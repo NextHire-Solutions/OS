@@ -59,6 +59,17 @@ export const CONCEPTS: Concept[] = [
         window: "current",
         platforms: ["emailbison"],
       },
+      {
+        tool: "inbox",
+        key: "clients",
+        label: "Master Inbox — clients",
+        definition:
+          "Clients that inbound replies are tagged against. A client exists here once any reply has been matched to it, so this list runs AHEAD of Client Health's roster — it includes clients nobody has onboarded there yet, and ones long since hidden.",
+        origin: "Master Inbox · Supabase",
+        requiresEnv: "MASTER_INBOX_ADMIN_TOKEN",
+        window: "all-time",
+        platforms: ["instantly", "emailbison"],
+      },
     ],
   },
 
@@ -155,7 +166,7 @@ export const CONCEPTS: Concept[] = [
         key: "introduction-label",
         label: "Master Inbox — Introduction label",
         definition:
-          "Threads carrying the `Introduction` label, all time. A label is applied per thread by a person or the AI labeller, so this counts conversations tagged as introductions rather than introductions delivered to a client.",
+          "Threads carrying the `Introduction` label, all time, summed across every client. The label is applied per thread by a person or the AI labeller, so this counts conversations tagged as introductions rather than introductions delivered to a client. This is the number Client Health imports.",
         origin: "Master Inbox · Supabase",
         requiresEnv: "MASTER_INBOX_ADMIN_TOKEN",
         window: "all-time",

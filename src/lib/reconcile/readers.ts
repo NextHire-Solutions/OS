@@ -147,11 +147,54 @@ const READERS: Record<string, Reader> = {
     return { value: num(counts?.open) };
   },
 
-  "inbox:introduction-label": async () => ({
-    value: null,
-    unavailable: "no endpoint counts threads by label",
-  }),
+  /*
+   * Master Inbox DOES publish this, via /api/clients/intro-stats — per-client
+   * counts of threads carrying the `Introduction` label, plus last_assigned_at.
+   *
+   * Worth noting how it authenticates: the proxy accepts `x-admin-token` equal
+   * to Master Inbox's SUPABASE_SERVICE_ROLE_KEY. That is a full RLS-bypassing
+   * database credential being spent to read a list of integers. It works, and
+   * it is what exists today, but a narrow read-only token on this one route
+   * would shrink the blast radius considerably. Flagged, not silently accepted.
+   */
+  "inbox:introduction-label": async (spec) => {
+    const rows = await introStats(spec);
+    if ("unavailable" in rows) return rows;
+    return {
+      value: rows.stats.reduce((sum, r) => sum + (num(r.count) ?? 0), 0),
+    };
+  },
+
+  "inbox:clients": async (spec) => {
+    const rows = await introStats(spec);
+    if ("unavailable" in rows) return rows;
+    return { value: rows.stats.length };
+  },
 };
+
+/** Shared by the two readings that come out of the same endpoint. */
+async function introStats(
+  spec: SourceSpec,
+): Promise<{ stats: Record<string, unknown>[] } | { value: null; unavailable: string }> {
+  const token = optionalEnv("MASTER_INBOX_ADMIN_TOKEN");
+  if (!token) return { value: null, unavailable: `${spec.requiresEnv} not set` };
+
+  const res = await httpProbe(`${baseUrlEnv("MASTER_INBOX_URL")}/api/clients/intro-stats`, {
+    timeoutMs: TIMEOUT,
+    headers: { "x-admin-token": token },
+  });
+
+  if (res.status === 307 || res.status === 302) {
+    return { value: null, unavailable: "token rejected — redirected to login" };
+  }
+  if (!res.ok) return { value: null, unavailable: `returned ${res.status ?? "no response"}` };
+
+  const body = asRecord(res.json);
+  const stats = body?.stats;
+  if (!Array.isArray(stats)) return { value: null, unavailable: "unexpected response shape" };
+
+  return { stats: stats as Record<string, unknown>[] };
+}
 
 export async function read(spec: SourceSpec): Promise<Reading> {
   const base: Omit<Reading, "value" | "unavailable" | "window"> = {
