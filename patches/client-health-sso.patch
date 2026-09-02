@@ -1,3 +1,195 @@
+diff --git a/apps/client-health/app/api/clients/route.ts b/apps/client-health/app/api/clients/route.ts
+index d050fbf..c655468 100644
+--- a/apps/client-health/app/api/clients/route.ts
++++ b/apps/client-health/app/api/clients/route.ts
+@@ -1,10 +1,24 @@
+ import { NextRequest, NextResponse } from 'next/server';
+ import { getSupabase } from '@/lib/supabase';
++import { requireRead, requireWrite } from '@/lib/route-auth';
+ 
+ export const runtime = 'nodejs';
+ export const dynamic = 'force-dynamic';
+ 
+-export async function GET() {
++// Auth is enforced HERE, not only in middleware.
++//
++// Master Inbox reads this route server-to-server (lib/portals/client-plan.ts)
++// with x-admin-token and no cookie. Once DASHBOARD_PASSWORD was set, the
++// middleware started refusing it — and Master Inbox swallows the error, so
++// every client's plan silently became null with nothing in any log.
++//
++// Reads now accept READ_ONLY_TOKEN. Writes never do: a token handed to
++// "lower-trust consumers" (its own words) must not be able to delete a client.
++
++export async function GET(req: NextRequest) {
++  const denied = await requireRead(req);
++  if (denied) return denied;
++
+   const sb = getSupabase();
+   const { data, error } = await sb.from('clients').select('*').order('name');
+   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+@@ -12,6 +26,9 @@ export async function GET() {
+ }
+ 
+ export async function POST(req: NextRequest) {
++  const denied = await requireWrite(req);
++  if (denied) return denied;
++
+   const body = await req.json();
+   const sb = getSupabase();
+   const { data, error } = await sb
+@@ -35,6 +52,9 @@ export async function POST(req: NextRequest) {
+ }
+ 
+ export async function PATCH(req: NextRequest) {
++  const denied = await requireWrite(req);
++  if (denied) return denied;
++
+   const body = await req.json();
+   if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+   const sb = getSupabase();
+@@ -66,6 +86,9 @@ export async function PATCH(req: NextRequest) {
+ }
+ 
+ export async function DELETE(req: NextRequest) {
++  const denied = await requireWrite(req);
++  if (denied) return denied;
++
+   const url = new URL(req.url);
+   const id = url.searchParams.get('id');
+   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+diff --git a/apps/client-health/app/api/metrics/weekly/route.ts b/apps/client-health/app/api/metrics/weekly/route.ts
+new file mode 100644
+index 0000000..bd01835
+--- /dev/null
++++ b/apps/client-health/app/api/metrics/weekly/route.ts
+@@ -0,0 +1,126 @@
++// Weekly metrics, for other systems to read.
++//
++// The numbers people argue about most — emails sent, and introductions per
++// week — are computed here and rendered straight into the dashboard. Nothing
++// publishes them, so no other tool can check its own figures against ours, and
++// "your intro count doesn't match mine" has never been settleable.
++//
++// This is the smallest thing that fixes that: one read-only endpoint over
++// weekly_metrics, authenticated exactly like /api/clients/status.
++//
++// Auth: x-admin-token vs READ_ONLY_TOKEN. Unset → 500, never open. Matching
++// the existing route rather than inventing a third convention, because a
++// consumer that already reads /api/clients/status can reuse its token and its
++// error handling unchanged.
++
++import { NextRequest, NextResponse } from 'next/server';
++import { getSupabase } from '@/lib/supabase';
++
++export const runtime = 'nodejs';
++export const dynamic = 'force-dynamic';
++
++/** Monday-start ISO week key, matching how the dashboard buckets. */
++const WEEK_KEY = /^\d{4}-\d{2}-\d{2}$/;
++
++/** Weeks returned when the caller names no range. One quarter. */
++const DEFAULT_WEEKS = 13;
++
++/** Hard ceiling. The table holds 26 weeks per client across ~40 clients; an
++ *  unbounded query would be a slow full scan on a route a poller may hit. */
++const MAX_WEEKS = 26;
++
++function bad(message: string, status = 400) {
++  return NextResponse.json({ error: message }, { status });
++}
++
++export async function GET(req: NextRequest) {
++  const expected = process.env.READ_ONLY_TOKEN;
++  if (!expected) {
++    return NextResponse.json(
++      { error: 'server misconfigured: READ_ONLY_TOKEN not set' },
++      { status: 500 },
++    );
++  }
++  if (req.headers.get('x-admin-token') !== expected) {
++    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
++  }
++
++  const url = new URL(req.url);
++  const from = url.searchParams.get('from');
++  const to = url.searchParams.get('to');
++  const weeksParam = url.searchParams.get('weeks');
++
++  if (from && !WEEK_KEY.test(from)) return bad('from must be YYYY-MM-DD (a Monday week_key)');
++  if (to && !WEEK_KEY.test(to)) return bad('to must be YYYY-MM-DD (a Monday week_key)');
++
++  let weeks = DEFAULT_WEEKS;
++  if (weeksParam !== null) {
++    const parsed = Number(weeksParam);
++    if (!Number.isInteger(parsed) || parsed < 1) return bad('weeks must be a positive integer');
++    weeks = Math.min(parsed, MAX_WEEKS);
++  }
++
++  const sb = getSupabase();
++
++  let query = sb
++    .from('weekly_metrics')
++    .select('client_id, week_key, emails_sent, intros, intros_corofy, interested_corofy, last_intro_at')
++    .order('week_key', { ascending: false });
++
++  if (from) query = query.gte('week_key', from);
++  if (to) query = query.lte('week_key', to);
++
++  // Only cap by week count when the caller gave no explicit range — otherwise
++  // a narrow range would be silently truncated, which is the kind of quiet
++  // wrongness this endpoint exists to eliminate.
++  const { data: rows, error } = await (from || to ? query : query.limit(weeks * 200));
++  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
++
++  const { data: clients, error: clientsError } = await sb
++    .from('clients')
++    .select('id, name, plan, weekly_target, hidden, client_paused');
++  if (clientsError) {
++    return NextResponse.json({ error: clientsError.message }, { status: 500 });
++  }
++
++  const byId = new Map((clients ?? []).map((c) => [c.id, c]));
++
++  // Names are included alongside ids because every other tool in the stack
++  // joins clients by NAME, not by our id. Forcing them to make a second call
++  // to resolve one would guarantee they cache it and drift.
++  const metrics = (rows ?? []).map((r) => {
++    const client = byId.get(r.client_id);
++    return {
++      client_id: r.client_id,
++      client_name: client?.name ?? null,
++      plan: client?.plan ?? null,
++      weekly_target: client?.weekly_target ?? null,
++      status: !client ? null : client.hidden ? 'churned' : client.client_paused ? 'paused' : 'active',
++      week_key: r.week_key,
++      emails_sent: r.emails_sent,
++      intros: r.intros,
++      intros_corofy: r.intros_corofy,
++      interested_corofy: r.interested_corofy,
++      last_intro_at: r.last_intro_at,
++    };
++  });
++
++  const weekKeys = [...new Set(metrics.map((m) => m.week_key))].sort();
++
++  return NextResponse.json({
++    ok: true,
++    // Stated rather than assumed: every consumer has to bucket by the same
++    // week boundary or the comparison is meaningless.
++    week_starts_on: 'monday',
++    definitions: {
++      emails_sent: 'Emails sent that week, summed from Instantly and EmailBison.',
++      intros: 'Introductions recorded that week by this app.',
++      intros_corofy: 'Introductions imported from Master Inbox for that week.',
++      interested_corofy: 'Threads labelled Interested in Master Inbox for that week.',
++    },
++    range: { from: weekKeys[0] ?? null, to: weekKeys[weekKeys.length - 1] ?? null },
++    week_count: weekKeys.length,
++    count: metrics.length,
++    metrics,
++  });
++}
 diff --git a/apps/client-health/app/no-access/page.tsx b/apps/client-health/app/no-access/page.tsx
 new file mode 100644
 index 0000000..7dae055
@@ -396,6 +588,120 @@ index 0000000..1c55db2
 +  }
 +  return undefined;
 +}
+diff --git a/apps/client-health/lib/route-auth.ts b/apps/client-health/lib/route-auth.ts
+new file mode 100644
+index 0000000..181fe38
+--- /dev/null
++++ b/apps/client-health/lib/route-auth.ts
+@@ -0,0 +1,108 @@
++// Route-level authorisation.
++//
++// The middleware already gates every page and API path, so why check again?
++// Because /api/clients has to be reachable by two very different callers:
++//
++//   the browser          — carries the bs_auth cookie (or bs_sso once SSO lands)
++//   Master Inbox         — carries x-admin-token, and has no cookie at all
++//
++// Making the middleware wave the whole path through would open POST/PATCH/DELETE
++// to anyone, since the handler currently checks nothing. So the middleware lets
++// the path through only for a token-bearing GET, and the handler below decides
++// what each caller may actually do.
++//
++// This also removes a real dependency on middleware behaviour: if
++// PUBLIC_PATH_PREFIXES is edited later, these routes stay safe on their own.
++
++import type { NextRequest } from 'next/server';
++import { hasGrant, readSsoCookie, verifySso } from './bs-auth';
++
++const AUTH_COOKIE = 'bs_auth';
++const AUTH_MESSAGE = 'bs-dashboard-authed';
++
++/** Constant-time compare — `===` leaks how much of a guess was correct. */
++function safeEqual(a: string, b: string): boolean {
++  if (a.length !== b.length) return false;
++  let diff = 0;
++  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
++  return diff === 0;
++}
++
++/** The cookie value the password login produces. Mirrors middleware.ts. */
++async function expectedCookieValue(password: string): Promise<string> {
++  const enc = new TextEncoder();
++  const key = await crypto.subtle.importKey(
++    'raw',
++    enc.encode(password),
++    { name: 'HMAC', hash: 'SHA-256' },
++    false,
++    ['sign'],
++  );
++  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(AUTH_MESSAGE));
++  let s = '';
++  const bytes = new Uint8Array(sig);
++  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
++  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
++}
++
++/** A person, signed in either way. May read and write. */
++export async function isSignedIn(req: NextRequest): Promise<boolean> {
++  const ssoSecret = process.env.BS_SSO_SECRET;
++  if (ssoSecret) {
++    const session = await verifySso(ssoSecret, readSsoCookie(req.headers.get('cookie')));
++    if (session && hasGrant(session, 'clients')) return true;
++  }
++
++  const password = process.env.DASHBOARD_PASSWORD;
++  if (password) {
++    const cookie = req.cookies.get(AUTH_COOKIE)?.value;
++    if (cookie && safeEqual(cookie, await expectedCookieValue(password))) return true;
++  }
++
++  return false;
++}
++
++/**
++ * A machine holding READ_ONLY_TOKEN. May read, never write.
++ *
++ * Deliberately fails closed when the variable is unset, matching
++ * /api/clients/status. The alternative — treating "unset" as "allow" — would
++ * mean one missing variable silently opens the client list to the internet.
++ */
++export async function isReadOnlyMachine(req: NextRequest): Promise<boolean> {
++  const expected = process.env.READ_ONLY_TOKEN;
++  if (!expected) return false;
++
++  const supplied = req.headers.get('x-admin-token');
++  return !!supplied && safeEqual(supplied, expected);
++}
++
++/**
++ * Guard for a read.
++ *
++ * Returns null when the caller may proceed, or the response to send back.
++ * A helper rather than a boolean so every route refuses in the same shape —
++ * JSON, never an HTML redirect, because every caller here is a fetch().
++ */
++export async function requireRead(req: NextRequest) {
++  if (await isSignedIn(req)) return null;
++  if (await isReadOnlyMachine(req)) return null;
++  return Response.json({ error: 'unauthorized' }, { status: 401 });
++}
++
++/** Guard for a write. The read-only token is deliberately NOT accepted. */
++export async function requireWrite(req: NextRequest) {
++  if (await isSignedIn(req)) return null;
++
++  // Distinguish "you are a reader" from "you are nobody": a 403 tells an
++  // integration its token is valid but insufficient, which is a far shorter
++  // debugging path than a blanket 401.
++  if (await isReadOnlyMachine(req)) {
++    return Response.json(
++      { error: 'forbidden', detail: 'READ_ONLY_TOKEN cannot modify clients' },
++      { status: 403 },
++    );
++  }
++
++  return Response.json({ error: 'unauthorized' }, { status: 401 });
++}
 diff --git a/apps/client-health/lib/session.ts b/apps/client-health/lib/session.ts
 new file mode 100644
 index 0000000..43b8d9d
@@ -442,10 +748,10 @@ index 0000000..43b8d9d
 +  return (await cookies()).get('bs_embed')?.value === '1';
 +}
 diff --git a/apps/client-health/middleware.ts b/apps/client-health/middleware.ts
-index c3b02b7..fd4b49b 100644
+index c3b02b7..71cd3ab 100644
 --- a/apps/client-health/middleware.ts
 +++ b/apps/client-health/middleware.ts
-@@ -1,30 +1,43 @@
+@@ -1,35 +1,49 @@
 -// Password-gates every dashboard page. Redirects unauthenticated requests
 -// to /login, preserving the intended destination via ?next=.
 +// Gates every dashboard page.
@@ -503,7 +809,13 @@ index c3b02b7..fd4b49b 100644
  const PUBLIC_PATH_PREFIXES = [
    '/login',
    '/api/auth/',
-@@ -50,32 +63,99 @@ async function expectedCookieValue(password: string): Promise<string> {
+   '/api/clients/onboard',
+   '/api/clients/status',
++  '/api/metrics/weekly',
+   '/api/sync/run',
+ ];
+ 
+@@ -50,32 +64,114 @@ async function expectedCookieValue(password: string): Promise<string> {
    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
  }
  
@@ -561,6 +873,21 @@ index c3b02b7..fd4b49b 100644
    // Static + public paths bypass auth.
    if (PUBLIC_PATH_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next();
  
++  // /api/clients — reachable by a machine holding READ_ONLY_TOKEN, but only to
++  // READ. Master Inbox calls this server-to-server for each client's plan and
++  // has no cookie; once DASHBOARD_PASSWORD was set it started getting 401s and
++  // silently fell back to null plans.
++  //
++  // Narrow on purpose: this path is NOT added to PUBLIC_PATH_PREFIXES, because
++  // that would wave POST/PATCH/DELETE through as well. GET only, correct token
++  // only — and the route handler checks again, so this is a convenience, not
++  // the security boundary.
++  if (pathname === '/api/clients' && req.method === 'GET') {
++    const expected = process.env.READ_ONLY_TOKEN;
++    const supplied = req.headers.get('x-admin-token');
++    if (expected && supplied && supplied === expected) return NextResponse.next();
++  }
++
 +  const ssoSecret = process.env.BS_SSO_SECRET;
    const password = process.env.DASHBOARD_PASSWORD;
 -  if (!password) return NextResponse.next(); // fail-open when unset
