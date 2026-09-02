@@ -1,0 +1,957 @@
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/package.json apps/command-center/package.json
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/package.json	2026-08-07 01:11:29
++++ apps/command-center/package.json	2026-09-02 02:35:49
+@@ -35,4 +35,4 @@
+   "engines": {
+     "node": ">=20.9.0"
+   }
+-}
+\ No newline at end of file
++}
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/app/api/auth/login/route.ts apps/command-center/src/app/api/auth/login/route.ts
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/app/api/auth/login/route.ts	2026-08-07 00:29:27
++++ apps/command-center/src/app/api/auth/login/route.ts	2026-09-02 02:32:05
+@@ -1,18 +1,30 @@
+ import { NextResponse } from "next/server";
+ import {
+-  AUTH_COOKIE,
+-  createSessionToken,
+-  credentialsMatch,
+-  sessionCookieOptions,
+-} from "@/lib/auth/session";
++  mintSso,
++  safeEqual,
++  sha256Hex,
++  ssoCookieOptions,
++  SSO_COOKIE,
++} from "@/lib/bs-auth";
++import { grantStore } from "@/lib/identity/store";
+ 
+ export const dynamic = "force-dynamic";
+ 
++/*
++ * Sign-in. The only place in the whole system that mints a token.
++ *
++ * The cookie is scoped to the parent domain (.brokerstaffer.com) so every app
++ * on a subdomain sees it as first-party — which is what lets an embedded pane
++ * work with SameSite=Lax instead of the fragile SameSite=None arrangement a
++ * cross-domain setup would force.
++ *
++ * SSO_COOKIE_DOMAIN is left unset in local development, because localhost has
++ * no shared apex and setting a domain there silently drops the cookie.
++ */
++
+ export async function POST(request: Request) {
+   const secret = process.env.AUTH_SECRET;
+-  const authUsers = process.env.AUTH_USERS;
+-
+-  if (!secret || !authUsers) {
++  if (!secret) {
+     return NextResponse.json(
+       { error: "Auth is not configured on this deployment." },
+       { status: 503 },
+@@ -30,22 +42,58 @@
+   }
+ 
+   if (!email || !password) {
+-    return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
++    return NextResponse.json(
++      { error: "Email and password are required." },
++      { status: 400 },
++    );
+   }
+ 
+-  if (!(await credentialsMatch(authUsers, email, password))) {
+-    // One message for both wrong-email and wrong-password, matching the
+-    // constant-time comparison in credentialsMatch — neither the timing nor
+-    // the copy should reveal which addresses exist.
+-    return NextResponse.json({ error: "Incorrect email or password." }, { status: 401 });
++  const user = await grantStore().findByEmail(email);
++
++  // Hash the supplied password even when the email is unknown, so a
++  // wrong-email response takes the same time as a wrong-password one and this
++  // endpoint can't be used to enumerate who has an account.
++  const supplied = await sha256Hex(password);
++  const matched = user ? safeEqual(supplied, user.passwordHash) : false;
++
++  if (!user || !matched) {
++    return NextResponse.json(
++      { error: "Incorrect email or password." },
++      { status: 401 },
++    );
+   }
+ 
++  // A real account with no tools is a configuration mistake worth naming
++  // precisely. Otherwise it presents as a workspace that signs you in and then
++  // shows an empty sidebar, which reads as a broken app rather than a missing
++  // grant.
++  if (user.grants.length === 0) {
++    return NextResponse.json(
++      {
++        error:
++          "Your account has no tools yet. Ask an admin to grant access in Team access.",
++      },
++      { status: 403 },
++    );
++  }
++
++  const token = await mintSso(secret, {
++    email: user.email,
++    grants: user.grants,
++    ver: user.tokenVersion,
++  });
++
+   const isSecure = new URL(request.url).protocol === "https:";
+-  const response = NextResponse.json({ ok: true });
++  const response = NextResponse.json({ ok: true, grants: user.grants });
++
+   response.cookies.set(
+-    AUTH_COOKIE,
+-    await createSessionToken(secret, email.trim().toLowerCase()),
+-    sessionCookieOptions(isSecure),
++    SSO_COOKIE,
++    token,
++    ssoCookieOptions({
++      secure: isSecure,
++      domain: process.env.SSO_COOKIE_DOMAIN,
++    }),
+   );
++
+   return response;
+ }
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/app/api/auth/logout/route.ts apps/command-center/src/app/api/auth/logout/route.ts
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/app/api/auth/logout/route.ts	2026-08-07 02:01:39
++++ apps/command-center/src/app/api/auth/logout/route.ts	2026-09-02 02:33:44
+@@ -1,5 +1,5 @@
+ import { NextResponse } from "next/server";
+-import { AUTH_COOKIE } from "@/lib/auth/session";
++import { SSO_COOKIE } from "@/lib/bs-auth";
+ 
+ export const dynamic = "force-dynamic";
+ 
+@@ -27,6 +27,15 @@
+     headers: { Location: "/login" },
+   });
+ 
+-  response.cookies.set(AUTH_COOKIE, "", { path: "/", maxAge: 0 });
++  // Must be cleared with the SAME domain it was set with. A cookie set on
++  // .brokerstaffer.com and cleared without a domain is treated as a different
++  // cookie: sign-out appears to work, the session survives, and the user is
++  // still signed in to all four apps.
++  response.cookies.set(SSO_COOKIE, "", {
++    path: "/",
++    maxAge: 0,
++    domain: process.env.SSO_COOKIE_DOMAIN,
++  });
++
+   return response;
+ }
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/app/api/auth/refresh/route.ts apps/command-center/src/app/api/auth/refresh/route.ts
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/app/api/auth/refresh/route.ts	1970-01-01 05:30:00
++++ apps/command-center/src/app/api/auth/refresh/route.ts	2026-09-02 02:30:15
+@@ -0,0 +1,91 @@
++import { NextResponse } from "next/server";
++import {
++  mintSso,
++  readSsoCookie,
++  ssoCookieOptions,
++  SSO_COOKIE,
++  verifySso,
++} from "@/lib/bs-auth";
++import { grantStore } from "@/lib/identity/store";
++
++export const dynamic = "force-dynamic";
++
++/*
++ * Silent renewal.
++ *
++ * Tokens live 30 minutes, which is short on purpose — it is the revocation
++ * window. This route trades a still-valid token for a fresh one, and in doing
++ * so RE-READS the grants from the store. That is the whole mechanism by which
++ * removing someone's access propagates to four apps that never talk to a
++ * database: within 30 minutes their next refresh returns a token without that
++ * grant, and every app starts refusing them.
++ *
++ * Three ways this deliberately refuses:
++ *
++ *   - the presented token is invalid or expired  → 401, sign in again
++ *   - the account is gone or deactivated         → 401
++ *   - token_version moved on                     → 401, instant revocation
++ *
++ * The last one is why `ver` rides inside the token at all. Apps cannot check it
++ * (they have no database); the issuer can, and does, here.
++ */
++
++export async function POST(request: Request) {
++  const secret = process.env.AUTH_SECRET;
++  if (!secret) {
++    return NextResponse.json({ error: "Not configured." }, { status: 503 });
++  }
++
++  const current = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
++  if (!current) {
++    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++  }
++
++  const user = await grantStore().findByEmail(current.email);
++  if (!user) {
++    return clearAndReject("Account no longer active.");
++  }
++
++  if (user.tokenVersion !== current.ver) {
++    return clearAndReject("Session was revoked.");
++  }
++
++  if (user.grants.length === 0) {
++    return clearAndReject("Your account has no tools.");
++  }
++
++  const token = await mintSso(secret, {
++    email: user.email,
++    grants: user.grants,
++    ver: user.tokenVersion,
++  });
++
++  const isSecure = new URL(request.url).protocol === "https:";
++  const response = NextResponse.json({ ok: true, grants: user.grants });
++
++  response.cookies.set(
++    SSO_COOKIE,
++    token,
++    ssoCookieOptions({ secure: isSecure, domain: process.env.SSO_COOKIE_DOMAIN }),
++  );
++
++  return response;
++}
++
++/**
++ * Clear the cookie as well as refusing.
++ *
++ * Leaving a revoked token in place would let the holder keep using the other
++ * apps for up to its remaining lifetime, since those verify offline and cannot
++ * know it was withdrawn. Removing it here is what makes revocation immediate
++ * rather than eventual.
++ */
++function clearAndReject(message: string) {
++  const response = NextResponse.json({ error: message }, { status: 401 });
++  response.cookies.set(SSO_COOKIE, "", {
++    path: "/",
++    maxAge: 0,
++    domain: process.env.SSO_COOKIE_DOMAIN,
++  });
++  return response;
++}
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/lib/bs-auth.ts apps/command-center/src/lib/bs-auth.ts
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/lib/bs-auth.ts	1970-01-01 05:30:00
++++ apps/command-center/src/lib/bs-auth.ts	2026-09-02 02:28:01
+@@ -0,0 +1,339 @@
++/* ---------------------------------------------------------------------------
++ * GENERATED FILE — DO NOT EDIT HERE.
++ *
++ * Source of truth: packages/bs-auth/index.ts in the BrokerStaffer-SSO workspace.
++ * Regenerate with: node packages/bs-auth/sync.mjs
++ *
++ * Edit the source and re-sync; edits made here are overwritten and, worse, make
++ * this app verify tokens differently from every other app.
++ *
++ * bs-auth@d235656d0c74
++ * ------------------------------------------------------------------------- */
++
++/*
++ * bs-auth — the shared single-sign-on token.
++ *
++ * ONE source of truth. This file is copied verbatim into each app as
++ * `lib/bs-auth.ts` by `packages/bs-auth/sync.mjs`. Four copies of ~200 lines is
++ * a deliberate choice over publishing a package: the apps deploy independently
++ * from separate repos, and a private registry (or four git submodules) would be
++ * more machinery than this earns. The sync script + a checksum test keep the
++ * copies honest.
++ *
++ * ---------------------------------------------------------------------------
++ * WHO ISSUES, WHO VERIFIES
++ *
++ *   Command Center  →  mints  bs_sso  (needs AUTH_SECRET + the grants DB)
++ *   Every other app →  verifies bs_sso  (needs only BS_SSO_SECRET)
++ *
++ * Apps verify OFFLINE. No network call, no database lookup on the hot path —
++ * a permission check is one HMAC, microseconds. That is what makes putting a
++ * grant check in front of every request affordable.
++ *
++ * ---------------------------------------------------------------------------
++ * TOKEN FORMAT
++ *
++ *   base64url(JSON.stringify(payload)) + "." + hex(HMAC-SHA256(secret, body))
++ *
++ * Two parts, not three. The earlier Analytics scheme kept `expiresAt` outside
++ * the payload so it could be read without decoding; that saves nothing real and
++ * invites checking expiry before verifying the signature, which is exactly
++ * backwards. Here the signature is checked FIRST and nothing inside the payload
++ * is trusted until it passes.
++ *
++ * Deliberately not a JWT: no `alg` field, so there is no algorithm-confusion
++ * attack surface and no dependency. The one algorithm is HMAC-SHA256.
++ *
++ * ---------------------------------------------------------------------------
++ * REVOCATION
++ *
++ * Tokens are short-lived (30 min) and silently refreshed by the Command Center,
++ * which re-reads grants from the database on every refresh. So removing a grant
++ * takes effect within 30 minutes with no coordination between apps.
++ *
++ * For instant revocation, bump `app_users.token_version`; the refresh endpoint
++ * then refuses to reissue. Apps do not check `ver` — they cannot, they have no
++ * database. It rides along so the issuer can reject a stale refresh.
++ *
++ * Runs identically in the Edge runtime and in Node: Web Crypto only.
++ */
++
++/** Tools a grant can be issued for. Keep in sync with the Command Center registry. */
++export type ToolId = "inbox" | "clients" | "analytics" | "search";
++
++export const ALL_TOOLS: readonly ToolId[] = ["inbox", "clients", "analytics", "search"];
++
++export interface SsoSession {
++  /** Lower-cased email. The stable identity across all apps. */
++  email: string;
++  /** Tools this person may open. */
++  grants: ToolId[];
++  /** Issuer's token version for this user; bumped to invalidate live sessions. */
++  ver: number;
++  /** Unix milliseconds. */
++  exp: number;
++  /** Unix milliseconds. Issued-at, for logging and staleness debugging. */
++  iat: number;
++}
++
++export const SSO_COOKIE = "bs_sso";
++
++/** 30 minutes. Short on purpose — this is the revocation window. */
++export const SSO_TTL_MS = 30 * 60 * 1000;
++
++/**
++ * Accept a token up to 60s past expiry.
++ *
++ * Not laziness: Railway containers, the browser and Supabase do not share a
++ * clock, and a user whose machine is 20s fast would otherwise get a hard 401
++ * mid-request with no way to self-diagnose. 60s is far below the 30-minute TTL,
++ * so it does not meaningfully widen the revocation window.
++ */
++const CLOCK_SKEW_MS = 60 * 1000;
++
++// --- encoding ---------------------------------------------------------------
++
++const encoder = new TextEncoder();
++
++function base64UrlEncode(input: string): string {
++  const bytes = encoder.encode(input);
++  let binary = "";
++  for (const byte of bytes) binary += String.fromCharCode(byte);
++  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
++}
++
++function base64UrlDecode(input: string): string {
++  const padded = input.replace(/-/g, "+").replace(/_/g, "/");
++  const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
++  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
++  return new TextDecoder().decode(bytes);
++}
++
++function toHex(buffer: ArrayBuffer): string {
++  return Array.from(new Uint8Array(buffer))
++    .map((b) => b.toString(16).padStart(2, "0"))
++    .join("");
++}
++
++/**
++ * Constant-time comparison. `a === b` short-circuits on the first differing
++ * byte, which leaks how much of a forged signature was correct.
++ */
++export function safeEqual(a: string, b: string): boolean {
++  if (a.length !== b.length) return false;
++  let diff = 0;
++  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
++  return diff === 0;
++}
++
++async function hmacHex(secret: string, payload: string): Promise<string> {
++  const key = await crypto.subtle.importKey(
++    "raw",
++    encoder.encode(secret),
++    { name: "HMAC", hash: "SHA-256" },
++    false,
++    ["sign"],
++  );
++  return toHex(await crypto.subtle.sign("HMAC", key, encoder.encode(payload)));
++}
++
++export async function sha256Hex(input: string): Promise<string> {
++  return toHex(await crypto.subtle.digest("SHA-256", encoder.encode(input)));
++}
++
++// --- mint (Command Center only) ---------------------------------------------
++
++export interface MintInput {
++  email: string;
++  grants: ToolId[];
++  ver: number;
++  ttlMs?: number;
++  now?: number;
++}
++
++export async function mintSso(secret: string, input: MintInput): Promise<string> {
++  if (!secret) throw new Error("mintSso: secret is required");
++
++  const now = input.now ?? Date.now();
++  const payload: SsoSession = {
++    email: input.email.trim().toLowerCase(),
++    // Normalise: drop unknown tools and duplicates so a typo in the database
++    // can never widen access, and so the token is byte-stable for a given set.
++    grants: ALL_TOOLS.filter((t) => input.grants.includes(t)),
++    ver: input.ver,
++    iat: now,
++    exp: now + (input.ttlMs ?? SSO_TTL_MS),
++  };
++
++  const body = base64UrlEncode(JSON.stringify(payload));
++  return `${body}.${await hmacHex(secret, body)}`;
++}
++
++// --- verify (every app) ------------------------------------------------------
++
++/** Why a token was rejected. Surfaced in logs, never to the browser. */
++export type SsoFailure =
++  | "missing"
++  | "malformed"
++  | "bad-signature"
++  | "expired"
++  | "bad-payload";
++
++export type SsoResult =
++  | { ok: true; session: SsoSession }
++  | { ok: false; reason: SsoFailure };
++
++/**
++ * Verifies a token. Signature first, payload second — nothing inside the
++ * payload is trusted until the HMAC checks out.
++ */
++export async function verifySsoDetailed(
++  secret: string,
++  token: string | undefined | null,
++  now = Date.now(),
++): Promise<SsoResult> {
++  if (!secret) return { ok: false, reason: "missing" };
++  if (!token) return { ok: false, reason: "missing" };
++
++  const dot = token.lastIndexOf(".");
++  if (dot <= 0 || dot === token.length - 1) return { ok: false, reason: "malformed" };
++
++  const body = token.slice(0, dot);
++  const signature = token.slice(dot + 1);
++
++  if (!safeEqual(signature, await hmacHex(secret, body))) {
++    return { ok: false, reason: "bad-signature" };
++  }
++
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(base64UrlDecode(body));
++  } catch {
++    return { ok: false, reason: "bad-payload" };
++  }
++
++  const session = normalise(parsed);
++  if (!session) return { ok: false, reason: "bad-payload" };
++
++  if (session.exp + CLOCK_SKEW_MS <= now) return { ok: false, reason: "expired" };
++
++  return { ok: true, session };
++}
++
++/** The common case: a session, or null. */
++export async function verifySso(
++  secret: string,
++  token: string | undefined | null,
++  now = Date.now(),
++): Promise<SsoSession | null> {
++  const result = await verifySsoDetailed(secret, token, now);
++  return result.ok ? result.session : null;
++}
++
++/**
++ * Shape-checks a decoded payload.
++ *
++ * A signed token could still carry a payload from an older or newer issuer, so
++ * every field is validated rather than cast. `grants` is intersected with
++ * ALL_TOOLS, so an unrecognised tool name grants nothing.
++ */
++function normalise(value: unknown): SsoSession | null {
++  if (!value || typeof value !== "object") return null;
++  const raw = value as Record<string, unknown>;
++
++  const email = typeof raw.email === "string" ? raw.email.trim().toLowerCase() : "";
++  if (!email) return null;
++
++  const exp = typeof raw.exp === "number" && Number.isFinite(raw.exp) ? raw.exp : null;
++  if (exp === null) return null;
++
++  const iat = typeof raw.iat === "number" && Number.isFinite(raw.iat) ? raw.iat : 0;
++  const ver = typeof raw.ver === "number" && Number.isFinite(raw.ver) ? raw.ver : 0;
++
++  const claimed = Array.isArray(raw.grants) ? raw.grants : [];
++  const grants = ALL_TOOLS.filter((t) => claimed.includes(t));
++
++  return { email, grants, ver, exp, iat };
++}
++
++// --- authorisation -----------------------------------------------------------
++
++/** True when the session may open `tool`. The only authorisation primitive. */
++export function hasGrant(session: SsoSession | null, tool: ToolId): boolean {
++  return !!session && session.grants.includes(tool);
++}
++
++/** Milliseconds until expiry; negative once expired. For refresh scheduling. */
++export function msUntilExpiry(session: SsoSession, now = Date.now()): number {
++  return session.exp - now;
++}
++
++/**
++ * True when the token is over halfway through its life and should be refreshed.
++ *
++ * Refreshing at the halfway point rather than near expiry means a failed
++ * refresh has a full half-TTL to retry before the user is logged out.
++ */
++export function shouldRefresh(session: SsoSession, now = Date.now()): boolean {
++  const lifetime = session.exp - session.iat;
++  if (lifetime <= 0) return true;
++  return now - session.iat > lifetime / 2;
++}
++
++// --- cookie ------------------------------------------------------------------
++
++export interface CookieOptions {
++  httpOnly: true;
++  secure: boolean;
++  sameSite: "lax";
++  path: "/";
++  domain?: string;
++  maxAge: number;
++}
++
++/**
++ * Cookie attributes for the SSO session.
++ *
++ * `sameSite: "lax"` with a parent-domain `domain` is correct and sufficient
++ * BECAUSE every app is a subdomain of one apex — an embedded pane on
++ * clients.brokerstaffer.com inside home.brokerstaffer.com is same-site, so the
++ * cookie is first-party. Do not "fix" this to SameSite=None: that would make it
++ * a third-party cookie, which Safari blocks by default and Chrome is phasing
++ * out, and would trade a working design for a fragile one.
++ *
++ * `domain` is omitted in local development (localhost has no shared apex), which
++ * is why it is a parameter rather than a constant.
++ */
++export function ssoCookieOptions(opts: {
++  secure: boolean;
++  domain?: string;
++  ttlMs?: number;
++}): CookieOptions {
++  return {
++    httpOnly: true,
++    secure: opts.secure,
++    sameSite: "lax",
++    path: "/",
++    ...(opts.domain ? { domain: opts.domain } : {}),
++    maxAge: Math.floor((opts.ttlMs ?? SSO_TTL_MS) / 1000),
++  };
++}
++
++/**
++ * Reads the token out of a raw Cookie header.
++ *
++ * Every app needs this in middleware, where framework cookie helpers differ
++ * (Next's NextRequest vs Express's req.cookies vs a bare header). Parsing the
++ * header directly is the one thing that works everywhere.
++ */
++export function readSsoCookie(cookieHeader: string | null | undefined): string | undefined {
++  if (!cookieHeader) return undefined;
++  for (const part of cookieHeader.split(";")) {
++    const eq = part.indexOf("=");
++    if (eq === -1) continue;
++    if (part.slice(0, eq).trim() === SSO_COOKIE) {
++      return decodeURIComponent(part.slice(eq + 1).trim());
++    }
++  }
++  return undefined;
++}
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/lib/identity/store.test.ts apps/command-center/src/lib/identity/store.test.ts
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/lib/identity/store.test.ts	1970-01-01 05:30:00
++++ apps/command-center/src/lib/identity/store.test.ts	2026-09-02 02:35:00
+@@ -0,0 +1,113 @@
++/*
++ * Grant-store tests.
++ *
++ * The interesting cases are all about failing in the safe direction: an
++ * unlisted user gets nothing, a typo'd tool grants nothing, and the one
++ * deliberate fail-open (BS_GRANTS entirely unset) is pinned so it cannot be
++ * widened by accident later.
++ *
++ *   node --test src/lib/identity/store.test.ts
++ */
++
++import { test } from "node:test";
++import assert from "node:assert/strict";
++
++import { EnvGrantStore } from "./store.ts";
++
++const HASH_A = "a".repeat(64);
++const HASH_B = "b".repeat(64);
++
++const USERS = `sam@brokerstaffer.com:${HASH_A}, nicole@brokerstaffer.com:${HASH_B}`;
++
++test("BS_GRANTS is authoritative when set", async () => {
++  const store = new EnvGrantStore(
++    USERS,
++    `sam@brokerstaffer.com:inbox,analytics
++     nicole@brokerstaffer.com:clients`,
++  );
++
++  assert.deepEqual((await store.findByEmail("sam@brokerstaffer.com"))?.grants, [
++    "inbox",
++    "analytics",
++  ]);
++  assert.deepEqual((await store.findByEmail("nicole@brokerstaffer.com"))?.grants, [
++    "clients",
++  ]);
++  assert.equal(store.describe().governed, true);
++});
++
++test("a user in AUTH_USERS but absent from BS_GRANTS gets NOTHING", async () => {
++  // The important fail-closed case: existing is not the same as entitled.
++  const store = new EnvGrantStore(USERS, "sam@brokerstaffer.com:inbox");
++  const nicole = await store.findByEmail("nicole@brokerstaffer.com");
++
++  assert.ok(nicole, "she can still authenticate");
++  assert.deepEqual(nicole.grants, [], "but is entitled to no tools");
++});
++
++test("with BS_GRANTS entirely unset, listed operators get every tool", async () => {
++  // A deliberate fail-open, pinned here so it is a decision rather than a
++  // drift. Without it, deploying SSO would lock the existing admin out of
++  // their own dashboard with no way back in.
++  const store = new EnvGrantStore(USERS, undefined);
++  const sam = await store.findByEmail("sam@brokerstaffer.com");
++
++  assert.deepEqual(sam?.grants, ["inbox", "clients", "analytics", "search"]);
++  assert.equal(store.describe().governed, false, "and it reports itself as ungoverned");
++});
++
++test("an empty BS_GRANTS string is treated as unset, not as 'nobody'", async () => {
++  const store = new EnvGrantStore(USERS, "   \n  ");
++  assert.equal(store.describe().governed, false);
++  assert.equal((await store.findByEmail("sam@brokerstaffer.com"))?.grants.length, 4);
++});
++
++test("unknown tool names are dropped, not trusted", async () => {
++  const store = new EnvGrantStore(USERS, "sam@brokerstaffer.com:inbox,database,admin,*");
++  assert.deepEqual((await store.findByEmail("sam@brokerstaffer.com"))?.grants, ["inbox"]);
++});
++
++test("grants named in BS_GRANTS for someone who cannot sign in are inert", async () => {
++  const store = new EnvGrantStore(
++    `sam@brokerstaffer.com:${HASH_A}`,
++    "ghost@brokerstaffer.com:inbox,clients,analytics,search",
++  );
++  assert.equal(await store.findByEmail("ghost@brokerstaffer.com"), null);
++  assert.equal((await store.listUsers()).length, 1);
++});
++
++test("email matching is case- and whitespace-insensitive on both sides", async () => {
++  const store = new EnvGrantStore(
++    `  SAM@BrokerStaffer.com : ${HASH_A} `,
++    " Sam@BROKERSTAFFER.com : inbox ",
++  );
++  const user = await store.findByEmail("  sAm@brokerstaffer.COM ");
++  assert.equal(user?.email, "sam@brokerstaffer.com");
++  assert.deepEqual(user?.grants, ["inbox"]);
++});
++
++test("grant order is normalised, so tokens are stable", async () => {
++  const store = new EnvGrantStore(USERS, "sam@brokerstaffer.com:search,analytics,inbox");
++  assert.deepEqual((await store.findByEmail("sam@brokerstaffer.com"))?.grants, [
++    "inbox",
++    "analytics",
++    "search",
++  ]);
++});
++
++test("malformed entries are skipped rather than throwing at boot", async () => {
++  // A parse error here would take sign-in down for everyone, which is a far
++  // worse outcome than ignoring one bad line.
++  const store = new EnvGrantStore(
++    `nonsense, ,:${HASH_A}, sam@brokerstaffer.com:${HASH_A}`,
++    "garbage\n\nsam@brokerstaffer.com:inbox\nalso-garbage",
++  );
++  assert.equal((await store.listUsers()).length, 1);
++  assert.deepEqual((await store.findByEmail("sam@brokerstaffer.com"))?.grants, ["inbox"]);
++});
++
++test("an unset AUTH_USERS yields no users at all", async () => {
++  const store = new EnvGrantStore(undefined, "sam@brokerstaffer.com:inbox");
++  assert.equal((await store.listUsers()).length, 0);
++  assert.equal(await store.findByEmail("sam@brokerstaffer.com"), null);
++});
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/lib/identity/store.ts apps/command-center/src/lib/identity/store.ts
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/lib/identity/store.ts	1970-01-01 05:30:00
++++ apps/command-center/src/lib/identity/store.ts	2026-09-02 02:34:41
+@@ -0,0 +1,165 @@
++/*
++ * Where users and their tool grants come from.
++ *
++ * Deliberately an interface with two implementations. The env-backed one ships
++ * today with nothing to provision; the Postgres one lands later and brings the
++ * admin UI. Everything above this file — sign-in, refresh, the proxy, all four
++ * apps — is written against `GrantStore` and does not change when we swap.
++ *
++ * The apps never call this. They read grants out of the signed token, which is
++ * what keeps a permission check to one HMAC instead of a database round-trip.
++ * This is consulted only when a token is issued or refreshed.
++ */
++
++// Relative, not the "@/" alias, so `node --test` can run this file's tests
++// without a bundler resolving path mappings.
++import { ALL_TOOLS, type ToolId } from "../bs-auth.ts";
++
++export interface StoredUser {
++  email: string;
++  /** sha256 hex of the password. Same scheme the app already uses. */
++  passwordHash: string;
++  /** Bumped to invalidate every live token for this person. */
++  tokenVersion: number;
++  grants: ToolId[];
++  isActive: boolean;
++}
++
++export interface GrantStore {
++  /** Case-insensitive. Returns null for unknown or deactivated users. */
++  findByEmail(email: string): Promise<StoredUser | null>;
++  /** Everyone, for the admin screen and diagnostics. */
++  listUsers(): Promise<StoredUser[]>;
++  /** How this store is configured, for /api/diagnostics. Never includes secrets. */
++  describe(): { kind: string; userCount: number; governed: boolean };
++}
++
++// --- env-backed --------------------------------------------------------------
++
++/**
++ * Reads users from AUTH_USERS and grants from BS_GRANTS.
++ *
++ *   AUTH_USERS = "sam@x.com:<sha256hex>, nicole@x.com:<sha256hex>"
++ *   BS_GRANTS  = "sam@x.com:inbox,clients,analytics,search
++ *                 nicole@x.com:inbox,clients"
++ *
++ * ---------------------------------------------------------------------------
++ * THE BOOTSTRAP RULE, AND WHY IT IS WHAT IT IS
++ *
++ * When BS_GRANTS is set, it is authoritative: an operator listed in AUTH_USERS
++ * but absent from BS_GRANTS gets NO tools. Fail closed — adding someone must be
++ * a deliberate act, not a side effect of existing.
++ *
++ * When BS_GRANTS is entirely unset, every AUTH_USERS operator gets every tool.
++ * This is a fail-open and it is chosen on purpose: without it, deploying this
++ * change would instantly lock the existing admin out of their own dashboard
++ * with no way back in. AUTH_USERS is itself an allow-list that only an operator
++ * with Railway access can edit, so the blast radius is "people who could
++ * already sign in keep what they already had".
++ *
++ * `describe().governed` reports which mode is active, and the diagnostics route
++ * surfaces it, so "we never actually set BS_GRANTS" cannot go unnoticed.
++ */
++export class EnvGrantStore implements GrantStore {
++  private users: Map<string, StoredUser>;
++  private governed: boolean;
++
++  constructor(authUsers: string | undefined, bsGrants: string | undefined) {
++    const grants = parseGrants(bsGrants);
++    this.governed = grants.size > 0;
++    this.users = new Map();
++
++    for (const [email, passwordHash] of parseAuthUsers(authUsers)) {
++      this.users.set(email, {
++        email,
++        passwordHash,
++        tokenVersion: 1,
++        grants: this.governed ? (grants.get(email) ?? []) : [...ALL_TOOLS],
++        isActive: true,
++      });
++    }
++  }
++
++  async findByEmail(email: string): Promise<StoredUser | null> {
++    const user = this.users.get(email.trim().toLowerCase());
++    return user && user.isActive ? user : null;
++  }
++
++  async listUsers(): Promise<StoredUser[]> {
++    return [...this.users.values()];
++  }
++
++  describe() {
++    return { kind: "env", userCount: this.users.size, governed: this.governed };
++  }
++}
++
++/** `email:sha256hex` pairs, separated by newlines or commas. */
++function parseAuthUsers(raw: string | undefined): Map<string, string> {
++  const users = new Map<string, string>();
++  if (!raw) return users;
++
++  for (const entry of raw.split(/[\n,]+/)) {
++    const trimmed = entry.trim();
++    if (!trimmed) continue;
++    // lastIndexOf, not indexOf: an email cannot contain ':' but a future hash
++    // format might, and splitting on the last one keeps the email intact.
++    const sep = trimmed.lastIndexOf(":");
++    if (sep === -1) continue;
++    const email = trimmed.slice(0, sep).trim().toLowerCase();
++    const hash = trimmed.slice(sep + 1).trim().toLowerCase();
++    if (email && hash) users.set(email, hash);
++  }
++  return users;
++}
++
++/**
++ * `email:tool,tool` entries, one per line.
++ *
++ * Newline-separated rather than comma-separated because the values themselves
++ * are comma lists. Unknown tool names are dropped, so a typo grants nothing
++ * instead of throwing at boot and taking sign-in down with it.
++ */
++function parseGrants(raw: string | undefined): Map<string, ToolId[]> {
++  const out = new Map<string, ToolId[]>();
++  if (!raw) return out;
++
++  for (const line of raw.split(/[\n;]+/)) {
++    const trimmed = line.trim();
++    if (!trimmed) continue;
++    const sep = trimmed.indexOf(":");
++    if (sep === -1) continue;
++
++    const email = trimmed.slice(0, sep).trim().toLowerCase();
++    const claimed = trimmed
++      .slice(sep + 1)
++      .split(",")
++      .map((t) => t.trim().toLowerCase());
++
++    if (!email) continue;
++    out.set(email, ALL_TOOLS.filter((t) => claimed.includes(t)));
++  }
++  return out;
++}
++
++// --- resolution --------------------------------------------------------------
++
++let cached: GrantStore | null = null;
++
++/**
++ * The active store.
++ *
++ * Memoised per process: parsing env on every sign-in would be wasteful, and a
++ * change to either variable requires a redeploy anyway, which resets this.
++ */
++export function grantStore(): GrantStore {
++  if (!cached) {
++    cached = new EnvGrantStore(process.env.AUTH_USERS, process.env.BS_GRANTS);
++  }
++  return cached;
++}
++
++/** Tests only. */
++export function __resetGrantStore() {
++  cached = null;
++}
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/proxy.ts apps/command-center/src/proxy.ts
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/src/proxy.ts	2026-08-07 00:23:29
++++ apps/command-center/src/proxy.ts	2026-09-02 02:32:52
+@@ -1,24 +1,26 @@
+ import { NextResponse, type NextRequest } from "next/server";
+-import {
+-  AUTH_COOKIE,
+-  createSessionToken,
+-  sessionCookieOptions,
+-  shouldRenew,
+-  verifySessionToken,
+-} from "@/lib/auth/session";
++import { readSsoCookie, verifySso } from "@/lib/bs-auth";
+ 
+ /*
+  * Next 16 renamed middleware to `proxy`. Same execution model: Edge runtime,
+- * runs before every matched request. Mirrors the Analytics app's gate.
++ * runs before every matched request.
+  *
+  * Order matters — public paths are checked before the session is read, so a
+  * broken AUTH_SECRET can't lock out the login page or the healthcheck.
+  *
+  * `/api/health` is public because Railway's healthcheck has no credential. It
+- * deliberately does not touch any upstream, so a sick tool can never cause
+- * Railway to restart *us*.
++ * deliberately touches no upstream, so a sick tool can never cause Railway to
++ * restart *us*.
+  *
+  * Everything under /api/tools/* IS gated: those responses carry upstream KPIs.
++ *
++ * ---------------------------------------------------------------------------
++ * This app verifies the same bs_sso token as every other app — it just happens
++ * to be the one that issues it. Renewal is NOT done here: the proxy runs on the
++ * Edge with no access to the grant store, so it cannot re-read grants, and
++ * reissuing a token from stale claims would defeat the 30-minute revocation
++ * window. The client posts to /api/auth/refresh instead, which does have the
++ * store and re-reads from it.
+  */
+ 
+ const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/health"];
+@@ -40,8 +42,7 @@
+     return NextResponse.redirect(new URL("/login?error=config", request.url));
+   }
+ 
+-  const token = request.cookies.get(AUTH_COOKIE)?.value;
+-  const session = await verifySessionToken(secret, token);
++  const session = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
+ 
+   if (isPublic(pathname)) {
+     if (session && pathname === "/login") {
+@@ -62,17 +63,10 @@
+   }
+ 
+   const response = NextResponse.next();
+-
+-  // Sliding expiry: reissue when under three days remain so an active user is
+-  // never logged out mid-session.
+-  if (shouldRenew(session)) {
+-    response.cookies.set(
+-      AUTH_COOKIE,
+-      await createSessionToken(secret, session.email),
+-      sessionCookieOptions(request.nextUrl.protocol === "https:"),
+-    );
+-  }
+-
++  // The shell reads these to build the sidebar, so an ungranted tool is never
++  // rendered. The apps enforce it again themselves — this is presentation.
++  response.headers.set("x-bs-user", session.email);
++  response.headers.set("x-bs-grants", session.grants.join(","));
+   return response;
+ }
+ 
+diff -ruN -x node_modules -x .next -x .env* -x *.log -x tsconfig.tsbuildinfo -x package-lock.json /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/tsconfig.json apps/command-center/tsconfig.json
+--- /Users/sankalpdutt/Desktop/Code/Corofy/Centralised dashboard/tsconfig.json	2026-08-07 01:13:27
++++ apps/command-center/tsconfig.json	2026-09-02 02:35:49
+@@ -26,7 +26,8 @@
+         "./src/*"
+       ]
+     },
+-    "incremental": true
++    "incremental": true,
++    "allowImportingTsExtensions": true
+   },
+   "include": [
+     "next-env.d.ts",

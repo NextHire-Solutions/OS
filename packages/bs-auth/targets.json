@@ -1,0 +1,4 @@
+{
+  "_comment": "Paths, relative to the repo root, that receive a copy of index.ts. The other three apps get theirs through patches/ — they live in their own repositories.",
+  "targets": ["src/lib/bs-auth.ts"]
+}

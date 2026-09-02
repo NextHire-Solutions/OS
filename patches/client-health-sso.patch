@@ -1,0 +1,633 @@
+diff --git a/apps/client-health/app/no-access/page.tsx b/apps/client-health/app/no-access/page.tsx
+new file mode 100644
+index 0000000..7dae055
+--- /dev/null
++++ b/apps/client-health/app/no-access/page.tsx
+@@ -0,0 +1,47 @@
++// Shown when someone has a valid BrokerStaffer sign-in but has not been granted
++// Client Health. Deliberately NOT a redirect to /login: they are already signed
++// in, so signing in again would change nothing and the loop would be baffling.
++//
++// Reached by a middleware rewrite, so the URL they typed stays in the address
++// bar — which matters, because the useful next step is usually "send this link
++// to whoever can grant me access".
++
++import { headers } from 'next/headers';
++
++export const dynamic = 'force-dynamic';
++
++export const metadata = { title: 'No access — BrokerStaffer' };
++
++export default async function NoAccessPage() {
++  const email = (await headers()).get('x-bs-user');
++
++  return (
++    <div className="login-wrap">
++      <div className="login-card">
++        <div className="login-brand">BrokerStaffer</div>
++        <div className="login-title">No access to Client Health</div>
++        <div className="login-sub">
++          {email ? (
++            <>
++              You&apos;re signed in as <strong>{email}</strong>, but this tool
++              hasn&apos;t been shared with you yet.
++            </>
++          ) : (
++            <>Your account doesn&apos;t have access to this tool yet.</>
++          )}
++        </div>
++        <p style={{ fontSize: 13, color: '#6B7280', marginTop: 16, lineHeight: 1.5 }}>
++          Ask a workspace admin to switch Client Health on for your account in
++          Team access.
++        </p>
++        <a
++          href={process.env.NEXT_PUBLIC_COMMAND_CENTER_URL ?? '/'}
++          className="login-btn"
++          style={{ display: 'block', textAlign: 'center', marginTop: 18, textDecoration: 'none' }}
++        >
++          Back to the workspace
++        </a>
++      </div>
++    </div>
++  );
++}
+diff --git a/apps/client-health/lib/bs-auth.ts b/apps/client-health/lib/bs-auth.ts
+new file mode 100644
+index 0000000..1c55db2
+--- /dev/null
++++ b/apps/client-health/lib/bs-auth.ts
+@@ -0,0 +1,339 @@
++/* ---------------------------------------------------------------------------
++ * GENERATED FILE — DO NOT EDIT HERE.
++ *
++ * Source of truth: packages/bs-auth/index.ts in the BrokerStaffer-SSO workspace.
++ * Regenerate with: node packages/bs-auth/sync.mjs
++ *
++ * Edit the source and re-sync; edits made here are overwritten and, worse, make
++ * this app verify tokens differently from every other app.
++ *
++ * bs-auth@d235656d0c74
++ * ------------------------------------------------------------------------- */
++
++/*
++ * bs-auth — the shared single-sign-on token.
++ *
++ * ONE source of truth. This file is copied verbatim into each app as
++ * `lib/bs-auth.ts` by `packages/bs-auth/sync.mjs`. Four copies of ~200 lines is
++ * a deliberate choice over publishing a package: the apps deploy independently
++ * from separate repos, and a private registry (or four git submodules) would be
++ * more machinery than this earns. The sync script + a checksum test keep the
++ * copies honest.
++ *
++ * ---------------------------------------------------------------------------
++ * WHO ISSUES, WHO VERIFIES
++ *
++ *   Command Center  →  mints  bs_sso  (needs AUTH_SECRET + the grants DB)
++ *   Every other app →  verifies bs_sso  (needs only BS_SSO_SECRET)
++ *
++ * Apps verify OFFLINE. No network call, no database lookup on the hot path —
++ * a permission check is one HMAC, microseconds. That is what makes putting a
++ * grant check in front of every request affordable.
++ *
++ * ---------------------------------------------------------------------------
++ * TOKEN FORMAT
++ *
++ *   base64url(JSON.stringify(payload)) + "." + hex(HMAC-SHA256(secret, body))
++ *
++ * Two parts, not three. The earlier Analytics scheme kept `expiresAt` outside
++ * the payload so it could be read without decoding; that saves nothing real and
++ * invites checking expiry before verifying the signature, which is exactly
++ * backwards. Here the signature is checked FIRST and nothing inside the payload
++ * is trusted until it passes.
++ *
++ * Deliberately not a JWT: no `alg` field, so there is no algorithm-confusion
++ * attack surface and no dependency. The one algorithm is HMAC-SHA256.
++ *
++ * ---------------------------------------------------------------------------
++ * REVOCATION
++ *
++ * Tokens are short-lived (30 min) and silently refreshed by the Command Center,
++ * which re-reads grants from the database on every refresh. So removing a grant
++ * takes effect within 30 minutes with no coordination between apps.
++ *
++ * For instant revocation, bump `app_users.token_version`; the refresh endpoint
++ * then refuses to reissue. Apps do not check `ver` — they cannot, they have no
++ * database. It rides along so the issuer can reject a stale refresh.
++ *
++ * Runs identically in the Edge runtime and in Node: Web Crypto only.
++ */
++
++/** Tools a grant can be issued for. Keep in sync with the Command Center registry. */
++export type ToolId = "inbox" | "clients" | "analytics" | "search";
++
++export const ALL_TOOLS: readonly ToolId[] = ["inbox", "clients", "analytics", "search"];
++
++export interface SsoSession {
++  /** Lower-cased email. The stable identity across all apps. */
++  email: string;
++  /** Tools this person may open. */
++  grants: ToolId[];
++  /** Issuer's token version for this user; bumped to invalidate live sessions. */
++  ver: number;
++  /** Unix milliseconds. */
++  exp: number;
++  /** Unix milliseconds. Issued-at, for logging and staleness debugging. */
++  iat: number;
++}
++
++export const SSO_COOKIE = "bs_sso";
++
++/** 30 minutes. Short on purpose — this is the revocation window. */
++export const SSO_TTL_MS = 30 * 60 * 1000;
++
++/**
++ * Accept a token up to 60s past expiry.
++ *
++ * Not laziness: Railway containers, the browser and Supabase do not share a
++ * clock, and a user whose machine is 20s fast would otherwise get a hard 401
++ * mid-request with no way to self-diagnose. 60s is far below the 30-minute TTL,
++ * so it does not meaningfully widen the revocation window.
++ */
++const CLOCK_SKEW_MS = 60 * 1000;
++
++// --- encoding ---------------------------------------------------------------
++
++const encoder = new TextEncoder();
++
++function base64UrlEncode(input: string): string {
++  const bytes = encoder.encode(input);
++  let binary = "";
++  for (const byte of bytes) binary += String.fromCharCode(byte);
++  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
++}
++
++function base64UrlDecode(input: string): string {
++  const padded = input.replace(/-/g, "+").replace(/_/g, "/");
++  const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
++  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
++  return new TextDecoder().decode(bytes);
++}
++
++function toHex(buffer: ArrayBuffer): string {
++  return Array.from(new Uint8Array(buffer))
++    .map((b) => b.toString(16).padStart(2, "0"))
++    .join("");
++}
++
++/**
++ * Constant-time comparison. `a === b` short-circuits on the first differing
++ * byte, which leaks how much of a forged signature was correct.
++ */
++export function safeEqual(a: string, b: string): boolean {
++  if (a.length !== b.length) return false;
++  let diff = 0;
++  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
++  return diff === 0;
++}
++
++async function hmacHex(secret: string, payload: string): Promise<string> {
++  const key = await crypto.subtle.importKey(
++    "raw",
++    encoder.encode(secret),
++    { name: "HMAC", hash: "SHA-256" },
++    false,
++    ["sign"],
++  );
++  return toHex(await crypto.subtle.sign("HMAC", key, encoder.encode(payload)));
++}
++
++export async function sha256Hex(input: string): Promise<string> {
++  return toHex(await crypto.subtle.digest("SHA-256", encoder.encode(input)));
++}
++
++// --- mint (Command Center only) ---------------------------------------------
++
++export interface MintInput {
++  email: string;
++  grants: ToolId[];
++  ver: number;
++  ttlMs?: number;
++  now?: number;
++}
++
++export async function mintSso(secret: string, input: MintInput): Promise<string> {
++  if (!secret) throw new Error("mintSso: secret is required");
++
++  const now = input.now ?? Date.now();
++  const payload: SsoSession = {
++    email: input.email.trim().toLowerCase(),
++    // Normalise: drop unknown tools and duplicates so a typo in the database
++    // can never widen access, and so the token is byte-stable for a given set.
++    grants: ALL_TOOLS.filter((t) => input.grants.includes(t)),
++    ver: input.ver,
++    iat: now,
++    exp: now + (input.ttlMs ?? SSO_TTL_MS),
++  };
++
++  const body = base64UrlEncode(JSON.stringify(payload));
++  return `${body}.${await hmacHex(secret, body)}`;
++}
++
++// --- verify (every app) ------------------------------------------------------
++
++/** Why a token was rejected. Surfaced in logs, never to the browser. */
++export type SsoFailure =
++  | "missing"
++  | "malformed"
++  | "bad-signature"
++  | "expired"
++  | "bad-payload";
++
++export type SsoResult =
++  | { ok: true; session: SsoSession }
++  | { ok: false; reason: SsoFailure };
++
++/**
++ * Verifies a token. Signature first, payload second — nothing inside the
++ * payload is trusted until the HMAC checks out.
++ */
++export async function verifySsoDetailed(
++  secret: string,
++  token: string | undefined | null,
++  now = Date.now(),
++): Promise<SsoResult> {
++  if (!secret) return { ok: false, reason: "missing" };
++  if (!token) return { ok: false, reason: "missing" };
++
++  const dot = token.lastIndexOf(".");
++  if (dot <= 0 || dot === token.length - 1) return { ok: false, reason: "malformed" };
++
++  const body = token.slice(0, dot);
++  const signature = token.slice(dot + 1);
++
++  if (!safeEqual(signature, await hmacHex(secret, body))) {
++    return { ok: false, reason: "bad-signature" };
++  }
++
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(base64UrlDecode(body));
++  } catch {
++    return { ok: false, reason: "bad-payload" };
++  }
++
++  const session = normalise(parsed);
++  if (!session) return { ok: false, reason: "bad-payload" };
++
++  if (session.exp + CLOCK_SKEW_MS <= now) return { ok: false, reason: "expired" };
++
++  return { ok: true, session };
++}
++
++/** The common case: a session, or null. */
++export async function verifySso(
++  secret: string,
++  token: string | undefined | null,
++  now = Date.now(),
++): Promise<SsoSession | null> {
++  const result = await verifySsoDetailed(secret, token, now);
++  return result.ok ? result.session : null;
++}
++
++/**
++ * Shape-checks a decoded payload.
++ *
++ * A signed token could still carry a payload from an older or newer issuer, so
++ * every field is validated rather than cast. `grants` is intersected with
++ * ALL_TOOLS, so an unrecognised tool name grants nothing.
++ */
++function normalise(value: unknown): SsoSession | null {
++  if (!value || typeof value !== "object") return null;
++  const raw = value as Record<string, unknown>;
++
++  const email = typeof raw.email === "string" ? raw.email.trim().toLowerCase() : "";
++  if (!email) return null;
++
++  const exp = typeof raw.exp === "number" && Number.isFinite(raw.exp) ? raw.exp : null;
++  if (exp === null) return null;
++
++  const iat = typeof raw.iat === "number" && Number.isFinite(raw.iat) ? raw.iat : 0;
++  const ver = typeof raw.ver === "number" && Number.isFinite(raw.ver) ? raw.ver : 0;
++
++  const claimed = Array.isArray(raw.grants) ? raw.grants : [];
++  const grants = ALL_TOOLS.filter((t) => claimed.includes(t));
++
++  return { email, grants, ver, exp, iat };
++}
++
++// --- authorisation -----------------------------------------------------------
++
++/** True when the session may open `tool`. The only authorisation primitive. */
++export function hasGrant(session: SsoSession | null, tool: ToolId): boolean {
++  return !!session && session.grants.includes(tool);
++}
++
++/** Milliseconds until expiry; negative once expired. For refresh scheduling. */
++export function msUntilExpiry(session: SsoSession, now = Date.now()): number {
++  return session.exp - now;
++}
++
++/**
++ * True when the token is over halfway through its life and should be refreshed.
++ *
++ * Refreshing at the halfway point rather than near expiry means a failed
++ * refresh has a full half-TTL to retry before the user is logged out.
++ */
++export function shouldRefresh(session: SsoSession, now = Date.now()): boolean {
++  const lifetime = session.exp - session.iat;
++  if (lifetime <= 0) return true;
++  return now - session.iat > lifetime / 2;
++}
++
++// --- cookie ------------------------------------------------------------------
++
++export interface CookieOptions {
++  httpOnly: true;
++  secure: boolean;
++  sameSite: "lax";
++  path: "/";
++  domain?: string;
++  maxAge: number;
++}
++
++/**
++ * Cookie attributes for the SSO session.
++ *
++ * `sameSite: "lax"` with a parent-domain `domain` is correct and sufficient
++ * BECAUSE every app is a subdomain of one apex — an embedded pane on
++ * clients.brokerstaffer.com inside home.brokerstaffer.com is same-site, so the
++ * cookie is first-party. Do not "fix" this to SameSite=None: that would make it
++ * a third-party cookie, which Safari blocks by default and Chrome is phasing
++ * out, and would trade a working design for a fragile one.
++ *
++ * `domain` is omitted in local development (localhost has no shared apex), which
++ * is why it is a parameter rather than a constant.
++ */
++export function ssoCookieOptions(opts: {
++  secure: boolean;
++  domain?: string;
++  ttlMs?: number;
++}): CookieOptions {
++  return {
++    httpOnly: true,
++    secure: opts.secure,
++    sameSite: "lax",
++    path: "/",
++    ...(opts.domain ? { domain: opts.domain } : {}),
++    maxAge: Math.floor((opts.ttlMs ?? SSO_TTL_MS) / 1000),
++  };
++}
++
++/**
++ * Reads the token out of a raw Cookie header.
++ *
++ * Every app needs this in middleware, where framework cookie helpers differ
++ * (Next's NextRequest vs Express's req.cookies vs a bare header). Parsing the
++ * header directly is the one thing that works everywhere.
++ */
++export function readSsoCookie(cookieHeader: string | null | undefined): string | undefined {
++  if (!cookieHeader) return undefined;
++  for (const part of cookieHeader.split(";")) {
++    const eq = part.indexOf("=");
++    if (eq === -1) continue;
++    if (part.slice(0, eq).trim() === SSO_COOKIE) {
++      return decodeURIComponent(part.slice(eq + 1).trim());
++    }
++  }
++  return undefined;
++}
+diff --git a/apps/client-health/lib/session.ts b/apps/client-health/lib/session.ts
+new file mode 100644
+index 0000000..43b8d9d
+--- /dev/null
++++ b/apps/client-health/lib/session.ts
+@@ -0,0 +1,39 @@
++// Reading the signed-in user inside server components.
++//
++// The middleware has already verified the SSO token; re-verifying here would be
++// a second HMAC on every render for no extra safety, so it forwards the result
++// as request headers and this reads them back.
++//
++// Safe because these headers are set by OUR middleware on the way in. Next
++// strips inbound request headers of the same name before middleware runs, so a
++// client cannot inject `x-bs-user` and impersonate someone.
++
++import { headers } from 'next/headers';
++import { ALL_TOOLS, type ToolId } from './bs-auth';
++
++export interface CurrentUser {
++  email: string;
++  grants: ToolId[];
++}
++
++/** The signed-in user, or null when running under the legacy team password. */
++export async function currentUser(): Promise<CurrentUser | null> {
++  const h = await headers();
++  const email = h.get('x-bs-user');
++  if (!email) return null;
++
++  const claimed = (h.get('x-bs-grants') ?? '').split(',').filter(Boolean);
++  return {
++    email,
++    grants: ALL_TOOLS.filter((t) => claimed.includes(t)),
++  };
++}
++
++/**
++ * True when this app is rendered inside a Command Center pane, in which case it
++ * must not draw its own logo/header — the workspace already provides one.
++ */
++export async function isEmbedded(): Promise<boolean> {
++  const { cookies } = await import('next/headers');
++  return (await cookies()).get('bs_embed')?.value === '1';
++}
+diff --git a/apps/client-health/middleware.ts b/apps/client-health/middleware.ts
+index c3b02b7..fd4b49b 100644
+--- a/apps/client-health/middleware.ts
++++ b/apps/client-health/middleware.ts
+@@ -1,30 +1,43 @@
+-// Password-gates every dashboard page. Redirects unauthenticated requests
+-// to /login, preserving the intended destination via ?next=.
++// Gates every dashboard page.
+ //
+-// Auth model:
+-//   - Single shared password in DASHBOARD_PASSWORD env var.
+-//   - Session cookie value = HMAC-SHA256 of a fixed message keyed by the
+-//     current password (base64url). Deterministic per-password: rotating
+-//     the password invalidates every existing session automatically.
+-//   - Uses Web Crypto (works in both Edge and Node runtimes) so no
+-//     runtime override is needed.
++// Two auth mechanisms, checked in this order:
++//
++//   1. BrokerStaffer SSO (bs_sso)  — the Command Center signs a short-lived
++//      token carrying the person's email and the tools they may open. We verify
++//      it offline with BS_SSO_SECRET and require the `clients` grant. This is
++//      the real one: it identifies WHO is looking, not just that they know a
++//      shared secret.
++//
++//   2. Shared team password (bs_auth) — the pre-SSO gate, kept as a fallback so
++//      the app keeps working while SSO rolls out and so nobody is locked out if
++//      the Command Center is down. Delete this branch once SSO is settled;
++//      it grants access without identity, which is the thing SSO exists to fix.
+ //
+ // Public paths (no auth required):
+-//   - /login itself + /api/auth/* (obviously)
+-//   - Server-to-server API endpoints that carry their own tokens:
++//   - /login + /api/auth/*
++//   - Server-to-server endpoints that carry their own tokens:
+ //     /api/clients/onboard (x-admin-token: ONBOARDING_TOKEN)
+ //     /api/clients/status  (x-admin-token: READ_ONLY_TOKEN)
+ //     /api/sync/run        (x-sync-secret: SYNC_SECRET, if set)
+ //
+-// Fail-open when DASHBOARD_PASSWORD is unset — matches how our other
+-// optional-token endpoints degrade (better to be reachable than to lock
+-// everyone out on a missing env var).
++// Fail-open only when NEITHER mechanism is configured. The previous rule
++// ("fail open when DASHBOARD_PASSWORD is unset") was reasonable when a missing
++// env var meant "auth not set up yet"; with SSO deployed it would mean clearing
++// one variable silently opens the whole dashboard to the internet. Now the app
++// is open only if it has been given no way to authenticate anyone at all.
+ 
+ import { NextRequest, NextResponse } from 'next/server';
++import { hasGrant, readSsoCookie, verifySso } from './lib/bs-auth';
+ 
+ const AUTH_COOKIE = 'bs_auth';
+ const AUTH_MESSAGE = 'bs-dashboard-authed';
+ 
++/** The grant this app requires. */
++const TOOL = 'clients' as const;
++
++/** Set by the Command Center when it opens this app in a workspace pane. */
++const EMBED_COOKIE = 'bs_embed';
++
+ const PUBLIC_PATH_PREFIXES = [
+   '/login',
+   '/api/auth/',
+@@ -50,32 +63,99 @@ async function expectedCookieValue(password: string): Promise<string> {
+   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+ }
+ 
++/**
++ * Embed mode is carried by a cookie, not the query string.
++ *
++ * `?embed=1` survives the first request and nothing after it — the moment the
++ * user clicks anything, Next does a client-side navigation and the param is
++ * gone. Threading it through every href is not realistic, so the first request
++ * converts it to a cookie and everything downstream reads that.
++ */
++function applyEmbedCookie(req: NextRequest, res: NextResponse): NextResponse {
++  const param = req.nextUrl.searchParams.get('embed');
++  if (param === '1') {
++    res.cookies.set(EMBED_COOKIE, '1', {
++      httpOnly: false, // the client shell reads it too
++      sameSite: 'lax',
++      path: '/',
++      secure: req.nextUrl.protocol === 'https:',
++    });
++  } else if (param === '0') {
++    res.cookies.set(EMBED_COOKIE, '', { path: '/', maxAge: 0 });
++  }
++  return res;
++}
++
++function deny(req: NextRequest, reason: 'unauthorized' | 'forbidden') {
++  const status = reason === 'forbidden' ? 403 : 401;
++
++  if (req.nextUrl.pathname.startsWith('/api/')) {
++    return NextResponse.json({ error: reason }, { status });
++  }
++
++  // No access to THIS tool, but a valid identity: sending them to /login would
++  // be a lie — signing in again changes nothing. Show why instead.
++  if (reason === 'forbidden') {
++    const url = req.nextUrl.clone();
++    url.pathname = '/no-access';
++    url.search = '';
++    return NextResponse.rewrite(url);
++  }
++
++  const loginUrl = req.nextUrl.clone();
++  loginUrl.pathname = '/login';
++  loginUrl.searchParams.set(
++    'next',
++    req.nextUrl.pathname === '/' ? '/' : req.nextUrl.pathname + (req.nextUrl.search || ''),
++  );
++  return NextResponse.redirect(loginUrl);
++}
++
+ export async function middleware(req: NextRequest) {
+   const { pathname } = req.nextUrl;
+ 
+   // Static + public paths bypass auth.
+   if (PUBLIC_PATH_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next();
+ 
++  const ssoSecret = process.env.BS_SSO_SECRET;
+   const password = process.env.DASHBOARD_PASSWORD;
+-  if (!password) return NextResponse.next(); // fail-open when unset
+ 
+-  const cookie = req.cookies.get(AUTH_COOKIE)?.value;
+-  if (cookie) {
+-    const expected = await expectedCookieValue(password);
+-    if (cookie === expected) return NextResponse.next();
++  // --- 1. SSO -------------------------------------------------------------
++  if (ssoSecret) {
++    const token = readSsoCookie(req.headers.get('cookie'));
++    const session = await verifySso(ssoSecret, token);
++
++    if (session) {
++      if (!hasGrant(session, TOOL)) return deny(req, 'forbidden');
++
++      const res = NextResponse.next();
++      // Downstream server components read these instead of re-verifying.
++      res.headers.set('x-bs-user', session.email);
++      res.headers.set('x-bs-grants', session.grants.join(','));
++      return applyEmbedCookie(req, res);
++    }
++    // No valid SSO token — fall through to the password gate rather than
++    // rejecting, so the app stays reachable during the rollout.
+   }
+ 
+-  // API routes: return 401 JSON so browser fetches from the dashboard
+-  // (Add/Edit/Delete Client, etc.) fail loudly instead of silently following
+-  // a redirect to /login. Page routes: redirect the browser to /login.
+-  if (pathname.startsWith('/api/')) {
+-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
++  // --- 2. Shared team password (legacy) -----------------------------------
++  if (password) {
++    const cookie = req.cookies.get(AUTH_COOKIE)?.value;
++    if (cookie && cookie === (await expectedCookieValue(password))) {
++      return applyEmbedCookie(req, NextResponse.next());
++    }
++    return deny(req, 'unauthorized');
+   }
+ 
+-  const loginUrl = req.nextUrl.clone();
+-  loginUrl.pathname = '/login';
+-  loginUrl.searchParams.set('next', pathname === '/' ? '/' : pathname + (req.nextUrl.search || ''));
+-  return NextResponse.redirect(loginUrl);
++  // --- 3. Nothing configured ----------------------------------------------
++  if (!ssoSecret) {
++    // Genuinely unconfigured: behave as before so a fresh checkout runs.
++    return applyEmbedCookie(req, NextResponse.next());
++  }
++
++  // SSO is configured but this request had no valid token, and there is no
++  // password fallback. Fail closed.
++  return deny(req, 'unauthorized');
+ }
+ 
+ export const config = {
+diff --git a/apps/client-health/package-lock.json b/apps/client-health/package-lock.json
+index d385b5b..f2bde9c 100644
+--- a/apps/client-health/package-lock.json
++++ b/apps/client-health/package-lock.json
+@@ -19,6 +19,9 @@
+         "@types/react-dom": "^19.0.0",
+         "tsx": "^4.19.0",
+         "typescript": "^5.6.0"
++      },
++      "engines": {
++        "node": ">=20"
+       }
+     },
+     "node_modules/@emnapi/runtime": {

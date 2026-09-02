@@ -1,0 +1,204 @@
+/*
+ * BRAND CONTRACT — the only file in this app permitted to contain a colour
+ * literal. Everything else references these tokens via globals.css.
+ *
+ * To re-brand: change the BRAND block and, optionally, TOOL ACCENTS. Nothing
+ * else in any file needs to move. `npm test` enforces this — see
+ * src/lib/__tests__/no-colour-literals.test.ts.
+ *
+ * --------------------------------------------------------------------------
+ * WHERE THE BLUE CAME FROM
+ *
+ * The BrokerStaffer logo (Master Inbox/app/icon.png) is a bright electric
+ * blue. Sampling its opaque pixels gives #0165FE ≈ oklch(0.561 0.241 260.9),
+ * and that is what --brand is set to here.
+ *
+ * This deliberately resolves a three-way conflict in the existing stack, where
+ * none of the hardcoded blues actually matched the logo:
+ *
+ *   #1565C0  Client Health + the client portal (117 uses) — Material Blue 800,
+ *            much duller and slightly greener than the mark
+ *   #2a78d6  Analytics --primary — closer in hue but still desaturated
+ *   near-black  Master Inbox staff app — stock shadcn, no brand colour at all
+ *
+ * White on --brand measures 4.89:1, so it clears AA for normal text; --brand
+ * on --surface measures the same, which is why it is safe for the focus ring
+ * and for 12px icons.
+ * --------------------------------------------------------------------------
+ *
+ * Light-only by deliberate choice, matching Analytics: every tool this app
+ * launches into is light, and a dark shell around light apps reads as broken.
+ * The .dark block below is authored and kept in sync but is unreachable —
+ * there is no ThemeProvider and no toggle. Keeping it means enabling dark
+ * later is a config change rather than a re-theme.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ── SHAPE & TYPE — inherited from the family, do not change ───────── */
+  --radius: 0.625rem;
+
+  /* ── SURFACES — four depths. A fifth is a smell. ───────────────────── */
+  --background: oklch(0.985 0.002 261);   /* page canvas, faintly brand-tinted */
+  --surface: oklch(1 0 0);                /* tool card, top bar */
+  --surface-elevated: oklch(1 0 0);       /* palette, popover */
+  --surface-sunken: oklch(0.968 0.003 261); /* chips, skeletons, fallback strip */
+  --overlay: oklch(0.145 0 0 / 40%);      /* dialog scrim */
+
+  /* ── LINES — two weights, the convention Analytics established ──────
+     `border` for component edges, `hairline` for grid lines inside an
+     instrument panel, which must read lighter than a card edge. */
+  --border: oklch(0.922 0.003 261);
+  --border-strong: oklch(0.87 0.005 261);
+  --hairline: oklch(0.945 0.002 261);
+
+  /* ── INK — three weights ──────────────────────────────────────────── */
+  --foreground: oklch(0.145 0 0);
+  --foreground-secondary: oklch(0.371 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --foreground-inverse: oklch(0.985 0 0);
+
+  /* ── BRAND ◀── THE DROP-IN BLOCK ──────────────────────────────────── */
+  --brand: oklch(0.561 0.241 260.9);        /* #0165FE, sampled from the logo */
+  --brand-foreground: oklch(0.985 0 0);     /* white on brand — 4.89:1 */
+  --brand-hover: oklch(0.505 0.235 260.9);
+  --brand-subtle: oklch(0.965 0.022 260.9); /* tint bg for icon tiles, chips */
+  --brand-border: oklch(0.90 0.045 260.9);
+
+  /* ── INTERACTION ──────────────────────────────────────────────────── */
+  --hover-surface: oklch(0.97 0.003 261);
+  --active-surface: oklch(0.945 0.004 261);
+  --selected-surface: oklch(0.965 0.022 260.9);
+  --ring: var(--brand);
+
+  /* ── STATUS — RESERVED, deliberately NOT themed by the brand ────────
+     These are semantic, not decorative. A brand red is not a "down" red: if
+     the brand happened to be red, "everything is fine" would look like
+     "everything is on fire". Fixed hues, brand-independent.
+
+     They always ship as glyph + word + colour, so colour never carries the
+     meaning alone and sub-3:1 on the light surface is mitigated by design.
+     Each is a triplet — solid / subtle bg / border — which is the structure
+     that makes the existing status pills in Client Health work, reused. */
+  --status-up: oklch(0.63 0.17 149);
+  --status-up-subtle: oklch(0.962 0.035 149);
+  --status-up-border: oklch(0.88 0.06 149);
+  --status-up-fg: oklch(0.42 0.13 149);
+
+  --status-warn: oklch(0.75 0.16 70);
+  --status-warn-subtle: oklch(0.97 0.04 70);
+  --status-warn-border: oklch(0.89 0.09 70);
+  --status-warn-fg: oklch(0.45 0.10 70);
+
+  --status-down: oklch(0.577 0.245 27.325);
+  --status-down-subtle: oklch(0.962 0.025 27.325);
+  --status-down-border: oklch(0.88 0.07 27.325);
+  --status-down-fg: oklch(0.45 0.18 27.325);
+
+  --status-neutral: oklch(0.65 0 0);
+  --status-neutral-subtle: oklch(0.962 0 0);
+  --status-neutral-border: oklch(0.90 0 0);
+  --status-neutral-fg: oklch(0.45 0 0);
+
+  /* ── PER-TOOL ACCENTS ─────────────────────────────────────────────────
+     One hue per tool, used ONLY on the icon tile and the hover edge.
+
+     Deliberately kept away from the status hues (green/amber/red): a tool's
+     identity colour must never be mistaken for its health. That is why the
+     set runs blue → teal → violet → amber → cyan, and why amber here is
+     noticeably warmer and lighter than --status-warn.
+
+     Identity is still carried by ICON SHAPE and POSITION first, so the grid
+     stays readable in grayscale and for colour-vision deficiency; the hue is
+     an accelerant, not the signal. */
+  --tool-master-inbox: oklch(0.561 0.241 260.9);
+  --tool-master-inbox-subtle: oklch(0.962 0.024 260.9);
+  --tool-client-health: oklch(0.60 0.145 162);
+  --tool-client-health-subtle: oklch(0.958 0.032 162);
+  --tool-analytics: oklch(0.545 0.205 292);
+  --tool-analytics-subtle: oklch(0.962 0.026 292);
+  --tool-scraper: oklch(0.655 0.155 62);
+  --tool-scraper-subtle: oklch(0.966 0.038 62);
+  --tool-database: oklch(0.555 0.115 225);
+  --tool-database-subtle: oklch(0.958 0.024 225);
+
+  /* ── ELEVATION — tokens because a chromatic brand wants a hue-tinted
+     shadow, and hunting arbitrary rgba() values later is exactly the
+     re-theme this contract exists to prevent. ───────────────────────── */
+  --shadow-card: 0 1px 2px 0 oklch(0.145 0 0 / 4%);
+  --shadow-card-hover:
+    0 4px 12px -2px oklch(0.145 0 0 / 8%),
+    0 2px 4px -2px oklch(0.145 0 0 / 4%);
+  --shadow-elevated: 0 16px 40px -8px oklch(0.145 0 0 / 16%);
+
+  /* ── MOTION ───────────────────────────────────────────────────────── */
+  --dur-instant: 80ms;
+  --dur-fast: 120ms;
+  --dur-base: 160ms;
+  --dur-slow: 240ms;
+  --dur-enter: 320ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/*
+ * Authored, in sync, and currently unreachable — there is no theme provider.
+ * Values are chosen against the dark surface, never auto-inverted: elevation
+ * reverses (elevated surfaces get lighter, not shadowed) and the brand loses
+ * chroma and gains lightness, because a 0.241-chroma blue vibrates on dark.
+ */
+.dark {
+  color-scheme: dark;
+
+  --background: oklch(0.145 0.004 261);
+  --surface: oklch(0.185 0.004 261);
+  --surface-elevated: oklch(0.225 0.005 261);
+  --surface-sunken: oklch(0.165 0.004 261);
+  --overlay: oklch(0.09 0 0 / 60%);
+
+  --border: oklch(0.28 0.006 261);
+  --border-strong: oklch(0.36 0.008 261);
+  --hairline: oklch(0.24 0.005 261);
+
+  --foreground: oklch(0.985 0 0);
+  --foreground-secondary: oklch(0.78 0 0);
+  --muted-foreground: oklch(0.65 0 0);
+  --foreground-inverse: oklch(0.145 0 0);
+
+  --brand: oklch(0.68 0.205 260.9);
+  --brand-foreground: oklch(0.145 0 0);
+  --brand-hover: oklch(0.74 0.19 260.9);
+  --brand-subtle: oklch(0.26 0.07 260.9);
+  --brand-border: oklch(0.36 0.10 260.9);
+
+  --hover-surface: oklch(0.225 0.005 261);
+  --active-surface: oklch(0.26 0.006 261);
+  --selected-surface: oklch(0.26 0.07 260.9);
+
+  --status-up: oklch(0.72 0.17 149);
+  --status-up-subtle: oklch(0.26 0.06 149);
+  --status-up-border: oklch(0.38 0.09 149);
+  --status-up-fg: oklch(0.82 0.14 149);
+
+  --status-warn: oklch(0.80 0.15 70);
+  --status-warn-subtle: oklch(0.28 0.06 70);
+  --status-warn-border: oklch(0.40 0.09 70);
+  --status-warn-fg: oklch(0.86 0.13 70);
+
+  --status-down: oklch(0.68 0.20 27.325);
+  --status-down-subtle: oklch(0.27 0.07 27.325);
+  --status-down-border: oklch(0.40 0.11 27.325);
+  --status-down-fg: oklch(0.80 0.15 27.325);
+
+  --status-neutral: oklch(0.60 0 0);
+  --status-neutral-subtle: oklch(0.24 0 0);
+  --status-neutral-border: oklch(0.34 0 0);
+  --status-neutral-fg: oklch(0.72 0 0);
+
+  --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 24%);
+  --shadow-card-hover:
+    0 4px 12px -2px oklch(0 0 0 / 36%),
+    0 2px 4px -2px oklch(0 0 0 / 24%);
+  --shadow-elevated: 0 16px 40px -8px oklch(0 0 0 / 48%);
+}

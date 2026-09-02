@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@import "./brand.css";
+
+/*
+ * Token mapping only. There is deliberately not a single colour literal in
+ * this file — every value comes from brand.css. Mirrors the structure of
+ * Analytics Dashboard/src/app/globals.css so the two apps stay legible to
+ * anyone who works on both.
+ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-overlay: var(--overlay);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-hairline: var(--hairline);
+
+  --color-foreground: var(--foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-foreground-inverse: var(--foreground-inverse);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-subtle: var(--brand-subtle);
+  --color-brand-border: var(--brand-border);
+
+  --color-hover-surface: var(--hover-surface);
+  --color-active-surface: var(--active-surface);
+  --color-selected-surface: var(--selected-surface);
+  --color-ring: var(--ring);
+
+  --color-status-up: var(--status-up);
+  --color-status-up-subtle: var(--status-up-subtle);
+  --color-status-up-border: var(--status-up-border);
+  --color-status-up-fg: var(--status-up-fg);
+  --color-status-warn: var(--status-warn);
+  --color-status-warn-subtle: var(--status-warn-subtle);
+  --color-status-warn-border: var(--status-warn-border);
+  --color-status-warn-fg: var(--status-warn-fg);
+  --color-status-down: var(--status-down);
+  --color-status-down-subtle: var(--status-down-subtle);
+  --color-status-down-border: var(--status-down-border);
+  --color-status-down-fg: var(--status-down-fg);
+  --color-status-neutral: var(--status-neutral);
+  --color-status-neutral-subtle: var(--status-neutral-subtle);
+  --color-status-neutral-border: var(--status-neutral-border);
+  --color-status-neutral-fg: var(--status-neutral-fg);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-card-hover: var(--shadow-card-hover);
+  --shadow-elevated: var(--shadow-elevated);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    /* Inter alternates: cv11 gives the single-storey 'a', ss01 the nicer 'g'.
+       Same pair the other two apps set, so type reads identically. */
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * Every number in this product is tabular. Proportional digits make a metric
+   * strip shimmer as values refetch, and these values sit in a 3-column grid
+   * repeated across five cards — they ARE a column and must align.
+   */
+  .tnum,
+  [data-metric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Hairline dividers between metric columns — lighter than a card edge. */
+@utility hairline-x {
+  border-inline-start: 1px solid var(--hairline);
+}
+
+@keyframes cc-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes cc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cc-enter {
+  animation: cc-fade-up var(--dur-enter) var(--ease-out) both;
+}
+
+.cc-spin {
+  animation: cc-spin 1200ms linear infinite;
+}
+
+/*
+ * Reduced motion: the entrance cascade and the checking spinner are the only
+ * things that move, and both have a non-motion fallback — the spinner becomes
+ * a static dashed ring, and the state is still announced by its text label,
+ * which is why that label is mandatory rather than decorative.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .cc-enter {
+    animation: none;
+  }
+}

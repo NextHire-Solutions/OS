@@ -1,0 +1,244 @@
+diff --git a/web/server/bs-auth.js b/web/server/bs-auth.js
+new file mode 100644
+index 0000000..75f3b0c
+--- /dev/null
++++ b/web/server/bs-auth.js
+@@ -0,0 +1,117 @@
++// bs-auth (verify only) — the BrokerStaffer single-sign-on token.
++//
++// A hand port of packages/bs-auth/index.ts for this app, which is plain ESM
++// JavaScript and cannot consume the TypeScript source the Next apps share.
++//
++// VERIFY ONLY, on purpose. This service never issues a credential; minting
++// lives solely in the Command Center. Leaving `mintSso` out means a compromise
++// here cannot forge a token for the other three apps.
++//
++// The port is guaranteed honest by a cross-implementation test
++// (scripts/verify-agent-search.mjs) that mints with the TypeScript library and
++// verifies with THIS file — so any drift in the algorithm fails a test rather
++// than silently rejecting everyone's sessions in production.
++
++export const SSO_COOKIE = 'bs_sso';
++
++/** Keep in step with ALL_TOOLS in packages/bs-auth/index.ts. */
++export const ALL_TOOLS = ['inbox', 'clients', 'analytics', 'search'];
++
++/** Matches CLOCK_SKEW_MS in the TypeScript source. */
++const CLOCK_SKEW_MS = 60 * 1000;
++
++const encoder = new TextEncoder();
++
++function base64UrlDecode(input) {
++    const padded = input.replace(/-/g, '+').replace(/_/g, '/');
++    const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
++    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
++    return new TextDecoder().decode(bytes);
++}
++
++function toHex(buffer) {
++    return Array.from(new Uint8Array(buffer))
++        .map((b) => b.toString(16).padStart(2, '0'))
++        .join('');
++}
++
++// `a === b` short-circuits on the first differing byte, which leaks how much of
++// a forged signature was correct.
++export function safeEqual(a, b) {
++    if (a.length !== b.length) return false;
++    let diff = 0;
++    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
++    return diff === 0;
++}
++
++async function hmacHex(secret, payload) {
++    const key = await crypto.subtle.importKey(
++        'raw',
++        encoder.encode(secret),
++        { name: 'HMAC', hash: 'SHA-256' },
++        false,
++        ['sign'],
++    );
++    return toHex(await crypto.subtle.sign('HMAC', key, encoder.encode(payload)));
++}
++
++// Signature first, payload second. Nothing inside the token is trusted until
++// the HMAC checks out.
++export async function verifySso(secret, token, now = Date.now()) {
++    if (!secret || !token) return null;
++
++    const dot = token.lastIndexOf('.');
++    if (dot <= 0 || dot === token.length - 1) return null;
++
++    const body = token.slice(0, dot);
++    const signature = token.slice(dot + 1);
++
++    if (!safeEqual(signature, await hmacHex(secret, body))) return null;
++
++    let parsed;
++    try {
++        parsed = JSON.parse(base64UrlDecode(body));
++    } catch {
++        return null;
++    }
++
++    if (!parsed || typeof parsed !== 'object') return null;
++
++    const email = typeof parsed.email === 'string' ? parsed.email.trim().toLowerCase() : '';
++    if (!email) return null;
++
++    const exp = typeof parsed.exp === 'number' && Number.isFinite(parsed.exp) ? parsed.exp : null;
++    if (exp === null) return null;
++    if (exp + CLOCK_SKEW_MS <= now) return null;
++
++    // Intersect with the known tools, so a tool name we do not recognise —
++    // from a newer issuer, or a typo — grants nothing rather than something.
++    const claimed = Array.isArray(parsed.grants) ? parsed.grants : [];
++    const grants = ALL_TOOLS.filter((t) => claimed.includes(t));
++
++    return {
++        email,
++        grants,
++        ver: typeof parsed.ver === 'number' ? parsed.ver : 0,
++        iat: typeof parsed.iat === 'number' ? parsed.iat : 0,
++        exp,
++    };
++}
++
++export function hasGrant(session, tool) {
++    return !!session && session.grants.includes(tool);
++}
++
++// Parsing the Cookie header directly rather than adding a cookie-parser
++// dependency — this is the only cookie the server reads.
++export function readSsoCookie(cookieHeader) {
++    if (!cookieHeader) return undefined;
++    for (const part of cookieHeader.split(';')) {
++        const eq = part.indexOf('=');
++        if (eq === -1) continue;
++        if (part.slice(0, eq).trim() === SSO_COOKIE) {
++            return decodeURIComponent(part.slice(eq + 1).trim());
++        }
++    }
++    return undefined;
++}
+diff --git a/web/server/index.js b/web/server/index.js
+index 95938a2..57b9fe3 100644
+--- a/web/server/index.js
++++ b/web/server/index.js
+@@ -23,6 +23,7 @@ import { OUTPUT_COLUMNS as COURTED_COLS } from '../../courted/src/constants.js';
+ import { OUTPUT_COLUMNS as ZILLOW_COLS } from '../../src/constants.js';
+ import { OUTPUT_COLUMNS as REALTOR_COLS } from './engines/realtor-map.js';
+ import { buildMaster } from './merge.js';
++import { hasGrant, readSsoCookie, verifySso } from './bs-auth.js';
+ 
+ const __dirname = path.dirname(fileURLToPath(import.meta.url));
+ const ROOT = path.resolve(__dirname, '../..');
+@@ -30,8 +31,93 @@ const ROOT = path.resolve(__dirname, '../..');
+ // --- tiny .env loader (web/.env) ---
+ loadEnv(path.join(ROOT, 'web/.env'));
+ 
++// Paths reachable without a session. See the auth middleware below.
++const PUBLIC_PATHS = ['/api/status'];
++
++const COMMAND_CENTER_URL =
++    process.env.COMMAND_CENTER_URL || 'https://home.brokerstaffer.com';
++
++// Shown to someone signed in to BrokerStaffer who has not been granted this
++// tool. Inline rather than a template file because the whole UI is a static
++// bundle this server merely hands over — there is no view layer to hook into.
++function noAccessPage(email) {
++    const who = String(email || '').replace(/[<>&"]/g, '');
++    return `<!doctype html><html lang="en"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width,initial-scale=1">
++<title>No access — BrokerStaffer</title>
++<style>
++  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0B0E14;
++       color:#E6EAF2;font:15px/1.6 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
++  .card{max-width:400px;padding:32px;background:#121722;border:1px solid #1E2635;border-radius:14px}
++  .brand{font-size:11px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:#6D5BFF}
++  h1{margin:12px 0 8px;font-size:19px;font-weight:600}
++  p{margin:0 0 10px;font-size:13.5px;color:#8892A6}
++  a{display:block;margin-top:20px;padding:11px;text-align:center;border-radius:9px;
++    background:linear-gradient(135deg,#6D5BFF,#8B7BFF);color:#fff;font-weight:700;
++    font-size:13.5px;text-decoration:none}
++</style></head><body><div class="card">
++  <div class="brand">BrokerStaffer</div>
++  <h1>No access to Agent Search</h1>
++  <p>${who ? `You're signed in as <strong>${who}</strong>, but this tool hasn't been shared with you yet.` : "Your account doesn't have access to this tool yet."}</p>
++  <p>Ask a workspace admin to switch Agent Search on for your account in Team access.</p>
++  <a href="${COMMAND_CENTER_URL}">Back to the workspace</a>
++</div></body></html>`;
++}
++
+ const app = express();
+ app.use(express.json());
++
++// --- BrokerStaffer single sign-on -------------------------------------------
++//
++// Placed BEFORE express.static on purpose: the gate has to cover the UI, not
++// just the API. Serving index.html to anonymous visitors and only refusing the
++// XHRs behind it would still leak the entire interface.
++//
++// Before this, the service was completely open — including
++// POST /api/courted/account, which stores a Courted login, and POST /api/search,
++// which spends proxy credits. Anyone who knew the URL could drive it.
++//
++// PUBLIC_PATHS is deliberately tiny. /api/status stays open because the Command
++// Center's status board polls it unauthenticated to render the Agent Search
++// card; it exposes only an account count and the unblocker's name. Give that
++// connector a service token and this exemption can go.
++//
++// Fail-open when BS_SSO_SECRET is unset so `node web/server/index.js` still
++// runs locally. The boot log below states plainly which mode is active, so an
++// unset variable in production is visible rather than silent.
++app.use(async (req, res, next) => {
++    const secret = process.env.BS_SSO_SECRET;
++    if (!secret) return next(); // not configured — local development
++
++    if (PUBLIC_PATHS.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
++        return next();
++    }
++
++    const session = await verifySso(secret, readSsoCookie(req.headers.cookie));
++
++    if (!session) {
++        if (req.path.startsWith('/api/')) {
++            return res.status(401).json({ error: 'unauthorized' });
++        }
++        // Send them to the workspace to sign in. A login form here would be a
++        // second password to remember, which is the thing the workspace exists
++        // to remove.
++        return res.redirect(302, COMMAND_CENTER_URL);
++    }
++
++    if (!hasGrant(session, 'search')) {
++        if (req.path.startsWith('/api/')) {
++            return res.status(403).json({ error: 'forbidden' });
++        }
++        // Signed in but not entitled to this tool. Deliberately not a redirect
++        // to sign-in: they are already signed in, so that would just loop.
++        return res.status(403).type('html').send(noAccessPage(session.email));
++    }
++
++    req.bsUser = session;
++    next();
++});
++
+ // Never cache the UI assets — always serve the latest app.js / index.html.
+ app.use(express.static(path.join(ROOT, 'web/public'), {
+     etag: false,
+@@ -402,6 +488,14 @@ app.listen(PORT, () => {
+     console.log(`\n  Agent Search webapp → http://localhost:${PORT}\n`);
+     console.log(`  Courted creds: ${readCourtedAccounts().length || 'NO'} account(s)`);
+     console.log(`  Unblocker:     ${unblockerProvider() || 'NONE — Zillow + realtor.com disabled'}  (Zillow + realtor.com)`);
++    // State this loudly. An unset BS_SSO_SECRET in production means the app is
++    // open to anyone with the URL, and that must never be something you have to
++    // go looking for.
++    console.log(
++        process.env.BS_SSO_SECRET
++            ? '  Auth:          BrokerStaffer SSO — requires the `search` grant'
++            : '  Auth:          OPEN — BS_SSO_SECRET is not set, every route is public',
++    );
+     startMlsMonitor();   // no-op unless MLS_MONITOR_ENABLED=1
+     startRefresh();      // no-op unless REFRESH_ENABLED=1
+     console.log('');
