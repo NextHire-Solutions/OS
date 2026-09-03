@@ -12,9 +12,38 @@ export function optionalEnv(name: string): string | undefined {
 }
 
 export class NotConfiguredError extends Error {
-  constructor(public readonly varName: string) {
+  // Assigned explicitly rather than via a constructor parameter property.
+  // Parameter properties are TypeScript-only sugar that Node's type-stripping
+  // cannot remove, so `node --test` — this project's test runner — refuses to
+  // import any file that reaches this one. Two extra lines buys testability.
+  readonly varName: string;
+
+  constructor(varName: string) {
     super(`${varName} is not set`);
     this.name = "NotConfiguredError";
+    this.varName = varName;
+  }
+}
+
+/**
+ * The upstream cannot serve this over HTTP at all — no credential would help.
+ *
+ * A third category, distinct from "we have no token" and from "it broke",
+ * because conflating it with the latter makes the status colour meaningless.
+ *
+ * The case that forced it: Master Inbox's /api/admin/thread-counts gets past
+ * that app's proxy with a service-role token, then its handler calls
+ * requireSession(), which has no service-role path and redirects to /login. No
+ * token we hold can ever satisfy it. Reporting that as a fault marks the tool
+ * degraded permanently, for a metric that has never been readable — and a
+ * dashboard that is always amber is a dashboard nobody reads.
+ *
+ * So: the tool is healthy, one number is simply not available. Info, not warn.
+ */
+export class UnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedError";
   }
 }
 

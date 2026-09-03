@@ -9,7 +9,7 @@ import {
   type ToolMetric,
 } from "./types";
 import { classifyReach } from "@/lib/http/classify";
-import { NotConfiguredError, optionalEnv } from "@/lib/env";
+import { NotConfiguredError, UnsupportedError, optionalEnv } from "@/lib/env";
 
 /*
  * Master Inbox — Next 16, Supabase Auth, the unified reply inbox.
@@ -27,7 +27,9 @@ import { NotConfiguredError, optionalEnv } from "@/lib/env";
  * bypass and redirects to /login. So this probe is EXPECTED to fail against
  * the current deploy. It is wired anyway because (a) it costs nothing, (b) it
  * starts working the moment that route grows a token path, and (c) its failure
- * is correctly reported as `degraded` + a note rather than as an outage.
+ * is reported as an INFO note that does NOT degrade the tool. No credential we
+ * hold can satisfy that route, so marking Master Inbox amber forever over it
+ * would make the status colour meaningless.
  */
 
 function num(value: unknown): number | null {
@@ -90,7 +92,9 @@ async function loadThreadCounts(ctx: ProbeContext) {
   // The handler redirects to /login when the session check fails, which
   // surfaces here as a 307 rather than a 401.
   if (res.status === 307 || res.status === 302) {
-    throw new Error("thread-counts requires a user session (no service-role path)");
+    throw new UnsupportedError(
+      "not readable over HTTP — the route requires a user session, and has no service-role path",
+    );
   }
   if (!res.ok) throw new Error(`thread-counts returned ${res.status ?? "no response"}`);
 
@@ -119,6 +123,12 @@ function describeFailure(
       note: note("info", `${fallback} — set ${error.varName} to enable`, error.varName),
       degrades: false,
     };
+  }
+
+  // The upstream cannot serve this at all. The tool is healthy; one number is
+  // unavailable. Degrading for it would be permanent and therefore useless.
+  if (error instanceof UnsupportedError) {
+    return { note: note("info", `${fallback} — ${error.message}`), degrades: false };
   }
 
   return {

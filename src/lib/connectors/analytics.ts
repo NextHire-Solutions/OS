@@ -10,7 +10,7 @@ import {
 } from "./types";
 import { classifyReach } from "@/lib/http/classify";
 import { mintAnalyticsSession } from "./upstream-auth/analytics-session";
-import { NotConfiguredError, optionalEnv } from "@/lib/env";
+import { NotConfiguredError, UnsupportedError, optionalEnv } from "@/lib/env";
 
 /*
  * Campaign Analytics — Next 16, EmailBison-backed, HMAC cookie auth.
@@ -123,6 +123,12 @@ function describeFailure(
       note: note("info", `${fallback} — set ${error.varName} to enable`, error.varName),
       degrades: false,
     };
+  }
+
+  // The upstream cannot serve this at all. The tool is healthy; one number is
+  // unavailable. Degrading for it would be permanent and therefore useless.
+  if (error instanceof UnsupportedError) {
+    return { note: note("info", `${fallback} — ${error.message}`), degrades: false };
   }
 
   return {
