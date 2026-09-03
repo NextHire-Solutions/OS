@@ -1,3 +1,33 @@
+diff --git a/apps/client-health/app/Dashboard.tsx b/apps/client-health/app/Dashboard.tsx
+index 55eaac5..99c6da0 100644
+--- a/apps/client-health/app/Dashboard.tsx
++++ b/apps/client-health/app/Dashboard.tsx
+@@ -134,7 +134,24 @@ export default function Dashboard({ initialClients, allInstantlyCampaigns, allBi
+   const [datePreset, setDatePreset] = useState<DatePreset>(null);
+   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
+   const [search, setSearch] = useState('');
+-  const [view, setView] = useState<'weekly' | 'biweekly' | 'success'>('weekly');
++  /*
++   * The view is seeded from `?view=` so each of the three has an address.
++   *
++   * The workspace rail lists Weekly, Bi-Weekly and Client Success as separate
++   * destinations, and a rail item needs somewhere to point. Without this they
++   * all land on Weekly and two of the three look broken.
++   *
++   * Read from window.location rather than useSearchParams(): that hook opts the
++   * whole route into client-side rendering and needs a Suspense boundary above
++   * it, which is a lot of machinery for one initial value. A lazy initialiser
++   * runs once, on the client, after hydration — and the toggle below remains
++   * the way you switch, so this only decides where you arrive.
++   */
++  const [view, setView] = useState<'weekly' | 'biweekly' | 'success'>(() => {
++    if (typeof window === 'undefined') return 'weekly';
++    const requested = new URLSearchParams(window.location.search).get('view');
++    return requested === 'biweekly' || requested === 'success' ? requested : 'weekly';
++  });
+   const [campaignSelections, setCampaignSelections] = useState<Record<string, string>>({});
+   const [campaignsPopupClientId, setCampaignsPopupClientId] = useState<string | null>(null);
+   const [toast, setToast] = useState<string | null>(null);
 diff --git a/apps/client-health/app/api/clients/route.ts b/apps/client-health/app/api/clients/route.ts
 index d050fbf..c655468 100644
 --- a/apps/client-health/app/api/clients/route.ts
