@@ -59,6 +59,9 @@ export async function GET(request: Request) {
         grants: u.grants,
         isActive: u.isActive,
         isAdmin: isAdmin(u.email),
+        // The design labels the account under its email ("· Owner"), so the
+        // label is decided here rather than inferred from isAdmin in the UI.
+        role: isAdmin(u.email) ? "Owner" : "Member",
         isSelf: u.email === session.email,
       }))
       .sort((a, b) => a.email.localeCompare(b.email)),
@@ -67,9 +70,15 @@ export async function GET(request: Request) {
 
     // Everything the screen needs to explain itself instead of guessing.
     capabilities: {
+      // The toggles are editable; saving is a paste, not a click. Permissions
+      // are a few dozen rows and do not justify a database project, so the
+      // screen posts the grid to /api/admin/grants/preview and shows the exact
+      // BS_GRANTS value to set.
       writable: false,
+      editable: true,
+      previewEndpoint: "/api/admin/grants/preview",
       reason:
-        "Grants are read from the BS_GRANTS environment variable, which cannot be changed from here. Editing requires the grants database.",
+        "Grants live in the BS_GRANTS environment variable. Change the switches, then copy the generated value into Railway and redeploy — access updates within 30 minutes.",
     },
 
     governance: {
