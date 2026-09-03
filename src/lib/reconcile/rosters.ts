@@ -24,7 +24,38 @@ export interface Roster {
   /** What this list actually contains — shown beside the diff, never assumed. */
   definition: string;
   entries: NamedEntry[];
+  /** Placeholder rows removed before comparing. Reported, never silent. */
+  excluded?: string[];
   unavailable?: string;
+}
+
+/*
+ * Rows that are buckets rather than clients.
+ *
+ * Analytics carries an "Unassigned" row for campaigns matching no client, and
+ * Master Inbox a "Unknown" one for replies it could not attribute. Neither is
+ * a customer, and comparing them produces a difference that is real, permanent
+ * and useless — the exact kind of entry that trains people to skim past the
+ * list and miss the twenty-seven that matter.
+ *
+ * Matched loosely because these are display names and get retitled. Removed
+ * rows are reported on the roster, so this can never quietly hide a real one.
+ */
+const PLACEHOLDER = /^(unassigned|unknown|none|n\/?a|test|demo)$/i;
+
+function withoutPlaceholders(entries: NamedEntry[]): {
+  entries: NamedEntry[];
+  excluded: string[];
+} {
+  const excluded: string[] = [];
+  const kept = entries.filter((e) => {
+    if (PLACEHOLDER.test(e.name.trim())) {
+      excluded.push(e.name);
+      return false;
+    }
+    return true;
+  });
+  return { entries: kept, excluded };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -63,7 +94,7 @@ async function masterInbox(): Promise<Roster> {
 
   return {
     ...base,
-    entries: stats.flatMap((raw) => {
+    ...withoutPlaceholders(stats.flatMap((raw) => {
       const row = asRecord(raw);
       const name = str(row?.client_name);
       if (!name) return [];
@@ -74,7 +105,7 @@ async function masterInbox(): Promise<Roster> {
           lastIntro: str(row?.last_assigned_at),
         },
       }];
-    }),
+    })),
   };
 }
 
@@ -104,7 +135,7 @@ async function analytics(): Promise<Roster> {
 
   return {
     ...base,
-    entries: rows.flatMap((raw) => {
+    ...withoutPlaceholders(rows.flatMap((raw) => {
       const row = asRecord(raw);
       const name = str(row?.name);
       if (!name) return [];
@@ -115,7 +146,7 @@ async function analytics(): Promise<Roster> {
           sent: typeof row?.sent === "number" ? row.sent : null,
         },
       }];
-    }),
+    })),
   };
 }
 
@@ -152,7 +183,7 @@ async function clientHealth(): Promise<Roster> {
 
   return {
     ...base,
-    entries: clients.flatMap((raw) => {
+    ...withoutPlaceholders(clients.flatMap((raw) => {
       const row = asRecord(raw);
       const name = str(row?.name);
       if (!name) return [];
@@ -163,7 +194,7 @@ async function clientHealth(): Promise<Roster> {
           status: row?.hidden ? "churned" : row?.client_paused ? "paused" : "active",
         },
       }];
-    }),
+    })),
   };
 }
 

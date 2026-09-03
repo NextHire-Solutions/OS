@@ -58,6 +58,10 @@ export async function GET() {
       label: r.label,
       definition: r.definition,
       count: r.entries.length,
+      // Placeholder rows ("Unassigned", "Unknown") are dropped before
+      // comparing, and named here. Filtering silently would be indistinguish-
+      // able from a bug that eats a real client.
+      excluded: r.excluded ?? [],
       unavailable: r.unavailable ?? null,
     })),
     comparisons,
