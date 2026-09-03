@@ -5,7 +5,6 @@ const ICONS: Record<ToolId, typeof Inbox> = {
   "master-inbox": Inbox,
   "client-health": HeartPulse,
   analytics: ChartNoAxesColumn,
-  database: Database,
   scraper: Radar,
 };
 

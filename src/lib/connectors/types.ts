@@ -14,7 +14,6 @@ export type ToolId =
   | "master-inbox"
   | "client-health"
   | "analytics"
-  | "database"
   | "scraper";
 
 /**
