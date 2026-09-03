@@ -207,11 +207,25 @@ export const analyticsConnector = defineConnector({
         notes.push(note("warn", `Sync degraded${jobs.length ? `: ${jobs.join(", ")}` : ""}`));
       }
 
-      if (dataAsOf && ctx.policy.dataStaleAfterMs) {
+      /*
+       * `dataAsOf` is DISPLAYED, never judged.
+       *
+       * It reports the oldest data across 18 sync jobs whose cadences run from
+       * 45 minutes to 30 hours. A blanket threshold here cannot know that
+       * `sync-leads` is supposed to be most of a day old — so it painted a
+       * perfectly healthy app amber: every job `ok`, `healthy: true`,
+       * `degraded: []`, and this card degraded anyway because one
+       * slow-by-design job dragged the figure to ten hours.
+       *
+       * Analytics evaluates each job against its own threshold and publishes
+       * the verdict as `healthy`, which is checked above. It is the authority
+       * on its own freshness. Second-guessing an upstream that has already
+       * answered the question is how a status board starts lying.
+       */
+      if (dataAsOf) {
         const age = ctx.now.getTime() - Date.parse(dataAsOf);
-        if (Number.isFinite(age) && age > ctx.policy.dataStaleAfterMs) {
-          degraded = true;
-          notes.push(note("warn", `Data is ${Math.round(age / 3.6e6)}h old`));
+        if (Number.isFinite(age) && age > 3.6e6) {
+          notes.push(note("info", `Oldest synced data is ${Math.round(age / 3.6e6)}h old`));
         }
       }
     } else {
