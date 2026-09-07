@@ -95,18 +95,46 @@ export async function probeConnector(connector: Connector): Promise<ToolSnapshot
 
   const notes: Note[] = [...(reach.notes ?? []), ...(metrics?.notes ?? [])];
 
+  /*
+   * A metrics probe can fail for three very different reasons, and treating
+   * them alike is how a status board becomes wallpaper:
+   *
+   *   no credential      our gap, the tool is fine     info, no degrade
+   *   cannot be served   nobody's fault, permanent     info, no degrade
+   *   it broke           worth investigating           warn, degrade
+   *
+   * The middle case is not hypothetical. Master Inbox's thread-counts route
+   * needs a user session and has no service-role path; Onboarding publishes no
+   * read endpoint at all. Both would sit amber forever over numbers that were
+   * never once readable.
+   *
+   * This lives HERE rather than in each connector so every tool gets it. Two
+   * connectors carried their own copy and the other three did not, which is
+   * exactly why adding Onboarding turned the whole board amber on day one.
+   */
+  let metricsFault = false;
+
   if (metricsOutcome.status === "rejected") {
-    notes.push({
-      level: "warn",
-      text:
-        metricsOutcome.reason instanceof Error
-          ? metricsOutcome.reason.message
-          : "Metrics probe threw",
-    });
+    const reason = metricsOutcome.reason;
+
+    if (reason instanceof NotConfiguredError) {
+      notes.push({
+        level: "info",
+        text: `Metrics unavailable — set ${reason.varName} to enable`,
+        envVar: reason.varName,
+      });
+    } else if (reason instanceof UnsupportedError) {
+      notes.push({ level: "info", text: `Metrics unavailable — ${reason.message}` });
+    } else {
+      metricsFault = true;
+      notes.push({
+        level: "warn",
+        text: reason instanceof Error ? reason.message : "Metrics probe threw",
+      });
+    }
   }
 
-  const metricsDegraded =
-    Boolean(metrics?.degraded) || metricsOutcome.status === "rejected";
+  const metricsDegraded = Boolean(metrics?.degraded) || metricsFault;
 
   return {
     ...base,
