@@ -9,7 +9,7 @@ import {
 } from "@/lib/connectors/types";
 import { httpProbe } from "@/lib/http/probe";
 import { deriveState } from "./derive";
-import { baseUrlEnv, isConfigured } from "@/lib/env";
+import { NotConfiguredError, UnsupportedError, baseUrlEnv, isConfigured } from "@/lib/env";
 
 /*
  * Runs one connector's two probes and assembles a snapshot.
