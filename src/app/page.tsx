@@ -4,6 +4,7 @@ import { aggregate } from "@/lib/status/derive";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
+import { TeamAccessScreen } from "@/components/screens/team-access";
 import { products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 
@@ -65,6 +66,10 @@ export default async function WorkspacePage() {
             now={new Date()}
           />
         ),
+        // Fetches its own data on mount rather than server-rendering: it is
+        // only ever opened deliberately, and loading it on every home render
+        // would cost a request nobody asked for.
+        "team-access": <TeamAccessScreen />,
       }}
     />
   );
