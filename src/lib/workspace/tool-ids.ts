@@ -24,6 +24,7 @@ export const GRANT_BY_CONNECTOR: Record<ConnectorId, GrantId> = {
   "client-health": "clients",
   analytics: "analytics",
   scraper: "search",
+  onboarding: "onboarding",
 };
 
 export const CONNECTOR_BY_GRANT: Record<GrantId, ConnectorId> = {
@@ -31,6 +32,7 @@ export const CONNECTOR_BY_GRANT: Record<GrantId, ConnectorId> = {
   clients: "client-health",
   analytics: "analytics",
   search: "scraper",
+  onboarding: "onboarding",
 };
 
 export function toGrantId(id: ConnectorId): GrantId {

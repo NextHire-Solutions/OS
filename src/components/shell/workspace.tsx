@@ -5,21 +5,23 @@ import { Rail } from "./rail";
 import { Topbar } from "./topbar";
 import { Palette } from "./palette";
 import { ToolPane } from "./tool-pane";
-import { NAV, destinations, type Destination } from "@/lib/workspace/nav";
+import { NAV, destinations, idForPath, pathForId, type Destination } from "@/lib/workspace/nav";
 
 /*
  * The workspace frame: rail, top bar, and whatever is on stage.
  *
- * Navigation is client state rather than routing. Two reasons, and the second
- * is the one that matters:
+ * Every screen has a real address — /inbox, /analytics, /team — so links can be
+ * shared and the back button works.
  *
- *   1. the destinations are a fixed tree, not arbitrary URLs
- *   2. panes must stay MOUNTED when you switch away, so returning to a tool is
- *      instant and keeps its scroll position and unsent draft. A route change
- *      unmounts, which would reload a whole app on every visit
+ * The URL is changed with history.pushState rather than a router navigation,
+ * which is the crux of the whole shell: a route change would UNMOUNT the panes,
+ * and a mounted pane is the only reason returning to a tool is instant with its
+ * scroll position and unsent drafts intact. Reloading a whole application on
+ * every sidebar click is exactly the feeling this design exists to remove.
  *
- * The trade is no deep-linkable URL per screen. Worth revisiting once the tool
- * panes are live and someone wants to paste a link to one.
+ * So: React state drives what is displayed, pushState keeps the address bar
+ * honest, and popstate handles Back. The server reads the same path on a cold
+ * load, so a pasted link renders the right screen immediately.
  */
 
 export interface WorkspaceProps {
@@ -31,6 +33,8 @@ export interface WorkspaceProps {
   badges?: Partial<Record<string, number>>;
   /** Workspace-owned screens, keyed by nav id. */
   screens: Partial<Record<string, React.ReactNode>>;
+  /** Resolved from the URL on the server, so a pasted link lands correctly. */
+  initialId?: string;
 }
 
 export function Workspace({
@@ -40,8 +44,9 @@ export function Workspace({
   shellHost,
   badges,
   screens,
+  initialId = "home",
 }: WorkspaceProps) {
-  const [activeId, setActiveId] = useState("home");
+  const [activeId, setActiveId] = useState(initialId);
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -55,8 +60,13 @@ export function Workspace({
     [all, grants],
   );
 
-  const navigate = useCallback((id: string) => {
+  const navigate = useCallback((id: string, fromHistory = false) => {
     setActiveId(id);
+    // pushState, never router.push — the latter unmounts every warm pane.
+    if (!fromHistory && typeof window !== "undefined") {
+      const path = pathForId(id);
+      if (window.location.pathname !== path) window.history.pushState({ id }, "", path);
+    }
     setMounted((live) => {
       if (!id.includes(":")) return live;
       if (live.includes(id)) return [...live.filter((x) => x !== id), id];
@@ -89,6 +99,15 @@ export function Workspace({
   useEffect(() => {
     document.body.classList.toggle("rail-collapsed", collapsed);
   }, [collapsed]);
+
+  // Back and forward move between screens without reloading anything.
+  useEffect(() => {
+    function onPop() {
+      setActiveId(idForPath(window.location.pathname));
+    }
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const active = reachable.find((d) => d.id === activeId);
   const crumbs = active ? [active.group, active.label] : ["Workspace", "Home"];

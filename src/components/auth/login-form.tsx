@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { cn } from "@/lib/utils";
 
 /*
  * Where to land after a successful sign-in.
@@ -59,21 +58,35 @@ export function LoginForm() {
     }
   }
 
-  const inputClass = cn(
-    "mt-1.5 w-full rounded-lg border border-border bg-surface-sunken px-3 py-2 text-[14px]",
-    "outline-none transition-colors focus:border-brand focus:bg-surface",
-  );
+  // The design's own input, full width. `.inp` carries the border, radius,
+  // focus ring and type scale, so nothing is redefined here.
+  const inputStyle = { width: "100%", marginTop: 7 } as const;
+  const labelStyle = {
+    fontSize: 12.5,
+    fontWeight: 500,
+    color: "var(--ink-2)",
+    display: "block",
+  } as const;
 
   return (
-    <form onSubmit={onSubmit} className="mt-5 space-y-4">
+    <form onSubmit={onSubmit} style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 14 }}>
       {configError ? (
-        <p className="rounded-lg border border-status-down-border bg-status-down-subtle px-3 py-2 text-[12px] text-status-down-fg">
-          Auth is not configured on this deployment. Set AUTH_SECRET and AUTH_USERS.
+        <p
+          style={{
+            background: "var(--red-bg)",
+            color: "var(--red)",
+            borderRadius: "var(--r-sm)",
+            padding: "10px 12px",
+            fontSize: 12.5,
+            lineHeight: 1.5,
+          }}
+        >
+          Sign-in is not configured on this deployment.
         </p>
       ) : null}
 
       <div>
-        <label htmlFor="email" className="text-[12px] font-medium text-foreground-secondary">
+        <label htmlFor="email" style={labelStyle}>
           Email
         </label>
         <input
@@ -84,12 +97,13 @@ export function LoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@brokerstaffer.com"
-          className={inputClass}
+          className="inp"
+          style={inputStyle}
         />
       </div>
 
       <div>
-        <label htmlFor="password" className="text-[12px] font-medium text-foreground-secondary">
+        <label htmlFor="password" style={labelStyle}>
           Password
         </label>
         <input
@@ -99,12 +113,13 @@ export function LoginForm() {
           required
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className={inputClass}
+          className="inp"
+          style={inputStyle}
         />
       </div>
 
       {error ? (
-        <p role="alert" className="text-[12px] text-status-down-fg">
+        <p role="alert" style={{ fontSize: 12.5, color: "var(--red)", lineHeight: 1.5 }}>
           {error}
         </p>
       ) : null}
@@ -112,10 +127,8 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={pending}
-        className={cn(
-          "w-full rounded-lg bg-brand px-3 py-2.5 text-[14px] font-semibold text-brand-foreground",
-          "transition-colors duration-[120ms] hover:bg-brand-hover disabled:opacity-60",
-        )}
+        className="btn btn-pri"
+        style={{ width: "100%", marginTop: 4, opacity: pending ? 0.6 : 1 }}
       >
         {pending ? "Signing in…" : "Sign in"}
       </button>

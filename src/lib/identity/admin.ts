@@ -64,6 +64,7 @@ export const GRANTABLE_TOOLS: ToolDescriptor[] = [
   { id: "clients", label: "Client Health", description: "Live client outreach health." },
   { id: "analytics", label: "Campaign Analytics", description: "Campaign performance and attribution." },
   { id: "search", label: "Agent Search", description: "Sources agent data from Courted, Zillow and Realtor.com." },
+  { id: "onboarding", label: "Onboarding", description: "Client intake and the 30-step onboarding pipeline." },
 ];
 
 /** Narrows arbitrary input to real tool ids. Unknown names grant nothing. */

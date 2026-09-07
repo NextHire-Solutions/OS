@@ -44,6 +44,13 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="m21 21-4.35-4.35" />
     </>
   ),
+  onboarding: (
+    <>
+      <path d="M9 11l2.5 2.5L16 9" />
+      <path d="M20 6.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9.5" />
+      <path d="M8 3.5h6" />
+    </>
+  ),
   "team-access": (
     <>
       <path d="M16 21v-1.8a4 4 0 0 0-4-4H6.5a4 4 0 0 0-4 4V21" />

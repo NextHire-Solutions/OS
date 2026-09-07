@@ -132,6 +132,18 @@ export const NAV: NavSection[] = [
       },
       {
         kind: "product",
+        id: "onboarding",
+        label: "Onboarding",
+        baseUrlEnv: "ONBOARDING_URL",
+        children: [
+          { id: "pipeline", label: "Pipeline", path: "/", verified: true },
+          { id: "stages", label: "Stages", path: "/stages", verified: true },
+          { id: "templates", label: "Templates", path: "/templates", verified: true },
+          { id: "settings", label: "Settings", path: "/settings", verified: true },
+        ],
+      },
+      {
+        kind: "product",
         id: "search",
         label: "Agent Search",
         baseUrlEnv: "SCRAPER_URL",
@@ -199,4 +211,80 @@ export function destinations(): Destination[] {
 /** Every tool a person can reach, in rail order. */
 export function products(): NavProduct[] {
   return NAV.flatMap((s) => s.items).filter((i): i is NavProduct => i.kind === "product");
+}
+
+/* ===========================================================================
+   URLS
+   ---------------------------------------------------------------------------
+   Every screen has an address, so a link can be pasted into Slack and the back
+   button behaves. The scheme is deliberately short and readable — this is what
+   people see in the address bar, and it is the whole reason the tools feel like
+   one product rather than five:
+
+     /                     Home
+     /performance          Performance
+     /inbox                Master Inbox, its first screen
+     /inbox/reminders      a specific screen within it
+     /clients              Client Health
+     /analytics            Campaign Analytics
+     /search               Agent Search
+     /onboarding           Onboarding
+     /team                 Team access
+
+   The tool's OWN hostname never appears. It is loaded inside the page, so the
+   address bar stays on the workspace throughout.
+   =========================================================================== */
+
+/** Slug for each product, used as the first path segment. */
+const PRODUCT_SLUG: Record<string, ToolId> = {
+  inbox: "inbox",
+  clients: "clients",
+  analytics: "analytics",
+  search: "search",
+  onboarding: "onboarding",
+};
+
+/** The workspace's own screens. */
+const PAGE_PATH: Record<string, string> = {
+  home: "/",
+  performance: "/performance",
+  "team-access": "/team",
+};
+
+/** The address for a destination id. */
+export function pathForId(id: string): string {
+  if (PAGE_PATH[id]) return PAGE_PATH[id];
+
+  const [tool, leaf] = id.split(":");
+  if (!tool || !PRODUCT_SLUG[tool]) return "/";
+
+  const product = products().find((p) => p.id === tool);
+  // The product's FIRST child is its bare path, so /inbox lands somewhere real
+  // rather than needing /inbox/all-email.
+  if (!leaf || product?.children[0]?.id === leaf) return `/${tool}`;
+  return `/${tool}/${leaf}`;
+}
+
+/** The destination id for a path. Unknown paths fall back to Home. */
+export function idForPath(pathname: string): string {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length === 0) return "home";
+
+  const [first, second] = segments;
+
+  for (const [id, path] of Object.entries(PAGE_PATH)) {
+    if (path === `/${first}`) return id;
+  }
+
+  const tool = PRODUCT_SLUG[first];
+  if (!tool) return "home";
+
+  const product = products().find((p) => p.id === tool);
+  if (!product) return "home";
+
+  if (!second) return `${tool}:${product.children[0]?.id ?? ""}`;
+  // An unrecognised leaf opens the product's first screen rather than a blank
+  // pane — a stale link should degrade to something useful.
+  const leaf = product.children.find((c) => c.id === second);
+  return `${tool}:${leaf?.id ?? product.children[0]?.id ?? ""}`;
 }

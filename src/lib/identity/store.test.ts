@@ -52,14 +52,14 @@ test("with BS_GRANTS entirely unset, listed operators get every tool", async () 
   const store = new EnvGrantStore(USERS, undefined);
   const sam = await store.findByEmail("sam@brokerstaffer.com");
 
-  assert.deepEqual(sam?.grants, ["inbox", "clients", "analytics", "search"]);
+  assert.deepEqual(sam?.grants, ["inbox", "clients", "analytics", "search", "onboarding"]);
   assert.equal(store.describe().governed, false, "and it reports itself as ungoverned");
 });
 
 test("an empty BS_GRANTS string is treated as unset, not as 'nobody'", async () => {
   const store = new EnvGrantStore(USERS, "   \n  ");
   assert.equal(store.describe().governed, false);
-  assert.equal((await store.findByEmail("sam@brokerstaffer.com"))?.grants.length, 4);
+  assert.equal((await store.findByEmail("sam@brokerstaffer.com"))?.grants.length, 5);
 });
 
 test("unknown tool names are dropped, not trusted", async () => {

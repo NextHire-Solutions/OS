@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { buildGrantsConfig } from "./grants-config.ts";
 import type { ToolId } from "../bs-auth.ts";
 
-const ALL: ToolId[] = ["inbox", "clients", "analytics", "search"];
+const ALL: ToolId[] = ["inbox", "clients", "analytics", "search", "onboarding"];
 const row = (email: string, grants: ToolId[]) => ({ email, grants });
 
 /** A baseline where everyone already has everything, i.e. BS_GRANTS unset. */
@@ -82,7 +82,7 @@ test("warns when a tool would have no one at all", () => {
     [row("s@x.com", ALL), row("n@x.com", ALL)],
   );
   const orphaned = c.warnings.filter((w) => w.level === "danger" && /Nobody would have access/.test(w.message));
-  assert.equal(orphaned.length, 3, "clients, analytics and search all lose everyone");
+  assert.equal(orphaned.length, 4, "clients, analytics, search and onboarding all lose everyone");
 });
 
 test("warns when a listed person is dropped from the paste entirely", () => {

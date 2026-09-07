@@ -19,6 +19,7 @@ const TINTS: Record<string, { bg: string; fg: string }> = {
   clients: { bg: "#DFF6EA", fg: "#0E8A5F" },
   analytics: { bg: "#EFEBFF", fg: "#5B3FD4" },
   search: { bg: "#FFF2E2", fg: "#B45309" },
+  onboarding: { bg: "#DFF6EA", fg: "#0E8A5F" },
 };
 
 function greeting(now: Date): string {

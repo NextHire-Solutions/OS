@@ -1,4 +1,11 @@
-import { Inbox, HeartPulse, ChartNoAxesColumn, Database, Radar } from "lucide-react";
+import {
+  ClipboardCheck,
+  Inbox,
+  HeartPulse,
+  ChartNoAxesColumn,
+  Database,
+  Radar,
+} from "lucide-react";
 import type { ToolId } from "@/lib/connectors/types";
 
 const ICONS: Record<ToolId, typeof Inbox> = {
@@ -6,6 +13,7 @@ const ICONS: Record<ToolId, typeof Inbox> = {
   "client-health": HeartPulse,
   analytics: ChartNoAxesColumn,
   scraper: Radar,
+  onboarding: ClipboardCheck,
 };
 
 /**

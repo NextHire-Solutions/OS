@@ -7,7 +7,7 @@
  * Edit the source and re-sync; edits made here are overwritten and, worse, make
  * this app verify tokens differently from every other app.
  *
- * bs-auth@d235656d0c74
+ * bs-auth@02036190bcf7
  * ------------------------------------------------------------------------- */
 
 /*
@@ -59,9 +59,21 @@
  */
 
 /** Tools a grant can be issued for. Keep in sync with the Command Center registry. */
-export type ToolId = "inbox" | "clients" | "analytics" | "search";
+export type ToolId = "inbox" | "clients" | "analytics" | "search" | "onboarding";
 
-export const ALL_TOOLS: readonly ToolId[] = ["inbox", "clients", "analytics", "search"];
+/*
+ * Adding a tool here is backward compatible on purpose: `grants` is intersected
+ * with this list at verify time, so a token minted before "onboarding" existed
+ * simply has no onboarding grant. Nobody is signed out and nothing is
+ * retroactively granted.
+ */
+export const ALL_TOOLS: readonly ToolId[] = [
+  "inbox",
+  "clients",
+  "analytics",
+  "search",
+  "onboarding",
+];
 
 export interface SsoSession {
   /** Lower-cased email. The stable identity across all apps. */

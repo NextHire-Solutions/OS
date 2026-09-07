@@ -14,7 +14,8 @@ export type ToolId =
   | "master-inbox"
   | "client-health"
   | "analytics"
-  | "scraper";
+  | "scraper"
+  | "onboarding";
 
 /**
  * The five states a card can be in.

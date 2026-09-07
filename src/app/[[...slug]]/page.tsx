@@ -2,15 +2,21 @@ import { headers } from "next/headers";
 import { getAllSnapshots } from "@/lib/status/store";
 import { aggregate } from "@/lib/status/derive";
 import { getOverview } from "@/lib/workspace/overview";
+import { getPerformance } from "@/lib/workspace/performance";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
-import { products } from "@/lib/workspace/nav";
+import { PerformanceScreen } from "@/components/screens/performance";
+import { idForPath, products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 
 /*
- * The workspace.
+ * The workspace, at every address.
+ *
+ * A catch-all so /inbox, /analytics/attribution and /team all render here with
+ * the right screen already open — a pasted link shows the screen it names on
+ * the first paint, with no client-side redirect flash.
  *
  * Server-rendered from the same status store the API serves, so the first paint
  * already carries real numbers — no client waterfall, and Home is useful before
@@ -18,7 +24,14 @@ import { ALL_TOOLS } from "@/lib/bs-auth";
  */
 export const dynamic = "force-dynamic";
 
-export default async function WorkspacePage() {
+export default async function WorkspacePage({
+  params,
+}: {
+  params: Promise<{ slug?: string[] }>;
+}) {
+  const { slug } = await params;
+  const initialId = idForPath(`/${(slug ?? []).join("/")}`);
+
   const requestHeaders = await headers();
 
   // Set by the proxy, which has already verified the token. Trusting it here
@@ -30,7 +43,11 @@ export default async function WorkspacePage() {
 
   // In parallel: one is four upstream probes, the other three Analytics calls.
   // Sequentially they would stack on every render of the home screen.
-  const [snapshots, overview] = await Promise.all([getAllSnapshots(), getOverview()]);
+  const [snapshots, overview, performance] = await Promise.all([
+    getAllSnapshots(),
+    getOverview(),
+    getPerformance(),
+  ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
   const toolUrls: Record<string, string> = {};
@@ -56,6 +73,7 @@ export default async function WorkspacePage() {
 
   return (
     <Workspace
+      initialId={initialId}
       grants={grants}
       user={{ name: firstName, email }}
       toolUrls={toolUrls}
@@ -73,6 +91,7 @@ export default async function WorkspacePage() {
         // Fetches its own data on mount rather than server-rendering: it is
         // only ever opened deliberately, and loading it on every home render
         // would cost a request nobody asked for.
+        performance: <PerformanceScreen performance={performance} />,
         "team-access": <TeamAccessScreen />,
       }}
     />

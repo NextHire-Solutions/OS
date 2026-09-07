@@ -974,17 +974,3 @@ index c3b02b7..71cd3ab 100644
  }
  
  export const config = {
-diff --git a/apps/client-health/package-lock.json b/apps/client-health/package-lock.json
-index d385b5b..f2bde9c 100644
---- a/apps/client-health/package-lock.json
-+++ b/apps/client-health/package-lock.json
-@@ -19,6 +19,9 @@
-         "@types/react-dom": "^19.0.0",
-         "tsx": "^4.19.0",
-         "typescript": "^5.6.0"
-+      },
-+      "engines": {
-+        "node": ">=20"
-       }
-     },
-     "node_modules/@emnapi/runtime": {

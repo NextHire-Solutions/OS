@@ -83,7 +83,7 @@ test("the grantable tools exclude the Database app", () => {
   // The status board still monitors it; nobody can be granted it. The two
   // lists answer different questions and are allowed to differ.
   const ids = GRANTABLE_TOOLS.map((t) => t.id);
-  assert.deepEqual(ids, ["inbox", "clients", "analytics", "search"]);
+  assert.deepEqual(ids, ["inbox", "clients", "analytics", "search", "onboarding"]);
   assert.equal(ids.includes("database" as never), false);
 });
 
