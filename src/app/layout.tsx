@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+// The design system, verbatim from the design file. Loaded AFTER globals so
+// its tokens and component rules win where the two overlap.
+import "./workspace.css";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -19,7 +22,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={inter.variable}>
-      <body className="min-h-screen font-sans">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

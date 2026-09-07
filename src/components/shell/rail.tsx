@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { NAV, type NavProduct } from "@/lib/workspace/nav";
-import { BrandMark } from "@/components/layout/brand-mark";
+import { RailBrand } from "./rail-brand";
 import { ToolGlyph } from "./tool-glyph";
 
 /*
@@ -44,7 +44,7 @@ export function Rail({ grants, activeId, onNavigate, badges = {}, user }: RailPr
   return (
     <aside className="rail" id="rail">
       <div className="rail-head">
-        <BrandMark />
+        <RailBrand />
       </div>
 
       <div className="rail-scroll">
