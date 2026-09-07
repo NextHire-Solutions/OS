@@ -1,6 +1,8 @@
 import type { ToolSnapshot } from "@/lib/connectors/types";
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { toGrantId } from "@/lib/workspace/tool-ids";
+import { OverviewCard } from "./overview-card";
+import type { Overview } from "@/lib/workspace/overview";
 
 /*
  * The workspace home, following the design's markup and class names.
@@ -29,11 +31,13 @@ function greeting(now: Date): string {
 export function HomeScreen({
   snapshots,
   summary,
+  overview,
   firstName,
   now,
 }: {
   snapshots: ToolSnapshot[];
   summary: { headline: string; breakdown: string };
+  overview: Overview;
   firstName: string;
   now: Date;
 }) {
@@ -49,6 +53,8 @@ export function HomeScreen({
       </div>
 
       <div className="wrap">
+        <OverviewCard overview={overview} />
+
         <div className="tools">
           {snapshots.map((tool) => {
             // Snapshots are keyed by connector id; glyphs and tints by grant

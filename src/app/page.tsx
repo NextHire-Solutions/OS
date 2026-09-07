@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { getAllSnapshots } from "@/lib/status/store";
 import { aggregate } from "@/lib/status/derive";
+import { getOverview } from "@/lib/workspace/overview";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
@@ -27,7 +28,9 @@ export default async function WorkspacePage() {
   const claimed = (requestHeaders.get("x-bs-grants") ?? "").split(",").filter(Boolean);
   const grants = ALL_TOOLS.filter((t) => claimed.includes(t));
 
-  const snapshots = await getAllSnapshots();
+  // In parallel: one is four upstream probes, the other three Analytics calls.
+  // Sequentially they would stack on every render of the home screen.
+  const [snapshots, overview] = await Promise.all([getAllSnapshots(), getOverview()]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
   const toolUrls: Record<string, string> = {};
@@ -62,6 +65,7 @@ export default async function WorkspacePage() {
           <HomeScreen
             snapshots={snapshots}
             summary={summary}
+            overview={overview}
             firstName={firstName}
             now={new Date()}
           />
