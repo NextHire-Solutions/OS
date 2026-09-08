@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { applyFilters, visibleTotal, type Filter, type Sort as WeeklySort } from "@/lib/tools/client-health/filters";
+import { deriveRows } from "@/lib/tools/client-health/summarize";
 import {
   biweeklyRows, sortBiWeekly, fmtDateUTC,
   type BwSortCol, type BiWeeklyRow,
@@ -57,9 +58,12 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
 
   // Filtered with the Weekly view's own predicates, so "At Risk" means the
   // same thing on both screens.
+  // The current week's rows, derived rather than sent — see weekly.ts.
+  const rowsAll = useMemo(() => deriveRows(data.clients, data.weekKey), [data.clients, data.weekKey]);
+
   const filtered = useMemo(
-    () => applyFilters(data.rows, { search, filter, plan: "all", sort: null as WeeklySort | null }),
-    [data.rows, search, filter],
+    () => applyFilters(rowsAll, { search, filter, plan: "all", sort: null as WeeklySort | null }),
+    [rowsAll, search, filter],
   );
 
   const rows = useMemo(
@@ -97,7 +101,7 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <div className="tbl-title">Billing Cycles</div>
             <div className="tbl-sub">
               Introductions since each client&rsquo;s last billing day, against a target scaled to their interval
-              {rows.length !== visibleTotal(data.rows) ? ` · showing ${rows.length}` : ""}
+              {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

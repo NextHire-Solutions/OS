@@ -73,12 +73,13 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const key = offset === 0 ? data.weekKey : weekKey(addDays(`${data.weekKey}T00:00:00`, offset * 7));
   const isCurrent = offset === 0;
 
-  // Offset 0 reuses the server's rows rather than deriving them again.
-  const rows = useMemo(
-    () => (offset === 0 ? data.rows : deriveRows(data.clients, key)),
-    [data.rows, data.clients, key, offset],
-  );
-  const summary = useMemo(() => (offset === 0 ? data.summary : summarize(rows)), [data.summary, rows, offset]);
+  /*
+   * Derived here rather than sent from the server. Both are a pure function of
+   * the clients and the week, so shipping them would be shipping the same data
+   * twice — 650 KB of it. The server would compute exactly this.
+   */
+  const rows = useMemo(() => deriveRows(data.clients, key), [data.clients, key]);
+  const summary = useMemo(() => summarize(rows), [rows]);
 
   const visible = useMemo(() => applyFilters(rows, { search, filter, plan, sort }), [rows, search, filter, plan, sort]);
 

@@ -2,7 +2,7 @@ import "server-only";
 
 import { loadDashboardClients } from "./loadDashboard";
 import { getMondayOf, weekKey } from "./derive";
-import { deriveRows, summarize, type WeeklyRow, type WeeklySummary } from "./summarize";
+import type { WeeklyRow, WeeklySummary } from "./summarize";
 import type { DashboardClient } from "./types";
 
 /*
@@ -21,13 +21,23 @@ import type { DashboardClient } from "./types";
 
 export type { WeeklyRow, WeeklySummary } from "./summarize";
 
+/*
+ * Deliberately carries the CLIENTS only — not the derived rows, and not the
+ * summary.
+ *
+ * Both are a pure function of the clients and the week, so sending them would
+ * be sending the same data twice. RSC's wire format dedupes shared references
+ * and hid that; JSON does not, and the API route this also feeds was returning
+ * 1.3 MB where 650 KB says the same thing.
+ *
+ * The screens derive with the same `deriveRows`/`summarize` the server would
+ * have used, so the values are identical and hydration cannot mismatch.
+ */
 export interface ClientHealthWeeklyData {
-  /** Every client, unfiltered. The browser derives the week it is showing. */
+  /** Every client, unfiltered. Each carries every week it has metrics for. */
   clients: DashboardClient[];
-  /** The week rendered on the server, so first paint needs no JavaScript. */
+  /** The current week, decided by the server so every client agrees on it. */
   weekKey: string;
-  rows: WeeklyRow[];
-  summary: WeeklySummary;
   source: "supabase" | "seed";
   error?: string;
 }
@@ -37,16 +47,6 @@ export async function getWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData>
 
   const monday = getMondayOf(new Date());
   monday.setDate(monday.getDate() + weekOffset * 7);
-  const key = weekKey(monday);
 
-  const rows = deriveRows(clients, key);
-
-  return {
-    clients,
-    weekKey: key,
-    rows,
-    summary: summarize(rows),
-    source,
-    error,
-  };
+  return { clients, weekKey: weekKey(monday), source, error };
 }

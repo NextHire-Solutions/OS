@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { applyFilters, visibleTotal, type Filter, type Sort as WeeklySort } from "@/lib/tools/client-health/filters";
+import { deriveRows } from "@/lib/tools/client-health/summarize";
 import {
   successRows, sortSuccess, scoreTone, humanizeAgo, fmtDateShort,
   type CsSortCol, type SuccessRow,
@@ -64,9 +65,12 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<{ col: CsSortCol; dir: "desc" | "asc" } | null>(null);
 
+  // The current week's rows, derived rather than sent — see weekly.ts.
+  const rowsAll = useMemo(() => deriveRows(data.clients, data.weekKey), [data.clients, data.weekKey]);
+
   const filtered = useMemo(
-    () => applyFilters(data.rows, { search, filter, plan: "all", sort: null as WeeklySort | null }),
-    [data.rows, search, filter],
+    () => applyFilters(rowsAll, { search, filter, plan: "all", sort: null as WeeklySort | null }),
+    [rowsAll, search, filter],
   );
 
   const rows = useMemo(
@@ -121,7 +125,7 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
             <div className="tbl-title">Client Success</div>
             <div className="tbl-sub">
               Account health — portal activity, stagnant introductions, hires
-              {rows.length !== visibleTotal(data.rows) ? ` · showing ${rows.length}` : ""}
+              {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
