@@ -7,6 +7,7 @@ import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
+import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
@@ -92,6 +93,10 @@ export default async function WorkspacePage({
         // only ever opened deliberately, and loading it on every home render
         // would cost a request nobody asked for.
         performance: <PerformanceScreen performance={performance} />,
+        // Both fetch on mount: each costs several upstream calls, and paying
+        // for them on every home render would slow the screen people actually
+        // land on.
+        consistency: <DiscrepanciesScreen />,
         "team-access": <TeamAccessScreen />,
       }}
     />

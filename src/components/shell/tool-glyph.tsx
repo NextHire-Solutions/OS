@@ -21,6 +21,13 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M18 17V9M13 17V5M8 17v-3" />
     </>
   ),
+  consistency: (
+    <>
+      <path d="M4 7h7M4 12h7M4 17h7" />
+      <path d="M20 7h-4M20 12h-4M20 17h-4" />
+      <path d="M13.5 5.5v13" />
+    </>
+  ),
   inbox: (
     <>
       <path d="M22 12h-6l-2 3h-4l-2-3H2" />
