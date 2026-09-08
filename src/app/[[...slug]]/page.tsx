@@ -4,6 +4,7 @@ import { aggregate } from "@/lib/status/derive";
 import { getOverview } from "@/lib/workspace/overview";
 import { getPerformance } from "@/lib/workspace/performance";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
+import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
 import { getClientsOverview } from "@/lib/clients/overview";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
@@ -13,6 +14,7 @@ import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
 import { ClientHealthSuccess } from "@/components/screens/client-health/success";
+import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeline";
 import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
@@ -72,12 +74,14 @@ export default async function WorkspacePage({
    */
   const only = (id: string) => initialId === id;
 
-  const [snapshots, overview, performance, clientHealth, clientsOverview] = await Promise.all([
+  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding] =
+    await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
     only("performance") ? getPerformance() : Promise.resolve(null),
     initialId.startsWith("clients:") ? getWeekly() : Promise.resolve(null),
     only("roster") ? getClientsOverview() : Promise.resolve(null),
+    only("onboarding:pipeline") ? getOnboardingPipeline() : Promise.resolve(null),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -133,6 +137,13 @@ export default async function WorkspacePage({
         "clients:weekly": <ClientHealthWeekly initial={initialId === "clients:weekly" ? clientHealth : null} />,
         "clients:biweekly": <ClientHealthBiWeekly initial={initialId === "clients:biweekly" ? clientHealth : null} />,
         "clients:success": <ClientHealthSuccess initial={initialId === "clients:success" ? clientHealth : null} />,
+        /*
+         * Onboarding, read from the orchestrator's own database. That service
+         * keeps running untouched — it holds the hub tokens and receives the
+         * Typeform, Stripe, EmailBison and Calendly webhooks, which must keep
+         * arriving on their current URLs.
+         */
+        "onboarding:pipeline": <OnboardingPipelineScreen initial={onboarding} />,
         "team-access": <TeamAccessScreen />,
       }}
     />
