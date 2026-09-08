@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 
-import { applyFilters, visibleTotal, type Filter, type Sort as WeeklySort } from "@/lib/tools/client-health/filters";
+import {
+  applyFilters, visibleTotal, FILTER_TABS,
+  type Filter, type Sort as WeeklySort,
+} from "@/lib/tools/client-health/filters";
 import { deriveRows } from "@/lib/tools/client-health/summarize";
 import {
   successRows, sortSuccess, scoreTone, humanizeAgo, fmtDateShort,
@@ -10,6 +13,7 @@ import {
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 import { ClientHealthFrame } from "./frame";
+import { SyncButton } from "./sync-button";
 
 /*
  * Client Health — Client Success.
@@ -34,14 +38,6 @@ const PLAN_CLASS: Record<string, string> = {
   production: "plan-prod",
   partner: "plan-partner",
 };
-
-const FILTERS: { id: Filter; label: string; cls?: string }[] = [
-  { id: "all", label: "All" },
-  { id: "risk", label: "At Risk", cls: "f-risk" },
-  { id: "ok", label: "On Track", cls: "f-ok" },
-  { id: "done", label: "Done", cls: "f-ok" },
-  { id: "paused", label: "Paused" },
-];
 
 const COLUMNS: { col: CsSortCol; label: string; title: string; num?: boolean }[] = [
   { col: "name", label: "Client", title: "Sort by client name" },
@@ -105,6 +101,10 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
         </div>
       ) : null}
 
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 18 }}>
+        <SyncButton />
+      </div>
+
       <div className="cards" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         <Card label="Clients" value={rows.length} sub="in this view" />
         <Card
@@ -137,12 +137,13 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
               aria-label="Search clients"
             />
             <span className="pills">
-              {FILTERS.map((f) => (
+              {FILTER_TABS.map((f) => (
                 <button
                   key={f.id}
                   className={`fp${f.cls ? ` ${f.cls}` : ""}${filter === f.id ? " on" : ""}`}
                   onClick={() => setFilter(f.id)}
                   aria-pressed={filter === f.id}
+                  title={f.title}
                 >
                   {f.label}
                 </button>

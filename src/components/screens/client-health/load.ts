@@ -56,6 +56,27 @@ export function loadClientHealth(): Promise<ClientHealthWeeklyData> {
   return inflight;
 }
 
+/*
+ * Subscribers, so a refresh reaches every mounted screen.
+ *
+ * All three Client Health screens stay mounted once visited. After a sync, the
+ * one you are looking at must update — but so must the other two, or switching
+ * to Bi-Weekly would show pre-sync numbers with no indication they are stale.
+ */
+const listeners = new Set<(d: ClientHealthWeeklyData) => void>();
+
+/**
+ * Discards the cached data and fetches it again, then tells every mounted
+ * screen. Called after a sync: the tool has new numbers, so ours are stale by
+ * definition and showing the old ones reads as the sync having failed.
+ */
+export async function refreshClientHealth(): Promise<ClientHealthWeeklyData> {
+  inflight = null;
+  const data = await loadClientHealth();
+  for (const notify of listeners) notify(data);
+  return data;
+}
+
 export interface ScreenData {
   data: ClientHealthWeeklyData | null;
   error: string | null;
@@ -73,6 +94,13 @@ export interface ScreenData {
 export function useClientHealth(initial: ClientHealthWeeklyData | null): ScreenData {
   const [data, setData] = useState<ClientHealthWeeklyData | null>(initial);
   const [error, setError] = useState<string | null>(null);
+
+  // Stay subscribed for the screen's whole life, not just until it has data:
+  // a sync must update a screen that loaded long ago.
+  useEffect(() => {
+    listeners.add(setData);
+    return () => { listeners.delete(setData); };
+  }, []);
 
   useEffect(() => {
     if (initial) return;

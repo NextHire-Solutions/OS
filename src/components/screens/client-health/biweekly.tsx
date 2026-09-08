@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 
-import { applyFilters, visibleTotal, type Filter, type Sort as WeeklySort } from "@/lib/tools/client-health/filters";
+import {
+  applyFilters, visibleTotal, FILTER_TABS,
+  type Filter, type Sort as WeeklySort,
+} from "@/lib/tools/client-health/filters";
 import { deriveRows } from "@/lib/tools/client-health/summarize";
 import {
   biweeklyRows, sortBiWeekly, fmtDateUTC,
@@ -10,6 +13,7 @@ import {
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 import { ClientHealthFrame } from "./frame";
+import { SyncButton } from "./sync-button";
 
 /*
  * Client Health — Bi-Weekly.
@@ -32,14 +36,6 @@ const PLAN_CLASS: Record<string, string> = {
   production: "plan-prod",
   partner: "plan-partner",
 };
-
-const FILTERS: { id: Filter; label: string; cls?: string }[] = [
-  { id: "all", label: "All" },
-  { id: "risk", label: "At Risk", cls: "f-risk" },
-  { id: "ok", label: "On Track", cls: "f-ok" },
-  { id: "done", label: "Done", cls: "f-ok" },
-  { id: "paused", label: "Paused" },
-];
 
 const COLUMNS: { col: BwSortCol; label: string; title: string }[] = [
   { col: "name", label: "Client", title: "Sort by client name" },
@@ -88,6 +84,10 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </div>
       ) : null}
 
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 18 }}>
+        <SyncButton />
+      </div>
+
       <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <Card label="Clients" value={rows.length} sub="in this cycle view" />
         <Card label="Billing in ≤3 days" value={dueSoon} sub="invoice imminent" tone={dueSoon > 0 ? "n-risk" : undefined} />
@@ -113,12 +113,13 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
               aria-label="Search clients"
             />
             <span className="pills">
-              {FILTERS.map((f) => (
+              {FILTER_TABS.map((f) => (
                 <button
                   key={f.id}
                   className={`fp${f.cls ? ` ${f.cls}` : ""}${filter === f.id ? " on" : ""}`}
                   onClick={() => setFilter(f.id)}
                   aria-pressed={filter === f.id}
+                  title={f.title}
                 >
                   {f.label}
                 </button>

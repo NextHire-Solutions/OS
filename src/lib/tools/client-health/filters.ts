@@ -21,6 +21,30 @@ export type Filter =
 export type SortCol = "leftWeek" | "campaigns";
 export interface Sort { col: SortCol; dir: "asc" | "desc" }
 
+/*
+ * The tool's nine filters, in its order. Shared by all three screens so they
+ * cannot drift apart.
+ *
+ * The last two are tabs rather than filters: hidden and client-paused clients
+ * are excluded from every other view, so these are the only way to reach them.
+ * Leaving them out would make churned clients unreachable from the workspace.
+ *
+ * "Paused" and "Client Paused" are different things and both are kept — the
+ * first means the campaign stopped running, the second that somebody paused
+ * the client. Collapsing them would lose a distinction the tool draws.
+ */
+export const FILTER_TABS: { id: Filter; label: string; cls?: string; title: string }[] = [
+  { id: "all", label: "All", title: "Every active client" },
+  { id: "risk", label: "At Risk", cls: "f-risk", title: "Below half their weekly target" },
+  { id: "ok", label: "On Track", cls: "f-ok", title: "Between half target and full" },
+  { id: "done", label: "Done", cls: "f-ok", title: "Met their weekly target" },
+  { id: "active", label: "Active", title: "Has a campaign running now" },
+  { id: "paused", label: "Paused", title: "Campaign launched, but not running now" },
+  { id: "inactive", label: "Inactive", title: "No campaign has ever launched" },
+  { id: "client-paused", label: "Client Paused", title: "Clients paused by hand" },
+  { id: "hidden", label: "Hidden", title: "Churned clients, hidden from every other view" },
+];
+
 export interface FilterState {
   search: string;
   filter: Filter;

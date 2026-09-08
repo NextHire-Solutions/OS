@@ -5,11 +5,12 @@ import { useMemo, useState } from "react";
 import { addDays, formatWeek, getMondayOf, weekKey } from "@/lib/tools/client-health/derive";
 import { deriveRows, summarize, type WeeklyRow } from "@/lib/tools/client-health/summarize";
 import {
-  applyFilters, visibleTotal,
+  applyFilters, visibleTotal, FILTER_TABS,
   type Filter, type Sort, type SortCol,
 } from "@/lib/tools/client-health/filters";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 import { ClientHealthFrame } from "./frame";
+import { SyncButton } from "./sync-button";
 
 /*
  * Client Health — Weekly.
@@ -45,14 +46,6 @@ const PLAN_CLASS: Record<string, string> = {
   production: "plan-prod",
   partner: "plan-partner",
 };
-
-const FILTERS: { id: Filter; label: string; cls?: string }[] = [
-  { id: "all", label: "All" },
-  { id: "risk", label: "At Risk", cls: "f-risk" },
-  { id: "ok", label: "On Track", cls: "f-ok" },
-  { id: "done", label: "Done", cls: "f-ok" },
-  { id: "paused", label: "Paused" },
-];
 
 const PLANS: { id: string; label: string }[] = [
   { id: "all", label: "All plans" },
@@ -124,6 +117,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             →
           </button>
         </span>
+        <SyncButton />
       </div>
 
       <div className="cards" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
@@ -186,12 +180,13 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
               ))}
             </select>
             <span className="pills">
-              {FILTERS.map((f) => (
+              {FILTER_TABS.map((f) => (
                 <button
                   key={f.id}
                   className={`fp${f.cls ? ` ${f.cls}` : ""}${filter === f.id ? " on" : ""}`}
                   onClick={() => setFilter(f.id)}
                   aria-pressed={filter === f.id}
+                  title={f.title}
                 >
                   {f.label}
                 </button>
