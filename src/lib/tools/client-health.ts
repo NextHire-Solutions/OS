@@ -16,12 +16,22 @@ import { baseUrlEnv, optionalEnv, NotConfiguredError } from "@/lib/env";
  *   /api/metrics/weekly   emails sent and introductions, per client per week
  *
  * ---------------------------------------------------------------------------
- * STATUS IS DERIVED HERE, ONCE
+ * THE DERIVATIONS ARE A PORT OF THE TOOL'S OWN, NOT AN APPROXIMATION
  *
- * "At risk" and "on track" are judgements, not stored values, and the tool
- * makes the same judgement in its own UI. Deriving it in one place means the
- * workspace cannot drift from the tool by quietly using a different rule —
- * which is the exact failure mode the Consistency screen exists to catch.
+ * Everything below mirrors `lib/derive.ts` in Client Health line for line. The
+ * workspace must show the SAME number as the tool, and the only way to be sure
+ * of that is to use the same rule rather than a reasonable-looking one.
+ *
+ * The field that matters most: introductions are `intros_corofy`, the count
+ * imported from Master Inbox — NOT `intros`. Reading the wrong one gives zero
+ * for every client and marks the whole roster at risk, which is exactly what a
+ * plausible guess produced here before this was checked against the source.
+ *
+ * Status precedence, from derive.ts:
+ *   no target      -> pending
+ *   met target     -> done
+ *   below half     -> risk
+ *   otherwise      -> ok
  */
 
 const TIMEOUT = 15_000;
@@ -100,13 +110,16 @@ function deriveStatus(input: {
   paused: boolean;
   target: number;
   intros: number;
-  hasData: boolean;
 }): ClientStatus {
+  // Hidden and paused are display states the tool applies before its own
+  // status rule, so they are checked first here too.
   if (input.hidden) return "churned";
   if (input.paused) return "paused";
-  if (input.target <= 0 || !input.hasData) return "pending";
+
+  // From derive.ts, unchanged.
+  if (input.target === 0) return "pending";
   if (input.intros >= input.target) return "done";
-  if (input.intros * 2 < input.target) return "at-risk";
+  if (input.intros < input.target / 2) return "at-risk";
   return "on-track";
 }
 
@@ -165,7 +178,9 @@ export async function getClientHealthWeekly(): Promise<ClientHealthWeekly> {
 
     const week = latest.get(id);
     const target = num(c?.weekly_target) ?? 0;
-    const intros = num(week?.intros) ?? 0;
+    // intros_corofy — the count imported from Master Inbox, which is what the
+    // tool counts. `intros` is a different, mostly-empty column.
+    const intros = num(week?.intros_corofy) ?? 0;
     const emailsSent = num(week?.emails_sent);
 
     return [{
@@ -179,7 +194,6 @@ export async function getClientHealthWeekly(): Promise<ClientHealthWeekly> {
         paused: c?.client_paused === true,
         target,
         intros,
-        hasData: week !== undefined,
       }),
       emailsToday: num(c?.emails_today),
       emailsSent,
