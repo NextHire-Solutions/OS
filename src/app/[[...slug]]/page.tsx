@@ -4,12 +4,14 @@ import { aggregate } from "@/lib/status/derive";
 import { getOverview } from "@/lib/workspace/overview";
 import { getPerformance } from "@/lib/workspace/performance";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
+import { getClientsOverview } from "@/lib/clients/overview";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
+import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
@@ -46,11 +48,12 @@ export default async function WorkspacePage({
 
   // In parallel: one is four upstream probes, the other three Analytics calls.
   // Sequentially they would stack on every render of the home screen.
-  const [snapshots, overview, performance, clientHealth] = await Promise.all([
+  const [snapshots, overview, performance, clientHealth, clientsOverview] = await Promise.all([
     getAllSnapshots(),
     getOverview(),
     getPerformance(),
     getWeekly(),
+    getClientsOverview(),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -99,6 +102,7 @@ export default async function WorkspacePage({
         // Both fetch on mount: each costs several upstream calls, and paying
         // for them on every home render would slow the screen people actually
         // land on.
+        roster: <ClientsScreen data={clientsOverview} />,
         consistency: <DiscrepanciesScreen />,
         // Built here, not embedded — the live tool is untouched.
         "clients:weekly": <ClientHealthWeekly data={clientHealth} />,
