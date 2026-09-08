@@ -46,29 +46,32 @@ Source: `apps/client-health`. Database: `CLIENT_HEALTH_SUPABASE_URL`.
 |---|---|---|
 | Search by name | ✅ | ✅ |
 | All / At Risk / On Track / Done / Paused | ✅ | ✅ |
-| **Active** (has a running campaign) | ✅ | 🔸 predicate ported and tested, no pill yet |
-| **Inactive** (never launched) | ✅ | 🔸 same |
-| **Client Paused** tab | ✅ | 🔸 same |
-| **Hidden** tab (churned clients) | ✅ | 🔸 same |
+| Active (has a running campaign) | ✅ | ✅ |
+| Inactive (never launched) | ✅ | ✅ |
+| Client Paused tab | ✅ | ✅ |
+| Hidden tab (churned clients) | ✅ | ✅ |
 | Plan filter | ✅ | ✅ |
 | **Date-range filter** (by start date) | ✅ | ⬜️ |
 | Column sorting | ✅ | ✅ |
 
-The four missing pills are the cheap ones: `applyFilters` already implements
-every predicate and each is covered by a test. They are absent from the button
-row, not from the logic.
+All nine of the tool's filters are present, on all three screens, sharing one
+list so they cannot drift apart. Hidden and Client Paused matter more than they
+look: those clients are excluded from every other view, so without those tabs a
+churned client is unreachable from the workspace entirely.
 
-### Writes — the real gap
+Still missing: the date-range filter on start date.
+
+### Writes
 
 | | Live | Workspace |
 |---|---|---|
-| **Sync now** → `POST /api/sync/run` | ✅ | ⬜️ |
-| **Add client** → `POST /api/clients` | ✅ | ⬜️ |
-| **Edit client** → `PATCH /api/clients` | ✅ | ⬜️ |
-| **Delete client** → `DELETE /api/clients?id=` | ✅ | ⬜️ |
+| **Sync now** → `POST /api/sync/run` | ✅ | ✅ button, on all three screens |
+| Add client → `POST /api/clients` | ✅ | 🔸 API proxied, no form yet |
+| Edit client → `PATCH /api/clients` | ✅ | 🔸 API proxied, no form yet |
+| Delete client → `DELETE /api/clients?id=` | ✅ | 🔸 API proxied, no confirm dialog yet |
+| Toggle client paused → `PATCH` | ✅ | 🔸 API proxied, no control yet |
 | Inline metric edit | ⛔️ | ⛔️ not a feature — see below |
-| **Toggle client paused** → `PATCH` | ✅ | ⬜️ |
-| Toast feedback on every write | ✅ | ⬜️ |
+| Toast feedback on writes | ✅ | ✅ on sync |
 
 The Weekly table's number cells look editable — they are `<input>` elements —
 but the live tool marks them `readOnly` and its `/api/metrics/weekly` is a GET.
