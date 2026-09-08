@@ -1,8 +1,11 @@
+"use client";
+
 import type { ToolSnapshot } from "@/lib/connectors/types";
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { toGrantId } from "@/lib/workspace/tool-ids";
 import { greeting } from "@/lib/workspace/greeting";
 import { OverviewCard } from "./overview-card";
+import { Lazy } from "./lazy";
 import type { Overview } from "@/lib/workspace/overview";
 
 /*
@@ -33,7 +36,8 @@ export function HomeScreen({
 }: {
   snapshots: ToolSnapshot[];
   summary: { headline: string; breakdown: string };
-  overview: Overview;
+  /** Null until loaded — only the home screen needs it, and it costs five calls. */
+  overview: Overview | null;
   firstName: string;
   now: Date;
 }) {
@@ -49,7 +53,16 @@ export function HomeScreen({
       </div>
 
       <div className="wrap">
-        <OverviewCard overview={overview} />
+        {/* The one expensive part of this screen: five upstream calls. It is
+            loaded here rather than on every route in the workspace. */}
+        <Lazy<Overview>
+          initial={overview}
+          url="/api/workspace/home"
+          label="The overview"
+          skeleton={<OverviewSkeleton />}
+        >
+          {(o) => <OverviewCard overview={o} />}
+        </Lazy>
 
         <div className="tools">
           {snapshots.map((tool) => {
@@ -143,4 +156,25 @@ function formatMetric(metric: ToolSnapshot["metrics"][number]): string {
     default:
       return value.toLocaleString("en-US");
   }
+}
+
+/* Shaped like the overview card so the page does not jump when it arrives. */
+function OverviewSkeleton() {
+  return (
+    <div className="ov-card" aria-busy="true" style={{ minHeight: 188 }}>
+      <div className="ov-top">
+        <div className="ov-title">
+          <span style={{ display: "block", width: 150, height: 15, borderRadius: 5, background: "var(--inset-2)" }} />
+        </div>
+      </div>
+      <div className="ovkpis">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div className="ovk" key={i}>
+            <div className="ovk-l"><span style={{ display: "block", width: 62, height: 10, borderRadius: 5, background: "var(--inset-2)" }} /></div>
+            <div className="ovk-n"><span style={{ display: "block", width: 52, height: 22, borderRadius: 5, background: "var(--inset-2)" }} /></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

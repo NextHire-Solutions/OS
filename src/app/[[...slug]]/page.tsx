@@ -49,29 +49,35 @@ export default async function WorkspacePage({
   const grants = ALL_TOOLS.filter((t) => claimed.includes(t));
 
   /*
-   * Client Health's data is loaded ONLY when the page is opened on one of its
-   * screens. It is by far the largest thing the workspace holds — 48 clients
-   * with every week of metrics each — and it used to be server-rendered into
-   * every route, whether or not that route displayed it. Measured on the live
-   * deployment before this changed:
+   * Each of these loaders feeds exactly ONE screen, and
+   * between them they made around eleven upstream HTTP calls:
    *
-   *   /performance   925,690 bytes of HTML, 722,535 of them the client list
+   *   getOverview          5 calls   Home
+   *   getPerformance       2 calls   Performance
+   *   getClientsOverview   4 calls   Clients
+   *   getWeekly            650 KB of clients, Client Health's three views
    *
-   * 92% of every page was data that page does not show. The three Client
-   * Health screens now fetch it themselves when they are opened, sharing one
-   * request; see `loadClientHealth()`. Opening one directly still gets it
-   * server-rendered, so a pasted link paints with no loading state.
+   * All four ran on every route. Measured on the live deployment before this
+   * changed, /performance served 925,690 bytes of HTML — 722,535 of them the
+   * client list, on a page that never shows it. And opening it waited on the
+   * roster's three tools and the home overview's five calls before it could
+   * render two numbers — 1.0 to 2.5 seconds to first byte on pages carrying no
+   * data of their own.
+   *
+   * Now the server loads only the screen being opened, so a pasted link still
+   * paints immediately with no loading state, and the rest fetch themselves on
+   * first visit and stay mounted. `getAllSnapshots` is the exception: it feeds
+   * the sidebar's status dots on every screen, and it reads a cached store
+   * rather than making calls of its own.
    */
-  const wantsClientHealth = initialId.startsWith("clients:");
+  const only = (id: string) => initialId === id;
 
-  // In parallel: one is four upstream probes, the other three Analytics calls.
-  // Sequentially they would stack on every render of the home screen.
   const [snapshots, overview, performance, clientHealth, clientsOverview] = await Promise.all([
     getAllSnapshots(),
-    getOverview(),
-    getPerformance(),
-    wantsClientHealth ? getWeekly() : Promise.resolve(null),
-    getClientsOverview(),
+    only("home") ? getOverview() : Promise.resolve(null),
+    only("performance") ? getPerformance() : Promise.resolve(null),
+    initialId.startsWith("clients:") ? getWeekly() : Promise.resolve(null),
+    only("roster") ? getClientsOverview() : Promise.resolve(null),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -113,23 +119,16 @@ export default async function WorkspacePage({
             now={new Date()}
           />
         ),
-        // Fetches its own data on mount rather than server-rendering: it is
-        // only ever opened deliberately, and loading it on every home render
-        // would cost a request nobody asked for.
-        performance: <PerformanceScreen performance={performance} />,
-        // Both fetch on mount: each costs several upstream calls, and paying
-        // for them on every home render would slow the screen people actually
-        // land on.
-        roster: <ClientsScreen data={clientsOverview} />,
+        performance: <PerformanceScreen initial={performance} />,
+        roster: <ClientsScreen initial={clientsOverview} />,
         consistency: <DiscrepanciesScreen />,
         /*
          * Client Health, built here rather than embedded — the live tool is
          * untouched and keeps running as a background worker.
          *
-         * All three share one `getWeekly()` read. The load is the whole client
-         * list with every week's metrics, which all three views need anyway, so
-         * splitting it into three fetches would triple the work to show the
-         * same rows.
+         * All three share one read — the whole client list, which each of them
+         * needs anyway. Only the view actually opened gets it from the server;
+         * the other two fetch it themselves, sharing one request.
          */
         "clients:weekly": <ClientHealthWeekly initial={initialId === "clients:weekly" ? clientHealth : null} />,
         "clients:biweekly": <ClientHealthBiWeekly initial={initialId === "clients:biweekly" ? clientHealth : null} />,

@@ -1,4 +1,8 @@
+"use client";
+
 import type { ClientsOverview, ClientRow } from "@/lib/clients/overview";
+
+import { Lazy, PlaceholderScreen } from "./lazy";
 
 /*
  * Clients — one row per client, and what each tool knows about them.
@@ -19,7 +23,7 @@ const PLAN_CLASS: Record<string, string> = {
   partner: "plan-partner",
 };
 
-export function ClientsScreen({ data }: { data: ClientsOverview }) {
+function ClientsView({ data }: { data: ClientsOverview }) {
   const present = (fn: (r: ClientRow) => boolean) => data.rows.filter(fn).length;
 
   return (
@@ -214,5 +218,24 @@ function Card({
       <div className={`card-n tnum${tone ? ` ${tone}` : ""}`}>{value}</div>
       <div className="card-s">{sub}</div>
     </div>
+  );
+}
+
+/*
+ * The public screen. `initial` is set only when the page was opened here —
+ * then it server-renders with no loading state and no second round trip.
+ * Otherwise it fetches on first visit and stays mounted, so returning to it is
+ * instant. See `Lazy` for why every route no longer pays for this data.
+ */
+export function ClientsScreen({ initial }: { initial: ClientsOverview | null }) {
+  return (
+    <Lazy<ClientsOverview>
+      initial={initial}
+      url="/api/workspace/roster"
+      label="The client roster"
+      skeleton={<PlaceholderScreen cards={4} />}
+    >
+      {(d) => <ClientsView data={d} />}
+    </Lazy>
   );
 }

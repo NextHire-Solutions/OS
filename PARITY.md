@@ -101,6 +101,11 @@ Query layer copied verbatim; connection verified against the live database.
 | Clients | ✅ | ⬜️ |
 | Schedule / job runs | ✅ | ⬜️ |
 
+> **Paused deliberately.** The tool is being changed right now, so building
+> screens against it would mean doing the work twice — the copied query layer
+> would need re-copying after those changes land too. Agent Search and
+> Onboarding come first; Analytics resumes once its changes have settled.
+
 **Cron triggers.** `GET /api/cron/[job]`, guarded by `CRON_SECRET`, is how a
 human re-runs a job by hand. Every job is idempotent, so re-running one costs
 freshness and nothing else. The workspace should expose these; it does not yet.

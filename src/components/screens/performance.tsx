@@ -1,4 +1,8 @@
+"use client";
+
 import type { Performance } from "@/lib/workspace/performance";
+
+import { Lazy, PlaceholderScreen } from "./lazy";
 
 /*
  * Performance — client base, plans and movement.
@@ -15,7 +19,7 @@ import type { Performance } from "@/lib/workspace/performance";
 
 const MISSING = "#B9C0CB";
 
-export function PerformanceScreen({ performance }: { performance: Performance }) {
+function PerformanceView({ performance }: { performance: Performance }) {
   const { totals, plans, months, unavailable } = performance;
 
   if (unavailable) {
@@ -159,5 +163,24 @@ function Card({
         {sub}
       </div>
     </div>
+  );
+}
+
+/*
+ * The public screen. `initial` is set only when the page was opened here —
+ * then it server-renders with no loading state and no second round trip.
+ * Otherwise it fetches on first visit and stays mounted, so returning to it is
+ * instant. See `Lazy` for why every route no longer pays for this data.
+ */
+export function PerformanceScreen({ initial }: { initial: Performance | null }) {
+  return (
+    <Lazy<Performance>
+      initial={initial}
+      url="/api/workspace/performance"
+      label="Performance"
+      skeleton={<PlaceholderScreen cards={4} />}
+    >
+      {(d) => <PerformanceView performance={d} />}
+    </Lazy>
   );
 }
