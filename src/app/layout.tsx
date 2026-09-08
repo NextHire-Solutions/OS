@@ -4,6 +4,7 @@ import "./globals.css";
 // The design system, verbatim from the design file. Loaded AFTER globals so
 // its tokens and component rules win where the two overlap.
 import "./workspace.css";
+import "./shell.css";
 
 const inter = Inter({
   subsets: ["latin"],

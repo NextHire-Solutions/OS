@@ -1,0 +1,48 @@
+/* ===========================================================================
+   Shell additions.
+
+   Kept OUT of workspace.css so that file stays a verbatim copy of the design
+   and can be diffed against it when the design changes. Everything here is
+   about hosting a tool inside the stage — a concern the design file describes
+   but does not implement, since its panes are mock screens rather than real
+   embedded applications.
+   =========================================================================== */
+
+/*
+ * A tool fills the stage below the top bar.
+ *
+ * Positioned against .stage rather than laid out inside .scroll: an embedded
+ * application does its own scrolling, and nesting that inside the workspace's
+ * scroll container produces two scrollbars and a page that never quite reaches
+ * the bottom. Taking the pane out of the flow gives the tool the full area and
+ * exactly one scrollbar — its own.
+ *
+ * The 70px matches .topbar's height. It is the one number shared between this
+ * file and the design; if the bar's height changes there, it changes here.
+ */
+.pane-host {
+  position: absolute;
+  inset: 70px 0 0 0;
+  display: none;
+}
+
+.pane-host.on {
+  display: block;
+}
+
+.tool-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--surface);
+}
+
+/*
+ * A pane that is mounted but not on screen is hidden with the `hidden`
+ * attribute, which must win over .screen.on — otherwise every warm pane would
+ * stack on top of the visible one.
+ */
+.pane-host[hidden] {
+  display: none !important;
+}
