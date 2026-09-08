@@ -1,4 +1,14 @@
-import type { ClientHealthWeeklyData, WeeklyRow } from "@/lib/tools/client-health/weekly";
+"use client";
+
+import { useMemo, useState } from "react";
+
+import { addDays, formatWeek, getMondayOf, weekKey } from "@/lib/tools/client-health/derive";
+import { deriveRows, summarize, type WeeklyRow } from "@/lib/tools/client-health/summarize";
+import {
+  applyFilters, visibleTotal,
+  type Filter, type Sort, type SortCol,
+} from "@/lib/tools/client-health/filters";
+import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
 /*
  * Client Health — Weekly.
@@ -6,6 +16,17 @@ import type { ClientHealthWeeklyData, WeeklyRow } from "@/lib/tools/client-healt
  * The design file's markup: thirteen cards in the order it lists them, the
  * table it specifies, its class names. The numbers come from the tool's own
  * derive(), so this screen and the live app cannot disagree.
+ *
+ * Every control here does the same thing the live tool's does — the filter
+ * predicates below are a direct port of its switch statement, because a pill
+ * labelled "At Risk" that selects a slightly different set than the tool's is
+ * worse than no pill at all.
+ *
+ * Changing week is a re-derive in the browser, not a round trip: each client
+ * already carries `metricsByWeek` for every week it has. The base week comes
+ * from the server's own answer rather than a fresh `new Date()`, so the first
+ * client render is identical to the server's and hydration never mismatches
+ * across a Monday boundary.
  *
  * A cell with no data shows an em dash. Never a zero — on a health dashboard
  * "0 emails sent" is a claim, and a different one from "we have no figure".
@@ -24,11 +45,48 @@ const PLAN_CLASS: Record<string, string> = {
   partner: "plan-partner",
 };
 
-export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
-  const s = data.summary;
+const FILTERS: { id: Filter; label: string; cls?: string }[] = [
+  { id: "all", label: "All" },
+  { id: "risk", label: "At Risk", cls: "f-risk" },
+  { id: "ok", label: "On Track", cls: "f-ok" },
+  { id: "done", label: "Done", cls: "f-ok" },
+  { id: "paused", label: "Paused" },
+];
 
-  // Hidden clients are off-roster in the tool and are not listed here either.
-  const visible = data.rows.filter((r) => !r.client.hidden);
+const PLANS: { id: string; label: string }[] = [
+  { id: "all", label: "All plans" },
+  { id: "minimum", label: "Minimum" },
+  { id: "production", label: "Production" },
+  { id: "partner", label: "Partner" },
+];
+
+export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
+  const [offset, setOffset] = useState(0);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [plan, setPlan] = useState("all");
+  const [sort, setSort] = useState<Sort | null>(null);
+
+  // The week being shown, measured from the server's own answer so offset 0
+  // reproduces the server render exactly.
+  const key = offset === 0 ? data.weekKey : weekKey(addDays(`${data.weekKey}T00:00:00`, offset * 7));
+  const isCurrent = offset === 0;
+
+  // Offset 0 reuses the server's rows rather than deriving them again.
+  const rows = useMemo(
+    () => (offset === 0 ? data.rows : deriveRows(data.clients, key)),
+    [data.rows, data.clients, key, offset],
+  );
+  const summary = useMemo(() => (offset === 0 ? data.summary : summarize(rows)), [data.summary, rows, offset]);
+
+  const visible = useMemo(() => applyFilters(rows, { search, filter, plan, sort }), [rows, search, filter, plan, sort]);
+
+  const s = summary;
+
+  const toggleSort = (col: SortCol) =>
+    setSort((cur) =>
+      cur?.col !== col ? { col, dir: "desc" } : cur.dir === "desc" ? { col, dir: "asc" } : null,
+    );
 
   return (
     <div className="wrap">
@@ -41,11 +99,26 @@ export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 18 }}>
         <span className="pills" style={{ padding: 0 }}>
-          <button className="fp">←</button>
-          <button className="fp on" style={{ minWidth: 150 }}>This Week</button>
-          <button className="fp">→</button>
+          <button className="fp" onClick={() => setOffset((o) => o - 1)} aria-label="Previous week" title="Previous week">←</button>
+          <button
+            className={`fp${isCurrent ? " on" : ""}`}
+            style={{ minWidth: 150 }}
+            onClick={() => setOffset(0)}
+            title={isCurrent ? "Showing this week" : "Back to this week"}
+          >
+            {isCurrent ? "This Week" : formatWeek(getMondayOf(`${key}T00:00:00`))}
+          </button>
+          <button
+            className="fp"
+            onClick={() => setOffset((o) => Math.min(0, o + 1))}
+            disabled={isCurrent}
+            aria-label="Next week"
+            title={isCurrent ? "This is the current week" : "Next week"}
+            style={isCurrent ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+          >
+            →
+          </button>
         </span>
-        <button className="btn btn-pri">+ Add Client</button>
       </div>
 
       <div className="cards" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
@@ -83,16 +156,41 @@ export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
         <div className="tbl-head">
           <div>
             <div className="tbl-title">Client Health</div>
-            <div className="tbl-sub">Live data from Instantly · Bison · MasterInbox</div>
+            <div className="tbl-sub">
+              Live data from Instantly · Bison · MasterInbox
+              {visible.length !== visibleTotal(rows) ? ` · showing ${visible.length}` : ""}
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <input className="inp" placeholder="Search clients…" />
+            <input
+              className="inp"
+              placeholder="Search clients…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search clients"
+            />
+            <select
+              className="inp"
+              value={plan}
+              onChange={(e) => setPlan(e.target.value)}
+              aria-label="Filter by plan"
+              style={{ cursor: "pointer" }}
+            >
+              {PLANS.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
             <span className="pills">
-              <button className="fp on">All</button>
-              <button className="fp f-risk">At Risk</button>
-              <button className="fp f-ok">On Track</button>
-              <button className="fp f-ok">Done</button>
-              <button className="fp">Paused</button>
+              {FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  className={`fp${f.cls ? ` ${f.cls}` : ""}${filter === f.id ? " on" : ""}`}
+                  onClick={() => setFilter(f.id)}
+                  aria-pressed={filter === f.id}
+                >
+                  {f.label}
+                </button>
+              ))}
             </span>
           </div>
         </div>
@@ -106,8 +204,8 @@ export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
                 <th>Emails Sent</th>
                 <th>Intros This Week</th>
                 <th>Conv. Rate</th>
-                <th>Left This Week</th>
-                <th>Campaign Progress</th>
+                <SortableTh col="leftWeek" sort={sort} onClick={toggleSort}>Left This Week</SortableTh>
+                <SortableTh col="campaigns" sort={sort} onClick={toggleSort}>Campaign Progress</SortableTh>
                 <th>Last Intro</th>
                 <th>Status</th>
                 <th>Interested</th>
@@ -117,14 +215,44 @@ export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
               </tr>
             </thead>
             <tbody>
-              {visible.map((row) => (
-                <Row key={row.client.id} row={row} />
-              ))}
+              {visible.length === 0 ? (
+                <tr>
+                  <td colSpan={13} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                    No clients match {search.trim() ? `“${search.trim()}”` : "this filter"}.
+                  </td>
+                </tr>
+              ) : (
+                visible.map((row) => <Row key={row.client.id} row={row} />)
+              )}
             </tbody>
           </table>
         </div>
       </div>
     </div>
+  );
+}
+
+function SortableTh({
+  col, sort, onClick, children,
+}: {
+  col: SortCol;
+  sort: Sort | null;
+  onClick: (col: SortCol) => void;
+  children: React.ReactNode;
+}) {
+  const active = sort?.col === col;
+  return (
+    <th
+      onClick={() => onClick(col)}
+      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+      title="Sort"
+      aria-sort={active ? (sort.dir === "desc" ? "descending" : "ascending") : "none"}
+    >
+      {children}
+      <span style={{ opacity: active ? 1 : 0.28, marginLeft: 5 }}>
+        {active && sort.dir === "asc" ? "↑" : "↓"}
+      </span>
+    </th>
   );
 }
 

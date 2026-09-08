@@ -11,6 +11,8 @@ import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
+import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
+import { ClientHealthSuccess } from "@/components/screens/client-health/success";
 import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
@@ -104,8 +106,18 @@ export default async function WorkspacePage({
         // land on.
         roster: <ClientsScreen data={clientsOverview} />,
         consistency: <DiscrepanciesScreen />,
-        // Built here, not embedded — the live tool is untouched.
+        /*
+         * Client Health, built here rather than embedded — the live tool is
+         * untouched and keeps running as a background worker.
+         *
+         * All three share one `getWeekly()` read. The load is the whole client
+         * list with every week's metrics, which all three views need anyway, so
+         * splitting it into three fetches would triple the work to show the
+         * same rows.
+         */
         "clients:weekly": <ClientHealthWeekly data={clientHealth} />,
+        "clients:biweekly": <ClientHealthBiWeekly data={clientHealth} />,
+        "clients:success": <ClientHealthSuccess data={clientHealth} />,
         "team-access": <TeamAccessScreen />,
       }}
     />

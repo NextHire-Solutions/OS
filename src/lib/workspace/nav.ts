@@ -100,21 +100,17 @@ export const NAV: NavSection[] = [
         baseUrlEnv: "CLIENT_HEALTH_URL",
         children: [
           /*
-           * Three views of ONE page, switched by React state:
-           *   const [view, setView] = useState<'weekly'|'biweekly'|'success'>('weekly')
+           * All three are built here, reading Client Health's own database
+           * through the tool's own derive(). The live tool keeps running
+           * untouched — it is a background worker now, not something we embed.
            *
-           * There is no URL for the other two. The design promotes them to rail
-           * siblings, and a rail item needs an address — so this needs a small
-           * change in Client Health to seed that state from `?view=`.
-           * `patches/client-health-view-param.patch` does exactly that.
-           *
-           * Until it is applied all three land on Weekly, where the tool's own
-           * toggle still works. Marked unverified so the shell can say "opens
-           * the Weekly view" rather than silently appearing broken.
+           * In the live tool these are three states of one page with no URL of
+           * their own. Here each is a real address, which is what lets the rail
+           * link straight to Bi-Weekly and the browser's back button work.
            */
           { id: "weekly", label: "Weekly", path: "/", verified: true },
-          { id: "biweekly", label: "Bi-Weekly", path: "/?view=biweekly", verified: false },
-          { id: "success", label: "Client Success", path: "/?view=success", verified: false },
+          { id: "biweekly", label: "Bi-Weekly", path: "/?view=biweekly", verified: true },
+          { id: "success", label: "Client Success", path: "/?view=success", verified: true },
         ],
       },
       {
