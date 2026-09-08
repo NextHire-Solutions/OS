@@ -59,7 +59,7 @@ export function Workspace({
    * link rendered the shell with an empty stage and nothing to show.
    */
   const [mounted, setMounted] = useState<string[]>(() =>
-    initialId.includes(":") ? [initialId] : [],
+    initialId.includes(":") && !screens[initialId] ? [initialId] : [],
   );
 
   const all = useMemo(() => destinations(), []);
@@ -76,7 +76,7 @@ export function Workspace({
       if (window.location.pathname !== path) window.history.pushState({ id }, "", path);
     }
     setMounted((live) => {
-      if (!id.includes(":")) return live;
+      if (!id.includes(":") || screens[id]) return live;
       if (live.includes(id)) return [...live.filter((x) => x !== id), id];
       /*
        * Three live panes, evicting the least recently used.
@@ -87,7 +87,7 @@ export function Workspace({
        */
       return [...live, id].slice(-3);
     });
-  }, []);
+  }, [screens]);
 
   // The design's shortcuts.
   useEffect(() => {
@@ -159,10 +159,15 @@ export function Workspace({
               </section>
             ))}
 
-            {/* Tool panes: mounted on first visit, then kept warm. */}
+            {/*
+              Panes are the FALLBACK. A destination the workspace draws itself
+              is in `screens` above and never mounts an iframe — that is the
+              architecture: the OS builds the product, and embeds only what it
+              has not built yet.
+            */}
             {mounted.map((id) => {
               const dest = reachable.find((d) => d.id === id);
-              if (!dest?.tool) return null;
+              if (!dest?.tool || screens[id]) return null;
               return (
                 <ToolPane
                   key={id}

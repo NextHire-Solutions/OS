@@ -3,11 +3,13 @@ import { getAllSnapshots } from "@/lib/status/store";
 import { aggregate } from "@/lib/status/derive";
 import { getOverview } from "@/lib/workspace/overview";
 import { getPerformance } from "@/lib/workspace/performance";
+import { getClientHealthWeekly } from "@/lib/tools/client-health";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
+import { ClientHealthWeeklyScreen } from "@/components/screens/client-health/weekly";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
@@ -44,10 +46,11 @@ export default async function WorkspacePage({
 
   // In parallel: one is four upstream probes, the other three Analytics calls.
   // Sequentially they would stack on every render of the home screen.
-  const [snapshots, overview, performance] = await Promise.all([
+  const [snapshots, overview, performance, clientHealth] = await Promise.all([
     getAllSnapshots(),
     getOverview(),
     getPerformance(),
+    getClientHealthWeekly(),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -97,6 +100,8 @@ export default async function WorkspacePage({
         // for them on every home render would slow the screen people actually
         // land on.
         consistency: <DiscrepanciesScreen />,
+        // Built here, not embedded — the live tool is untouched.
+        "clients:weekly": <ClientHealthWeeklyScreen data={clientHealth} />,
         "team-access": <TeamAccessScreen />,
       }}
     />
