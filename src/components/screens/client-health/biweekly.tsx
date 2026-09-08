@@ -8,6 +8,7 @@ import {
   type BwSortCol, type BiWeeklyRow,
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
+import { ClientHealthFrame } from "./frame";
 
 /*
  * Client Health — Bi-Weekly.
@@ -48,7 +49,7 @@ const COLUMNS: { col: BwSortCol; label: string; title: string }[] = [
   { col: "leftCycle", label: "Left This Cycle", title: "Introductions left in the current billing cycle" },
 ];
 
-export function ClientHealthBiWeekly({ data }: { data: ClientHealthWeeklyData }) {
+function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const [now] = useState(() => new Date(`${data.weekKey}T00:00:00Z`));
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -228,4 +229,14 @@ function Card({ label, value, sub, tone }: { label: string; value: number; sub: 
       <div className="card-s">{sub}</div>
     </div>
   );
+}
+
+/*
+ * The public screen. `initial` is present only when the page was opened on
+ * this view — then it server-renders with no loading state and no second round
+ * trip. Otherwise the frame fetches, sharing one request across all three
+ * views, and the screen stays mounted afterwards so returning is instant.
+ */
+export function ClientHealthBiWeekly({ initial }: { initial: ClientHealthWeeklyData | null }) {
+  return <ClientHealthFrame initial={initial}>{(data) => <BiWeeklyView data={data} />}</ClientHealthFrame>;
 }

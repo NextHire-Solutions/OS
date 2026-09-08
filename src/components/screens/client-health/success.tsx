@@ -8,6 +8,7 @@ import {
   type CsSortCol, type SuccessRow,
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
+import { ClientHealthFrame } from "./frame";
 
 /*
  * Client Health — Client Success.
@@ -57,7 +58,7 @@ const COLUMNS: { col: CsSortCol; label: string; title: string; num?: boolean }[]
 
 const SCORE_COLOR = { good: "var(--green)", mid: "var(--yellow)", low: "var(--red)" } as const;
 
-export function ClientHealthSuccess({ data }: { data: ClientHealthWeeklyData }) {
+function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
   const [now] = useState(() => new Date(`${data.weekKey}T00:00:00Z`));
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -255,4 +256,14 @@ function Card({
       <div className="card-s">{sub}</div>
     </div>
   );
+}
+
+/*
+ * The public screen. `initial` is present only when the page was opened on
+ * this view — then it server-renders with no loading state and no second round
+ * trip. Otherwise the frame fetches, sharing one request across all three
+ * views, and the screen stays mounted afterwards so returning is instant.
+ */
+export function ClientHealthSuccess({ initial }: { initial: ClientHealthWeeklyData | null }) {
+  return <ClientHealthFrame initial={initial}>{(data) => <SuccessView data={data} />}</ClientHealthFrame>;
 }

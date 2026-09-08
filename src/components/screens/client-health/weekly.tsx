@@ -9,6 +9,7 @@ import {
   type Filter, type Sort, type SortCol,
 } from "@/lib/tools/client-health/filters";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
+import { ClientHealthFrame } from "./frame";
 
 /*
  * Client Health — Weekly.
@@ -60,7 +61,7 @@ const PLANS: { id: string; label: string }[] = [
   { id: "partner", label: "Partner" },
 ];
 
-export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
+function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -392,4 +393,14 @@ function Card({
       <div className="card-s">{sub}</div>
     </div>
   );
+}
+
+/*
+ * The public screen. `initial` is present only when the page was opened on
+ * this view — then it server-renders with no loading state and no second round
+ * trip. Otherwise the frame fetches, sharing one request across all three
+ * views, and the screen stays mounted afterwards so returning is instant.
+ */
+export function ClientHealthWeekly({ initial }: { initial: ClientHealthWeeklyData | null }) {
+  return <ClientHealthFrame initial={initial}>{(data) => <WeeklyView data={data} />}</ClientHealthFrame>;
 }

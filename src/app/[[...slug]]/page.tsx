@@ -48,13 +48,29 @@ export default async function WorkspacePage({
   const claimed = (requestHeaders.get("x-bs-grants") ?? "").split(",").filter(Boolean);
   const grants = ALL_TOOLS.filter((t) => claimed.includes(t));
 
+  /*
+   * Client Health's data is loaded ONLY when the page is opened on one of its
+   * screens. It is by far the largest thing the workspace holds — 48 clients
+   * with every week of metrics each — and it used to be server-rendered into
+   * every route, whether or not that route displayed it. Measured on the live
+   * deployment before this changed:
+   *
+   *   /performance   925,690 bytes of HTML, 722,535 of them the client list
+   *
+   * 92% of every page was data that page does not show. The three Client
+   * Health screens now fetch it themselves when they are opened, sharing one
+   * request; see `loadClientHealth()`. Opening one directly still gets it
+   * server-rendered, so a pasted link paints with no loading state.
+   */
+  const wantsClientHealth = initialId.startsWith("clients:");
+
   // In parallel: one is four upstream probes, the other three Analytics calls.
   // Sequentially they would stack on every render of the home screen.
   const [snapshots, overview, performance, clientHealth, clientsOverview] = await Promise.all([
     getAllSnapshots(),
     getOverview(),
     getPerformance(),
-    getWeekly(),
+    wantsClientHealth ? getWeekly() : Promise.resolve(null),
     getClientsOverview(),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
@@ -115,9 +131,9 @@ export default async function WorkspacePage({
          * splitting it into three fetches would triple the work to show the
          * same rows.
          */
-        "clients:weekly": <ClientHealthWeekly data={clientHealth} />,
-        "clients:biweekly": <ClientHealthBiWeekly data={clientHealth} />,
-        "clients:success": <ClientHealthSuccess data={clientHealth} />,
+        "clients:weekly": <ClientHealthWeekly initial={initialId === "clients:weekly" ? clientHealth : null} />,
+        "clients:biweekly": <ClientHealthBiWeekly initial={initialId === "clients:biweekly" ? clientHealth : null} />,
+        "clients:success": <ClientHealthSuccess initial={initialId === "clients:success" ? clientHealth : null} />,
         "team-access": <TeamAccessScreen />,
       }}
     />
