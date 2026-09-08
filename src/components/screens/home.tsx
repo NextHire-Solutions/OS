@@ -1,6 +1,7 @@
 import type { ToolSnapshot } from "@/lib/connectors/types";
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { toGrantId } from "@/lib/workspace/tool-ids";
+import { greeting } from "@/lib/workspace/greeting";
 import { OverviewCard } from "./overview-card";
 import type { Overview } from "@/lib/workspace/overview";
 
@@ -22,12 +23,6 @@ const TINTS: Record<string, { bg: string; fg: string }> = {
   onboarding: { bg: "#DFF6EA", fg: "#0E8A5F" },
 };
 
-function greeting(now: Date): string {
-  const hour = now.getHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 18) return "Good afternoon";
-  return "Good evening";
-}
 
 export function HomeScreen({
   snapshots,

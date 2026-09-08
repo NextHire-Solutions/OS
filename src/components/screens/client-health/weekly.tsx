@@ -104,6 +104,9 @@ export function ClientHealthWeekly({ data }: { data: ClientHealthWeeklyData }) {
             className={`fp${isCurrent ? " on" : ""}`}
             style={{ minWidth: 150 }}
             onClick={() => setOffset(0)}
+            // Highlighted only on the current week, so the rail reads as "you
+            // are looking at something else" the moment you step back.
+            aria-label="Selected week"
             title={isCurrent ? "Showing this week" : "Back to this week"}
           >
             {isCurrent ? "This Week" : formatWeek(getMondayOf(`${key}T00:00:00`))}
