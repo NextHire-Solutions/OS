@@ -3,13 +3,13 @@ import { getAllSnapshots } from "@/lib/status/store";
 import { aggregate } from "@/lib/status/derive";
 import { getOverview } from "@/lib/workspace/overview";
 import { getPerformance } from "@/lib/workspace/performance";
-import { getClientHealthWeekly } from "@/lib/tools/client-health";
+import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
-import { ClientHealthWeeklyScreen } from "@/components/screens/client-health/weekly";
+import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
@@ -50,7 +50,7 @@ export default async function WorkspacePage({
     getAllSnapshots(),
     getOverview(),
     getPerformance(),
-    getClientHealthWeekly(),
+    getWeekly(),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -101,7 +101,7 @@ export default async function WorkspacePage({
         // land on.
         consistency: <DiscrepanciesScreen />,
         // Built here, not embedded — the live tool is untouched.
-        "clients:weekly": <ClientHealthWeeklyScreen data={clientHealth} />,
+        "clients:weekly": <ClientHealthWeekly data={clientHealth} />,
         "team-access": <TeamAccessScreen />,
       }}
     />
