@@ -140,10 +140,19 @@ client-facing demo and must not be treated as clutter.
 ## Onboarding
 
 Source: `corofy-onboarding`. Orchestrator on Railway.
+Database: shared with Agent Search — see below.
 
 | | Live | Workspace |
 |---|---|---|
-| Screens | ✅ | ⬜️ embedded pane only |
+| Pipeline (clients by stage) | ✅ | ✅ |
+| Stage board with counts | ✅ | ✅ |
+| Templates | ✅ | ⬜️ |
+| Settings | ✅ | ⬜️ |
+| Stage transitions (writes) | ✅ | ⬜️ |
+
+Live data: 37 clients across 8 stages, 344 introductions. The screen leads with
+what is stuck — waiting 14 days or more, paid but not live, live but unpaid —
+rather than with a total that never changes.
 
 **Do not move the webhooks.** This app receives Typeform, EmailBison, Stripe
 and Calendly callbacks and holds the hub tokens. Those endpoints must keep
@@ -155,14 +164,44 @@ over delivery.
 ## Agent Search
 
 Source: `Scrapper`. Express, four worker processes.
-Database: `AGENT_SEARCH_SUPABASE_URL` — credentials now available.
 
 | | Live | Workspace |
 |---|---|---|
-| Screens | ✅ | ⬜️ embedded pane only |
+| Agent browser (search, filter, sort) | ✅ | ✅ server-paged |
+| Saved lists | ✅ | 🔸 listed, not openable |
+| Start / stop a scrape | ✅ | ⬜️ |
+| Enrichment runs | ✅ | ⬜️ |
+| MLS monitor + scan | ✅ | ⬜️ |
+| CSV / Sheet import | ✅ | ⬜️ |
+| Master list build + export | ✅ | ⬜️ |
+
+Live data: 1,173,896 agents, 177,766 offices, 54 MLS boards, 31 saved lists.
+
+**Server-paged out of necessity.** Every other table in the workspace filters
+in the browser because it holds forty rows; doing that here would mean sending
+a million. The browser never receives more than one page, and the page size is
+enforced server-side — this route is reachable by anyone signed in, and
+`&limit=100000` in an address bar must not be able to pull the table.
+
+The job controls above are the remaining gap. They are all *actions* on the
+live service rather than reads, so they follow the pattern the Client Health
+sync button established: trigger the tool's own endpoint, never reimplement it.
 
 ⛔️ The scraping workers, the MLS monitor and the ingest endpoints stay on the
 live service. The workspace reads what they produce.
+
+### One database, two tools
+
+Agent Search and Onboarding point at the **same Supabase project**. Neither
+codebase says so — each reads a plain `SUPABASE_URL` and neither mentions the
+other — and it changes what a migration on "the onboarding database" can safely
+touch. They are cleanly separated by prefix:
+
+    orch_*                                     Onboarding
+    agents, offices, mls, agent_mls,           Agent Search
+    saved_lists
+
+One client serves both; two would open two pools to the same Postgres.
 
 ---
 

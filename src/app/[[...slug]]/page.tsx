@@ -5,6 +5,7 @@ import { getOverview } from "@/lib/workspace/overview";
 import { getPerformance } from "@/lib/workspace/performance";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
+import { getAgentSearchOverview } from "@/lib/tools/agent-search/agents";
 import { getClientsOverview } from "@/lib/clients/overview";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
@@ -15,6 +16,7 @@ import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
 import { ClientHealthSuccess } from "@/components/screens/client-health/success";
 import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeline";
+import { AgentSearchScreen } from "@/components/screens/agent-search/agents";
 import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
@@ -74,7 +76,7 @@ export default async function WorkspacePage({
    */
   const only = (id: string) => initialId === id;
 
-  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding] =
+  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, agentSearch] =
     await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
@@ -82,6 +84,7 @@ export default async function WorkspacePage({
     initialId.startsWith("clients:") ? getWeekly() : Promise.resolve(null),
     only("roster") ? getClientsOverview() : Promise.resolve(null),
     only("onboarding:pipeline") ? getOnboardingPipeline() : Promise.resolve(null),
+    only("search:search") ? getAgentSearchOverview() : Promise.resolve(null),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -144,6 +147,13 @@ export default async function WorkspacePage({
          * arriving on their current URLs.
          */
         "onboarding:pipeline": <OnboardingPipelineScreen initial={onboarding} />,
+        /*
+         * Agent Search. Server-paged out of necessity rather than taste: the
+         * table holds 1.17 million agents, so the browser is never sent more
+         * than one page. The scraping workers and MLS monitor keep running on
+         * the live service.
+         */
+        "search:search": <AgentSearchScreen initial={agentSearch} />,
         "team-access": <TeamAccessScreen />,
       }}
     />
