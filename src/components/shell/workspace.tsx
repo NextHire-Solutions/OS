@@ -50,9 +50,17 @@ export function Workspace({
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  // Panes are mounted on first visit and never unmounted, which is what makes
-  // switching back instant. Capped below.
-  const [mounted, setMounted] = useState<string[]>([]);
+  /*
+   * Panes are mounted on first visit and never unmounted, which is what makes
+   * switching back instant. Capped below.
+   *
+   * Seeded from initialId, because arriving directly at /inbox has to mount
+   * the pane too — mounting used to happen only inside navigate(), so a pasted
+   * link rendered the shell with an empty stage and nothing to show.
+   */
+  const [mounted, setMounted] = useState<string[]>(() =>
+    initialId.includes(":") ? [initialId] : [],
+  );
 
   const all = useMemo(() => destinations(), []);
   const reachable = useMemo(
