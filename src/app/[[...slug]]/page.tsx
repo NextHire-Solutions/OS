@@ -7,6 +7,7 @@ import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
 import { getAgentSearchOverview } from "@/lib/tools/agent-search/agents";
 import { getInbox } from "@/lib/tools/master-inbox/inbox-view";
+import { getReminders } from "@/lib/tools/master-inbox/reminders";
 import { getClientsOverview } from "@/lib/clients/overview";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
@@ -19,6 +20,7 @@ import { ClientHealthSuccess } from "@/components/screens/client-health/success"
 import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeline";
 import { AgentSearchScreen } from "@/components/screens/agent-search/agents";
 import { MasterInboxScreen } from "@/components/screens/master-inbox/inbox";
+import { RemindersScreen } from "@/components/screens/master-inbox/reminders";
 import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
@@ -78,7 +80,7 @@ export default async function WorkspacePage({
    */
   const only = (id: string) => initialId === id;
 
-  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, agentSearch, inbox] =
+  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, agentSearch, inbox, reminders] =
     await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
@@ -90,6 +92,7 @@ export default async function WorkspacePage({
     only("inbox:all-email")
       ? getInbox({ view: "all-email", page: 1, q: "" })
       : Promise.resolve(null),
+    only("inbox:reminders") ? getReminders() : Promise.resolve(null),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -167,6 +170,7 @@ export default async function WorkspacePage({
          * receiving the provider webhooks; see MASTER-INBOX-AUDIT.md.
          */
         "inbox:all-email": <MasterInboxScreen initial={inbox} />,
+        "inbox:reminders": <RemindersScreen initial={reminders} />,
         "team-access": <TeamAccessScreen />,
       }}
     />

@@ -123,9 +123,21 @@ copy, merge tags, and the bulk actions in `/api/campaigns/actions`.
 Source: `apps/master-inbox`. The largest by far — 50,290 lines, 297 files, 51
 of them bound to Supabase RLS.
 
-| | Live | Workspace |
+| Screen | Live | Workspace |
 |---|---|---|
-| Every screen | ✅ | ⬜️ embedded pane only |
+| Inbox — threads, views, search, paging | ✅ | ✅ read-only |
+| Conversation view | ✅ | ✅ read-only |
+| Reminders | ✅ | ✅ read-only — see below |
+| Leads | ⛔️ | ⛔️ **a 5-line stub in the tool** — nothing to port |
+| Client Portals (staff admin) | ✅ | ⬜️ |
+| Settings (7 screens) | ✅ | ⬜️ |
+| Reply, label, archive, assign | ✅ | ⬜️ phase 2 |
+
+**Reminders writes on load in the live tool.** Opening its reminders page marks
+every due reminder `fired` and reopens the threads they point at — that is how
+a snoozed thread returns to the inbox. The workspace reads the same rows and
+marks which are due, but does NOT fire them, and the screen says so. A screen
+showing "3 due" while silently doing nothing would look handled.
 
 Its data layer reads through an RLS-bound client keyed to the signed-in user,
 so it cannot be lifted the way Client Health's was without replacing that
