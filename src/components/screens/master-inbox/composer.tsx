@@ -34,6 +34,23 @@ import type { ThreadDetail } from "@/lib/tools/master-inbox/inbox-view";
  * default on — so this does the same, here, before the body is sent.
  */
 
+/*
+ * "Re: <subject>", the way a mail client does it.
+ *
+ * The route passes `subject` straight to the provider and derives nothing —
+ * Instantly REFUSES a reply without one (400, "body must have required
+ * property 'subject'"), which is how the first live send failed. The tool's own
+ * composer pre-fills the same value; this is that pre-fill.
+ *
+ * Already-prefixed subjects are left alone rather than stacked into
+ * "Re: Re: Re:", and an empty one falls back rather than sending "Re: ".
+ */
+function replySubject(subject: string | null): string {
+  const base = (subject ?? "").trim();
+  if (!base) return "Re: your message";
+  return /^re:/i.test(base) ? base : `Re: ${base}`;
+}
+
 export function Composer({ detail, onSent }: { detail: ThreadDetail; onSent: () => void }) {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
@@ -87,6 +104,7 @@ export function Composer({ detail, onSent }: { detail: ThreadDetail; onSent: () 
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             body: composed,
+            subject: replySubject(detail.subject),
             content_type: "text",
             reply_all: false,
             inject_previous_email_body: true,
