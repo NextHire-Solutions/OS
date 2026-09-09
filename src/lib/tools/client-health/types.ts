@@ -71,6 +71,9 @@ export interface Client {
   last_lead_activity_at: string | null;  // mirror of Corofy portals.last_lead_activity_at
   stagnant_intros_count: number;         // Introduction-feed rows where updated_at ≈ assigned_at
   intros_since_last_billing: number;     // Introduction-feed rows with assigned_at >= last billing day
+  // Monthly-target fields (migration 0013):
+  monthly_target: number;                // per-client goal for one monthly cycle; 0 = unset
+  intros_this_month: number;             // Introduction-feed rows since the current monthly-cycle start
 }
 
 export interface WeeklyMetric {

@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from "react";
 
-import { addDays, formatWeek, getMondayOf, weekKey } from "@/lib/tools/client-health/derive";
+import { addDays, formatWeek, getMondayOf, nextBillingDate, weekKey } from "@/lib/tools/client-health/derive";
 import { deriveRows, summarize, type WeeklyRow } from "@/lib/tools/client-health/summarize";
 import {
   applyFilters, visibleTotal, FILTER_TABS,
   type Filter, type Sort, type SortCol,
 } from "@/lib/tools/client-health/filters";
+import { TZ_SHORT_BY_VALUE } from "@/lib/tools/client-health/types";
+import { fmtDateUTC } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 import { ClientHealthFrame } from "./frame";
 import { SyncButton } from "./sync-button";
@@ -85,6 +87,9 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
     () => (offset === 0 && data.summary ? data.summary : summarize(rows)),
     [data.summary, rows, offset],
   );
+
+  // Fixed for the week on screen, so every row agrees and hydration matches.
+  const now = useMemo(() => new Date(`${key}T00:00:00Z`), [key]);
 
   const visible = useMemo(() => applyFilters(rows, { search, filter, plan, sort }), [rows, search, filter, plan, sort]);
 
@@ -208,17 +213,20 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </div>
 
         <div className="tbl-scroll">
-          <table style={{ minWidth: 1520 }}>
+          <table style={{ minWidth: 1680 }}>
             <thead>
               <tr>
                 <th>Client</th>
+                <th>Time Zone</th>
+                <th>Monthly</th>
+                <th>Last Intro</th>
+                <th>Billing Date</th>
                 <th>Daily Emails Sent</th>
                 <th>Emails Sent</th>
                 <th>Intros This Week</th>
                 <th>Conv. Rate</th>
                 <SortableTh col="leftWeek" sort={sort} onClick={toggleSort}>Left This Week</SortableTh>
                 <SortableTh col="campaigns" sort={sort} onClick={toggleSort}>Campaign Progress</SortableTh>
-                <th>Last Intro</th>
                 <th>Status</th>
                 <th>Interested</th>
                 <th>Converted</th>
@@ -229,12 +237,12 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={13} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                  <td colSpan={15} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
                     No clients match {search.trim() ? `“${search.trim()}”` : "this filter"}.
                   </td>
                 </tr>
               ) : (
-                visible.map((row) => <Row key={row.client.id} row={row} />)
+                visible.map((row) => <Row key={row.client.id} row={row} now={now} />)
               )}
             </tbody>
           </table>
@@ -268,8 +276,22 @@ function SortableTh({
   );
 }
 
-function Row({ row }: { row: WeeklyRow }) {
+function Row({ row, now }: { row: WeeklyRow; now: Date }) {
   const { client: c, derived: d } = row;
+  /*
+   * The next billing date.
+   *
+   * `now` comes from the parent, seeded from the server's week — NOT from
+   * `new Date()`. Reading the clock here would be the same hydration bug that
+   * has already shipped three times in this workspace: the server and the
+   * browser would compute different day counts. See lib/workspace/dates.ts.
+   */
+  const billing = nextBillingDate(
+    c.billing_anchor_date ?? c.start_date,
+    c.billing_interval,
+    now,
+    c.billing_interval_days,
+  );
   const status = c.client_paused ? STATUS.pending : STATUS[d.status];
 
   return (
@@ -280,6 +302,67 @@ function Row({ row }: { row: WeeklyRow }) {
         {c.client_paused ? (
           <span className="cmeta" style={{ borderStyle: "dashed", opacity: 0.75 }}>Client Paused</span>
         ) : null}
+      </td>
+
+      <td>
+        {c.time_zone ? (
+          <span className="tg" title={c.time_zone}>
+            {TZ_SHORT_BY_VALUE[c.time_zone] ?? c.time_zone}
+          </span>
+        ) : (
+          <span className="api-none">—</span>
+        )}
+      </td>
+
+      {/*
+        Monthly progress against the client's own monthly target. An em dash
+        rather than "0/0" when no target is set: 0/0 reads as complete.
+        Thresholds are the tool's — met, at least half, below half.
+      */}
+      <td>
+        {c.monthly_target === 0 ? (
+          <span className="api-none" title="No monthly target set for this client">—</span>
+        ) : (
+          <span
+            className="tnum"
+            style={{
+              fontWeight: 700,
+              color:
+                c.intros_this_month >= c.monthly_target ? "var(--green)"
+                : c.intros_this_month >= Math.ceil(c.monthly_target / 2) ? "var(--yellow)"
+                : "var(--red)",
+            }}
+          >
+            {c.intros_this_month}/{c.monthly_target}
+          </span>
+        )}
+      </td>
+
+      <td>
+        {d.daysSince === null ? (
+          <span style={{ fontSize: 13, color: "var(--muted)" }}>No data</span>
+        ) : d.daysSince <= 1 ? (
+          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--green)" }}>
+            {d.daysSince === 0 ? "Today" : "Yesterday"}
+          </span>
+        ) : (
+          <span
+            className="tg"
+            style={{ background: "var(--yellow-bg)", borderColor: "transparent", color: "var(--yellow)" }}
+          >
+            {d.daysSince}d ago
+          </span>
+        )}
+      </td>
+
+      {/*
+        Next billing date, using the tool's own nextBillingDate. An anchor is
+        the FIRST billing day, not the next one, so it rolls forward a whole
+        cycle — reading it as the next date would show a date in the past for
+        every long-standing client.
+      */}
+      <td className="tnum mut">
+        {billing ? fmtDateUTC(billing) : <span className="api-none">not set</span>}
       </td>
 
       <td>{c.emails_today ? <span className="api-num tnum">{c.emails_today.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}</td>
@@ -330,23 +413,6 @@ function Row({ row }: { row: WeeklyRow }) {
           </>
         ) : (
           <span className="api-none">—</span>
-        )}
-      </td>
-
-      <td>
-        {d.daysSince === null ? (
-          <span style={{ fontSize: 13, color: "var(--muted)" }}>No data</span>
-        ) : d.daysSince <= 1 ? (
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--green)" }}>
-            {d.daysSince === 0 ? "Today" : "Yesterday"}
-          </span>
-        ) : (
-          <span
-            className="tg"
-            style={{ background: "var(--yellow-bg)", borderColor: "transparent", color: "var(--yellow)" }}
-          >
-            {d.daysSince}d ago
-          </span>
         )}
       </td>
 
