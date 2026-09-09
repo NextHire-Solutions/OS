@@ -6,6 +6,7 @@ import type {
   InboxData, ThreadRow, ThreadDetail, ThreadResult,
 } from "@/lib/tools/master-inbox/inbox-view";
 import { Lazy } from "../lazy";
+import { Composer } from "./composer";
 import {
   applyLabel, loadLabels, setSeen, setStatus,
   type Label, type ThreadStatus,
@@ -128,13 +129,6 @@ function InboxView({ first }: { first: InboxData }) {
 
   return (
     <div className="wrap">
-      <div className="anno" style={{ marginBottom: 16 }}>
-        <b>Replying still happens in Master Inbox.</b> Everything else works here.
-        Labelling a thread &ldquo;Introduction&rdquo; creates a row in that
-        client&rsquo;s live portal and notifies n8n, Slack and Follow Up Boss —
-        exactly as it does in the tool.
-      </div>
-
       {failed ? (
         <div className="anno" style={{ borderColor: "var(--red)", marginBottom: 16 }}>
           <b>The inbox could not be read.</b> {failed}
@@ -353,6 +347,8 @@ function ThreadPane({
                 This conversation has no messages.
               </div>
             ) : null}
+
+            <Composer detail={detail} onSent={onDone} />
           </>
         ) : null}
       </div>
