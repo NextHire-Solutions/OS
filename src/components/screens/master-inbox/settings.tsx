@@ -210,10 +210,16 @@ function SettingsView({ data }: { data: MasterInboxSettings }) {
             <table style={{ minWidth: 460 }}>
               <thead><tr><th>View</th><th>Slug</th></tr></thead>
               <tbody>
-                {data.views.length === 0 ? <Empty colSpan={2} q="" /> : data.views.map((v) => (
+                {data.views.length === 0 ? <Empty colSpan={3} q="" /> : data.views.map((v) => (
                   <tr key={v.id}>
-                    <td><div className="cname">{v.name}</div></td>
-                    <td className="mut">{v.slug}</td>
+                    <td>
+                      <div className="cname">
+                        {v.icon ? <span style={{ marginRight: 7 }}>{v.icon}</span> : null}
+                        {v.name}
+                      </div>
+                    </td>
+                    <td className="mut">{v.shared ? "✓" : "—"}</td>
+                    <td className="mut" style={{ fontSize: 12.5 }}>/inbox/{v.slug}</td>
                   </tr>
                 ))}
               </tbody>

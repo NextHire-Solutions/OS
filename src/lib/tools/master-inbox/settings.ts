@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getMasterInboxSupabase, workspaceId } from "./supabase";
+import { slugifyView } from "./inbox/views-shared";
 
 /*
  * Master Inbox — settings.
@@ -64,7 +65,11 @@ export interface SettingsMember {
 export interface SettingsView {
   id: string;
   name: string;
+  /** Derived from the name — `custom_views` has no slug column. */
   slug: string;
+  icon: string | null;
+  shared: boolean;
+  system: boolean;
 }
 
 export interface MasterInboxSettings {
@@ -110,13 +115,28 @@ export async function getSettings(): Promise<MasterInboxSettings> {
         .select("id,name,mode,model,provider,active,auto_respond_new,api_key_encrypted")
         .eq("workspace_id", ws).order("name"),
       sb.from("workspace_members").select("user_id,role,status").eq("workspace_id", ws),
-      sb.from("custom_views").select("id,name,slug").eq("workspace_id", ws).order("name"),
+      sb.from("custom_views").select("id,name,icon,shared,is_system").eq("workspace_id", ws).order("sort_order"),
       sb.from("clients").select("id", { count: "exact", head: true }).eq("workspace_id", ws),
       // One read for every label's thread count, rather than one per label.
       sb.from("label_assignments").select("label_id").eq("target_type", "thread").limit(20_000),
     ]);
 
-    if (labels.error) throw new Error(labels.error.message);
+    /*
+     * EVERY query's error, not just the first.
+     *
+     * This checked only `labels` and it cost a real bug: custom_views has no
+     * `slug` column — the tool derives it from the name — so that select
+     * failed, the helper turned a non-array into [], and the screen reported
+     * "0 custom views" as though that were the answer. A failed read
+     * rendering as zero data is the worst shape a failure can take, because
+     * nothing looks wrong.
+     */
+    for (const [what, res] of [
+      ["labels", labels], ["templates", templates], ["reply agents", agents],
+      ["members", members], ["custom views", views], ["clients", clients],
+    ] as const) {
+      if (res.error) throw new Error(`${what}: ${res.error.message}`);
+    }
 
     const perLabel = new Map<string, number>();
     for (const a of rows(assignments.data)) {
@@ -159,7 +179,11 @@ export async function getSettings(): Promise<MasterInboxSettings> {
       views: rows(views.data).map((v) => ({
         id: String(v.id),
         name: String(v.name ?? ""),
-        slug: String(v.slug ?? ""),
+        // Derived, exactly as the tool derives it — there is no slug column.
+        slug: slugifyView(String(v.name ?? "")),
+        icon: str(v.icon),
+        shared: v.shared === true,
+        system: v.is_system === true,
       })),
       clients: num(clients.count) ?? 0,
       error: null,
