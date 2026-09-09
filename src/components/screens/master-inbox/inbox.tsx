@@ -6,6 +6,7 @@ import type {
   InboxData, ThreadRow, ThreadDetail, ThreadResult,
 } from "@/lib/tools/master-inbox/inbox-view";
 import { Lazy } from "../lazy";
+import { setSeen, setStatus, type ThreadStatus } from "./actions";
 import { fullStamp, shortStamp } from "@/lib/workspace/dates";
 
 /*
@@ -125,10 +126,10 @@ function InboxView({ first }: { first: InboxData }) {
   return (
     <div className="wrap">
       <div className="anno" style={{ marginBottom: 16 }}>
-        <b>Reading only, for now.</b> Replying, labelling and archiving still happen in
-        Master Inbox itself. Labelling a thread creates a row in that
-        client&rsquo;s live portal, so those actions are being added deliberately rather
-        than quickly.
+        <b>Replying and labelling still happen in Master Inbox.</b> Archiving and
+        read state work here. Labelling creates a row in that client&rsquo;s live
+        portal and notifies four other systems, so it lands with its own testing
+        rather than riding along.
       </div>
 
       {failed ? (
@@ -240,6 +241,9 @@ function InboxView({ first }: { first: InboxData }) {
             busy={threadBusy}
             error={threadError}
             onClose={() => setOpenId(null)}
+            // The list is now wrong — the thread has left this view, or its
+            // read state changed. Reload it rather than leave a stale row.
+            onDone={() => { setOpenId(null); load({ view, q, page }); }}
           />
         ) : null}
       </div>
@@ -303,8 +307,14 @@ function ThreadItem({ t, open, onOpen, now }: { t: ThreadRow; open: boolean; onO
 }
 
 function ThreadPane({
-  detail, busy, error, onClose,
-}: { detail: ThreadDetail | null; busy: boolean; error: string | null; onClose: () => void }) {
+  detail, busy, error, onClose, onDone,
+}: {
+  detail: ThreadDetail | null;
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
   return (
     <div className="tbl-wrap" style={{ position: "sticky", top: 12 }}>
       <div className="tbl-head">
@@ -320,7 +330,10 @@ function ThreadPane({
               : ""}
           </div>
         </div>
-        <button className="fp" onClick={onClose} aria-label="Close conversation" title="Close">✕</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {detail ? <ThreadActions detail={detail} onDone={onDone} /> : null}
+          <button className="fp" onClick={onClose} aria-label="Close conversation" title="Close">✕</button>
+        </div>
       </div>
 
       <div style={{ padding: "6px 20px 20px", maxHeight: "72vh", overflowY: "auto" }}>
@@ -429,4 +442,80 @@ function InboxSkeleton() {
 
 function Bar({ w, h = 11 }: { w: number | string; h?: number }) {
   return <span style={{ display: "block", width: w, height: h, borderRadius: 5, background: "var(--inset-2)" }} />;
+}
+
+/*
+ * Archive, spam, trash, restore, and read state.
+ *
+ * Placed on the open conversation rather than as row hovers: these move a
+ * thread out of the view you are looking at, and doing that from a list is how
+ * you archive the wrong one.
+ *
+ * Every button disables while its write is in flight. Without that, an
+ * impatient second click sends a second write, and for "trash" that means
+ * moving a thread you have already moved.
+ */
+function ThreadActions({ detail, onDone }: { detail: ThreadDetail; onDone: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const run = async (label: string, fn: () => Promise<void>) => {
+    setBusy(label);
+    setFailed(null);
+    try {
+      await fn();
+      onDone();
+    } catch (error) {
+      setFailed(error instanceof Error ? error.message : "That did not work");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const move = (status: ThreadStatus, label: string) =>
+    run(label, () => setStatus([detail.id], status));
+
+  // Restore is the only sensible action on something already filed away.
+  const filed = detail.status !== "open";
+
+  return (
+    <>
+      {filed ? (
+        <button className="fp" disabled={busy !== null} onClick={() => move("open", "restore")}
+          title="Move back to the inbox">
+          {busy === "restore" ? "…" : "Restore"}
+        </button>
+      ) : (
+        <>
+          <button className="fp" disabled={busy !== null} onClick={() => move("archived", "archive")}
+            title="Archive this conversation">
+            {busy === "archive" ? "…" : "Archive"}
+          </button>
+          <button className="fp" disabled={busy !== null} onClick={() => move("spam", "spam")}
+            title="Mark as spam">
+            {busy === "spam" ? "…" : "Spam"}
+          </button>
+          <button className="fp" disabled={busy !== null} onClick={() => move("trash", "trash")}
+            title="Move to trash — recoverable from the Trash view">
+            {busy === "trash" ? "…" : "Trash"}
+          </button>
+        </>
+      )}
+
+      <button
+        className="fp"
+        disabled={busy !== null}
+        onClick={() => run("seen", () => setSeen([detail.id], false))}
+        title="Mark unread and return to the list"
+      >
+        {busy === "seen" ? "…" : "Unread"}
+      </button>
+
+      {failed ? (
+        <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
+          {failed}
+        </span>
+      ) : null}
+    </>
+  );
 }
