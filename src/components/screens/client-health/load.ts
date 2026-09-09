@@ -102,22 +102,14 @@ export function useClientHealth(initial: ClientHealthWeeklyData | null): ScreenD
     return () => { listeners.delete(setData); };
   }, []);
 
-  /*
-   * Deferred by one frame, for the reason spelled out in `Lazy`: swapping a
-   * skeleton for real content while sibling subtrees are still hydrating makes
-   * React find markup it did not write, and it throws an element mismatch on
-   * roughly one load in twenty.
-   */
   useEffect(() => {
     if (initial) return;
     let live = true;
-    const frame = requestAnimationFrame(() => {
-      loadClientHealth().then(
-        (d) => { if (live) setData(d); },
-        (e: unknown) => { if (live) setError(e instanceof Error ? e.message : "Could not load Client Health"); },
-      );
-    });
-    return () => { live = false; cancelAnimationFrame(frame); };
+    loadClientHealth().then(
+      (d) => { if (live) setData(d); },
+      (e: unknown) => { if (live) setError(e instanceof Error ? e.message : "Could not load Client Health"); },
+    );
+    return () => { live = false; };
   }, [initial]);
 
   return { data, error, loading: !data && !error };

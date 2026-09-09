@@ -96,34 +96,14 @@ export function Lazy<T>({
     return () => { live.current = false; };
   }, []);
 
-  /*
-   * The fetch starts on the next frame, not immediately.
-   *
-   * The page mounts several of these at once — only the screen being opened
-   * has data, so every other one is a skeleton waiting on a request. When one
-   * resolved quickly it swapped its skeleton for real content while sibling
-   * subtrees were still hydrating, and React found markup it had not put
-   * there: error #418, an ELEMENT mismatch, on roughly one load in twenty.
-   *
-   * Intermittent and invisible — React re-renders and the screen looks right —
-   * which is exactly why it needed measuring rather than eyeballing.
-   *
-   * One frame is enough: hydration of the visible tree is done by then, and
-   * nothing here is fast enough for the delay to be perceptible.
-   */
   useEffect(() => {
     if (initial) return;
-    let frame = 0;
-    const start = () => {
-      loadOnce<T>(url).then(
-        (d) => { if (live.current) setData(d); },
-        (e: unknown) => {
-          if (live.current) setError(e instanceof Error ? e.message : `Could not load ${label}`);
-        },
-      );
-    };
-    frame = requestAnimationFrame(start);
-    return () => cancelAnimationFrame(frame);
+    loadOnce<T>(url).then(
+      (d) => { if (live.current) setData(d); },
+      (e: unknown) => {
+        if (live.current) setError(e instanceof Error ? e.message : `Could not load ${label}`);
+      },
+    );
   }, [initial, url, label]);
 
   if (error) {
