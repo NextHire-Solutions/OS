@@ -86,8 +86,14 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
     [data.summary, rows, offset],
   );
 
-  // Fixed for the week on screen, so every row agrees and hydration matches.
-  const now = useMemo(() => new Date(`${key}T00:00:00Z`), [key]);
+  /*
+   * The SERVER's clock — not the week's Monday, and not the browser's.
+   *
+   * "Daily Emails Sent" only counts when the stored date is today, and the
+   * billing sort needs the next date from now. Passing the Monday made every
+   * daily figure compare as zero, so that column quietly did not sort at all.
+   */
+  const now = useMemo(() => new Date(data.now), [data.now]);
 
   /*
    * Filter first, then sort. The tool's own order, and the cheaper one — the

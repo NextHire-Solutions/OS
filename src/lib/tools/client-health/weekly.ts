@@ -57,6 +57,19 @@ export interface ClientHealthWeeklyData {
   clients: DashboardClient[];
   /** The current week, decided by the server so every client agrees on it. */
   weekKey: string;
+  /**
+   * The server's clock at load.
+   *
+   * Distinct from `weekKey`, which is the MONDAY of the week on screen. Two
+   * columns need actual today rather than the week's start: "Daily Emails
+   * Sent" only counts when the stored date is today, and the billing sort
+   * needs the next date from now. Using the Monday made every daily figure
+   * compare as zero, so that column silently would not sort.
+   *
+   * Sent rather than read in the browser for the usual reason — the server and
+   * the browser are two different clocks and hydration compares them.
+   */
+  now: string;
   /** Present only when server-rendered. See above — this is a hydration fix. */
   rows?: WeeklyRow[];
   summary?: WeeklySummary;
@@ -72,7 +85,7 @@ export async function getWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData>
   const key = weekKey(monday);
   const rows = deriveRows(clients, key);
 
-  return { clients, weekKey: key, rows, summary: summarize(rows), source, error };
+  return { clients, weekKey: key, now: new Date().toISOString(), rows, summary: summarize(rows), source, error };
 }
 
 /**
