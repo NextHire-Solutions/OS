@@ -50,7 +50,8 @@ export function OnboardingPipelineScreen({ initial }: { initial: OnboardingPipel
 }
 
 function PipelineView({ data }: { data: OnboardingPipeline }) {
-  const [now] = useState(() => Date.now());
+  // The SERVER's clock, not the browser's — see pipeline.ts.
+  const now = new Date(data.now).getTime();
   const [search, setSearch] = useState("");
   const [stage, setStage] = useState<string>("all");
   const [sort, setSort] = useState<Sort>("waiting");

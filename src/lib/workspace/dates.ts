@@ -30,6 +30,9 @@ const TIME = new Intl.DateTimeFormat("en-US", {
 const DAY = new Intl.DateTimeFormat("en-US", {
   timeZone: TZ, month: "short", day: "numeric",
 });
+const DAY_YEAR = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ, month: "short", day: "numeric", year: "numeric",
+});
 const FULL = new Intl.DateTimeFormat("en-US", {
   timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
 });
@@ -59,6 +62,18 @@ export function fullStamp(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : FULL.format(d);
+}
+
+/**
+ * A calendar day with its year, for table columns.
+ *
+ * The em dash rather than an empty string: a blank cell in a table reads as a
+ * rendering fault, where "—" reads as "we have no date", which is the truth.
+ */
+export function dateStamp(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : DAY_YEAR.format(d);
 }
 
 /** Just the calendar day. */

@@ -3,6 +3,7 @@
 import type { ClientsOverview, ClientRow } from "@/lib/clients/overview";
 
 import { Lazy, PlaceholderScreen } from "./lazy";
+import { dateStamp } from "@/lib/workspace/dates";
 
 /*
  * Clients — one row per client, and what each tool knows about them.
@@ -174,7 +175,7 @@ function Row({ row }: { row: ClientRow }) {
         )}
       </td>
 
-      <td className="mut">{inbox.lastIntro ? formatDate(inbox.lastIntro) : "—"}</td>
+      <td className="mut">{inbox.lastIntro ? dateStamp(inbox.lastIntro) : "—"}</td>
 
       <td>
         {analytics.present ? (
@@ -200,13 +201,6 @@ function Gap({ tool }: { tool: string }) {
       missing
     </span>
   );
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function Card({

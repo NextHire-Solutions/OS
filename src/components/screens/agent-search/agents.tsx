@@ -6,6 +6,7 @@ import type {
   Agent, AgentPage, AgentSearchOverview, AgentSort,
 } from "@/lib/tools/agent-search/agents";
 import { Lazy, PlaceholderScreen } from "../lazy";
+import { dateStamp } from "@/lib/workspace/dates";
 
 /*
  * Agent Search — the agent database.
@@ -270,7 +271,7 @@ function AgentsView({ overview }: { overview: AgentSearchOverview }) {
                     <td>{l.sourceMode ? <span className="tg">{l.sourceMode}</span> : <span className="api-none">—</span>}</td>
                     <td>{l.count !== null ? <span className="api-num tnum">{l.count.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}</td>
                     <td className="mut">{l.shared ? "✓" : "—"}</td>
-                    <td className="mut">{l.updatedAt ? formatDate(l.updatedAt) : "—"}</td>
+                    <td className="mut">{l.updatedAt ? dateStamp(l.updatedAt) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -331,13 +332,6 @@ function money(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `$${Math.round(v / 1_000)}K`;
   return `$${Math.round(v).toLocaleString("en-US")}`;
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function Card({

@@ -63,6 +63,14 @@ export interface OnboardingClient {
 
 export interface OnboardingPipeline {
   stages: Stage[];
+  /**
+   * The server's clock at load.
+   *
+   * The screen renders "waiting 14d", which is a function of now. Reading the
+   * browser's clock instead would be a different instant from the server's,
+   * and the same class of hydration bug that has already shipped twice here.
+   */
+  now: string;
   clients: OnboardingClient[];
   error: string | null;
 }
@@ -166,12 +174,13 @@ export async function getOnboardingPipeline(): Promise<OnboardingPipeline> {
       };
     });
 
-    return { stages, clients, error: null };
+    return { stages, clients, now: new Date().toISOString(), error: null };
   } catch (error) {
     // A failure costs this screen, never the workspace.
     return {
       stages: [],
       clients: [],
+      now: new Date().toISOString(),
       error: error instanceof Error ? error.message : "Onboarding is unreachable",
     };
   }
