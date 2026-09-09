@@ -6,7 +6,10 @@ import type {
   InboxData, ThreadRow, ThreadDetail, ThreadResult,
 } from "@/lib/tools/master-inbox/inbox-view";
 import { Lazy } from "../lazy";
-import { setSeen, setStatus, type ThreadStatus } from "./actions";
+import {
+  applyLabel, loadLabels, setSeen, setStatus,
+  type Label, type ThreadStatus,
+} from "./actions";
 import { fullStamp, shortStamp } from "@/lib/workspace/dates";
 
 /*
@@ -126,10 +129,10 @@ function InboxView({ first }: { first: InboxData }) {
   return (
     <div className="wrap">
       <div className="anno" style={{ marginBottom: 16 }}>
-        <b>Replying and labelling still happen in Master Inbox.</b> Archiving and
-        read state work here. Labelling creates a row in that client&rsquo;s live
-        portal and notifies four other systems, so it lands with its own testing
-        rather than riding along.
+        <b>Replying still happens in Master Inbox.</b> Everything else works here.
+        Labelling a thread &ldquo;Introduction&rdquo; creates a row in that
+        client&rsquo;s live portal and notifies n8n, Slack and Follow Up Boss —
+        exactly as it does in the tool.
       </div>
 
       {failed ? (
@@ -343,15 +346,7 @@ function ThreadPane({
           <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>Opening…</div>
         ) : detail ? (
           <>
-            {detail.labels.length > 0 ? (
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "10px 0 4px" }}>
-                {detail.labels.map((l) => (
-                  <span key={l.id} className="tg" style={{ background: l.color || "var(--inset-2)", borderColor: "transparent" }}>
-                    {l.name}
-                  </span>
-                ))}
-              </div>
-            ) : null}
+            <LabelPicker detail={detail} onDone={onDone} />
             {detail.messages.map((m) => <Message key={m.id} m={m} />)}
             {detail.messages.length === 0 ? (
               <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>
@@ -517,5 +512,111 @@ function ThreadActions({ detail, onDone }: { detail: ThreadDetail; onDone: () =>
         </span>
       ) : null}
     </>
+  );
+}
+
+/*
+ * The thread's label, and the picker that changes it.
+ *
+ * Single-label-per-thread, as the tool decided in May 2026 — choosing one
+ * replaces whatever was there, so the picker is a list of alternatives rather
+ * than a set of checkboxes.
+ *
+ * The consequences are written next to the buttons rather than in a commit
+ * message, because "Introduction" is not a filing decision: it puts a row in
+ * front of the client and tells three other systems. Somebody should know that
+ * before they click, not after.
+ */
+function LabelPicker({ detail, onDone }: { detail: ThreadDetail; onDone: () => void }) {
+  const [labels, setLabels] = useState<Label[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const current = detail.labels[0] ?? null;
+
+  useEffect(() => {
+    if (!open || labels) return;
+    loadLabels().then(setLabels, (e: unknown) =>
+      setFailed(e instanceof Error ? e.message : "Labels could not be loaded"),
+    );
+  }, [open, labels]);
+
+  const choose = async (label: Label) => {
+    setBusy(label.id);
+    setFailed(null);
+    try {
+      await applyLabel(detail.id, label.id);
+      setOpen(false);
+      onDone();
+    } catch (error) {
+      setFailed(error instanceof Error ? error.message : "That label could not be applied");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div style={{ padding: "10px 0 4px" }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        {detail.labels.map((l) => (
+          <span key={l.id} className="tg" style={{ background: l.color || "var(--inset-2)", borderColor: "transparent" }}>
+            {l.name}
+          </span>
+        ))}
+        <button
+          className="fp"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          title={current ? `Replace the “${current.name}” label` : "Apply a label"}
+        >
+          {current ? "Change label" : "Add label"}
+        </button>
+      </div>
+
+      {open ? (
+        <div
+          style={{
+            marginTop: 10,
+            padding: 12,
+            border: "1px solid var(--line-soft)",
+            borderRadius: 11,
+            background: "var(--surface)",
+          }}
+        >
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 9, lineHeight: 1.6 }}>
+            One label per conversation — this replaces{" "}
+            {current ? <b>{current.name}</b> : "nothing yet"}.{" "}
+            <b>Introduction</b> adds the lead to that client&rsquo;s portal and notifies
+            n8n, Slack and Follow Up Boss. <b>Hostile</b> blacklists them on the sending
+            platform.
+          </div>
+
+          {!labels && !failed ? (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>Loading labels…</div>
+          ) : (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {(labels ?? []).map((l) => (
+                <button
+                  key={l.id}
+                  className={`fp${current?.id === l.id ? " on" : ""}`}
+                  disabled={busy !== null || current?.id === l.id}
+                  onClick={() => choose(l)}
+                  title={current?.id === l.id ? "Already applied" : `Apply “${l.name}”`}
+                >
+                  {busy === l.id ? "…" : l.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {failed ? (
+            <div className="tg" style={{ marginTop: 9, background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
+              {failed}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

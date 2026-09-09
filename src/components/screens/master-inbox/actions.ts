@@ -33,3 +33,64 @@ export function setStatus(threadIds: string[], status: ThreadStatus): Promise<vo
 export function setSeen(threadIds: string[], seen: boolean): Promise<void> {
   return post({ action: "seen", thread_ids: threadIds, seen });
 }
+
+export interface Label {
+  id: string;
+  name: string;
+  color: string | null;
+  sentiment: string | null;
+}
+
+/*
+ * The label list, fetched once and shared.
+ *
+ * Twenty-one labels that change a few times a year, wanted by every open
+ * conversation. Re-fetching per thread would be a round trip for a list that
+ * has not changed since the page loaded.
+ */
+let labelsPromise: Promise<Label[]> | null = null;
+
+export function loadLabels(): Promise<Label[]> {
+  if (labelsPromise) return labelsPromise;
+  labelsPromise = fetch("/api/tools/master-inbox/labels", { credentials: "same-origin" })
+    .then(async (res) => {
+      const body = (await res.json()) as { labels?: Label[]; error?: string };
+      if (!res.ok || body.error) throw new Error(body.error ?? `Failed (${res.status})`);
+      return body.labels ?? [];
+    })
+    .catch((error) => {
+      labelsPromise = null;
+      throw error;
+    });
+  return labelsPromise;
+}
+
+/**
+ * Applies a label, replacing whatever the thread had.
+ *
+ * Not a quiet write. Applying "Introduction" creates a row in that client's
+ * live portal and notifies n8n, Slack and Follow Up Boss; "Interested" and
+ * "Not Interested" round-trip to EmailBison; "Hostile" blacklists the lead.
+ * The UI says so before the click, not after.
+ */
+export async function applyLabel(threadId: string, labelId: string): Promise<void> {
+  const res = await fetch("/api/tools/master-inbox/labels", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId, label_id: labelId }),
+  });
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(body?.error ?? `Request failed (${res.status})`);
+}
+
+export async function removeLabel(threadId: string, labelId: string): Promise<void> {
+  const res = await fetch("/api/tools/master-inbox/labels", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId, label_id: labelId, op: "remove" }),
+  });
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(body?.error ?? `Request failed (${res.status})`);
+}
