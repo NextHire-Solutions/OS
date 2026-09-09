@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { ThreadDetail } from "@/lib/tools/master-inbox/inbox-view";
+import { ALWAYS_CC_EMAIL, mergeAlwaysCcString } from "@/lib/tools/master-inbox/inbox/auto-cc";
 
 /*
  * The reply composer.
@@ -35,20 +36,37 @@ import type { ThreadDetail } from "@/lib/tools/master-inbox/inbox-view";
  */
 
 /*
- * "Re: <subject>", the way a mail client does it.
+ * Plain text as HTML, the way the tool's rich-text editor produces it.
  *
- * The route passes `subject` straight to the provider and derives nothing —
- * Instantly REFUSES a reply without one (400, "body must have required
- * property 'subject'"), which is how the first live send failed. The tool's own
- * composer pre-fills the same value; this is that pre-fill.
- *
- * Already-prefixed subjects are left alone rather than stacked into
- * "Re: Re: Re:", and an empty one falls back rather than sending "Re: ".
+ * Their composer sends `content_type: "html"` because its editor emits HTML.
+ * This one is a textarea, so the newlines have to become markup or the reply
+ * arrives as one unbroken paragraph.
  */
-function replySubject(subject: string | null): string {
-  const base = (subject ?? "").trim();
-  if (!base) return "Re: your message";
-  return /^re:/i.test(base) ? base : `Re: ${base}`;
+function toHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return escaped
+    .split(/\n{2,}/)
+    .map((para) => `<p>${para.replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
+/**
+ * The CC list, using the tool's own merge.
+ *
+ * Drops the auto-CC when that address is already the recipient — replying to a
+ * thread where Nicole IS the lead should copy her once, not twice.
+ */
+function ccList(to: string | null): { email_address: string }[] | undefined {
+  const merged = mergeAlwaysCcString("", to);
+  const list = merged
+    .split(/[,;]/)
+    .map((x) => x.trim())
+    .filter((x) => x.includes("@"))
+    .map((email_address) => ({ email_address }));
+  return list.length > 0 ? list : undefined;
 }
 
 export function Composer({ detail, onSent }: { detail: ThreadDetail; onSent: () => void }) {
@@ -91,10 +109,15 @@ export function Composer({ detail, onSent }: { detail: ThreadDetail; onSent: () 
     setFailed(null);
 
     try {
-      const composed =
+      /*
+       * The body, assembled the way their composer assembles it: HTML, with
+       * the signature appended when the toggle is on. The route sends `body`
+       * verbatim and never touches the signature — that is the caller's job.
+       */
+      const html =
         addSignature && detail.outbound_sender_signature
-          ? `${body}\n\n${detail.outbound_sender_signature}`
-          : body;
+          ? `${toHtml(body)}${detail.outbound_sender_signature}`
+          : toHtml(body);
 
       const res = await fetch(
         `/api/tools/master-inbox/threads/reply?threadId=${encodeURIComponent(detail.id)}`,
@@ -102,12 +125,32 @@ export function Composer({ detail, onSent }: { detail: ThreadDetail; onSent: () 
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
+          /*
+           * The same payload their composer posts, field for field.
+           *
+           * `subject` is the thread's own, unchanged — which is why
+           * `subject_changed` is false. That flag decides which EmailBison
+           * endpoint the route uses: /replies/{id}/reply silently DROPS a
+           * changed subject, so a changed one has to go through /replies/new,
+           * at the cost of starting a new thread on their side.
+           *
+           * `cc` carries the workspace auto-CC. The server stopped re-adding
+           * it in June 2026, so the composer is the only thing that puts it
+           * there — omitting it means Nicole silently stops being copied on
+           * replies, which is the sort of thing nobody notices for a month.
+           *
+           * `reply_all` and `inject_previous_email_body` are deliberately
+           * absent, exactly as in theirs: the route's defaults (false, true)
+           * are the intended behaviour, and sending them would be restating
+           * a default that could drift.
+           */
           body: JSON.stringify({
-            body: composed,
-            subject: replySubject(detail.subject),
-            content_type: "text",
-            reply_all: false,
-            inject_previous_email_body: true,
+            body: html,
+            content_type: "html",
+            subject: detail.subject ?? "",
+            subject_changed: false,
+            to: to ? [{ email_address: to, name: detail.lead.full_name ?? undefined }] : undefined,
+            cc: ccList(to),
           }),
         },
       );
@@ -163,6 +206,7 @@ export function Composer({ detail, onSent }: { detail: ThreadDetail; onSent: () 
         To <b>{to}</b>
         {sender ? <> · from <b>{sender}</b></> : null}
         {provider ? <> · {provider === "emailbison" ? "EmailBison" : "Instantly"}</> : null}
+        {ccList(to) ? <> · cc <b>{ALWAYS_CC_EMAIL}</b></> : null}
       </div>
 
       <textarea
