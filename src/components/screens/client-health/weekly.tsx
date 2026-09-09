@@ -4,10 +4,8 @@ import { useMemo, useState } from "react";
 
 import { addDays, formatWeek, getMondayOf, nextBillingDate, weekKey } from "@/lib/tools/client-health/derive";
 import { deriveRows, summarize, type WeeklyRow } from "@/lib/tools/client-health/summarize";
-import {
-  applyFilters, visibleTotal, FILTER_TABS,
-  type Filter, type Sort, type SortCol,
-} from "@/lib/tools/client-health/filters";
+import { applyFilters, visibleTotal, FILTER_TABS, type Filter } from "@/lib/tools/client-health/filters";
+import { sortWeekly, type Sort, type SortCol } from "@/lib/tools/client-health/sorting";
 import { TZ_SHORT_BY_VALUE } from "@/lib/tools/client-health/types";
 import { fmtDateUTC } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
@@ -91,7 +89,14 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   // Fixed for the week on screen, so every row agrees and hydration matches.
   const now = useMemo(() => new Date(`${key}T00:00:00Z`), [key]);
 
-  const visible = useMemo(() => applyFilters(rows, { search, filter, plan, sort }), [rows, search, filter, plan, sort]);
+  /*
+   * Filter first, then sort. The tool's own order, and the cheaper one — the
+   * sort only ever runs over what survived the filter.
+   */
+  const visible = useMemo(
+    () => sortWeekly(applyFilters(rows, { search, filter, plan, sort: null }), sort, now),
+    [rows, search, filter, plan, sort, now],
+  );
 
   const s = summary;
 
@@ -217,19 +222,19 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <thead>
               <tr>
                 <th>Client</th>
-                <th>Time Zone</th>
-                <th>Monthly</th>
-                <th>Last Intro</th>
-                <th>Billing Date</th>
-                <th>Daily Emails Sent</th>
-                <th>Emails Sent</th>
-                <th>Intros This Week</th>
-                <th>Conv. Rate</th>
+                <SortableTh col="tz" sort={sort} onClick={toggleSort}>Time Zone</SortableTh>
+                <SortableTh col="monthly" sort={sort} onClick={toggleSort}>Monthly</SortableTh>
+                <SortableTh col="lastIntro" sort={sort} onClick={toggleSort}>Last Intro</SortableTh>
+                <SortableTh col="billing" sort={sort} onClick={toggleSort}>Billing Date</SortableTh>
+                <SortableTh col="today" sort={sort} onClick={toggleSort}>Daily Emails Sent</SortableTh>
+                <SortableTh col="emails" sort={sort} onClick={toggleSort}>Emails Sent</SortableTh>
+                <SortableTh col="intros" sort={sort} onClick={toggleSort}>Intros This Week</SortableTh>
+                <SortableTh col="conv" sort={sort} onClick={toggleSort}>Conv. Rate</SortableTh>
                 <SortableTh col="leftWeek" sort={sort} onClick={toggleSort}>Left This Week</SortableTh>
-                <SortableTh col="campaigns" sort={sort} onClick={toggleSort}>Campaign Progress</SortableTh>
+                <SortableTh col="progress" sort={sort} onClick={toggleSort}>Campaign Progress</SortableTh>
                 <th>Status</th>
-                <th>Interested</th>
-                <th>Converted</th>
+                <SortableTh col="interested" sort={sort} onClick={toggleSort}>Interested</SortableTh>
+                <SortableTh col="converted" sort={sort} onClick={toggleSort}>Converted</SortableTh>
                 <th>Plan</th>
                 <th>Portal</th>
               </tr>
