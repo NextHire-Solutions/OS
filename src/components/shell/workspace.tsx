@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { SessionKeeper } from "./session-keeper";
 import { Rail } from "./rail";
 import { Topbar } from "./topbar";
 import { Palette } from "./palette";
@@ -134,6 +136,9 @@ export function Workspace({
 
   return (
     <>
+      {/* Renews the 30-minute sign-in while the workspace is open. Without it
+          every session died mid-task and the next click bounced to /login. */}
+      <SessionKeeper />
       <div className="app">
         <Rail
           grants={grants}
