@@ -42,7 +42,7 @@ export const FILTER_TABS: { id: Filter; label: string; cls?: string; title: stri
   { id: "paused", label: "Paused", title: "Campaign launched, but not running now" },
   { id: "inactive", label: "Inactive", title: "No campaign has ever launched" },
   { id: "client-paused", label: "Client Paused", title: "Clients paused by hand" },
-  { id: "hidden", label: "Hidden", title: "Churned clients, hidden from every other view" },
+  { id: "hidden", label: "Churn", title: "Churned clients, hidden from every other view" },
 ];
 
 export interface FilterState {

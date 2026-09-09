@@ -1,4 +1,4 @@
-import { nextBillingDate, todayInET } from "./derive.ts";
+import { lastBillingDate, nextBillingDate, todayInET } from "./derive.ts";
 import type { WeeklyRow } from "./summarize.ts";
 
 /*
@@ -20,7 +20,8 @@ import type { WeeklyRow } from "./summarize.ts";
  */
 
 export type SortCol =
-  | "tz" | "monthly" | "lastIntro" | "billing" | "today" | "emails"
+  | "tz" | "monthly" | "lastIntro" | "lastBilling" | "billing" | "billingDays"
+  | "today" | "emails"
   | "intros" | "conv" | "leftWeek" | "progress" | "interested"
   | "converted" | "convRate" | "campaigns";
 
@@ -124,6 +125,24 @@ export function sortWeekly(rows: WeeklyRow[], sort: Sort | null, now: Date): Wee
     case "lastIntro":
       return sinking((r) => (r.derived.daysSince === null ? null : -r.derived.daysSince));
 
+    /*
+     * The LAST billing day, which is null until a client has billed once —
+     * a new client has not "billed longest ago", it has not billed at all.
+     */
+    case "lastBilling":
+      return sinking((r) => {
+        const d = lastBillingDate(
+          r.client.billing_anchor_date ?? r.client.start_date,
+          r.client.billing_interval,
+          now,
+          r.client.billing_interval_days,
+        );
+        return d ? d.getTime() : null;
+      });
+
+    // Days until billing sorts the same set as the date, so it shares its
+    // score — otherwise the two columns could disagree about the same rows.
+    case "billingDays":
     case "billing":
       return sinking((r) => {
         const d = nextBillingDate(

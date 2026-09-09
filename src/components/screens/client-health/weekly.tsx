@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 
-import { addDays, formatWeek, getMondayOf, nextBillingDate, weekKey } from "@/lib/tools/client-health/derive";
+import {
+  addDays, daysUntil, formatWeek, getMondayOf,
+  lastBillingDate, nextBillingDate, weekKey,
+} from "@/lib/tools/client-health/derive";
 import { deriveRows, summarize, type WeeklyRow } from "@/lib/tools/client-health/summarize";
 import { applyFilters, visibleTotal, FILTER_TABS, type Filter } from "@/lib/tools/client-health/filters";
 import { sortWeekly, type Sort, type SortCol } from "@/lib/tools/client-health/sorting";
@@ -224,16 +227,17 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </div>
 
         <div className="tbl-scroll">
-          <table style={{ minWidth: 1680 }}>
+          <table style={{ minWidth: 1780 }}>
             <thead>
               <tr>
                 <th>Client</th>
                 <SortableTh col="tz" sort={sort} onClick={toggleSort}>Time Zone</SortableTh>
                 <SortableTh col="monthly" sort={sort} onClick={toggleSort}>Monthly</SortableTh>
                 <SortableTh col="lastIntro" sort={sort} onClick={toggleSort}>Last Intro</SortableTh>
+                <SortableTh col="lastBilling" sort={sort} onClick={toggleSort}>Last Billing</SortableTh>
                 <SortableTh col="billing" sort={sort} onClick={toggleSort}>Billing Date</SortableTh>
+                <SortableTh col="billingDays" sort={sort} onClick={toggleSort}>Days Until Billing</SortableTh>
                 <SortableTh col="today" sort={sort} onClick={toggleSort}>Daily Emails Sent</SortableTh>
-                <SortableTh col="emails" sort={sort} onClick={toggleSort}>Emails Sent</SortableTh>
                 <SortableTh col="intros" sort={sort} onClick={toggleSort}>Intros This Week</SortableTh>
                 <SortableTh col="conv" sort={sort} onClick={toggleSort}>Conv. Rate</SortableTh>
                 <SortableTh col="leftWeek" sort={sort} onClick={toggleSort}>Left This Week</SortableTh>
@@ -248,7 +252,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={15} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                  <td colSpan={17} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
                     No clients match {search.trim() ? `“${search.trim()}”` : "this filter"}.
                   </td>
                 </tr>
@@ -297,12 +301,10 @@ function Row({ row, now }: { row: WeeklyRow; now: Date }) {
    * has already shipped three times in this workspace: the server and the
    * browser would compute different day counts. See lib/workspace/dates.ts.
    */
-  const billing = nextBillingDate(
-    c.billing_anchor_date ?? c.start_date,
-    c.billing_interval,
-    now,
-    c.billing_interval_days,
-  );
+  const anchor = c.billing_anchor_date ?? c.start_date;
+  const lastBilling = lastBillingDate(anchor, c.billing_interval, now, c.billing_interval_days);
+  const billing = nextBillingDate(anchor, c.billing_interval, now, c.billing_interval_days);
+  const billingDays = billing ? daysUntil(billing, now) : null;
   const status = c.client_paused ? STATUS.pending : STATUS[d.status];
 
   return (
@@ -373,11 +375,28 @@ function Row({ row, now }: { row: WeeklyRow; now: Date }) {
         every long-standing client.
       */}
       <td className="tnum mut">
+        {lastBilling ? fmtDateUTC(lastBilling) : <span className="api-none">—</span>}
+      </td>
+
+      <td className="tnum mut">
         {billing ? fmtDateUTC(billing) : <span className="api-none">not set</span>}
       </td>
 
+      {/* Days until billing. Three days or fewer is the number somebody acts
+          on, so it is the only one coloured. */}
+      <td>
+        {billingDays === null ? (
+          <span className="api-none">—</span>
+        ) : billingDays <= 3 ? (
+          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
+            {billingDays} day{billingDays === 1 ? "" : "s"}
+          </span>
+        ) : (
+          <span className="tnum mut">{billingDays} days</span>
+        )}
+      </td>
+
       <td>{c.emails_today ? <span className="api-num tnum">{c.emails_today.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}</td>
-      <td>{d.hasEmails ? <span className="api-num tnum">{d.emails.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}</td>
 
       <td>
         <input
