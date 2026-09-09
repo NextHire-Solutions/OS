@@ -215,3 +215,37 @@ One client serves both; two would open two pools to the same Postgres.
 
 The workspace is a reader and a caller. It is not, and should not become, the
 thing these depend on.
+
+
+---
+
+## Known issues
+
+### Intermittent hydration warning on Bi-Weekly
+
+`/clients/biweekly` throws React error #418 on roughly **5–12% of loads**. An
+ELEMENT mismatch (`args[]=HTML`), not a text one.
+
+**No user-visible effect** — React discards the server markup for that subtree
+and re-renders, and the screen is correct. It is a warning about wasted work,
+not a fault. Found only by driving the page forty times and counting; no
+screenshot and no amount of clicking would show it.
+
+Ruled out, with evidence:
+
+| hypothesis | test | result |
+|---|---|---|
+| a date or clock read | swept every formatter into `dates.ts` | still occurs |
+| non-deterministic server render | four requests, byte-compared | **identical**, 817,960 bytes each |
+| `derive()` re-deriving on the client | server sends `rows`; browser reuses them | still occurs |
+| `nextBillingDate` reading the clock | read the function | takes `today` explicitly |
+| lazy screens swapping mid-hydration | deferred both loaders by a frame | **worse** (5/40 vs 1/20) — reverted |
+| other pages affected | 33 loads across 11 pages | zero |
+
+So: the server is deterministic, the data is deterministic, and it is specific
+to this screen. It does not reproduce in `next dev` — dev's slower, unminified
+render changes the timing — which is what makes it awkward to pin down.
+
+Next thing to try: capture the server HTML and the post-hydration DOM on a
+FAILING load and diff them structurally, rather than reasoning about which
+element it might be. The detection is in the suite, so it cannot be forgotten.
