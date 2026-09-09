@@ -10,9 +10,20 @@
 // page data without requiring real Supabase credentials. Each call site reads
 // the value at runtime and throws there if it is missing.
 
+/*
+ * The namespace, applied HERE rather than at each call site.
+ *
+ * These helpers build the variable name at runtime, so rewriting the literals
+ * elsewhere in the file missed them entirely — the provider clients came up
+ * with no API key and the first live send failed with
+ * "Instantly API key is not configured". Prefixing in one place covers every
+ * lookup, including any added later.
+ */
+const NS = "MASTER_INBOX_";
+
 function lazyRequired(name: string) {
   return () => {
-    const v = process.env[name];
+    const v = process.env[NS + name];
     if (!v) {
       throw new Error(
         `Missing environment variable: ${name}. Copy .env.example to .env.local and fill in the values.`,
@@ -23,7 +34,7 @@ function lazyRequired(name: string) {
 }
 
 function lazyOptional(name: string) {
-  return () => process.env[name] || undefined;
+  return () => process.env[NS + name] || undefined;
 }
 
 export const env = {
