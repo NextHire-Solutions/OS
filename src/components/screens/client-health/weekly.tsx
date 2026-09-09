@@ -71,8 +71,20 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
    * the clients and the week, so shipping them would be shipping the same data
    * twice — 650 KB of it. The server would compute exactly this.
    */
-  const rows = useMemo(() => deriveRows(data.clients, key), [data.clients, key]);
-  const summary = useMemo(() => summarize(rows), [rows]);
+  /*
+   * The server's rows win on the first render, because `derive()` reads the
+   * local clock — deriving again here would compute "2d ago" against the
+   * server's "3d ago" and break hydration. Once the reader changes week there
+   * is no server render to match, so deriving is safe.
+   */
+  const rows = useMemo(
+    () => (offset === 0 && data.rows ? data.rows : deriveRows(data.clients, key)),
+    [data.rows, data.clients, key, offset],
+  );
+  const summary = useMemo(
+    () => (offset === 0 && data.summary ? data.summary : summarize(rows)),
+    [data.summary, rows, offset],
+  );
 
   const visible = useMemo(() => applyFilters(rows, { search, filter, plan, sort }), [rows, search, filter, plan, sort]);
 

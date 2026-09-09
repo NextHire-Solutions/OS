@@ -55,7 +55,12 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   // Filtered with the Weekly view's own predicates, so "At Risk" means the
   // same thing on both screens.
   // The current week's rows, derived rather than sent — see weekly.ts.
-  const rowsAll = useMemo(() => deriveRows(data.clients, data.weekKey), [data.clients, data.weekKey]);
+  // The server's rows when it rendered this screen — `derive()` reads the
+  // local clock, so deriving again would break hydration. See weekly.ts.
+  const rowsAll = useMemo(
+    () => data.rows ?? deriveRows(data.clients, data.weekKey),
+    [data.rows, data.clients, data.weekKey],
+  );
 
   const filtered = useMemo(
     () => applyFilters(rowsAll, { search, filter, plan: "all", sort: null as WeeklySort | null }),

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getWeekly } from "@/lib/tools/client-health/weekly";
+import { getWeekly, withoutDerived } from "@/lib/tools/client-health/weekly";
 
 /*
  * Client Health's data, for the three screens that show it.
@@ -20,7 +20,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    return NextResponse.json(await getWeekly());
+    // The derived rows are dropped: they halve the response, and a fetched
+    // screen has no server HTML to be compared against, so deriving them in
+    // the browser cannot cause a hydration mismatch. See withoutDerived().
+    return NextResponse.json(withoutDerived(await getWeekly()));
   } catch (error) {
     console.error("[api/tools/client-health]", error);
     return NextResponse.json(

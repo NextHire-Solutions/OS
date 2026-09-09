@@ -24,6 +24,7 @@ import {
   successRows, sortSuccess, scoreTone,
   humanizeAgo, fmtDateShort, fmtDateUTC,
 } from "./views.ts";
+import { daysSinceLastIntro } from "./derive.ts";
 import type { DashboardClient } from "./types.ts";
 
 const NOW = new Date("2026-09-09T00:00:00Z");
@@ -243,4 +244,31 @@ test("dates format in UTC, so a calendar day never shifts by one", () => {
   assert.equal(fmtDateUTC(new Date("2026-01-05T00:00:00Z")), "01/05/2026");
   assert.equal(fmtDateShort(null), "—");
   assert.equal(fmtDateShort("nonsense"), "—");
+});
+
+// -- the hydration trap ------------------------------------------------------
+
+test("derive() is NOT pure — it reads the local clock, so rows cannot be re-derived on the client", () => {
+  // This is the reason ClientHealthWeeklyData carries optional `rows`, and it
+  // is not obvious from reading derive(): `daysSinceLastIntro` calls
+  // `new Date()` and then `setHours`, which is LOCAL midnight. The server runs
+  // in UTC and the browser does not, so deriving on both sides renders
+  // "3d ago" against "2d ago" and React throws a hydration error.
+  //
+  // If this test ever fails because derive() became pure, the optional rows
+  // can go and the payload halves again. Until then, do not "simplify" it.
+  const original = process.env.TZ;
+  const answers = new Set<number | null>();
+  try {
+    for (const tz of ["UTC", "Pacific/Kiritimati", "Pacific/Midway"]) {
+      process.env.TZ = tz;
+      answers.add(daysSinceLastIntro(new Date(Date.now() - 36 * 3600 * 1000).toISOString()));
+    }
+  } finally {
+    process.env.TZ = original;
+  }
+  assert.ok(
+    answers.size > 1,
+    "derive() now looks timezone-independent — re-check the hydration workaround in weekly.ts",
+  );
 });
