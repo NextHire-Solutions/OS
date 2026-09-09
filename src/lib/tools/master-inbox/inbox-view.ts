@@ -48,6 +48,16 @@ export interface InboxQuery {
 
 export interface InboxData {
   query: InboxQuery;
+  /**
+   * The server's clock at load.
+   *
+   * Sent rather than read in the browser because the list renders relative
+   * times ("2:14 PM" for today, "Sep 8" for older). `Date.now()` on both sides
+   * of hydration is two different instants, and `toLocaleTimeString` on both
+   * sides is two different timezones — either one renders different text and
+   * React tears the tree down.
+   */
+  now: string;
   threads: ThreadRow[];
   total: number;
   page: number;
@@ -72,6 +82,7 @@ export function parseInboxQuery(params: URLSearchParams): InboxQuery {
 export async function getInbox(query: InboxQuery): Promise<InboxData> {
   const empty = {
     query,
+    now: new Date().toISOString(),
     threads: [],
     total: 0,
     page: query.page,

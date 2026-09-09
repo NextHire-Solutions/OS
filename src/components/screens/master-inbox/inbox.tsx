@@ -6,6 +6,7 @@ import type {
   InboxData, ThreadRow, ThreadDetail, ThreadResult,
 } from "@/lib/tools/master-inbox/inbox-view";
 import { Lazy } from "../lazy";
+import { fullStamp, shortStamp } from "@/lib/workspace/dates";
 
 /*
  * Master Inbox — the staff inbox.
@@ -107,6 +108,9 @@ function InboxView({ first }: { first: InboxData }) {
 
   const change = (fn: () => void) => { fn(); setPage(1); setOpenId(null); };
 
+  // The server's clock, not the browser's — see shortDate below.
+  const now = new Date(data.now ?? first.now).getTime();
+
   const lastPage = Math.max(1, Math.ceil(data.total / (data.pageSize || 50)));
   const counts = data.counts ?? {};
 
@@ -203,6 +207,7 @@ function InboxView({ first }: { first: InboxData }) {
                     t={t}
                     open={openId === t.id}
                     onOpen={() => setOpenId(openId === t.id ? null : t.id)}
+                    now={now}
                   />
                 ))}
               </div>
@@ -242,7 +247,7 @@ function InboxView({ first }: { first: InboxData }) {
   );
 }
 
-function ThreadItem({ t, open, onOpen }: { t: ThreadRow; open: boolean; onOpen: () => void }) {
+function ThreadItem({ t, open, onOpen, now }: { t: ThreadRow; open: boolean; onOpen: () => void; now: number }) {
   return (
     <button
       role="listitem"
@@ -271,7 +276,7 @@ function ThreadItem({ t, open, onOpen }: { t: ThreadRow; open: boolean; onOpen: 
           </span>
         ) : null}
         <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
-          {t.last_message_at ? shortDate(t.last_message_at) : ""}
+          {shortStamp(t.last_message_at, now)}
         </span>
       </div>
 
@@ -362,7 +367,7 @@ function Message({ m }: { m: ThreadDetail["messages"][number] }) {
         </span>
         <span className="tg" style={{ fontSize: 10.5 }}>{outbound ? "sent" : "received"}</span>
         <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--muted)" }}>
-          {m.sent_at ? longDate(m.sent_at) : ""}
+          {fullStamp(m.sent_at)}
         </span>
       </div>
       {/*
@@ -397,21 +402,6 @@ function stripHtml(html: string | null): string {
     .trim();
 }
 
-function shortDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const days = (Date.now() - d.getTime()) / 86_400_000;
-  return days < 1
-    ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-    : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function longDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ""
-    : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
 
 function InboxSkeleton() {
   return (
