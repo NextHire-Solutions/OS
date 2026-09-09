@@ -9,9 +9,7 @@ import {
   isNotInterestedLabel,
   markEmailBisonReplyInterested,
 } from "./inbox/interest";
-import { notifyIntroductionForThreads } from "./webhooks/n8n-introduction";
-import { pushIntroPipelineEntriesForThreadsToFub } from "./integrations/push-pipeline-entry";
-import { notifyPortalIntroductionForThreads } from "./webhooks/slack-portal";
+import { enqueueIntroduction } from "./outbox";
 import {
   restorePipelineNotes,
   snapshotPipelineNotes,
@@ -152,9 +150,29 @@ export async function applyLabel(threadId: string, labelId: string): Promise<Lab
      * own errors rather than failing the label.
      */
     if (isIntroLabel) {
-      after(() => notifyIntroductionForThreads([threadId], "inbox_label"));
-      after(() => pushIntroPipelineEntriesForThreadsToFub([threadId]));
-      after(() => notifyPortalIntroductionForThreads([threadId]));
+      /*
+       * Through the outbox rather than straight to `after()`.
+       *
+       * The tool fires these three fire-and-forget, so a deploy in that split
+       * second loses them permanently and silently: the introduction is in the
+       * database and in the client's portal, but n8n never ran, nobody saw it
+       * in Slack, and the lead never reached the client's CRM.
+       *
+       * The outbox records the intent before attempting it, so a lost attempt
+       * is retried instead of forgotten. It still attempts immediately, so the
+       * normal case is exactly as fast as before.
+       */
+      after(() => enqueueIntroduction(threadId));
+
+      /*
+       * Notes restoration stays inline in `after()`, deliberately.
+       *
+       * It is a repair of THIS request's damage — the delete-then-upsert wiped
+       * the pipeline entry and its notes — so deferring it to a sweep would
+       * leave the client's portal missing their own notes in the meantime. The
+       * snapshot itself was taken synchronously above, which is the part that
+       * cannot be allowed to fail.
+       */
       if (notesSnapshot) {
         const snap = notesSnapshot;
         after(() => restorePipelineNotes(sb, snap));

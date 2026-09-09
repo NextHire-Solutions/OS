@@ -100,6 +100,42 @@ heavily, and it is the table the client sees.
 
 ---
 
+## 3b. A correction: the portal DOES write back to the inbox
+
+I originally recorded that the portal never touches `label_assignments`, on the
+strength of grepping `app/api/portal` and finding nothing. That was wrong, and
+wrong in a way worth naming: the write happens in a **database trigger**, not
+in application code, so no amount of grepping the routes would have found it.
+
+Migration **0070**, `pipeline_apply_no_show_label`: when a portal moves a
+pipeline entry into `no_show`, a trigger inserts a **"No Show / No Response"
+label on the thread** (demo client excluded). **260 threads already carry it.**
+
+What misled me was this comment in `no-show-window.ts`:
+
+> "MasterInbox is unaffected — this governs only the portal pipeline routes;
+> the inbox 'No Show / No Response' LABEL is separate and does not set the
+> pipeline stage."
+
+It is about the OTHER direction. The inbox label does not set the portal stage.
+It says nothing about the reverse, and I read it as symmetric.
+
+So the coupling is asymmetric, and both halves matter:
+
+| direction | mechanism |
+|---|---|
+| inbox → portal | label "Introduction" → trigger 0023 creates the pipeline entry |
+| portal → inbox | stage `no_show` → trigger 0070 applies the thread label |
+| portal → reporting | stage change → trigger 0065 → `pipeline_outcome_events` → `/api/outcomes` |
+
+The workspace reads `label_assignments`, so those labels already appear
+correctly. Nothing needed fixing — but the understanding did.
+
+**Method note.** Auditing the application code and the triggers ON a table is
+not enough. The triggers that WRITE a table have to be enumerated too.
+
+---
+
 ## 4. Writes have database-side consequences
 
 Four triggers on the pipeline, from migrations 0023 and 0027:
@@ -220,6 +256,52 @@ Rebuilding the staff half must not change the shared table's shape.
 
 ---
 
+## 8b. What the original authors confirmed
+
+Answers from the session that built Master Inbox, on the points where reading
+the code left genuine ambiguity. Three of them changed the design.
+
+**There is no send idempotency.** A retried reply sends a SECOND EMAIL. The
+`messages` insert error is deliberately unchecked and swallowed, and the route
+returns ok. The row converges anyway: `external_message_id` is
+`eb:reply:<id>` / `in:email:<id>`, matching what the webhook backfill computes,
+behind a unique index on `(workspace_id, external_message_id)`.
+
+  → The instinct to "fix" the swallowed error is wrong. Failing the request
+  after a successful send invites a retry, and the retry emails the agent
+  twice. Keep the swallow, log it, and make double-submit impossible in the UI.
+
+**Sender resolution is not what it looks like.** The EmailBison sender comes
+from the STORED INBOUND WEBHOOK ENVELOPE — `raw_payload.data.sender_email.id` —
+not from `thread.outbound_sender_email`, which is only a display field and the
+Instantly eaccount fallback. `channels.emailbison_team_id` is mandatory and
+refuses with a 400 when null, and it is populated lazily from inbound webhooks.
+
+  → **A thread with no prior inbound cannot be replied to**, and a freshly
+  registered sender cannot reply until its first inbound lands. The UI must say
+  so rather than surface a 500.
+
+**`after()` is a silent single point of failure.** No queue, no reconciler. A
+restart between response and callback loses n8n and Slack permanently. Follow
+Up Boss is gated on `fub_pushed_at` so it is idempotent, but nothing retries it
+— a missed push waits for someone to re-label the thread.
+
+  → Fixed here with an outbox; see `migrations/0001_side_effect_outbox.sql`.
+
+**Other confirmations.** `assigned_user_id` has no readers anywhere — writing
+null is correct. `DEMO_MODE` is unset in production. The webhook handlers are
+idempotent on replay and hold no in-memory state, so the live service can keep
+receiving them safely. Realtime is a nicety: a 30-second poll already exists as
+the guaranteed fallback — but do NOT subscribe to `threads` UPDATE, because the
+`seen=true` write on every navigation would fire a refresh that races the
+navigation itself.
+
+**Hired and funnel history live in `pipeline_outcome_events`**, not in an
+entry's current stage. "How many reached Phone Screen" cannot be answered from
+`client_pipeline_entries` alone.
+
+---
+
 ## 9. Rules this audit produces
 
 1. **Never write Master Inbox's tables directly.** Every write goes through its
@@ -233,3 +315,7 @@ Rebuilding the staff half must not change the shared table's shape.
 6. **Leave the service deployed.** It is the portal host, the webhook receiver
    and the write path, whatever happens to its staff UI.
 7. Scope every query by `workspace_id`, even with one workspace.
+8. **Never retry a send.** There is no idempotency key; a retry emails the
+   agent twice.
+9. **Enumerate the triggers that WRITE a table**, not only those on it — that
+   is how the portal→inbox link was missed.
