@@ -9,6 +9,7 @@ import { getAgentSearchOverview } from "@/lib/tools/agent-search/agents";
 import { getInbox } from "@/lib/tools/master-inbox/inbox-view";
 import { getReminders } from "@/lib/tools/master-inbox/reminders";
 import { getSettings } from "@/lib/tools/master-inbox/settings";
+import { getPortals } from "@/lib/tools/master-inbox/portals";
 import { getClientsOverview } from "@/lib/clients/overview";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
@@ -23,6 +24,7 @@ import { AgentSearchScreen } from "@/components/screens/agent-search/agents";
 import { MasterInboxScreen } from "@/components/screens/master-inbox/inbox";
 import { RemindersScreen } from "@/components/screens/master-inbox/reminders";
 import { MasterInboxSettingsScreen } from "@/components/screens/master-inbox/settings";
+import { PortalsScreen } from "@/components/screens/master-inbox/portals";
 import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
@@ -82,7 +84,7 @@ export default async function WorkspacePage({
    */
   const only = (id: string) => initialId === id;
 
-  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, agentSearch, inbox, reminders, inboxSettings] =
+  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, agentSearch, inbox, reminders, inboxSettings, portals] =
     await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
@@ -96,6 +98,7 @@ export default async function WorkspacePage({
       : Promise.resolve(null),
     only("inbox:reminders") ? getReminders() : Promise.resolve(null),
     only("inbox:settings") ? getSettings() : Promise.resolve(null),
+    only("inbox:portals") ? getPortals() : Promise.resolve(null),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -175,6 +178,7 @@ export default async function WorkspacePage({
         "inbox:all-email": <MasterInboxScreen initial={inbox} />,
         "inbox:reminders": <RemindersScreen initial={reminders} />,
         "inbox:settings": <MasterInboxSettingsScreen initial={inboxSettings} />,
+        "inbox:portals": <PortalsScreen initial={portals} />,
         "team-access": <TeamAccessScreen />,
       }}
     />
