@@ -7,6 +7,8 @@ import type {
 } from "@/lib/tools/master-inbox/inbox-view";
 import { Lazy } from "../lazy";
 import { Composer } from "./composer";
+import { InboxRow, RailCard } from "./row";
+import { SelectionBar } from "./selection-bar";
 import {
   applyLabel, loadLabels, setSeen, setStatus,
   type Label, type ThreadStatus,
@@ -51,6 +53,7 @@ function InboxView({ first }: { first: InboxData }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(first.error);
 
+  const [selected, setSelected] = useState<string[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [threadBusy, setThreadBusy] = useState(false);
@@ -128,108 +131,104 @@ function InboxView({ first }: { first: InboxData }) {
   ];
 
   return (
-    <div className="wrap">
+    <>
       {failed ? (
-        <div className="anno" style={{ borderColor: "var(--red)", marginBottom: 16 }}>
+        <div className="anno" style={{ margin: "0 16px 12px" }}>
           <b>The inbox could not be read.</b> {failed}
         </div>
       ) : null}
 
-      {/* Views. Counts come from the tool's own loadViewCounts. */}
-      <div className="pills" style={{ marginBottom: 16, flexWrap: "wrap" }}>
+      {/* The design's tab strip. Counts are UNSEEN — the tool's "N new" pill. */}
+      <div className="mi-tabs">
         {VIEWS.map((v) => {
-          // The tool's count is UNSEEN, not a total — it is the "N new" pill.
-          // Showing it as a total would misreport every view.
           const unseen = counts[v.slug]?.unseen ?? 0;
           return (
             <button
               key={v.slug}
-              className={`fp${view === v.slug ? " on" : ""}`}
+              className={`mi-tab${view === v.slug ? " on" : ""}`}
               onClick={() => change(() => setView(v.slug))}
               aria-pressed={view === v.slug}
-              title={unseen > 0 ? `${unseen.toLocaleString("en-US")} unread` : v.label}
             >
               {v.label}
-              {unseen > 0 ? (
-                <span
-                  className="tnum"
-                  style={{
-                    marginLeft: 7,
-                    background: "var(--red-bg)",
-                    color: "var(--red)",
-                    borderRadius: 7,
-                    padding: "1px 6px",
-                    fontWeight: 700,
-                  }}
-                >
-                  {unseen.toLocaleString("en-US")}
-                </span>
-              ) : null}
+              {unseen > 0 ? <span className="cpill">{unseen} new</span> : null}
             </button>
           );
         })}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: openId ? "minmax(340px, 420px) 1fr" : "1fr", gap: 18, alignItems: "start" }}>
-        <div className="tbl-wrap">
-          <div className="tbl-head">
-            <div>
-              <div className="tbl-title">Conversations</div>
-              <div className="tbl-sub">
-                {data.total.toLocaleString("en-US")} in {view.replace(/-/g, " ")}
-                {lastPage > 1 ? ` · page ${data.page} of ${lastPage.toLocaleString("en-US")}` : ""}
-              </div>
-            </div>
-            <input
-              className="inp"
-              placeholder="Search conversations…"
-              value={q}
-              onChange={(e) => change(() => setQ(e.target.value))}
-              aria-label="Search conversations"
-              style={{ minWidth: 210 }}
-            />
-          </div>
+      <div className="mi-filter">
+        <input
+          className="inp"
+          placeholder="Search conversations…"
+          value={q}
+          onChange={(e) => change(() => setQ(e.target.value))}
+          aria-label="Search conversations"
+          style={{ flex: 1, maxWidth: 420 }}
+        />
+      </div>
 
-          {/* Dimmed rather than blanked while loading — an inbox that empties
-              on every keystroke reads as "you have no mail". */}
-          <div style={{ opacity: busy ? 0.55 : 1, transition: "opacity .12s" }} aria-busy={busy}>
+      <SelectionBar
+        selected={selected}
+        total={data.total}
+        page={data.page}
+        lastPage={lastPage}
+        pageSize={data.pageSize}
+        onClear={() => setSelected([])}
+        onSelectAll={() => setSelected(data.threads.map((t) => t.id))}
+        onDone={() => { setSelected([]); load({ view, q, page }); }}
+        onPage={(d) => setPage((n) => Math.min(Math.max(1, n + d), lastPage))}
+      />
+
+      {/*
+        Two modes, as the design has them.
+
+        With nothing open the list is full width, so a row can carry sender,
+        chips, subject and preview on one line. Opening a conversation narrows
+        the list to a rail of compact cards — the same rows squeezed into 320px
+        would be unreadable, which is why the design draws them differently
+        rather than just shrinking them.
+      */}
+      <div
+        style={
+          openId
+            ? { display: "grid", gridTemplateColumns: "320px 1fr", minHeight: 0, flex: 1 }
+            : undefined
+        }
+      >
+        <div style={openId ? { overflow: "auto", borderRight: "1px solid var(--line-soft)" } : undefined}>
+          <div style={{ opacity: busy ? 0.55 : 1, transition: "opacity .12s" }} aria-busy={busy} role="list">
             {data.threads.length === 0 ? (
               <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--muted)" }}>
-                {q.trim() ? `Nothing matches “${q.trim()}”.` : "No conversations in this view."}
+                {q.trim() ? `Nothing matches \u201c${q.trim()}\u201d.` : "No conversations in this view."}
               </div>
+            ) : openId ? (
+              data.threads.map((t) => (
+                <RailCard
+                  key={t.id}
+                  t={t}
+                  now={now}
+                  open={openId === t.id}
+                  onOpen={() => setOpenId(t.id)}
+                />
+              ))
             ) : (
-              <div role="list">
-                {data.threads.map((t) => (
-                  <ThreadItem
-                    key={t.id}
-                    t={t}
-                    open={openId === t.id}
-                    onOpen={() => setOpenId(openId === t.id ? null : t.id)}
-                    now={now}
-                  />
-                ))}
-              </div>
+              data.threads.map((t) => (
+                <InboxRow
+                  key={t.id}
+                  t={t}
+                  now={now}
+                  open={false}
+                  selected={selected.includes(t.id)}
+                  onOpen={() => setOpenId(t.id)}
+                  onToggle={() =>
+                    setSelected((cur) =>
+                      cur.includes(t.id) ? cur.filter((x) => x !== t.id) : [...cur, t.id],
+                    )
+                  }
+                />
+              ))
             )}
           </div>
-
-          {lastPage > 1 ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 18px" }}>
-              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
-                {((data.page - 1) * data.pageSize + 1).toLocaleString("en-US")}–
-                {Math.min(data.page * data.pageSize, data.total).toLocaleString("en-US")} of{" "}
-                {data.total.toLocaleString("en-US")}
-              </span>
-              <span className="pills" style={{ padding: 0 }}>
-                <button className="fp" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={data.page <= 1}
-                  style={data.page <= 1 ? { opacity: 0.4, cursor: "not-allowed" } : undefined} aria-label="Previous page">←</button>
-                <button className="fp on" style={{ minWidth: 84 }} disabled>
-                  {data.page} / {lastPage.toLocaleString("en-US")}
-                </button>
-                <button className="fp" onClick={() => setPage((p) => Math.min(lastPage, p + 1))} disabled={data.page >= lastPage}
-                  style={data.page >= lastPage ? { opacity: 0.4, cursor: "not-allowed" } : undefined} aria-label="Next page">→</button>
-              </span>
-            </div>
-          ) : null}
         </div>
 
         {openId ? (
@@ -238,68 +237,11 @@ function InboxView({ first }: { first: InboxData }) {
             busy={threadBusy}
             error={threadError}
             onClose={() => setOpenId(null)}
-            // The list is now wrong — the thread has left this view, or its
-            // read state changed. Reload it rather than leave a stale row.
             onDone={() => { setOpenId(null); load({ view, q, page }); }}
           />
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function ThreadItem({ t, open, onOpen, now }: { t: ThreadRow; open: boolean; onOpen: () => void; now: number }) {
-  return (
-    <button
-      role="listitem"
-      onClick={onOpen}
-      aria-expanded={open}
-      className="mi-row"
-      style={{
-        display: "block",
-        width: "100%",
-        textAlign: "left",
-        padding: "13px 18px",
-        borderTop: "1px solid var(--line-soft)",
-        background: open ? "var(--inset)" : "transparent",
-        cursor: "pointer",
-        // An unseen thread is the reason somebody opened this screen.
-        fontWeight: t.seen ? 400 : 600,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {t.lead_full_name ?? t.lead_email ?? "Unknown sender"}
-        </span>
-        {t.needs_reply ? (
-          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
-            needs reply
-          </span>
-        ) : null}
-        <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
-          {shortStamp(t.last_message_at, now)}
-        </span>
-      </div>
-
-      <div style={{ fontSize: 13, color: "var(--ink)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {t.subject ?? "(no subject)"}
-      </div>
-
-      {t.last_message_preview ? (
-        <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 400 }}>
-          {t.last_message_preview}
-        </div>
-      ) : null}
-
-      <div style={{ display: "flex", gap: 6, marginTop: 7, flexWrap: "wrap", alignItems: "center" }}>
-        {t.client_name ? <span className="tg">{t.client_name}</span> : null}
-        {t.labels?.slice(0, 3).map((l) => (
-          <span key={l.name} className="tg" style={{ background: l.color || "var(--inset-2)", borderColor: "transparent" }}>
-            {l.name}
-          </span>
-        ))}
-      </div>
-    </button>
+    </>
   );
 }
 
@@ -387,6 +329,7 @@ function Message({ m }: { m: ThreadDetail["messages"][number] }) {
 }
 
 /** Plain text from an HTML body — the workspace never renders sender HTML. */
+
 function stripHtml(html: string | null): string {
   if (!html) return "";
   return html
@@ -405,7 +348,6 @@ function stripHtml(html: string | null): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
-
 
 function InboxSkeleton() {
   return (
