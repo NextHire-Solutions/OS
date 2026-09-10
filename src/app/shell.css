@@ -69,6 +69,26 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
+  /*
+   * Capped, not merely shrinkable.
+   *
+   * Allowing the cluster to shrink stopped the row overflowing, but it still
+   * claimed 461px of 1146 and left the preview eleven pixels wide — present in
+   * the markup, useless on the screen. The preview is the line that tells you
+   * whether a reply needs opening, so it gets a real share.
+   */
+  max-width: 30%;
+}
+
+/*
+ * Campaign names here run far longer than the mockup's samples — "Carolina
+ * Realty Advisors 2 + Nicole + East" — so the design's 14rem cap is generous
+ * against real data. It is the chip worth truncating: the provider and client
+ * are read at a glance, and the full campaign is on screen once the
+ * conversation is open.
+ */
+.mi-row .c-camp {
+  max-width: 11rem;
 }
 
 /* The row itself must be allowed to compute a shrunken width for its cells. */
