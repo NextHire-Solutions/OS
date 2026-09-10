@@ -65,7 +65,6 @@ export const NAV: NavSection[] = [
       { kind: "page", id: "home", label: "Home", route: "/" },
       { kind: "page", id: "performance", label: "Performance", route: "/performance" },
       { kind: "page", id: "roster", label: "Clients", route: "/roster" },
-      { kind: "page", id: "consistency", label: "Consistency", route: "/consistency" },
     ],
   },
   {
@@ -247,7 +246,6 @@ const PAGE_PATH: Record<string, string> = {
   home: "/",
   performance: "/performance",
   roster: "/roster",
-  consistency: "/consistency",
   "team-access": "/team",
 };
 

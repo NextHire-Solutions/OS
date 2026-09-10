@@ -6,30 +6,33 @@ import { NotConfiguredError } from "@/lib/env";
  * Signing in to Client Health as the workspace.
  *
  * ---------------------------------------------------------------------------
- * WHY MINT ITS COOKIE RATHER THAN CHANGE THE TOOL
+ * WHAT STILL GOES THROUGH THE LIVE TOOL, AND WHY ONLY THIS
  *
- * Reads come straight from Client Health's database, but WRITES must go
- * through its own API — that is where its validation lives, and where its sync
- * worker's assumptions are enforced. Writing to its tables directly would work
- * right up until it silently didn't.
+ * One thing: "Sync now". Client edits, pauses, churns and deletes used to come
+ * through here too; they now write to Client Health's database directly, from
+ * `clientWrites.ts`, because the tool is being switched off and a proxy dies
+ * with it.
  *
- * Its API authenticates a person by a `bs_auth` cookie, and only that path
- * permits POST, PATCH and DELETE: the `x-admin-token` route is deliberately
- * narrowed to GET /api/clients so a read token can never write.
+ * The sync is the exception because it is not a write the OS is qualified to
+ * make. `runSync()` walks Instantly and EmailBison, reconciles campaigns and
+ * pulls introductions from Corofy; a second implementation of that would drift,
+ * and the way anyone would find out is two dashboards disagreeing about a
+ * client's numbers. So the OS presses the tool's own button instead.
  *
- * So the workspace derives the same cookie the tool's own login produces —
- * HMAC-SHA256 of a fixed message under the dashboard password, exactly as
- * `expectedCookieValue` in the tool computes it. Copied, not reimplemented: if
- * this ever disagreed the writes would 401 rather than corrupt anything, but
- * copying keeps it honest.
+ * That means this file survives exactly as long as the sync worker does, and no
+ * longer. When the tool goes, the sync worker has to move — not this.
  *
- * The point of doing it this way is that the live tool needs no change at all.
- * No new endpoint, no new token, no deploy. Its existing auth is simply used
- * as intended.
+ * The tool authenticates a person by a `bs_auth` cookie, and only that path
+ * permits POST: its `x-admin-token` route is deliberately narrowed to
+ * GET /api/clients so a read token can never trigger anything. So the workspace
+ * derives the same cookie the tool's own login produces — HMAC-SHA256 of a
+ * fixed message under the dashboard password, exactly as `expectedCookieValue`
+ * in the tool computes it. Copied, not reimplemented: if this ever disagreed
+ * the call would 401 rather than misfire, but copying keeps it honest.
  *
- * The password lives only in Railway. It is never sent to the browser — every
- * write is proxied through this app's own API routes, which the workspace's
- * sign-in already guards.
+ * The password lives only in Railway. It is never sent to the browser — the
+ * call is made from this app's own API route, which the workspace's sign-in
+ * already guards.
  */
 
 const AUTH_MESSAGE = "bs-dashboard-authed";
@@ -66,8 +69,9 @@ export async function clientHealthAuthCookie(): Promise<string> {
 /**
  * Calls Client Health's own API as a signed-in person.
  *
- * Every write the workspace makes goes through here, so there is exactly one
- * place that knows how to authenticate to that tool.
+ * One caller: `POST /api/tools/client-health/sync`. Kept general because there
+ * is exactly one place that should know how to authenticate to that tool, and
+ * one place is easier to delete than five.
  */
 export async function callClientHealth(
   path: string,

@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { ttlCache } from "../cache/ttl";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { env } from "@/lib/env";
@@ -89,7 +90,34 @@ async function loadAllIntroAssignments(
 // by client_id (each list newest-first). This is the single shared scan
 // behind the per-client loader and the admin roll-up — wrapped in
 // cache() so one render runs it once no matter how many callers ask.
+/*
+ * ---------------------------------------------------------------------------
+ * TTL-CACHED ON TOP OF React.cache — a deliberate difference from the tool.
+ *
+ * `cache()` alone dedupes within ONE render. This scan walks every
+ * Introduction-labelled thread in the workspace — 1,113 of them today, chunked
+ * into `.in()` batches, plus the lead join — and it is the whole cost of the
+ * portals admin page: 13.5 seconds, paid again on every single visit and every
+ * refresh.
+ *
+ * The tool pays it too; it is simply a page nobody opens often there. Here the
+ * workspace is meant to feel fast, and this is a roll-up of how many
+ * introductions each client has — a number that does not need to be to the
+ * second.
+ *
+ * FIVE minutes, not the 60 seconds used for the campaign and client pickers,
+ * and the difference is deliberate. Those are cheap scans where a stale entry
+ * would be noticed immediately in a dropdown. This one costs thirteen seconds,
+ * so a 60-second TTL means anybody visiting the portals page more than a minute
+ * apart pays it again — measured: 12.9s cold, 1.0s warm.
+ *
+ * What goes stale is a COUNT of introductions per client on a staff admin page.
+ * The client's own portal is unaffected either way: it reads
+ * `client_pipeline_entries` directly and shows a new introduction the moment
+ * the trigger writes it.
+ */
 export const loadOurIntroLeadsByClient = cache(
+  ttlCache(
   async function loadOurIntroLeadsByClient(): Promise<Map<string, IntroLead[]>> {
     const admin = createAdminSupabase();
     const assignments = await loadAllIntroAssignments(admin);
@@ -197,6 +225,8 @@ export const loadOurIntroLeadsByClient = cache(
     }
     return byClient;
   },
+  { ttlMs: 60_000 },
+  ),
 );
 
 // Every Introduction lead for ONE client (our Supabase data only),

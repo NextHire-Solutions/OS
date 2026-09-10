@@ -3,6 +3,7 @@ import "server-only";
 import { loadDashboardClients } from "./loadDashboard";
 import { getMondayOf, weekKey } from "./derive";
 import { deriveRows, summarize, type WeeklyRow, type WeeklySummary } from "./summarize";
+import type { NamedCampaign } from "./clientForm";
 import type { DashboardClient } from "./types";
 
 /*
@@ -70,6 +71,16 @@ export interface ClientHealthWeeklyData {
    * the browser are two different clocks and hydration compares them.
    */
   now: string;
+  /*
+   * Every campaign name, for the Add / Edit form's auto-linking.
+   *
+   * Names and ids only. The tool ships the whole campaign objects because its
+   * dashboard is one page and already has them; here they would be ~200 KB of
+   * progress percentages and reply counts that only `autoMatchCampaignIds`
+   * looks at, and it only reads the name.
+   */
+  instantlyCampaigns: NamedCampaign[];
+  bisonCampaigns: NamedCampaign[];
   /** Present only when server-rendered. See above — this is a hydration fix. */
   rows?: WeeklyRow[];
   summary?: WeeklySummary;
@@ -77,15 +88,29 @@ export interface ClientHealthWeeklyData {
   error?: string;
 }
 
+const named = (list: { id: string; name: string }[]): NamedCampaign[] =>
+  list.map((c) => ({ id: c.id, name: c.name }));
+
 export async function getWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData> {
-  const { clients, source, error } = await loadDashboardClients();
+  const { clients, allInstantlyCampaigns, allBisonCampaigns, source, error } =
+    await loadDashboardClients();
 
   const monday = getMondayOf(new Date());
   monday.setDate(monday.getDate() + weekOffset * 7);
   const key = weekKey(monday);
   const rows = deriveRows(clients, key);
 
-  return { clients, weekKey: key, now: new Date().toISOString(), rows, summary: summarize(rows), source, error };
+  return {
+    clients,
+    weekKey: key,
+    now: new Date().toISOString(),
+    instantlyCampaigns: named(allInstantlyCampaigns),
+    bisonCampaigns: named(allBisonCampaigns),
+    rows,
+    summary: summarize(rows, key),
+    source,
+    error,
+  };
 }
 
 /**

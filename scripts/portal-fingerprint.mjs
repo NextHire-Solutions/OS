@@ -12,6 +12,7 @@
  * Read-only. It performs no writes of any kind.
  */
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 const OUT = process.env.FP_OUT || path.join(process.cwd(), ".portal-fingerprint.json");
@@ -50,9 +51,27 @@ async function snapshot() {
 
   return {
     at: new Date().toISOString(),
+    /*
+     * TOKENS ARE HASHED, NEVER STORED.
+     *
+     * A portal token IS the credential — portal.brokerstaffer.com/portal/<token>
+     * opens a client's data with no login. An earlier version of this file wrote
+     * all 57 of them in plain text, the result was committed, and the repository
+     * was public at the time. That is the single worst thing this project has
+     * done, and it was done by the very script meant to protect the portals.
+     *
+     * A hash answers the only question this file asks — "did the token change?"
+     * — and answers it just as well, while being worthless to anyone who reads
+     * the file.
+     */
     clients: rows.map((c) => ({
-      id: c.id, name: c.name, slug: c.slug,
-      portal_token: c.portal_token, portal_enabled: c.portal_enabled,
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      token_hash: c.portal_token
+        ? createHash("sha256").update(String(c.portal_token)).digest("hex").slice(0, 16)
+        : null,
+      portal_enabled: c.portal_enabled,
     })),
     counts,
   };
@@ -60,7 +79,7 @@ async function snapshot() {
 
 const mode = process.argv[2] || "check";
 const now = await snapshot();
-const live = now.clients.filter((c) => c.portal_token && c.portal_enabled !== false);
+const live = now.clients.filter((c) => c.token_hash && c.portal_enabled !== false);
 
 if (mode === "save" || !fs.existsSync(OUT)) {
   fs.writeFileSync(OUT, JSON.stringify(now, null, 2));
@@ -76,8 +95,8 @@ const problems = [];
 for (const c of now.clients) {
   const b = byId.get(c.id);
   if (!b) { problems.push(`NEW client "${c.name}" (not a fault, but new)`); continue; }
-  if (b.portal_token !== c.portal_token)
-    problems.push(`*** URL CHANGED: "${c.name}" token ${b.portal_token} → ${c.portal_token}`);
+  if (b.token_hash !== c.token_hash)
+    problems.push(`*** URL CHANGED: "${c.name}" — its portal link no longer works`);
   if (b.portal_enabled !== c.portal_enabled)
     problems.push(`*** PORTAL TOGGLED: "${c.name}" enabled ${b.portal_enabled} → ${c.portal_enabled}`);
   if (b.slug !== c.slug) problems.push(`slug changed: "${c.name}" ${b.slug} → ${c.slug}`);

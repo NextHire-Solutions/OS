@@ -74,12 +74,19 @@ export interface Client {
   // Monthly-target fields (migration 0013):
   monthly_target: number;                // per-client goal for one monthly cycle; 0 = unset
   intros_this_month: number;             // Introduction-feed rows since the current monthly-cycle start
+  // Portal deep-link (migration 0014):
+  portal_url: string | null;             // mirror of Corofy portals.portal_url; null when no portal
+  // All-time Corofy label counts (migration 0016). Refreshed on every sync
+  // tick; NOT clipped to the 26-week weekly_metrics backfill window.
+  total_intros_corofy: number;
+  total_interested_corofy: number;
 }
 
 export interface WeeklyMetric {
   client_id: string;
   week_key: string; // YYYY-MM-DD (Monday)
   emails_sent: number;
+  replies: number;                      // Instantly daily 'replies' + Bison 'Replied' series, summed per week
   intros_corofy: number;                // Corofy "Introduction" count
   last_corofy_intro_at: string | null;
   interested_corofy: number;            // Corofy "Interested" count

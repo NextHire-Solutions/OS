@@ -1,170 +1,145 @@
-"use client";
-
-import { useMemo, useState } from "react";
-
-import type { Reminder, RemindersData } from "@/lib/tools/master-inbox/reminders";
-import { fullStamp } from "@/lib/workspace/dates";
-import { Lazy, PlaceholderScreen } from "../lazy";
-
 /*
- * Master Inbox — reminders.
+ * Reminders — the tool's own page.
  *
- * Snoozed threads, and when they come back.
+ * Replaces a hand-written screen that listed reminders and could not dismiss
+ * one: `DismissReminderButton` was never mounted, so the only action the page
+ * has did not exist. Found by scripts/inbox-inventory.mjs (0 of 3 components).
  *
- * The screen is explicit that it does not fire them, because in the live tool
- * opening the reminders page is what fires due reminders and returns their
- * threads to the inbox. A workspace screen showing "3 due" while silently
- * doing nothing would look handled, which is worse than not having the screen.
+ * The tabs are the design's (see mockup/tabs.tsx); everything else — the
+ * loaders, the grouping, the dismiss action — is the tool's.
  */
 
-export function RemindersScreen({ initial }: { initial: RemindersData | null }) {
-  return (
-    <Lazy<RemindersData>
-      initial={initial}
-      url="/api/tools/master-inbox/reminders"
-      label="Reminders"
-      skeleton={<PlaceholderScreen cards={2} />}
-    >
-      {(data) => <RemindersView data={data} />}
-    </Lazy>
-  );
+import Link from "next/link";
+import { Clock, Mail, ArrowRight } from "lucide-react";
+import { requireSession } from "@/lib/auth/workspace";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { TopBar } from "@/components/master-inbox/top-bar";
+import { MockupTabs } from "./mockup/tabs";
+import { loadViewCounts } from "@/lib/tools/master-inbox/inbox/views";
+import { loadViews } from "@/lib/tools/master-inbox/inbox/views";
+import { loadLabels } from "@/lib/tools/master-inbox/inbox/labels";
+import { DismissReminderButton } from "@/components/master-inbox/dismiss-reminder-button";
+
+
+interface ReminderRow {
+  id: string;
+  thread_id: string;
+  remind_at: string;
+  note: string | null;
+  status: "pending" | "fired" | "dismissed";
+  threads:
+    | { id: string; subject: string | null; leads: { full_name: string | null; email: string | null } | null }
+    | null;
 }
 
-function RemindersView({ data }: { data: RemindersData }) {
-  const [search, setSearch] = useState("");
-  // The SERVER's clock — "due" must be decided once, not once per side.
-  const now = useMemo(() => new Date(data.now).getTime(), [data.now]);
+export async function RemindersScreen() {
+  const session = await requireSession();
+  const admin = createAdminSupabase();
+  const wsId = session.activeWorkspace.id;
+  const now = new Date().toISOString();
 
-  const rows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return data.reminders;
-    return data.reminders.filter(
-      (r) =>
-        (r.subject ?? "").toLowerCase().includes(q) ||
-        (r.leadName ?? "").toLowerCase().includes(q) ||
-        (r.leadEmail ?? "").toLowerCase().includes(q) ||
-        (r.note ?? "").toLowerCase().includes(q),
-    );
-  }, [data.reminders, search]);
-
-  if (data.error) {
-    return (
-      <div className="wrap">
-        <div className="anno">
-          <b>Reminders could not be read.</b> {data.error}
-        </div>
-      </div>
-    );
+  // Auto-fire any reminders whose time has come — flip the thread back to
+  // open and mark the reminder as fired. Visiting the page is effectively
+  // the alarm clock: due threads return to your inbox.
+  const { data: dueReminders } = await admin
+    .from("reminders")
+    .select("id, thread_id")
+    .eq("workspace_id", wsId)
+    .eq("status", "pending")
+    .lte("remind_at", now);
+  if (dueReminders && dueReminders.length > 0) {
+    const reminderIds = dueReminders.map((r) => r.id as string);
+    const threadIds = dueReminders.map((r) => r.thread_id as string);
+    await admin.from("reminders").update({ status: "fired" }).in("id", reminderIds);
+    await admin
+      .from("threads")
+      .update({ status: "open" })
+      .in("id", threadIds)
+      .eq("workspace_id", wsId);
   }
 
+  const { data: rows } = await admin
+    .from("reminders")
+    .select(
+      "id, thread_id, remind_at, note, status, threads:thread_id(id, subject, leads:lead_id(full_name, email))",
+    )
+    .eq("workspace_id", wsId)
+    .eq("status", "pending")
+    .order("remind_at", { ascending: true });
+
+  const [views, labels, viewCounts] = await Promise.all([
+    loadViews(wsId),
+    loadLabels(wsId),
+    loadViewCounts(wsId, null),
+  ]);
+  const reminders = (rows ?? []) as unknown as ReminderRow[];
+
   return (
-    <div className="wrap">
-      {data.dueCount > 0 ? (
-        <div className="anno" style={{ marginBottom: 16 }}>
-          <b>
-            {data.dueCount} reminder{data.dueCount === 1 ? " is" : "s are"} due.
-          </b>{" "}
-          The workspace does not fire them yet — opening Master Inbox&rsquo;s own
-          Reminders page is still what returns those threads to the inbox.
-        </div>
-      ) : null}
-
-      <div className="cards" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-        <Card label="Pending" value={data.reminders.length} sub="threads snoozed" />
-        <Card
-          label="Due Now"
-          value={data.dueCount}
-          sub="past their time"
-          tone={data.dueCount > 0 ? "n-risk" : "n-green"}
-        />
-      </div>
-
-      <div className="tbl-wrap">
-        <div className="tbl-head">
-          <div>
-            <div className="tbl-title">Reminders</div>
-            <div className="tbl-sub">
-              Soonest first
-              {rows.length !== data.reminders.length ? ` · showing ${rows.length}` : ""}
-            </div>
+    <div className="mi-theme">
+      <TopBar />
+      <MockupTabs
+        views={views.map((v) => ({ id: v.id, slug: v.slug, name: v.name }))}
+        activeSlug=""
+        counts={viewCounts}
+      />
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-8 py-8">
+          <div className="mb-6">
+            <h1 className="text-xl font-semibold tracking-tight">Reminders</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Threads you&apos;ve snoozed. They auto-return to your inbox at the scheduled
+              time the next time you open this page.
+            </p>
           </div>
-          <input
-            className="inp"
-            placeholder="Search reminders…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search reminders"
-          />
-        </div>
 
-        <div className="tbl-scroll">
-          <table style={{ minWidth: 820 }}>
-            <thead>
-              <tr>
-                <th>Thread</th>
-                <th>Lead</th>
-                <th>Due</th>
-                <th>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={4} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
-                    {search.trim()
-                      ? `Nothing matches “${search.trim()}”.`
-                      : "No threads are snoozed."}
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r) => <Row key={r.id} r={r} now={now} />)
-              )}
-            </tbody>
-          </table>
+          {reminders.length === 0 ? (
+            <div className="rounded-lg border bg-card p-10 text-center">
+              <Clock className="size-7 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm font-medium">No snoozed threads</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Open any thread and click the clock icon in the toolbar to snooze it.
+              </p>
+            </div>
+          ) : (
+            <ul className="rounded-lg border bg-card divide-y">
+              {reminders.map((r) => {
+                const thread = r.threads;
+                const lead = thread?.leads;
+                const remindAt = new Date(r.remind_at);
+                return (
+                  <li key={r.id} className="flex items-center gap-3 px-4 py-3">
+                    <div className="size-9 rounded-md bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                      <Mail className="size-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">
+                        {lead?.full_name || lead?.email || "Unknown"}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {thread?.subject || "(no subject)"}
+                      </p>
+                    </div>
+                    <div className="text-xs text-muted-foreground tabular-nums shrink-0">
+                      <Clock className="size-3 inline-block mr-1 -mt-0.5" />
+                      {remindAt.toLocaleString()}
+                    </div>
+                    <DismissReminderButton threadId={r.thread_id} />
+                    {thread?.id ? (
+                      <Link
+                        href={`/inbox/all-email/${thread.id}`}
+                        className="size-8 rounded-md flex items-center justify-center hover:bg-accent text-muted-foreground hover:text-foreground"
+                        aria-label="Open thread"
+                      >
+                        <ArrowRight className="size-4" />
+                      </Link>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function Row({ r, now }: { r: Reminder; now: number }) {
-  return (
-    <tr>
-      <td><div className="cname">{r.subject ?? "(no subject)"}</div></td>
-      <td className="mut">{r.leadName ?? r.leadEmail ?? <span className="api-none">—</span>}</td>
-      <td>
-        {!r.remindAt ? (
-          <span className="api-none">—</span>
-        ) : r.due ? (
-          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
-            {overdue(r.remindAt, now)}
-          </span>
-        ) : (
-          <span className="mut">{fullStamp(r.remindAt)}</span>
-        )}
-      </td>
-      <td className="mut">{r.note ?? <span className="api-none">—</span>}</td>
-    </tr>
-  );
-}
-
-/** How long a due reminder has been waiting — the number that prompts action. */
-function overdue(iso: string, now: number): string {
-  const ms = now - new Date(iso).getTime();
-  if (!Number.isFinite(ms)) return "due";
-  const mins = Math.floor(ms / 60_000);
-  if (mins < 60) return `due ${Math.max(1, mins)}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `due ${hours}h ago`;
-  return `due ${Math.floor(hours / 24)}d ago`;
-}
-
-function Card({ label, value, sub, tone }: { label: string; value: number; sub: string; tone?: string }) {
-  return (
-    <div className="card">
-      <div className="card-l">{label}</div>
-      <div className={`card-n tnum${tone ? ` ${tone}` : ""}`}>{value.toLocaleString("en-US")}</div>
-      <div className="card-s">{sub}</div>
     </div>
   );
 }

@@ -5,10 +5,15 @@ import type { DashboardClient } from "@/lib/tools/client-health/types";
 /*
  * Writes to Client Health, from the browser.
  *
- * Every one goes to a workspace API route, which proxies to the tool's own
- * endpoint. The browser never holds a credential for Client Health, and the
- * tool's validation, auto-linking and cascade rules all still apply — the
- * workspace has no opinion about what a valid client is.
+ * Every one goes to a workspace API route. Those routes used to forward the
+ * write to the live Client Health app; they now perform it themselves, because
+ * that app is being switched off and a proxy dies with the thing it proxies
+ * to. The rules it held — the field allow-list, the delete cascade — moved into
+ * `src/lib/tools/client-health/clientWrites.ts`.
+ *
+ * Nothing here changed with them. The paths, the bodies and the response
+ * shapes are the same, which is the point: the browser never held a credential
+ * for Client Health and still does not, and no caller had to be touched.
  */
 
 async function send(path: string, init: RequestInit): Promise<unknown> {
@@ -56,7 +61,12 @@ export function describeSync(r: SyncResult): string {
 
 export type ClientPatch = Partial<DashboardClient> & { id: string };
 
-/** Updates one client. The tool decides which fields it will accept. */
+/**
+ * Updates one client.
+ *
+ * Only the fields a person may edit are applied; the API route ignores the
+ * rest, so a stale tab cannot write over a column the sync worker owns.
+ */
 export function updateClient(patch: ClientPatch): Promise<unknown> {
   return send(`${BASE}/clients`, json("PATCH", patch));
 }
@@ -68,8 +78,9 @@ export function createClient(client: Record<string, unknown>): Promise<unknown> 
 /**
  * Deletes a client.
  *
- * Cascading and irreversible in the tool — it removes the client's metrics and
- * campaign links too. Callers must confirm by name before calling this.
+ * Cascading and irreversible. The client's entire weekly_metrics history goes
+ * with it — the database does that, on a foreign key — and so do campaign cache
+ * rows no other client references. Callers must confirm by name first.
  */
 export function deleteClient(id: string): Promise<unknown> {
   return send(`${BASE}/clients?id=${encodeURIComponent(id)}`, { method: "DELETE" });

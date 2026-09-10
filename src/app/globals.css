@@ -26,6 +26,8 @@
 @import "./brand.css";
 @import "./workspace.css" layer(mockup);
 @import "./inbox-theme.css";
+/* Unlayered on purpose — see the note at the top of the file. */
+@import "./mi-skin.css";
 
 /*
  * `dark:` is opt-in, not OS-driven.

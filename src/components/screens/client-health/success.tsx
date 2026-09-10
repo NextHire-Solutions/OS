@@ -2,18 +2,20 @@
 
 import { useMemo, useState } from "react";
 
-import {
-  applyFilters, visibleTotal, FILTER_TABS,
-  type Filter, type Sort as WeeklySort,
-} from "@/lib/tools/client-health/filters";
+import { formForClient, type ClientFormState } from "@/lib/tools/client-health/clientForm";
+import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
 import { deriveRows } from "@/lib/tools/client-health/summarize";
+import type { DashboardClient } from "@/lib/tools/client-health/types";
 import {
   successRows, sortSuccess, scoreTone, humanizeAgo, fmtDateShort,
   type CsSortCol, type SuccessRow,
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
+import { ClientModal } from "./client-modal";
+import { EMPTY_FILTERS, FilterBar, type FilterBarState } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
 import { SyncButton } from "./sync-button";
+import { ToastHost } from "./toast";
 
 /*
  * Client Health — Client Success.
@@ -56,10 +58,20 @@ const COLUMNS: { col: CsSortCol; label: string; title: string; num?: boolean }[]
 const SCORE_COLOR = { good: "var(--green)", mid: "var(--yellow)", low: "var(--red)" } as const;
 
 function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
-  const [now] = useState(() => new Date(`${data.weekKey}T00:00:00Z`));
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  /*
+   * The SERVER's clock, sent with the data.
+   *
+   * Every "how long ago" on this screen is measured from it. The week's Monday
+   * would be up to six days stale, which on a column called "Portal Updated"
+   * is the difference between a portal worked yesterday and one nobody has
+   * touched in a week.
+   */
+  const now = useMemo(() => new Date(data.now), [data.now]);
+  const [filters, setFilters] = useState<FilterBarState>(EMPTY_FILTERS);
   const [sort, setSort] = useState<{ col: CsSortCol; dir: "desc" | "asc" } | null>(null);
+  const [modal, setModal] = useState<ClientFormState | null>(null);
+
+  const openEdit = (c: DashboardClient) => setModal(formForClient(c));
 
   // The current week's rows, derived rather than sent — see weekly.ts.
   // The server's rows when it rendered this screen — `derive()` reads the
@@ -70,8 +82,8 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
   );
 
   const filtered = useMemo(
-    () => applyFilters(rowsAll, { search, filter, plan: "all", sort: null as WeeklySort | null }),
-    [rowsAll, search, filter],
+    () => applyFilters(rowsAll, { ...filters, sort: null }, now),
+    [rowsAll, filters, now],
   );
 
   const rows = useMemo(
@@ -133,28 +145,10 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
               {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <input
-              className="inp"
-              placeholder="Search clients…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label="Search clients"
-            />
-            <span className="pills">
-              {FILTER_TABS.map((f) => (
-                <button
-                  key={f.id}
-                  className={`fp${f.cls ? ` ${f.cls}` : ""}${filter === f.id ? " on" : ""}`}
-                  onClick={() => setFilter(f.id)}
-                  aria-pressed={filter === f.id}
-                  title={f.title}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </span>
-          </div>
+          {/* The Plan select is hidden here: this table already has a Plan
+              column you can sort by, so the select would be a second way to
+              say the same thing in less space. */}
+          <FilterBar value={filters} onChange={setFilters} now={now} showPlan={false} />
         </div>
 
         <div className="tbl-scroll">
@@ -184,21 +178,34 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={COLUMNS.length} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
-                    No clients match {search.trim() ? `“${search.trim()}”` : "this filter"}.
+                    No clients match {filters.search.trim() ? `“${filters.search.trim()}”` : "this filter"}.
                   </td>
                 </tr>
               ) : (
-                rows.map((r) => <Row key={r.client.id} row={r} now={now.getTime()} />)
+                rows.map((r) => (
+                  <Row key={r.client.id} row={r} now={now.getTime()} onEdit={() => openEdit(r.client)} />
+                ))
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {modal ? (
+        <ClientModal
+          form={modal}
+          instantly={data.instantlyCampaigns ?? []}
+          bison={data.bisonCampaigns ?? []}
+          onClose={() => setModal(null)}
+        />
+      ) : null}
+
+      <ToastHost />
     </div>
   );
 }
 
-function Row({ row, now }: { row: SuccessRow; now: number }) {
+function Row({ row, now, onEdit }: { row: SuccessRow; now: number; onEdit: () => void }) {
   const { client: c, hiredTotal, lastHireAt, score, tzShort } = row;
 
   return (
@@ -221,9 +228,9 @@ function Row({ row, now }: { row: SuccessRow; now: number }) {
         )}
       </td>
 
-      <td>{tzShort ? <span className="tg">{tzShort}</span> : <span className="api-none">—</span>}</td>
+      <td>{tzShort ? <span className="tg">{tzShort}</span> : <SetLink onClick={onEdit}>Set</SetLink>}</td>
 
-      <td className="tnum mut">{c.start_date ? fmtDateShort(c.start_date) : <span className="api-none">—</span>}</td>
+      <td className="tnum mut">{c.start_date ? fmtDateShort(c.start_date) : <SetLink onClick={onEdit}>Set date</SetLink>}</td>
 
       <td className="mut">
         {c.last_lead_activity_at ? humanizeAgo(c.last_lead_activity_at, now) : <span className="api-none">—</span>}
@@ -247,6 +254,27 @@ function Row({ row, now }: { row: SuccessRow; now: number }) {
 
       <td>{c.agents_count > 0 ? <span className="tnum">{c.agents_count.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}</td>
     </tr>
+  );
+}
+
+/*
+ * The "Set" affordance on an empty cell.
+ *
+ * A missing time zone or launch date is not a gap to report — it is a gap to
+ * fill, and the person reading the row is the one who can fill it. So the cell
+ * offers the edit modal rather than an em dash.
+ */
+function SetLink({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: 0, background: "none", padding: 0, font: "inherit", fontSize: 12.5,
+        color: "var(--blue)", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2,
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -1,8 +1,8 @@
 import { TopBar } from "@/components/master-inbox/top-bar";
-import { TabBar } from "@/components/master-inbox/tab-bar";
+import { MockupTabs } from "./mockup/tabs";
+import { MockupThreadList } from "./mockup/list";
 import { FilterBar } from "@/components/master-inbox/filter-bar";
 import { EmptyInbox } from "@/components/master-inbox/empty-state";
-import { ThreadList } from "@/components/master-inbox/thread-list";
 import { RealtimeRefresher } from "@/components/master-inbox/realtime-refresher";
 import { requireSession } from "@/lib/auth/workspace";
 import { loadThreads } from "@/lib/tools/master-inbox/inbox/threads";
@@ -11,7 +11,6 @@ import { loadLabels } from "@/lib/tools/master-inbox/inbox/labels";
 import { loadChannels } from "@/lib/tools/master-inbox/inbox/channels";
 import { loadCampaigns } from "@/lib/tools/master-inbox/inbox/campaigns";
 import { loadClients } from "@/lib/tools/master-inbox/inbox/clients";
-import { loadLists } from "@/lib/tools/master-inbox/inbox/lists";
 import { decodeFilter, type FilterRow, type FilterState } from "@/lib/tools/master-inbox/inbox/filters";
 
 /*
@@ -65,7 +64,7 @@ export async function FullInbox({ view, f, list, page, q }: FullInboxProps) {
   const pageNum = Math.max(1, Number(page ?? "1") || 1);
   const searchQuery = q?.trim() || null;
 
-  const [threadPage, views, viewCounts, labels, channels, campaigns, clients, lists, currentView] =
+  const [threadPage, views, viewCounts, labels, channels, campaigns, clients, currentView] =
     await Promise.all([
       loadThreads(session.activeWorkspace.id, view, filterFromUrl, list ?? null, pageNum, searchQuery),
       loadViews(session.activeWorkspace.id),
@@ -74,7 +73,6 @@ export async function FullInbox({ view, f, list, page, q }: FullInboxProps) {
       loadChannels(session.activeWorkspace.id),
       loadCampaigns(session.activeWorkspace.id),
       loadClients(session.activeWorkspace.id),
-      loadLists(session.activeWorkspace.id),
       loadViewBySlug(session.activeWorkspace.id, view),
     ]);
 
@@ -86,39 +84,69 @@ export async function FullInbox({ view, f, list, page, q }: FullInboxProps) {
       rows: (currentView?.filter_json as { rows?: FilterRow[] } | undefined)?.rows ?? [],
     };
 
+  /*
+   * The server's clock, sent to the list so its timestamps agree between the
+   * server render and the client hydration. Reading Date.now() inside the row
+   * gives two different answers and React discards the whole list.
+   */
+  const now = Date.now();
+
   return (
     /*
      * `mi-theme` re-points Tailwind's semantic tokens at the mockup's palette
-     * for everything inside it — see src/app/inbox-theme.css. Scoped here
-     * rather than applied globally so the rest of the OS, which is already
-     * drawn in the design's own classes, is untouched.
+     * for the parts of this screen that are still the tool's components — the
+     * filter bar and, once a conversation is open, the composer and prospect
+     * panel. See src/app/inbox-theme.css.
      */
     <div className="mi-theme">
       <TopBar />
-      <TabBar views={views} activeSlug={view} labels={labels} viewCounts={viewCounts} />
-      <FilterBar
-        initialFilter={initialFilter}
-        labels={labels}
-        channels={channels}
-        campaigns={campaigns}
-        clients={clients}
-        currentViewId={currentView?.id ?? null}
-        currentViewName={currentView?.name ?? null}
+
+      {/*
+       * The design's tabs and list, the tool's data.
+       *
+       * The tool's own TabBar and ThreadList are Tailwind components that look
+       * like the tool. The approved mockup draws both differently — pill tabs
+       * with a count, and a row of fixed columns rather than one long preview
+       * line — and that is markup, not colour, so no token remapping reaches
+       * it.
+       *
+       * What is NOT swapped: everything below the list. FilterBar is the tool's
+       * 921-line filter builder, and opening a conversation lands in the tool's
+       * ThreadView with its composer, attachments, forward, templates, AI
+       * drafts, snooze, subsequences and prospect panel. The mockup does not
+       * draw any of those, so re-doing them would only lose features.
+       */}
+      <MockupTabs
+        views={views.map((v) => ({ id: v.id, slug: v.slug, name: v.name }))}
+        activeSlug={view}
+        counts={viewCounts}
       />
+
+      <div className="mi-filter">
+        <FilterBar
+          initialFilter={initialFilter}
+          labels={labels}
+          channels={channels}
+          campaigns={campaigns}
+          clients={clients}
+          currentViewId={currentView?.id ?? null}
+          currentViewName={currentView?.name ?? null}
+        />
+      </div>
+
       {threadPage.rows.length === 0 && threadPage.total === 0 ? (
         <EmptyInbox view={view} />
       ) : (
-        <ThreadList
+        <MockupThreadList
           threads={threadPage.rows}
-          basePath={`/inbox/${view}`}
-          labels={labels}
-          lists={lists}
+          view={view}
           total={threadPage.total}
           page={threadPage.page}
           pageSize={threadPage.pageSize}
-          view={view}
+          now={now}
         />
       )}
+
       <RealtimeRefresher workspaceId={session.activeWorkspace.id} />
     </div>
   );

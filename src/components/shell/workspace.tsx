@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { SessionKeeper } from "./session-keeper";
@@ -62,7 +63,7 @@ export function Workspace({
    * link rendered the shell with an empty stage and nothing to show.
    */
   const [mounted, setMounted] = useState<string[]>(() =>
-    initialId.includes(":") && !screens[initialId] ? [initialId] : [],
+    initialId.includes(":") && !(initialId in screens) ? [initialId] : [],
   );
 
   const all = useMemo(() => destinations(), []);
@@ -71,15 +72,30 @@ export function Workspace({
     [all, grants],
   );
 
+  const router = useRouter();
+
   const navigate = useCallback((id: string, fromHistory = false) => {
+    /*
+     * Two kinds of destination, two kinds of navigation.
+     *
+     * IFRAME PANES stay warm: pushState only, because `router.push` would
+     * unmount every mounted pane and reboot the app inside it.
+     *
+     * WORKSPACE SCREENS are server-rendered one at a time now, so reaching one
+     * means asking the server for it. pushState alone would change the URL and
+     * leave an empty stage.
+     */
+    const isWorkspaceScreen = id in screens;
     setActiveId(id);
-    // pushState, never router.push — the latter unmounts every warm pane.
     if (!fromHistory && typeof window !== "undefined") {
       const path = pathForId(id);
-      if (window.location.pathname !== path) window.history.pushState({ id }, "", path);
+      if (window.location.pathname !== path) {
+        if (isWorkspaceScreen) router.push(path);
+        else window.history.pushState({ id }, "", path);
+      }
     }
     setMounted((live) => {
-      if (!id.includes(":") || screens[id]) return live;
+      if (!id.includes(":") || id in screens) return live;
       if (live.includes(id)) return [...live.filter((x) => x !== id), id];
       /*
        * Three live panes, evicting the least recently used.
@@ -90,7 +106,7 @@ export function Workspace({
        */
       return [...live, id].slice(-3);
     });
-  }, [screens]);
+  }, [screens, router]);
 
   // The design's shortcuts.
   useEffect(() => {
@@ -161,12 +177,39 @@ export function Workspace({
           />
 
           <div className="scroll">
-            {/* Workspace-owned screens: rendered once, shown by id. */}
-            {Object.entries(screens).map(([id, node]) => (
-              <section key={id} className={`screen${activeId === id ? " on" : ""}`}>
-                {node}
-              </section>
-            ))}
+              {/*
+               * ONLY THE ACTIVE SCREEN IS RENDERED.
+               *
+               * This used to render every screen and reveal one with CSS, so a
+               * switch cost no round-trip. That was affordable while the screens
+               * were small summaries. It stopped being affordable once they
+               * became the Master Inbox's real pages: every request built all
+               * sixteen, and the home page shipped 810KB containing the inbox,
+               * the settings editors and — the part that decided it — every
+               * client's live portal token, to anyone loading any page.
+               *
+               * One screen takes a page from ~12s to ~1s and stops it carrying
+               * data it has no business carrying. The cost is that moving
+               * between screens is a navigation rather than a class toggle;
+               * `navigate` handles that, and the iframe panes below still use
+               * pushState because those really are warm.
+               */}
+              {/*
+               * The catch-all builds an element for the ACTIVE screen only and
+               * `null` for the rest (see `pick` in app/[[...slug]]/page.tsx),
+               * so rendering whatever is non-null renders exactly one.
+               *
+               * Membership checks above use `id in screens` rather than
+               * truthiness: every key is present, so a null value means
+               * "workspace screen, not currently built" — not "iframe pane".
+               */}
+              {Object.entries(screens)
+                .filter(([, node]) => node != null)
+                .map(([id, node]) => (
+                  <section key={id} className="screen on">
+                    {node}
+                  </section>
+                ))}
 
             {/*
               Panes are the FALLBACK. A destination the workspace draws itself
@@ -176,7 +219,7 @@ export function Workspace({
             */}
             {mounted.map((id) => {
               const dest = reachable.find((d) => d.id === id);
-              if (!dest?.tool || screens[id]) return null;
+              if (!dest?.tool || id in screens) return null;
               return (
                 <ToolPane
                   key={id}

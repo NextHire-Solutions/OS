@@ -1,0 +1,219 @@
+/*
+ * The mockup's look, applied to the Master Inbox's UI primitives.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY CSS AND NOT EDITS TO THE COMPONENTS
+ *
+ * The inbox runs the tool's own components so that no behaviour is re-decided.
+ * Those components are styled with Tailwind utilities and shadcn tokens, which
+ * look like the tool, not like the approved mockup.
+ *
+ * Editing their JSX would work once. It would also mean every future sync from
+ * the live tool reverts the design, and a diff against the original stops being
+ * readable — which is most of the value of copying in the first place.
+ *
+ * Every primitive emits a stable `data-slot`, so the whole surface can be
+ * restyled from here: buttons, inputs, selects, dialogs, switches, menus. The
+ * components stay byte-identical to the tool's.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT IS UNLAYERED
+ *
+ * Tailwind's utilities live in `@layer utilities`, and in the CSS cascade an
+ * UNLAYERED rule beats a layered one regardless of specificity. This file is
+ * imported without `layer()` on purpose, so a single `[data-slot]` selector
+ * overrides the utility classes baked into the components. That is the same
+ * mechanism that — accidentally, from `workspace.css` — used to override every
+ * utility in the app; here it is deliberate and scoped to these hooks.
+ *
+ * ---------------------------------------------------------------------------
+ * WHERE IT APPLIES
+ *
+ * Globally, not under `.mi-theme`. Dialogs, popovers, menus and toasts render
+ * through a PORTAL attached to <body>, so a scoped selector would style the
+ * page and miss every popup — which is exactly the Create Label dialog that
+ * looked wrong.
+ */
+
+/* ── Buttons ────────────────────────────────────────────────────────────────
+   The design's `.btn`: a 12px radius, a hairline border, a real weight. Its
+   primary is solid blue. shadcn's variants map onto those two shapes. */
+[data-slot="button"] {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 9px 15px;
+  height: auto;
+  box-shadow: 0 1px 2px rgba(13, 21, 38, 0.04);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+[data-slot="button"]:hover:not(:disabled) {
+  background: var(--inset);
+  border-color: var(--line);
+}
+/* The primary action. shadcn's `default` variant carries bg-primary. */
+[data-slot="button"].bg-primary,
+[data-slot="button"][data-variant="default"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+[data-slot="button"].bg-primary:hover:not(:disabled) {
+  background: var(--blue-ink);
+  border-color: var(--blue-ink);
+}
+/* Destructive keeps the design's red rather than shadcn's. */
+[data-slot="button"].bg-destructive {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+/* Ghost and icon-only buttons become the design's `.ib`: no border, no shadow. */
+[data-slot="button"].bg-transparent,
+[data-slot="button"].hover\:bg-accent {
+  border-color: transparent;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+}
+[data-slot="button"].bg-transparent:hover:not(:disabled) {
+  background: var(--inset);
+  color: var(--ink);
+}
+
+/* ── Text fields ────────────────────────────────────────────────────────────
+   The design's `.inp`: taller than shadcn's, 10px radius, a visible border and
+   a blue ring on focus rather than a halo. */
+[data-slot="input"],
+[data-slot="textarea"] {
+  height: auto;
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13.5px;
+  padding: 9px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+[data-slot="textarea"] { min-height: 90px; line-height: 1.5; }
+[data-slot="input"]::placeholder,
+[data-slot="textarea"]::placeholder { color: var(--muted); }
+[data-slot="input"]:focus-visible,
+[data-slot="textarea"]:focus-visible {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-pale);
+  outline: none;
+}
+
+/* ── Selects ────────────────────────────────────────────────────────────────
+   Matches the text fields, so a form reads as one set of controls. */
+[data-slot="select-trigger"] {
+  height: auto;
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13.5px;
+  padding: 9px 12px;
+}
+[data-slot="select-content"],
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"] {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(13, 21, 38, 0.14);
+  padding: 6px;
+  color: var(--ink);
+}
+[data-slot="select-item"],
+[data-slot="dropdown-menu-item"] {
+  border-radius: 8px;
+  font-size: 13.5px;
+  padding: 8px 10px;
+  color: var(--ink);
+}
+[data-slot="select-item"]:hover,
+[data-slot="dropdown-menu-item"]:hover { background: var(--inset); }
+
+/* ── Dialogs ────────────────────────────────────────────────────────────────
+   The design's card, over the design's scrim. The dialog the user screenshotted
+   was a shadcn popup with a plain grey backdrop; this is `.card` + `.scrim`. */
+[data-slot="dialog-overlay"],
+[data-slot="sheet-overlay"] {
+  background: rgba(13, 21, 38, 0.28);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+[data-slot="dialog-content"],
+[data-slot="sheet-content"] {
+  border-radius: var(--r-lg, 16px);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 64px rgba(13, 21, 38, 0.22);
+  padding: 22px;
+  gap: 16px;
+  /* shadcn caps dialogs at sm:max-w-sm — too narrow for the label and template
+     forms, which is why the Create Label fields felt cramped. */
+  max-width: min(560px, calc(100vw - 2rem));
+}
+[data-slot="dialog-title"],
+[data-slot="sheet-title"] {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+[data-slot="dialog-description"],
+[data-slot="sheet-description"] { font-size: 13px; color: var(--muted); }
+[data-slot="dialog-footer"] { gap: 8px; padding-top: 4px; }
+
+/* ── Labels, switches, checkboxes, badges ──────────────────────────────────── */
+[data-slot="label"] {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: 0.01em;
+}
+[data-slot="switch"] { background: var(--inset-2); border-color: var(--line); }
+[data-slot="switch"][data-checked] { background: var(--blue); border-color: var(--blue); }
+[data-slot="checkbox"] { border-radius: 6px; border-color: var(--line); }
+[data-slot="checkbox"][data-checked] { background: var(--blue); border-color: var(--blue); }
+[data-slot="badge"] {
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+}
+
+/* ── Tabs (the tool's, where they still appear) ─────────────────────────────
+   The design's pill, so a tab strip inside a settings panel matches the inbox's
+   own tabs rather than looking like a second design. */
+[data-slot="tabs-list"] { background: var(--inset); border-radius: 11px; padding: 4px; gap: 4px; }
+[data-slot="tabs-trigger"] {
+  border-radius: 9px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 7px 13px;
+}
+[data-slot="tabs-trigger"][data-selected] {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--sh-card, 0 1px 2px rgba(13, 21, 38, 0.06));
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+[data-slot="card"] {
+  border-radius: var(--r-lg, 16px);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--sh-card, 0 1px 2px rgba(13, 21, 38, 0.06));
+}

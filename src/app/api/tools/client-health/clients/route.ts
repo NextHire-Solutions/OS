@@ -1,98 +1,103 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { callClientHealth } from "@/lib/tools/client-health/session";
-import { NotConfiguredError } from "@/lib/env";
+import {
+  createClientRow,
+  deleteClientRow,
+  updateClientRow,
+  type WriteResult,
+} from "@/lib/tools/client-health/clientWrites";
+import { getSupabase } from "@/lib/tools/client-health/supabase";
 
 /*
  * Every write the workspace makes to Client Health.
  *
- * A thin proxy onto the tool's own /api/clients, on purpose. That endpoint
- * holds the validation, the campaign auto-linking and the cascade rules for a
- * delete. Writing to the database directly would bypass all of it, and the
- * failure would be silent — a client row that looks right and behaves wrongly.
+ * ---------------------------------------------------------------------------
+ * THIS USED TO BE A PROXY
  *
- * So the body is passed through untouched and the tool's response is returned
- * as it comes. The workspace adds authentication and nothing else; it has no
- * opinion about what a valid client is, and should not develop one.
+ * It forwarded each write to the live Client Health app's own `/api/clients`,
+ * on the reasoning that the tool held the validation and the cascade rules and
+ * the OS should have no opinion about what a valid client is.
  *
- * The proxy has already verified the workspace session before this runs, and
- * the credential for Client Health never reaches the browser.
+ * The architecture changed underneath that reasoning. Client Health is being
+ * switched off and the OS is taking it over, which makes the proxy a dependency
+ * on something that will stop answering. When it does, the failure is not loud:
+ * the screen still loads — reads come from the database directly — and only
+ * saving, pausing, churning and deleting break, one toast at a time.
+ *
+ * So the rules moved into `clientWrites.ts` rather than the traffic moving
+ * through a doomed hop. Read that file before changing anything here: it
+ * documents what a DELETE actually removes, and the one place this deliberately
+ * diverges from the tool (`time_zone` on create, which the tool drops).
+ *
+ * There is no auth check in this file. Everything under /api/tools/* is behind
+ * the workspace's front door — the signed cookie checked in `src/proxy.ts` —
+ * so by the time a handler here runs the caller is signed in.
  */
 export const dynamic = "force-dynamic";
 
-async function proxy(request: NextRequest, method: "POST" | "PATCH"): Promise<NextResponse> {
-  const body = await request.text();
-  return relay(
-    callClientHealth("/api/clients", {
-      method,
-      headers: { "content-type": "application/json" },
-      body,
-      timeoutMs: 30_000,
-    }),
-  );
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  return respond(async (db) => createClientRow(db, await readJson(request)), 201, (v) => ({
+    client: v,
+  }));
 }
 
-export const POST = (request: NextRequest) => proxy(request, "POST");
-export const PATCH = (request: NextRequest) => proxy(request, "PATCH");
+export async function PATCH(request: NextRequest): Promise<NextResponse> {
+  return respond(async (db) => updateClientRow(db, await readJson(request)), 200, (v) => ({
+    client: v,
+  }));
+}
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const id = request.nextUrl.searchParams.get("id");
-  // Refused here rather than forwarded: a DELETE with no id is a bug in the
-  // caller, and the one thing worse than failing is guessing which client.
+  // Refused here rather than guessed: a DELETE with no id is a bug in the
+  // caller, and this one cascades.
   if (!id) {
     return NextResponse.json({ error: "A client id is required" }, { status: 400 });
   }
-  return relay(
-    callClientHealth(`/api/clients?id=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      timeoutMs: 30_000,
-    }),
-  );
+  return respond((db) => deleteClientRow(db, id), 200, (v) => ({ ok: true, ...v }));
 }
 
-/** Returns the tool's own answer, with its status, so nothing is invented. */
-async function relay(pending: Promise<Response>): Promise<NextResponse> {
+/**
+ * Runs one write and turns its result into a response.
+ *
+ * The body shapes — `{ client }` and `{ ok, orphansRemoved }` — are the live
+ * tool's, unchanged, because the browser code reads them: `saveClient` needs
+ * `client.id` to add the new row without a reload, and `removeClient` reports
+ * the orphan count in its toast.
+ */
+async function respond<T>(
+  run: (db: ReturnType<typeof getSupabase>) => Promise<WriteResult<T>>,
+  okStatus: number,
+  shape: (value: T) => Record<string, unknown>,
+): Promise<NextResponse> {
+  let db: ReturnType<typeof getSupabase>;
   try {
-    const res = await pending;
-    const text = await res.text();
-    const body = text ? safeParse(text) : null;
-
-    if (!res.ok) {
-      return NextResponse.json(
-        {
-          error:
-            (body && typeof body === "object" && "error" in body
-              ? String((body as { error: unknown }).error)
-              : null) ??
-            // A 401 here means OUR credential is wrong, not the user's — say so
-            // rather than showing them an authentication error they cannot act on.
-            (res.status === 401
-              ? "The workspace could not authenticate to Client Health"
-              : `Client Health returned ${res.status}`),
-        },
-        { status: res.status === 401 ? 502 : res.status },
-      );
-    }
-
-    return NextResponse.json(body ?? { ok: true });
+    db = getSupabase();
   } catch (error) {
-    if (error instanceof NotConfiguredError) {
-      return NextResponse.json(
-        { error: `Not configured — set ${error.varName}` },
-        { status: 501 },
-      );
-    }
+    // A missing credential is a deployment problem, not a bad request. 501
+    // keeps it out of the "your input was wrong" bucket.
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Client Health is unreachable" },
+      { error: error instanceof Error ? error.message : "Client Health is not configured" },
+      { status: 501 },
+    );
+  }
+
+  try {
+    const result = await run(db);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+    return NextResponse.json(shape(result.value), { status: okStatus });
+  } catch (error) {
+    console.error("[api/tools/client-health/clients]", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "The write could not be completed" },
       { status: 502 },
     );
   }
 }
 
-function safeParse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: text.slice(0, 200) };
-  }
+/** Body parsing that fails as invalid input rather than as an exception. */
+async function readJson(request: NextRequest): Promise<unknown> {
+  return request.json().catch(() => null);
 }

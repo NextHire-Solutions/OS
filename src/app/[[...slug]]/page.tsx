@@ -5,7 +5,9 @@ import { getOverview } from "@/lib/workspace/overview";
 import { getPerformance } from "@/lib/workspace/performance";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
-import { getAgentSearchOverview } from "@/lib/tools/agent-search/agents";
+import { getStagesBoard } from "@/lib/tools/onboarding/stages";
+import { getTemplates } from "@/lib/tools/onboarding/templates";
+import { getOnboardingSettings } from "@/lib/tools/onboarding/settings-view";
 import { getInbox } from "@/lib/tools/master-inbox/inbox-view";
 import { getReminders } from "@/lib/tools/master-inbox/reminders";
 import { getSettings } from "@/lib/tools/master-inbox/settings";
@@ -15,19 +17,25 @@ import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
-import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
 import { ClientHealthSuccess } from "@/components/screens/client-health/success";
 import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeline";
-import { AgentSearchScreen } from "@/components/screens/agent-search/agents";
+import { OnboardingStagesScreen } from "@/components/screens/onboarding/stages";
+import { OnboardingTemplatesScreen } from "@/components/screens/onboarding/templates";
+import { OnboardingSettingsScreen } from "@/components/screens/onboarding/settings";
+import { AgentSearchSearchScreen } from "@/components/screens/agent-search/search";
+import { AgentSearchMasterScreen } from "@/components/screens/agent-search/master";
+import { AgentSearchAccountsScreen } from "@/components/screens/agent-search/accounts";
+import { AgentSearchMlsScreen } from "@/components/screens/agent-search/mls";
+import { AgentSearchImportScreen } from "@/components/screens/agent-search/import";
 import { FullInbox } from "@/components/screens/master-inbox/full-inbox";
 import { ThreadDetail } from "@/components/screens/master-inbox/thread-detail";
 import { FolderEmpty } from "@/components/master-inbox/folder-empty";
 import { PortalDetail } from "@/components/screens/master-inbox/portal-detail";
 import { RemindersScreen } from "@/components/screens/master-inbox/reminders";
 import { MasterInboxSettingsScreen } from "@/components/screens/master-inbox/settings";
-import { PortalsScreen } from "@/components/screens/master-inbox/portals";
+import { PortalsAdminScreen } from "@/components/screens/master-inbox/portals";
 import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { idForPath, products } from "@/lib/workspace/nav";
@@ -74,6 +82,25 @@ function threadIdFrom(slug: string[] | undefined): string | null {
   if (!view || INBOX_SCREENS.has(view)) return null;
   const third = parts[2];
   return third && UUID.test(third) ? third : null;
+}
+
+
+/*
+ * Build one screen, keep the shape.
+ *
+ * The shell reads `screens[id]` to tell a workspace-owned destination from an
+ * iframe pane, so every key has to survive; only the ACTIVE one carries an
+ * element. Everything else is `null`, which is falsy — and that is deliberate:
+ * `Boolean(screens[id])` would then treat an inactive screen as a pane. The
+ * shell checks membership with `id in screens` for that reason.
+ */
+function pick(
+  activeId: string,
+  all: Record<string, React.ReactNode>,
+): Partial<Record<string, React.ReactNode>> {
+  const out: Partial<Record<string, React.ReactNode>> = {};
+  for (const key of Object.keys(all)) out[key] = key === activeId ? all[key] : null;
+  return out;
 }
 
 export const dynamic = "force-dynamic";
@@ -128,7 +155,7 @@ export default async function WorkspacePage({
    */
   const only = (id: string) => initialId === id;
 
-  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, agentSearch, inbox, reminders, inboxSettings, portals] =
+  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, onboardingStages, onboardingTemplates, onboardingSettings, agentSearch, inbox, reminders, inboxSettings, portals] =
     await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
@@ -136,7 +163,29 @@ export default async function WorkspacePage({
     initialId.startsWith("clients:") ? getWeekly() : Promise.resolve(null),
     only("roster") ? getClientsOverview() : Promise.resolve(null),
     only("onboarding:pipeline") ? getOnboardingPipeline() : Promise.resolve(null),
-    only("search:search") ? getAgentSearchOverview() : Promise.resolve(null),
+      /*
+       * Each loader runs only for its own screen — the same `only()` gate every
+       * other entry uses. Every Onboarding screen tolerates a null `initial` and
+       * fetches its own route on mount, so a wrong guess about which loader to
+       * run costs one round trip rather than a blank screen.
+       */
+      only("onboarding:stages") ? getStagesBoard() : Promise.resolve(null),
+      only("onboarding:templates") ? getTemplates() : Promise.resolve(null),
+      only("onboarding:settings") ? getOnboardingSettings() : Promise.resolve(null),
+    /*
+     * Nothing to load for Agent Search.
+     *
+     * This used to call `getAgentSearchOverview()` whenever `search:search` was
+     * active. That screen is now `AgentSearchSearchScreen`, which fetches its
+     * own live job state on mount — so the call made four Supabase round trips
+     * on every visit and threw the result away. TypeScript cannot see that: the
+     * value was still destructured, just never read.
+     *
+     * `agents.tsx` and its loader are left in place, unreferenced, pending a
+     * decision on where that screen belongs — it browses tables owned by the
+     * Database app, not by Agent Search.
+     */
+    Promise.resolve(null),
     only("inbox:all-email")
       ? getInbox({ view: "all-email", page: 1, q: "" })
       : Promise.resolve(null),
@@ -174,7 +223,22 @@ export default async function WorkspacePage({
       user={{ name: firstName, email }}
       toolUrls={toolUrls}
       shellHost={shellHost}
-      screens={{
+      /*
+       * ONLY THE ACTIVE SCREEN IS BUILT.
+       *
+       * `screens` is a prop full of server-component elements. Passing all
+       * sixteen means Next renders all sixteen — they have to be serialized
+       * into the RSC payload whether or not the client shows them. Filtering
+       * on the client hides them and saves nothing: the home page still spent
+       * ~12 seconds building the inbox, the settings editors and the portal
+       * admin, and still shipped every client's live portal token to anyone
+       * who loaded any page.
+       *
+       * `pick` keeps the object shape the shell expects — it looks up
+       * `screens[id]` to decide whether a destination is workspace-owned or an
+       * iframe pane — while building exactly one element.
+       */
+      screens={pick(initialId, {
         home: (
           <HomeScreen
             snapshots={snapshots}
@@ -186,7 +250,6 @@ export default async function WorkspacePage({
         ),
         performance: <PerformanceScreen initial={performance} />,
         roster: <ClientsScreen initial={clientsOverview} />,
-        consistency: <DiscrepanciesScreen />,
         /*
          * Client Health, built here rather than embedded — the live tool is
          * untouched and keeps running as a background worker.
@@ -205,13 +268,30 @@ export default async function WorkspacePage({
          * arriving on their current URLs.
          */
         "onboarding:pipeline": <OnboardingPipelineScreen initial={onboarding} />,
+        "onboarding:stages": <OnboardingStagesScreen initial={onboardingStages} />,
+        "onboarding:templates": <OnboardingTemplatesScreen initial={onboardingTemplates} />,
+        "onboarding:settings": <OnboardingSettingsScreen initial={onboardingSettings} />,
         /*
          * Agent Search. Server-paged out of necessity rather than taste: the
          * table holds 1.17 million agents, so the browser is never sent more
          * than one page. The scraping workers and MLS monitor keep running on
          * the live service.
          */
-        "search:search": <AgentSearchScreen initial={agentSearch} />,
+        /*
+         * Agent Search. The live tool is one long scrolling page; each of these
+         * is a real section of it, lifted into its own destination — verified
+         * against `web/public/index.html` in NextHire-Solutions/Scrapper, where
+         * all five exist as distinct sections.
+         *
+         * None takes an `initial` prop, deliberately: all five are operational
+         * control panels whose data is live job state or a scheduler's last run,
+         * so a server-rendered snapshot would be stale before it painted.
+         */
+        "search:search": <AgentSearchSearchScreen />,
+        "search:master": <AgentSearchMasterScreen />,
+        "search:accounts": <AgentSearchAccountsScreen />,
+        "search:mls": <AgentSearchMlsScreen />,
+        "search:import": <AgentSearchImportScreen />,
         /*
          * Master Inbox, read-only for now. Its own loadThreads is used
          * verbatim — that query carries corrections (a 50-row page, id sets
@@ -266,12 +346,20 @@ export default async function WorkspacePage({
          * item says the same thing the tool says rather than looking broken.
          */
         "inbox:leads": (
-          <FolderEmpty
-            title="Leads"
-            description="Your prospect & lead database will appear here."
-          />
+          /*
+           * Wrapped in `mi-theme` like every other inbox surface, so
+           * FolderEmpty picks up the workspace's palette rather than shadcn's
+           * defaults. The component and its copy are the tool's — this screen
+           * is a placeholder there too.
+           */
+          <div className="mi-theme">
+            <FolderEmpty
+              title="Leads"
+              description="Your prospect & lead database will appear here."
+            />
+          </div>
         ),
-        "inbox:reminders": <RemindersScreen initial={reminders} />,
+        "inbox:reminders": <RemindersScreen />,
         "inbox:settings": <MasterInboxSettingsScreen tab={(slug ?? [])[2]} />,
         /*
          * /inbox/portals lists the 47 client portals; /inbox/portals/<id> is
@@ -284,10 +372,10 @@ export default async function WorkspacePage({
           // as threadIdFrom above: this screen renders on every request.
           const parts = slug ?? [];
           const id = parts[0] === "inbox" && parts[1] === "portals" ? parts[2] : undefined;
-          return id && UUID.test(id) ? <PortalDetail clientId={id} /> : <PortalsScreen initial={portals} />;
+          return id && UUID.test(id) ? <PortalDetail clientId={id} /> : <PortalsAdminScreen />;
         })(),
         "team-access": <TeamAccessScreen />,
-      }}
+      })}
     />
   );
 }

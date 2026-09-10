@@ -13,3 +13,9 @@ build
 next-env.d.ts
 tsconfig.tsbuildinfo
 *.log
+
+# Portal fingerprints hold live portal tokens, and a portal token IS the
+# credential: portal.brokerstaffer.com/portal/<token> opens a client's data
+# with no login. This repository is public. Never commit one.
+.portal-fingerprint.json
+.*-fingerprint.json

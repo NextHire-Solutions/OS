@@ -3,7 +3,9 @@
 import { useMemo, useState } from "react";
 
 import type { OnboardingClient, OnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
-import { Lazy, PlaceholderScreen } from "../lazy";
+import { PlaceholderScreen } from "../lazy";
+import { PIPELINE_URL, setClientStage, useOnboardingData } from "./actions";
+import { Toast, useToast } from "./toast";
 
 /*
  * Onboarding — the pipeline.
@@ -37,24 +39,50 @@ const STALE_DAYS = 14;
 type Sort = "waiting" | "name" | "stage" | "created";
 
 export function OnboardingPipelineScreen({ initial }: { initial: OnboardingPipeline | null }) {
-  return (
-    <Lazy<OnboardingPipeline>
-      initial={initial}
-      url="/api/tools/onboarding"
-      label="Onboarding"
-      skeleton={<PlaceholderScreen cards={5} />}
-    >
-      {(data) => <PipelineView data={data} />}
-    </Lazy>
-  );
+  /*
+   * `useOnboardingData` rather than `Lazy`, because this screen now WRITES: a
+   * client can be moved along the board from the Stage column, and after a move
+   * the data on screen is stale by definition. Same one-request cache, plus a
+   * reload.
+   */
+  const { data, error, reload } = useOnboardingData<OnboardingPipeline>(initial, PIPELINE_URL);
+
+  if (error) {
+    return (
+      <div className="wrap">
+        <div className="anno" style={{ margin: "0 0 18px" }}>
+          <b>Onboarding could not be loaded.</b> {error}
+        </div>
+      </div>
+    );
+  }
+  if (!data) return <PlaceholderScreen cards={5} />;
+  return <PipelineView data={data} reload={reload} />;
 }
 
-function PipelineView({ data }: { data: OnboardingPipeline }) {
+function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () => Promise<void> }) {
   // The SERVER's clock, not the browser's — see pipeline.ts.
   const now = new Date(data.now).getTime();
   const [search, setSearch] = useState("");
   const [stage, setStage] = useState<string>("all");
   const [sort, setSort] = useState<Sort>("waiting");
+  const { toast, show } = useToast();
+  const [moving, setMoving] = useState<string | null>(null);
+
+  /* The manual move along the board — the tool's most-used write. */
+  async function move(c: OnboardingClient, stageId: string) {
+    setMoving(c.id);
+    try {
+      await setClientStage(c.id, stageId || null);
+      await reload();
+      const name = data.stages.find((s) => s.id === stageId)?.name ?? "no stage";
+      show({ text: `${c.name} moved to ${name}` });
+    } catch (e) {
+      show({ text: e instanceof Error ? e.message : "Could not move that client", bad: true });
+    } finally {
+      setMoving(null);
+    }
+  }
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -229,17 +257,29 @@ function PipelineView({ data }: { data: OnboardingPipeline }) {
                   </td>
                 </tr>
               ) : (
-                rows.map((c) => <Row key={c.id} c={c} data={data} now={now} />)
+                rows.map((c) => (
+                  <Row key={c.id} c={c} data={data} now={now} onMove={move} moving={moving === c.id} />
+                ))
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <Toast toast={toast} />
     </div>
   );
 }
 
-function Row({ c, data, now }: { c: OnboardingClient; data: OnboardingPipeline; now: number }) {
+function Row({
+  c, data, now, onMove, moving,
+}: {
+  c: OnboardingClient;
+  data: OnboardingPipeline;
+  now: number;
+  onMove: (c: OnboardingClient, stageId: string) => void;
+  moving: boolean;
+}) {
   const waited = daysSince(c.updatedAt ?? c.createdAt, now);
   const done = c.stageName === "Live";
   const tone = STAGE_TONE[data.stages.find((s) => s.id === c.stageId)?.color ?? "neutral"] ?? STAGE_TONE.neutral;
@@ -253,19 +293,38 @@ function Row({ c, data, now }: { c: OnboardingClient; data: OnboardingPipeline; 
       </td>
 
       <td>
-        {c.stageName ? (
-          <span className="tg" style={{ background: tone.bg, borderColor: "transparent", color: tone.fg }}>
-            {c.stageName}
-          </span>
-        ) : (
-          <span
-            className="tg"
-            style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}
-            title="This client is on no stage, so it appears on no board"
-          >
-            no stage
-          </span>
-        )}
+        {/*
+          The stage is a control, not a label. Moving a client along the board is
+          the thing the team does most, and a pipeline that can only be read is
+          a report rather than a pipeline.
+
+          Tinted with the stage's own colour so the column still scans as a
+          status at a glance, which the plain dropdown lost.
+        */}
+        <select
+          className="inp"
+          value={c.stageId ?? ""}
+          disabled={moving}
+          aria-label={`Stage for ${c.name}`}
+          title={c.stageId ? `Move ${c.name} to another stage` : "This client is on no stage, so it appears on no board"}
+          onChange={(e) => onMove(c, e.target.value)}
+          style={{
+            cursor: moving ? "progress" : "pointer",
+            minWidth: 132,
+            fontWeight: 600,
+            background: c.stageId ? tone.bg : "var(--red-bg)",
+            color: c.stageId ? tone.fg : "var(--red)",
+            borderColor: "transparent",
+            opacity: moving ? 0.5 : 1,
+          }}
+        >
+          <option value="">no stage</option>
+          {data.stages.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
       </td>
 
       <td>

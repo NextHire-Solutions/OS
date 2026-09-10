@@ -103,4 +103,96 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
+
+  /*
+   * ---------------------------------------------------------------------------
+   * WIDTH CONTAINMENT — this is what stopped the inbox running off the screen.
+   *
+   * The tool's tab strip already carries `overflow-x-auto`, so it is BUILT to
+   * scroll its 15 tabs inside a fixed width. It did not, because nothing above
+   * it gave it a width to fit into: a flex item's default `min-width` is `auto`,
+   * which means "never shrink below your content". The strip therefore grew to
+   * its natural 2858px inside a 1440px window, and every row did the same —
+   * 139 elements past the right edge, tabs clipped, the preview column running
+   * off into nothing.
+   *
+   * `min-width: 0` lets these panes shrink to the space available, which is the
+   * precondition for any of their own `overflow-x-auto` to engage. `overflow:
+   * hidden` on the wrapper stops the page itself scrolling sideways — the
+   * interior panes (the thread list, the conversation) scroll independently, as
+   * the design draws them.
+   */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/*
+ * The same rule one level down. Each direct child is a row of the inbox — the
+ * top bar, the tab strip, the filter bar, the list/conversation split — and each
+ * needs to be shrinkable for its own scrolling to work.
+ */
+.mi-theme > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/*
+ * Anything inside that declares its own horizontal scrolling must be allowed to
+ * do it. Tailwind's `overflow-x-auto` sets the overflow but not the `min-width`
+ * that makes it take effect inside a flex row.
+ */
+.mi-theme .overflow-x-auto,
+.mi-theme [class*="overflow-x-auto"] {
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   The composer overlays the conversation instead of splitting it.
+
+   The tool's composer is `fixed` on narrow screens and `lg:static` above
+   1024px — an in-flow 480px column. Standalone that is fine: 1440px minus the
+   300px thread rail and the 320px prospect panel leaves ~820px, so the message
+   body keeps ~340px beside it.
+
+   Inside this workspace the 280px navigation rail comes off the top of that,
+   so the same sum leaves the conversation about 46px — a column of single
+   words, which is what "the reply section is broken" looked like.
+
+   Nothing about the composer changes; it simply stops taking space from a
+   pane that has none to give. The parent section is already `relative`, so
+   absolute positioning here needs no other change, and the narrow-screen
+   `fixed` behaviour is untouched.
+
+   Targeted by the class combination rather than a data-slot because the
+   composer is the tool's component and must stay byte-identical for the next
+   sync. If a future upstream change alters those classes this rule stops
+   matching, and the symptom returns visibly rather than silently — which is
+   the right way for a layout override to fail.
+   ------------------------------------------------------------------------- */
+@media (min-width: 1024px) {
+  .mi-theme [class*="lg:w-[480px]"][class*="border-l"] {
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    width: min(600px, 62%);
+    z-index: 30;
+    box-shadow: -14px 0 40px rgba(13, 21, 38, 0.13);
+    background: var(--surface);
+  }
+
+  /*
+   * The prospect panel stays ABOVE the composer.
+   *
+   * The panel is user-resizable — its width is an inline style — so the
+   * overlay cannot simply be offset by a fixed number. Lifting the panel
+   * instead works at any width, and is the behaviour you want anyway: the
+   * agent's name, email, phone and campaign are exactly what someone reads
+   * while writing the reply. Covering them to show the reply box is the wrong
+   * trade.
+   */
+  .mi-theme aside[class*="overflow-y-auto"][class*="border-l"] {
+    position: relative;
+    z-index: 40;
+  }
 }

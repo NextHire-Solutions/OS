@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import type { DashboardClient } from "@/lib/tools/client-health/types";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
 /*
@@ -37,6 +38,17 @@ import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
 let inflight: Promise<ClientHealthWeeklyData> | null = null;
 
+/*
+ * The data as it currently stands, INCLUDING optimistic edits.
+ *
+ * Separate from `inflight` because that promise resolves once and never
+ * changes, while this moves every time somebody pauses a client or saves the
+ * modal. Held at module scope for the same reason the promise is: the three
+ * screens are separate mounts, and an edit made on Weekly has to be there when
+ * you switch to Bi-Weekly rather than silently reverting.
+ */
+let current: ClientHealthWeeklyData | null = null;
+
 export function loadClientHealth(): Promise<ClientHealthWeeklyData> {
   if (inflight) return inflight;
 
@@ -46,7 +58,9 @@ export function loadClientHealth(): Promise<ClientHealthWeeklyData> {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `Client Health returned ${res.status}`);
       }
-      return (await res.json()) as ClientHealthWeeklyData;
+      const data = (await res.json()) as ClientHealthWeeklyData;
+      current = data;
+      return data;
     })
     .catch((error) => {
       inflight = null;
@@ -73,8 +87,56 @@ const listeners = new Set<(d: ClientHealthWeeklyData) => void>();
 export async function refreshClientHealth(): Promise<ClientHealthWeeklyData> {
   inflight = null;
   const data = await loadClientHealth();
-  for (const notify of listeners) notify(data);
+  publish(data);
   return data;
+}
+
+function publish(data: ClientHealthWeeklyData): void {
+  current = data;
+  for (const notify of listeners) notify(data);
+}
+
+/**
+ * Applies a change to the client list and tells every mounted screen.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE EDITS ARE OPTIMISTIC
+ *
+ * Pausing a client is one PATCH against a database in another datacentre. Wait
+ * for it and the pause button does nothing for half a second, which reads as a
+ * broken button and gets clicked again. So the row changes immediately and the
+ * caller rolls it back if the request fails — the tool does exactly this, and
+ * `rollback` below is what makes that honest rather than a lie you never
+ * correct.
+ *
+ * The derived `rows`/`summary` from the server render are DROPPED on any edit.
+ * They were computed from the pre-edit clients, and keeping them would leave a
+ * paused client still counted in the headline numbers until the next reload.
+ */
+export function patchClients(
+  update: (clients: DashboardClient[]) => DashboardClient[],
+): void {
+  if (!current) return;
+  const { rows: _rows, summary: _summary, ...rest } = current;
+  publish({ ...rest, clients: update(current.clients) });
+}
+
+/** Replaces one client, by id. The common case. */
+export function patchClient(id: string, change: Partial<DashboardClient>): void {
+  patchClients((list) => list.map((c) => (c.id === id ? { ...c, ...change } : c)));
+}
+
+export function removeClientLocally(id: string): void {
+  patchClients((list) => list.filter((c) => c.id !== id));
+}
+
+export function addClientLocally(client: DashboardClient): void {
+  patchClients((list) => [...list, client]);
+}
+
+/** The client list as the store currently holds it, or null before first load. */
+export function currentClients(): DashboardClient[] | null {
+  return current?.clients ?? null;
 }
 
 export interface ScreenData {
@@ -94,6 +156,13 @@ export interface ScreenData {
 export function useClientHealth(initial: ClientHealthWeeklyData | null): ScreenData {
   const [data, setData] = useState<ClientHealthWeeklyData | null>(initial);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * A server-rendered screen never went through `loadClientHealth`, so the
+   * store has nothing in it and the first edit would find no list to change.
+   * Seeding it here is what makes the modal work on a direct link.
+   */
+  if (initial && !current) current = initial;
 
   // Stay subscribed for the screen's whole life, not just until it has data:
   // a sync must update a screen that loaded long ago.

@@ -174,3 +174,52 @@ Every one of these scripts records the prior state, asserts the change, and puts
 it back — then re-reads the counts and says plainly whether the restore worked.
 Run `node scripts/portal-fingerprint.mjs check` afterwards; `client_pipeline_entries`
 and `label_assignments` should both read "unchanged".
+
+
+---
+
+# Architecture change: the OS owns every tool
+
+**Decided 11 Sep 2026.** The OS is not a window onto five live products. It is
+replacing them: Master Inbox, Client Health, Agent Search, Onboarding and
+Campaign Analytics all move here, and the originals get switched off. So the OS
+reads **and writes** every one of their databases, and no feature may be left
+behind.
+
+This invalidates a rule that used to be enforced by a test — "the OS may only
+read a tool it does not own" — and that test has been replaced rather than
+weakened. Keeping a suite that fails for the wrong reason teaches people to
+override it, which costs more than it saves.
+
+## What is guarded now
+
+`src/lib/guards/blast-radius.test.ts` asserts a different property, and one that
+matters more once there are ~200 write sites:
+
+> **No `.update()` or `.delete()` may be unscoped.**
+
+PostgREST applies an unfiltered update or delete to EVERY ROW in the table. There
+is no confirmation, no transaction to roll back, and the first sign of trouble is
+somebody noticing their data is gone. That is one forgotten `.eq()` away in any
+of those call sites, and it reads as perfectly ordinary code.
+
+The check anchors on `.from("table")` rather than on the verb — an earlier
+version matched any `.delete(` and flagged four `Map.delete(key)` calls in a TTL
+cache, which is the kind of false positive that gets a test disabled.
+
+## What every tool now needs, because Master Inbox needed it
+
+The Master Inbox port is the worked example. Each tool that follows should
+expect the same four things:
+
+1. **A fingerprint script.** `scripts/portal-fingerprint.mjs` records the row
+   counts and identifying columns of the tables a tool depends on, and reports
+   any change. Run it before and after write testing. "Nothing shrank" is
+   evidence; "I was careful" is not.
+2. **Test data you can destroy.** Never exercise a destructive path on a real
+   customer's row. Create a test record, use it, remove it, and say so.
+3. **Scoped writes, checked by the test above.**
+4. **Proof by behaviour, not by file listing.** This project has shipped a
+   settings page where every field was read-only, 23 routes that returned 401 to
+   everybody, and a portals page whose own comment said "Read-only" — all of
+   which looked finished. Click the control; then check the database.

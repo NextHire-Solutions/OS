@@ -12,7 +12,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyFilters, visibleTotal, type FilterState } from "./filters.ts";
+import {
+  applyFilters, presetRange, visibleTotal,
+  BILLING_WINDOW_OPTIONS, FILTER_TABS, PLAN_OPTIONS, TZ_OPTIONS,
+  type FilterState,
+} from "./filters.ts";
 import type { WeeklyRow } from "./summarize.ts";
 
 const BASE: FilterState = { search: "", filter: "all", plan: "all", sort: null };
@@ -156,4 +160,139 @@ test("no filter and no search returns the visible set unchanged", () => {
   const rows = [row("A"), row("B"), row("C", { hidden: true })];
   assert.equal(applyFilters(rows, BASE).length, 2);
   assert.equal(visibleTotal(rows), 2);
+});
+
+/*
+ * The three selects and the date range.
+ *
+ * Added with the rest of the tool's filter row. Each of these can silently
+ * remove clients from a screen somebody is using to decide who to call, so
+ * each one gets pinned to what the live tool does.
+ */
+
+/** A row with the fields the newer filters read. */
+function client(
+  name: string,
+  o: Partial<{
+    time_zone: string | null;
+    start_date: string | null;
+    billing_anchor_date: string | null;
+    billing_interval: string;
+    billing_interval_days: number | null;
+  }> = {},
+): WeeklyRow {
+  const base = row(name);
+  return {
+    ...base,
+    client: {
+      ...base.client,
+      time_zone: o.time_zone ?? null,
+      start_date: o.start_date ?? null,
+      billing_anchor_date: o.billing_anchor_date ?? null,
+      billing_interval: o.billing_interval ?? "biweekly",
+      billing_interval_days: o.billing_interval_days ?? null,
+    },
+  } as unknown as WeeklyRow;
+}
+
+const NOW = new Date("2026-09-11T12:00:00Z");
+
+test("the time-zone filter matches the stored IANA string exactly", () => {
+  const rows = [
+    client("East", { time_zone: "America/New_York" }),
+    client("West", { time_zone: "America/Los_Angeles" }),
+    client("Unset"),
+  ];
+
+  assert.deepEqual(names(applyFilters(rows, { ...BASE, tz: "America/New_York" })), ["East"]);
+  // A client with no time zone is not in every zone — it is in none.
+  assert.deepEqual(names(applyFilters(rows, { ...BASE, tz: "America/Chicago" })), []);
+  assert.equal(applyFilters(rows, { ...BASE, tz: "all" }).length, 3);
+});
+
+test("the billing window keeps only clients billing within N days", () => {
+  // Anchored so the next fortnightly date is a known distance away.
+  const rows = [
+    client("Soon", { billing_anchor_date: "2026-09-14", billing_interval: "biweekly" }),
+    client("Later", { billing_anchor_date: "2026-10-05", billing_interval: "biweekly" }),
+    client("NoAnchor"),
+  ];
+
+  const within = (days: "7" | "14" | "30") =>
+    names(applyFilters(rows, { ...BASE, billingWindow: days }, NOW));
+
+  assert.deepEqual(within("7"), ["Soon"], "three days out");
+  assert.ok(within("30").includes("Later"), "twenty-four days out");
+  // No anchor and no start date means no billing date to be inside a window.
+  assert.ok(!within("30").includes("NoAnchor"));
+});
+
+test("a client with no billing date is excluded rather than kept by default", () => {
+  const rows = [client("NoAnchor")];
+  assert.equal(applyFilters(rows, { ...BASE, billingWindow: "30" }, NOW).length, 0);
+  assert.equal(applyFilters(rows, { ...BASE, billingWindow: "all" }, NOW).length, 1);
+});
+
+test("the date range filters on start date, inclusive at both ends", () => {
+  const rows = [
+    client("Jan", { start_date: "2026-01-15" }),
+    client("Jun", { start_date: "2026-06-01" }),
+    client("Sep", { start_date: "2026-09-01" }),
+    client("Undated"),
+  ];
+
+  assert.deepEqual(
+    names(applyFilters(rows, { ...BASE, dateFrom: "2026-06-01", dateTo: "2026-09-01" })),
+    ["Jun", "Sep"],
+    "both bounds are inclusive",
+  );
+  assert.deepEqual(names(applyFilters(rows, { ...BASE, dateFrom: "2026-06-02" })), ["Sep"]);
+  assert.deepEqual(names(applyFilters(rows, { ...BASE, dateTo: "2026-01-31" })), ["Jan"]);
+});
+
+test("a client with no start date drops out of any date range", () => {
+  // It has no answer to the question the filter asks, so keeping it would be
+  // keeping it on a technicality.
+  const rows = [client("Undated")];
+  assert.equal(applyFilters(rows, { ...BASE, dateFrom: "2020-01-01" }).length, 0);
+  assert.equal(applyFilters(rows, BASE).length, 1);
+});
+
+test("the filters compose — each narrows what the last one left", () => {
+  const rows = [
+    client("Match", { time_zone: "America/New_York", start_date: "2026-06-01" }),
+    client("WrongZone", { time_zone: "America/Denver", start_date: "2026-06-01" }),
+    client("WrongDate", { time_zone: "America/New_York", start_date: "2025-01-01" }),
+  ];
+
+  assert.deepEqual(
+    names(applyFilters(rows, {
+      ...BASE, tz: "America/New_York", dateFrom: "2026-01-01", dateTo: "2026-12-31",
+    })),
+    ["Match"],
+  );
+});
+
+test("the presets are inclusive of today and land on whole days", () => {
+  assert.deepEqual(presetRange("last7", NOW), { from: "2026-09-05", to: "2026-09-11" });
+  assert.deepEqual(presetRange("last30", NOW), { from: "2026-08-13", to: "2026-09-11" });
+  assert.deepEqual(presetRange("ytd", NOW), { from: "2026-01-01", to: "2026-09-11" });
+});
+
+test("the tool's nine filter tabs are all present, in its order", () => {
+  assert.deepEqual(
+    FILTER_TABS.map((f) => f.id),
+    ["all", "risk", "ok", "done", "active", "paused", "inactive", "client-paused", "hidden"],
+  );
+  // The rename pass: these two labels are the distinction the tool draws.
+  assert.equal(FILTER_TABS.find((f) => f.id === "paused")?.label, "Campaign Paused");
+  assert.equal(FILTER_TABS.find((f) => f.id === "hidden")?.label, "Clients Churned");
+});
+
+test("every select offers an all-clearing option first", () => {
+  // Without one there is no way back to the unfiltered list.
+  assert.equal(PLAN_OPTIONS[0].id, "all");
+  assert.equal(TZ_OPTIONS[0].id, "all");
+  assert.equal(BILLING_WINDOW_OPTIONS[0].id, "all");
+  assert.equal(TZ_OPTIONS.length, 8, "all, plus the seven zones the tool offers");
 });
