@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { PIPELINE_STAGES, type PortalClient, type PortalsData } from "@/lib/tools/master-inbox/portals";
+import type { PortalClient, PortalsData } from "@/lib/tools/master-inbox/portals";
 import { dateStamp } from "@/lib/workspace/dates";
 import { Lazy, PlaceholderScreen } from "../lazy";
 
@@ -28,6 +28,26 @@ import { Lazy, PlaceholderScreen } from "../lazy";
  * Read-only, and more firmly than elsewhere: these are the tables the 48 live
  * portals are built on.
  */
+
+/*
+ * The stages a portal pipeline moves through, in the order it shows them.
+ *
+ * Defined here rather than in the loader: it is presentation, and the loader
+ * is `server-only`. Importing a VALUE from a server-only module into a client
+ * component pulls the whole module into the browser bundle, which fails the
+ * build — as it did.
+ */
+export const PIPELINE_STAGES = [
+  { key: "introduction", label: "Introduction" },
+  { key: "phone_screen_scheduled", label: "Phone Screen Scheduled" },
+  { key: "phone_screen", label: "Phone Screen" },
+  { key: "interview_scheduled", label: "Interview Scheduled" },
+  { key: "interview", label: "Interview" },
+  { key: "hired", label: "Hired" },
+  { key: "keep_warm", label: "Keep Warm" },
+  { key: "no_show", label: "No Show / No Response" },
+  { key: "we_they_rejected", label: "Rejected" },
+] as const;
 
 /** A portal untouched this long is worth asking about. */
 const QUIET_DAYS = 21;
@@ -273,4 +293,3 @@ function Card({ label, value, sub, tone }: { label: string; value: number; sub: 
   );
 }
 
-export { PIPELINE_STAGES };

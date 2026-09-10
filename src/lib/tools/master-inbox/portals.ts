@@ -32,19 +32,6 @@ type Row = Record<string, unknown>;
 const rows = (d: unknown): Row[] => (Array.isArray(d) ? (d as Row[]) : []);
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-/** The stages a portal pipeline moves through, in the order it shows them. */
-export const PIPELINE_STAGES = [
-  { key: "introduction", label: "Introduction" },
-  { key: "phone_screen_scheduled", label: "Phone Screen Scheduled" },
-  { key: "phone_screen", label: "Phone Screen" },
-  { key: "interview_scheduled", label: "Interview Scheduled" },
-  { key: "interview", label: "Interview" },
-  { key: "hired", label: "Hired" },
-  { key: "keep_warm", label: "Keep Warm" },
-  { key: "no_show", label: "No Show / No Response" },
-  { key: "we_they_rejected", label: "Rejected" },
-] as const;
-
 export interface PortalClient {
   id: string;
   name: string;
