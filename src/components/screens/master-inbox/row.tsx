@@ -83,10 +83,16 @@ export function InboxRow({
         ) : null}
         {t.client_name ? <span className="c c-client">{t.client_name}</span> : null}
         {t.campaign_name ? <span className="c c-camp">{t.campaign_name}</span> : null}
-        {t.labels?.slice(0, 2).map((l) => (
+        {/*
+          One label, not two, and no "needs reply" chip.
+
+          The design carries unread state in the dot and the bold sender, so a
+          third badge repeating it only costs the width that the subject and
+          preview need. `needs_reply` still drives the dot.
+        */}
+        {t.labels?.slice(0, 1).map((l) => (
           <span key={l.name} className={labelClass(l.color)}>{l.name}</span>
         ))}
-        {t.needs_reply ? <span className="lc lc-amber">needs reply</span> : null}
       </span>
 
       <span className="subj">{t.subject ?? "(no subject)"}</span>

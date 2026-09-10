@@ -46,3 +46,37 @@
 .pane-host[hidden] {
   display: none !important;
 }
+
+/* ===========================================================================
+   Inbox rows: let the chip cluster give way.
+
+   The design's `.chips` is `flex:none`, which is right for the mockup's short
+   sample data. Real campaign names run to "Carolina Realty Advisors 2 + Nicole
+   + East" and several chips together exceeded the row, pushing the subject,
+   preview and timestamp off the right edge and putting a horizontal scrollbar
+   under the whole list.
+
+   So the cluster is allowed to shrink and clip instead. The provider and
+   client chips are the ones worth reading at a glance and they come first;
+   the campaign name is the one that truncates, which is the right thing to
+   lose — it is also on screen once the conversation is open.
+
+   Kept here rather than edited into workspace.css so the design file stays a
+   clean copy of what was handed over, and every deviation is visible in one
+   place.
+   ======================================================================== */
+.mi-row .chips {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* The row itself must be allowed to compute a shrunken width for its cells. */
+.mi-row {
+  min-width: 0;
+}
+
+.mi-row .subj,
+.mi-row .prev {
+  min-width: 0;
+}
