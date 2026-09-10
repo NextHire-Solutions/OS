@@ -116,7 +116,15 @@ export async function getSettings(): Promise<MasterInboxSettings> {
         .eq("workspace_id", ws).order("name"),
       sb.from("workspace_members").select("user_id,role,status").eq("workspace_id", ws),
       sb.from("custom_views").select("id,name,icon,shared,is_system").eq("workspace_id", ws).order("sort_order"),
-      sb.from("clients").select("id", { count: "exact", head: true }).eq("workspace_id", ws),
+      /*
+       * NOT scoped by workspace — `clients` has no workspace_id column.
+       *
+       * It is global to the deployment, which is also why the client portals
+       * resolve a token against it without a workspace anywhere in the query.
+       * Filtering on a column that does not exist made this a 400, and before
+       * the error loop below existed it surfaced as "0 clients".
+       */
+      sb.from("clients").select("id", { count: "exact", head: true }),
       // One read for every label's thread count, rather than one per label.
       sb.from("label_assignments").select("label_id").eq("target_type", "thread").limit(20_000),
     ]);
