@@ -1,9 +1,9 @@
-import type { PipelineEntry } from "../portals/portal-data";
-import type { FubPerson } from "../integrations/followup-boss";
+import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/portal-data";
+import type { FubPerson } from "@/lib/tools/master-inbox/integrations/followup-boss";
 import {
   pickFirstString,
   PHONE_KEYS,
-} from "../portals/custom-field-helpers";
+} from "@/components/master-inbox/portals-ui/custom-field-helpers";
 
 // Build the FUB person payload for a pipeline entry.
 //

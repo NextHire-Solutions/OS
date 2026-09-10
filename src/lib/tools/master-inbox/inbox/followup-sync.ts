@@ -1,5 +1,5 @@
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { createEmailBisonClient } from "../emailbison/client";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { createEmailBisonClient } from "@/lib/tools/master-inbox/emailbison/client";
 
 // Resolves and caches a thread's EmailBison reply_followup campaign
 // membership onto the thread row (migration 0029). Parallel to

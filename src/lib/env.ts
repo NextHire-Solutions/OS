@@ -61,3 +61,20 @@ export function baseUrlEnv(name: string): string {
 export function isConfigured(...names: string[]): boolean {
   return names.every((n) => Boolean(optionalEnv(n)));
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Master Inbox compatibility re-exports.
+ *
+ * The copied Master Inbox code reads `env.INSTANTLY_API_KEY` and friends from
+ * `@/lib/env`. In the OS those same variables are namespaced
+ * (`MASTER_INBOX_INSTANTLY_API_KEY`) so five tools can share one environment
+ * without colliding; the namespacing itself lives in the real module, which
+ * builds each name at lookup time.
+ *
+ * These two lines exist so the copied files keep the import they already have.
+ * They are APPENDED to this module rather than replacing it — the OS's own
+ * `optionalEnv` / `NotConfiguredError` above are used by Client Health and the
+ * catch-all route, and overwriting them broke both.
+ */
+export { env, browserEnv } from "./tools/master-inbox/env.ts";

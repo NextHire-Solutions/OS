@@ -1,8 +1,8 @@
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { env } from "../env";
-import { postSlackMessage } from "../webhooks/slack";
-import { DEFAULT_STAGE_LABELS } from "../portals/portal-data";
-import type { PipelineStage } from "../portals/portal-data";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { env } from "@/lib/env";
+import { postSlackMessage } from "@/lib/tools/master-inbox/webhooks/slack";
+import { DEFAULT_STAGE_LABELS } from "@/lib/tools/master-inbox/portals/portal-data";
+import type { PipelineStage } from "@/lib/tools/master-inbox/portals/portal-data";
 
 // Slack notifications for client portal activity.
 //

@@ -1,4 +1,4 @@
-import { env } from "../env";
+import { env } from "@/lib/env";
 
 // Thin wrapper around Slack's chat.postMessage. The ONLY module
 // that talks to Slack's HTTP API. Every domain-specific notifier

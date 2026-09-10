@@ -1,6 +1,6 @@
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { createEmailBisonClient } from "../emailbison/client";
-import { createInstantlyClient } from "../instantly/client";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { createEmailBisonClient } from "@/lib/tools/master-inbox/emailbison/client";
+import { createInstantlyClient } from "@/lib/tools/master-inbox/instantly/client";
 
 // "Do Not Contact" — pushes a thread's lead onto the source platform's
 // blocklist so the sequencer stops emailing them. Wired to the "Hostile"

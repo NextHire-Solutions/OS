@@ -1,6 +1,6 @@
 import { cache } from "react";
-import { getMasterInboxSupabase as createServerSupabase } from "../supabase";
-import { ttlCache } from "../cache/ttl";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { ttlCache } from "@/lib/cache/ttl";
 
 export interface ClientOption {
   id: string;

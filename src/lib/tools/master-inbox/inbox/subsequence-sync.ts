@@ -1,5 +1,5 @@
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { createInstantlyClient } from "../instantly/client";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { createInstantlyClient } from "@/lib/tools/master-inbox/instantly/client";
 
 // Resolves and caches a thread's Instantly subsequence membership onto
 // the thread row (migration 0021). The prospect panel reads the cached

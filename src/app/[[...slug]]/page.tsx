@@ -21,7 +21,10 @@ import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekl
 import { ClientHealthSuccess } from "@/components/screens/client-health/success";
 import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeline";
 import { AgentSearchScreen } from "@/components/screens/agent-search/agents";
-import { MasterInboxScreen } from "@/components/screens/master-inbox/inbox";
+import { FullInbox } from "@/components/screens/master-inbox/full-inbox";
+import { ThreadDetail } from "@/components/screens/master-inbox/thread-detail";
+import { FolderEmpty } from "@/components/master-inbox/folder-empty";
+import { PortalDetail } from "@/components/screens/master-inbox/portal-detail";
 import { RemindersScreen } from "@/components/screens/master-inbox/reminders";
 import { MasterInboxSettingsScreen } from "@/components/screens/master-inbox/settings";
 import { PortalsScreen } from "@/components/screens/master-inbox/portals";
@@ -41,14 +44,55 @@ import { ALL_TOOLS } from "@/lib/bs-auth";
  * already carries real numbers — no client waterfall, and Home is useful before
  * any JavaScript runs.
  */
+/** Thread and client ids are UUIDs; a non-UUID third segment is a screen. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/*
+ * Segments under /inbox that are SCREENS rather than inbox views.
+ *
+ * This list exists because of a real bug. Every screen below is rendered on
+ * every request — the shell keeps them all mounted so switching is instant and
+ * costs no round-trip (see workspace.tsx `navigate`, which uses pushState).
+ * That means a screen cannot assume the URL belongs to it.
+ *
+ * `ThreadDetail` did assume it: it treated ANY uuid in the third segment as a
+ * thread id. Visiting `/inbox/portals/<clientId>` therefore handed a CLIENT id
+ * to `loadThreadDetail`, which found nothing and called `notFound()` — and
+ * because it renders on every request, that 404'd the whole page, including
+ * the portal screen that was supposed to be showing.
+ *
+ * So the check is "is this URL actually an inbox view?", not "does it end in a
+ * uuid".
+ */
+const INBOX_SCREENS = new Set(["portals", "settings", "reminders"]);
+
+/** True only for /inbox/<view>/<threadId>, never /inbox/portals/<clientId>. */
+function threadIdFrom(slug: string[] | undefined): string | null {
+  const parts = slug ?? [];
+  if (parts[0] !== "inbox") return null;
+  const view = parts[1];
+  if (!view || INBOX_SCREENS.has(view)) return null;
+  const third = parts[2];
+  return third && UUID.test(third) ? third : null;
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function WorkspacePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug?: string[] }>;
+  /*
+   * The inbox needs these: `f` is the encoded filter, `list` the active list,
+   * `page` the page number and `q` a search. They arrive as query params
+   * because that is what makes an inbox view linkable — a colleague pastes a
+   * filtered URL and sees the same screen.
+   */
+  searchParams: Promise<{ f?: string; list?: string; page?: string; q?: string }>;
 }) {
   const { slug } = await params;
+  const query = await searchParams;
   const initialId = idForPath(`/${(slug ?? []).join("/")}`);
 
   const requestHeaders = await headers();
@@ -175,10 +219,73 @@ export default async function WorkspacePage({
          * empty. The live service keeps serving the client portals and
          * receiving the provider webhooks; see MASTER-INBOX-AUDIT.md.
          */
-        "inbox:all-email": <MasterInboxScreen initial={inbox} />,
+        /*
+         * The tool's own inbox, running here. See full-inbox.tsx for why this
+         * is a port of their page rather than a screen written against the
+         * mockup — the short version is that the hand-written one was missing
+         * attachments, forward, reply-all, templates, the sender picker, AI
+         * drafts, snooze, the prospect panel and the filter builder.
+         */
+        "inbox:all-email": (() => {
+          /*
+           * /inbox/<view> is the list; /inbox/<view>/<threadId> is one
+           * conversation. `threadIdFrom` decides which, and returns null for
+           * every non-inbox-view path — see its note for the 404 that taught
+           * us to check the view and not just the uuid.
+           */
+          const threadId = threadIdFrom(slug);
+          const parts = slug ?? [];
+          const view = parts[0] === "inbox" && parts[1] && !INBOX_SCREENS.has(parts[1])
+            ? parts[1]
+            : "all-email";
+          return threadId ? (
+            <ThreadDetail
+              view={view}
+              threadId={threadId}
+              f={query.f}
+              list={query.list}
+              page={query.page}
+              q={query.q}
+            />
+          ) : (
+            <FullInbox view={view} f={query.f} list={query.list} page={query.page} q={query.q} />
+          );
+        })(),
+        /*
+         * Archive is a real inbox view, not a separate screen — the tool
+         * renders it through the same page with `view="archive"`. It was
+         * falling through to the default before, which showed the wrong
+         * screen at a URL in the sidebar.
+         */
+        "inbox:archive": (
+          <FullInbox view="archive" f={query.f} list={query.list} page={query.page} q={query.q} />
+        ),
+        /*
+         * Leads is an empty placeholder in the live tool as well
+         * (`app/(app)/leads/page.tsx` renders exactly this). Kept so the nav
+         * item says the same thing the tool says rather than looking broken.
+         */
+        "inbox:leads": (
+          <FolderEmpty
+            title="Leads"
+            description="Your prospect & lead database will appear here."
+          />
+        ),
         "inbox:reminders": <RemindersScreen initial={reminders} />,
-        "inbox:settings": <MasterInboxSettingsScreen initial={inboxSettings} />,
-        "inbox:portals": <PortalsScreen initial={portals} />,
+        "inbox:settings": <MasterInboxSettingsScreen tab={(slug ?? [])[2]} />,
+        /*
+         * /inbox/portals lists the 47 client portals; /inbox/portals/<id> is
+         * the staff drill-down into one of them. The list linked at that
+         * second URL and it returned 404 — the one screen the tool has that
+         * this workspace was missing.
+         */
+        "inbox:portals": (() => {
+          // Only when the URL really is /inbox/portals/<clientId>. Same lesson
+          // as threadIdFrom above: this screen renders on every request.
+          const parts = slug ?? [];
+          const id = parts[0] === "inbox" && parts[1] === "portals" ? parts[2] : undefined;
+          return id && UUID.test(id) ? <PortalDetail clientId={id} /> : <PortalsScreen initial={portals} />;
+        })(),
         "team-access": <TeamAccessScreen />,
       }}
     />

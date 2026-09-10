@@ -3,7 +3,11 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 // The design system, verbatim from the design file. Loaded AFTER globals so
 // its tokens and component rules win where the two overlap.
-import "./workspace.css";
+/*
+ * workspace.css is imported by globals.css into `layer(mockup)` — see the
+ * layer-order note there. Importing it here as well would reintroduce it
+ * unlayered, which is the bug that note describes.
+ */
 import "./shell.css";
 
 const inter = Inter({

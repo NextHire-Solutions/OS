@@ -1,5 +1,5 @@
-import type { getMasterInboxSupabase as createServerSupabase } from "../supabase";
-import { fetchAllRows } from "../db/paginated-select";
+import type { createServerSupabase } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 
 // "Open Responses" — a work-queue view scoped to threads where the
 // ball is in OUR court right now:

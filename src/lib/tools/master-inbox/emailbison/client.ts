@@ -1,4 +1,4 @@
-import { env } from "../env";
+import { env } from "@/lib/env";
 
 // Thin typed wrapper around EmailBison's REST API. Bearer auth. All endpoints
 // live under `${baseUrl}/api/...`. See docs/emailbison-openapi.json.

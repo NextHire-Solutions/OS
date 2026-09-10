@@ -85,3 +85,50 @@ export const PORTAL_TABLES = [
   "client_pipeline_stages",
   "client_team_members",
 ] as const;
+
+/*
+ * ---------------------------------------------------------------------------
+ * THE SECOND TIER — for the client editor that the OS now carries
+ *
+ * `assertNoPortalColumns` above is the strict guard: it refuses all three
+ * columns, and it is right for every screen that has no business managing
+ * portals (Client Health, the roster, bulk tooling).
+ *
+ * It is the WRONG guard for the Master Inbox's own client editor, which the OS
+ * now runs verbatim. That editor manages portals on purpose:
+ *
+ *   creating a client MINTS portal_token and sets portal_enabled — a new
+ *   client with no portal is a broken client
+ *
+ *   renaming a client REWRITES slug, because slug is derived from the name
+ *
+ * Blocking those would not protect anything; it would delete two working
+ * features. So this tier guards the narrower, sharper claim.
+ *
+ * WHAT ACTUALLY BREAKS A LIVE PORTAL URL
+ *
+ * Portals resolve by TOKEN — every route is `/portal/[token]/…` and
+ * `/api/portal/[token]/…`. The slug is display metadata; the token is the
+ * address. Rewriting `portal_token` on an existing client invalidates the link
+ * that client already has, instantly and with no way to discover the new one.
+ *
+ * The user's constraint was explicit: "client portal urls remain same right for
+ * all the clients?" So on an EXISTING client, the token is frozen.
+ *
+ * `portal_enabled` is deliberately left writable: it is the tool's own on/off
+ * switch, it is reversible, and a staff member turning a portal off is making a
+ * decision rather than an accident.
+ */
+
+/**
+ * Guards an UPDATE to an existing client.
+ *
+ * Refuses only `portal_token` — the column that is the portal's URL. Everything
+ * else the tool's editor writes is allowed through, because it is either
+ * reversible or derived.
+ *
+ * Not used on INSERT: a new client must be able to mint its first token.
+ */
+export function assertPortalUrlStable(patch: Record<string, unknown>): void {
+  if ("portal_token" in patch) throw new PortalGuardError("portal_token");
+}

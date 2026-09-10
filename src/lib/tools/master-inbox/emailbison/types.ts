@@ -43,7 +43,7 @@ export interface EmailBisonScheduledEmail {
   sent_at?: string | null;
 }
 
-// EmailBison reply payload — field names per the live `/api/webhook-events/test-event`
+// EmailBison reply payload — field names per the live `/api/tools/master-inbox/webhook-events/test-event`
 // response. NOT `body_html` / `subject` — they're `html_body` / `email_subject`.
 export interface EmailBisonReply {
   id: number;

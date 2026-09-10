@@ -1,23 +1,9 @@
 import { NextResponse, after } from "next/server";
 import { z } from "zod";
-import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
+import { requireSession } from "@/lib/auth/workspace";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 import { chunkedRun } from "@/lib/tools/master-inbox/db/chunked-in";
-
-/*
- * Master Inbox — bulk thread actions. The tool's own route, copied.
- *
- * Seven actions across a selection: seen, status, labels, list, delete,
- * delete_permanent and move_client. Copied rather than rewritten for the same
- * reason as the reply route — the label branch fires an n8n webhook, a Follow
- * Up Boss push, a Slack notice and an EmailBison interest call, and creates
- * rows in clients' LIVE portals.
- *
- * The differences are the same four as everywhere else: the workspace proxy
- * has already authenticated, both Supabase clients become one service-role
- * client, the workspace is scoped explicitly because RLS no longer does it,
- * and `null` becomes null — which every existing row already is.
- */
-const WORKSPACE_ID = process.env.MASTER_INBOX_WORKSPACE_ID ?? "";
 import {
   isInterestedLabel,
   markEmailBisonReplyInterested,
@@ -97,7 +83,7 @@ const dispatcher = z.discriminatedUnion("action", [
 ]);
 
 export async function POST(request: Request) {
-
+  const session = await requireSession();
   const body = await request.json().catch(() => null);
   const parsed = dispatcher.safeParse(body);
   if (!parsed.success) {
@@ -107,9 +93,8 @@ export async function POST(request: Request) {
     );
   }
 
-  // The proxy verified the session before this handler ran.
-  const supabase = getMasterInboxSupabase();
-  const wsId = WORKSPACE_ID;
+  const supabase = await createServerSupabase();
+  const wsId = session.activeWorkspace.id;
   const data = parsed.data;
 
   // Every server-side `.in("id"|"target_id"|"thread_id", thread_ids)`
@@ -181,7 +166,7 @@ export async function POST(request: Request) {
       // Durability: the sync layer (upsertThread in lib/sync/*) does
       // "first match wins" on client_id, so a later reply on a moved
       // thread never reverts this. The move is permanent.
-      const admin = getMasterInboxSupabase();
+      const admin = createAdminSupabase();
       const targetClientId = data.client_id;
 
       // 1. Validate the target exists and isn't the "unknown" bucket.
@@ -310,7 +295,7 @@ export async function POST(request: Request) {
         let notesSnapshot: PipelineNotesSnapshot | null = null;
         if (names.includes("introduction")) {
           notesSnapshot = await snapshotPipelineNotes(
-            getMasterInboxSupabase(),
+            createAdminSupabase(),
             data.thread_ids,
           );
         }
@@ -345,7 +330,7 @@ export async function POST(request: Request) {
             target_type: "thread" as const,
             target_id: tid,
             assigned_by: "user" as const,
-            assigned_user_id: null,
+            assigned_user_id: session.user.id,
           })),
         );
         // Insert in row chunks rather than thread-id chunks — the
@@ -380,7 +365,7 @@ export async function POST(request: Request) {
           // (no-op for entries that survived or already carry notes).
           if (notesSnapshot) {
             const snap = notesSnapshot;
-            after(() => restorePipelineNotes(getMasterInboxSupabase(), snap));
+            after(() => restorePipelineNotes(createAdminSupabase(), snap));
           }
         }
         if (names.includes("interested")) {
@@ -475,7 +460,7 @@ export async function POST(request: Request) {
           list_id: data.list_id,
           thread_id: tid,
           workspace_id: wsId,
-          added_by: null,
+          added_by: session.user.id,
         }));
         // Upsert in row chunks; payload lives in POST body.
         const insertChunkSize = 500;

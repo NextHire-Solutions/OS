@@ -1,5 +1,62 @@
+/*
+ * LAYER ORDER — declared explicitly, because the default order was the cause
+ * of a whole class of bug.
+ *
+ * Tailwind 4 puts its utilities in `@layer utilities`. `workspace.css` — the
+ * design's own stylesheet — was imported unlayered from layout.tsx, and in the
+ * CSS cascade UNLAYERED STYLES BEAT LAYERED ONES no matter their specificity.
+ *
+ * So `workspace.css` line 68, `*{box-sizing:border-box;margin:0;padding:0}`,
+ * silently beat every Tailwind utility in the copied Master Inbox components.
+ * `pl-9` on the search input computed to `padding-left: 0px`; the magnifier
+ * icon sat on top of the placeholder text. That was the visible symptom — the
+ * invisible one was that all 308 utility classes in those components were
+ * being overridden the same way.
+ *
+ * Declaring `mockup` between `components` and `utilities` puts the design
+ * sheet back where it belongs: above Tailwind's resets and component styles,
+ * below its utilities. Nothing about the mockup screens changes — they use the
+ * design's semantic classes (`.mi-row`, `.rail`, `.card`) and contain zero
+ * Tailwind utilities, so there is nothing for the utilities layer to win
+ * against. Checked before making the change, not assumed.
+ */
+@layer theme, base, components, mockup, utilities;
+
 @import "tailwindcss";
 @import "./brand.css";
+@import "./workspace.css" layer(mockup);
+@import "./inbox-theme.css";
+
+/*
+ * `dark:` is opt-in, not OS-driven.
+ *
+ * ---------------------------------------------------------------------------
+ * THE BUG THIS FIXES
+ *
+ * Tailwind's default `dark:` variant follows `prefers-color-scheme`. The
+ * Master Inbox components copied from the tool carry 45 `dark:` classes, so on
+ * any machine whose OS is set to dark mode those fired — while the rest of the
+ * OS, which is a light-only design with no dark palette, stayed light.
+ *
+ * The result was not "dark mode". It was a light page with dark grey rows:
+ * `bg-zinc-200/90 dark:bg-zinc-800/60` resolved to zinc-800, and the preview
+ * text became unreadable against it. Every staff member running their Mac in
+ * dark mode would have seen it; nobody running light mode ever would, which is
+ * exactly the kind of bug that survives review.
+ *
+ * Redefining the variant to key off a `.dark` class means the 45 inherited
+ * classes are inert — nothing sets `.dark` — while remaining ready if the
+ * workspace ever gains a real dark theme. The alternative, deleting them from
+ * the copied components, would have to be redone on every future copy.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Tells the browser to draw form controls, scrollbars and the canvas in
+     light, so a dark-mode OS does not invert inputs the design assumes light. */
+  color-scheme: light;
+}
+
 
 /*
  * Token mapping only. There is deliberately not a single colour literal in

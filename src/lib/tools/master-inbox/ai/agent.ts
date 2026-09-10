@@ -1,7 +1,7 @@
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { env } from "../env";
-import { generateReplyDraft, DEFAULT_REPLY_SYSTEM_PROMPT, type ConversationTurn } from "./reply";
-import type { AiProvider } from "./label";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { env } from "@/lib/env";
+import { generateReplyDraft, DEFAULT_REPLY_SYSTEM_PROMPT, type ConversationTurn } from "@/lib/tools/master-inbox/ai/reply";
+import type { AiProvider } from "@/lib/tools/master-inbox/ai/label";
 
 export type ChannelFilter = "email" | "both";
 

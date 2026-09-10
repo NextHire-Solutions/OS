@@ -1,0 +1,106 @@
+/*
+ * The mockup's palette, applied to the Master Inbox's own components.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS FILE INSTEAD OF EDITING 308 className ATTRIBUTES
+ *
+ * The inbox is the tool's code, copied so that no feature would be lost. Its
+ * components are styled with Tailwind's SEMANTIC tokens rather than raw
+ * colours — `text-muted-foreground` 129 times, `bg-background` 39,
+ * `text-foreground` 28, `bg-accent` 26. That is the whole opportunity: those
+ * names resolve through CSS variables, so redefining the variables restyles
+ * every usage at once.
+ *
+ * Rewriting the classNames by hand would take a day, would diverge from the
+ * tool's source the moment it was done, and would introduce a fresh chance of
+ * error at each of the 308 sites. This changes the same pixels from one file
+ * and leaves the components byte-identical to the originals.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT IS SCOPED RATHER THAN GLOBAL
+ *
+ * The rest of the OS is already drawn in the mockup's own semantic classes
+ * (`.mi-row`, `.rail`, `.card`) and reads `--page`, `--ink`, `--line` directly.
+ * Redefining Tailwind's tokens globally would repaint screens that are already
+ * correct, to no benefit and some risk. Everything here is confined to
+ * `.mi-theme`, which wraps only the inbox.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE OF THESE IS A BUG FIX, NOT A RESTYLE
+ *
+ * `--accent` and `--accent-foreground` were never defined anywhere in this app,
+ * yet `bg-accent` appears 26 times in the copied components — every hover
+ * state, every selected row. Tailwind emitted
+ * `background-color: var(--color-accent)`, that resolved to nothing, and the
+ * highlight simply did not paint. It is defined below, so hover and selection
+ * are visible for the first time.
+ */
+
+.mi-theme {
+  /* Surfaces — the mockup's white-on-grey, not the app's oklch near-white. */
+  --background: var(--surface);
+  --surface-elevated: var(--white);
+  --surface-sunken: var(--inset);
+
+  /* Type. Two weights of grey, matching the design's ink scale. */
+  --foreground: var(--ink);
+  --foreground-secondary: var(--ink-2);
+  --muted-foreground: var(--muted);
+
+  /* Lines. The design uses a hairline between rows and a firmer one between
+     panes; `--border` is the firmer of the two so panels stay legible. */
+  --border: var(--line);
+  --border-strong: var(--line);
+  --hairline: var(--line-soft);
+
+  /* Accent = the design's inset grey. This is the pair that was undefined. */
+  --accent: var(--inset);
+  --accent-foreground: var(--ink);
+
+  /* Interaction. Distinct from --accent so a hovered row and a selected row
+     do not look identical — they did in the mockup's own list, and the
+     selected state is the one that has to win. */
+  --hover-surface: var(--inset);
+  --active-surface: var(--inset-2);
+  --selected-surface: var(--blue-pale);
+
+  /* Brand. The design's blue, and the pale wash used behind selected rows. */
+  --brand: var(--blue);
+  --brand-hover: var(--blue-ink);
+  --brand-subtle: var(--blue-pale);
+  --brand-border: var(--blue-pale);
+  --ring: var(--blue);
+
+  /* Radius. The mockup is noticeably squarer than shadcn's 10px default;
+     matching it is most of why the two looked like different products. */
+  --radius: 6px;
+
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/*
+ * Density.
+ *
+ * The mockup's list is 60px rows in a 13px face. The tool's components inherit
+ * the app's base size, which is a shade larger and makes the same screen hold
+ * three fewer conversations. Set on the wrapper so the components keep their
+ * own relative sizing (`text-xs`, `text-[11px]`) and simply sit on a smaller
+ * base.
+ */
+.mi-theme {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/*
+ * The inbox owns the full height of the stage and scrolls internally — the
+ * thread list and the conversation scroll independently, as the design draws
+ * them. Without this the whole page scrolls and the toolbar leaves the screen.
+ */
+.mi-theme {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}

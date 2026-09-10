@@ -1,6 +1,6 @@
 import { cache } from "react";
-import { getMasterInboxSupabase as createServerSupabase } from "../supabase";
-import { OPEN_RESPONSES_PRESET } from "./open-responses";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { OPEN_RESPONSES_PRESET } from "@/lib/tools/master-inbox/inbox/open-responses";
 
 export type { CustomView } from "./views-shared";
 export { slugifyView } from "./views-shared";

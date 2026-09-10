@@ -1,4 +1,4 @@
-import { getMasterInboxSupabase as createServerSupabase } from "../supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 export interface MessageRow {
   id: string;

@@ -1,6 +1,6 @@
 import { cache } from "react";
-import { getMasterInboxSupabase as createServerSupabase } from "../supabase";
-import { fetchAllRows } from "../db/paginated-select";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import type { ListRow } from "./lists-shared";
 
 export type { ListRow } from "./lists-shared";

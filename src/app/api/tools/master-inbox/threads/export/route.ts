@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
+import { requireSession } from "@/lib/auth/workspace";
+import { createServerSupabase } from "@/lib/supabase/server";
 import { chunkedRun } from "@/lib/tools/master-inbox/db/chunked-in";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,7 @@ function csvEscape(value: unknown): string {
 }
 
 export async function POST(request: Request) {
+  const session = await requireSession();
   const body = await request.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -27,7 +29,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const supabase = getMasterInboxSupabase();
+  const supabase = await createServerSupabase();
   // Chunk the .in() so the PostgREST URL stays under Node's header
   // cap regardless of how many ids the operator selects (zod allows
   // up to 5000; the URL form of in.(…) starts to break around 400).
@@ -40,7 +42,7 @@ export async function POST(request: Request) {
          channels:channel_id(display_name, provider)`,
       )
       .in("id", slice)
-      .eq("workspace_id", process.env.MASTER_INBOX_WORKSPACE_ID ?? ""),
+      .eq("workspace_id", session.activeWorkspace.id),
   );
   const failed = chunkResults.find((r) => r.error);
   if (failed?.error) {

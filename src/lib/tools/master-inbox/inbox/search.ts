@@ -1,4 +1,4 @@
-import { getMasterInboxSupabase as createServerSupabase } from "../supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 // Thread search shared by the top-bar dropdown and the full results page
 // (/inbox/search). Matches a query against, in priority order:

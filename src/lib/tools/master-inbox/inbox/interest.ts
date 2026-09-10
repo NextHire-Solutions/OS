@@ -1,5 +1,5 @@
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { createEmailBisonClient } from "../emailbison/client";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { createEmailBisonClient } from "@/lib/tools/master-inbox/emailbison/client";
 
 // "Interested" / "Not Interested" — mirrors the label decision back
 // to EmailBison so the reply's interested flag round-trips to

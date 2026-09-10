@@ -20,10 +20,10 @@
 // the caller — every fetch is wrapped in try/catch, and callers
 // already invoke this inside next/server `after(...)`.
 
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { chunkedRun } from "../db/chunked-in";
-import { env } from "../env";
-import { publicPortalUrl } from "../portals/public-url";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { chunkedRun } from "@/lib/tools/master-inbox/db/chunked-in";
+import { env } from "@/lib/env";
+import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 
 export type IntroductionSource =
   | "inbox_label"

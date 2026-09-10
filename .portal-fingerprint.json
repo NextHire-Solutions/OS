@@ -1,0 +1,421 @@
+{
+  "at": "2026-09-10T16:46:50.384Z",
+  "clients": [
+    {
+      "id": "c370499d-8cc4-4c1f-93b0-f75d363b108d",
+      "name": "54 Realty",
+      "slug": "54-realty",
+      "portal_token": "54-realty-517df4e889",
+      "portal_enabled": true
+    },
+    {
+      "id": "72ae212b-cd41-4572-b5b4-e1d48c072e36",
+      "name": "Bastion Realty South",
+      "slug": "bastion-realty-south",
+      "portal_token": "bastion-realty-south-244ef3d822",
+      "portal_enabled": true
+    },
+    {
+      "id": "0998aede-a765-4a3a-9450-9a6001022833",
+      "name": "BHGRE Basecamp",
+      "slug": "bhgre-basecamp",
+      "portal_token": "bhgre-basecamp-1df240764d",
+      "portal_enabled": true
+    },
+    {
+      "id": "3fad01e1-42e2-41f6-975c-1636a64f329b",
+      "name": "Brandolino Group",
+      "slug": "brandolino-group",
+      "portal_token": "brandolino-group-395b2db872",
+      "portal_enabled": true
+    },
+    {
+      "id": "07875d9e-194f-4a3f-9ba3-ad65441f9dd2",
+      "name": "Brooklyn Group",
+      "slug": "brooklyn-group",
+      "portal_token": "brooklyn-group-63c69c2084",
+      "portal_enabled": true
+    },
+    {
+      "id": "8895bdee-2629-4345-96d4-92239bec91e5",
+      "name": "C21 Results - Elite Team",
+      "slug": "c21-results-elite-team",
+      "portal_token": "c21-results-elite-team-9755952b2c",
+      "portal_enabled": true
+    },
+    {
+      "id": "95be131b-1f37-4b46-8238-506ec6a33b6f",
+      "name": "Camelot Realty Group",
+      "slug": "camelot-realty-group",
+      "portal_token": "camelot-realty-group-488d05f4b3",
+      "portal_enabled": true
+    },
+    {
+      "id": "54be9e4a-bbc7-4e58-af75-a1baf0abea0d",
+      "name": "Cardinal Realty Group",
+      "slug": "cardinal-realty-group",
+      "portal_token": "cardinal-realty-group-a641d3bf74",
+      "portal_enabled": false
+    },
+    {
+      "id": "353aef33-8ca7-45c3-842b-fa7800f7c60d",
+      "name": "Carolina Realty Advisors",
+      "slug": "carolina-realty-advisors",
+      "portal_token": "carolina-realty-advisors-743cf1db26",
+      "portal_enabled": true
+    },
+    {
+      "id": "ce7b2983-3743-4c6b-ab12-02f1fe1509c8",
+      "name": "ChuckTown Homes Team",
+      "slug": "chucktown-homes-team",
+      "portal_token": "chucktown-homes-real-estate-d5723645ce",
+      "portal_enabled": true
+    },
+    {
+      "id": "00ef116c-646d-43b4-a323-680548ea7126",
+      "name": "Demo Portal",
+      "slug": "demo-portal",
+      "portal_token": "demo-portal-667f2214f24776ed",
+      "portal_enabled": true
+    },
+    {
+      "id": "2f099347-da6a-4bbd-8736-05ddcd077416",
+      "name": "Discover Flag Team",
+      "slug": "discover-flag-team",
+      "portal_token": "discoverflag-com-cf90799409",
+      "portal_enabled": true
+    },
+    {
+      "id": "feab4a6f-e175-4cbe-8740-57d2d2bca15f",
+      "name": "Douglas Elliman LA",
+      "slug": "douglas-elliman-la",
+      "portal_token": "douglas-elliman-la-c7aed19057",
+      "portal_enabled": true
+    },
+    {
+      "id": "20b335bf-90f2-45b3-9d6e-7cf964b8997c",
+      "name": "Douglas Elliman Las Vegas",
+      "slug": "douglas-elliman-las-vegas",
+      "portal_token": "douglas-elliman-las-vegas-2dd7f627ac",
+      "portal_enabled": true
+    },
+    {
+      "id": "f7fbfc19-503f-46ba-9251-c8d5a432d75c",
+      "name": "Douglas Elliman NYC",
+      "slug": "douglas-elliman-nyc",
+      "portal_token": "douglas-elliman-nyc-b3ae33d3a1",
+      "portal_enabled": true
+    },
+    {
+      "id": "d789ae35-f9b4-4b6e-a249-584fd3f378ce",
+      "name": "EXR",
+      "slug": "exr",
+      "portal_token": "exr-cff4e34d63",
+      "portal_enabled": false
+    },
+    {
+      "id": "3ea66fed-d1a1-4823-8b61-aee3c14718af",
+      "name": "Fast Real Estate",
+      "slug": "fast-real-estate",
+      "portal_token": "fast-real-estate-c1d91c5681",
+      "portal_enabled": true
+    },
+    {
+      "id": "3aff6167-167c-497f-8ae5-6e144d3a6e15",
+      "name": "Front Range Collective",
+      "slug": "front-range-collective",
+      "portal_token": "front-range-collective-676df4a02e",
+      "portal_enabled": true
+    },
+    {
+      "id": "67aa4b2e-8dd5-4842-aa4f-cb9e2432eb5f",
+      "name": "Howard Hanna NYC",
+      "slug": "howard-hanna-nyc",
+      "portal_token": "howard-hanna-nyc-4737960d9f",
+      "portal_enabled": false
+    },
+    {
+      "id": "51da8205-ef10-425c-87a7-0d193109117f",
+      "name": "Howe Realty Group",
+      "slug": "howe-realty-group",
+      "portal_token": "howe-realty-group-3ece77334e",
+      "portal_enabled": true
+    },
+    {
+      "id": "730c94cb-718e-40bf-864a-b2c64a630c2d",
+      "name": "Hunter Dehn Realty",
+      "slug": "hunter-dehn-realty",
+      "portal_token": "hunter-dehn-realty-721b4a3e43",
+      "portal_enabled": false
+    },
+    {
+      "id": "0db12070-4074-4e47-b073-413eee081f58",
+      "name": "Jeff Cook Real Estate",
+      "slug": "jeff-cook-real-estate",
+      "portal_token": "jeff-cook-real-estate-481980e1d7",
+      "portal_enabled": true
+    },
+    {
+      "id": "4fb9eacf-27cd-4923-ac6d-2a548f1711bb",
+      "name": "JM properties",
+      "slug": "jm-properties",
+      "portal_token": "jm-properties-5f74950b14",
+      "portal_enabled": true
+    },
+    {
+      "id": "1b6873bb-a621-476e-9484-6572b1312fc4",
+      "name": "JPAR Ironhorse Real Estate",
+      "slug": "jpar-ironhorse-real-estate",
+      "portal_token": "jpar-ironhorse-real-estate-8707fb8d83",
+      "portal_enabled": true
+    },
+    {
+      "id": "3ae10b98-b61f-446a-8c90-200b3d1efacb",
+      "name": "Kelly + Co",
+      "slug": "kelly-and-co",
+      "portal_token": "kelly-and-co-a01c583290",
+      "portal_enabled": false
+    },
+    {
+      "id": "f55a907e-cfe3-4bfe-9d24-9de877529058",
+      "name": "LIV Indy Realty",
+      "slug": "liv-indy-realty",
+      "portal_token": "liv-indy-realty-b3c0169827",
+      "portal_enabled": true
+    },
+    {
+      "id": "060fbda2-dcba-4d2b-9fde-b5f612263de3",
+      "name": "Maltos Realty Group",
+      "slug": "maltos-realty-group",
+      "portal_token": "maltos-realty-group-a4b3d249de",
+      "portal_enabled": false
+    },
+    {
+      "id": "2758fab6-9577-4d06-a0d3-9dcb9bdaa9a7",
+      "name": "MattC Group",
+      "slug": "mattc-group",
+      "portal_token": "mattc-group-5a00eceac8",
+      "portal_enabled": true
+    },
+    {
+      "id": "00c7fa19-1230-4fc6-b8d9-49edca3156b3",
+      "name": "Military Veteran Team - LPT Realty",
+      "slug": "military-veteran-team-lpt-realty",
+      "portal_token": "military-veteran-team-lpt-realty-16bdbc1387",
+      "portal_enabled": false
+    },
+    {
+      "id": "b4cbd1bd-12aa-4ed7-bcdd-969d834c7290",
+      "name": "Momentum Realty",
+      "slug": "momentum-realty",
+      "portal_token": "momentum-realty-8644eb3cab",
+      "portal_enabled": true
+    },
+    {
+      "id": "064ea678-5668-4f53-ba14-40668c96e0cd",
+      "name": "New client portal",
+      "slug": "new-client-portal",
+      "portal_token": "new-client-portal-bedae18f6a",
+      "portal_enabled": true
+    },
+    {
+      "id": "577413ab-8b36-4212-be0f-91b2c813d5aa",
+      "name": "Norvell&Co Real Estate",
+      "slug": "norvellandco-real-estate",
+      "portal_token": "norvellandco-real-estate-702b4dce25",
+      "portal_enabled": true
+    },
+    {
+      "id": "686dab31-b7ca-4800-a156-23932196cb70",
+      "name": "Oz Group",
+      "slug": "oz-group",
+      "portal_token": "oz-group-445076f22e",
+      "portal_enabled": true
+    },
+    {
+      "id": "c6303d33-1e76-4876-9478-02ab38c30e19",
+      "name": "PRG Real Estate at EXP",
+      "slug": "prg-real-estate-at-exp",
+      "portal_token": "prg-real-estate-at-exp-e29c2dff3c",
+      "portal_enabled": true
+    },
+    {
+      "id": "9d7910c2-79c4-422b-8456-a527dcc825b0",
+      "name": "Properties & Estates",
+      "slug": "properties-and-estates",
+      "portal_token": "properties-and-estates-c45aa538e6",
+      "portal_enabled": true
+    },
+    {
+      "id": "c35aa183-ef08-46aa-8f32-1d66f2ccb70d",
+      "name": "Properties & Estates Florida",
+      "slug": "properties-and-estates-florida",
+      "portal_token": "properties-and-estates-florida-a9ae271ab1",
+      "portal_enabled": true
+    },
+    {
+      "id": "6940ed72-3794-4f37-92a9-2e969f01eeac",
+      "name": "Raintown Realty",
+      "slug": "raintown-realty",
+      "portal_token": "raintown-realty-3240ab72d2",
+      "portal_enabled": true
+    },
+    {
+      "id": "37986de4-b505-4c74-9961-8555f819b9e8",
+      "name": "RE/MAX Pacific",
+      "slug": "re-max-pacific",
+      "portal_token": "max-folkers-8413fe318c",
+      "portal_enabled": true
+    },
+    {
+      "id": "0a393351-0787-432f-933f-4a3835b4a460",
+      "name": "Rise Loan Officers",
+      "slug": "rise-loan-officers",
+      "portal_token": "rise-loan-officers-5091bccd6d",
+      "portal_enabled": false
+    },
+    {
+      "id": "0d148851-8057-4739-add4-123c935254be",
+      "name": "Rise Real Estate Antelope",
+      "slug": "rise-real-estate-antelope",
+      "portal_token": "rise-real-estate-3b85d77e63",
+      "portal_enabled": true
+    },
+    {
+      "id": "19970c09-caab-4c6a-8822-6d111048b753",
+      "name": "Rise Real Estate Tujunga",
+      "slug": "rise-real-estate-tujunga",
+      "portal_token": "rise-real-estate-tujunga-181875561f",
+      "portal_enabled": true
+    },
+    {
+      "id": "8cff3018-d8c3-4965-a272-db89f1cdf710",
+      "name": "SERHANT. NJ",
+      "slug": "serhant-nj",
+      "portal_token": "serhant-27e13ee8a6",
+      "portal_enabled": true
+    },
+    {
+      "id": "b5c20176-a803-4572-9219-d0185e91ceaa",
+      "name": "SERHANT. PA",
+      "slug": "serhant-pa",
+      "portal_token": "serhant-pa-19106e6850",
+      "portal_enabled": true
+    },
+    {
+      "id": "0270feee-15e0-44d4-8a93-cfa44a0e5d74",
+      "name": "SERHANT. PA 15M+",
+      "slug": "serhant-pa-15m",
+      "portal_token": "serhant-pa-15m-e9e97402fd",
+      "portal_enabled": true
+    },
+    {
+      "id": "07091fa1-4e91-4c6d-9b3f-af21d22f0d92",
+      "name": "Simien Properties",
+      "slug": "simien-properties",
+      "portal_token": "the-simien-team-3b32a73746",
+      "portal_enabled": true
+    },
+    {
+      "id": "31406858-0086-40cd-91aa-1b468c0cfb7a",
+      "name": "Simply Vegas",
+      "slug": "simply-vegas",
+      "portal_token": "simply-vegas-b885b1c052",
+      "portal_enabled": true
+    },
+    {
+      "id": "6c3a1b7a-f744-47b2-b105-dad89e8cfe35",
+      "name": "SPACE",
+      "slug": "space",
+      "portal_token": "space-8064f8c076",
+      "portal_enabled": true
+    },
+    {
+      "id": "6b4a2585-6451-42bd-a73c-1f60cc0ec53e",
+      "name": "Spotlight - A Compass Team",
+      "slug": "spotlight-compass",
+      "portal_token": "spotlight-compass-b1e653a0e9",
+      "portal_enabled": true
+    },
+    {
+      "id": "95646033-277e-44cc-a0f9-d0ce0d0cb3c2",
+      "name": "Test FUB",
+      "slug": "test-fub",
+      "portal_token": "test-fub-504e970128",
+      "portal_enabled": true
+    },
+    {
+      "id": "5e8f91b2-82b9-4285-b664-833ee4589593",
+      "name": "The Discover Phx Team",
+      "slug": "the-discover-phx-team",
+      "portal_token": "the-discover-phx-team-4de4bbd02f",
+      "portal_enabled": true
+    },
+    {
+      "id": "f087fecf-dcf0-43c8-9d07-553f3f65f95c",
+      "name": "The Karp Group",
+      "slug": "the-karp-group",
+      "portal_token": "the-karp-group-9d60462bac",
+      "portal_enabled": false
+    },
+    {
+      "id": "492b2783-280f-4c6d-8807-a3de56c59ab1",
+      "name": "The Keyes Company",
+      "slug": "the-keyes-company",
+      "portal_token": "the-keyes-company-6320598ec7",
+      "portal_enabled": true
+    },
+    {
+      "id": "14294390-174e-4d33-a33f-55e9ea430238",
+      "name": "The Rafeh Group",
+      "slug": "the-rafeh-group",
+      "portal_token": "rima-rafeh-d2740a6654",
+      "portal_enabled": true
+    },
+    {
+      "id": "0a1cae13-a86d-4050-8dbb-31626e746100",
+      "name": "The RE Home Group of Douglas Realty",
+      "slug": "the-re-home-group-of-douglas-realty",
+      "portal_token": "the-re-home-group-of-douglas-realty-48394215f2",
+      "portal_enabled": true
+    },
+    {
+      "id": "b2994982-73b5-4ad5-9bff-de737061508e",
+      "name": "The Wurst Team",
+      "slug": "the-wurst-team",
+      "portal_token": "the-wurst-team-6aaaa78e1f",
+      "portal_enabled": true
+    },
+    {
+      "id": "5a085512-2418-4d86-9bbc-4b41ed255920",
+      "name": "Unknown",
+      "slug": "unknown",
+      "portal_token": null,
+      "portal_enabled": true
+    },
+    {
+      "id": "d2f569ee-62bf-4703-af6b-ea87724aaaea",
+      "name": "Wagner Real Estate Group",
+      "slug": "wagner-real-estate-group",
+      "portal_token": "m-wagner-team-8a6fa7057d",
+      "portal_enabled": true
+    },
+    {
+      "id": "046cedd3-7921-4aba-904a-0f31ed43a551",
+      "name": "Young Realty",
+      "slug": "young-realty",
+      "portal_token": "young-realty-7d81375dbf",
+      "portal_enabled": false
+    }
+  ],
+  "counts": {
+    "threads": 10163,
+    "messages": 36099,
+    "client_pipeline_entries": 1525,
+    "client_pipeline_notes": 1138,
+    "client_agents": 11306,
+    "client_team_members": 96,
+    "client_dnc_entries": 14278,
+    "label_assignments": 10576
+  }
+}

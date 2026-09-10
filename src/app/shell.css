@@ -100,3 +100,19 @@
 .mi-row .prev {
   min-width: 0;
 }
+
+/* ---------------------------------------------------------------------------
+   Master Inbox settings — the tab strip.
+
+   The panels inside each tab are the tool's own components, but this chrome
+   sits in the OS shell next to the mockup's screens, so it is drawn with the
+   design's pill (`.fp`) rather than a Tailwind tab strip. Kept here rather
+   than in workspace.css so that file stays a verbatim copy of the design.
+   ------------------------------------------------------------------------- */
+.mi-settings-tabs{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding:14px 26px;border-bottom:1px solid var(--line);background:var(--surface);
+}
+.mi-settings-tabs .fp{text-decoration:none}
+/* The body scrolls on its own so the tabs stay put on a long editor. */
+.mi-settings-body{flex:1;min-height:0;overflow:auto;padding:22px 26px}

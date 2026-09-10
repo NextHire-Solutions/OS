@@ -20,7 +20,7 @@
 // touches stage/hired_at/labels, and both helpers swallow their own errors so a
 // labeling request can never fail because of note preservation.
 
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 
 type Admin = ReturnType<typeof createAdminSupabase>;
 

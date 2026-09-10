@@ -1,9 +1,9 @@
-import { getMasterInboxSupabase as createServerSupabase } from "../supabase";
-import { loadViewBySlug, type CustomView } from "./views";
-import { searchThreads } from "./search";
-import { OPEN_RESPONSES_PRESET, openResponsesThreadIds } from "./open-responses";
-import { fetchAllRows } from "../db/paginated-select";
-import type { FilterRow, FilterState } from "./filters";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { loadViewBySlug, type CustomView } from "@/lib/tools/master-inbox/inbox/views";
+import { searchThreads } from "@/lib/tools/master-inbox/inbox/search";
+import { OPEN_RESPONSES_PRESET, openResponsesThreadIds } from "@/lib/tools/master-inbox/inbox/open-responses";
+import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
+import type { FilterRow, FilterState } from "@/lib/tools/master-inbox/inbox/filters";
 
 export type SourceProvider = "emailbison" | "instantly";
 

@@ -1,8 +1,8 @@
-import { getMasterInboxSupabase as createAdminSupabase } from "../supabase";
-import { loadPipelineEntries } from "../portals/portal-data";
-import { pushPersonEvent } from "../integrations/followup-boss";
-import { buildFubPayload } from "../integrations/build-fub-payload";
-import { chunkedRun } from "../db/chunked-in";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
+import { pushPersonEvent } from "@/lib/tools/master-inbox/integrations/followup-boss";
+import { buildFubPayload } from "@/lib/tools/master-inbox/integrations/build-fub-payload";
+import { chunkedRun } from "@/lib/tools/master-inbox/db/chunked-in";
 
 // Shared push helper called from the manual "Push to FUB" route and
 // from the inline auto-push hook on stage transitions. Wraps:

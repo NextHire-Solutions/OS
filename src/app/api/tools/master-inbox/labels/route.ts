@@ -1,38 +1,63 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { requireSession } from "@/lib/auth/workspace";
+import { createServerSupabase } from "@/lib/supabase/server";
 
-import { applyLabel, getLabels, removeLabel } from "@/lib/tools/master-inbox/labels";
-
-/*
- * Thread labels.
- *
- * The most consequential write in the workspace. Applying one label wipes the
- * thread's others, fires a database trigger that creates a row in the client's
- * LIVE portal, posts to n8n and Slack, pushes the lead to Follow Up Boss, and
- * round-trips the decision to EmailBison.
- *
- * All of that is Master Inbox's own logic, ported rather than reimplemented —
- * see lib/tools/master-inbox/labels.ts for the two subtleties that are easy to
- * drop and expensive to lose.
- */
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return NextResponse.json(await getLabels());
-}
+const COLORS = ["green", "red", "amber", "zinc", "stone", "pink", "blue"] as const;
+const SENTIMENTS = ["positive", "negative", "neutral"] as const;
+const PLATFORMS = ["email", "both"] as const;
 
-export async function POST(request: NextRequest) {
-  const body = (await request.json().catch(() => null)) as
-    | { thread_id?: string; label_id?: string; op?: string }
-    | null;
+const createSchema = z.object({
+  name: z.string().min(1).max(80),
+  color: z.enum(COLORS).default("zinc"),
+  sentiment: z.enum(SENTIMENTS).default("neutral"),
+  platform: z.enum(PLATFORMS).default("both"),
+  obligation: z.boolean().default(false),
+  mirror_to_emailbison: z.boolean().default(false),
+});
 
-  if (!body?.thread_id || !body?.label_id) {
-    return NextResponse.json({ error: "thread_id and label_id are required" }, { status: 400 });
+export async function POST(request: Request) {
+  const session = await requireSession();
+  const body = await request.json().catch(() => null);
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid input" },
+      { status: 400 },
+    );
   }
 
-  const result =
-    body.op === "remove"
-      ? await removeLabel(body.thread_id, body.label_id)
-      : await applyLabel(body.thread_id, body.label_id);
+  const supabase = await createServerSupabase();
+  // Place new labels at the end of the user's current ordering.
+  const { data: maxRow } = await supabase
+    .from("labels")
+    .select("sort_order")
+    .eq("workspace_id", session.activeWorkspace.id)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const nextOrder = (maxRow?.sort_order ?? -1) + 1;
 
-  return NextResponse.json(result, { status: result.ok ? 200 : 502 });
+  const { data, error } = await supabase
+    .from("labels")
+    .insert({
+      workspace_id: session.activeWorkspace.id,
+      name: parsed.data.name,
+      color: parsed.data.color,
+      sentiment: parsed.data.sentiment,
+      platform: parsed.data.platform,
+      obligation: parsed.data.obligation,
+      mirror_to_emailbison: parsed.data.mirror_to_emailbison,
+      sort_order: nextOrder,
+      is_system: false,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  return NextResponse.json({ id: data.id });
 }
