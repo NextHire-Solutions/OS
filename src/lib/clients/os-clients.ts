@@ -27,6 +27,18 @@ export interface OsClient {
   status: ClientStatus;
   links: Record<ToolKey, string | null>;
   source: "roster" | "os" | "onboarding";
+  /*
+   * The person an introduction is addressed to, and the brokerage it names.
+   * Written by the Onboard and Edit dialogs, read by the composer's Introduce
+   * button. Every field is optional: a client can exist without ever being
+   * introduced to anyone. See migrations/0005_os_client_contacts.sql.
+   */
+  contact: {
+    name: string | null;
+    role: string | null;
+    email: string | null;
+    brokerage: string | null;
+  };
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -42,7 +54,8 @@ const LINK_COLUMN: Record<ToolKey, string> = {
 
 const SELECT =
   "id, name, slug, aliases, status, source, notes, created_at, updated_at, " +
-  "mi_client_id, ch_client_id, an_client_id, orch_client_id";
+  "mi_client_id, ch_client_id, an_client_id, orch_client_id, " +
+  "contact_name, contact_role, contact_email, brokerage";
 
 type Row = Record<string, unknown>;
 
@@ -60,6 +73,12 @@ function toClient(row: Row): OsClient {
       onboarding: (row.orch_client_id as string | null) ?? null,
     },
     source: (row.source as OsClient["source"]) ?? "roster",
+    contact: {
+      name: (row.contact_name as string | null) ?? null,
+      role: (row.contact_role as string | null) ?? null,
+      email: (row.contact_email as string | null) ?? null,
+      brokerage: (row.brokerage as string | null) ?? null,
+    },
     notes: (row.notes as string | null) ?? null,
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? ""),

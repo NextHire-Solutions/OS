@@ -1,6 +1,7 @@
 import "server-only";
 
 import { osTable } from "./os-db";
+import { syncIntroTemplate } from "./intro-template-sync";
 import { CLIENT_STATUSES, type ClientStatus } from "./client-status";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
@@ -57,6 +58,16 @@ export interface ClientEdit {
   aliases?: string[];
   status?: ClientStatus;
   notes?: string | null;
+  /*
+   * The introduction details. Stored on the OS record and used by the
+   * composer's Introduce button; changing any of them also re-renders the
+   * client's stored "Intro Macro - <name>" reply template so the Templates
+   * picker never shows a stale version. An empty string clears the field.
+   */
+  contactName?: string | null;
+  contactRole?: string | null;
+  contactEmail?: string | null;
+  brokerage?: string | null;
   plan?: (typeof PLANS)[number];
   weeklyTarget?: number;
   startDate?: string | null;
@@ -79,7 +90,16 @@ interface Row {
   an_client_id: string | null;
   ch_client_id: string | null;
   mi_client_id: string | null;
+  contact_name: string | null;
+  contact_role: string | null;
+  contact_email: string | null;
+  brokerage: string | null;
 }
+
+/** The four fields that make up the introduction macro. */
+const INTRO_KEYS = ["contactName", "contactRole", "contactEmail", "brokerage"] as const;
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function validateEdit(edit: ClientEdit): string[] {
   const errors: string[] = [];
@@ -104,6 +124,19 @@ export function validateEdit(edit: ClientEdit): string[] {
   if (edit.billingInterval !== undefined && !BILLING_INTERVALS.includes(edit.billingInterval)) {
     errors.push(`Billing interval must be one of ${BILLING_INTERVALS.join(", ")}.`);
   }
+  for (const [label, v, max] of [
+    ["Contact name", edit.contactName, 160],
+    ["Their role", edit.contactRole, 120],
+    ["Brokerage", edit.brokerage, 160],
+  ] as const) {
+    if (typeof v === "string" && v.length > max) {
+      errors.push(`${label} is ${v.length} characters; the introduction template allows ${max}.`);
+    }
+  }
+  // An empty string clears the address; anything else has to be one.
+  if (typeof edit.contactEmail === "string" && edit.contactEmail.trim() && !EMAIL.test(edit.contactEmail.trim())) {
+    errors.push("Contact email must be a valid email address.");
+  }
   return errors;
 }
 
@@ -112,7 +145,10 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   if (errors.length) throw new Error(errors.join(" "));
 
   const { data, error } = await osTable("os_clients")
-    .select("id, name, an_client_id, ch_client_id, mi_client_id")
+    .select(
+      "id, name, an_client_id, ch_client_id, mi_client_id, " +
+        "contact_name, contact_role, contact_email, brokerage",
+    )
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(`Could not read the client: ${error.message}`);
@@ -129,10 +165,53 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   if (edit.aliases !== undefined) local.aliases = edit.aliases;
   if (edit.status !== undefined) local.status = edit.status;
   if (edit.notes !== undefined) local.notes = edit.notes;
+  // A blank field is a deliberate clear, not "leave it alone" — the dialog
+  // only sends a key when its value actually changed.
+  const blankToNull = (v: string | null | undefined) => (v ?? "").trim() || null;
+  if (edit.contactName !== undefined) local.contact_name = blankToNull(edit.contactName);
+  if (edit.contactRole !== undefined) local.contact_role = blankToNull(edit.contactRole);
+  if (edit.contactEmail !== undefined) local.contact_email = blankToNull(edit.contactEmail);
+  if (edit.brokerage !== undefined) local.brokerage = blankToNull(edit.brokerage);
   if (Object.keys(local).length > 1) {
     const { error: e } = await osTable("os_clients").update(local).eq("id", id);
     if (e) failed.push({ what: "the OS record", error: e.message });
     else updated.push("the OS record");
+  }
+
+  /* ------------------------------------------ the stored intro template */
+  /*
+   * Only when an introduction field was actually edited. Re-rendered from the
+   * values AFTER this edit, so the template and the roster agree. Never fatal:
+   * the OS record above is already saved and the Introduce button reads from
+   * it, not from here.
+   */
+  if (INTRO_KEYS.some((k) => edit[k] !== undefined)) {
+    const after = {
+      name: row.name,
+      contactName: edit.contactName !== undefined ? blankToNull(edit.contactName) : row.contact_name,
+      contactRole: edit.contactRole !== undefined ? blankToNull(edit.contactRole) : row.contact_role,
+      contactEmail: edit.contactEmail !== undefined ? blankToNull(edit.contactEmail) : row.contact_email,
+      brokerage: edit.brokerage !== undefined ? blankToNull(edit.brokerage) : row.brokerage,
+    };
+    try {
+      const outcome = await syncIntroTemplate(after);
+      if (outcome === "updated") updated.push("the stored introduction template");
+      else if (outcome === "created") updated.push("the stored introduction template (created)");
+      else if (outcome === "no-details") {
+        untouched.push(
+          "The stored introduction template was left alone — a contact name and role are needed to write one.",
+        );
+      } else if (outcome === "no-workspace") {
+        untouched.push(
+          "The stored introduction template was left alone — MASTER_INBOX_WORKSPACE_ID is not set.",
+        );
+      }
+    } catch (e) {
+      failed.push({
+        what: "the stored introduction template",
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   /* ----------------------------------------------------------- Analytics */

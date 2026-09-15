@@ -73,6 +73,10 @@ echo "  filters      a: $(grep -E 'filters exercised' "$OUT/filters-a.txt" | tai
 # 5. Dialogs centred at desktop and phone width; tab switching feel.
 chrome 9536 && PORT=9536 $NODE scripts/modal-center-test.mjs 2>&1 | quiet > "$OUT/modals.txt"; kill_chrome 9536
 echo "  modals       $(tail -1 "$OUT/modals.txt")"
+chrome 9536 && PORT=9536 $NODE scripts/dialog-fields-test.mjs 2>&1 | quiet > "$OUT/dialog-fields.txt"; kill_chrome 9536
+echo "  dialog fields $(grep -E 'of [0-9]+ passed' "$OUT/dialog-fields.txt" | tail -1)"
+chrome 9536 && PORT=9536 $NODE scripts/intro-macro-test.mjs 2>&1 | quiet > "$OUT/intro.txt"; kill_chrome 9536
+echo "  introduce    $(grep -E 'of [0-9]+ passed' "$OUT/intro.txt" | tail -1)"
 chrome 9537 && PORT=9537 $NODE scripts/tab-switch-timing.mjs 2>&1 | quiet > "$OUT/tabs.txt"; kill_chrome 9537
 echo "  tab switch   $(grep -E 'feedback \(click' "$OUT/tabs.txt" | tail -1)"
 

@@ -69,6 +69,7 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
   const [brokerage, setBrokerage] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
 
   const [failed, setFailed] = useState("");
   /*
@@ -150,6 +151,7 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
                 clientFullName: fullName,
                 clientFirstName: fullName.trim().split(/\s+/)[0] ?? "",
                 clientRole: role,
+                contactEmail: contactEmail.trim() || undefined,
               }
             : undefined,
         }),
@@ -233,25 +235,40 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, cursor: "pointer" }}>
             <input type="checkbox" checked={macroOn} onChange={(e) => setMacroOn(e.target.checked)}
               style={{ accentColor: "var(--blue)", cursor: "pointer" }} />
-            Create the intro macro reply template
+            Add introduction details
           </label>
           {macroOn ? (
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", marginTop: 12 }}>
-              <label style={FIELD}>
-                <span style={LABEL}>Brokerage</span>
-                <input className="inp" value={brokerage} placeholder={name || "Client name"}
-                  onChange={(e) => setBrokerage(e.target.value)} />
-              </label>
-              <label style={FIELD}>
-                <span style={LABEL}>Contact full name *</span>
-                <input className="inp" value={fullName} onChange={(e) => setFullName(e.target.value)} />
-              </label>
-              <label style={FIELD}>
-                <span style={LABEL}>Their role *</span>
-                <input className="inp" value={role} placeholder="Team Leader"
-                  onChange={(e) => setRole(e.target.value)} />
-              </label>
-            </div>
+            <>
+              <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 0", lineHeight: 1.55 }}>
+                Creates this client&rsquo;s intro macro template and powers the <b>Introduce</b>{" "}
+                button in a conversation. Every field can be changed later in Edit.
+              </div>
+              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", marginTop: 12 }}>
+                <label style={FIELD}>
+                  <span style={LABEL}>Brokerage</span>
+                  <input className="inp" value={brokerage} placeholder={name || "Client name"}
+                    onChange={(e) => setBrokerage(e.target.value)} />
+                </label>
+                <label style={FIELD}>
+                  <span style={LABEL}>Contact full name *</span>
+                  <input className="inp" value={fullName} placeholder="Nicole Collins"
+                    onChange={(e) => setFullName(e.target.value)} />
+                </label>
+                <label style={FIELD}>
+                  <span style={LABEL}>Their role *</span>
+                  <input className="inp" value={role} placeholder="Team Leader"
+                    onChange={(e) => setRole(e.target.value)} />
+                </label>
+                <label style={FIELD}>
+                  <span style={LABEL}>Contact email</span>
+                  <input className="inp" type="email" value={contactEmail} placeholder="nicole@brokerage.com"
+                    onChange={(e) => setContactEmail(e.target.value)} />
+                </label>
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8, lineHeight: 1.55 }}>
+                The contact email is copied into <b>Cc</b> whenever the introduction is inserted.
+              </div>
+            </>
           ) : null}
         </div>
 

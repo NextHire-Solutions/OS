@@ -178,3 +178,32 @@ test("an invalid plan still returns every error, not just the first", () => {
   assert.equal(p.ok, false);
   assert.ok(p.errors.length >= 3, `expected several errors, got ${p.errors.length}`);
 });
+
+test("the contact email travels to Master Inbox, and its absence changes nothing", () => {
+  const macro = {
+    brokerage: "Oz Group", clientFullName: "Nicole Collins",
+    clientFirstName: "Nicole", clientRole: "Team Leader",
+  };
+  const withEmail = planOnboarding({ ...valid, introMacro: { ...macro, contactEmail: " nicole@oz.com " } });
+  const mi = withEmail.calls.find((c) => c.leg === "master_inbox")!;
+  const sent = (mi.body as Record<string, Record<string, unknown>>).intro_macro;
+  assert.equal(sent.contact_email, "nicole@oz.com", "trimmed, and sent as snake_case");
+
+  // Without one the key is absent entirely — the API's schema treats a missing
+  // key and an empty string differently, and an empty Cc is not a Cc.
+  const without = planOnboarding({ ...valid, introMacro: macro });
+  const miNo = without.calls.find((c) => c.leg === "master_inbox")!;
+  const sentNo = (miNo.body as Record<string, Record<string, unknown>>).intro_macro;
+  assert.equal("contact_email" in sentNo, false);
+})
+
+test("a macro without a contact email is still valid — the email is optional", () => {
+  const p = planOnboarding({
+    ...valid,
+    introMacro: {
+      brokerage: "Oz Group", clientFullName: "Nicole Collins",
+      clientFirstName: "Nicole", clientRole: "Team Leader",
+    },
+  });
+  assert.equal(p.ok, true, p.errors.join("; "));
+});

@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { hasGrant, readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { NextResponse } from "next/server";
+import { renderIntroMacroTemplate, introTemplateName } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -34,34 +35,13 @@ const createSchema = z.object({
       client_full_name: z.string().trim().min(1).max(160),
       client_first_name: z.string().trim().min(1).max(80),
       client_role: z.string().trim().min(1).max(120),
+      // Optional. When present it becomes the template's Cc, so inserting the
+      // macro from the Templates picker copies the client in as well — the
+      // same address the composer's Introduce button adds.
+      contact_email: z.string().trim().email().max(200).optional(),
     })
     .optional(),
 });
-
-// Pure body renderer for the Intro Macro reply template. The
-// brokerage / client_* values are baked in at create time; the
-// {{lead.*}} + {{sender.name}} tokens are the canonical composer
-// placeholders (see lib/inbox/template-variables.ts). Kept as a
-// verbatim string so the shape can be diffed / golden-tested
-// later without any fixture machinery.
-function renderIntroMacroBody(macro: {
-  brokerage: string;
-  client_full_name: string;
-  client_first_name: string;
-  client_role: string;
-}): string {
-  const { brokerage, client_full_name, client_first_name, client_role } = macro;
-  return (
-    `Hey {{lead.name}},\n\n` +
-    `I'd like to introduce you to ${client_full_name}, ${client_role} at ${brokerage}\n\n` +
-    `${client_first_name}, I recently connected with {{lead.first_name}}, ` +
-    `who can be reached directly at {{lead.phone_number}} and is currently with {{lead.company}}.\n\n` +
-    `{{lead.first_name}}, ${client_first_name} will be in touch directly to ` +
-    `learn more about your business and discuss the opportunity in greater detail.\n\n` +
-    `I hope you have a productive conversation!\n\n` +
-    `Best,\n{{sender.name}}\nTalent Acquisition | ${brokerage}`
-  );
-}
 
 function toSlug(name: string): string {
   return name
@@ -247,7 +227,14 @@ export async function POST(request: Request) {
     | null = null;
   if (parsed.data.intro_macro) {
     try {
-      const body = renderIntroMacroBody(parsed.data.intro_macro);
+      const macro = parsed.data.intro_macro;
+      const body = renderIntroMacroTemplate({
+        name: data.name as string,
+        contactName: macro.client_full_name,
+        contactRole: macro.client_role,
+        brokerage: macro.brokerage,
+        contactFirstName: macro.client_first_name,
+      });
       const { data: maxOrder } = await admin
         .from("reply_templates")
         .select("sort_order")
@@ -257,7 +244,7 @@ export async function POST(request: Request) {
         .maybeSingle();
       const nextOrder =
         ((maxOrder?.sort_order as number | null) ?? -1) + 1;
-      const templateName = `Intro Macro - ${data.name}`;
+      const templateName = introTemplateName(data.name as string);
       const { data: tmpl, error: tmplErr } = await admin
         .from("reply_templates")
         .insert({
@@ -266,7 +253,7 @@ export async function POST(request: Request) {
           body,
           body_html: null,
           subject: null,
-          cc: null,
+          cc: macro.contact_email ?? null,
           bcc: null,
           category: data.name,
           sort_order: nextOrder,

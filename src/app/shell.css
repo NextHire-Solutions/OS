@@ -240,3 +240,25 @@ body.rail-collapsed .rail-signout { display: none; }
  * design and can be re-synced without losing this.
  */
 .n-purple { color: var(--purple); }
+
+/*
+ * Fields inside a dialog fill their column.
+ *
+ * `.inp` carries `min-width: 200px` and no width, which is right for a form
+ * laid out in a flex row and wrong inside the auto-fit grids every dialog
+ * uses. Measured on the Edit dialog at 1440px: the grid gave each field a
+ * 162px column, every input drew 200px wide, so neighbours overlapped by 38px
+ * and the right-hand one ran 23px past the dialog's own edge. The Onboard
+ * dialog had it too — 620px wide, 185px columns.
+ *
+ * Scoped to `[data-modal-dialog]`, which only the centred dialogs carry, so
+ * no form outside one changes. `min-width: 0` is the half that matters: a grid
+ * item cannot shrink below its content's minimum without it.
+ *
+ * Not in `workspace.css` — see the header of this file.
+ */
+[data-modal-dialog] .inp,
+[data-modal-dialog] .sel {
+  width: 100%;
+  min-width: 0;
+}

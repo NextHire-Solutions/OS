@@ -54,6 +54,13 @@ export interface IntroMacro {
   clientFullName: string;
   clientFirstName: string;
   clientRole: string;
+  /*
+   * The contact's address. Optional, and never required by the validator: a
+   * macro without one is still a usable macro, it just does not copy anybody
+   * in. Becomes the created template's Cc, and is stored on the OS record for
+   * the composer's Introduce button.
+   */
+  contactEmail?: string;
 }
 
 export interface OnboardInput {
@@ -226,6 +233,7 @@ export function planOnboarding(input: OnboardInput): OnboardPlan {
       client_full_name: macro.clientFullName.trim(),
       client_first_name: macro.clientFirstName.trim(),
       client_role: macro.clientRole.trim(),
+      ...(macro.contactEmail?.trim() ? { contact_email: macro.contactEmail.trim() } : {}),
     };
   }
 

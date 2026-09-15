@@ -10,6 +10,7 @@ import {
   Paperclip,
   Image as ImageIcon,
   Sparkles,
+  UserPlus,
   Mail,
   File as FileIcon,
   FileText,
@@ -501,6 +502,70 @@ export function Composer({
     setSavingState("idle");
   }
 
+  /*
+   * The Introduce button's readiness, asked for once when the composer opens.
+   *
+   * Up front rather than on click so the button can say WHY it is unavailable
+   * — "Add Oz Group's contact name in Clients → Edit" — instead of looking
+   * broken when pressed. One indexed lookup per composer open, and only in
+   * reply mode: an introduction is a reply, never a forward.
+   */
+  const [introMacro, setIntroMacro] = useState<IntroMacroState>(null);
+  const [introducing, setIntroducing] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "reply") return;
+    let cancelled = false;
+    void fetch(`/api/tools/master-inbox/threads/${threadId}/intro-macro`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!cancelled && j && typeof j.available === "boolean") setIntroMacro(j as IntroMacroState);
+      })
+      .catch(() => {
+        /* the button stays disabled with its "checking" title — no toast for
+           something the user did not ask for */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, mode]);
+
+  function insertIntroduction() {
+    if (!introMacro?.available || introducing) return;
+    setIntroducing(true);
+    try {
+      // The same substitution the Templates picker performs, so a macro put in
+      // by this button and one chosen from the picker read identically.
+      const resolved = substituteVariables(introMacro.body, {
+        lead: {
+          name: toName ?? null,
+          email: toEmail,
+          phone: leadPhone,
+          company: leadCompany,
+          title: leadTitle,
+        },
+        thread: { subject: composerSubject },
+        sender: { name: fromName ?? null, email: fromEmail ?? null },
+      });
+      // At the caret, like a template: anything already typed survives.
+      editorRef.current?.insertContent(plainTextToHtml(resolved));
+      const introCc = introMacro.cc;
+      if (introCc) {
+        // Merge, never replace — mergeRecipientStrings keeps what is already
+        // in Cc (the standing workspace copy included) and de-duplicates.
+        setCc((cur) => mergeRecipientStrings(cur, introCc));
+        setShowCc(true);
+      }
+      toast.success(
+        introCc
+          ? `Introduction to ${introMacro.clientName} added · ${introCc} copied in`
+          : `Introduction to ${introMacro.clientName} added`,
+      );
+    } finally {
+      setIntroducing(false);
+    }
+  }
+
   async function generateAiReply() {
     if (generating) return;
     setGenerating(true);
@@ -943,6 +1008,26 @@ export function Composer({
             )}
             {generating ? "Generating…" : "AI reply"}
           </button>
+          {mode === "reply" ? (
+            <button
+              type="button"
+              onClick={insertIntroduction}
+              disabled={!introMacro?.available || introducing}
+              aria-label="Insert the introduction"
+              title={
+                introMacro === null
+                  ? "Checking this client's introduction details…"
+                  : introMacro.available
+                    ? `Introduce this agent to ${introMacro.clientName}` +
+                      (introMacro.cc ? ` and copy in ${introMacro.cc}` : "")
+                    : introMacro.reason
+              }
+              className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md border bg-background text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <UserPlus className="size-3.5" />
+              Introduce
+            </button>
+          ) : null}
           <TemplatePicker
             substitutionContext={{
               lead: {
@@ -1132,6 +1217,12 @@ function parseRecipients(
 // Merge two CC/BCC strings, dedup case-insensitively, preserve order.
 // Used when a template carries its own CC/BCC and we don't want to
 // clobber whatever the user already typed manually.
+/** What GET .../intro-macro answers with. Null until it has answered. */
+type IntroMacroState =
+  | { available: true; clientName: string; body: string; cc: string | null }
+  | { available: false; reason: string; clientName?: string }
+  | null;
+
 function mergeRecipientStrings(existing: string, incoming: string): string {
   const seen = new Set<string>();
   const out: string[] = [];

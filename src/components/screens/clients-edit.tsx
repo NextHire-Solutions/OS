@@ -35,6 +35,13 @@ export interface EditableClient {
   status: ClientStatus;
   plan: string | null;
   weeklyTarget: number | null;
+  /** The introduction macro's details. Null fields simply render empty. */
+  contact: {
+    name: string | null;
+    role: string | null;
+    email: string | null;
+    brokerage: string | null;
+  };
 }
 
 export function EditClient({ client, onSaved }: { client: EditableClient; onSaved: () => void }) {
@@ -59,7 +66,7 @@ export function EditClient({ client, onSaved }: { client: EditableClient; onSave
       <ModalDialog
         open={open}
         onClose={close}
-        width={440}
+        width={540}
         label={`Edit ${client.name}`}
       >
         <EditBody client={client} onClose={close} onSaved={onSaved} />
@@ -76,6 +83,10 @@ function EditBody({
   const [plan, setPlan] = useState(client.plan ?? "production");
   const [weeklyTarget, setWeeklyTarget] = useState(String(client.weeklyTarget ?? 3));
   const [billingInterval, setBillingInterval] = useState("");
+  const [contactName, setContactName] = useState(client.contact.name ?? "");
+  const [contactRole, setContactRole] = useState(client.contact.role ?? "");
+  const [contactEmail, setContactEmail] = useState(client.contact.email ?? "");
+  const [brokerage, setBrokerage] = useState(client.contact.brokerage ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ updated: string[]; failed: { what: string; error: string }[]; untouched: string[] } | null>(null);
@@ -93,6 +104,12 @@ function EditBody({
       if (plan !== (client.plan ?? "production")) body.plan = plan;
       if (Number(weeklyTarget) !== (client.weeklyTarget ?? 3)) body.weeklyTarget = Number(weeklyTarget);
       if (billingInterval) body.billingInterval = billingInterval;
+      // Only what changed — an untouched field must not be re-asserted, and a
+      // cleared one has to travel as "" so the server knows to null it.
+      if (contactName.trim() !== (client.contact.name ?? "")) body.contactName = contactName.trim();
+      if (contactRole.trim() !== (client.contact.role ?? "")) body.contactRole = contactRole.trim();
+      if (contactEmail.trim() !== (client.contact.email ?? "")) body.contactEmail = contactEmail.trim();
+      if (brokerage.trim() !== (client.contact.brokerage ?? "")) body.brokerage = brokerage.trim();
 
       if (Object.keys(body).length === 1) { onClose(); return; }
 
@@ -164,6 +181,53 @@ function EditBody({
               {BILLING.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </label>
+        </div>
+
+        {/*
+          The introduction macro's values.
+
+          They were only ever settable while onboarding, and then only if the
+          macro box was ticked — so a role typed wrongly, or a client onboarded
+          before the macro existed, could never be corrected. Saving any of
+          them also re-renders this client's stored "Intro Macro" template, so
+          the Templates picker and the Introduce button always agree.
+        */}
+        <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 13, display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 650 }}>Introduction details</div>
+            <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.55 }}>
+              Used by the <b>Introduce</b> button in a conversation: “I&rsquo;d like to introduce you
+              to <i>{contactName.trim() || "…"}</i>, <i>{contactRole.trim() || "…"}</i> at{" "}
+              <i>{brokerage.trim() || client.name}</i>”.
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+            <label style={FIELD}>
+              <span style={LABEL}>Contact full name</span>
+              <input className="inp" value={contactName} maxLength={160} placeholder="Nicole Collins"
+                onChange={(e) => setContactName(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>Their role</span>
+              <input className="inp" value={contactRole} maxLength={120} placeholder="Team Leader"
+                onChange={(e) => setContactRole(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>Brokerage</span>
+              <input className="inp" value={brokerage} maxLength={160} placeholder={client.name}
+                onChange={(e) => setBrokerage(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>Contact email</span>
+              <input className="inp" type="email" value={contactEmail} maxLength={200}
+                placeholder="nicole@brokerage.com"
+                onChange={(e) => setContactEmail(e.target.value)} />
+            </label>
+          </div>
+          <span style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 }}>
+            The contact email is copied into <b>Cc</b> when the introduction is inserted — added to
+            whoever is already there, never replacing them.
+          </span>
         </div>
 
         <p style={{ margin: 0, fontSize: 11.5, color: "var(--muted)", lineHeight: 1.6 }}>

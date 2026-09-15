@@ -139,6 +139,32 @@ export async function runOnboarding(
   const plan = planOnboarding(input);
   if (!plan.ok) throw new Error(`Refusing to run an invalid plan: ${plan.errors.join("; ")}`);
 
+  /*
+   * Keep the introduction details on the OS record.
+   *
+   * They used to travel to Master Inbox, get baked into that client's reply
+   * template, and be forgotten — so they could not be corrected afterwards,
+   * and the composer had nothing to render an introduction from. Written
+   * before the legs run, so the record is complete even if a leg fails.
+   * Never fatal: an onboarding is not a failure because a role did not save.
+   */
+  if (input.introMacro) {
+    const m = input.introMacro;
+    try {
+      await osTable("os_clients")
+        .update({
+          contact_name: m.clientFullName.trim() || null,
+          contact_role: m.clientRole.trim() || null,
+          contact_email: m.contactEmail?.trim() || null,
+          brokerage: m.brokerage.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", osClientId);
+    } catch (err) {
+      console.error("[onboard] could not store the introduction details", err);
+    }
+  }
+
   const { data: existing, error: readErr } = await osTable("os_client_onboarding")
     .select("leg, status, remote_id")
     .eq("os_client_id", osClientId);
