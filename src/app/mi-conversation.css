@@ -1,0 +1,767 @@
+/* ===========================================================================
+   THE CONVERSATION VIEW, IN THE DESIGN'S OWN LANGUAGE.
+
+   ---------------------------------------------------------------------------
+   WHY THIS FILE EXISTS AND WHAT IT IS NOT
+
+   `mi-skin.css` restyles the tool's PRIMITIVES (buttons, inputs, dialogs) and
+   `inbox-theme.css` re-points Tailwind's semantic TOKENS. Between them the
+   conversation screen took the mockup's colours — and still read as the tool,
+   because colour was never the difference. The difference was markup: a 40px
+   toolbar of 32px square icon buttons, message cards with a green wash and a
+   Tailwind border, a prospect panel of underlined tabs and `rounded-lg`
+   boxes. No amount of token remapping produces `.ptool` / `.ib` / `.msg` /
+   `.pcard`.
+
+   So `thread-view.tsx`, `prospect-panel.tsx` and `thread-detail.tsx` were
+   re-marked-up against `workspace.css`'s OWN thread-detail vocabulary — which
+   already existed and was never used:
+
+       .pane3 .pcol .phd .ptool .ib .msgs .msg .msg-who .ava
+       .msg-hd .msg-sub .msg-hdrs .msg-body .pp .pp-tabs .pp-tab
+       .pcard .pcard-h .prow (.k/.v)
+
+   This file holds ONLY what that vocabulary does not cover: the three-pane
+   frame that has to accommodate a user-resizable panel, the collapse/expand
+   affordance on a message, the multi-value agent fields, the add-email and
+   add-phone forms, and the restyle of two components this rebuild is not
+   allowed to rewrite (the tool's compact `ThreadList` and the two sequencing
+   pickers). Nothing here restates a rule `workspace.css` already makes.
+
+   ---------------------------------------------------------------------------
+   WHY IT IS UNLAYERED, AND WHY EVERY SELECTOR IS SCOPED
+
+   Imported from `globals.css` without `layer()`, directly after
+   `mi-skin.css`. In the CSS cascade an unlayered rule beats a layered one
+   regardless of specificity, which is the only way to override the Tailwind
+   utilities still baked into the components this file restyles rather than
+   rewrites.
+
+   That is a loaded gun, so every selector below is scoped under `.mi-conv`,
+   `.mi-prospect` or `.mi-theme`. A bare `.msg` here would silently outrank
+   Tailwind everywhere in the OS.
+   =========================================================================== */
+
+/* ==========================================================================
+   1 · THE THREE-PANE FRAME
+
+   `workspace.css` draws this as `.pane3`, a
+   `grid-template-columns:320px 1fr 370px` grid. The real screen cannot use
+   that grid: the prospect panel is user-resizable and carries its width as an
+   inline style, which a fixed grid track would override.
+
+   Flex reproduces the same picture and lets the third pane own its width —
+   the columns, the hairlines and the independent scrolling are identical.
+   ========================================================================== */
+/*
+ * The conversation fills the viewport instead of growing the page.
+ *
+ * `.mi-conv` asks for `flex: 1; min-height: 0`, which only means anything
+ * inside a height-constrained flex column. Its ancestor `section.screen.on` is
+ * `display: block`, so there was no constraint to fill: the section grew to
+ * 8761px inside a 936px scroller, the whole conversation became one long page,
+ * and reaching Reply meant scrolling past every message in the thread list.
+ *
+ * `workspace.css` already solves this for screens built from `.pane` — the
+ * rule at its line 670 gives them `display:flex; flex-direction:column;
+ * height:100%`. This is the same treatment for the screen that holds a
+ * conversation, so each of the three panes scrolls inside its own column the
+ * way the tool's own inbox does.
+ */
+.screen.on:has(> .mi-theme > .mi-conv),
+.screen.on:has(> .mi-theme .mi-conv) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.screen.on:has(.mi-conv) > .mi-theme {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Each pane scrolls itself, rather than the page scrolling all three. */
+.mi-conv > .mi-conv-rail,
+.mi-conv > .mi-conv-main,
+.mi-conv > .mi-prospect {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.mi-conv {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: var(--surface);
+}
+
+/* The thread list rail — `.pane3`'s first track. */
+.mi-conv > .mi-conv-rail {
+  width: 320px;
+  flex: none;
+  min-width: 0;
+}
+
+/*
+ * The conversation itself. `position:relative` is load-bearing, not tidiness:
+ * `inbox-theme.css` makes the composer `position:absolute` inside this pane so
+ * it OVERLAYS the conversation instead of splitting it. Absolute positioning
+ * needs a positioned ancestor, and the class it used to find that on
+ * (`relative` on the old <section>) is gone.
+ */
+.mi-conv > .mi-conv-main {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+/*
+ * The prospect panel stays ABOVE the composer overlay.
+ *
+ * `inbox-theme.css` already says this, but it says it via
+ * `aside[class*="overflow-y-auto"][class*="border-l"]` — Tailwind classes this
+ * rebuild removed. Restated here against the new class so the rule survives,
+ * because the behaviour it protects is real: people read the agent's name,
+ * email and campaign while writing the reply, and covering that to show the
+ * reply box is the wrong trade.
+ */
+@media (min-width: 1024px) {
+  .mi-theme .mi-prospect {
+    position: relative;
+    z-index: 40;
+  }
+}
+
+/* ==========================================================================
+   2 · THE CONVERSATION PANE
+   ========================================================================== */
+
+/*
+ * The action strip. `.ptool`, `.ib` and `.spacer` are the design's; these add
+ * the states the design file does not draw, and the density it does not need.
+ *
+ * The mockup draws eight buttons in this row; the real screen has eleven, and
+ * the pane they sit in is whatever is left after the rail, the list and a
+ * panel the user can drag to 580px. At 34px with a 3px gap the row fits down
+ * to a 390px pane, and `wrap` is the safety net below that — every control
+ * stays reachable rather than being clipped.
+ */
+.mi-conv .ptool {
+  gap: 3px;
+  padding: 10px 12px;
+  flex-wrap: wrap;
+}
+.mi-conv .ptool .ib { width: 34px; height: 34px; }
+
+/* A disabled tool reads as unavailable rather than missing — the design has no
+   disabled state, so this is the `.ib` at 38% with pointer events off, which
+   is what the tool's own `opacity-40 pointer-events-none` meant. */
+.mi-conv .ib.is-off {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+/*
+ * ARMED DESTRUCTIVE ACTION.
+ *
+ * Delete used to call `window.confirm`, which suspends the page — no test can
+ * answer it, so the delete path was untestable by construction. Replaced with
+ * the repo's arm-then-fire: the first click turns the button red and relabels
+ * it, the second one fires, and it disarms itself on blur or after 4s.
+ */
+.mi-conv .ib.is-armed {
+  background: var(--red-bg);
+  color: var(--red);
+}
+.mi-conv .ib.is-armed:hover { background: var(--red-bg); color: var(--red); }
+.mi-conv .mi-arm-note {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--red);
+  padding: 0 4px 0 2px;
+  letter-spacing: 0.004em;
+  white-space: nowrap;
+}
+
+/*
+ * The tool's own dropdown triggers — Move agent, Labels, Snooze — are
+ * `<button className="size-8 rounded-md …">` inside components this rebuild
+ * does not own. Given the shape of `.ib` here they sit in the same row at the
+ * same size as the buttons around them instead of being two pixels smaller and
+ * a different radius.
+ */
+.mi-conv .ptool button:not(.ib) {
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mi-conv .ptool button:not(.ib):hover:not(:disabled) {
+  background: var(--inset);
+  color: var(--ink);
+}
+.mi-conv .ptool button:not(.ib) svg { width: 17px; height: 17px; }
+
+/* ==========================================================================
+   3 · MESSAGES
+
+   `workspace.css` gives `.msg` both the card treatment AND the alignment
+   (`max-width:88%`, `margin-left/right:auto`), while `.msg-who` — the sender
+   line — is drawn ABOVE that card, outside its border. Those two cannot be the
+   same element, so the alignment moves to a wrapper and `.msg` keeps the card.
+   ========================================================================== */
+.mi-conv .mi-msg { max-width: 88%; min-width: 0; }
+.mi-conv .mi-msg.in { margin-right: auto; }
+.mi-conv .mi-msg.out { margin-left: auto; }
+.mi-conv .mi-msg.out .msg-who { justify-content: flex-end; }
+.mi-conv .mi-msg .msg { max-width: none; }
+.mi-conv .msg-who b { font-weight: 600; color: var(--ink-2); }
+
+.mi-conv .msg-hd { min-width: 0; }
+.mi-conv .msg-hd .hd-l { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+.mi-conv .msg-acts { display: flex; align-items: center; gap: 2px; flex: none; }
+/* A smaller `.ib` — three of them have to fit beside a subject. */
+.mi-conv .msg-acts .ib { width: 28px; height: 28px; border-radius: 8px; }
+.mi-conv .msg-acts .ib svg { width: 14px; height: 14px; }
+
+/*
+ * The design sets `.msg-hdrs b` to a 32px inline-block, so the address runs on
+ * after it. That is fine for the mockup's one short address and wrong for a
+ * real one: an inline-block only holds the FIRST line's indent, so a long
+ * address wrapped back to the left margin and sat under its own label.
+ *
+ * A flex row keeps the label a fixed column and the addresses in theirs, at
+ * any length, which is what the design was drawing.
+ */
+.mi-conv .msg-hdrs { word-break: break-word; }
+.mi-conv .msg-hdrs > span { display: flex; align-items: baseline; gap: 8px; }
+/* The design's own 32px label column — restated because a flex item ignores
+   the inline-block width it was relying on. */
+.mi-conv .msg-hdrs > span > b { flex: none; width: 32px; }
+
+/*
+ * The body is untrusted email HTML. It scrolls inside its own box rather than
+ * widening the card: a marketing email's 700px table would otherwise push the
+ * whole pane past the right edge of the window, which is the failure
+ * `scripts/layout-test.mjs` exists to catch.
+ */
+.mi-conv .msg-body { overflow-x: auto; overflow-wrap: anywhere; }
+.mi-conv .msg-body img { max-width: 100%; height: auto; }
+.mi-conv .msg-body pre {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* Collapse / expand. The fade tells you there is more without a second
+   control; the chevron is the control. */
+.mi-conv .mi-msg-clip { position: relative; }
+.mi-conv .mi-msg-fade {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 46px;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--surface), rgba(255, 255, 255, 0));
+}
+.mi-conv .mi-msg-more {
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+.mi-conv .mi-msg-more button {
+  width: 100%;
+  height: 26px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font: inherit;
+}
+.mi-conv .mi-msg-more button:hover { background: var(--inset); color: var(--ink); }
+.mi-conv .mi-msg-more svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.9;
+}
+
+.mi-conv .mi-msgs-empty {
+  margin: auto;
+  color: var(--muted);
+  font-size: 13.5px;
+  text-align: center;
+  padding: 60px 0;
+}
+
+/* The floating Reply. The design's primary pill, parked over the conversation
+   — it is hidden while the composer is open, so it can never sit on Send. */
+.mi-conv .mi-reply-fab {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 12px;
+  padding: 11px 17px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--blue);
+  cursor: pointer;
+  box-shadow: 0 8px 22px -8px rgba(1, 101, 254, 0.85), 0 1px 2px rgba(13, 21, 38, 0.1);
+  transition: background 0.14s linear, transform 0.25s var(--sp-quick, ease);
+}
+.mi-conv .mi-reply-fab:hover { background: #0159e0; }
+.mi-conv .mi-reply-fab:active { transform: scale(0.96); }
+.mi-conv .mi-reply-fab svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+/* ==========================================================================
+   4 · THE THREAD LIST RAIL
+
+   The tool's `<ThreadList compact>` renders this, and it is NOT rewritten: it
+   carries scroll memory across navigations, optimistic read-state, pagination
+   and the click→render timing probe. Losing any of those to a repaint is
+   exactly the trade this project keeps refusing.
+
+   So the rows are restyled from here into the design's list rhythm. The
+   selectors are deliberately structural (`li > a`) rather than tied to the
+   tool's utility strings, so a future sync from the tool does not silently
+   drop the styling.
+   ========================================================================== */
+/*
+ * The rail's one header row is the tool's own count + pagination strip, given
+ * the shape the mockup draws for it: a 36px `.phd` in 11px muted type
+ * ("1–50 of 1,284"), sitting on the design's inset rather than white.
+ */
+.mi-conv-rail > div:first-child[class*="border-b"] {
+  height: 36px;
+  flex: none;
+  padding: 0 14px;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--inset);
+}
+.mi-conv-rail > div:first-child[class*="border-b"] button,
+.mi-conv-rail > div:first-child[class*="border-b"] a {
+  border-radius: 8px;
+  color: var(--muted);
+}
+
+.mi-conv-rail li { border-bottom: 1px solid var(--line-soft) !important; }
+.mi-conv-rail li > a {
+  display: block;
+  padding: 12px 14px !important;
+  background: var(--surface) !important;
+  transition: background 0.14s linear;
+}
+.mi-conv-rail li > a:hover { background: var(--inset) !important; }
+/*
+ * `~=` and not `*=`. Every row carries `hover:bg-accent/40`, so a substring
+ * match on "bg-accent" painted the whole rail as if every conversation were
+ * the open one. `~=` matches a whole space-separated class, which `bg-accent`
+ * is only on the active row.
+ */
+.mi-conv-rail li > a[class~="bg-accent"] {
+  background: var(--blue-pale) !important;
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+.mi-conv-rail li > a[class~="bg-accent"]:hover { background: var(--blue-pale) !important; }
+/* Read rows recede. The tool washes them zinc-200, which is a different grey
+   from every other recessed surface in the design. */
+.mi-conv-rail li > a[class*="bg-zinc-200"] { background: var(--inset) !important; }
+.mi-conv-rail li > a[class*="bg-zinc-200"]:hover { background: var(--inset-2) !important; }
+
+/* The unread dot and the channel tile, at the design's size and colour. */
+.mi-conv-rail li span[class*="rounded-full"][class*="bg-blue-500"] {
+  background: var(--blue) !important;
+}
+.mi-conv-rail li div[class*="size-6"][class*="rounded"] {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: var(--inset) !important;
+  color: var(--ink-2) !important;
+}
+
+/*
+ * The chips. All four of the tool's row chips share `px-1.5 py-0.5 rounded`,
+ * which is what distinguishes them from the unread dot and the checkbox — both
+ * of which a looser `[class*="rounded"]` swept up and inflated into pills.
+ *
+ * The colours are re-pointed at the design's `.c-*` / `.lc-*` families so a
+ * source, a client, a campaign and a label read the same here as they do in
+ * the conversation list one pane to the left.
+ */
+.mi-conv-rail li span[class*="px-1.5"][class*="rounded"] {
+  border-radius: 7px;
+  border: 0 !important;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 3px 7px;
+}
+.mi-conv-rail li span[class*="bg-indigo-50"] { background: var(--blue-pale) !important; color: var(--blue-ink) !important; }
+.mi-conv-rail li span[class*="bg-violet-50"] { background: var(--purple-bg) !important; color: var(--purple) !important; }
+.mi-conv-rail li span[class*="bg-amber-50"] { background: var(--amber-pale) !important; color: var(--amber) !important; }
+.mi-conv-rail li span[class*="bg-sky-50"],
+.mi-conv-rail li span[class*="bg-zinc-50"] { background: var(--inset) !important; color: var(--muted) !important; letter-spacing: 0.002em; }
+.mi-conv-rail li span[class*="bg-emerald-100"] { background: var(--green-bg) !important; color: var(--green) !important; }
+.mi-conv-rail li span[class*="bg-red-100"] { background: var(--red-bg) !important; color: var(--red) !important; }
+.mi-conv-rail li span[class*="bg-amber-100"] { background: var(--amber-pale) !important; color: var(--amber) !important; }
+.mi-conv-rail li span[class*="bg-pink-100"] { background: var(--purple-bg) !important; color: var(--purple) !important; }
+.mi-conv-rail li span[class*="bg-blue-100"] { background: var(--blue-pale) !important; color: var(--blue-ink) !important; }
+.mi-conv-rail li span[class*="bg-zinc-100"],
+.mi-conv-rail li span[class*="bg-stone-100"] { background: var(--inset-2) !important; color: var(--ink-2) !important; }
+
+/* The row's own checkbox keeps the design's 5px corner. */
+.mi-conv-rail li [class*="size-4"][class*="rounded-"] { border-radius: 5px; }
+
+/* ==========================================================================
+   5 · THE PROSPECT PANEL
+   ========================================================================== */
+.mi-prospect {
+  flex: none;
+  min-width: 0;
+  /* The grip is absolutely positioned against this, at every width. */
+  position: relative;
+  border-left: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+
+/*
+ * The resize grip, drawn the way the rail's own resizer is drawn in
+ * `workspace.css` — an invisible 11px target that shows a short blue bar on
+ * hover and a solid one while dragging.
+ */
+.mi-prospect .mi-prospect-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 11px;
+  z-index: 20;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mi-prospect .mi-prospect-grip::before {
+  content: "";
+  width: 2px;
+  height: 38px;
+  border-radius: 2px;
+  background: var(--blue);
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition: opacity 0.22s var(--sp-smooth, ease), transform 0.3s var(--sp-smooth, ease);
+}
+.mi-prospect .mi-prospect-grip:hover::before { opacity: 0.5; transform: scaleY(1); }
+.mi-prospect .mi-prospect-grip.drag::before { opacity: 0.95; transform: scaleY(1); }
+
+/* `.pp` is the design's panel body; here it also has to be the scroller, since
+   the panel's header stays put. */
+.mi-prospect .pp {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  gap: 14px;
+}
+.mi-prospect .pp::-webkit-scrollbar { width: 10px; }
+.mi-prospect .pp::-webkit-scrollbar-thumb {
+  background: #dde1e7;
+  border-radius: 5px;
+  border: 3px solid var(--surface);
+}
+
+/* Identity block — the mockup's 36px `.tile` with initials, then name over
+   email. */
+.mi-prospect .pp-av {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.mi-prospect .pp-id { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.mi-prospect .pp-id .who { min-width: 0; flex: 1; }
+.mi-prospect .pp-id .who b {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.012em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mi-prospect .pp-id .who .mail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  min-width: 0;
+}
+.mi-prospect .pp-id .who .mail span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mi-prospect .pp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* A copy button: the design's `.ib`, shrunk to sit beside a value. */
+.mi-prospect .cp {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  display: grid;
+  place-items: center;
+  color: transparent;
+  cursor: pointer;
+  transition: color 0.14s linear, background 0.14s linear;
+}
+.mi-prospect .cp svg { width: 12px; height: 12px; }
+.mi-prospect .prow:hover .cp,
+.mi-prospect .pp-id:hover .cp { color: var(--muted); }
+.mi-prospect .cp:hover { background: var(--inset); color: var(--ink) !important; }
+.mi-prospect .cp:focus-visible { color: var(--muted); }
+
+/* `.prow` is the design's, unchanged. These two rules are what a real value
+   needs that a mockup's sample data never showed: a link, and a custom-field
+   name long enough to need wrapping inside an 86px column. */
+.mi-prospect .prow .v { flex: 1; }
+.mi-prospect .prow .v a { color: var(--blue); text-decoration: none; word-break: break-all; }
+.mi-prospect .prow .v a:hover { text-decoration: underline; }
+.mi-prospect .prow.plain .k { word-break: break-word; }
+
+/* Multi-value agent fields — each address or number with its preferred
+   checkbox. `.cbx` is the design's own checkbox from the conversation list. */
+.mi-prospect .pp-multi { display: flex; flex-direction: column; gap: 7px; }
+.mi-prospect .pp-multi .one { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mi-prospect .pp-multi .one > span.val {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+  line-height: 1.4;
+}
+.mi-prospect .cbx {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #c3c9d2;
+  border-radius: 5px;
+  flex: none;
+  background: var(--surface);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: transparent;
+}
+.mi-prospect .cbx svg { width: 11px; height: 11px; stroke-width: 3; }
+.mi-prospect .cbx[aria-checked="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.mi-prospect .cbx:disabled { opacity: 0.6; cursor: default; }
+.mi-prospect .pref {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--blue-ink);
+  background: var(--blue-pale);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.mi-prospect .pp-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  letter-spacing: 0.005em;
+}
+
+/* Add-email / add-phone. Full width inside a 300px panel, so the field never
+   forces the panel wider than the user sized it. */
+.mi-prospect .pp-add { display: flex; flex-direction: column; gap: 7px; margin-top: 8px; }
+.mi-prospect .pp-add input {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+}
+.mi-prospect .pp-add input::placeholder { color: var(--muted); }
+.mi-prospect .pp-add input:focus {
+  outline: 0;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(1, 101, 254, 0.12);
+}
+.mi-prospect .pp-add .row { display: flex; gap: 6px; }
+.mi-prospect .pp-btn {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.mi-prospect .pp-btn:hover:not(:disabled) { background: var(--inset); }
+.mi-prospect .pp-btn.pri {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.mi-prospect .pp-btn.pri:hover:not(:disabled) { background: #0159e0; border-color: #0159e0; }
+.mi-prospect .pp-btn:disabled { opacity: 0.6; cursor: default; }
+.mi-prospect .pp-link {
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--blue);
+  cursor: pointer;
+  text-align: left;
+  align-self: flex-start;
+}
+.mi-prospect .pp-link:hover { color: var(--blue-ink); text-decoration: underline; }
+
+/* The card's chevron and its collapsible body. `.pcard-h` is a heading in the
+   design; here it is also the toggle. */
+.mi-prospect .pcard-h {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.mi-prospect .pcard-h:hover { background: var(--inset); }
+.mi-prospect .pcard-h svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--muted);
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+/* An empty tab still has to say something. */
+.mi-prospect .pp-empty {
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 26px 18px;
+  line-height: 1.5;
+}
+
+/*
+ * The two sequencing pickers — `SubsequenceSection` (Instantly) and
+ * `FollowupCampaignPicker` (EmailBison) — are the tool's components and stay
+ * the tool's. Their full-width action button becomes the design's `.btn` so it
+ * does not read as a third button style inside one card.
+ */
+.mi-prospect .pcard-foot { padding: 12px 16px; border-top: 1px solid var(--line-soft); }
+.mi-prospect .pcard-foot button {
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 36px;
+}
+.mi-prospect .pcard-foot button:not(:disabled) {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+.mi-prospect .pcard-foot button:not(:disabled):hover { background: var(--inset); }
+.mi-prospect .pcard-foot [class*="rounded-md"][class*="border-amber"] {
+  border-radius: 10px;
+  border-color: var(--yellow-border);
+  background: var(--yellow-bg);
+  color: var(--yellow);
+}
+
+/* ==========================================================================
+   6 · NARROW WINDOWS
+
+   Three panes plus a 264px navigation rail is a lot of columns, and the
+   composer takes 62% of whatever the conversation has left. The arithmetic at
+   1100px, if nothing gives:
+
+       1100 − 20 (app inset) − 264 (rail) − 320 (list) − 360 (panel) = 136px
+
+   which is the "column of single words" this workspace has already shipped
+   once. So the list rail narrows, then the panel is capped, then the list rail
+   goes — in that order, because the conversation and the agent's details are
+   what the screen was opened for and the list is one Back away.
+
+       1440 → 476px of conversation      1280 → 400px
+       1200 → 596px (list rail dropped)  1100 → 496px
+   ========================================================================== */
+@media (max-width: 1400px) {
+  .mi-conv > .mi-conv-rail { width: 288px; }
+}
+@media (max-width: 1300px) {
+  .mi-conv > .mi-conv-rail { width: 256px; }
+  /* Caps the width the user dragged the panel to, without forgetting it — the
+     stored value comes back the moment the window is wide enough for it. */
+  .mi-prospect { max-width: 340px; }
+}
+@media (max-width: 1200px) {
+  .mi-conv > .mi-conv-rail { display: none; }
+  .mi-prospect { max-width: 320px; }
+}

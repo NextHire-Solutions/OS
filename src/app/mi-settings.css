@@ -1,0 +1,1199 @@
+/* ===========================================================================
+   Master Inbox — SETTINGS.
+
+   ---------------------------------------------------------------------------
+   WHY A THIRD STYLESHEET
+
+   `workspace.css` is the design, verbatim. `mi-skin.css` restyles the tool's
+   UI PRIMITIVES by `data-slot` — buttons, inputs, selects, dialogs, switches —
+   so that the tool's own components look like the design without editing them.
+
+   Neither covers the settings panels, because the settings panels are not a
+   primitive and they are not the design either: the design file never drew
+   them. There is no "settings screen" in the mockup to copy. So this file is
+   the one place where the design's vocabulary is EXTENDED rather than applied,
+   and it is kept separate precisely so that extension is visible and auditable
+   in one file rather than smeared through eight components.
+
+   Everything here is built from the design's own tokens — `--ink`, `--ink-2`,
+   `--muted`, `--line`, `--line-soft`, `--inset`, `--surface`, `--blue`,
+   `--blue-pale`, `--r-md`, `--r-lg`, `--sh-card`. There is not a colour
+   literal below that is not one of the design's own greys, and the shapes
+   (12px controls, 14px groups, 20px cards) are the design's radii.
+
+   ---------------------------------------------------------------------------
+   WHAT IT DOES *NOT* DO
+
+   It does not restyle the primitives. Buttons, inputs, selects, switches,
+   checkboxes, dialogs and dropdowns are `mi-skin.css`'s job and stay its job —
+   the panels use `.btn` / `.inp` / `.sel` from the design where the markup is
+   ours, and the shadcn primitives where the markup is shared (every dialog, so
+   the portal keeps one look).
+
+   There is exactly ONE `[data-slot]` rule below, at the very end, and it sets a
+   property `mi-skin.css` never sets rather than overriding one it does. It is
+   called out there.
+
+   ---------------------------------------------------------------------------
+   THE TWO OVERRIDES, AND WHY THEY ARE NOT A FIGHT
+
+   `mi-skin.css` carries two rules written for the OLD settings structure, when
+   each panel was a single full-bleed sheet:
+
+       .mi-settings-body > *      { …becomes one card… }
+       .mi-settings-body table    { margin: 14px -24px -22px; … }
+
+   A rebuilt panel is not one card — it is a page carrying several cards and
+   tables on the page ground, which is how every other screen in this workspace
+   is drawn. So the new page opts out by name, at a higher specificity, rather
+   than by being loaded later and hoping:
+
+       .mi-settings-body > .mis   { …plain page… }
+
+   `mi-skin`'s rule still applies to anything that is not a `.mis` page, so
+   nothing else in the inbox changes.
+   =========================================================================== */
+
+/* ── The page ───────────────────────────────────────────────────────────────
+   Opting out of `mi-skin`'s one-card-per-panel treatment. Higher specificity
+   than `.mi-settings-body > *`, so load order is irrelevant. */
+.mi-settings-body > .mis {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  overflow: visible;
+}
+
+/*
+ * The ground under the panel.
+ *
+ * `mi-skin` painted it `--page` (the grey outside the app frame) because the
+ * panel it was drawing was a single white card that needed something to sit
+ * ON. Every other screen in this workspace scrolls inside `.scroll`, which the
+ * design paints `--surface` — cards there are white-on-white, separated by
+ * their hairline and `--sh-card`, and that IS the design's card treatment.
+ *
+ * A rebuilt panel is a page of those cards, so it takes the same ground. The
+ * `:has()` keeps this to rebuilt panels only.
+ */
+.mi-settings-body:has(> .mis) {
+  background: var(--surface);
+}
+
+/* Same reason: tables inside a `.mis` page live inside their own `.tbl-wrap`
+   and must meet ITS edges, not bleed through a padding that is no longer
+   there. */
+.mi-settings-body .mis table {
+  margin: 0;
+  width: 100%;
+}
+
+.mis {
+  /* Wide enough for a 6-column table, narrow enough that a two-field form does
+     not stretch to a 1500px line length. The design's own `.wrap` is 1500 for
+     data screens; a settings form is not a data screen. */
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-bottom: 40px;
+  color: var(--ink-2);
+}
+
+/* ── Page header ────────────────────────────────────────────────────────── */
+.mis-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.mis-hd-t {
+  flex: 1;
+  min-width: 260px;
+}
+.mis-hd h1 {
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -.022em;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.mis-hd p {
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin-top: 6px;
+  max-width: 76ch;
+}
+.mis-hd-a {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Section rhythm ─────────────────────────────────────────────────────────
+   `.card` and `.tbl-wrap` come from the design. `.mis-sec` is only the gap
+   between them, so a panel with five groups breathes the way the mockup's
+   screens do. */
+.mis-sec {
+  margin-bottom: 18px;
+}
+.mis-sec:last-child {
+  margin-bottom: 0;
+}
+/* A card's own heading — the design's `.tbl-title` / `.tbl-sub` pair, used
+   where there is no table under it. */
+.mis-h {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -.012em;
+  line-height: 1.3;
+}
+.mis-sub {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin-top: 5px;
+}
+.mis-h-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* ── Toolbar: search, count, actions ────────────────────────────────────── */
+.mis-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.mis-bar .mis-count {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mis-bar .mis-gap {
+  flex: 1;
+}
+/*
+ * A toolbar button never wraps.
+ *
+ * It did, and the cause was not the flex row: Tailwind's preflight sets
+ * `svg { display: block }`, so the leading `＋` in "＋ Create label" forced a
+ * line break and the control grew to 56px — the one thing on the page that did
+ * not look like the design. A button lays its icon and its label out as a flex
+ * row instead, which is also how it stays centred at any width.
+ */
+.mis-bar .btn {
+  flex: none;
+}
+.mis .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.mis .btn svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+/* The search field: the design's `.inp` with room for a magnifier. The icon is
+   absolutely positioned rather than a flex sibling so the input keeps its own
+   focus ring shape. */
+.mis-find {
+  position: relative;
+  flex: 0 1 320px;
+  min-width: 200px;
+}
+.mis-find .inp {
+  width: 100%;
+  min-width: 0;
+  padding-left: 34px;
+}
+.mis-find svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+  color: var(--muted);
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── Fields ─────────────────────────────────────────────────────────────────
+   `.as-l` is the design's field label (Agent Search's forms are the only ones
+   it drew). Same size, same weight, same 7px gap — named here so a settings
+   form does not have to borrow another screen's class. */
+.mis-f {
+  display: block;
+  min-width: 0;
+}
+.mis-l {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 7px;
+  letter-spacing: -.002em;
+}
+.mis-l .mis-opt {
+  color: var(--muted);
+  font-weight: 400;
+}
+.mis-f .inp,
+.mis-f .sel,
+.mis-f textarea.inp {
+  width: 100%;
+  min-width: 0;
+}
+.mis-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 6px;
+}
+.mis-req {
+  color: var(--red);
+}
+
+/* A multi-line control keeps the design's control shape but grows. */
+textarea.inp {
+  min-height: 92px;
+  line-height: 1.6;
+  resize: vertical;
+  font-family: inherit;
+}
+
+/* Field grids. Collapse to one column early — these sit inside a dialog that
+   is itself capped at 560px, and two 13px selects side by side below ~520px
+   truncate their own option text. */
+.mis-g {
+  display: grid;
+  gap: 14px;
+}
+.mis-g2 {
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 620px) {
+  .mis-g2 { grid-template-columns: 1fr; }
+}
+
+/* ── Toggle rows ────────────────────────────────────────────────────────────
+   Title + explanation on the left, control on the right, in the design's
+   recessed group. The tool drew these as a hairline box; the design recesses
+   secondary groups instead (`.kpi`, `.pills`, `.grp.top` all do). */
+.mis-tog {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 15px;
+  border-radius: var(--r-md);
+  background: var(--inset);
+}
+.mis-tog + .mis-tog {
+  margin-top: 10px;
+}
+.mis-tog-t {
+  min-width: 0;
+}
+.mis-tog-t b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -.005em;
+}
+.mis-tog-t span {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 3px;
+}
+.mis-tog > [data-slot="switch"] {
+  flex: none;
+}
+
+/* ── Checkboxes and pick-lists ──────────────────────────────────────────────
+   A checkbox and its label read as one control, so they sit on one line with
+   the design's 13.5px body size and a real hit target. */
+.mis-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  padding: 6px 2px;
+  cursor: pointer;
+  min-width: 0;
+}
+.mis-check > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mis-check:hover {
+  color: var(--ink);
+}
+/* A scrolling list of them — the design's recessed group, so a long workspace
+   list reads as one block rather than a bordered box inside a card. */
+.mis-picklist {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: var(--inset);
+}
+.mis-picklist::-webkit-scrollbar {
+  width: 8px;
+}
+.mis-picklist::-webkit-scrollbar-thumb {
+  background: #D3D8E0;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* ── Rows in a list-shaped panel (templates, clients) ───────────────────────
+   The design's own list rhythm: a hairline between rows, a hover wash, 15px
+   of vertical air. Same numbers as `td` in workspace.css, so a list panel and
+   a table panel have one density. */
+.mis-list {
+  display: flex;
+  flex-direction: column;
+}
+.mis-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line-soft);
+}
+.mis-row:first-child {
+  border-top: 0;
+}
+.mis-row:hover {
+  background: var(--inset);
+}
+.mis-row-m {
+  flex: 1;
+  min-width: 0;
+}
+.mis-row-n {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -.008em;
+}
+.mis-row-s {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+/* A body preview is two lines and no more — a 400-word template would
+   otherwise make one row taller than the window. */
+.mis-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+.mis-row-a {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* Two 30px controls plus the gap. Reserved even when a row shows only one,
+     so the edit pencils stay in a column rather than jumping left on every
+     system row. */
+  min-width: 62px;
+  justify-content: flex-end;
+}
+
+/* An explanatory list inside an `.anno` ribbon. Tailwind's preflight sets
+   `list-style: none` on every `ul`, which silently ate the bullets. */
+.mis-bullets {
+  margin: 7px 0 0;
+  padding-left: 18px;
+  list-style: disc;
+  display: grid;
+  gap: 3px;
+}
+.mis-bullets li {
+  list-style: inherit;
+}
+
+/* ── Icon buttons ───────────────────────────────────────────────────────────
+   The design's `.ib` at 36px is right beside a 60px inbox row; inside a 48px
+   settings row it is too tall, so this is the same control one step down. */
+.ib.mis-ib {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+.ib.mis-ib svg {
+  width: 15px;
+  height: 15px;
+}
+.ib.mis-ib:hover {
+  background: var(--inset-2);
+  color: var(--ink);
+}
+.ib.mis-ib.mis-del:hover {
+  background: var(--red-bg);
+  color: var(--red);
+}
+.ib.mis-ib:disabled {
+  opacity: .32;
+  cursor: not-allowed;
+}
+.ib.mis-ib:disabled:hover {
+  background: none;
+  color: var(--muted);
+}
+
+/* ── Collapsible category header ────────────────────────────────────────── */
+.mis-cat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 20px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+.mis-cat:hover {
+  background: var(--inset);
+}
+.mis-cat b {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.mis-cat .mis-n {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--inset-2);
+  border-radius: 7px;
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.mis-cat svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--muted);
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform .28s var(--sp-smooth, ease);
+}
+.mis-cat[aria-expanded="true"] svg.mis-chev {
+  transform: rotate(90deg);
+}
+.mis-cat-b {
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ── Empty states ───────────────────────────────────────────────────────── */
+.mis-empty {
+  padding: 44px 24px;
+  text-align: center;
+}
+.mis-empty svg {
+  width: 26px;
+  height: 26px;
+  color: var(--muted);
+  opacity: .7;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  margin: 0 auto 12px;
+  display: block;
+}
+.mis-empty b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.mis-empty p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 6px auto 0;
+  max-width: 46ch;
+}
+.mis-empty .btn {
+  margin-top: 16px;
+}
+/* Inside a table, the same empty state has to live in a cell. */
+td.mis-empty-cell {
+  padding: 40px 18px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+/* ── Colour swatches (the label editor) ─────────────────────────────────── */
+.mis-sw {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.mis-sw button {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  /* The ring sits OUTSIDE the disc, so selecting does not change its size and
+     the row cannot reflow as you click along it. */
+  box-shadow: 0 0 0 1px var(--line);
+  transition: box-shadow .16s linear, transform .25s var(--sp-quick, ease);
+}
+.mis-sw button:hover {
+  box-shadow: 0 0 0 2px var(--line);
+}
+.mis-sw button[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--blue);
+}
+.mis-sw button:active {
+  transform: scale(.92);
+}
+
+/* The seven label colours, as the design draws them — the same pairs as the
+   `.lc-*` chips, so the swatch you pick is the chip you get. */
+.mis-c-green  { background: var(--green); }
+.mis-c-red    { background: var(--red); }
+.mis-c-amber  { background: var(--amber); }
+.mis-c-blue   { background: var(--blue); }
+.mis-c-pink   { background: var(--purple); }
+.mis-c-zinc   { background: #9AA2AF; }
+.mis-c-stone  { background: #A8A29B; }
+
+.mis-prev {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* The design's chip set (`.lc-green`, `.lc-red`, `.lc-amber`, `.lc-zinc`,
+   `.lc-stone`, `.lc-pink`) is missing the seventh colour a label can be,
+   because the inbox row only ever shows ONE chip and the difference never
+   came up. On this screen you are choosing between all seven at once, so
+   blue has to be visibly blue rather than fall through to zinc. */
+.lc-blue {
+  background: var(--blue-pale);
+  color: var(--blue-ink);
+}
+
+/* ── Toggleable chips (AI candidate labels) ─────────────────────────────── */
+.mis-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.mis-chips button {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 7px;
+  transition: opacity .16s linear, transform .25s var(--sp-quick, ease);
+}
+/* Off is dimmed, not recoloured: the chip must stay recognisably the same
+   label in both states, which a grey pill would not. */
+.mis-chips button[aria-pressed="false"] {
+  opacity: .34;
+}
+.mis-chips button[aria-pressed="false"]:hover {
+  opacity: .7;
+}
+.mis-chips button:active {
+  transform: scale(.94);
+}
+
+/* ── Key/value detail grid (agent cards, run report) ────────────────────── */
+.mis-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 16px;
+  font-size: 12.5px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.mis-kv dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.mis-kv dd {
+  color: var(--ink-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Agent cards ────────────────────────────────────────────────────────── */
+.mis-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.mis-cards > .card {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+}
+.mis-card-h {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.mis-card-h .mis-row-m {
+  min-width: 0;
+}
+.mis-trunc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Wizard steps ───────────────────────────────────────────────────────── */
+.mis-steps {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--inset);
+}
+.mis-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.mis-step i {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  background: var(--inset-2);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.mis-step.on i {
+  background: var(--blue);
+  color: #fff;
+  box-shadow: none;
+}
+.mis-step.done i {
+  background: var(--green-bg);
+  color: var(--green);
+  box-shadow: none;
+}
+.mis-step b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: -.004em;
+}
+.mis-step.on b,
+.mis-step.done b {
+  color: var(--ink);
+}
+.mis-step span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.mis-step-line {
+  flex: none;
+  width: 26px;
+  height: 1px;
+  background: #DDE1E7;
+}
+
+/* ── Dialog interiors ───────────────────────────────────────────────────────
+   `mi-skin.css` owns the dialog SHELL (radius, border, scrim, shadow, title).
+   These are only the body's rhythm and its scroll, which the shell cannot
+   know about because it depends on how long the particular form is. */
+.mis-form {
+  display: grid;
+  gap: 14px;
+}
+.mis-scroll {
+  max-height: min(56vh, 460px);
+  overflow-y: auto;
+  /* Room for the focus ring on a control flush with the right edge. */
+  padding-right: 4px;
+  margin-right: -4px;
+}
+.mis-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.mis-scroll::-webkit-scrollbar-thumb {
+  background: #D3D8E0;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.mis-err {
+  font-size: 12.5px;
+  color: var(--red);
+  line-height: 1.5;
+}
+.mis-ok {
+  font-size: 12.5px;
+  color: var(--green);
+  line-height: 1.5;
+}
+
+/* A field with a trailing button (alias add, generate a password, clear a
+   key) — the control keeps the design's shape, the button sits beside it. */
+.mis-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mis-inline .inp {
+  flex: 1;
+  min-width: 0;
+}
+.mis-inline .btn {
+  flex: none;
+}
+
+/* A password / key field whose reveal button sits inside it. */
+.mis-reveal {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.mis-reveal .inp {
+  width: 100%;
+  padding-right: 38px;
+}
+.mis-reveal .ib {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.mis-reveal .ib svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ── Removable chips (client aliases) ───────────────────────────────────── */
+.mis-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mis-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 8px;
+  background: var(--blue-pale);
+  color: var(--blue-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mis-tag button {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  opacity: .6;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  line-height: 0;
+}
+.mis-tag button:hover {
+  opacity: 1;
+  background: rgba(1, 101, 254, .12);
+}
+.mis-tag button svg {
+  width: 11px;
+  height: 11px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+/* Read-only variant, on the client list rather than in the editor. */
+.mis-tag.mis-tag-q {
+  background: var(--inset-2);
+  color: var(--ink-2);
+  font-weight: 500;
+  padding: 4px 9px;
+}
+
+/* ── Progress ───────────────────────────────────────────────────────────────
+   The design's `.track` / `.track i`, with the numbers above it. */
+.mis-prog-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.mis-prog-h b {
+  font-weight: 600;
+  color: var(--ink);
+}
+.mis-prog-h span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mis-prog-f {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mis-prog-f b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.mis-prog-f .mis-bad b,
+.mis-prog-f .mis-bad {
+  color: var(--red);
+}
+.track i {
+  transition: width .2s linear;
+}
+
+/* ── Run report ────────────────────────────────────────────────────────── */
+.mis-report {
+  display: grid;
+  gap: 16px;
+}
+.mis-report-l {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.mis-report-l > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.mis-num {
+  flex: none;
+  min-width: 30px;
+  text-align: center;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: var(--inset-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.mis-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── The rich-text editor ───────────────────────────────────────────────────
+   Its chrome is drawn here rather than left as Tailwind, so a template body
+   sits in the same 12px-radius, hairline-bordered control as every other
+   field on the page. The editor itself (TipTap) is untouched. */
+.mis-ed {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.mis-ed:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-pale);
+}
+.mis-ed-t {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--inset);
+  border-bottom: 1px solid var(--line-soft);
+}
+.mis-ed-b {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+}
+.mis-ed-b:hover {
+  background: rgba(255, 255, 255, .8);
+  color: var(--ink);
+}
+.mis-ed-b[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--blue);
+  box-shadow: var(--sh-card);
+}
+.mis-ed-b svg {
+  width: 15px;
+  height: 15px;
+}
+.mis-ed-v {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  flex: none;
+}
+.mis-ed-v:hover {
+  background: rgba(255, 255, 255, .8);
+  color: var(--ink);
+}
+.mis-ed-v svg {
+  width: 12px;
+  height: 12px;
+}
+.mis-ed-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+  margin: 0 5px;
+  flex: none;
+}
+/* The editing surface. TipTap writes into this; the block styles below are
+   what the reader sees while composing, and they match the message body the
+   design draws in the conversation view (`.msg-body`). */
+.mis-ed .tiptap {
+  min-height: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  outline: none;
+}
+.mis-ed .tiptap p { margin: 0 0 .55em; }
+.mis-ed .tiptap p:last-child { margin-bottom: 0; }
+.mis-ed .tiptap h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -.014em;
+  margin: 1em 0 .35em;
+}
+.mis-ed .tiptap ul { list-style: disc; padding-left: 22px; margin: 0 0 .55em; }
+.mis-ed .tiptap ol { list-style: decimal; padding-left: 22px; margin: 0 0 .55em; }
+.mis-ed .tiptap li { margin: .15em 0; }
+.mis-ed .tiptap a { color: var(--blue); text-decoration: underline; }
+.mis-ed .tiptap blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 12px;
+  color: var(--muted);
+  margin: 0 0 .55em;
+}
+.mis-ed .tiptap code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--inset);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+/* TipTap's placeholder: a `data-placeholder` on the first empty paragraph. */
+.mis-ed .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.mis-ed-load {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* The variable menu's two-line rows. */
+.mis-var {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.mis-var code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Action bars ───────────────────────────────────────────────────────── */
+.mis-act {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.mis-act .mis-gap {
+  flex: 1;
+}
+.mis-stamp {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* ── Table cells the design has no class for ───────────────────────────── */
+.mis .atbl td.mis-cell-a {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+  padding-left: 8px;
+}
+.mis .atbl td.mis-cell-a > div {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  /* Same reservation as `.mis-row-a` — the pencil keeps its column whether or
+     not the row also has a delete. */
+  min-width: 62px;
+}
+.mis-cap {
+  text-transform: capitalize;
+}
+
+/* ── A read-only field ──────────────────────────────────────────────────────
+   The design has no disabled state; a plain `.inp` that is not editable must
+   still LOOK not-editable or it invites a click.
+
+   Keyed off an explicit class rather than `[readonly]`: the AI provider key is
+   readOnly UNTIL FOCUS — that is the trick that stops a password manager
+   autofilling the user's login password into it — and matching the attribute
+   drew that live field as though it were disabled. */
+.inp.mis-ro,
+.inp:disabled {
+  background: var(--inset);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* ── Fitting the stage ──────────────────────────────────────────────────────
+   Below the rail + a 1120px page the panel simply uses what it is given; the
+   only thing that must not happen is a table pushing the whole workspace
+   sideways, so every table on these panels scrolls inside its own wrapper
+   (`.tbl-scroll`, from the design) and the cards reflow. */
+@media (max-width: 900px) {
+  .mis-tog {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .mis-steps {
+    flex-wrap: wrap;
+  }
+  .mis-step-line {
+    display: none;
+  }
+}
+
+/* ── The one primitive rule ─────────────────────────────────────────────────
+   A ticked checkbox had no visible tick.
+
+   `mi-skin.css` fills the box with `--blue` when it is checked, and the
+   component draws its tick in `text-primary-foreground` — a token this app
+   never defines, so the tick inherited the box's own dark ink and vanished
+   against the blue. Nobody noticed because the only checkbox in the inbox is
+   this screen's "All workspaces", and this screen was unreachable.
+
+   This sets the INDICATOR's colour, which `mi-skin.css` does not set at all,
+   so the two are not in conflict; and it is scoped to `.mis` so no other
+   checkbox in the product changes. */
+.mis [data-slot="checkbox"] {
+  color: #fff;
+}
+.mis [data-slot="checkbox-indicator"] svg {
+  width: 12px;
+  height: 12px;
+}

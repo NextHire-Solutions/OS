@@ -1,6 +1,7 @@
 import "server-only";
 
-import { optionalEnv } from "@/lib/env";
+import { isConfigured } from "@/lib/env";
+import { clientStatuses } from "@/lib/tools/client-health/publish";
 
 import { getOnboardingDb } from "./db";
 import { getSetting, setSetting } from "./settings";
@@ -17,17 +18,17 @@ export * from "./health-match";
  * the team can see at a glance who is still live.
  *
  * ---------------------------------------------------------------------------
- * WHICH CREDENTIAL THIS USES, AND WHY IT IS NOT THE TOOL'S
+ * WHERE THE STATUSES COME FROM
  *
- * The orchestrator reads `HEALTH_DASH_BASE_URL` + `HEALTH_DASH_READ_TOKEN`.
- * Those names do not exist in the workspace — but the workspace already talks to
- * the same dashboard, on the same endpoint, with the same `x-admin-token` header,
- * under its own names: `CLIENT_HEALTH_URL` + `CLIENT_HEALTH_READ_TOKEN` (see
- * `src/lib/connectors/client-health.ts`).
+ * The orchestrator read the live dashboard's GET /api/clients/status over
+ * HTTP with HEALTH_DASH_BASE_URL + HEALTH_DASH_READ_TOKEN. Client Health is
+ * being switched off and the workspace now holds the same database, so this
+ * reads the same listing — identical shape, identical three-way status rule —
+ * through `clientStatuses()` in lib/tools/client-health/publish.ts. Nothing
+ * here writes to that database, and the status never drives any work.
  *
- * So this reads the workspace's names, and falls back to the tool's if anyone
- * later copies those in. Inventing a second credential for one endpoint the OS
- * is already authenticated to would be a second thing to rotate.
+ * "Configured" therefore means Client Health's database credentials are set,
+ * not a dashboard URL and token.
  */
 
 const SYNCED_AT = "health_status_synced_at";
@@ -42,14 +43,10 @@ export interface HealthPanel {
   configured: boolean;
 }
 
-function endpoint(): { base: string; token: string } | null {
-  const base = optionalEnv("CLIENT_HEALTH_URL") ?? optionalEnv("HEALTH_DASH_BASE_URL");
-  const token =
-    optionalEnv("CLIENT_HEALTH_READ_TOKEN") ??
-    optionalEnv("HEALTH_DASH_READ_TOKEN") ??
-    optionalEnv("HEALTH_DASH_ADMIN_TOKEN");
-  if (!base || !token) return null;
-  return { base: base.replace(/\/+$/, ""), token };
+const DB_ENV = ["CLIENT_HEALTH_SUPABASE_URL", "CLIENT_HEALTH_SUPABASE_SERVICE_ROLE_KEY"];
+
+function configured(): boolean {
+  return isConfigured(...DB_ENV);
 }
 
 export async function fetchHealthStatuses(): Promise<{
@@ -58,21 +55,13 @@ export async function fetchHealthStatuses(): Promise<{
   clients?: TheirClient[];
   counts?: Record<string, number>;
 }> {
-  const target = endpoint();
-  if (!target) {
-    return { ok: false, error: "CLIENT_HEALTH_URL / CLIENT_HEALTH_READ_TOKEN not set" };
+  if (!configured()) {
+    return { ok: false, error: `${DB_ENV.join(" / ")} not set` };
   }
 
   try {
-    const res = await fetch(`${target.base}/api/clients/status`, {
-      headers: { "x-admin-token": target.token },
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      return { ok: false, error: `HTTP ${res.status}${res.status === 401 ? " — read token rejected" : ""}` };
-    }
-    const json = (await res.json()) as { clients?: TheirClient[]; counts?: Record<string, number> };
-    return { ok: true, clients: json?.clients ?? [], counts: json?.counts ?? {} };
+    const listing = await clientStatuses();
+    return { ok: true, clients: listing.clients as TheirClient[], counts: listing.counts };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -151,6 +140,6 @@ export async function getHealthPanel(): Promise<HealthPanel> {
     counts,
     unmatched: unmatched.sort(),
     lastSync: await lastHealthSync().catch(() => null),
-    configured: endpoint() !== null,
+    configured: configured(),
   };
 }

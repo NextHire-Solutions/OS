@@ -44,7 +44,7 @@ export const CONCEPTS: Concept[] = [
         definition:
           "Clients that are neither hidden nor manually paused. Derived from two flags, where `hidden` wins over `client_paused`, so a hidden-and-paused client counts once as churned.",
         origin: "Client Health · Supabase",
-        requiresEnv: "CLIENT_HEALTH_READ_TOKEN",
+        requiresEnv: "CLIENT_HEALTH_SUPABASE_URL",
         window: "current",
         platforms: ["instantly", "emailbison"],
       },

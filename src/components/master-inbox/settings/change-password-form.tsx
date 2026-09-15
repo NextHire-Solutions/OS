@@ -1,13 +1,28 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
-import { Button } from "@/components/mi-ui/button";
-import { Input } from "@/components/mi-ui/input";
-import { Label } from "@/components/mi-ui/label";
+import { Field, ToastHost, useShowToast } from "./ui";
+
+/*
+ * Change password.
+ *
+ * The three fields, the match check, the 8-character minimum and the POST are
+ * unchanged. What changed is that the form is drawn with the design's `.inp`
+ * and its own field labels, and that its messages are visible: `sonner`'s
+ * `toast` was reporting both success and failure into a `<Toaster />` this app
+ * has never mounted, so "New passwords don't match" appeared nowhere at all.
+ */
 
 export function ChangePasswordForm() {
+  return (
+    <ToastHost>
+      <ChangePasswordBody />
+    </ToastHost>
+  );
+}
+
+function ChangePasswordBody() {
+  const show = useShowToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -16,11 +31,11 @@ export function ChangePasswordForm() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (next !== confirm) {
-      toast.error("New passwords don't match");
+      show({ text: "New passwords don't match", bad: true });
       return;
     }
     if (next.length < 8) {
-      toast.error("New password must be at least 8 characters");
+      show({ text: "New password must be at least 8 characters", bad: true });
       return;
     }
     setSubmitting(true);
@@ -32,57 +47,68 @@ export function ChangePasswordForm() {
       });
       const body = await res.json();
       if (!res.ok) {
-        toast.error(body.error ?? "Could not change password");
+        show({ text: body.error ?? "Could not change password", bad: true });
         return;
       }
-      toast.success("Password updated");
+      show({ text: "Password updated" });
       setCurrent("");
       setNext("");
       setConfirm("");
     } catch {
-      toast.error("Could not change password");
+      show({ text: "Could not change password", bad: true });
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="p-6 space-y-4 max-w-lg">
-      <div className="space-y-1.5">
-        <Label htmlFor="cur">Current password</Label>
-        <Input
+    <form onSubmit={onSubmit} className="mis-form" style={{ maxWidth: 460 }}>
+      <Field label="Current password" htmlFor="cur">
+        <input
           id="cur"
+          className="inp"
           type="password"
+          autoComplete="current-password"
           required
           value={current}
           onChange={(e) => setCurrent(e.target.value)}
         />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="new">New password</Label>
-        <Input
+      </Field>
+      <Field label="New password" htmlFor="new" hint="At least 8 characters.">
+        <input
           id="new"
+          className="inp"
           type="password"
+          autoComplete="new-password"
           required
           minLength={8}
           value={next}
           onChange={(e) => setNext(e.target.value)}
         />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="conf">Confirm new password</Label>
-        <Input
+      </Field>
+      <Field label="Confirm new password" htmlFor="conf">
+        <input
           id="conf"
+          className="inp"
           type="password"
+          autoComplete="new-password"
           required
           minLength={8}
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
         />
+      </Field>
+      <div>
+        <button
+          type="submit"
+          className="btn btn-pri"
+          disabled={submitting}
+          data-mis="update-password"
+          style={submitting ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+        >
+          {submitting ? "Updating…" : "Update password"}
+        </button>
       </div>
-      <Button type="submit" size="sm" disabled={submitting}>
-        {submitting ? <Loader2 className="size-4 animate-spin" /> : "Update password"}
-      </Button>
     </form>
   );
 }

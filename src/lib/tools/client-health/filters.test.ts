@@ -19,7 +19,7 @@ import {
 } from "./filters.ts";
 import type { WeeklyRow } from "./summarize.ts";
 
-const BASE: FilterState = { search: "", filter: "all", plan: "all", sort: null };
+const BASE: FilterState = { search: "", filter: "all", plan: "all" };
 
 /** A row with only the fields the filters read. */
 function row(
@@ -121,39 +121,6 @@ test("plan filter combines with the status pills rather than replacing them", ()
     row("C", { plan: "partner", status: "ok" }),
   ];
   assert.deepEqual(names(applyFilters(rows, { ...BASE, filter: "risk", plan: "partner" })), ["A"]);
-});
-
-test("sorting orders by the column and reverses on ascending", () => {
-  const rows = [
-    row("low", { leftThisWeek: 1 }),
-    row("high", { leftThisWeek: 9 }),
-    row("mid", { leftThisWeek: 4 }),
-  ];
-  assert.deepEqual(
-    names(applyFilters(rows, { ...BASE, sort: { col: "leftWeek", dir: "desc" } })),
-    ["high", "mid", "low"],
-  );
-  assert.deepEqual(
-    names(applyFilters(rows, { ...BASE, sort: { col: "leftWeek", dir: "asc" } })),
-    ["low", "mid", "high"],
-  );
-});
-
-test("sorting by campaign progress uses the derived average", () => {
-  const rows = [row("a", { campaignsAvgPct: 10 }), row("b", { campaignsAvgPct: 80 })];
-  assert.deepEqual(
-    names(applyFilters(rows, { ...BASE, sort: { col: "campaigns", dir: "desc" } })),
-    ["b", "a"],
-  );
-});
-
-test("sorting does not mutate the caller's array", () => {
-  // The array is memoised upstream; sorting it in place would corrupt a value
-  // React believes is unchanged, and the bug would look like random reordering.
-  const rows = [row("a", { leftThisWeek: 1 }), row("b", { leftThisWeek: 9 })];
-  const before = names(rows);
-  applyFilters(rows, { ...BASE, sort: { col: "leftWeek", dir: "desc" } });
-  assert.deepEqual(names(rows), before);
 });
 
 test("no filter and no search returns the visible set unchanged", () => {

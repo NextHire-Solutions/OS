@@ -1,0 +1,871 @@
+/*
+ * Client Portals, in the mockup's visual language.
+ *
+ * ===========================================================================
+ * WHY A THIRD STYLESHEET
+ *
+ * `workspace.css` is the approved design and the authority. `mi-skin.css`
+ * already restyles the Master Inbox's shared PRIMITIVES by `data-slot` —
+ * buttons, inputs, dialogs, sheets, menus — and the structural rules under
+ * `.mi-theme` cover tables, headings and density for the inbox screens.
+ *
+ * The two portals screens were getting none of it: `portals.tsx` and
+ * `portal-detail.tsx` were the only Master Inbox screens that never wrapped
+ * themselves in `.mi-theme`, so every token remap and every structural rule in
+ * those two files stopped at their edge. That is most of why they still looked
+ * like the tool while the rest of the inbox had moved on.
+ *
+ * Both screens now carry `.mi-theme .mi-portals`. `.mi-theme` earns them the
+ * existing work for free; this file adds what is specific to the portals
+ * surface — 2,954 lines of pipeline board that no shared rule was ever going
+ * to reach.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT IS MOSTLY A PALETTE BRIDGE
+ *
+ * The tool's portal components are not styled with design tokens. They carry
+ * 460 Tailwind arbitrary-value utilities holding literal hex codes — the tool's
+ * own palette, hardcoded: `text-[#9aa0ab]` 69 times, `border-[#ebecf0]` 56,
+ * `text-[#1565C0]` 53. That palette maps almost one-to-one onto the mockup's:
+ *
+ *     #1565C0  the tool's blue        ->  --blue      #0165FE   (the logo blue)
+ *     #0f1320  ink                    ->  --ink       #0D1526
+ *     #5b6472  secondary ink          ->  --ink-2     #3D4657
+ *     #9aa0ab  muted                  ->  --muted     #7A8394
+ *     #ebecf0  border                 ->  --line      #E7E9ED
+ *     #f0f1f4  hairline               ->  --line-soft #F0F2F5
+ *     #fafbfc  inset / table header   ->  --inset     #F4F5F7
+ *     #eaf2fd  blue pale              ->  --blue-pale #E8F0FF
+ *     #e23a3a  red                    ->  --red       #C93A31
+ *
+ * Rewriting 460 utilities across fourteen components by hand would be 460
+ * chances to delete a feature by accident, and the next sync from the live tool
+ * would revert every one. Re-pointing them here is one rule per colour, it
+ * cannot change behaviour because it never touches JSX, and the components stay
+ * diffable against the tool's originals — the same argument `mi-skin.css`
+ * makes at its own top, for the same reason.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT IS UNLAYERED
+ *
+ * Tailwind's utilities live in `@layer utilities`, and an UNLAYERED rule beats
+ * a layered one whatever the specificity. Imported without `layer()` from
+ * `globals.css`, immediately after `mi-skin.css`, a single `.mi-portals .bg-…`
+ * selector overrides the utility baked into the component. Source order puts
+ * this file after `mi-skin.css`, so where both speak to the same property this
+ * one wins — which is what "build on it, do not fight it" needs.
+ *
+ * Everything is scoped under `.mi-portals`. Dialogs, sheets and menus render
+ * through a portal attached to <body> and would escape that scope, so those
+ * carry `data-portal-surface` (set by the components) and are matched
+ * unscoped, exactly as `mi-skin.css` matches `data-slot` globally.
+ * ===========================================================================
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. THE PALETTE BRIDGE
+
+   One rule per colour the tool hardcodes. Nothing structural happens here —
+   this section only re-points hex literals at the design's tokens.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Ink ─────────────────────────────────────────────────────────────────── */
+.mi-portals .text-\[\#0f1320\],
+[data-portal-surface] .text-\[\#0f1320\],
+.mi-portals .text-\[\#15181e\] { color: var(--ink); }
+
+.mi-portals .text-\[\#5b6472\],
+[data-portal-surface] .text-\[\#5b6472\],
+.mi-portals .text-\[\#5b6370\] { color: var(--ink-2); }
+
+.mi-portals .text-\[\#9aa0ab\],
+[data-portal-surface] .text-\[\#9aa0ab\],
+.mi-portals .text-\[\#aab0ba\],
+.mi-portals .text-\[\#c2c7d0\],
+.mi-portals .text-\[\#c0c4cc\] { color: var(--muted); }
+
+/* ── The blue ────────────────────────────────────────────────────────────────
+   The tool's #1565C0 is a duller, greener blue than the design's #0165FE.
+   On tinted grounds the design uses --blue-ink, which is the same hue at a
+   contrast that survives on pale blue. */
+.mi-portals .text-\[\#1565C0\],
+[data-portal-surface] .text-\[\#1565C0\] { color: var(--blue); }
+.mi-portals .bg-\[\#eaf2fd\] .text-\[\#1565C0\],
+.mi-portals .bg-\[\#dbe9fa\] .text-\[\#1565C0\] { color: var(--blue-ink); }
+
+.mi-portals .bg-\[\#1565C0\],
+[data-portal-surface] .bg-\[\#1565C0\] { background-color: var(--blue); }
+.mi-portals .border-\[\#1565C0\] { border-color: var(--blue); }
+.mi-portals .accent-\[\#1565C0\] { accent-color: var(--blue); }
+.mi-portals .from-\[\#1565C0\] { --tw-gradient-from: var(--blue); }
+.mi-portals .to-\[\#2f7fe0\] { --tw-gradient-to: var(--blue); }
+
+.mi-portals .bg-\[\#eaf2fd\],
+[data-portal-surface] .bg-\[\#eaf2fd\],
+.mi-portals .bg-\[\#dbe9fa\],
+.mi-portals .bg-\[\#f4f8fd\],
+.mi-portals .bg-\[\#f4f9ff\],
+.mi-portals .bg-\[\#E3F0FF\],
+.mi-portals .bg-\[\#bcd5f1\] { background-color: var(--blue-pale); }
+
+.mi-portals .border-\[\#d4e4f8\],
+.mi-portals .border-\[\#bcd5f1\],
+[data-portal-surface] .border-\[\#bcd5f1\] { border-color: #CFE0FF; }
+.mi-portals .ring-\[\#eaf2fd\],
+[data-portal-surface] .ring-\[\#eaf2fd\] { --tw-ring-color: var(--blue-pale); }
+
+/* ── Lines and grounds ───────────────────────────────────────────────────── */
+.mi-portals .border-\[\#ebecf0\],
+[data-portal-surface] .border-\[\#ebecf0\],
+.mi-portals .border-\[\#e3e8ef\],
+.mi-portals .border-\[\#dde0e5\],
+.mi-portals .border-\[\#d4dae3\],
+.mi-portals .ring-\[\#ebecf0\] { border-color: var(--line); }
+.mi-portals .ring-\[\#ebecf0\] { --tw-ring-color: var(--line); }
+
+.mi-portals .border-\[\#f0f1f4\],
+[data-portal-surface] .border-\[\#f0f1f4\],
+.mi-portals .divide-\[\#f0f1f4\] > * + * { border-color: var(--line-soft); }
+
+.mi-portals .bg-\[\#fafbfc\],
+[data-portal-surface] .bg-\[\#fafbfc\],
+.mi-portals .bg-\[\#fcfdff\],
+.mi-portals .bg-\[\#f4f7fb\] { background-color: var(--inset); }
+
+.mi-portals .bg-\[\#f0f1f4\],
+.mi-portals .bg-\[\#f0f2f5\],
+.mi-portals .bg-\[\#eef0f3\],
+.mi-portals .bg-\[\#eef2f7\],
+[data-portal-surface] .bg-\[\#eef0f3\] { background-color: var(--inset-2); }
+
+/* The tool paints its own page ground #f6f7f9 behind everything. In the
+   mockup the stage IS white — `.stage` and `.scroll` are both var(--surface)
+   — and a card separates itself with a hairline plus --sh-card rather than by
+   sitting on grey. */
+.mi-portals .bg-\[\#f6f7f9\],
+.mi-portals .bg-\[\#f4f7fb\] { background-color: var(--surface); }
+.mi-portals .hover\:bg-\[\#f6f7f9\]:hover,
+.mi-portals .hover\:bg-\[\#fafbfc\]:hover { background-color: var(--inset); }
+
+/* ── Semantic tones ──────────────────────────────────────────────────────── */
+.mi-portals .text-\[\#e23a3a\],
+.mi-portals .text-\[\#c23934\],
+.mi-portals .text-\[\#c0392b\],
+.mi-portals .text-\[\#b91c1c\],
+.mi-portals .text-\[\#9a3a3a\],
+[data-portal-surface] .text-\[\#b91c1c\] { color: var(--red); }
+.mi-portals .bg-\[\#fff5f5\],
+.mi-portals .bg-\[\#fee2e2\],
+.mi-portals .bg-\[\#fef0ee\],
+[data-portal-surface] .bg-\[\#fee2e2\] { background-color: var(--red-bg); }
+.mi-portals .border-\[\#fcd9d9\] { border-color: var(--red-border); }
+
+.mi-portals .text-\[\#0c8a4e\],
+[data-portal-surface] .text-\[\#0c8a4e\] { color: var(--green); }
+.mi-portals .bg-\[\#e9f7ef\],
+[data-portal-surface] .bg-\[\#e9f7ef\] { background-color: var(--green-bg); }
+
+.mi-portals .text-\[\#a06200\] { color: var(--yellow); }
+.mi-portals .bg-\[\#fef7e6\] { background-color: var(--yellow-bg); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. THE STAGE COLOURS
+
+   The nine pipeline stages are a deliberate workflow gradient — intro blue,
+   through two indigos and two purples, to hired green, plus amber/red/grey for
+   the three terminal states. The client's own portal renders the same nine, so
+   they are not ours to collapse into the design's four semantic tones; doing
+   that would throw away six distinctions a recruiter reads at a glance.
+
+   What DOES change is the chip idiom. The tool fills a chip with the saturated
+   hue and sets white text. The design's chip — `.lc-green`, `.lc-amber`, and
+   the rest — is a soft tint with the saturated hue as the TEXT colour. So each
+   of the nine keeps its hue and takes the design's shape.
+
+   Dots stay saturated: an 8px dot in a tint is invisible.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mi-portals [data-stage-chip],
+.mi-portals [data-stage-pill],
+[data-portal-surface] [data-stage-pill] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: nowrap;
+  background: var(--inset-2);
+  color: var(--ink-2);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+/* Nine hues × (tint, ink). Tints are the hue at ~10% over white, which is how
+   the design's own four were built. */
+.mi-portals [data-stage="introduction"],
+[data-portal-surface] [data-stage="introduction"]           { background: #E4EFFC; color: #12518F; }
+.mi-portals [data-stage="phone_screen_scheduled"],
+[data-portal-surface] [data-stage="phone_screen_scheduled"] { background: #EBEEFB; color: #3A4CA8; }
+.mi-portals [data-stage="phone_screen"],
+[data-portal-surface] [data-stage="phone_screen"]           { background: #E7EAF9; color: #3243A6; }
+.mi-portals [data-stage="interview_scheduled"],
+[data-portal-surface] [data-stage="interview_scheduled"]    { background: #F0EBFE; color: #5B3FD4; }
+.mi-portals [data-stage="interview"],
+[data-portal-surface] [data-stage="interview"]              { background: #EDE6FF; color: #5A2FD1; }
+.mi-portals [data-stage="hired"],
+[data-portal-surface] [data-stage="hired"]                  { background: var(--green-bg); color: var(--green); }
+.mi-portals [data-stage="keep_warm"],
+[data-portal-surface] [data-stage="keep_warm"]              { background: var(--yellow-bg); color: var(--yellow); }
+.mi-portals [data-stage="we_they_rejected"],
+[data-portal-surface] [data-stage="we_they_rejected"]       { background: var(--red-bg); color: var(--red); }
+.mi-portals [data-stage="no_show"],
+[data-portal-surface] [data-stage="no_show"]                { background: var(--inset-2); color: var(--ink-2); }
+
+/*
+ * A CUSTOM stage carries an operator-chosen hex, filled inline by the
+ * component. The base rule above sets a colour, and an unlayered class
+ * selector beats Tailwind's `text-white`, so the label has to be restored here
+ * or it would sit in ink-2 on a saturated ground.
+ */
+.mi-portals [data-stage-chip][data-custom="true"][data-on="true"] { color: #fff; }
+.mi-portals [data-stage-chip][data-custom="true"][data-on="true"] span { color: rgba(255,255,255,.8); }
+
+/* A filter chip that is OFF reads as one of the design's segmented pills. */
+.mi-portals [data-stage-chip][data-on="false"] {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  padding: 3px 9px;
+}
+.mi-portals [data-stage-chip][data-on="false"]:hover {
+  background: var(--inset);
+  color: var(--ink);
+}
+.mi-portals [data-stage-chip] .tnum,
+.mi-portals [data-stage-chip] span { font-variant-numeric: tabular-nums; }
+.mi-portals [data-stage-chip][data-on="false"] span:last-child { color: var(--muted); }
+
+/* The stage pill is a menu trigger, so it needs an affordance the chip does
+   not: a hairline that only appears on hover, matching `.schip`. */
+.mi-portals [data-stage-pill] { cursor: pointer; }
+.mi-portals [data-stage-pill]:hover { filter: brightness(0.97); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. PAGE STRUCTURE
+
+   Colour alone was never going to be enough — measured across these two
+   screens, the tool's markup carries its own width, radius and rhythm. These
+   rules put the design's `.wrap`, `.card`, `.tbl-wrap` proportions back.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mi-portals {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+/* The design's page container: 1500px, 26px gutters. The tool centres on
+   max-w-5xl / max-w-6xl, which leaves a workspace stage half empty. */
+.mi-portals .mi-portals-wrap {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 22px 26px 40px;
+}
+
+/* ── Screen header ───────────────────────────────────────────────────────── */
+.mi-portals .mi-portals-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.mi-portals .mi-portals-head h1 {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.022em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.mi-portals .mi-portals-head p {
+  margin-top: 5px;
+  max-width: 62ch;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+/* The logo tile, in the design's soft-tile idiom rather than a bordered box. */
+.mi-portals .mi-portals-mark {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 13px;
+  background: var(--blue-pale);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.mi-portals .mi-portals-mark img { width: 30px; height: auto; }
+.mi-portals .mi-portals-mark svg { width: 22px; height: 22px; color: var(--blue); }
+
+/* ── Stat cards ──────────────────────────────────────────────────────────── */
+.mi-portals .cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 22px;
+}
+.mi-portals .card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 20px 22px 18px;
+  box-shadow: var(--sh-card);
+}
+/* The design leads with the LABEL and follows with the number. The tool leads
+   with a tinted icon tile and a 34px number, which reads as a dashboard widget
+   rather than one of the design's cards. The tile is kept — it is in the
+   design's vocabulary too — but it moves beside the label. */
+.mi-portals .card-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.mi-portals .card-ico {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  background: var(--blue-pale);
+  color: var(--blue);
+  display: grid;
+  place-items: center;
+}
+.mi-portals .card-ico svg { width: 16px; height: 16px; }
+.mi-portals .card-l {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+.mi-portals .card-n {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.mi-portals .card-s { font-size: 13px; color: var(--muted); }
+/* The design has no gradient card. Its emphasis card is the same white card
+   with the accent spent on the NUMBER — `.n-intros`. */
+.mi-portals .card.accent .card-n { color: var(--blue); }
+.mi-portals .card.accent .card-ico { background: var(--blue); color: #fff; }
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+.mi-portals .tbl-wrap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--sh-card);
+  margin-bottom: 16px;
+}
+.mi-portals .tbl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line-soft);
+  flex-wrap: wrap;
+}
+.mi-portals .tbl-title {
+  font-size: 16.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.mi-portals .tbl-sub { font-size: 13.5px; color: var(--muted); margin-top: 4px; }
+.mi-portals .tbl-scroll { overflow-x: auto; }
+
+/* The design's table: a quiet inset header in sentence case at medium weight.
+   The tool's is 10.5px uppercase with wide tracking — the single most visible
+   "this is a different product" signal on both screens. */
+.mi-portals table { width: 100%; border-collapse: collapse; }
+.mi-portals thead th {
+  padding: 11px 18px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: var(--inset);
+  border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap;
+}
+.mi-portals tbody td {
+  padding: 14px 18px;
+  font-size: 13.5px;
+  vertical-align: middle;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--line-soft);
+}
+.mi-portals tbody tr:last-child td { border-bottom: 0; }
+.mi-portals tbody tr:hover { background: var(--inset); }
+.mi-portals .tnum { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+/* The tool builds its rows out of CSS grid rather than a table. Those keep
+   working; they only need the design's rhythm. */
+.mi-portals .mi-portals-grid-head {
+  padding: 11px 18px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: var(--inset);
+  border-bottom: 1px solid var(--line-soft);
+}
+.mi-portals .mi-portals-grid-row {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 13.5px;
+  transition: background 0.12s linear;
+}
+.mi-portals .mi-portals-grid-row:last-child { border-bottom: 0; }
+.mi-portals .mi-portals-grid-row:hover { background: var(--inset); }
+
+/* ── Client identity in a row ────────────────────────────────────────────── */
+.mi-portals .mi-portals-av {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 10px;
+  background: var(--inset);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.mi-portals .cname {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.mi-portals a.cname:hover { color: var(--blue); }
+.mi-portals .csince {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+}
+
+/* ── Icon buttons ────────────────────────────────────────────────────────── */
+.mi-portals .ib {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 0;
+  background: none;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.mi-portals .ib:hover:not(:disabled) { background: var(--inset); color: var(--ink); }
+.mi-portals .ib:disabled { opacity: 0.35; cursor: not-allowed; }
+.mi-portals .ib:active:not(:disabled) { transform: scale(0.9); }
+.mi-portals .ib svg { width: 16px; height: 16px; }
+.mi-portals .ib.on { color: var(--green); }
+
+/* ── The design's controls ───────────────────────────────────────────────── */
+.mi-portals .inp {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 13px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  width: 100%;
+}
+.mi-portals .inp::placeholder { color: var(--muted); }
+.mi-portals .inp:focus {
+  outline: 0;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(1, 101, 254, 0.12);
+}
+.mi-portals .srch { position: relative; max-width: 280px; }
+.mi-portals .srch svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.mi-portals .srch .inp { padding-left: 34px; }
+
+/* ── The annotation ribbon ───────────────────────────────────────────────── */
+.mi-portals .anno {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 13px 16px;
+  border-radius: var(--r-md);
+  background: var(--amber-pale);
+  border: 1px solid #F6DFC0;
+  font-size: 12.5px;
+  color: #8A5A12;
+  line-height: 1.55;
+}
+.mi-portals .anno b { color: #6E460A; font-weight: 600; }
+.mi-portals .anno svg { width: 15px; height: 15px; flex: none; margin-top: 1px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. THE DRILL-DOWN
+
+   The staff bar, the pipeline header, the board toolbar and the bulk bar.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Staff bar above the embedded pipeline ───────────────────────────────── */
+.mi-portals .mi-portals-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 26px;
+  height: 56px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft);
+}
+.mi-portals .mi-portals-bar .back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--muted);
+  transition: color 0.14s;
+}
+.mi-portals .mi-portals-bar .back:hover { color: var(--ink); }
+.mi-portals .mi-portals-bar .back svg { width: 16px; height: 16px; }
+/* The counts read as the design's recessed metric group, not as loose text. */
+.mi-portals .mi-portals-counts {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--inset);
+  border-radius: var(--r-md);
+  padding: 4px;
+}
+.mi-portals .mi-portals-counts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.mi-portals .mi-portals-counts span b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.mi-portals .mi-portals-counts svg { width: 14px; height: 14px; opacity: 0.7; }
+.mi-portals .mi-portals-bar .open-live {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.mi-portals .mi-portals-bar .open-live:hover { background: var(--inset); }
+.mi-portals .mi-portals-bar .open-live svg { width: 14px; height: 14px; color: var(--muted); }
+
+/* ── Pipeline header ─────────────────────────────────────────────────────── */
+.mi-portals header .mi-portals-eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  text-transform: none;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.mi-portals header h1 {
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+/* ── Board toolbar ───────────────────────────────────────────────────────── */
+.mi-portals .mi-portals-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.mi-portals .mi-portals-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The design's segmented pill, for the List / Board switch. */
+.mi-portals .seg {
+  display: inline-flex;
+  background: var(--inset);
+  border: 0;
+  border-radius: 12px;
+  padding: 4px;
+  gap: 3px;
+}
+.mi-portals .seg button {
+  border: 0;
+  background: none;
+  border-radius: 9px;
+  padding: 7px 13px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mi-portals .seg button:hover { color: var(--ink); }
+.mi-portals .seg button.on {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--sh-card);
+}
+/* A checkbox that reads as a control rather than a bordered box. */
+.mi-portals .mi-portals-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 13px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.mi-portals .mi-portals-check:hover { background: var(--inset); }
+.mi-portals .mi-portals-check input { accent-color: var(--blue); width: 14px; height: 14px; }
+.mi-portals .mi-portals-count {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Bulk action bar ─────────────────────────────────────────────────────── */
+/* The design's recessed group. It stays rendered when nothing is selected —
+   the affordance is the point — and lights to the accent tint on selection. */
+.mi-portals .mi-portals-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  border-radius: var(--r-md);
+  background: var(--inset);
+  border: 1px solid transparent;
+  font-size: 12.5px;
+  transition: background 0.16s linear, border-color 0.16s linear;
+}
+.mi-portals .mi-portals-bulk[data-active="true"] {
+  background: var(--blue-pale);
+  border-color: #CFE0FF;
+}
+.mi-portals .mi-portals-bulk > span:first-child { font-weight: 500; color: var(--muted); }
+.mi-portals .mi-portals-bulk[data-active="true"] > span:first-child {
+  color: var(--blue-ink);
+  font-weight: 600;
+}
+
+/* ── Disclosures ─────────────────────────────────────────────────────────── */
+.mi-portals .mi-portals-disc {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-card);
+  overflow: hidden;
+}
+.mi-portals .mi-portals-disc > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.mi-portals .mi-portals-disc > button:hover { background: var(--inset); }
+.mi-portals .mi-portals-disc > button > span:first-child {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.mi-portals .mi-portals-disc svg { color: var(--muted); }
+
+/* ── Cards the tool draws inline (Nicole, stage editor, empty states) ────── */
+.mi-portals [class*="rounded-2xl"]:not(.card):not(.tbl-wrap),
+.mi-portals [class*="rounded-xl"]:not(.card):not(.tbl-wrap) {
+  border-radius: var(--r-md);
+}
+.mi-portals .shadow-sm:not(.card):not(.tbl-wrap) { box-shadow: var(--sh-card); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. THE KANBAN BOARD
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mi-portals [data-kanban-column] {
+  background: var(--inset);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+.mi-portals [data-kanban-column][data-over="true"] {
+  background: var(--blue-pale);
+  border-color: #CFE0FF;
+}
+.mi-portals [data-kanban-card] {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: 0 1px 2px rgba(13, 21, 38, 0.04);
+  transition: box-shadow 0.14s, transform 0.14s;
+}
+.mi-portals [data-kanban-card]:hover {
+  box-shadow: var(--sh-raise);
+  transform: translateY(-1px);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. SHEETS AND DIALOGS
+
+   These render through a body portal, so `.mi-portals` cannot reach them. The
+   components stamp `data-portal-surface` on the sheet/dialog content instead.
+   `mi-skin.css` already gives them the design's card, radius and scrim; what is
+   left is the portals-specific interior.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+[data-portal-surface] .uppercase { text-transform: none; letter-spacing: 0; }
+[data-portal-surface] h2,
+[data-portal-surface] h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: 0;
+}
+/* The design's key/value row, for the sheets' Details blocks. */
+[data-portal-surface] .prow-k {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+[data-portal-surface] .prow-v { font-size: 13.5px; color: var(--ink-2); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. DENSITY
+
+   `mi-skin.css` sets these for `.mi-theme`; repeated here because the portals
+   markup uses bracketed sizes the shared rules do not name.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mi-portals .text-\[13px\],
+.mi-portals .text-\[13\.5px\] { font-size: 13.5px; }
+.mi-portals .text-\[12px\],
+.mi-portals .text-\[12\.5px\] { font-size: 12.5px; }
+.mi-portals .text-\[11px\],
+.mi-portals .text-\[11\.5px\] { font-size: 11.5px; }
+.mi-portals .text-\[10\.5px\] { font-size: 11px; letter-spacing: 0; }
+
+/* The tool's uppercase micro-labels. The design does not shout. */
+.mi-portals .uppercase.tracking-wider,
+.mi-portals .uppercase.tracking-wide,
+.mi-portals .uppercase.tracking-\[0\.16em\] {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+/* Focus, everywhere, in the design's ring. */
+.mi-portals :focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8. NARROW STAGES
+
+   The workspace rail takes 264px, so a 1280px window leaves the stage about
+   1000px. The stat cards stop being three-up before they get cramped.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1180px) {
+  .mi-portals .cards { grid-template-columns: repeat(2, 1fr); }
+  .mi-portals .mi-portals-wrap { padding: 20px 20px 36px; }
+  .mi-portals .mi-portals-bar { padding: 0 20px; }
+}
+@media (max-width: 820px) {
+  .mi-portals .cards { grid-template-columns: 1fr; }
+}
+
+/* ── The portals table below desktop width ───────────────────────────────────
+   The rows are CSS grid: `36px 1.4fr 1.1fr 140px 130px 200px …`. Four of those
+   columns are FIXED, so as the viewport narrows they keep their width and the
+   two flexible ones absorb the entire loss. At 1100px they resolved to 50px and
+   39px — the client-name column crushed to nothing while the chips inside it
+   ("Agent profile", "Conversation", the source badge) stayed ~90px and spilled
+   out of a box with no width. At 960px it was worse.
+
+   `.tbl-wrap` is `overflow: hidden` for its rounded corners, so the overflow
+   had nowhere to go. Scrolling horizontally is what every other wide table in
+   this workspace does, and it keeps the columns at their intended proportions
+   instead of crushing them.
+
+   Only `overflow-x` is set: `overflow-y` stays hidden, which the spec allows
+   because neither axis is `visible` — the coercion rule that bit the filter bar
+   applies only when one axis is `visible`. */
+.mi-portals .tbl-wrap { overflow-x: auto; }
+.mi-portals .mi-portals-grid-head,
+.mi-portals .mi-portals-grid-row { min-width: 880px; }

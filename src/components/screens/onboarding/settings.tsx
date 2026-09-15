@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { OnboardingSettings } from "@/lib/tools/onboarding/settings-view";
 import { STEPS } from "@/lib/tools/onboarding/steps";
@@ -9,6 +9,8 @@ import { PlaceholderScreen } from "../lazy";
 import {
   SETTINGS_URL,
   createPerson,
+  disconnectMailbox,
+  pollRepliesNow,
   refreshHealthStatuses,
   removePerson,
   setAutomationEnabled,
@@ -30,16 +32,16 @@ import { fullStamp } from "@/lib/workspace/dates";
  * ---------------------------------------------------------------------------
  * WHAT IS EDITABLE HERE AND WHAT IS NOT
  *
- * Four of the five panels write for real, to the same `orch_settings` and
- * `orch_salespeople` rows the live orchestrator reads. The automation switch in
- * particular is not a workspace preference: turning it off here stops the
- * orchestrator firing on its next webhook.
+ * All five panels write for real, to the same `orch_settings`,
+ * `orch_salespeople` and `orch_email_account` rows. The automation switch is
+ * not a preference: on, the OS runs the set-up chain on copy approval, records
+ * the Calendly-triggered emails as pending, and launches a campaign when the
+ * DB app imports its leads; off, every step waits for a button.
  *
- * The fifth — the Gmail mailbox — is READ-ONLY, and says so on screen rather than
- * offering a button that cannot work. Connecting is an OAuth round trip ending at
- * a redirect URI registered with Google for the orchestrator's domain; the
- * workspace is a different origin and holds no client id, so the consent screen
- * would refuse the redirect. See `lib/tools/onboarding/settings-view.ts`.
+ * The Gmail mailbox panel is the tool's GoogleConnect: Connect starts the OAuth
+ * round trip at /api/tools/onboarding/auth/google, Google returns to this
+ * workspace's own callback, and Check-replies-now READS the mailbox. Sending
+ * from it is switched off pending explicit enablement.
  */
 
 const CARD: React.CSSProperties = {
@@ -136,7 +138,8 @@ function SettingsView({ s, reload }: { s: OnboardingSettings; reload: () => Prom
       ))}
 
       <HealthPanel health={s.health} busy={busy} setBusy={setBusy} reload={reload} show={show} />
-      <MailboxPanel mailbox={s.mailbox} />
+      <MailboxPanel mailbox={s.mailbox} busy={busy} run={run} show={show} />
+      <SchedulerNote scheduler={s.scheduler} />
 
       <Toast toast={toast} />
     </div>
@@ -174,16 +177,16 @@ function AutomationPanel({
     >
       <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "var(--muted)", lineHeight: 1.6, maxWidth: 760 }}>
         {on
-          ? "Emails, portal, team, lead list and campaign launch fire on their own as each trigger happens. The buttons on a client page stay available as overrides."
-          : "Nothing runs on its own. Every client needs someone to click through the steps on their page — nothing sends unless a person asks for it."}
+          ? "Approving the copy runs the set-up chain — portal, team, Health Dash, campaign, lead list — and the campaign launches when the DB app imports its leads. The client emails those triggers would send are recorded as pending enablement, not sent. The buttons on a client page stay available as overrides."
+          : "Nothing runs on its own. Every client needs someone to click through the steps on their page — nothing builds or launches unless a person asks for it."}
       </p>
       <ConfirmButton
         label={on ? "Switch to manual" : "Switch to automatic"}
         armedLabel={on ? "Confirm — switch to manual" : "Confirm — switch to automatic"}
         title={
           on
-            ? "From now on nothing sends or builds by itself — every step needs a click."
-            : "Emails, portal, lead list and campaign launch will start firing on their own again."
+            ? "From now on nothing builds or launches by itself — every step needs a click."
+            : "Copy approval will run the set-up chain, and campaigns will launch when their leads are imported. Emails stay switched off."
         }
         disabled={busy}
         onConfirm={() =>
@@ -235,9 +238,17 @@ function StepLabelsPanel({
         className="anno"
         style={{ margin: "0 0 16px" }}
       >
-        <b>These buttons live on a client&rsquo;s own page in the tool.</b> The workspace does not
-        carry that page yet, so a name changed here shows up in the orchestrator rather than
-        anywhere in the workspace. Saving still works and is what the live tool reads.
+        <b>These names appear on every client&rsquo;s page.</b> Rename a step here and the
+        button changes both in the workspace &mdash; Onboarding &rsaquo; Pipeline, then any
+        client &mdash; and in the live orchestrator, which reads the same setting.
+        {/*
+          * This note used to say the workspace "does not carry that page yet", which
+          * was true when it was written and is not now: `/onboarding/clients/<id>` is
+          * a real screen, and `client-steps.tsx` labels its buttons through
+          * `labelFor(step, data.stepLabels)` — the very values this table edits. A
+          * caveat that has outlived its cause is worse than none, because it tells
+          * the reader their change went nowhere.
+          */}
       </div>
 
       <div className="tbl-scroll">
@@ -505,8 +516,8 @@ function HealthPanel({
     >
       {!health.configured && (
         <div className="anno" style={{ margin: "0 0 16px" }}>
-          <b>No credential for the dashboard.</b> Set <code>CLIENT_HEALTH_URL</code> and{" "}
-          <code>CLIENT_HEALTH_READ_TOKEN</code> to enable the refresh. The stored statuses below
+          <b>No credential for the dashboard.</b> Set <code>CLIENT_HEALTH_SUPABASE_URL</code> and{" "}
+          <code>CLIENT_HEALTH_SUPABASE_SERVICE_ROLE_KEY</code> to enable the refresh. The stored statuses below
           still show.
         </div>
       )}
@@ -570,61 +581,163 @@ function HealthPanel({
 
 /* ------------------------------ email account ---------------------------- */
 
-function MailboxPanel({ mailbox }: { mailbox: OnboardingSettings["mailbox"] }) {
+function MailboxPanel({
+  mailbox,
+  busy,
+  run,
+  show,
+}: {
+  mailbox: OnboardingSettings["mailbox"];
+  busy: boolean;
+  run: (what: string, fn: () => Promise<unknown>) => Promise<void>;
+  show: (t: { text: string; bad?: boolean }) => void;
+}) {
+  /*
+   * Google sends the browser back to /onboarding/settings?connected=<email> or
+   * ?error=<why> (the tool's callback does the same to /settings). Read it once,
+   * say it, and clean the address so a reload does not say it again.
+   */
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const connected = q.get("connected");
+    const error = q.get("error");
+    if (!connected && !error) return;
+    show(connected ? { text: `Connected ${connected}` } : { text: `Connection error: ${error}`, bad: true });
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [show]);
+
+  const connected = !!mailbox.email;
+  const badge = !connected ? (
+    <span className="badge s-risk"><span className="dot" />not connected</span>
+  ) : mailbox.broken ? (
+    <span className="badge s-risk"><span className="dot" />connection broken</span>
+  ) : (
+    <span className="badge s-done"><span className="dot" />connected</span>
+  );
+
+  const connectButton = (
+    <a
+      href={mailbox.connectUrl}
+      className="btn btn-pri"
+      aria-disabled={!mailbox.configured}
+      title={mailbox.configured ? "Opens Google's consent screen for the mailbox" : "Set the Google OAuth client id and secret first"}
+      onClick={(e) => { if (!mailbox.configured) e.preventDefault(); }}
+      style={mailbox.configured ? undefined : { opacity: 0.4, cursor: "not-allowed" }}
+    >
+      {connected ? "Reconnect Google account" : "Connect Google account"}
+    </a>
+  );
+
   return (
     <Panel
       title="Email account"
-      sub="The Google mailbox the orchestrator sends onboarding emails from and reads replies through."
-      right={
-        mailbox.email ? (
-          <span className="badge s-done">
-            <span className="dot" />
-            connected
-          </span>
-        ) : (
-          <span className="badge s-risk">
-            <span className="dot" />
-            not connected
-          </span>
-        )
-      }
+      sub="The Google mailbox the onboarding emails are sent from and replies are read through."
+      right={badge}
     >
-      {mailbox.email ? (
+      {!mailbox.configured && (
+        <div className="anno" style={{ margin: "0 0 16px" }}>
+          <b>Waiting on the Google OAuth client.</b> Set <code>ONBOARDING_GOOGLE_OAUTH_CLIENT_ID</code> and{" "}
+          <code>ONBOARDING_GOOGLE_OAUTH_CLIENT_SECRET</code> in the environment, then reload to enable Connect.
+        </div>
+      )}
+
+      {connected && mailbox.broken && (
+        <div className="anno" style={{ margin: "0 0 16px", borderColor: "var(--red)" }}>
+          <div>
+            <b style={{ color: "var(--red)" }}>Connection broken — reply tracking is stopped.</b>{" "}
+            {mailbox.invalidGrant
+              ? "Google revoked this mailbox's access (token revoked — password change, revoked access, or the OAuth app in Testing mode)."
+              : mailbox.error}{" "}
+            Reconnect below.
+          </div>
+        </div>
+      )}
+
+      {connected ? (
         <div style={{ display: "grid", gap: 8, fontSize: 13.5, marginBottom: 14 }}>
-          <Row k="Mailbox" v={mailbox.email} />
-          <Row k="Sends as" v={mailbox.email} />
+          <Row k="Mailbox" v={mailbox.email ?? ""} />
+          <Row k="Sends as" v={mailbox.email ?? ""} />
           <Row
             k="Reply tracking"
-            v={mailbox.hasRefreshToken ? "On (Gmail read)" : "No refresh token stored"}
+            v={mailbox.broken ? "Stopped" : mailbox.hasRefreshToken ? "On (Gmail read, every 10 minutes)" : "No refresh token stored"}
           />
-          {mailbox.connectedAt && (
-            <Row k="Connected" v={fullStamp(mailbox.connectedAt)} />
-          )}
+          <Row k="Sending" v="Switched off in the OS pending explicit enablement" />
+          {mailbox.connectedAt && <Row k="Connected" v={fullStamp(mailbox.connectedAt)} />}
+          {mailbox.checkedAt && <Row k="Last checked" v={fullStamp(mailbox.checkedAt)} />}
         </div>
       ) : (
         <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "var(--muted)" }}>
-          No account connected. Sends fall back to the service account.
+          No account connected yet. Reply tracking needs one.
         </p>
       )}
 
-      {/*
-        The honest note. The alternative — a Connect button that opens a consent
-        screen Google then refuses — is the sort of thing that looks finished and
-        is not.
-      */}
-      <div className="anno" style={{ margin: 0 }}>
-        <b>Read-only here.</b> Connecting or disconnecting a mailbox is an OAuth round trip that
-        ends at a redirect URI registered with Google for the orchestrator&rsquo;s own domain, so it
-        can only be completed there.{" "}
-        {mailbox.toolUrl && (
-          <a href={`${mailbox.toolUrl}`} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600 }}>
-            Open Onboarding settings
-          </a>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {connected && !mailbox.broken ? (
+          <Btn
+            disabled={busy}
+            title="Reads the inbox for replies on threads the onboarding emails started. Sends nothing."
+            onClick={() =>
+              void (async () => {
+                try {
+                  const r = await pollRepliesNow();
+                  show({ text: `Scanned ${r.scanned ?? 0} inbox messages, matched ${r.matched ?? 0} replies.` });
+                } catch (e) {
+                  show({ text: e instanceof Error ? e.message : "Poll failed", bad: true });
+                }
+              })()
+            }
+          >
+            Check replies now
+          </Btn>
+        ) : (
+          connectButton
         )}
-        {mailbox.hasRefreshToken === false && mailbox.email
-          ? " This mailbox has no refresh token stored, so sending is already stopped."
-          : ""}
+        {connected && !mailbox.broken && connectButton}
+        {connected && (
+          <>
+            <span style={{ flex: 1 }} />
+            <ConfirmButton
+              label="Disconnect"
+              armedLabel="Confirm disconnect"
+              title="Forget this Google account. Reply tracking stops until another is connected."
+              disabled={busy}
+              onConfirm={() => void run("Google account disconnected", disconnectMailbox)}
+            />
+          </>
+        )}
       </div>
+
+      <p style={{ marginTop: 14, fontSize: 12.5, color: "var(--muted)" }}>
+        Redirect URI to register in Google Cloud: <code>{mailbox.redirectUri}</code>
+      </p>
+    </Panel>
+  );
+}
+
+/* ------------------------------- scheduler -------------------------------- */
+
+function SchedulerNote({ scheduler }: { scheduler: OnboardingSettings["scheduler"] }) {
+  return (
+    <Panel
+      title="Background jobs"
+      sub="Reply polling, the DB-app import check, the daily Health Dash refresh, the follow-up clock and the cancelled-call alert — every 10 minutes."
+      right={
+        scheduler.running ? (
+          <span className="badge s-done"><span className="dot" />running</span>
+        ) : scheduler.enabled ? (
+          <span className="badge s-pending"><span className="dot" />starts on first request</span>
+        ) : (
+          <span className="badge s-risk"><span className="dot" />off</span>
+        )
+      }
+    >
+      <p style={{ margin: 0, fontSize: 13.5, color: "var(--muted)", lineHeight: 1.6 }}>
+        {scheduler.enabled
+          ? scheduler.running
+            ? `In-process ticker running since ${fullStamp(scheduler.startedAt)}.`
+            : "ONBOARDING_CRON_ENABLED=1 is set; the ticker starts with the first onboarding request after boot."
+          : "Set ONBOARDING_CRON_ENABLED=1 on exactly one process to run these in-process, or drive /api/tools/onboarding/cron/* from an external scheduler with the bearer secret."}
+      </p>
     </Panel>
   );
 }

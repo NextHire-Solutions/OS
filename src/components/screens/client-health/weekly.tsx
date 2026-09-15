@@ -9,8 +9,7 @@ import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
 } from "@/lib/tools/client-health/clientForm";
 import {
-  addDays, daysUntil, formatWeek, getMondayOf,
-  lastBillingDate, nextBillingDate, todayInET, weekKey,
+  daysUntil, lastBillingDate, nextBillingDate, todayInET,
 } from "@/lib/tools/client-health/derive";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
 import {
@@ -24,11 +23,13 @@ import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
 import { CampaignsPopup } from "./campaigns-popup";
 import { ClientModal } from "./client-modal";
-import { EMPTY_FILTERS, FilterBar, type FilterBarState } from "./filter-bar";
+import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
 import { removeClient, setHidden, setPaused } from "./mutations";
-import { SyncButton } from "./sync-button";
 import { ToastHost } from "./toast";
+import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
+import { SummaryCards } from "./summary-cards";
+import { setFilters, useClientHealthView } from "./view-state";
 
 /*
  * Client Health — Weekly.
@@ -47,6 +48,11 @@ import { ToastHost } from "./toast";
  * from the server's own answer rather than a fresh `new Date()`, so the first
  * client render is identical to the server's and hydration never mismatches
  * across a Monday boundary.
+ *
+ * The selected week and the filters live in view-state.ts, shared with the
+ * Bi-Weekly and Client Success screens — the tool has one header and one
+ * filtered list for all three views, so a week or a filter chosen here is in
+ * force there too.
  *
  * A cell with no data shows an em dash. Never a zero — on a health dashboard
  * "0 emails sent" is a claim, and a different one from "we have no figure".
@@ -74,18 +80,14 @@ const pct = (v: number | null, digits = 1) => (v === null ? "—" : `${v.toFixed
 const ratio = (a: number, b: number) => `${n(a)} / ${n(b)}`;
 
 function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
-  const [offset, setOffset] = useState(0);
-  const [filters, setFilters] = useState<FilterBarState>(EMPTY_FILTERS);
+  const { filters } = useClientHealthView();
+  const selected = useSelectedWeek(data);
+  const { key, isCurrent, offset } = selected;
   const [sort, setSort] = useState<Sort | null>(null);
   /** Which campaign each row's dropdown is showing. Absent means the roll-up. */
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [modal, setModal] = useState<ClientFormState | null>(null);
   const [popup, setPopup] = useState<string | null>(null);
-
-  // The week being shown, measured from the server's own answer so offset 0
-  // reproduces the server render exactly.
-  const key = offset === 0 ? data.weekKey : weekKey(addDays(`${data.weekKey}T00:00:00`, offset * 7));
-  const isCurrent = offset === 0;
 
   /*
    * The server's rows win on the first render, because `derive()` reads the
@@ -121,7 +123,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
    * sort only ever runs over what survived the filter.
    */
   const visible = useMemo(
-    () => sortWeekly(applyFilters(rows, { ...filters, sort: null }, now), sort, now),
+    () => sortWeekly(applyFilters(rows, filters, now), sort, now),
     [rows, filters, sort, now],
   );
 
@@ -140,7 +142,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const popupClient = popup ? data.clients.find((c) => c.id === popup) ?? null : null;
 
   return (
-    <div className="wrap">
+    <div className="wrap wrap-wide">
       {data.source === "seed" ? (
         <div className="anno">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
@@ -148,106 +150,13 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </div>
       ) : null}
 
-      {/* A past week is a record, not a dashboard. Said plainly, because the
-          rest of the screen looks exactly the same and the numbers do not. */}
-      {!isCurrent ? (
-        <div className="anno">
-          <b>Viewing a past week.</b> These figures are a record of that week — the row
-          actions and the sync still act on today.
-        </div>
-      ) : null}
-
-      <div
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "flex-end",
-          gap: 10, marginBottom: 18, flexWrap: "wrap",
-        }}
-      >
-        <span className="pills" style={{ padding: 0 }}>
-          <button className="fp" onClick={() => setOffset((o) => o - 1)} aria-label="Previous week" title="Previous week">←</button>
-          <button
-            className={`fp${isCurrent ? " on" : ""}`}
-            style={{ minWidth: 150 }}
-            onClick={() => setOffset(0)}
-            // Highlighted only on the current week, so the rail reads as "you
-            // are looking at something else" the moment you step back.
-            aria-label="Selected week"
-            title={isCurrent ? "Showing this week" : "Back to this week"}
-          >
-            {isCurrent ? "This Week" : formatWeek(getMondayOf(`${key}T00:00:00`))}
-          </button>
-          <button
-            className="fp"
-            onClick={() => setOffset((o) => Math.min(0, o + 1))}
-            disabled={isCurrent}
-            aria-label="Next week"
-            title={isCurrent ? "This is the current week" : "Next week"}
-            style={isCurrent ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
-          >
-            →
-          </button>
-        </span>
-
-        {!isCurrent ? (
-          <button className="btn" onClick={() => setOffset(0)} title="Back to the current week">
-            Today
-          </button>
-        ) : null}
-
-        <button className="btn" onClick={openAdd}>+ Add Client</button>
-        <SyncButton />
-      </div>
-
-      <CardGroup label="Status">
-        <Card label="Clients" value={s.total} sub="active" />
-        <Card label="At Risk" value={s.risk} sub="below half target" tone="n-risk" />
-        <Card label="On Track" value={s.ok} sub="meeting target this week" tone="n-ok" />
-        <Card label="Done" value={s.done} sub="met weekly target" tone="n-done" />
-        <Card label="Client Paused" value={s.clientPaused} sub="manually paused" />
-        <Card
-          label="By Plan"
-          value={`${s.plans.minimum} · ${s.plans.production} · ${s.plans.partner}`}
-          sub="min · prod · partner"
-          size={26}
-        />
-      </CardGroup>
-
-      <CardGroup label="Performance">
-        <Card label="Weekly Intros Sent" value={s.intros} sub="across all clients" tone="n-intros" />
-        <Card label="Weekly Target" value={s.target} sub="intros / week" />
-        <Card label="Weekly Completion" value={`${s.completionPct}%`} sub="intros vs weekly target" tone="n-green" />
-        <Card label="Monthly Intros Sent" value={s.monthlyIntros} sub="this monthly cycle" tone="n-intros" />
-        <Card
-          label="Monthly Target"
-          value={s.monthlyTarget}
-          sub={s.monthlyTarget > 0 ? "intros / month" : "no client has one set"}
-        />
-        <Card
-          label="Monthly Completion"
-          value={s.monthlyTarget > 0 ? `${s.monthlyCompletionPct}%` : null}
-          sub="intros vs monthly target"
-          tone="n-green"
-        />
-      </CardGroup>
+      <ClientHealthToolbar week={selected} onAdd={openAdd} sync={data.sync} now={now} />
 
       {/*
-        Two funnels, deliberately side by side.
-        Lifetime answers "does this motion work"; This Week answers "is it
-        working now". One without the other is how a quarter of decline hides
-        behind a good all-time average.
+        The tool renders these 24 cards above every view; the workspace used to
+        draw them on Weekly only. Shared component, same numbers on all three.
       */}
-      <FunnelGroup
-        label="Funnel — Lifetime"
-        totals={s.lifetime}
-        rates={lifetime}
-        emailsSub="all campaigns"
-      />
-      <FunnelGroup
-        label={isCurrent ? "Funnel — This Week" : `Funnel — Week of ${formatWeek(getMondayOf(`${key}T00:00:00`))}`}
-        totals={s.week}
-        rates={week}
-        emailsSub="this week"
-      />
+      <SummaryCards s={s} lifetime={lifetime} week={week} isCurrent={isCurrent} weekKey={key} />
 
       <div className="tbl-wrap">
         <div className="tbl-head">
@@ -256,7 +165,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <div className="tbl-sub">
               {isCurrent
                 ? "Live data from Instantly · Bison · MasterInbox"
-                : `Week of ${formatWeek(getMondayOf(`${key}T00:00:00`))}`}
+                : `Week of ${weekLabel(key)}`}
               {visible.length !== visibleTotal(rows) ? ` · showing ${visible.length}` : ""}
             </div>
           </div>
@@ -422,7 +331,18 @@ function Row({
               rel="noopener noreferrer"
               title="Open this client’s portal in Corofy"
               aria-label={`Open ${c.name}’s portal in Corofy`}
-              style={{ color: "var(--blue)", textDecoration: "none", fontSize: 12, fontWeight: 700 }}
+              /*
+               * Padded to a real hit area. The glyph is 9x19, which measured as
+               * the smallest click target in the workspace — and this is the
+               * link that opens a CUSTOMER'S portal, so a near-miss opens
+               * nothing and reads as the link being broken. The negative margin
+               * keeps the row's spacing exactly as it was.
+               */
+              style={{
+                color: "var(--blue)", textDecoration: "none", fontSize: 12, fontWeight: 700,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                minWidth: 24, minHeight: 24, margin: "-4px -6px", borderRadius: 6,
+              }}
             >
               ↗
             </a>
@@ -762,92 +682,6 @@ function formatDate(iso: string): string {
   });
 }
 
-/** One labelled band of six cards — the tool's own grouping. */
-function CardGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <section style={{ marginBottom: 20 }}>
-      <div className="grp-h" style={{ marginBottom: 10 }}>{label}</div>
-      <div className="cards" style={{ gridTemplateColumns: "repeat(6, 1fr)", marginBottom: 0 }}>
-        {children}
-      </div>
-    </section>
-  );
-}
-
-/**
- * One funnel band.
- *
- * Both funnels have identical shape, so they are one component — which is also
- * what guarantees the two read the same way. Each rate card carries its own
- * numerator and denominator as its subtitle, because a percentage without them
- * cannot be checked and a wrong one looks exactly like a right one.
- */
-function FunnelGroup({
-  label, totals, rates, emailsSub,
-}: {
-  label: string;
-  totals: FunnelTotals;
-  rates: ReturnType<typeof funnelRates>;
-  emailsSub: string;
-}) {
-  const funnel = totals.converted + totals.interested;
-  return (
-    <CardGroup label={label}>
-      <Card label="Emails Sent" value={totals.emails} sub={emailsSub} tone="n-emails" />
-      <Card
-        label="Reply Rate"
-        value={pct(rates.replyRate)}
-        sub={ratio(totals.replies, totals.emails)}
-        tone="n-ok"
-      />
-      <Card
-        label="Positive Reply"
-        value={pct(rates.positiveReply)}
-        sub={ratio(totals.interested, totals.replies)}
-        tone="n-ok"
-      />
-      <Card
-        label="Avg Conv."
-        value={pct(rates.convPer1k)}
-        sub={`${ratio(totals.converted, totals.emails)} · per 1k`}
-        tone="n-ok"
-      />
-      <Card label="Converted" value={totals.converted} sub="interested → intro" tone="n-green" />
-      <Card
-        label="Int → Intro"
-        value={pct(rates.intToIntro)}
-        sub={ratio(totals.converted, funnel)}
-        tone="n-blue"
-      />
-    </CardGroup>
-  );
-}
-
-function Card({
-  label, value, sub, tone, size,
-}: {
-  label: string;
-  value: number | string | null;
-  sub: string;
-  tone?: string;
-  size?: number;
-}) {
-  // An em dash string counts as missing too — that is how the rate helpers
-  // say "no denominator", and it should look the same as a null.
-  const missing = value === null || value === "—";
-  return (
-    <div className="card">
-      <div className="card-l">{label}</div>
-      <div
-        className={`card-n tnum${tone && !missing ? ` ${tone}` : ""}`}
-        style={{ ...(size ? { fontSize: size } : {}), ...(missing ? { color: "#B9C0CB" } : {}) }}
-      >
-        {missing ? "—" : typeof value === "number" ? n(value) : value}
-      </div>
-      <div className="card-s">{sub}</div>
-    </div>
-  );
-}
 
 /*
  * The public screen. `initial` is present only when the page was opened on

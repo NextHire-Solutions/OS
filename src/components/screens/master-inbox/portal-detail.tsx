@@ -39,7 +39,14 @@ import { PipelineBoard } from "@/components/master-inbox/portals-ui/pipeline-boa
 import {
   StageLabelsProvider,
   VisibleStagesProvider,
+  StageDefsProvider,
 } from "@/components/master-inbox/portals-ui/stage-labels-context";
+import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
+import { loadClientStageRows } from "@/lib/tools/master-inbox/portals/load-stages";
+import {
+  resolveStageDefs,
+  MANAGE_STAGES_FLAG,
+} from "@/lib/tools/master-inbox/portals/stage-config";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/tools/master-inbox/portals/flag";
 import { PortalsComingSoon } from "@/components/master-inbox/portals-ui/portals-coming-soon";
 
@@ -120,71 +127,106 @@ export async function PortalDetail({ clientId }: { clientId: string }) {
   // haven't opted in).
   const stageLabels = safeStageLabelsFor(fullLabels, visibleStages);
 
+  /*
+   * PER-CLIENT FEATURE FLAGS — these were resolved and then dropped.
+   *
+   * `PipelineBoard` gates five surfaces behind props that all default to
+   * false: Upload CSV, the List/Board view switch, the Source column, the
+   * board's sales-volume totals, and Manage Stages. This screen is the only
+   * place in the OS that mounts it, and it passed none of them — so those five
+   * were dead on the staff drill-down no matter which client you opened, while
+   * the same client's own portal showed them. Staff and client seeing different
+   * things is exactly what this screen exists to prevent.
+   *
+   * The flags come from `clients.feature_flags`, so the safety contract is
+   * unchanged: a real client without a flag renders precisely what it rendered
+   * before, and no gated string enters their SSR payload.
+   */
+  const flagged = { feature_flags: featureFlags };
+  const manageStagesEnabled = clientHasFeature(flagged, MANAGE_STAGES_FLAG);
+  // Only read the stage rows for a client that has the flag on — the loader
+  // fails open to [], which falls back to the canonical stages.
+  const manageStages = manageStagesEnabled
+    ? resolveStageDefs(
+        {
+          feature_flags: featureFlags,
+          stage_label_overrides: overrides,
+        },
+        await loadClientStageRows(client.id as string),
+      )
+    : undefined;
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-[#f6f7f9]">
-      {/* Slim admin bar above the embedded pipeline */}
-      <div className="shrink-0 border-b bg-white px-6 h-12 flex items-center justify-between gap-4">
-        <Link
-          href="/portals"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronLeft className="size-4" />
+    /*
+     * `mi-theme` re-points Tailwind's semantic tokens at the mockup's palette,
+     * as every other Master Inbox screen does; `mi-portals` scopes this
+     * screen's own rules. Neither was here before, so the shared skin stopped
+     * at this screen's edge.
+     */
+    <div className="mi-theme mi-portals flex flex-col !overflow-hidden">
+      {/* Staff bar above the embedded pipeline */}
+      <div className="mi-portals-bar">
+        <Link href="/inbox/portals" className="back">
+          <ChevronLeft />
           All client portals
         </Link>
-        <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <Workflow className="size-3.5" />
-            {counts.pipeline} in pipeline
+        <div className="mi-portals-counts">
+          <span>
+            <Workflow />
+            <b className="tnum">{counts.pipeline}</b> in pipeline
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <UserCheck className="size-3.5" />
-            {counts.agents} agents
+          <span>
+            <UserCheck />
+            <b className="tnum">{counts.agents}</b> agents
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Ban className="size-3.5" />
-            {counts.dnc} DNC
+          <span>
+            <Ban />
+            <b className="tnum">{counts.dnc}</b> DNC
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Users className="size-3.5" />
-            {counts.team} team
+          <span>
+            <Users />
+            <b className="tnum">{counts.team}</b> team
           </span>
         </div>
         {portalPublicUrl ? (
-          <a
-            href={portalPublicUrl}
-            target="_blank"
-            rel="noopener"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-[#1565C0] hover:underline"
-          >
+          <a href={portalPublicUrl} target="_blank" rel="noopener" className="open-live">
             Open live portal
-            <ExternalLink className="size-3.5" />
+            <ExternalLink />
           </a>
         ) : null}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <StageLabelsProvider value={stageLabels}>
           <VisibleStagesProvider value={visibleStages}>
-            <PipelineHeader clientName={client.name as string} />
-            {client.portal_token ? (
-              <>
-                <PipelineBoard
-                  token={client.portal_token as string}
-                  entries={entries}
-                  teamMembers={teamMembers}
-                  stageLabels={stageLabels}
-                  stageLabelOverrides={overrides}
-                  fubConnected={Boolean(
-                    (client as { fub_api_key?: string | null }).fub_api_key,
-                  )}
-                />
-                <PipelineFooterInfo />
-              </>
-            ) : (
-              <div className="mx-auto max-w-6xl px-6 py-12 text-center text-sm text-muted-foreground">
-                This client has no portal token yet; pipeline edits aren&apos;t wired up.
-              </div>
-            )}
+            <StageDefsProvider value={manageStages ?? null}>
+              <PipelineHeader clientName={client.name as string} />
+              {client.portal_token ? (
+                <>
+                  <PipelineBoard
+                    token={client.portal_token as string}
+                    entries={entries}
+                    teamMembers={teamMembers}
+                    stageLabels={stageLabels}
+                    stageLabelOverrides={overrides}
+                    fubConnected={Boolean(
+                      (client as { fub_api_key?: string | null }).fub_api_key,
+                    )}
+                    csvUploadEnabled={clientHasFeature(flagged, "pipeline_csv_upload")}
+                    kanbanViewEnabled={clientHasFeature(flagged, "pipeline_kanban_view")}
+                    sourceSplitEnabled={clientHasFeature(flagged, "pipeline_source_split")}
+                    boardEnhanced={clientHasFeature(flagged, "pipeline_board_enhanced")}
+                    manageStagesEnabled={manageStagesEnabled}
+                    manageStages={manageStages}
+                  />
+                  <PipelineFooterInfo />
+                </>
+              ) : (
+                <div className="mi-portals-wrap text-center text-[13.5px] text-[#9aa0ab]">
+                  This client has no portal token yet; pipeline edits aren&apos;t wired up.
+                </div>
+              )}
+            </StageDefsProvider>
           </VisibleStagesProvider>
         </StageLabelsProvider>
       </div>

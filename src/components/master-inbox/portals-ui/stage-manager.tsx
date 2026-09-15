@@ -158,7 +158,10 @@ export function StageManager({
   }
 
   return (
-    <section className="mb-4 overflow-hidden rounded-2xl border border-[#ebecf0] bg-white shadow-sm">
+    <section
+      data-stage-manager
+      className="card mb-4 overflow-hidden !p-0"
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

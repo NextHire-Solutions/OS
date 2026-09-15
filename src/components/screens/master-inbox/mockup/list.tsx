@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import type { LabelRow } from "@/lib/tools/master-inbox/inbox/labels";
+import type { ListRow } from "@/lib/tools/master-inbox/inbox/lists";
+import { InboxLink, useInboxNav } from "@/components/master-inbox/inbox-nav";
 
 import type { ThreadRow } from "@/lib/tools/master-inbox/inbox/threads";
 import { shortStamp } from "@/lib/workspace/dates";
@@ -36,7 +37,7 @@ import { labelClass } from "./tabs";
 
 export function MockupThreadList({
   threads, view, total, page, pageSize,
-  now,
+  now, labels, lists,
 }: {
   threads: ThreadRow[];
   view: string;
@@ -52,8 +53,13 @@ export function MockupThreadList({
    * it. Seeded from the server, both agree.
    */
   now: number;
+  /** Threaded through to the selection bar — see MockupSelectionBar. */
+  labels?: LabelRow[];
+  lists?: ListRow[];
 }) {
-  const router = useRouter();
+  // Pager and rows navigate through the screen's transition so the
+  // skeleton shows while the server responds — see inbox-nav.tsx.
+  const { navigate } = useInboxNav();
   const [selected, setSelected] = useState<string[]>([]);
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
 
@@ -68,8 +74,8 @@ export function MockupThreadList({
     if (next === page) return;
     const url = new URL(window.location.href);
     url.searchParams.set("page", String(next));
-    router.push(url.pathname + url.search);
-  }, [page, lastPage, router]);
+    navigate(url.pathname + url.search);
+  }, [page, lastPage, navigate]);
 
   return (
     <>
@@ -83,13 +89,16 @@ export function MockupThreadList({
         onSelectAll={() => setSelected(allIds)}
         onDone={() => setSelected([])}
         onPage={goPage}
+        labels={labels}
+        lists={lists}
+        view={view}
       />
 
       <div className="mi-list" role="list">
         {threads.map((t) => {
           const isSelected = selected.includes(t.id);
           return (
-            <Link
+            <InboxLink
               key={t.id}
               href={`/inbox/${view}/${t.id}`}
               className={`mi-row${t.seen ? " read" : ""}`}
@@ -118,17 +127,26 @@ export function MockupThreadList({
 
               <span className="sndr">{t.lead_full_name ?? t.lead_email ?? "Unknown sender"}</span>
 
+              {/*
+                The same metadata the tool's row carries, in the design's chip
+                classes. The tile above is the tool's ChannelIcon (a mail glyph
+                whatever the provider); `c-bison` / `c-inst` is its SourceBadge;
+                then the client chip, the campaign chip and the labels.
+              */}
               <span className="chips">
                 {t.source_provider === "emailbison" ? <span className="c c-bison">EmailBison</span> : null}
                 {t.source_provider === "instantly" ? <span className="c c-inst">Instantly</span> : null}
                 {t.client_name ? <span className="c c-client">{t.client_name}</span> : null}
                 {t.campaign_name ? <span className="c c-camp">{t.campaign_name}</span> : null}
                 {/*
-                  One label, not all of them. The design carries unread state in
-                  the dot and the bold sender, so extra badges only cost the
-                  width the subject and preview need.
+                  Two labels, as the tool's thread-list shows (`slice(0, 2)`).
+                  An earlier pass cut this to one to protect the preview's
+                  width; mi-inbox.css now gives each label chip its own floor
+                  and ellipsis, so the second one fits without pushing the
+                  preview out — and a thread that is both "Interested" and
+                  "Introduction" reads as both from the list.
                 */}
-                {t.labels?.slice(0, 1).map((l) => (
+                {t.labels?.slice(0, 2).map((l) => (
                   <span key={l.name} className={labelClass(l.color)}>{l.name}</span>
                 ))}
               </span>
@@ -136,7 +154,7 @@ export function MockupThreadList({
               <span className="subj">{t.subject ?? "(no subject)"}</span>
               <span className="prev">{t.last_message_preview ?? ""}</span>
               <span className="tm tnum">{shortStamp(t.last_message_at, now)}</span>
-            </Link>
+            </InboxLink>
           );
         })}
       </div>

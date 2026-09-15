@@ -5,7 +5,12 @@ import { SettingsAiLabeling } from "./settings-tabs/ai-labeling";
 import { SettingsClients } from "./settings-tabs/clients";
 import { SettingsMembers } from "./settings-tabs/members";
 import { SettingsPersonal } from "./settings-tabs/personal";
-import { SettingsWebhooks } from "./settings-tabs/webhooks";
+/*
+ * Webhooks is not offered in the workspace, at the user's request. The tab and
+ * its panel are gone from the strip; the component and its route are left in
+ * place so the tool's own copy still works and a future sync does not conflict.
+ */
+// import { SettingsWebhooks } from "./settings-tabs/webhooks";
 
 /*
  * Master Inbox settings.
@@ -43,7 +48,6 @@ export const SETTINGS_TABS = [
   { id: "clients", label: "Clients" },
   { id: "members", label: "Members" },
   { id: "personal", label: "Personal" },
-  { id: "webhooks", label: "Webhooks" },
 ] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -79,7 +83,6 @@ export async function MasterInboxSettingsScreen({ tab = "labels" }: { tab?: stri
         {active === "clients" ? <SettingsClients /> : null}
         {active === "members" ? <SettingsMembers /> : null}
         {active === "personal" ? <SettingsPersonal /> : null}
-        {active === "webhooks" ? <SettingsWebhooks /> : null}
       </div>
     </div>
   );

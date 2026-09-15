@@ -6,7 +6,10 @@ import type { CourtedState } from "@/lib/tools/agent-search/courted-state";
 import { mlsDisplayName } from "@/lib/tools/agent-search/format";
 import { buildSweepPayload } from "@/lib/tools/agent-search/payload";
 import { jobStore } from "./job-store";
-import { Actions, AgentSearchHeader, Card, Check, Field, Msg, ago, useStatus } from "./shared";
+import {
+  Actions, AgentSearchHeader, Card, Check, Field, Msg, ago, elapsedLabel, pollCourtedState,
+  useStatus, type FireReply,
+} from "./shared";
 
 /*
  * Courted accounts — add a login, choose what to import, start the sweep.
@@ -190,7 +193,7 @@ export function AgentSearchAccountsScreen() {
   const courted = job.sources.courted;
 
   return (
-    <div className="as">
+    <div className="as as-screen">
       <AgentSearchHeader
         title="Courted accounts"
         sub="Each login unlocks its own set of MLSs — add one and every agent it can see is swept in"
@@ -281,24 +284,78 @@ export function AgentSearchAccountsScreen() {
  * will actually work through — so the top row is the account it does next.
  */
 function AccountsTable({ state, onRefresh }: { state: CourtedState | null; onRefresh: () => void }) {
-  const [running, setRunning] = useState<string | null>(null);
+  /*
+   * Which rows have a re-scrape in flight, and since when. Per row, not a
+   * single flag: the tool never locked anything while a refresh ran — its
+   * own handler answers "A refresh is already running" if you ask for a
+   * second — so the other buttons stay usable and that message is shown
+   * verbatim if it comes.
+   */
+  const [inflight, setInflight] = useState<Record<string, number>>({});
   const [note, setNote] = useState("");
+  const [bad, setBad] = useState(false);
 
+  const say = (text: string, error = false) => { setNote(text); setBad(error); };
+  const mark = (email: string, on: boolean) =>
+    setInflight((cur) => {
+      const next = { ...cur };
+      if (on) next[email] = Date.now(); else delete next[email];
+      return next;
+    });
+
+  /*
+   * Fire-and-poll. The live handler resolves only when the whole-account
+   * sweep is done, hours later, so the workspace route answers 202
+   * `{ started }` and the proof of completion is `refresh_state` — the row
+   * refresh.js writes when the sweep finishes. Poll courted-state until that
+   * account's `lastRefreshedAt` moves past when we pressed the button.
+   */
   async function refreshNow(email: string) {
-    setRunning(email);
-    setNote(`Re-scraping ${email} — a whole-account sweep, this takes a while…`);
+    const before = state?.accounts.find((a) => a.email === email)?.lastRefreshedAt ?? null;
+    const t0 = Date.now();
+    mark(email, true);
+    say(`Starting a re-scrape of ${email}…`);
     try {
       const res = await fetch("/api/tools/agent-search/courted/refresh", {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
         body: JSON.stringify({ email }),
       });
-      const d = (await res.json()) as { error?: string; message?: string; status?: string };
-      setNote(d.error ? `Refresh failed: ${d.error}` : (d.message ?? "Refresh finished."));
+      const d = (await res.json()) as FireReply & { agents?: number };
+      if (!res.ok || d.error) throw new Error(d.error ?? `request failed (${res.status})`);
+      // The upstream's own early refusals come back with 200 and ok:false —
+      // "A refresh is already running", "No such account".
+      if (d.ok === false) throw new Error(d.message ?? "refresh refused");
+
+      if (!d.started) {
+        // Finished inside the start window — a tiny account, or a no-op.
+        say(`${email}: ${d.message ?? "refresh finished"}${d.agents ? ` · ${d.agents.toLocaleString("en-US")} agents` : ""}`);
+        onRefresh();
+        return;
+      }
+
+      say(`Re-scraping ${email} — a whole-account sweep. Running for under a minute…`);
+      const landed = await pollCourtedState(
+        (s) => {
+          const row = s.accounts.find((a) => a.email === email);
+          if (!row?.lastRefreshedAt || row.lastRefreshedAt === before) return false;
+          const at = Date.parse(row.lastRefreshedAt);
+          // A minute of slack: the service's clock and ours need not agree.
+          return Number.isFinite(at) && at >= t0 - 60_000;
+        },
+        { onTick: (ms) => say(`Re-scraping ${email} — a whole-account sweep. Running for ${elapsedLabel(ms)}…`) },
+      );
+      if (!landed) {
+        say(`${email} is still re-scraping after ${elapsedLabel(Date.now() - t0)} — its result will appear in the table when it finishes.`);
+        return;
+      }
+      const row = landed.accounts.find((a) => a.email === email);
+      const ok = row?.lastStatus === "ok";
+      say(`${email}: re-scrape ${ok ? "finished" : "failed"}${row?.lastMessage ? ` — ${row.lastMessage}` : ""}`, !ok);
       onRefresh();
     } catch (e) {
-      setNote("Refresh failed: " + (e instanceof Error ? e.message : "unknown error"));
+      say("Refresh failed: " + (e instanceof Error ? e.message : "unknown error"), true);
     } finally {
-      setRunning(null);
+      mark(email, false);
     }
   }
 
@@ -314,9 +371,21 @@ function AccountsTable({ state, onRefresh }: { state: CourtedState | null; onRef
   return (
     <Card
       title="Configured accounts"
-      small={`${state.accounts.length} live`}
+      small={
+        state.configuredAccounts !== null && state.configuredAccounts !== state.accounts.length
+          ? `${state.accounts.length} seen · ${state.configuredAccounts} configured`
+          : `${state.accounts.length} live`
+      }
       sub={`Read from Agent Search's own database — the MLS reach each login has, and where the ${state.refreshWindowDays}-day rolling re-scrape has got to. The tool collects all of this and shows none of it.`}
     >
+      {state.configuredAccounts !== null && state.configuredAccounts > state.accounts.length ? (
+        <Msg text={
+          `${state.configuredAccounts - state.accounts.length} configured account` +
+          `${state.configuredAccounts - state.accounts.length === 1 ? " has" : "s have"} not been seen by either scheduler yet. ` +
+          "The service keeps its logins in Railway and publishes only a count; an account appears here once the " +
+          `${state.refreshWindowDays}-day refresh or the MLS monitor has attempted it.`
+        } />
+      ) : null}
       <div style={{ display: "flex", gap: 22, flexWrap: "wrap", marginBottom: 16, fontSize: 13, color: "var(--muted)" }}>
         <span>
           Agent reach{" "}
@@ -329,7 +398,7 @@ function AccountsTable({ state, onRefresh }: { state: CourtedState | null; onRef
       </div>
 
       <div className="tbl-scroll">
-        <table className="atbl" style={{ minWidth: 940 }}>
+        <table className="atbl as-acct-tbl" style={{ minWidth: 940 }}>
           <thead>
             <tr>
               <th>Account</th><th>MLSs</th><th style={{ textAlign: "right" }}>Agents</th>
@@ -339,7 +408,7 @@ function AccountsTable({ state, onRefresh }: { state: CourtedState | null; onRef
           <tbody>
             {state.accounts.map((a) => (
               <tr key={a.email}>
-                <td style={{ fontWeight: 500, color: "var(--ink)" }}>{a.email}</td>
+                <td className="as-acct-email" style={{ fontWeight: 500, color: "var(--ink)" }}>{a.email}</td>
                 <td style={{ maxWidth: 340 }}>
                   <span className="tnum" style={{ color: "var(--ink)" }}>{a.mls.length}</span>
                   <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
@@ -347,7 +416,9 @@ function AccountsTable({ state, onRefresh }: { state: CourtedState | null; onRef
                     {a.mls.length > 3 ? ` +${a.mls.length - 3}` : ""}
                   </span>
                 </td>
-                <td className="tnum" style={{ textAlign: "right" }}>{a.total?.toLocaleString("en-US") ?? "—"}</td>
+                <td className="tnum" style={{ textAlign: "right" }} title={a.scannedAt ? `Last MLS scan ${ago(a.scannedAt)}` : "Not yet scanned by the MLS monitor"}>
+                  {a.total?.toLocaleString("en-US") ?? "—"}
+                </td>
                 <td>
                   <span style={{ color: a.overdue ? "var(--red)" : "var(--ink-2)" }}>{ago(a.lastRefreshedAt)}</span>
                   {a.overdue ? (
@@ -360,10 +431,11 @@ function AccountsTable({ state, onRefresh }: { state: CourtedState | null; onRef
                 <td style={{ textAlign: "right" }}>
                   <button
                     className="as-btn ghost" style={{ padding: "7px 12px", fontSize: 12.5 }}
-                    disabled={running !== null}
+                    disabled={a.email in inflight}
                     onClick={() => void refreshNow(a.email)}
+                    title={`Re-scrape every agent ${a.email} can see`}
                   >
-                    {running === a.email ? "Re-scraping…" : "Re-scrape"}
+                    {a.email in inflight ? "Re-scraping…" : "Re-scrape"}
                   </button>
                 </td>
               </tr>
@@ -371,7 +443,7 @@ function AccountsTable({ state, onRefresh }: { state: CourtedState | null; onRef
           </tbody>
         </table>
       </div>
-      <Msg text={note} />
+      <Msg text={note} tone={bad ? "error" : undefined} />
     </Card>
   );
 }

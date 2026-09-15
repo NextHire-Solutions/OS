@@ -86,11 +86,6 @@ export function deleteClient(id: string): Promise<unknown> {
   return send(`${BASE}/clients?id=${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-/** Pauses or resumes a client. Paused clients leave every other filter. */
-export function setClientPaused(id: string, paused: boolean): Promise<unknown> {
-  return updateClient({ id, client_paused: paused } as ClientPatch);
-}
-
 /*
  * There is deliberately no metric write here.
  *

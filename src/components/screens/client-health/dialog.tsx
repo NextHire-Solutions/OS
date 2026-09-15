@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /*
  * The overlay both Client Health dialogs sit in.
@@ -15,6 +16,22 @@ import { useEffect, useRef } from "react";
  *
  * The panel is a `.card`'s material — white on the scrim, 20px corners, the
  * raised shadow — so a dialog reads as the same system as everything under it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT PORTALS TO <body>
+ *
+ * `position: fixed` is NOT relative to the viewport when an ancestor has a
+ * transform, a filter or containment — it is relative to that ancestor. The
+ * workspace's `section.screen.on` carries both a transform and a filter for its
+ * screen transition, so the scrim rendered in place measured
+ * 284, -3518, 1218x8618: anchored to the pane, and as tall as the pane's whole
+ * scroll height. The dialog then centred in 8618px rather than in 950, which
+ * put it 292px BELOW THE FOLD — its Save and Cancel buttons off the bottom of
+ * the screen, unreachable — and pushed it right of centre by the width of the
+ * rail.
+ *
+ * Portalling to <body> puts it outside that containing block, which is why the
+ * Master Inbox dialogs centre correctly: theirs already do.
  */
 
 export function Dialog({
@@ -55,7 +72,16 @@ export function Dialog({
     (first ?? panel.current)?.focus();
   }, []);
 
-  return (
+  /*
+   * Rendered only after mount. `document` does not exist while the server
+   * renders, and a portal that differs between server and client is a
+   * hydration mismatch.
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       className="scrim on"
       style={{
@@ -92,8 +118,9 @@ export function Dialog({
         }}
       >
         {children}
-      </div>
-    </div>
+        </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 
 import { SessionKeeper } from "./session-keeper";
 import { OutboxSweeper } from "./outbox-sweeper";
@@ -73,6 +73,34 @@ export function Workspace({
   );
 
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  /*
+   * A skeleton that appears only if the wait is actually noticeable. Flashing
+   * one for a 250ms navigation is worse than showing nothing at all.
+   */
+  const [showSkeleton, setShowSkeleton] = useState(false);
+  useEffect(() => {
+    if (!isPending) { setShowSkeleton(false); return; }
+    const t = window.setTimeout(() => setShowSkeleton(true), 150);
+    return () => window.clearTimeout(t);
+  }, [isPending]);
+
+
+  /*
+   * Why a transition, and why a delayed skeleton.
+   *
+   * Every workspace screen is server-rendered by the catch-all route, so a tab
+   * switch is a round trip: measured on production, 300ms on a good screen and
+   * over a second on the roster, the inbox and the onboarding pipeline. During
+   * that window `router.push` alone leaves the PREVIOUS screen on the stage
+   * while the rail already shows the new tab as selected — the click appears to
+   * do nothing, which is the lag people describe.
+   *
+   * `startTransition` gives an `isPending` flag from the moment of the click.
+   * The skeleton waits 150ms before appearing, so the fast screens never flash
+   * one and the slow ones stop looking broken.
+   */
 
   const navigate = useCallback((id: string, fromHistory = false) => {
     /*
@@ -90,7 +118,7 @@ export function Workspace({
     if (!fromHistory && typeof window !== "undefined") {
       const path = pathForId(id);
       if (window.location.pathname !== path) {
-        if (isWorkspaceScreen) router.push(path);
+        if (isWorkspaceScreen) startTransition(() => router.push(path));
         else window.history.pushState({ id }, "", path);
       }
     }
@@ -106,7 +134,7 @@ export function Workspace({
        */
       return [...live, id].slice(-3);
     });
-  }, [screens, router]);
+  }, [screens, router, startTransition]);
 
   // The design's shortcuts.
   useEffect(() => {
@@ -136,8 +164,29 @@ export function Workspace({
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  /*
+   * Start the server work on HOVER, not on click.
+   *
+   * Next caches the prefetched payload, so by the time the pointer travels from
+   * the rail item to the mouse-down the round trip is usually already done and
+   * the switch is instant. Prefetch is idempotent and deduped by the router, so
+   * sweeping the pointer across the rail costs one request per destination.
+   */
+  const prefetch = useCallback((id: string) => {
+    if (!(id in screens)) return;
+    const path = pathForId(id);
+    if (path && typeof window !== "undefined" && window.location.pathname !== path) {
+      router.prefetch(path);
+    }
+  }, [screens, router]);
+
   const active = reachable.find((d) => d.id === activeId);
-  const crumbs = active ? [active.group, active.label] : ["Workspace", "Home"];
+  // Pages outside the rail (Account) still deserve their own name up top.
+  const crumbs = active
+    ? [active.group, active.label]
+    : activeId === "account"
+      ? ["Workspace", "Account"]
+      : ["Workspace", "Home"];
 
   useEffect(() => {
     document.title = `${crumbs[crumbs.length - 1]} — BrokerStaffer Workspace`;
@@ -164,6 +213,7 @@ export function Workspace({
           grants={grants}
           activeId={activeId}
           onNavigate={navigate}
+          onPrefetch={prefetch}
           badges={badges}
           user={user}
         />
@@ -203,10 +253,24 @@ export function Workspace({
                * truthiness: every key is present, so a null value means
                * "workspace screen, not currently built" — not "iframe pane".
                */}
+              {showSkeleton ? (
+                <section className="screen on" aria-busy="true" data-screen-skeleton="">
+                  <div className="scr-skel">
+                    <div className="scr-skel-h" />
+                    <div className="scr-skel-sub" />
+                    <div className="scr-skel-cards">
+                      <div /><div /><div /><div />
+                    </div>
+                    <div className="scr-skel-rows">
+                      {Array.from({ length: 8 }).map((_, i) => <div key={i} />)}
+                    </div>
+                  </div>
+                </section>
+              ) : null}
               {Object.entries(screens)
                 .filter(([, node]) => node != null)
                 .map(([id, node]) => (
-                  <section key={id} className="screen on">
+                  <section key={id} className="screen on" hidden={showSkeleton}>
                     {node}
                   </section>
                 ))}

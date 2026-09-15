@@ -63,7 +63,7 @@ export function AgentSearchMasterScreen() {
   const rows = data?.rows ?? [];
 
   return (
-    <div className="as">
+    <div className="as as-screen">
       <AgentSearchHeader
         title="Master List"
         sub="One row per agent — the same person on Courted, Zillow and Realtor.com merged"
@@ -77,13 +77,13 @@ export function AgentSearchMasterScreen() {
       >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <button className="as-btn" onClick={() => void build()} disabled={!canBuild || busy}
-            style={!canBuild || busy ? { opacity: 0.45, cursor: "not-allowed" } : undefined}>
+            title={canBuild ? "Merge the current run into one row per agent" : "Run a search first"}>
             {busy ? "Matching…" : data ? "Rebuild master list" : "Build master list"}
           </button>
           <button
             className="as-btn ghost"
             disabled={!job.jobId || rows.length === 0}
-            style={!job.jobId || rows.length === 0 ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
+            title={rows.length ? "Download the merged list as CSV" : "Build the master list first"}
             onClick={() => {
               if (job.jobId) {
                 window.location.href =
@@ -122,7 +122,7 @@ export function AgentSearchMasterScreen() {
       </Card>
 
       {rows.length > 0 ? (
-        <div className="as-res b">
+        <div className="as-res b as-has-rows">
           <div className="as-res-h">
             <h3>Merged agents</h3>
             <span className="as-cnt tnum">{rows.length.toLocaleString("en-US")}</span>

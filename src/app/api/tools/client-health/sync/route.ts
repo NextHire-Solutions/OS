@@ -1,60 +1,76 @@
 import { NextResponse } from "next/server";
 
-import { callClientHealth } from "@/lib/tools/client-health/session";
-import { NotConfiguredError } from "@/lib/env";
+import { authorizeSync } from "@/lib/tools/client-health/sync/auth";
+import { syncHealth, triggerSync } from "@/lib/tools/client-health/sync";
 
 /*
- * "Sync now" — triggers Client Health's OWN sync worker.
+ * "Sync now" — Client Health's sync worker, run IN THIS PROCESS.
  *
- * The workspace deliberately does not reimplement the sync. `runSync()` walks
- * Instantly and EmailBison, reconciles campaigns and pulls introductions from
- * Corofy; a second implementation of that would drift, and the way you would
- * find out is two dashboards disagreeing about a client's numbers.
+ * ---------------------------------------------------------------------------
+ * THIS USED TO BE A PROXY
  *
- * So this is a proxy: the workspace authenticates as a signed-in person and
- * presses the same button the tool's own dashboard presses. Whatever the tool
- * does today, this does.
+ * It signed in to the live Client Health app as a person and pressed that
+ * app's own button, on the reasoning that a second implementation of the sync
+ * would drift. That reasoning held while the tool was running. The tool is
+ * being switched off, and its sync-worker with it, so the worker moved here:
+ * `src/lib/tools/client-health/sync/` is the tool's `scripts/sync.ts` and its
+ * four source clients, ported step for step against the same tables.
  *
- * It is slow by nature — thousands of upstream calls — hence the long timeout.
- * Reporting a failure for a sync that actually completed would be worse than
- * waiting, because someone would press it again.
+ * ---------------------------------------------------------------------------
+ * WHO MAY CALL IT
+ *
+ * The tool's POST /api/sync/run accepted `x-sync-secret` when SYNC_SECRET was
+ * set and anyone when it was not. Here: the workspace session (the button), or
+ * CLIENT_HEALTH_SYNC_SECRET — and an unset secret closes that path rather than
+ * opening it. See sync/auth.ts.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE AT A TIME
+ *
+ * A second press while a run is in flight gets 409, not a second run. The
+ * button already disables itself; this is for the case the button cannot see —
+ * a scheduled tick that started thirty seconds ago, or a colleague's tab.
+ *
+ * Slow by nature — thousands of upstream calls — hence the long limit. The
+ * response shape is the tool's: `{ ok: true, result }`, which the SyncButton's
+ * `describeSync` reads for its "Synced · N campaigns · M intros" toast.
  */
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (!(await authorizeSync(request))) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  const outcome = triggerSync("manual");
+  if (!outcome.started) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "A sync is already running — wait for it to finish rather than starting another.",
+        busySince: outcome.busySince?.toISOString() ?? null,
+      },
+      { status: 409 },
+    );
+  }
+
   try {
-    const res = await callClientHealth("/api/sync/run", {
-      method: "POST",
-      timeoutMs: 240_000,
-    });
+    const result = await outcome.result;
+    return NextResponse.json({ ok: true, result });
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 });
+  }
+}
 
-    const body = (await res.json().catch(() => null)) as
-      | { ok?: boolean; result?: unknown; error?: string }
-      | null;
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { ok: false, error: body?.error ?? `Client Health returned ${res.status}` },
-        { status: res.status === 401 ? 502 : res.status },
-      );
-    }
-
-    return NextResponse.json({ ok: true, result: body?.result ?? null });
-  } catch (error) {
-    // A missing variable is our gap, not the tool's fault, and says which one.
-    if (error instanceof NotConfiguredError) {
-      return NextResponse.json(
-        { ok: false, error: `Sync is not configured — set ${error.varName}` },
-        { status: 501 },
-      );
-    }
-    const message =
-      error instanceof Error && error.name === "TimeoutError"
-        ? "The sync is taking longer than four minutes. It is still running — check Client Health for the result rather than starting another."
-        : error instanceof Error
-          ? error.message
-          : "Sync failed";
-    return NextResponse.json({ ok: false, error: message }, { status: 504 });
+/** Sync health for the screens' "Synced N min ago" line. Session only. */
+export async function GET(request: Request) {
+  if (!(await authorizeSync(request))) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  try {
+    return NextResponse.json(await syncHealth());
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 });
   }
 }

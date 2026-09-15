@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 
-import { formForClient, type ClientFormState } from "@/lib/tools/client-health/clientForm";
+import {
+  blankForm, formForClient, todayLocalISO, type ClientFormState,
+} from "@/lib/tools/client-health/clientForm";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
-import { deriveRows } from "@/lib/tools/client-health/summarize";
+import { deriveRows, funnelRates, summarize } from "@/lib/tools/client-health/summarize";
 import type { DashboardClient } from "@/lib/tools/client-health/types";
 import {
   successRows, sortSuccess, scoreTone, humanizeAgo, fmtDateShort,
@@ -12,10 +14,12 @@ import {
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 import { ClientModal } from "./client-modal";
-import { EMPTY_FILTERS, FilterBar, type FilterBarState } from "./filter-bar";
+import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
-import { SyncButton } from "./sync-button";
 import { ToastHost } from "./toast";
+import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
+import { SummaryCards } from "./summary-cards";
+import { setFilters, useClientHealthView } from "./view-state";
 
 /*
  * Client Health — Client Success.
@@ -67,22 +71,27 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
    * touched in a week.
    */
   const now = useMemo(() => new Date(data.now), [data.now]);
-  const [filters, setFilters] = useState<FilterBarState>(EMPTY_FILTERS);
+  // Shared with Weekly and Bi-Weekly — the tool has one header and one
+  // filtered list for all three views. See view-state.ts.
+  const { filters } = useClientHealthView();
+  const week = useSelectedWeek(data);
+  const { key, isCurrent } = week;
   const [sort, setSort] = useState<{ col: CsSortCol; dir: "desc" | "asc" } | null>(null);
   const [modal, setModal] = useState<ClientFormState | null>(null);
 
+  const openAdd = () => setModal(blankForm(todayLocalISO()));
   const openEdit = (c: DashboardClient) => setModal(formForClient(c));
 
-  // The current week's rows, derived rather than sent — see weekly.ts.
-  // The server's rows when it rendered this screen — `derive()` reads the
-  // local clock, so deriving again would break hydration. See weekly.ts.
+  // The selected week's rows, derived rather than sent — see weekly.ts.
+  // The server's rows when it rendered this screen and the week is current —
+  // `derive()` reads the local clock, so deriving again would break hydration.
   const rowsAll = useMemo(
-    () => data.rows ?? deriveRows(data.clients, data.weekKey),
-    [data.rows, data.clients, data.weekKey],
+    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
+    [data.rows, data.clients, key, isCurrent],
   );
 
   const filtered = useMemo(
-    () => applyFilters(rowsAll, { ...filters, sort: null }, now),
+    () => applyFilters(rowsAll, filters, now),
     [rowsAll, filters, now],
   );
 
@@ -90,6 +99,21 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
     () => sortSuccess(successRows(filtered.map((r) => r.client), now), sort),
     [filtered, now, sort],
   );
+  /*
+   * The 24 cards use the WEEKLY rows and summary — the same numbers Weekly
+   * shows, from the same server-derived data when on the current week — not
+   * this view's own row shape. Otherwise "At Risk" could differ between tabs.
+   */
+  const weeklyRows = useMemo(
+    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
+    [isCurrent, data.rows, data.clients, key],
+  );
+  const summary = useMemo(
+    () => (isCurrent && data.summary ? data.summary : summarize(weeklyRows, key)),
+    [isCurrent, data.summary, weeklyRows, key],
+  );
+  const lifetimeRates = funnelRates(summary.lifetime);
+  const weekRates = funnelRates(summary.week);
 
   const cycleSort = (col: CsSortCol) =>
     setSort((cur) => (cur?.col !== col ? { col, dir: "desc" } : cur.dir === "desc" ? { col, dir: "asc" } : null));
@@ -110,7 +134,7 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
   }).length;
 
   return (
-    <div className="wrap">
+    <div className="wrap wrap-wide">
       {data.source === "seed" ? (
         <div className="anno">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
@@ -118,11 +142,16 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
         </div>
       ) : null}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 18 }}>
-        <SyncButton />
-      </div>
+      <ClientHealthToolbar week={week} onAdd={openAdd} sync={data.sync} now={now} />
 
-      <div className="cards" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+      {/*
+         * Six cards, so a fixed five-column grid stranded "Hired" alone on a
+         * second row — it read as a separate section rather than the last of a
+         * set. `auto-fit` keeps them on one row where there is space and falls
+         * to a balanced 3 + 3 where there is not.
+         */}
+      <SummaryCards s={summary} lifetime={lifetimeRates} week={weekRates} isCurrent={isCurrent} weekKey={key} />
+      <div className="cards" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))" }}>
         <Card label="Clients" value={rows.length} sub="in this view" />
         <Card
           label="Avg Score"
@@ -142,13 +171,17 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
             <div className="tbl-title">Client Success</div>
             <div className="tbl-sub">
               Account health — portal activity, stagnant introductions, hires
+              {isCurrent ? "" : ` · status filters as of week of ${weekLabel(key)}`}
               {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
             </div>
           </div>
           {/* The Plan select is hidden here: this table already has a Plan
               column you can sort by, so the select would be a second way to
               say the same thing in less space. */}
-          <FilterBar value={filters} onChange={setFilters} now={now} showPlan={false} />
+          {/* The tool's filter row is identical on every view, plan select included.
+              It was hidden here on the reasoning that the Plan column is sortable;
+              the tool does not hide it, so neither does the workspace. */}
+          <FilterBar value={filters} onChange={setFilters} now={now} />
         </div>
 
         <div className="tbl-scroll">

@@ -23,22 +23,36 @@ function withEnv(value: string | undefined, run: () => void) {
   }
 }
 
-test("unset ADMIN_EMAILS makes every signed-in operator an admin", () => {
+/** Run with AUTH_USERS set to the given allow-list, restoring it after. */
+function withAuthUsers(value: string | undefined, fn: () => void) {
+  const prev = process.env.AUTH_USERS;
+  if (value === undefined) delete process.env.AUTH_USERS; else process.env.AUTH_USERS = value;
+  try { fn(); } finally {
+    if (prev === undefined) delete process.env.AUTH_USERS; else process.env.AUTH_USERS = prev;
+  }
+}
+
+test("unset ADMIN_EMAILS makes every AUTH_USERS operator an admin — and nobody else", () => {
   // The bootstrap fail-open. Without it the first deploy produces a Team
-  // access screen that refuses its only user.
-  withEnv(undefined, () => {
-    assert.equal(isAdmin("anyone@brokerstaffer.com"), true);
+  // access screen that refuses its only user. It reaches AUTH_USERS only:
+  // since 0004 an invited person can sign in too, and the first live invite
+  // came back as "Owner, every tool" while this said "everyone signed in".
+  withEnv(undefined, () => withAuthUsers("owner@brokerstaffer.com:abc, Second@brokerstaffer.com:def", () => {
+    assert.equal(isAdmin("owner@brokerstaffer.com"), true);
+    assert.equal(isAdmin("second@brokerstaffer.com"), true, "case-insensitive, like sign-in");
+    assert.equal(isAdmin("invited@brokerstaffer.com"), false, "an invited person is never an admin by default");
     assert.equal(describeAdmins().governed, false, "and it reports itself as ungoverned");
-  });
+  }));
 });
 
 test("an empty or whitespace ADMIN_EMAILS counts as unset, not as 'nobody'", () => {
   // "Nobody is an admin" would lock the workspace out of its own settings with
   // no way back short of a redeploy.
-  withEnv("  \n , ", () => {
-    assert.equal(isAdmin("anyone@brokerstaffer.com"), true);
+  withEnv("  \n , ", () => withAuthUsers("owner@brokerstaffer.com:abc", () => {
+    assert.equal(isAdmin("owner@brokerstaffer.com"), true);
+    assert.equal(isAdmin("invited@brokerstaffer.com"), false);
     assert.equal(describeAdmins().governed, false);
-  });
+  }));
 });
 
 test("once set, ADMIN_EMAILS is authoritative", () => {

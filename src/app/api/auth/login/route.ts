@@ -84,7 +84,7 @@ export async function POST(request: Request) {
   });
 
   const isSecure = new URL(request.url).protocol === "https:";
-  const response = NextResponse.json({ ok: true, grants: user.grants });
+  const response = NextResponse.json({ ok: true, grants: user.grants, mustChangePassword: user.mustChangePassword === true });
 
   response.cookies.set(
     SSO_COOKIE,

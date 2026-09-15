@@ -1,11 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { toneOf } from "@/lib/tools/onboarding/stage-types";
 
 import type { OnboardingClient, OnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
 import { PlaceholderScreen } from "../lazy";
 import { PIPELINE_URL, setClientStage, useOnboardingData } from "./actions";
-import { Toast, useToast } from "./toast";
+import { Avatar } from "./photo-input";
+import { RepliesPanel } from "./replies-panel";
+import { Btn, Toast, useToast } from "./toast";
 
 /*
  * Onboarding — the pipeline.
@@ -16,16 +19,21 @@ import { Toast, useToast } from "./toast";
  * The screen leads with what is STUCK rather than with totals. "37 clients in
  * onboarding" is true, unchanging and useless; "four have been at Copy sent
  * for a fortnight" is the thing somebody acts on. So the cards count
- * exceptions, and the default sort puts the longest-waiting first.
+ * exceptions.
+ *
+ * The table is the tool's `components/ClientTable.tsx`: its seven columns
+ * first, in its order, then the columns only this workspace has. Every header
+ * sorts on click and every column has a text filter, exactly as the tool's do.
  */
 
-/* The stage colours the orchestrator itself assigns, mapped to our palette. */
-const STAGE_TONE: Record<string, { bg: string; fg: string }> = {
-  neutral: { bg: "var(--inset-2)", fg: "var(--ink-2)" },
-  amber: { bg: "var(--yellow-bg)", fg: "var(--yellow)" },
-  blue: { bg: "var(--blue-bg, #E8F0FF)", fg: "var(--blue, #0165FE)" },
-  green: { bg: "var(--green-bg)", fg: "var(--green)" },
-};
+/*
+ * Stage tints come from the one canonical map in stage-types.ts.
+ *
+ * This file used to carry its own four-entry copy, which silently lacked `red`
+ * — the fifth colour the tool's stage editor offers. A stage coloured red drew
+ * as neutral grey here while drawing red on the Stages editor and the client
+ * ribbon. One map, one answer.
+ */
 
 const PLAN_CLASS: Record<string, string> = {
   minimum: "plan-min",
@@ -36,7 +44,59 @@ const PLAN_CLASS: Record<string, string> = {
 /** A client untouched for this long is worth a look. */
 const STALE_DAYS = 14;
 
-type Sort = "waiting" | "name" | "stage" | "created";
+/** Live status from the Health Dashboard, on our badge classes. Read-only — never written back. */
+const HEALTH_CLASS: Record<string, string> = { active: "s-done", paused: "s-pending", churned: "s-risk" };
+
+/**
+ * One column: what it is called, and the string it sorts and filters on.
+ *
+ * Sorting is string-based, as the tool's is, so numbers are zero-padded in
+ * `value` — otherwise 100 lands between 1 and 2. `text` is what the filter box
+ * matches when the padded form would read strangely ("014" for "14d").
+ */
+type Col = {
+  key: string;
+  label: string;
+  value: (c: OnboardingClient, now: number) => string;
+  text?: (c: OnboardingClient, now: number) => string;
+};
+
+const pad = (n: number | null, width = 6) => String(n ?? -1).padStart(width, "0");
+
+const COLS: Col[] = [
+  // The tool's seven, in its order and with its labels.
+  { key: "client_name", label: "Client", value: (c) => `${c.name} ${c.brand ?? ""}`.trim() },
+  { key: "contact", label: "Contact", value: (c) => `${c.contactName ?? ""} ${c.contactEmail ?? ""}`.trim() },
+  { key: "mls_location", label: "MLS / Location", value: (c) => `${c.mls ?? ""} ${c.location ?? ""}`.trim() },
+  { key: "salesperson", label: "Salesperson", value: (c) => c.salespersonName ?? "" },
+  { key: "health", label: "Health", value: (c) => c.healthStatus ?? "" },
+  { key: "stage", label: "Stage", value: (c) => c.stageName ?? "—" },
+  { key: "progress", label: "Profile", value: (c) => String(c.progress.pct).padStart(3, "0"), text: (c) => `${c.progress.pct}%` },
+  // Ours.
+  {
+    key: "waiting",
+    label: "Waiting",
+    value: (c, now) => pad(daysSince(c.updatedAt ?? c.createdAt, now)),
+    text: (c, now) => { const d = daysSince(c.updatedAt ?? c.createdAt, now); return d === null ? "" : `${d}d`; },
+  },
+  { key: "plan", label: "Plan", value: (c) => c.plan ?? "" },
+  {
+    key: "payment",
+    label: "Payment",
+    value: (c) => (c.paid ? `1 ${pad(c.amount, 9)}` : "0"),
+    text: (c) => (c.paid ? (c.amount !== null ? `paid ${formatMoney(c.amount)}` : "paid") : "not yet"),
+  },
+  { key: "campaign", label: "Campaign", value: (c) => c.campaignStatus ?? "" },
+  {
+    key: "leads",
+    label: "Leads",
+    value: (c) => pad(c.leadsExported ?? c.leadsInReview, 8),
+    text: (c) => (c.leadsExported !== null ? String(c.leadsExported) : c.leadsInReview !== null ? `${c.leadsInReview} in review` : ""),
+  },
+  { key: "intros", label: "Intros", value: (c) => pad(c.intros), text: (c) => (c.intros > 0 ? String(c.intros) : "") },
+  { key: "portal", label: "Portal", value: (c) => (c.portalUrl ? "open" : "") },
+  { key: "roster", label: "On Roster", value: (c) => (c.rosterName ? "matched" : "unmatched") },
+];
 
 export function OnboardingPipelineScreen({ initial }: { initial: OnboardingPipeline | null }) {
   /*
@@ -63,9 +123,11 @@ export function OnboardingPipelineScreen({ initial }: { initial: OnboardingPipel
 function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () => Promise<void> }) {
   // The SERVER's clock, not the browser's — see pipeline.ts.
   const now = new Date(data.now).getTime();
-  const [search, setSearch] = useState("");
   const [stage, setStage] = useState<string>("all");
-  const [sort, setSort] = useState<Sort>("waiting");
+  // The tool's defaults: by client name, ascending; filters closed and empty.
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "client_name", dir: 1 });
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [showFilters, setShowFilters] = useState(false);
   const { toast, show } = useToast();
   const [moving, setMoving] = useState<string | null>(null);
 
@@ -85,30 +147,28 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
   }
 
   const rows = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    // The stage board's click filter first, then the tool's per-column filters.
+    const active = Object.entries(filters).filter(([, v]) => v.trim());
     let list = data.clients.filter((c) => {
       if (stage !== "all" && (c.stageId ?? "none") !== stage) return false;
-      if (!q) return true;
-      return (
-        c.name.toLowerCase().includes(q) ||
-        (c.officeName ?? "").toLowerCase().includes(q) ||
-        (c.primaryContact ?? "").toLowerCase().includes(q) ||
-        (c.location ?? "").toLowerCase().includes(q)
-      );
+      return active.every(([k, v]) => {
+        const col = COLS.find((x) => x.key === k);
+        return col ? (col.text ?? col.value)(c, now).toLowerCase().includes(v.trim().toLowerCase()) : true;
+      });
     });
 
-    const waited = (c: OnboardingClient) => daysSince(c.updatedAt ?? c.createdAt, now) ?? -1;
-    list = [...list].sort((a, b) => {
-      switch (sort) {
-        case "name": return a.name.localeCompare(b.name);
-        case "stage": return (stageSort(data, a) - stageSort(data, b)) || a.name.localeCompare(b.name);
-        case "created": return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
-        // Longest-waiting first — the whole point of the screen.
-        default: return waited(b) - waited(a) || a.name.localeCompare(b.name);
-      }
-    });
+    const col = COLS.find((x) => x.key === sort.key);
+    if (col) {
+      list = [...list].sort(
+        (a, b) => col.value(a, now).localeCompare(col.value(b, now), undefined, { sensitivity: "base" }) * sort.dir,
+      );
+    }
     return list;
-  }, [data, search, stage, sort, now]);
+  }, [data, filters, stage, sort, now]);
+
+  const toggleSort = (key: string) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
+  const activeCount = Object.values(filters).filter((v) => v.trim()).length;
 
   const all = data.clients;
   const live = all.filter((c) => c.stageName === "Live").length;
@@ -131,8 +191,18 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
   }
 
   return (
-    <div className="wrap">
-      <div className="cards" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+    <div className="wrap onb-pipeline">
+      {/*
+         * Six cards in a five-column grid left "Off Roster" stranded alone on a
+         * second row, which reads as a separate section rather than the last of
+         * a set. `auto-fit` with a minimum lets the row hold all six on a wide
+         * screen and fall to a balanced 3 + 3 when it cannot, instead of always
+         * breaking 5 + 1.
+         */}
+        <div
+          className="cards"
+          style={{ gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))" }}
+        >
         <Card label="In Onboarding" value={all.length} sub="clients on the board" />
         <Card label="Live" value={live} sub="reached the final stage" tone="n-green" />
         <Card
@@ -184,7 +254,7 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
               count={all.filter((c) => c.stageId === s.id).length}
               on={stage === s.id}
               onClick={() => setStage(s.id)}
-              tone={STAGE_TONE[s.color ?? "neutral"] ?? STAGE_TONE.neutral}
+              tone={toneOf(s.color)}
             />
           ))}
           {/* A client with no stage is invisible on a stage board — which is
@@ -205,55 +275,67 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
         <div className="tbl-head">
           <div>
             <div className="tbl-title">Clients</div>
-            <div className="tbl-sub">
-              Longest-waiting first
-              {rows.length !== all.length ? ` · showing ${rows.length} of ${all.length}` : ""}
-            </div>
+            <div className="tbl-sub">Click a header to sort. Filter opens a box under every column.</div>
           </div>
+          {/* The tool's toolbar: Filter / Clear, and how many of the rows are showing. */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <input
-              className="inp"
-              placeholder="Search name, office, contact…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label="Search onboarding clients"
-            />
-            <select
-              className="inp"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as Sort)}
-              aria-label="Sort by"
-              style={{ cursor: "pointer" }}
-            >
-              <option value="waiting">Longest waiting</option>
-              <option value="stage">Stage</option>
-              <option value="name">Name</option>
-              <option value="created">Newest first</option>
-            </select>
+            <Btn onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>
+              {showFilters ? "Hide filters" : "Filter"}
+              {activeCount ? ` (${activeCount})` : ""}
+            </Btn>
+            {activeCount > 0 && <Btn onClick={() => setFilters({})}>Clear</Btn>}
+            <span className="tbl-sub tnum">
+              {rows.length} of {all.length} clients
+            </span>
           </div>
         </div>
 
         <div className="tbl-scroll">
-          <table style={{ minWidth: 1240 }}>
+          <table style={{ minWidth: 1900 }}>
             <thead>
               <tr>
-                <th>Client</th>
-                <th>Stage</th>
-                <th>Waiting</th>
-                <th>Plan</th>
-                <th>Payment</th>
-                <th>Campaign</th>
-                <th>Leads</th>
-                <th>Intros</th>
-                <th>Portal</th>
-                <th>On Roster</th>
+                {COLS.map((col) => {
+                  const on = sort.key === col.key;
+                  return (
+                    <th
+                      key={col.key}
+                      className="sortable"
+                      onClick={() => toggleSort(col.key)}
+                      title={`Sort by ${col.label}`}
+                      aria-sort={on ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+                    >
+                      {col.label}
+                      <span className={`sort-ind${on ? " on" : ""}`}>{on ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span>
+                    </th>
+                  );
+                })}
               </tr>
+              {showFilters && (
+                <tr className="filter-row">
+                  {COLS.map((col) => (
+                    <th key={col.key}>
+                      <input
+                        className="inp"
+                        type="text"
+                        placeholder={`Filter ${col.label.toLowerCase()}…`}
+                        aria-label={`Filter ${col.label}`}
+                        value={filters[col.key] ?? ""}
+                        onChange={(e) => setFilters((f) => ({ ...f, [col.key]: e.target.value }))}
+                      />
+                    </th>
+                  ))}
+                </tr>
+              )}
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
-                    No clients match {search.trim() ? `“${search.trim()}”` : "this stage"}.
+                  <td colSpan={COLS.length} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                    {all.length === 0
+                      ? "No clients yet — waiting on the first Typeform submission."
+                      : activeCount > 0
+                        ? "No clients match these filters."
+                        : "No clients at this stage."}
                   </td>
                 </tr>
               ) : (
@@ -265,6 +347,9 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
           </table>
         </div>
       </div>
+
+      {/* Where the tool puts it: under the table, hideable, remembered per browser. */}
+      <RepliesPanel replies={data.replies} />
 
       <Toast toast={toast} />
     </div>
@@ -282,14 +367,72 @@ function Row({
 }) {
   const waited = daysSince(c.updatedAt ?? c.createdAt, now);
   const done = c.stageName === "Live";
-  const tone = STAGE_TONE[data.stages.find((s) => s.id === c.stageId)?.color ?? "neutral"] ?? STAGE_TONE.neutral;
+  const tone = toneOf(data.stages.find((s) => s.id === c.stageId)?.color);
 
   return (
     <tr>
       <td>
-        <div className="cname">{c.name}</div>
-        {c.officeName && c.officeName !== c.name ? <div className="csince">{c.officeName}</div> : null}
-        {c.location ? <div className="csince">{c.location}</div> : null}
+        {/*
+          The row's way into the client.
+
+          This table used to dead-end: 38 clients you could move between stages
+          and not one you could open. A plain <a> rather than a router push —
+          /onboarding/clients/<id> resolves to this same destination id, so the
+          shell keeps its place and the server builds the detail screen, exactly
+          as /inbox/portals/<id> already works.
+
+          Their photo when they have one, otherwise initials — as the tool's
+          Avatar does. Brand below the name only when it says something new.
+        */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Avatar src={c.photoUrl} name={c.name} size={30} />
+          <div>
+            <a
+              href={`/onboarding/clients/${c.id}`}
+              className="cname"
+              title={`Open ${c.name}`}
+              style={{ textDecoration: "none", color: "var(--ink)" }}
+            >
+              {c.name}
+            </a>
+            {c.brand && c.brand !== c.name ? <div className="csince">{c.brand}</div> : null}
+          </div>
+        </div>
+      </td>
+
+      <td>
+        {c.contactName ?? <span className="api-none">—</span>}
+        {c.contactEmail ? <div className="cell-sub">{c.contactEmail}</div> : null}
+      </td>
+
+      <td>
+        {c.mls ?? <span className="api-none">—</span>}
+        {c.location ? <div className="cell-sub">{c.location}</div> : null}
+      </td>
+
+      <td>
+        {c.salespersonName ? (
+          <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+            <Avatar src={c.salespersonPhoto} name={c.salespersonName} size={30} />
+            {c.salespersonName}
+          </span>
+        ) : (
+          <span className="badge s-neutral">unassigned</span>
+        )}
+      </td>
+
+      <td>
+        {/* Read from the Health Dashboard by the orchestrator's daily sync; never written back. */}
+        {c.healthStatus ? (
+          <span className={`badge ${HEALTH_CLASS[c.healthStatus] ?? "s-neutral"}`}>
+            <span className="dot" />
+            {c.healthStatus}
+          </span>
+        ) : (
+          <span className="mut" title="No matching client on the Health Dashboard">
+            —
+          </span>
+        )}
       </td>
 
       <td>
@@ -325,6 +468,10 @@ function Row({
             </option>
           ))}
         </select>
+      </td>
+
+      <td>
+        <ProgressCell progress={c.progress} />
       </td>
 
       <td>
@@ -414,6 +561,23 @@ function Row({
   );
 }
 
+/**
+ * Profile completed — the share of onboarding steps that have run for this
+ * client. It counts ticks, so it moves only when someone actually runs a step.
+ */
+function ProgressCell({ progress }: { progress: OnboardingClient["progress"] }) {
+  const pct = progress.pct;
+  const tone = pct === 100 ? "green" : pct >= 50 ? "amber" : "red";
+  return (
+    <div className="progress" title={`${progress.done} of ${progress.total} steps done`}>
+      <div className="progress-track">
+        <span className={`progress-fill ${tone}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="progress-pct">{pct}%</span>
+    </div>
+  );
+}
+
 function StageChip({
   label, count, on, onClick, tone,
 }: {
@@ -481,8 +645,4 @@ function Card({ label, value, sub, tone }: { label: string; value: number; sub: 
       <div className="card-s">{sub}</div>
     </div>
   );
-}
-
-function stageSort(data: OnboardingPipeline, c: OnboardingClient): number {
-  return data.stages.find((s) => s.id === c.stageId)?.sort ?? 999;
 }

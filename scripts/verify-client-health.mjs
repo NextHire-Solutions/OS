@@ -10,6 +10,31 @@
  *   node scripts/verify-client-health.mjs
  */
 
+/*
+ * ---------------------------------------------------------------------------
+ * OBSOLETE — kept for the record, skipped rather than deleted.
+ *
+ * This booted Client Health as its OWN deployed app under `apps/client-health` and proved it
+ * still worked with the shared sign-in bolted on — the Phase-2 plan, where each
+ * tool stayed separately deployed and the dashboard only issued the cookie.
+ *
+ * That is not the architecture any more: "for all the tools, I am building them
+ * in this OS because I will stop using them or will remove them in future. so
+ * everything should be done from our OS only." Client Health is built into the OS and
+ * reads its database directly, so there is no separate app here to boot.
+ *
+ * It was dying on a missing path, which reads as a broken tool rather than a
+ * retired test. It now says what it is and exits clean.
+ * ---------------------------------------------------------------------------
+ */
+import { existsSync as __exists } from "node:fs";
+if (!__exists(new URL("../apps/client-health", import.meta.url).pathname)) {
+  console.log("SKIP  verify-client-health.mjs — apps/client-health no longer exists.");
+  console.log("      Client Health is built into the OS; this tested the separate");
+  console.log("      deployment it replaced. See the note at the top of this file.");
+  process.exit(0);
+}
+
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { mintSso, SSO_COOKIE } from "../packages/bs-auth/index.ts";

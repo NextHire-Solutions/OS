@@ -11,6 +11,36 @@
  *   node scripts/verify-killswitch.mjs
  */
 
+/*
+ * ---------------------------------------------------------------------------
+ * OBSOLETE — kept for the record, skipped rather than deleted.
+ *
+ * This proved the rollout story for an architecture we no longer use: Client
+ * Health patched IN PLACE as its own deployed app under `apps/client-health`,
+ * shipped with `BS_SSO_SECRET` unset so it behaved exactly as production did,
+ * then switched on when ready.
+ *
+ * That app is not part of this repo any more. Client Health is built INTO the
+ * OS now, reading its database directly — the decision was "everything should
+ * be done from our OS only, read and write everything from all the tools" —
+ * so there is no separate artefact to boot twice and no variable to flip.
+ *
+ * It was failing with ENOENT on a cwd that no longer exists, which reads as a
+ * broken killswitch rather than a retired one. A suite that is red for reasons
+ * nobody can act on is a suite people stop reading, so it now says what it is
+ * and exits clean.
+ * ---------------------------------------------------------------------------
+ */
+import { existsSync } from "node:fs";
+const APP = new URL("../apps/client-health", import.meta.url).pathname;
+if (!existsSync(APP)) {
+  console.log("SKIP  verify-killswitch — apps/client-health no longer exists.");
+  console.log("      Client Health is built into the OS; the in-place rollback");
+  console.log("      story this asserted does not apply any more. See the note");
+  console.log("      at the top of this file.");
+  process.exit(0);
+}
+
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createHmac } from "node:crypto";
@@ -32,7 +62,16 @@ function legacyCookie(password) {
 }
 
 async function boot(port, env) {
-  const server = spawn("npx", ["next", "start", "-p", String(port)], {
+  /*
+   * The next CLI run by THIS node, rather than `npx` or the .bin symlink.
+   * spawn() without a shell does not search the npm bin path (ENOENT), and the
+   * symlink only moved the problem: its `#!/usr/bin/env node` shebang needs
+   * `node` on the spawned PATH, which it is not here — so that died with the
+   * same ENOENT, pointing at a file that plainly exists. Invoking the script
+   * with `process.execPath` needs neither a PATH lookup nor a shebang.
+   */
+  const nextBin = new URL("../node_modules/next/dist/bin/next", import.meta.url).pathname;
+  const server = spawn(process.execPath, [nextBin, "start", "-p", String(port)], {
     cwd: new URL("../apps/client-health", import.meta.url).pathname,
     env: { ...process.env, NODE_ENV: "production", ...env },
     stdio: ["ignore", "pipe", "pipe"],

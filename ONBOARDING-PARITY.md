@@ -95,7 +95,61 @@ an oversight.
 
 ---
 
-## The client detail page — the real gap
+## The client detail page — ✅ built (a later pass)
+
+> **Update.** All four pages are now ported. See **ONBOARDING-CLIENT-WIRING.md**
+> for their addresses and the change to `src/app/[[...slug]]/page.tsx` that
+> gives them one. Everything on them reads and writes Onboarding's database
+> directly — profile, custom fields, MLS picker, the three assignment pickers,
+> stage, photo, copy approval, and the leads / agents / team tabs.
+>
+> **The fourteen step buttons are rendered and NONE OF THEM FIRES.** They post to
+> a route that validates in full, logs what it would have done, and answers 501.
+> The analysis below is what led to that decision and is left as written.
+
+### Feature by feature, against the tool's four pages
+
+| `/clients/[id]` | Status | Note |
+|---|---|---|
+| Client photo — pick, resize in-browser, save | ✅ | `PhotoInput`, shared with Settings |
+| Name, brand / office, stage badge, health badge, plan | ✅ | |
+| Stage picker — click any stage, forwards or back | ✅ | the tool's chevron ribbon, as workspace `.tg` toggles |
+| Contact name / role / email / phone | ✅ | email read-only, as in the tool |
+| **MLS picker** — search the `mls` table, add / remove codes | ✅ | picks only; free text would build an empty list in silence |
+| Location, timezone, onboarding call, sender, filter ranges | ✅ | the call is formatted in the CLIENT's timezone, server-side |
+| **Custom fields** — add / edit / retype / reorder / delete | ✅ | label suggestions from every client's fields |
+| **Salesperson** — type or pick; a new name creates the person | ✅ | find-or-create, then assign |
+| **Account manager** — pick from the roster | ✅ | a hidden holder stays selectable |
+| **TAC** — type or pick from the three | ✅ | |
+| Step progress bar, "N of 14 done" | ✅ | counted from real `orch_connector_deliveries` rows |
+| **The 14 step buttons, with ✓ marks and "last attempt failed"** | 🔸 | **rendered, validated, and refused** — see below |
+| Copy approval — Mark approved / Needs another round | ✅ | writes the flag; the tool's 6-step automation chain is NOT ported |
+| Pause campaign | 🔸 | stubbed with the fourteen |
+| "Run every remaining step at once" | 🔸 | stubbed — six external side effects from one press |
+| **Stripe box** — paid badge, amount, outstanding link | ✅ read | state is live from the row |
+| Stripe box — Send payment link | 🔸 | stubbed: creates a real Stripe link and emails it |
+| Campaign id / status / lead count / portal link | ✅ | *(the workspace's own panel; the tool scatters these)* |
+| Client replies (last 20) | ✅ | |
+| Delivery log (last 20) | ✅ | |
+| Team / Your agents summary cards | ✅ | as tabs with counts, rather than two 5-row previews |
+| `syncBisonImports()` on every page view | ⛔️ | an EmailBison call per page view; the orchestrator's cron does this |
+
+| `/clients/[id]/leads` | Status |
+|---|---|
+| Total, top 500 by sales volume, joined to the scraped agent row | ✅ |
+| The three states: list built / with the DB app / leads in campaign | ✅ |
+| "Showing the top N of M" when truncated | ✅ |
+
+| `/clients/[id]/agents` | Status |
+|---|---|
+| Their roster (source ≠ typeform), never contacted | ✅ |
+| Do-not-contact entries from the intake form | ✅ |
+| Link to the client's own portal DNC page | ✅ |
+
+| `/clients/[id]/team` | Status |
+|---|---|
+| The client's own people we work with, with the portal Team link | ✅ |
+
 
 `/clients/[id]` and its three sub-pages exist in the product and appear nowhere
 in the OS nav. This is the largest single piece of the tool that is not ported,
@@ -131,6 +185,20 @@ ready, but I have deliberately built **no route that can fire one**. That wants
 its own task, its own credentials in `.env.local`, and a decision about whether
 the workspace fires them itself or calls the orchestrator's endpoint the way the
 Client Health sync button does.
+
+**What the later pass actually did.** It built the screens and wired every step
+button to `POST /api/tools/onboarding/clients/:id/steps`, which validates the
+request as thoroughly as the real action would — including the tool's own
+once-only `hasDelivery` guards — then refuses. A 400 carries the live action's
+own sentence; a 501 names the service that would have been called, what that
+call does, whether it is reversible, and the credential the workspace lacks.
+There is no success branch. `step-effects.ts` holds the catalogue of effects and
+a test asserts every step in `steps.ts` has an entry, so a step added later
+cannot become a button whose blast radius nobody wrote down.
+
+Also not ported, deliberately: the automation chain behind "Mark approved" (six
+external side effects from one click — the OS writes the flag only), and the
+`syncBisonImports()` EmailBison call the tool makes on every page view.
 
 ---
 

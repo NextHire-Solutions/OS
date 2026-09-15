@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Pencil, Search } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 import { Button } from "@/components/mi-ui/button";
-import { Input } from "@/components/mi-ui/input";
 import { Switch } from "@/components/mi-ui/switch";
 import {
   Dialog,
@@ -13,23 +12,50 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/mi-ui/dialog";
-import { LabelChip } from "@/components/master-inbox/label-chip";
-import { cn } from "@/lib/tools/master-inbox/utils";
 import type { LabelRow } from "@/lib/tools/master-inbox/inbox/labels-shared";
+import {
+  Btn,
+  Chip,
+  ConfirmButton,
+  Field,
+  Find,
+  IconBtn,
+  ToastHost,
+  ToggleRow,
+  useShowToast,
+} from "./ui";
+
+/*
+ * Labels.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT MOVED AND WHAT DID NOT
+ *
+ * The markup is now the design's — `.tbl-wrap` + `.atbl` for the list, `.inp`
+ * and `.sel` for the controls, the recessed `.mis-tog` group for the switches.
+ * Every fetch, every optimistic update and every field is the code that was
+ * already here.
+ *
+ * Two behaviour changes, both deliberate, both in SETTINGS-PARITY.md:
+ *
+ *   · delete was `window.confirm`, which suspends the page and therefore
+ *     cannot be driven by any automated check. It is now the workspace's
+ *     arm-then-fire button, and the sentence the native dialog carried moves
+ *     to the button's title and its armed caption.
+ *   · a failed delete was `alert()`. It is now the screen's own status line,
+ *     which is both visible in the design and readable by a test.
+ *
+ * The colour picker previews the result as the chip the INBOX will actually
+ * draw (`.lc-*`), rather than a Tailwind swatch that only approximates it.
+ */
 
 type Color = "green" | "red" | "amber" | "zinc" | "stone" | "pink" | "blue";
 type Sentiment = "positive" | "negative" | "neutral";
 type Platform = "email" | "both";
 
-const COLOR_OPTIONS: { value: Color; swatch: string }[] = [
-  { value: "green", swatch: "bg-emerald-400" },
-  { value: "red", swatch: "bg-red-400" },
-  { value: "amber", swatch: "bg-amber-400" },
-  { value: "blue", swatch: "bg-blue-400" },
-  { value: "pink", swatch: "bg-pink-400" },
-  { value: "zinc", swatch: "bg-zinc-400" },
-  { value: "stone", swatch: "bg-stone-400" },
-];
+/* The same seven values the API accepts, ordered the way the design orders a
+   palette: the three semantic tones, then blue, then the two neutrals. */
+const COLOR_OPTIONS: Color[] = ["green", "red", "amber", "blue", "pink", "zinc", "stone"];
 
 interface FormState {
   name: string;
@@ -49,8 +75,17 @@ const EMPTY_FORM: FormState = {
   mirror_to_emailbison: false,
 };
 
-export function LabelsManager({ labels: initial }: { labels: LabelRow[] }) {
+export function LabelsManager({ labels }: { labels: LabelRow[] }) {
+  return (
+    <ToastHost>
+      <LabelsBody labels={labels} />
+    </ToastHost>
+  );
+}
+
+function LabelsBody({ labels: initial }: { labels: LabelRow[] }) {
   const router = useRouter();
+  const show = useShowToast();
   // Mirror the server-rendered list into local state so create / edit /
   // delete mutations can update the UI optimistically without waiting
   // for the next router refresh round-trip. The server is still the
@@ -93,7 +128,9 @@ export function LabelsManager({ labels: initial }: { labels: LabelRow[] }) {
   async function handleSubmit() {
     setError(null);
     setPending(true);
-    const url = editing ? `/api/tools/master-inbox/labels/${editing.id}` : "/api/tools/master-inbox/labels";
+    const url = editing
+      ? `/api/tools/master-inbox/labels/${editing.id}`
+      : "/api/tools/master-inbox/labels";
     const method = editing ? "PATCH" : "POST";
     const res = await fetch(url, {
       method,
@@ -145,23 +182,24 @@ export function LabelsManager({ labels: initial }: { labels: LabelRow[] }) {
       setLabels((cur) => [...cur, newLabel]);
     }
     setOpen(false);
+    show({ text: editing ? `Saved “${form.name}”` : `Created “${form.name}”` });
     // Fire-and-forget background refresh — no startTransition wrapper,
     // no await. Local state is already correct.
     router.refresh();
   }
 
   async function handleDelete(l: LabelRow) {
-    if (!confirm(`Delete label "${l.name}"?`)) return;
     const previous = labels;
     // Optimistic remove first.
     setLabels((cur) => cur.filter((x) => x.id !== l.id));
     const res = await fetch(`/api/tools/master-inbox/labels/${l.id}`, { method: "DELETE" });
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      alert(json.error ?? "Delete failed");
+      show({ text: json.error ?? "Delete failed", bad: true });
       setLabels(previous);
       return;
     }
+    show({ text: `Deleted “${l.name}”` });
     router.refresh();
   }
 
@@ -170,185 +208,181 @@ export function LabelsManager({ labels: initial }: { labels: LabelRow[] }) {
   );
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-          <Input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search labels"
-            className="pl-8 h-8 text-sm"
-          />
-        </div>
-        <Button size="sm" onClick={openCreate} className="gap-1.5">
-          <Plus className="size-3.5" />
-          Create Label
-        </Button>
+    <>
+      <div className="mis-bar">
+        <Find
+          value={filter}
+          onChange={setFilter}
+          label="Search labels"
+          placeholder="Search labels"
+          name="label_search"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+        />
+        <span className="mis-count tnum">
+          {visible.length} of {labels.length} label{labels.length === 1 ? "" : "s"}
+        </span>
+        <span className="mis-gap" />
+        <Btn primary onClick={openCreate} data-mis="create-label">
+          <Plus aria-hidden />
+          Create label
+        </Btn>
       </div>
 
-      <div className="rounded-lg border bg-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 text-xs text-muted-foreground">
-            <tr>
-              <th className="text-left font-medium px-4 py-2">Label</th>
-              <th className="text-left font-medium px-4 py-2">Sentiment</th>
-              <th className="text-left font-medium px-4 py-2">Platform</th>
-              <th className="text-left font-medium px-4 py-2">Obligation</th>
-              <th className="text-left font-medium px-4 py-2">Source</th>
-              <th className="w-10" />
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {visible.length === 0 ? (
+      <div className="tbl-wrap mis-sec">
+        <div className="tbl-scroll">
+          <table className="atbl">
+            <thead>
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">
-                  No labels match.
-                </td>
+                <th>Label</th>
+                <th>Sentiment</th>
+                <th>Platform</th>
+                <th>Obligation</th>
+                <th>Source</th>
+                <th aria-label="Actions" />
               </tr>
-            ) : (
-              visible.map((l) => (
-                <tr key={l.id} className="hover:bg-muted/30">
-                  <td className="px-4 py-2">
-                    <LabelChip name={l.name} color={l.color} />
-                  </td>
-                  <td className="px-4 py-2 capitalize text-muted-foreground">{l.sentiment}</td>
-                  <td className="px-4 py-2 capitalize text-muted-foreground">{l.platform}</td>
-                  <td className="px-4 py-2 text-muted-foreground">
-                    {l.obligation ? "Yes" : "No"}
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">
-                    {l.is_system ? "System" : "Custom"}
-                  </td>
-                  <td className="px-2 py-2">
-                    <div className="flex items-center gap-0.5 justify-end">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(l)}
-                        className="size-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                        aria-label="Edit"
-                      >
-                        <Pencil className="size-3.5" />
-                      </button>
-                      {!l.is_system ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(l)}
-                          disabled={pending}
-                          className="size-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-red-600 transition-colors"
-                          aria-label="Delete"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      ) : null}
-                    </div>
+            </thead>
+            <tbody>
+              {visible.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="mis-empty-cell">
+                    No labels match.
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                visible.map((l) => (
+                  <tr key={l.id} data-mis-label={l.name}>
+                    <td>
+                      <Chip name={l.name} color={l.color} />
+                    </td>
+                    <td className="mut mis-cap">{l.sentiment}</td>
+                    <td className="mut mis-cap">{l.platform}</td>
+                    <td className="mut">{l.obligation ? "Yes" : "No"}</td>
+                    <td className="mut">{l.is_system ? "System" : "Custom"}</td>
+                    <td className="mis-cell-a">
+                      <div>
+                        <IconBtn label={`Edit ${l.name}`} onClick={() => openEdit(l)}>
+                          <Pencil aria-hidden />
+                        </IconBtn>
+                        {/*
+                          System labels seed every workspace and the API refuses
+                          to delete them, so the control is ABSENT rather than
+                          disabled — a greyed button invites a click to find out
+                          why, which is the wrong way to learn a rule.
+                        */}
+                        {!l.is_system ? (
+                          <ConfirmButton
+                            compact
+                            label="Delete"
+                            armedLabel="Confirm delete"
+                            title={`Delete label “${l.name}”? It comes off every conversation carrying it.`}
+                            disabled={pending}
+                            onConfirm={() => void handleDelete(l)}
+                          >
+                            <Trash2 aria-hidden />
+                          </ConfirmButton>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? "Edit label" : "Create label"}</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Name</label>
-              <Input
+          <div className="mis-form">
+            <Field label="Name">
+              <input
+                className="inp"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="e.g. Interested"
+                aria-label="Label name"
                 autoFocus
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Color</label>
-              <div className="flex flex-wrap gap-1.5">
+            <div className="mis-f">
+              <span className="mis-l">Colour</span>
+              <div className="mis-sw" role="group" aria-label="Label colour">
                 {COLOR_OPTIONS.map((c) => (
                   <button
-                    key={c.value}
+                    key={c}
                     type="button"
-                    onClick={() => setForm({ ...form, color: c.value })}
-                    className={cn(
-                      "size-7 rounded-full border-2 transition-all",
-                      c.swatch,
-                      form.color === c.value
-                        ? "border-foreground scale-110"
-                        : "border-transparent hover:border-muted-foreground/40",
-                    )}
-                    aria-label={c.value}
+                    onClick={() => setForm({ ...form, color: c })}
+                    className={`mis-c-${c}`}
+                    aria-pressed={form.color === c}
+                    aria-label={c}
+                    title={c}
                   />
                 ))}
               </div>
-              <div className="pt-2">
-                <span className="text-xs text-muted-foreground mr-2">Preview:</span>
-                <LabelChip name={form.name || "Sample"} color={form.color} />
+              <div className="mis-prev">
+                Preview
+                <Chip name={form.name || "Sample"} color={form.color} />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Sentiment</label>
+            <div className="mis-g mis-g2">
+              <Field label="Sentiment">
                 <select
+                  className="sel"
+                  aria-label="Sentiment"
                   value={form.sentiment}
-                  onChange={(e) =>
-                    setForm({ ...form, sentiment: e.target.value as Sentiment })
-                  }
-                  className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  onChange={(e) => setForm({ ...form, sentiment: e.target.value as Sentiment })}
                 >
                   <option value="positive">Positive</option>
                   <option value="negative">Negative</option>
                   <option value="neutral">Neutral</option>
                 </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Platform</label>
+              </Field>
+              <Field label="Platform">
                 <select
+                  className="sel"
+                  aria-label="Platform"
                   value={form.platform}
-                  onChange={(e) =>
-                    setForm({ ...form, platform: e.target.value as Platform })
-                  }
-                  className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  onChange={(e) => setForm({ ...form, platform: e.target.value as Platform })}
                 >
                   <option value="both">Both</option>
                   <option value="email">Email only</option>
                 </select>
-              </div>
+              </Field>
             </div>
 
-            <div className="flex items-center justify-between rounded-md border px-3 py-2">
-              <div>
-                <p className="text-xs font-medium">Obligation</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Threads with this label appear in Needs Reply.
-                </p>
-              </div>
-              <Switch
-                checked={form.obligation}
-                onCheckedChange={(v) => setForm({ ...form, obligation: v })}
-              />
+            <div>
+              <ToggleRow title="Obligation" hint="Threads with this label appear in Needs Reply.">
+                <Switch
+                  checked={form.obligation}
+                  aria-label="Obligation"
+                  onCheckedChange={(v) => setForm({ ...form, obligation: v })}
+                />
+              </ToggleRow>
+              <ToggleRow
+                title="Mirror to EmailBison"
+                hint="Sync this label as a tag on EmailBison replies."
+              >
+                <Switch
+                  checked={form.mirror_to_emailbison}
+                  aria-label="Mirror to EmailBison"
+                  onCheckedChange={(v) => setForm({ ...form, mirror_to_emailbison: v })}
+                />
+              </ToggleRow>
             </div>
 
-            <div className="flex items-center justify-between rounded-md border px-3 py-2">
-              <div>
-                <p className="text-xs font-medium">Mirror to EmailBison</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Sync this label as a tag on EmailBison replies.
-                </p>
-              </div>
-              <Switch
-                checked={form.mirror_to_emailbison}
-                onCheckedChange={(v) => setForm({ ...form, mirror_to_emailbison: v })}
-              />
-            </div>
-
-            {error ? <p className="text-xs text-red-600">{error}</p> : null}
+            {error ? (
+              <p className="mis-err" role="alert">
+                {error}
+              </p>
+            ) : null}
           </div>
 
           <DialogFooter>
@@ -361,6 +395,6 @@ export function LabelsManager({ labels: initial }: { labels: LabelRow[] }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

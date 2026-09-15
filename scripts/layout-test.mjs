@@ -14,7 +14,9 @@
 import fs from "node:fs";
 
 const BASE = process.argv[2] || "http://localhost:3210";
-const CDP = "http://localhost:9333";
+/* Overridable so a second agent can drive its own Chrome and its own screens
+   without touching the default port. Defaults are unchanged. */
+const CDP = process.env.CDP_URL || "http://localhost:9333";
 const WIDTH = Number(process.argv[3] || 1440);
 
 const { mintSso, ALL_TOOLS } = await import("../src/lib/bs-auth.ts");
@@ -22,7 +24,9 @@ const raw = fs.readFileSync(".env.local", "utf8");
 const pick = (k) => { const m = raw.match(new RegExp(`^${k}=(.*)$`, "m")); return m ? m[1].trim().replace(/^["']|["']$/g, "") : ""; };
 const cookie = await mintSso(pick("BS_SSO_SECRET") || pick("AUTH_SECRET"), { email: "admin@outreachify.io", grants: [...ALL_TOOLS], ver: 1 });
 
-const SCREENS = ["/inbox/all-email", "/inbox/archive", "/inbox/settings/templates", "/", "/client-health/weekly"];
+const SCREENS = process.env.SCREENS
+  ? process.env.SCREENS.split(",").map((s) => s.trim()).filter(Boolean)
+  : ["/inbox/all-email", "/inbox/archive", "/inbox/settings/templates", "/", "/client-health/weekly"];
 let bad = 0;
 
 for (const path of SCREENS) {

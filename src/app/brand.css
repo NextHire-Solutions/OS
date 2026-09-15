@@ -41,6 +41,12 @@
 
   /* ── SURFACES — four depths. A fifth is a smell. ───────────────────── */
   --background: oklch(0.985 0.002 261);   /* page canvas, faintly brand-tinted */
+  /* Raised surfaces. `.mi-theme` overrides these; these are the fallback so a
+     popover outside the inbox is not transparent either. */
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.006 261);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.006 261);
   --surface: oklch(1 0 0);                /* tool card, top bar */
   --surface-elevated: oklch(1 0 0);       /* palette, popover */
   --surface-sunken: oklch(0.968 0.003 261); /* chips, skeletons, fallback strip */

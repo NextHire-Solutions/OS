@@ -412,8 +412,18 @@ tbody tr:hover{background:var(--inset)}
 .pp-tab{flex:1;text-align:center;font-size:13.5px;padding:8px 10px;color:var(--muted);
         border-bottom:0;border-radius:9px;text-transform:capitalize;cursor:pointer;font-weight:500}
 .pp-tab.on{color:var(--ink);font-weight:600;background:var(--surface);box-shadow:var(--sh-card)}
+/* `flex:none` here is load-bearing, not tidying.
+   `.pp` is a flex column with a constrained height, so its children shrink. An
+   item's automatic minimum size normally stops that at its content — but
+   `min-height:auto` only applies while `overflow` is `visible`, and this card
+   sets `overflow:hidden` for its rounded corners. That drops its minimum to
+   zero, so the card was squashed to 199px around 518px of content and silently
+   ate 319px of it: seven rows rendered, roughly two visible, and scrolling the
+   panel could never reveal them because the clipping was INSIDE the card.
+   Holding its natural height lets `.pp` scroll instead, which is what its
+   `overflow-y:auto` is for. */
 .pcard{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);
-       box-shadow:var(--sh-card);overflow:hidden}
+       box-shadow:var(--sh-card);overflow:hidden;flex:none}
 .pcard-h{padding:14px 16px;font-size:14.5px;font-weight:600;color:var(--ink);display:flex;
          justify-content:space-between;align-items:center}
 .prow{display:flex;gap:12px;padding:11px 16px;border-top:1px solid var(--line-soft);align-items:flex-start}
@@ -913,7 +923,13 @@ body.resizing{cursor:col-resize;user-select:none}
      became an accordion, so section headers and chevrons leaked through */
   :root{--rail-w:76px}
   .rail .lbl,.rail .wordmark,.rail .who,.rail .pill,
-  .rail .sec-h,.acc-btn .chev,.acc-list{display:none}
+  /* `.rail .acc-list`, not `.acc-list`.
+     A media query adds NO specificity, so the bare `.acc-list{display:flex}`
+     defined further down this file (it comes later, same specificity) won and
+     the leaf list survived on narrow screens — 46px-wide buttons inside a 35px
+     rail, spilling over the thread list. The two neighbours here are already
+     two-class selectors, which is why only this one broke. */
+  .rail .sec-h,.acc-btn .chev,.rail .acc-list{display:none}
   .rail-head{justify-content:center}
   .rail .nav,.rail .acc-btn{
     width:46px;height:46px;padding:0;margin:0 auto 3px;
@@ -1202,3 +1218,52 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
   .viewport-note{animation:noteIn .5s var(--sp-smooth) both .6s}
   @keyframes noteIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 }
+
+/* ==========================================================================
+   SCREEN SKELETON
+
+   Shown while a tab switch is in flight, and only after 150ms so the quick
+   screens never flash one. Every workspace screen is server-rendered by the
+   catch-all route, so switching costs a round trip — 300ms at best, over a
+   second on the roster, the inbox and the onboarding pipeline. Without this
+   the stage kept showing the PREVIOUS screen while the rail already showed the
+   new tab selected, which reads as a click that did nothing.
+
+   Shaped like the screens it stands in for — a title, a row of cards, a table —
+   so the layout does not jump when the real content replaces it.
+   ========================================================================== */
+.scr-skel{padding:24px 28px;display:flex;flex-direction:column;gap:18px}
+.scr-skel>*{--sk:linear-gradient(90deg,var(--line-soft) 25%,var(--line) 37%,var(--line-soft) 63%)}
+.scr-skel-h,.scr-skel-sub,.scr-skel-cards>div,.scr-skel-rows>div{
+  background:var(--sk,linear-gradient(90deg,var(--line-soft) 25%,var(--line) 37%,var(--line-soft) 63%));
+  background-size:400% 100%;border-radius:var(--r-sm);animation:scr-sheen 1.4s ease-in-out infinite}
+.scr-skel-h{height:26px;width:210px}
+.scr-skel-sub{height:14px;width:330px;opacity:.7}
+.scr-skel-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+.scr-skel-cards>div{height:92px;border-radius:var(--r-md)}
+.scr-skel-rows{display:flex;flex-direction:column;gap:9px}
+.scr-skel-rows>div{height:38px}
+
+@keyframes scr-sheen{0%{background-position:100% 0}100%{background-position:0 0}}
+
+/* Someone who has asked for less motion gets the shape without the shimmer —
+   the skeleton still communicates "working", it just does not animate. */
+@media (prefers-reduced-motion: reduce){
+  .scr-skel-h,.scr-skel-sub,.scr-skel-cards>div,.scr-skel-rows>div{animation:none}
+}
+
+/* ==========================================================================
+   FULL-WIDTH SCREENS
+
+   `.wrap` caps at 1500px and centres, which is right for reading-width screens
+   — Home, Performance, the Onboarding boards. It is wrong for the Client
+   Health tables, which carry seventeen columns: capped, the table scrolls
+   horizontally while the monitor has empty space either side of it.
+
+   This mirrors the change made in the Client Health tool itself
+   (commit 7defded, "Weekly view: full-screen width"), which dropped
+   `main { max-width: 1400px }` to `none` with 24×32 padding for the same
+   reason. Same decision, same numbers, applied per-screen here rather than
+   globally so the narrow screens keep the cap that suits them.
+   ========================================================================== */
+.wrap.wrap-wide{max-width:none;padding:24px 32px 40px}

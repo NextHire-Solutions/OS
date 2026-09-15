@@ -54,9 +54,16 @@ export function getAnalyticsSupabase(): SupabaseClient {
   return client;
 }
 
-/** The EmailBison team whose data this workspace reports on. */
+/**
+ * The EmailBison team whose data this workspace reports on — every table's
+ * team_id. The tool called it EMAILBISON_TEAM_ID, so the OS environment holds
+ * it as ANALYTICS_EMAILBISON_TEAM_ID; ANALYTICS_TEAM_ID is the name this file
+ * was first written against. Either works, and both default to the tool's 2.
+ */
 export function analyticsTeamId(): number {
-  return Number(process.env.ANALYTICS_TEAM_ID || 2);
+  return Number(
+    process.env.ANALYTICS_TEAM_ID || process.env.ANALYTICS_EMAILBISON_TEAM_ID || 2,
+  );
 }
 
 /**

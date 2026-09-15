@@ -8,6 +8,7 @@ import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
 import { getStagesBoard } from "@/lib/tools/onboarding/stages";
 import { getTemplates } from "@/lib/tools/onboarding/templates";
 import { getOnboardingSettings } from "@/lib/tools/onboarding/settings-view";
+import { getClientDetail } from "@/lib/tools/onboarding/client-detail";
 import { getInbox } from "@/lib/tools/master-inbox/inbox-view";
 import { getReminders } from "@/lib/tools/master-inbox/reminders";
 import { getSettings } from "@/lib/tools/master-inbox/settings";
@@ -15,8 +16,10 @@ import { getPortals } from "@/lib/tools/master-inbox/portals";
 import { getClientsOverview } from "@/lib/clients/overview";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
+import { loadRailBadges } from "@/lib/workspace/badges";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
+import { AccountScreen } from "@/components/screens/account";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
 import { ClientHealthSuccess } from "@/components/screens/client-health/success";
@@ -24,6 +27,7 @@ import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeli
 import { OnboardingStagesScreen } from "@/components/screens/onboarding/stages";
 import { OnboardingTemplatesScreen } from "@/components/screens/onboarding/templates";
 import { OnboardingSettingsScreen } from "@/components/screens/onboarding/settings";
+import { OnboardingClientScreen } from "@/components/screens/onboarding/client";
 import { AgentSearchSearchScreen } from "@/components/screens/agent-search/search";
 import { AgentSearchMasterScreen } from "@/components/screens/agent-search/master";
 import { AgentSearchAccountsScreen } from "@/components/screens/agent-search/accounts";
@@ -38,6 +42,15 @@ import { MasterInboxSettingsScreen } from "@/components/screens/master-inbox/set
 import { PortalsAdminScreen } from "@/components/screens/master-inbox/portals";
 import { ClientsScreen } from "@/components/screens/clients";
 import { PerformanceScreen } from "@/components/screens/performance";
+import { AnalyticsCampaignScreen } from "@/components/screens/analytics/campaign";
+import { AnalyticsInfrastructureScreen } from "@/components/screens/analytics/infrastructure";
+import { AnalyticsAttributionScreen } from "@/components/screens/analytics/attribution";
+import { AnalyticsCopyScreen } from "@/components/screens/analytics/copy";
+import { AnalyticsCampaignsScreen } from "@/components/screens/analytics/campaigns";
+import { AnalyticsVolumeScreen } from "@/components/screens/analytics/volume";
+import { CampaignDetailScreen } from "@/components/screens/analytics/campaign-detail";
+import { AnalyticsScheduleScreen } from "@/components/screens/analytics/schedule";
+import { AnalyticsClientsScreen } from "@/components/screens/analytics/clients";
 import { idForPath, products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 
@@ -82,6 +95,35 @@ function threadIdFrom(slug: string[] | undefined): string | null {
   if (!view || INBOX_SCREENS.has(view)) return null;
   const third = parts[2];
   return third && UUID.test(third) ? third : null;
+}
+
+
+/*
+ * `/onboarding/clients/<id>` and its three tabs.
+ *
+ * `idForPath` resolves this to `onboarding:pipeline`, because "clients" is not
+ * one of the Onboarding product's leaves — which is deliberate and is what
+ * keeps the rail highlighted on Pipeline while a client is open, the same way
+ * `/inbox/portals/<clientId>` stays on Client Portals.
+ *
+ * It also meant the detail screen was unreachable: the pipeline's rows linked
+ * here, `OnboardingClientScreen` and `getClientDetail()` both existed, and the
+ * router rendered the pipeline over the top of them. Thirty-eight clients you
+ * could move between stages and still not open — the exact dead end the link
+ * was added to fix.
+ */
+const ONBOARDING_TABS = new Set(["leads", "agents", "team"]);
+
+function onboardingClientFrom(
+  slug: string[] | undefined,
+): { id: string; tab: "profile" | "leads" | "agents" | "team" } | null {
+  const parts = slug ?? [];
+  if (parts[0] !== "onboarding" || parts[1] !== "clients") return null;
+  const id = parts[2];
+  if (!id || !UUID.test(id)) return null;
+  const third = parts[3];
+  const tab = third && ONBOARDING_TABS.has(third) ? (third as "leads" | "agents" | "team") : "profile";
+  return { id, tab };
 }
 
 
@@ -155,14 +197,16 @@ export default async function WorkspacePage({
    */
   const only = (id: string) => initialId === id;
 
-  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, onboardingStages, onboardingTemplates, onboardingSettings, agentSearch, inbox, reminders, inboxSettings, portals] =
+  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, onboardingStages, onboardingTemplates, onboardingSettings, agentSearch, inbox, reminders, inboxSettings, portals, onboardingClient, railBadges] =
     await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
     only("performance") ? getPerformance() : Promise.resolve(null),
     initialId.startsWith("clients:") ? getWeekly() : Promise.resolve(null),
     only("roster") ? getClientsOverview() : Promise.resolve(null),
-    only("onboarding:pipeline") ? getOnboardingPipeline() : Promise.resolve(null),
+    only("onboarding:pipeline") && !onboardingClientFrom(slug)
+      ? getOnboardingPipeline()
+      : Promise.resolve(null),
       /*
        * Each loader runs only for its own screen — the same `only()` gate every
        * other entry uses. Every Onboarding screen tolerates a null `initial` and
@@ -192,6 +236,21 @@ export default async function WorkspacePage({
     only("inbox:reminders") ? getReminders() : Promise.resolve(null),
     only("inbox:settings") ? getSettings() : Promise.resolve(null),
     only("inbox:portals") ? getPortals() : Promise.resolve(null),
+    /*
+     * Server-rendered so a pasted client link paints with its data already
+     * there, exactly like every other screen above. The component still
+     * refetches on the client, so this is a first paint, not a cache.
+     */
+    (() => {
+      const c = onboardingClientFrom(slug);
+      return c ? getClientDetail(c.id) : Promise.resolve(null);
+    })(),
+    /*
+     * Unconditional, unlike every loader above it: the rail is on every screen,
+     * so its counts are too. Two `head: true` count queries behind a 60s cache
+     * — see `badges.ts` for why it must never fetch rows to do this.
+     */
+    loadRailBadges(),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
 
@@ -220,6 +279,7 @@ export default async function WorkspacePage({
     <Workspace
       initialId={initialId}
       grants={grants}
+      badges={railBadges}
       user={{ name: firstName, email }}
       toolUrls={toolUrls}
       shellHost={shellHost}
@@ -267,7 +327,12 @@ export default async function WorkspacePage({
          * Typeform, Stripe, EmailBison and Calendly webhooks, which must keep
          * arriving on their current URLs.
          */
-        "onboarding:pipeline": <OnboardingPipelineScreen initial={onboarding} />,
+        "onboarding:pipeline": (() => {
+          const c = onboardingClientFrom(slug);
+          return c
+            ? <OnboardingClientScreen clientId={c.id} tab={c.tab} initial={onboardingClient} />
+            : <OnboardingPipelineScreen initial={onboarding} />;
+        })(),
         "onboarding:stages": <OnboardingStagesScreen initial={onboardingStages} />,
         "onboarding:templates": <OnboardingTemplatesScreen initial={onboardingTemplates} />,
         "onboarding:settings": <OnboardingSettingsScreen initial={onboardingSettings} />,
@@ -340,6 +405,10 @@ export default async function WorkspacePage({
         "inbox:archive": (
           <FullInbox view="archive" f={query.f} list={query.list} page={query.page} q={query.q} />
         ),
+        // Same shape as Archive: a real inbox view through the same page.
+        "inbox:trash": (
+          <FullInbox view="trash" f={query.f} list={query.list} page={query.page} q={query.q} />
+        ),
         /*
          * Leads is an empty placeholder in the live tool as well
          * (`app/(app)/leads/page.tsx` renders exactly this). Kept so the nav
@@ -374,7 +443,35 @@ export default async function WorkspacePage({
           const id = parts[0] === "inbox" && parts[1] === "portals" ? parts[2] : undefined;
           return id && UUID.test(id) ? <PortalDetail clientId={id} /> : <PortalsAdminScreen />;
         })(),
+        /*
+         * Campaign Analytics, read and written against the tool's own database
+         * through the tool's own route handlers.
+         *
+         * No loader and no `initial` prop, deliberately — the same choice Agent
+         * Search makes, for a sharper reason: every one of these screens is
+         * driven by a filter bar, so a server-rendered snapshot taken with the
+         * default window would be discarded by the first chip anyone clicks.
+         */
+        "analytics:campaign": <AnalyticsCampaignScreen />,
+        "analytics:volume": <AnalyticsVolumeScreen />,
+        "analytics:infrastructure": <AnalyticsInfrastructureScreen />,
+        "analytics:attribution": <AnalyticsAttributionScreen />,
+        "analytics:copy": <AnalyticsCopyScreen />,
+        /*
+         * The list, or one campaign. Same shape as `inbox:portals`, and the
+         * same lesson: this screen renders on every request, so it must ask
+         * whether the URL really belongs to it rather than whether a third
+         * segment merely exists.
+         */
+        "analytics:campaigns": (() => {
+          const parts = slug ?? [];
+          const id = parts[0] === "analytics" && parts[1] === "campaigns" ? parts[2] : undefined;
+          return id ? <CampaignDetailScreen id={id} /> : <AnalyticsCampaignsScreen />;
+        })(),
+        "analytics:schedule": <AnalyticsScheduleScreen />,
+        "analytics:clients": <AnalyticsClientsScreen />,
         "team-access": <TeamAccessScreen />,
+        account: <AccountScreen email={email} />,
       })}
     />
   );

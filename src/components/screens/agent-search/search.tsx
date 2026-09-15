@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { useRouter } from "next/navigation";
 
 import { SOURCES, type SourceId } from "@/lib/tools/agent-search/columns";
 import { buildSearchPayload } from "@/lib/tools/agent-search/payload";
@@ -23,7 +24,35 @@ const TONE_DOT: Record<SourceId, string> = {
   courted: "var(--green)", zillow: "var(--blue)", realtor: "var(--amber)",
 };
 
+/*
+ * The four in-page views the rail used to name with a hash.
+ *
+ * Agent Search began life as one long scrolling page, and its rail entries
+ * still describe the other four views as anchors on it — `/search#master`,
+ * `/search#accounts`, and so on (see `nav.ts`). They are real, separately
+ * routed screens now, at `/search/master` and friends, and nothing was left
+ * translating between the two: a link anyone had pasted into Slack while the
+ * anchors were the address opened the Search screen and silently stayed
+ * there, with the rail highlighting the wrong row.
+ *
+ * Rewriting them here keeps those links working. It is deliberately a
+ * `replace`, not a `push`: the hash URL was never a place worth going Back to.
+ */
+const HASH_VIEWS = new Set(["master", "accounts", "mls", "import"]);
+
 export function AgentSearchSearchScreen() {
+  const router = useRouter();
+  useEffect(() => {
+    const jump = () => {
+      const leaf = window.location.hash.replace(/^#/, "");
+      if (HASH_VIEWS.has(leaf)) router.replace(`/search/${leaf}`);
+    };
+    jump();
+    // Also catch someone editing the hash on an already-open Search screen.
+    window.addEventListener("hashchange", jump);
+    return () => window.removeEventListener("hashchange", jump);
+  }, [router]);
+
   const status = useStatus();
   const columns = useColumns();
   const job = useSyncExternalStore(jobStore.subscribe, jobStore.getSnapshot, jobStore.getServerSnapshot);
@@ -83,7 +112,7 @@ export function AgentSearchSearchScreen() {
   }
 
   return (
-    <div className="as">
+    <div className="as as-screen">
       <AgentSearchHeader
         title="Agent Search"
         sub="Courted · Zillow · Realtor.com — unified agent intelligence"
@@ -105,17 +134,45 @@ export function AgentSearchSearchScreen() {
             <button
               key={s} type="button"
               className={`as-tog${on[s] ? " on" : ""}`}
+              /*
+               * The design gives the columns pill the same `.as-tog` look as
+               * these three, which is right visually and ambiguous to anything
+               * selecting them — counting `.as-tog` returns four. This marks
+               * the ones that pick a SOURCE, changing nothing on screen.
+               */
+              data-source={s}
               aria-pressed={on[s]}
               onClick={() => setOn((p) => ({ ...p, [s]: !p[s] }))}
             >
               <i style={{ background: TONE_DOT[s] }} />
+              {/*
+                * The design puts a tick box inside the pill, not just a colour
+                * change: `<i>` is the SOURCE's colour and never changes, so with
+                * the glyph missing the only thing separating on from off was the
+                * pill's background — which reads as "hovered" rather than
+                * "selected", and is invisible to anyone who cannot see the tint.
+                * `aria-pressed` already says it; this makes it visible too.
+                */}
+              <span aria-hidden="true">{on[s] ? "\u2611" : "\u2610"}</span>
               {SOURCE_LABEL[s]}
               {s === "courted" ? <span style={{ color: "var(--muted)", fontWeight: 400 }}>free</span> : null}
             </button>
           ))}
-          <span style={{ marginLeft: "auto" }}>
-            <Check checked={showAll} onChange={setShowAll} label="Show all columns" />
-          </span>
+          {/*
+            * Same pill as the source toggles, which is what the design draws —
+            * it was a bare checkbox here, the only control on the row not
+            * wearing the tool's own vocabulary.
+            */}
+          <button
+            type="button"
+            className={`as-tog${showAll ? " on" : ""}`}
+            style={{ marginLeft: "auto" }}
+            aria-pressed={showAll}
+            onClick={() => setShowAll(!showAll)}
+          >
+            <span aria-hidden="true">{showAll ? "\u2611" : "\u2610"}</span>
+            Show all columns
+          </button>
         </div>
 
         <div style={{ marginTop: 16 }}>
@@ -194,13 +251,25 @@ export function AgentSearchSearchScreen() {
         <Msg text={error || job.error || ""} tone="error" />
       </Card>
 
-      {SOURCES.map((s) => (
-        <ResultPanel
-          key={s} source={s} state={job.sources[s]}
-          columns={displayColumns(columns, s, showAll)}
-          onExport={job.jobId ? () => exportCsv(s) : undefined}
-        />
-      ))}
+      {/*
+        A grid, not a stack.
+        
+        `dim` is the honest version of the tool's fade: once a job exists a
+        panel is dim if it was not part of that run, and before any job it
+        simply follows the source toggles — so turning Realtor.com on lights
+        its panel up immediately instead of leaving all three greyed out until
+        someone spends money to find out they were live all along.
+      */}
+      <div className="as-panels">
+        {SOURCES.map((s) => (
+          <ResultPanel
+            key={s} source={s} state={job.sources[s]}
+            columns={displayColumns(columns, s, showAll)}
+            onExport={job.jobId ? () => exportCsv(s) : undefined}
+            dim={job.jobId ? !job.sources[s].active : !on[s]}
+          />
+        ))}
+      </div>
     </div>
   );
 }

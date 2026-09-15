@@ -128,16 +128,37 @@ const q = (sel, prop = "textContent") =>
 const count = (sel) => tab.eval(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
 const text = (sel) => tab.eval(`(document.querySelector(${JSON.stringify(sel)})||{}).innerText || ""`);
 
+/*
+ * Wait for a selector's text to match, then return it.
+ *
+ * The header's status badges come from `useStatus()`, which fetches
+ * /api/tools/agent-search/status from a useEffect — and that request proxies
+ * to the live scraper service, so it lands about 1.3s after the screen paints.
+ * Asserting on the header the moment `show()` returns therefore passed or
+ * failed depending on the network, which is exactly the kind of flake that
+ * teaches people to ignore a red suite. The badge itself was never broken.
+ */
+const textWhen = async (sel, re, ms = 15000) => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const v = await text(sel);
+    if (re.test(v) || Date.now() > deadline) return v;
+    await tab.eval("new Promise(r=>setTimeout(r,150))");
+  }
+};
+
 /* ------------------------------------------------------------------ SEARCH */
 console.log("\n  Search");
 await show("search");
 {
-  const hd = await text('section.screen.on .as-hd');
-  check("header renders with live status badges", /Agent Search/.test(hd) && /Courted · 9 accts/.test(hd),
+  const hd = await textWhen('section.screen.on .as-hd', /Courted · \d+ accts/);
+  check("header renders with live status badges", /Agent Search/.test(hd) && /Courted · \d+ accts/.test(hd),
     `→ ${hd.replace(/\n+/g, " · ").slice(0, 74)}`);
-  check("three source toggles", (await count('section.screen.on .as-tog')) === 3);
+  // `.as-tog[data-source]` rather than `.as-tog`: the "Show all columns"
+  // control wears the same pill in the design, so a bare `.as-tog` count is 4.
+  check("three source toggles", (await count('section.screen.on .as-tog[data-source]')) === 3);
   check("Courted + Zillow on by default, Realtor off",
-    (await count('section.screen.on .as-tog.on')) === 2);
+    (await count('section.screen.on .as-tog[data-source].on')) === 2);
   check("three result panels", (await count('section.screen.on .as-res')) === 3);
   check("Realtor panel dimmed (inactive)",
     Number(await tab.eval(`getComputedStyle(document.querySelectorAll('section.screen.on .as-res')[2]).opacity`)) < 0.5);
@@ -154,8 +175,10 @@ await show("search");
    */
   const nums = await count('section.screen.on input[type=number]');
   const boxes = await count('section.screen.on input[type=checkbox]');
-  check("Options reveals 3 groups, 6 numeric fields and 5 checkboxes",
-    nums === 6 && boxes === 5 && (await count('section.screen.on .as-tog')) === 3,
+  // Four checkboxes, not five: "Show all columns" is now the design's pill
+  // rather than a bare checkbox, so it counts under `.as-tog`, not here.
+  check("Options reveals 3 groups, 6 numeric fields and 4 checkboxes",
+    nums === 6 && boxes === 4 && (await count('section.screen.on .as-tog[data-source]')) === 3,
     `→ ${nums} numeric, ${boxes} checkboxes`);
 
   // Validation refusal — this makes NO request.
@@ -166,10 +189,10 @@ await show("search");
   check("no scrape was started", (await tab.eval(`!!document.body.innerText.match(/Stop/)`)) === false);
 
   // Toggling a source is free.
-  await tab.eval(`document.querySelectorAll('section.screen.on .as-tog')[2].click()`);
+  await tab.eval(`document.querySelector('section.screen.on .as-tog[data-source="realtor"]').click()`);
   await sleep(250);
   check("clicking Realtor.com activates it",
-    (await count('section.screen.on .as-tog.on')) === 3);
+    (await count('section.screen.on .as-tog[data-source].on')) === 3);
 }
 
 /* ------------------------------------------------------------- MASTER LIST */
@@ -218,7 +241,10 @@ await show("mls");
   const blocks = await count('section.screen.on .as-card:last-of-type > div > div');
   check("the scheduler's last scan is shown without scanning", blocks >= 9, `→ ${blocks} account blocks`);
   check("server baseline is the default comparison",
-    /Server baseline/.test(body) && (await tab.eval(`document.querySelectorAll('section.screen.on .as-tog.on').length`)) === 1);
+    /Server baseline/.test(body) && // Bare `.as-tog` on purpose: this is the MLS monitor, whose toggle picks a
+    // COMPARISON MODE, not a search source — there is no `data-source` here and
+    // no columns pill to disambiguate from.
+    (await tab.eval(`document.querySelectorAll('section.screen.on .as-tog.on').length`)) === 1);
   check("both baselines offered", /Server baseline/.test(body) && /This browser/.test(body));
   check("browser baseline reports none saved", /none saved/.test(body));
   check("per-account MLS detail rendered", /CANOPY|GAMLS|CHSMLS/.test(body));

@@ -116,3 +116,127 @@
 .mi-settings-tabs .fp{text-decoration:none}
 /* The body scrolls on its own so the tabs stay put on a long editor. */
 .mi-settings-body{flex:1;min-height:0;overflow:auto;padding:22px 26px}
+
+/* ---------------------------------------------------------------------------
+   The rail actually collapses.
+
+   `workspace.css` carries thirty `body.rail-collapsed` rules — they hide the
+   wordmark, centre the glyphs, shrink the section headings. Not one of them
+   touches the GRID COLUMN. `.app` is `grid-template-columns: 264px 1fr`
+   unconditionally, so pressing collapse tidied the rail's contents inside a
+   column that stayed 264px wide: a half-collapsed rail with a stripe of empty
+   space beside it.
+
+   Kept here rather than edited into workspace.css so that file stays a verbatim
+   copy of the design.
+   ------------------------------------------------------------------------- */
+body.rail-collapsed .app { grid-template-columns: 76px 1fr; }
+/* The transition is on the grid, so the stage slides rather than jumping. */
+.app { transition: grid-template-columns 0.22s var(--sp-smooth, cubic-bezier(0.4, 0, 0.2, 1)); }
+
+/* Anything that only makes sense with a label goes when the labels do. */
+body.rail-collapsed .rail-foot .who { display: none; }
+body.rail-collapsed .rail-foot { justify-content: center; gap: 0; }
+
+/* ---------------------------------------------------------------------------
+   Sign out.
+
+   There was no way to leave this workspace: `/api/auth/logout` has existed
+   since the shell was built and nothing called it. It sits in the footer beside
+   the account, which is where people look for it.
+   ------------------------------------------------------------------------- */
+.rail-foot { display: flex; align-items: center; gap: 10px; }
+.rail-signout { margin-left: auto; display: flex; }
+.rail-signout .ib { width: 30px; height: 30px; border-radius: 8px; }
+.rail-signout .ib svg { width: 15px; height: 15px; }
+body.rail-collapsed .rail-signout { display: none; }
+
+/* ---------------------------------------------------------------------------
+   The client lists rail, beside the conversations.
+
+   One row per client, created when that client is onboarded. The dot is their
+   health — green active, amber paused, red churned — from the same status feed
+   the tool uses, joined by normalised name.
+   ------------------------------------------------------------------------- */
+.mi-split { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.mi-split-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.mi-lists {
+  /*
+   * 232px, matching the width of the tool's own "Sales inbox" sidebar that
+   * this replaces — the design file names that number in its annotation. At
+   * 218px names like "The RE Home Group of Douglas Realty" lost more than
+   * half their characters; they still truncate here, as they do in the tool,
+   * but far fewer of them reach the ellipsis. Every row carries the full name
+   * as a `title`, so the clipped ones are one hover away.
+   */
+  width: 232px;
+  flex: none;
+  border-right: 1px solid var(--line-soft);
+  background: var(--surface);
+  padding: 14px 10px;
+  overflow-y: auto;
+}
+.mi-lists .sec-h { padding: 0 8px 8px; }
+
+/*
+ * One client link in the Master Inbox rail.
+ *
+ * Named `.mi-list-item`, not `.mi-list`, and the rename is the whole point:
+ * `.mi-list` is ALSO the thread-list container in `mockup/list.tsx`. With one
+ * name for both, this rule's `display:flex` applied to that container and laid
+ * all fifty threads out SIDEWAYS — fifty 52px-wide slivers showing nothing but
+ * a checkbox. The inbox looked empty and the rows were simply off-screen.
+ */
+.mi-list-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--ink-2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.mi-list-item:hover { background: var(--inset); color: var(--ink); }
+.mi-list-item.on { background: var(--blue-pale); color: var(--blue-ink); font-weight: 600; }
+
+/* A long client name truncates rather than widening the rail. */
+.mi-list-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Flat dots, not emoji — the design's palette, and they stay legible at 7px
+   where 🟢 renders as a glossy sphere that fights the rest of the interface. */
+.mi-list-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.mi-list-dot.s-active  { background: var(--green); }
+.mi-list-dot.s-paused  { background: var(--yellow); }
+.mi-list-dot.s-churned { background: var(--red); }
+/* `off` holds the same space, so names stay aligned whether or not the status
+   feed answered. */
+.mi-list-dot.off { background: var(--line); }
+
+@media (max-width: 1180px) { .mi-lists { display: none; } }
+
+
+/*
+ * The thread list itself — a vertical stack.
+ *
+ * Stated explicitly rather than left to `display:block`, because that default
+ * is exactly what let the rail's `.mi-list` rule above hijack this container
+ * without anything looking wrong in the markup.
+ */
+.mi-theme .mi-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/*
+ * The Partner plan's colour as a number tone.
+ *
+ * `.n-blue` and `.n-green` already exist in the design's own sheet; there is no
+ * `.n-purple` because the mockup only ever needed purple on a pill. Added here
+ * rather than in `workspace.css` so that file stays a faithful copy of the
+ * design and can be re-synced without losing this.
+ */
+.n-purple { color: var(--purple); }

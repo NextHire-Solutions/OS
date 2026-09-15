@@ -217,3 +217,102 @@
   background: var(--surface);
   box-shadow: var(--sh-card, 0 1px 2px rgba(13, 21, 38, 0.06));
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LAYOUT, not just colour.
+
+   The rules above restyle the UI PRIMITIVES — buttons, inputs, dialogs — and
+   that was enough to make popups look right. It was not enough for whole
+   screens. Measured across the conversation view, the prospect panel, the
+   portals admin and the settings managers: 607 Tailwind layout classes against
+   6 of the design's. Those pages were still the tool's structure wearing the
+   mockup's colours, which is exactly what "the UI is still not updated" meant.
+
+   These rules restyle the STRUCTURE — tables, headings, section rhythm,
+   density — scoped to `.mi-theme` so nothing outside the inbox is touched.
+
+   Why CSS again rather than rewriting the JSX: those four files carry the
+   features. `prospect-panel.tsx` alone is 960 lines of agent detail, and
+   `portals-admin.tsx` is every portal control. Rewriting their markup risks
+   dropping something, and the next sync from the live tool would revert it.
+   Restyling from here leaves them byte-identical to the tool's.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tables ─────────────────────────────────────────────────────────────────
+   The design's `.atbl`: a quiet inset header, generous rows, hairline rules.
+   The tool's tables are dense with a bold uppercase header — a different
+   rhythm entirely, and the most visible difference on the portals and settings
+   screens. */
+.mi-theme table { width: 100%; border-collapse: collapse; }
+.mi-theme thead th,
+.mi-theme [role="columnheader"] {
+  padding: 11px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  background: var(--inset);
+  color: var(--muted);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.mi-theme tbody td {
+  padding: 14px 16px;
+  font-size: 13.5px;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line-soft);
+}
+.mi-theme tbody tr:hover { background: var(--inset); }
+.mi-theme tbody tr:last-child td { border-bottom: 0; }
+
+/* ── Section headings ───────────────────────────────────────────────────────
+   The design does NOT shout. Headings are small, medium-weight and muted;
+   the tool uses larger semibold dark type, which reads as a different product
+   sitting inside the workspace. */
+.mi-theme h1 { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); }
+.mi-theme h2 { font-size: 15px; font-weight: 600; color: var(--ink); }
+.mi-theme h3 { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.mi-theme h1 + p,
+.mi-theme h2 + p { font-size: 13px; color: var(--muted); line-height: 1.55; }
+
+/* ── The settings page shell ────────────────────────────────────────────────
+   Each settings panel becomes one of the design's cards, on the page ground,
+   rather than a full-bleed white sheet. */
+.mi-settings-body > * {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg, 16px);
+  box-shadow: var(--sh-card, 0 1px 2px rgba(13, 21, 38, 0.06));
+  padding: 22px 24px;
+  overflow: hidden;
+}
+.mi-settings-body { background: var(--page); }
+/* A table inside a card should meet its edges rather than float inside padding. */
+.mi-settings-body > * > table,
+.mi-settings-body table { margin: 14px -24px -22px; width: calc(100% + 48px); }
+
+/* ── Rounded containers ─────────────────────────────────────────────────────
+   shadcn's default radius is smaller and its borders darker than the design's.
+   Aligning them is most of what makes a panel feel like it belongs. */
+.mi-theme [class*="rounded-md"],
+.mi-theme [class*="rounded-lg"] { border-radius: 10px; }
+.mi-theme [class*="rounded-xl"] { border-radius: var(--r-lg, 16px); }
+.mi-theme [class*="border"] { border-color: var(--line); }
+
+/* ── Density ────────────────────────────────────────────────────────────────
+   The design breathes more than the tool: the tool is built for a full-width
+   window, the workspace gives it a stage inside a rail. */
+.mi-theme [class*="text-sm"] { font-size: 13.5px; }
+.mi-theme [class*="text-xs"] { font-size: 12px; }
+.mi-theme [class*="text-\[11px\]"] { font-size: 11.5px; }
+
+/* ── The conversation's message cards ───────────────────────────────────────
+   Each message reads as one of the design's cards rather than a bordered box,
+   and the FROM/TO header takes the inset treatment the design uses for
+   secondary metadata. */
+.mi-theme article,
+.mi-theme [class*="rounded"][class*="border"][class*="bg-background"] {
+  border-radius: var(--r-md, 12px);
+  border-color: var(--line);
+  background: var(--surface);
+}

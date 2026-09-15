@@ -3,6 +3,7 @@ import "server-only";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
+import { listClientRows } from "@/lib/tools/client-health/publish";
 import type { NamedEntry } from "./names";
 
 /*
@@ -159,27 +160,19 @@ async function clientHealth(): Promise<Roster> {
       "The billed roster: clients someone onboarded here, each with a plan and a weekly target. Hidden and paused clients are included.",
   };
 
-  const token = optionalEnv("CLIENT_HEALTH_READ_TOKEN");
-  const res = await httpProbe(`${baseUrlEnv("CLIENT_HEALTH_URL")}/api/clients`, {
-    timeoutMs: TIMEOUT,
-    headers: token ? { "x-admin-token": token } : {},
-  });
-
-  if (res.status === 401) {
+  // Client Health's own database, through the workspace's loader — the same
+  // rows its GET /api/clients returned. The tool is being switched off, and
+  // this roster must not go with it.
+  let clients: Record<string, unknown>[];
+  try {
+    clients = await listClientRows();
+  } catch (error) {
     return {
       ...base,
       entries: [],
-      // Names the fix precisely: this route only started refusing tokens when
-      // the team password went on, and the patch that reopens it is written.
-      unavailable: token
-        ? "401 — token rejected"
-        : "401 — needs CLIENT_HEALTH_READ_TOKEN, and the /api/clients auth patch applied",
+      unavailable: error instanceof Error ? error.message : "Client Health is unreachable",
     };
   }
-  if (!res.ok) return { ...base, entries: [], unavailable: `returned ${res.status ?? "no response"}` };
-
-  const clients = asRecord(res.json)?.clients;
-  if (!Array.isArray(clients)) return { ...base, entries: [], unavailable: "unexpected response shape" };
 
   return {
     ...base,

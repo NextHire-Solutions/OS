@@ -15,11 +15,19 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { isSuperAdmin } from "@/lib/auth/super-admin";
 import { SettingsPageShell } from "@/components/master-inbox/settings/page-shell";
 import { MembersClient } from "@/components/master-inbox/settings/members-client";
+import { signedInEmail } from "./signed-in-email";
 
 
 export async function SettingsMembers() {
   const session = await requireSession();
-  const superAdmin = isSuperAdmin(session.user.email);
+  /*
+   * `session.user.email` is null in this workspace — the shim has no Supabase
+   * user — so `isSuperAdmin(null)` was false for EVERYONE and this tab was the
+   * refusal card no matter who was signed in or what `SUPER_ADMIN_EMAILS` said.
+   * The verified address from `proxy.ts` is the one to ask. See
+   * `signed-in-email.ts`.
+   */
+  const superAdmin = isSuperAdmin(session.user.email ?? (await signedInEmail()));
 
   if (!superAdmin) {
     return (
@@ -27,9 +35,19 @@ export async function SettingsMembers() {
         title="Members"
         description="Only the workspace admin can manage members."
       >
-        <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">
-          Ask <a className="underline" href="mailto:admin@outreachify.io">admin@outreachify.io</a>
-          {" "}to invite teammates to this workspace.
+        {/*
+          A refusal, drawn as the design draws one: the annotation ribbon,
+          which is what this is — an explanation of why the screen is empty,
+          with the way forward in it. It was a grey Tailwind box before.
+        */}
+        <div className="anno" style={{ margin: 0 }}>
+          <span>
+            <b>Members are managed by the workspace admin.</b> Ask{" "}
+            <a href="mailto:admin@outreachify.io" style={{ color: "inherit" }}>
+              admin@outreachify.io
+            </a>{" "}
+            to invite teammates to this workspace.
+          </span>
         </div>
       </SettingsPageShell>
     );

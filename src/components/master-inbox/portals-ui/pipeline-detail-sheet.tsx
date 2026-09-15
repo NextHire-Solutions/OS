@@ -47,6 +47,7 @@ export function PipelineDetailSheet({
   return (
     <Sheet open onOpenChange={(v) => (!v ? onClose() : undefined)}>
       <SheetContent
+        data-portal-surface
         side="right"
         className="flex w-full flex-col gap-0 bg-white p-0 sm:max-w-[720px]"
         // Offset the sheet below the Calendly banner. Portal pages

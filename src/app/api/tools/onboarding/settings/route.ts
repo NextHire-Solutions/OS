@@ -3,13 +3,15 @@ import { z } from "zod";
 
 import { getOnboardingSettings } from "@/lib/tools/onboarding/settings-view";
 import { cleanStepLabels, setSetting } from "@/lib/tools/onboarding/settings";
+import { ensureOnboardingScheduler } from "@/lib/tools/onboarding/scheduler";
 
 /*
  * Onboarding settings — the automation master switch and the step-button names.
  *
- * Both live in `orch_settings`, the same two rows the live orchestrator reads on
- * every webhook and every scheduler tick. Turning automation off here really does
- * stop the orchestrator firing; this is not a workspace-local preference.
+ * Both live in `orch_settings`. The automation switch is read by the OS's own
+ * webhook receivers, scheduler tick and copy-approval write — turning it on here
+ * makes approval run the set-up chain, and the Calendly and DB-app triggers act
+ * on their own; turning it off makes every step wait for a button.
  */
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,7 @@ const patchSchema = z
   });
 
 export async function GET() {
+  ensureOnboardingScheduler();
   return NextResponse.json(await getOnboardingSettings());
 }
 

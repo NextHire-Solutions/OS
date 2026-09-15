@@ -136,6 +136,7 @@ export function ConversationSheet({
   return (
     <Sheet open onOpenChange={(v) => !v && onClose()}>
       <SheetContent
+        data-portal-surface
         side="right"
         // Width is user-resizable via the drag handle on the left
         // edge below. SSR / first paint use DEFAULT_WIDTH; the

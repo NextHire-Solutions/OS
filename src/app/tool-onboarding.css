@@ -1,0 +1,45 @@
+/*
+ * onboarding — this tool's own stylesheet, and nobody else's.
+ *
+ * Every selector here MUST be scoped to this tool's own screens. The reason is
+ * a bug this file exists to prevent: `.mi-list` was used both for a client
+ * link in the Master Inbox rail and for the thread-list container, so the
+ * rail's `display:flex` laid fifty threads out sideways as 52px slivers. One
+ * name, two meanings, and an inbox that looked empty.
+ *
+ * Load order is set in globals.css; this file is imported after the shared
+ * sheets, so it wins ties without needing !important.
+ */
+
+/* ---------- Pipeline: sortable headers, per-column filters, profile bar ---------- */
+/* Scoped to the pipeline screen's root (`.onb-pipeline`), as the note above requires. */
+
+.onb-pipeline th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.onb-pipeline th.sortable:hover { color: var(--ink); }
+.onb-pipeline .sort-ind { margin-left: 6px; font-size: 9px; opacity: .35; }
+.onb-pipeline .sort-ind.on { opacity: 1; color: var(--blue); }
+.onb-pipeline tr.filter-row th { padding-top: 0; padding-bottom: 8px; }
+.onb-pipeline tr.filter-row .inp {
+  height: 30px; font-size: 12.5px; padding: 0 8px; width: 100%; min-width: 110px; border-radius: 8px;
+}
+
+/* The tool's `.badge.neutral` — "unassigned", and a health status we do not know. */
+.onb-pipeline .badge.s-neutral { background: var(--inset-2); color: var(--muted); }
+
+/* Profile completion — the tool's `.progress` bar, on our palette. */
+.onb-pipeline .progress { display: flex; align-items: center; gap: 8px; min-width: 110px; }
+.onb-pipeline .progress-track {
+  flex: 1 1 auto; height: 6px; border-radius: 999px; background: var(--inset-2); overflow: hidden;
+}
+.onb-pipeline .progress-fill { display: block; height: 100%; border-radius: 999px; transition: width .2s ease; }
+.onb-pipeline .progress-fill.green { background: var(--green); }
+.onb-pipeline .progress-fill.amber { background: var(--yellow); }
+.onb-pipeline .progress-fill.red { background: var(--red); }
+.onb-pipeline .progress-pct {
+  flex: 0 0 auto; font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+
+/* Second lines in a cell (contact email, location) and the replies feed. */
+.onb-pipeline .cell-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.onb-pipeline .cell-ellipsis { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onb-pipeline .nowrap { white-space: nowrap; }

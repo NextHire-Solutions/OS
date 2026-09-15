@@ -2,6 +2,9 @@ import "server-only";
 
 import { cache } from "react";
 
+import { headers } from "next/headers";
+
+import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { workspaceId } from "@/lib/tools/master-inbox/supabase";
 
 /*
@@ -89,8 +92,45 @@ export const requireSession = cache(async function requireSession(): Promise<Ses
   };
 
   return {
-    user: { id: null, email: null, name: null, avatar_url: null },
+    /*
+     * `id` stays null on purpose — see the note above: these columns are
+     * foreign keys into `auth.users`, OS users have no row there, and a
+     * fabricated UUID fails the constraint on insert.
+     *
+     * `email` is NOT null, and the difference matters. It was null here
+     * originally, and because `isSuperAdmin()` returns false for a null
+     * address, that silently disabled every super-admin gate in the app for
+     * EVERY user, whatever `SUPER_ADMIN_EMAILS` contained. The Members tab —
+     * the entire invite / reset-password admin panel — was unreachable by
+     * anybody, and Personal rendered an empty email box. Nothing errored; the
+     * UI simply behaved as though nobody qualified.
+     *
+     * The OS does know who is calling: `proxy.ts` has already verified the
+     * signed `bs_sso` cookie before any of this is reachable. Reading the
+     * address from that cookie answers what the call sites are actually
+     * asking, from the only authority here that can answer it.
+     */
+    user: { id: null, email: await signedInEmail(), name: null, avatar_url: null },
     workspaces: [summary],
     activeWorkspace: summary,
   };
 });
+
+/*
+ * The signed-in address, read from the same cookie `proxy.ts` already verified.
+ *
+ * Returns null rather than throwing when there is no request scope at all — a
+ * build, a cron, a script. "No request" genuinely means "no signed-in user",
+ * which is the correct answer for a gate rather than an error to propagate.
+ */
+async function signedInEmail(): Promise<string | null> {
+  try {
+    const session = await verifySso(
+      process.env.AUTH_SECRET ?? "",
+      readSsoCookie((await headers()).get("cookie")),
+    );
+    return session?.email ?? null;
+  } catch {
+    return null;
+  }
+}

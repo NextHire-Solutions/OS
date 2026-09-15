@@ -3,6 +3,7 @@ import "server-only";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
+import { clientStatuses, listClientRows } from "@/lib/tools/client-health/publish";
 import type { Reading, SourceSpec } from "./types";
 
 /*
@@ -65,30 +66,23 @@ async function analyticsKpis(field: string) {
 
 const READERS: Record<string, Reader> = {
   // --- Client Health -------------------------------------------------------
+  // Both read Client Health's database through the workspace's own loaders —
+  // the same answers its GET /api/clients and /api/clients/status gave, minus
+  // the hop to an app being switched off.
   "clients:roster": async () => {
-    const res = await httpProbe(`${baseUrlEnv("CLIENT_HEALTH_URL")}/api/clients`, {
-      timeoutMs: TIMEOUT,
-    });
-    if (res.status === 401) return { value: null, unavailable: "401 — needs a read token now" };
-    if (!res.ok) return { value: null, unavailable: `returned ${res.status ?? "no response"}` };
-
-    const clients = asRecord(res.json)?.clients;
-    if (!Array.isArray(clients)) return { value: null, unavailable: "unexpected response shape" };
-    return { value: clients.length };
+    try {
+      return { value: (await listClientRows()).length };
+    } catch (error) {
+      return { value: null, unavailable: error instanceof Error ? error.message : "Client Health is unreachable" };
+    }
   },
 
-  "clients:active": async (spec) => {
-    const token = optionalEnv("CLIENT_HEALTH_READ_TOKEN");
-    if (!token) return { value: null, unavailable: `${spec.requiresEnv} not set` };
-
-    const res = await httpProbe(`${baseUrlEnv("CLIENT_HEALTH_URL")}/api/clients/status`, {
-      timeoutMs: TIMEOUT,
-      headers: { "x-admin-token": token },
-    });
-    if (!res.ok) return { value: null, unavailable: `returned ${res.status ?? "no response"}` };
-
-    const counts = asRecord(asRecord(res.json)?.counts);
-    return { value: num(counts?.active) };
+  "clients:active": async () => {
+    try {
+      return { value: (await clientStatuses()).counts.active };
+    } catch (error) {
+      return { value: null, unavailable: error instanceof Error ? error.message : "Client Health is unreachable" };
+    }
   },
 
   // Computed from weekly_metrics inside the app and never published. Naming it

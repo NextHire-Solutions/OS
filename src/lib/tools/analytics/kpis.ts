@@ -1,4 +1,4 @@
-import { getAnalyticsSupabase as getSupabase } from "./supabase";
+import { getAnalyticsSupabase as getSupabase } from "./supabase.ts";
 import {
   bounceRate,
   humanRate,
@@ -8,6 +8,7 @@ import {
   replyRate,
 } from "./metrics.ts";
 import type { ResolvedFilters } from "./query-params.ts";
+import { resolvePlatformScope } from "./platform-scope.ts";
 import { fetchFollowUpOverall } from "./follow-up.ts";
 
 /*
@@ -26,11 +27,17 @@ import { fetchFollowUpOverall } from "./follow-up.ts";
 
 export interface KpiValues {
   sent: number;
-  prospects: number;
+  /** null when EmailBison could not be asked — rendered as a dash, not a zero. */
+  prospects: number | null;
   replies: number;
   humanReplies: number;
-  positive: number;
-  bounces: number;
+  /*
+   * Nullable: Instantly can supply neither, and a 0 would read as "none" when
+   * it means "not available for the platforms in scope". Every formatter in
+   * format.ts already renders null as a dash.
+   */
+  positive: number | null;
+  bounces: number | null;
   medianReplyTime: number | null;
   medianFollowUpTime: number | null;
   replyRate: number | null;
@@ -50,17 +57,36 @@ export interface KpiResponse {
     followUpBusinessHours: string | null;
     followUpSampleSize: number | null;
     replyTimingSampleSize: number;
+    /** Which sending platforms the figures above actually describe. */
+    platforms?: string[];
+    /** False while MasterInbox labels do not reach Instantly replies. */
+    positiveCoversInstantly?: boolean;
+    /**
+     * Why Instantly was left out despite being selected. Null when it wasn't.
+     *
+     * The band needs to SAY this: an EmailBison-only figure with the Instantly
+     * chip visibly ticked looks like the filter is being ignored — which is
+     * precisely what the old behaviour did, in the other direction.
+     */
+    instantlyExcludedBy?: "campaign-filter" | null;
   };
 }
 
 interface RpcRow {
   period: string;
   sent: number;
-  prospects: number;
+  /* Widened with KpiValues: the merged row may legitimately not know this. */
+  prospects: number | null;
   replies: number;
   human_replies: number;
-  positive: number;
-  bounces: number;
+  /*
+   * Nullable because Instantly cannot supply either. MasterInbox labels decide
+   * Positive and key on EmailBison reply ids; Instantly publishes no per-day
+   * bounce figure. When Instantly is in scope both go null and reach the DOM
+   * as a dash, rather than a partial figure that would misstate the rates.
+   */
+  positive: number | null;
+  bounces: number | null;
 }
 
 function derive(
@@ -72,14 +98,30 @@ function derive(
   const sent = Number(row?.sent ?? 0);
   const replies = Number(row?.replies ?? 0);
   const humanReplies = Number(row?.human_replies ?? 0);
-  const positive = Number(row?.positive ?? 0);
-  const bounces = Number(row?.bounces ?? 0);
+  /*
+   * NULL SURVIVES. `?? 0` would turn "we do not have this" into "there were
+   * none" — and these two are exactly the metrics Instantly cannot supply:
+   * MasterInbox owns Positive and keys on EmailBison reply ids, and Instantly
+   * publishes no per-day bounce figure at all. A 0 next to 884 replies reads as
+   * a collapse in performance rather than a gap in coverage, which is the
+   * confusion rule 1 exists to prevent. The formatters render null as a dash.
+   */
+  const positive = row?.positive == null ? null : Number(row.positive);
+  const bounces = row?.bounces == null ? null : Number(row.bounces);
 
   return {
     sent,
-    // NOT row.prospects -- that column sums daily distinct counts and
-    // overcounts. See fetchProspects().
-    prospects: prospects ?? 0,
+    /*
+     * NOT row.prospects — that column sums daily distinct counts and
+     * overcounts: 215,385 against the 96,493 distinct people EmailBison itself
+     * reports for the same window. See fetchProspects().
+     *
+     * And null, never `?? 0`. fetchProspects returns null when the EmailBison
+     * credentials are absent — exactly the state production was in — so the
+     * card read "Prospects 0", which does not mean "unknown": it claims nobody
+     * was contacted. The band already renders a nullish metric as a dash.
+     */
+    prospects,
     replies,
     humanReplies,
     positive,
@@ -88,9 +130,11 @@ function derive(
     medianFollowUpTime: medianFollowUp,
     replyRate: replyRate(replies, sent),
     humanRate: humanRate(humanReplies, sent),
-    positiveRate: positiveRate(positive, replies),
-    leadToEmail: leadToEmail(sent, positive),
-    bounceRate: bounceRate(bounces, sent),
+    // A rate whose numerator is unknown is unknown, not zero. Dividing null by
+    // a real reply count would print 0.0% and read as "nothing converted".
+    positiveRate: positive == null ? null : positiveRate(positive, replies),
+    leadToEmail: positive == null ? null : leadToEmail(sent, positive),
+    bounceRate: bounces == null ? null : bounceRate(bounces, sent),
   };
 }
 
@@ -130,8 +174,17 @@ async function fetchProspects(
   to: string,
   campaignIds: number[],
 ): Promise<number | null> {
-  const base = process.env.EMAILBISON_BASE_URL;
-  const key = process.env.EMAILBISON_API_KEY;
+
+  /*
+   * NAMESPACED. The tool reads the bare names; the workspace cannot, because it
+   * talks to two EmailBison-shaped tools and four Supabase projects in a single
+   * process and an unprefixed name would collide with Master Inbox's. Same
+   * change, same reason, as supabase.ts. The VALUES are the tool's own — the
+   * August figures reconcile to the row: 224,708 sent in the analytics database
+   * against 224,709 reported by this workspace's stats endpoint.
+   */
+  const base = process.env.ANALYTICS_EMAILBISON_BASE_URL;
+  const key = process.env.ANALYTICS_EMAILBISON_API_KEY;
   if (!base || !key) return null;
 
   const headers = {
@@ -194,7 +247,7 @@ export async function loadKpis(
     p_team_id: teamId,
     p_from: filters.from,
     p_to: filters.to,
-    p_campaign_ids: filters.campaignIds.length ? filters.campaignIds : null,
+    p_campaign_ids: filters.emailbisonCampaignIds.length ? filters.emailbisonCampaignIds : null,
     p_client_ids: filters.clientIds.length ? filters.clientIds : null,
   };
 
@@ -203,7 +256,7 @@ export async function loadKpis(
       sb.rpc("analytics_kpis", { ...args, p_compare: filters.compare }),
       sb.rpc("analytics_reply_timing", args),
       fetchFollowUpOverall(filters.from, filters.to),
-      fetchProspects(filters.from, filters.to, filters.campaignIds),
+      fetchProspects(filters.from, filters.to, filters.emailbisonCampaignIds),
       filters.compare && filters.compareFrom && filters.compareTo
         ? sb.rpc("analytics_reply_timing", {
             ...args,
@@ -215,15 +268,144 @@ export async function loadKpis(
         ? fetchFollowUpOverall(filters.compareFrom, filters.compareTo)
         : Promise.resolve(null),
       filters.compare && filters.compareFrom && filters.compareTo
-        ? fetchProspects(filters.compareFrom, filters.compareTo, filters.campaignIds)
+        ? fetchProspects(filters.compareFrom, filters.compareTo, filters.emailbisonCampaignIds)
         : Promise.resolve(null),
     ]);
 
   if (counts.error) throw new Error(`analytics_kpis: ${counts.error.message}`);
 
   const rows = (counts.data ?? []) as RpcRow[];
-  const currentRow = rows.find((r) => r.period === "current");
+  let currentRow = rows.find((r) => r.period === "current");
   const previousRow = rows.find((r) => r.period === "previous");
+
+  /*
+   * `currentRow` IS THE EMAILBISON ROW, and it is computed whether or not
+   * EmailBison is in scope — the RPC above runs unconditionally.
+   *
+   * That was survivable only because the one path that excluded EmailBison
+   * (Instantly alone) always rebuilt the row from Instantly's figures. Once a
+   * campaign filter could take Instantly out of scope too, "Instantly only,
+   * campaign selected" left EmailBison's own numbers standing under an
+   * "Instantly only" label — the same leak as before with the platforms
+   * swapped. Zeroing it here means the row is never a platform nobody asked
+   * for, regardless of which branch runs below.
+   */
+
+  /*
+   * INSTANTLY, WHEN THE PLATFORM FILTER ASKS FOR IT.
+   *
+   * Instantly is the larger half of the sending — 840,416 sends against
+   * EmailBison's ~435,000 — so a band that ignores it describes under a third
+   * of the operation. But the two platforms do not answer the same questions,
+   * and pretending otherwise breaks rule 3:
+   *
+   *   Sent / Prospects / Replies / Human / BOUNCES   both platforms report
+   *                                        these and they add up. Bounces
+   *                                        joined that list in 077, once the
+   *                                        per-day figures were found on the
+   *                                        ranged analytics endpoint.
+   *   POSITIVE                             MasterInbox labels decide it, and
+   *                                        they key on EmailBison reply ids.
+   *                                        No Instantly reply has one, and no
+   *                                        amount of Instantly syncing changes
+   *                                        that — it is a gap in what has been
+   *                                        LABELLED, not in what was fetched.
+   *
+   * Adding Instantly's replies to the numerator-less Positive would halve the
+   * Positive RATE overnight and read as a collapse in performance rather than a
+   * change in what is being counted. So Positive alone goes NULL — a dash —
+   * whenever Instantly is in scope, and `coverage` says which platforms the
+   * row actually describes.
+   */
+  /*
+   * A CAMPAIGN FILTER TAKES INSTANTLY OUT OF SCOPE. Campaign ids are
+   * EmailBison integers, so the selection contains no Instantly campaign and
+   * Instantly's honest contribution is nothing. Passing `p_campaign_ids: null`
+   * meant "no restriction" and added the entire Instantly workspace to whatever
+   * single campaign was selected — 43,283 sent on a campaign that sent 2.
+   */
+  const scope = resolvePlatformScope({
+    platforms: filters.platforms,
+    emailbisonCampaignIds: filters.emailbisonCampaignIds,
+    instantlyCampaignIds: filters.instantlyCampaignIds,
+  });
+  const wantsInstantly = scope.instantly;
+  const wantsEmailBison = scope.emailbison;
+
+  if (!wantsEmailBison && currentRow) {
+    currentRow = {
+      ...currentRow,
+      sent: 0,
+      prospects: 0,
+      replies: 0,
+      human_replies: 0,
+      positive: 0,
+      bounces: 0,
+    };
+  }
+
+  let platformsCovered: string[] = wantsEmailBison ? ["emailbison"] : [];
+
+  if (wantsInstantly) {
+    const { data: inst, error: instError } = await sb.rpc("analytics_instantly_kpis", {
+      p_team_id: teamId,
+      p_from: filters.from,
+      p_to: filters.to,
+      p_client_ids: filters.clientIds.length ? filters.clientIds : null,
+      /*
+       * The Instantly half of the campaign filter. This was null while the
+       * picker could only offer EmailBison ids; null means "no restriction", so
+       * once Instantly campaigns became selectable it would have returned the
+       * whole workspace for a single selected campaign.
+       */
+      p_campaign_ids: filters.instantlyCampaignIds.length
+        ? filters.instantlyCampaignIds
+        : null,
+    });
+    if (instError) throw new Error(`analytics_instantly_kpis: ${instError.message}`);
+
+    const i = (inst ?? [])[0] as
+      | {
+          sent: number;
+          prospects: number;
+          replies: number;
+          human_replies: number;
+          bounces: number | null;
+        }
+      | undefined;
+
+    if (i) {
+      platformsCovered = [...platformsCovered, "instantly"];
+      const base = wantsEmailBison ? currentRow : undefined;
+      currentRow = {
+        period: "current",
+        sent: Number(base?.sent ?? 0) + Number(i.sent ?? 0),
+        /*
+         * Null only when NEITHER side reported. Summing through `?? 0` would
+         * turn "EmailBison unreachable" into "EmailBison contacted nobody" the
+         * moment Instantly came into scope.
+         */
+        prospects:
+          base?.prospects == null && i.prospects == null
+            ? null
+            : Number(base?.prospects ?? 0) + Number(i.prospects ?? 0),
+        replies: Number(base?.replies ?? 0) + Number(i.replies ?? 0),
+        human_replies: Number(base?.human_replies ?? 0) + Number(i.human_replies ?? 0),
+        // Deliberately unavailable while Instantly is in scope. See above.
+        positive: null,
+        /*
+         * Summed where BOTH sides have a figure. If Instantly's is null — a
+         * window entirely before 077 wrote per-day bounces — the total goes
+         * null too rather than silently reporting the EmailBison half as though
+         * it were the whole.
+         */
+        bounces:
+          i.bounces == null
+            ? null
+            : Number(base?.bounces ?? 0) + Number(i.bounces),
+      } satisfies RpcRow;
+    }
+  }
 
   const medianReply = timing.data?.[0]?.median_reply_seconds ?? null;
   const replySamples = Number(timing.data?.[0]?.sample_size ?? 0);
@@ -241,6 +423,19 @@ export async function loadKpis(
       followUpBusinessHours: followUp.businessHours,
       followUpSampleSize: followUp.sampleSize,
       replyTimingSampleSize: replySamples,
+      /*
+       * Which platforms this row actually describes, so the band can say so
+       * rather than leaving a reader to assume it covers everything.
+       */
+      platforms: platformsCovered,
+      positiveCoversInstantly: false,
+      /*
+       * Instantly was asked for and deliberately left out. Surfaced so the band
+       * can say so — an unexplained EmailBison-only figure while the Instantly
+       * chip is visibly selected reads as the filter being ignored, which is
+       * exactly what the previous behaviour actually was.
+       */
+      instantlyExcludedBy: scope.instantlyExcludedBy ?? null,
     },
   };
 

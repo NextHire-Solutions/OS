@@ -45,7 +45,7 @@ async function fetchClients(workspaceId: string): Promise<ClientOption[]> {
 // `.invalidate()` after a rename / delete. React's outer `cache()`
 // wrapper doesn't proxy custom methods, so we keep the raw ttlCache
 // reference separately.
-const cachedFetchClients = ttlCache(fetchClients, { ttlMs: 60_000 });
+const cachedFetchClients = ttlCache(fetchClients, { ttlMs: 60_000, staleMs: 10 * 60_000 });
 export const loadClients = cache(cachedFetchClients);
 
 // Drop the inbox client-list cache so the next render sees fresh

@@ -185,12 +185,10 @@ export function PipelineKanban({
               if (cur && displayKeyOf(cur) === c.key) return;
               onStageChange(id, c.key);
             }}
-            className={cn(
-              "flex w-[280px] shrink-0 flex-col rounded-xl border bg-[#fafbfc] transition-colors",
-              isDropTarget
-                ? "border-[#1565C0] ring-2 ring-[#eaf2fd]"
-                : "border-[#ebecf0]",
-            )}
+            data-kanban-column
+            data-stage={c.key}
+            data-over={isDropTarget ? "true" : "false"}
+            className="flex w-[280px] shrink-0 flex-col transition-colors"
           >
             <div className="flex items-center gap-2 border-b border-[#ebecf0] px-3 py-2.5">
               <span
@@ -246,8 +244,10 @@ export function PipelineKanban({
                       setDragOverStage(null);
                     }}
                     onClick={() => onCardClick(e)}
+                    data-kanban-card
+                    data-entry-id={e.id}
                     className={cn(
-                      "flex flex-col gap-1.5 rounded-lg border border-[#ebecf0] bg-white p-2.5 text-left shadow-sm transition-colors hover:border-[#bcd5f1] hover:bg-[#fcfdff]",
+                      "flex flex-col gap-1.5 p-2.5 text-left transition-colors",
                       onStageChange ? "cursor-grab active:cursor-grabbing" : "",
                       draggingId === e.id ? "opacity-50" : "",
                     )}

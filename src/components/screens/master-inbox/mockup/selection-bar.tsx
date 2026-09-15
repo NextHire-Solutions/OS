@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { BulkActionsBar } from "@/components/master-inbox/bulk-actions-bar";
+import type { LabelRow } from "@/lib/tools/master-inbox/inbox/labels";
+import type { ListRow } from "@/lib/tools/master-inbox/inbox/lists";
 import { useRouter } from "next/navigation";
 
 /*
@@ -33,6 +36,7 @@ const API = "/api/tools/master-inbox/threads/bulk";
 
 export function MockupSelectionBar({
   selected, total, page, lastPage, pageSize, onClear, onSelectAll, onDone, onPage,
+  labels, lists, view,
 }: {
   selected: string[];
   total: number;
@@ -43,6 +47,22 @@ export function MockupSelectionBar({
   onSelectAll: () => void;
   onDone: () => void;
   onPage: (delta: number) => void;
+  /*
+   * When these are supplied the tool's own BulkActionsBar renders the action
+   * set — bulk labels, move to list / create list, move agent, restore from
+   * archive, delete forever (trash only) and CSV export — in place of the
+   * five quick buttons below. Without them the quick buttons remain, so a
+   * caller that has not loaded labels and lists still gets a working bar.
+   *
+   * WHY THIS WAS MISSING: `bulk-actions-bar.tsx` was ported and imported only
+   * by `thread-list.tsx`, which only the conversation screen renders — in
+   * compact mode, which returns before the bar. The list screen used this
+   * mockup bar instead. Every one of those actions existed in the repo and
+   * was reachable from no screen.
+   */
+  labels?: LabelRow[];
+  lists?: ListRow[];
+  view?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -92,6 +112,11 @@ export function MockupSelectionBar({
         <span className="tnum">
           {from.toLocaleString("en-US")}–{to.toLocaleString("en-US")} of {total.toLocaleString("en-US")}
         </span>
+      ) : labels && lists ? (
+        <>
+          <span className="tnum">{n} selected</span>
+          <BulkActionsBar selected={selected} onClear={onClear} labels={labels} lists={lists} view={view} />
+        </>
       ) : (
         <>
           <span className="tnum">{n} selected</span>

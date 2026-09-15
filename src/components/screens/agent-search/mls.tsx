@@ -8,7 +8,10 @@ import {
 } from "@/lib/tools/agent-search/baseline";
 import type { CourtedState } from "@/lib/tools/agent-search/courted-state";
 import { mlsDisplayName } from "@/lib/tools/agent-search/format";
-import { Actions, AgentSearchHeader, Card, Msg, ago, useStatus } from "./shared";
+import {
+  Actions, AgentSearchHeader, Card, Msg, ago, elapsedLabel, pollCourtedState, useStatus,
+  type FireReply,
+} from "./shared";
 
 /*
  * MLS monitor — which MLSs each Courted account can see, and what changed.
@@ -126,22 +129,54 @@ export function AgentSearchMlsScreen() {
    * the endpoint by hand.
    */
   async function runMonitorNow() {
+    /*
+     * Fire-and-poll. The live handler logs into every account in series and
+     * answers only at the end, so the workspace route replies 202
+     * `{ started }` and the proof of completion is `mls_monitor_state` —
+     * every cleanly scanned account's `scanned_at` moves. Watch courted-state
+     * for `lastScanAt` to pass the moment we pressed the button.
+     */
+    const before = server?.lastScanAt ?? null;
+    const t0 = Date.now();
     setMonitorRunning(true);
-    say("Running the monitor — logging into every account and diffing against the server baseline…");
+    say("Starting the monitor — it logs into every account and diffs against the server baseline…");
     try {
       const res = await fetch("/api/tools/agent-search/courted/mls-monitor", {
         method: "POST", credentials: "same-origin",
       });
-      const d = (await res.json()) as {
-        error?: string; ok?: boolean; scanned?: number; changes?: number;
-        failures?: number; alerted?: boolean; message?: string;
+      const d = (await res.json()) as FireReply & {
+        scanned?: number; changes?: number; failures?: number; alerted?: boolean;
       };
       if (!res.ok || d.error) throw new Error(d.error ?? d.message ?? "monitor failed");
-      say(`Monitor finished — ${d.scanned ?? 0} account(s) scanned, ${d.changes ?? 0} changed, ` +
-          `${d.failures ?? 0} failed to log in.` +
-          (d.alerted ? " Slack alerted." : d.changes || d.failures ? " Slack not configured — the alert was logged." : "") +
-          " The server baseline is now up to date.");
-      loadServer();
+      // "No Courted accounts configured." comes back 200 with ok:false.
+      if (d.ok === false) throw new Error(d.message ?? "monitor refused");
+
+      if (!d.started) {
+        say(`Monitor finished — ${d.scanned ?? 0} account(s) scanned, ${d.changes ?? 0} changed, ` +
+            `${d.failures ?? 0} failed to log in.` +
+            (d.alerted ? " Slack alerted." : d.changes || d.failures ? " Slack not configured — the alert was logged." : "") +
+            " The server baseline is now up to date.");
+        loadServer();
+        return;
+      }
+
+      say("Monitor running — logging into every account in turn. Under a minute so far…");
+      const landed = await pollCourtedState(
+        (s) => {
+          if (!s.lastScanAt || s.lastScanAt === before) return false;
+          const at = Date.parse(s.lastScanAt);
+          return Number.isFinite(at) && at >= t0 - 60_000;
+        },
+        { onTick: (ms) => say(`Monitor running — logging into every account in turn. ${elapsedLabel(ms)} so far…`) },
+      );
+      if (!landed) {
+        say(`The monitor is still running after ${elapsedLabel(Date.now() - t0)} — the server baseline will update when it finishes.`);
+        return;
+      }
+      const scanned = landed.accounts.filter((a) => a.scannedAt && Date.parse(a.scannedAt) >= t0 - 60_000).length;
+      say(`Monitor finished — ${scanned} account(s) scanned cleanly and re-baselined ${ago(landed.lastScanAt)}. ` +
+          "Any add / remove or login failure went to Slack, as the scheduler's runs do; the server baseline below is now current.");
+      setServer(landed);
     } catch (e) {
       say("Monitor failed: " + (e instanceof Error ? e.message : "unknown"), true);
     } finally {
@@ -186,7 +221,7 @@ export function AgentSearchMlsScreen() {
   const baseline = baselineFor();
 
   return (
-    <div className="as">
+    <div className="as as-screen">
       <AgentSearchHeader
         title="MLS monitor"
         sub="Which MLSs each Courted account can reach — and what it gained or lost"
@@ -222,20 +257,19 @@ export function AgentSearchMlsScreen() {
 
         <Actions>
           <button className="as-btn" onClick={() => void startScan()} disabled={running}
-            style={running ? { opacity: 0.55, cursor: "wait" } : undefined}>
+            title="Log into every saved account and list the MLSs it can reach — read-only">
             {running ? "Scanning…" : "Scan all accounts"}
           </button>
           {running ? (
             <button className="as-btn ghost" style={{ color: "var(--red)" }} onClick={stopScan}>■ Stop</button>
           ) : null}
           <button className="as-btn ghost" onClick={() => void runMonitorNow()} disabled={monitorRunning || running}
-            style={monitorRunning || running ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
             title="Diff every account against the server baseline, alert Slack on any change, and save the new baseline">
             {monitorRunning ? "Running monitor…" : "Run monitor now"}
           </button>
           <button className="as-btn ghost" onClick={saveBrowserBaseline}
             disabled={!scan?.accounts?.length}
-            style={!scan?.accounts?.length ? { opacity: 0.45, cursor: "not-allowed" } : undefined}>
+            title={scan?.accounts?.length ? "Remember this scan in this browser" : "Run a scan first"}>
             Save as baseline
           </button>
           {scan ? (
@@ -296,7 +330,7 @@ function AccountBlock(
   const added = d.hadBaseline ? d.added : [];
 
   return (
-    <div style={{
+    <div className="as-mls-block" style={{
       border: `1px solid ${d.changed ? "var(--amber)" : "var(--line)"}`,
       background: d.changed ? "var(--amber-pale)" : "var(--inset)",
       borderRadius: 12, padding: 14,

@@ -125,7 +125,10 @@ export function StageLabelEditor({
   const busy = saving || pending;
 
   return (
-    <section className="mb-4 overflow-hidden rounded-2xl border border-[#ebecf0] bg-white shadow-sm transition-colors">
+    <section
+      data-stage-editor
+      className="card mb-4 overflow-hidden !p-0 transition-colors"
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

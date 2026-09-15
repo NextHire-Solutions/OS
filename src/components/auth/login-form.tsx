@@ -50,7 +50,12 @@ export function LoginForm() {
 
       // Full navigation, not router.push: the session cookie was just set and
       // the proxy needs to see it on a fresh request.
-      window.location.href = safeNext(next);
+      // An invited person still on their temporary password goes to set
+      // their own first; the destination they asked for waits behind it.
+      const body = await res.json().catch(() => ({}));
+      window.location.href = body?.mustChangePassword
+        ? `/account?first=1&next=${encodeURIComponent(safeNext(next))}`
+        : safeNext(next);
     } catch {
       setError("Network error. Try again.");
     } finally {

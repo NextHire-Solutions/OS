@@ -175,7 +175,7 @@ export function AgentSearchImportScreen() {
   const c = job?.counts ?? {};
 
   return (
-    <div className="as">
+    <div className="as as-screen">
       <AgentSearchHeader
         title="Import Profile URLs"
         sub="Scrape a list of Zillow / Realtor.com profiles and add only the agents you don't already have"
@@ -187,19 +187,27 @@ export function AgentSearchImportScreen() {
         small="enrichment"
         sub="Paste a shared Google Sheet link (Anyone with the link) or a CSV of Zillow / Realtor.com profile URLs. Each agent is scraped, cross-checked against the database by identity, and only new agents are written — the URLs already scraped are skipped. Existing rows are never modified."
       >
-        <div className="as-grid">
+        {/*
+          The two inputs are alternatives, so they sit beside each other with
+          the "or" between — as the design has them. Left on the bare
+          `.as-grid` (which declares no columns) this collapsed to a single
+          column: a full-width link box, a stranded "or", and a full-width
+          textarea underneath, reading as three sequential steps rather than a
+          choice of two. See `.as-io` in tool-agent-search.css.
+        */}
+        <div className="as-grid as-io">
           <Field label="Google Sheet link" hint="(shared: Anyone with the link)">
             <input className="as-i" type="text" value={sheetUrl} autoComplete="off"
               placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0"
               onChange={(e) => { setSheetUrl(e.target.value); setCanStart(false); }} />
           </Field>
-          <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>or</div>
+          <div className="as-or">or</div>
           <Field label="Upload / paste CSV of URLs">
             <textarea className="as-ta" rows={3} value={csv}
               placeholder={"Pick a .csv file below, or paste rows / URLs here\nhttps://www.zillow.com/profile/…\nhttps://www.realtor.com/realestateagents/…"}
               onChange={(e) => { setCsv(e.target.value); setCanStart(false); }} />
-            <input type="file" accept=".csv,text/csv,text/plain" onChange={onFile}
-              style={{ marginTop: 9, fontSize: 12.5, color: "var(--muted)" }} />
+            <input className="as-file" type="file" accept=".csv,text/csv,text/plain"
+              aria-label="Upload a CSV of profile URLs" onChange={onFile} />
           </Field>
         </div>
 
@@ -221,7 +229,7 @@ export function AgentSearchImportScreen() {
             {resolving ? "Detecting…" : "Detect URLs"}
           </button>
           <button className="as-btn" onClick={() => void start()} disabled={!canStart || running}
-            style={!canStart || running ? { opacity: 0.45, cursor: "not-allowed" } : undefined}>
+            title={canStart ? "Scrape these profiles" : "Run Detect URLs first"}>
             Start enrichment
           </button>
           {running ? (

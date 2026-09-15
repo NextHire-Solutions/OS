@@ -75,7 +75,15 @@ function PerformanceView({ performance }: { performance: Performance }) {
               key={plan.plan}
               label={plan.label}
               value={plan.count}
-              sub={plan.weeklyTarget !== null ? `${plan.weeklyTarget} intros / week` : "mixed weekly targets"}
+              /*
+               * The plan's own colour — blue for Production, purple for Partner,
+               * plain for Minimum. The workspace already colours these pills on
+               * the Clients roster, and the design colours these very numbers;
+               * printing all three in black here made the plan mix unreadable at
+               * a glance and disagreed with our own other screen.
+               */
+              tone={PLAN_TONE[plan.plan]}
+              sub={weeklyTargetLabel(plan)}
             />
           ))}
         </div>
@@ -134,6 +142,40 @@ function PerformanceView({ performance }: { performance: Performance }) {
       </div>
     </>
   );
+}
+
+/*
+ * Plan colours, matching `.plan-prod` / `.plan-partner` / `.plan-min` on the
+ * Clients roster so one plan does not read as two different things on two
+ * screens.
+ */
+const PLAN_TONE: Record<string, string | undefined> = {
+  production: "n-blue",
+  partner: "n-purple",
+  minimum: undefined,
+};
+
+/*
+ * What the plan promises per week.
+ *
+ * Every client on a plan agreeing is the easy case. When they disagree the old
+ * copy read "mixed weekly targets" — printed identically under all three cards,
+ * which says nothing the reader cannot already see. The spread says the same
+ * thing with the numbers in it, and "2–4 intros / week" is actionable where
+ * "mixed" is not.
+ */
+function weeklyTargetLabel(plan: {
+  weeklyTarget: number | null;
+  targetMin: number | null;
+  targetMax: number | null;
+}): string {
+  if (plan.weeklyTarget !== null) {
+    return `${plan.weeklyTarget} intro${plan.weeklyTarget === 1 ? "" : "s"} / week`;
+  }
+  const { targetMin: lo, targetMax: hi } = plan;
+  if (lo === null || hi === null) return "no weekly target set";
+  if (lo === hi) return `${lo} intro${lo === 1 ? "" : "s"} / week`;
+  return `${lo}–${hi} intros / week`;
 }
 
 function Card({

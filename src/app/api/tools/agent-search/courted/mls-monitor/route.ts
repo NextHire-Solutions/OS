@@ -11,6 +11,11 @@ import { scraper } from "@/lib/tools/agent-search/scraper";
  * login failure, and then writes the fresh baseline — but only for accounts
  * that scanned cleanly, so a stale password can never wipe an account's
  * history or fire a false "removed".
+ *
+ * Fire-and-poll (scraper.fireScraper): the live handler resolves only after
+ * every account has been logged into in series. An early refusal comes back
+ * as-is; otherwise 202 `{ started: true }`, and the screen watches GET
+ * courted-state for `lastScanAt` to move.
  */
 export const dynamic = "force-dynamic";
 

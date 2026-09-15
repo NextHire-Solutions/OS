@@ -1,6 +1,7 @@
 "use client";
 
 import { useClientHealth } from "./load";
+import { SyncScheduler } from "./sync-scheduler";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
 /*
@@ -13,6 +14,11 @@ import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
  *
  * The skeleton matches the real layout's shape — cards above, table below — so
  * arriving data does not shove the page around.
+ *
+ * The sync schedule's ticker is mounted here too, because "a Client Health
+ * screen is open" is exactly the condition under which the schedule should be
+ * kept — see sync-scheduler.tsx. It renders nothing and dedupes itself across
+ * the three screens.
  */
 export function ClientHealthFrame({
   initial,
@@ -23,20 +29,28 @@ export function ClientHealthFrame({
 }) {
   const { data, error } = useClientHealth(initial);
 
+  let body: React.ReactNode;
   if (error) {
-    return (
+    body = (
       <div className="wrap">
         <div className="anno">
           <b>Client Health could not be read.</b> {error}. Nothing is wrong with the
-          tool&rsquo;s own dashboard — this is the workspace&rsquo;s connection to it.
+          data itself — this is the workspace&rsquo;s connection to its database.
         </div>
       </div>
     );
+  } else if (!data) {
+    body = <Skeleton />;
+  } else {
+    body = children(data);
   }
 
-  if (!data) return <Skeleton />;
-
-  return <>{children(data)}</>;
+  return (
+    <>
+      <SyncScheduler />
+      {body}
+    </>
+  );
 }
 
 function Skeleton() {

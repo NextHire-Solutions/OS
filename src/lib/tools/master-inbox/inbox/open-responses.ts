@@ -1,5 +1,6 @@
 import type { createServerSupabase } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
+import { ttlCache } from "@/lib/cache/ttl";
 
 // "Open Responses" — a work-queue view scoped to threads where the
 // ball is in OUR court right now:
@@ -56,7 +57,7 @@ export async function resolveOpenResponseLabelIds(
 
 // Every open thread id in the workspace that qualifies as an Open
 // Response. Used by loadThreads to restrict the query via .in("id", …).
-export async function openResponsesThreadIds(
+async function computeOpenResponsesThreadIds(
   supabase: ServerSupabase,
   workspaceId: string,
 ): Promise<Set<string>> {
@@ -176,3 +177,45 @@ export async function openResponsesThreadIds(
   }
   return result;
 }
+
+/*
+ * Cached, because computing it is the slowest thing in the inbox.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT IT COST BEFORE
+ *
+ * Measured on production: `/inbox/open-responses` took 11.9 SECONDS, against
+ * 1.5–2.6s for every other view. The work is unavoidable in shape — it reads
+ * every open thread in the workspace (~10,000), then walks their label
+ * assignments in 150-id chunks because of the URL length cap, which is roughly
+ * seventy round trips before the message-direction pass even starts.
+ *
+ * The user-visible effect was worse than slow. A behaviour sweep reported the
+ * "Open Responses" tab as DEAD — clicked, nothing happened — and it was right
+ * about what a person experiences: you click, the page sits there, and you
+ * conclude the tab is broken. Every other tab in that strip responds in under
+ * three seconds.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A CACHE IS THE RIGHT ANSWER HERE
+ *
+ * Membership changes only when somebody labels a thread or a reply arrives, and
+ * the view is a work queue that several people open repeatedly in a session.
+ * 60 seconds matches what the rest of this workspace already uses — the inbox
+ * client list, the canonical client list and the Client Health week all cache
+ * for the same interval, and that last one is what took `/clients` from 3814ms
+ * to 101ms.
+ *
+ * The cost is honest and small: label a thread "Interested" and it can take up
+ * to a minute to appear here. The alternative is twelve seconds of nothing
+ * every single time, which people read as a broken button.
+ */
+export const openResponsesThreadIds = ttlCache(computeOpenResponsesThreadIds, {
+  ttlMs: 60_000,
+  // Serve the last answer for up to 15 minutes while recomputing behind it:
+  // the 12s walk is paid once per deploy, not once per quiet minute.
+  staleMs: 15 * 60_000,
+  // Keyed by workspace only. The Supabase client is an argument but not an
+  // identity — including it in the key would make every request a cache miss.
+  key: (_supabase, workspaceId) => workspaceId,
+});

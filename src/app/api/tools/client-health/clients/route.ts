@@ -6,7 +6,9 @@ import {
   updateClientRow,
   type WriteResult,
 } from "@/lib/tools/client-health/clientWrites";
+import { checkReadToken, listClientRows } from "@/lib/tools/client-health/publish";
 import { getSupabase } from "@/lib/tools/client-health/supabase";
+import { getWeekly } from "@/lib/tools/client-health/weekly";
 
 /*
  * Every write the workspace makes to Client Health.
@@ -34,6 +36,34 @@ import { getSupabase } from "@/lib/tools/client-health/supabase";
  * so by the time a handler here runs the caller is signed in.
  */
 export const dynamic = "force-dynamic";
+
+/*
+ * GET — the tool's published roster, `{ clients }`, every column of every
+ * client ordered by name.
+ *
+ * The tool accepts two callers here: a signed-in person, or a machine holding
+ * READ_ONLY_TOKEN in `x-admin-token`. The proxy has already established the
+ * first; the second is honoured too, so a consumer that read the tool's
+ * /api/clients with a token can read this one with the same header — the
+ * workspace's name for that secret is CLIENT_HEALTH_READ_TOKEN. Writes below
+ * never accept the token: a secret handed to lower-trust readers must not be
+ * able to delete a client.
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const token = request.headers.get("x-admin-token");
+  if (token !== null && checkReadToken(token) !== "ok") {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  try {
+    getSupabase();
+    return NextResponse.json({ clients: await listClientRows() });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Client Health is unreachable" },
+      { status: 500 },
+    );
+  }
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   return respond(async (db) => createClientRow(db, await readJson(request)), 201, (v) => ({
@@ -70,6 +100,18 @@ async function respond<T>(
   okStatus: number,
   shape: (value: T) => Record<string, unknown>,
 ): Promise<NextResponse> {
+  /*
+   * Every write drops the cached read.
+   *
+   * `getWeekly` is a 60-second ttlCache, and nothing invalidated it. Add a
+   * client, press reload inside a minute: the client is gone. Churn one: the
+   * churn looks undone. Edit one: the edit looks lost. The write had landed —
+   * the next read was simply served from a cache that predated it, and the
+   * screen then flipped between the two depending on which path it took.
+   *
+   * The tool itself never had this problem because its page is force-dynamic
+   * and every mutation calls router.refresh().
+   */
   let db: ReturnType<typeof getSupabase>;
   try {
     db = getSupabase();
@@ -87,6 +129,7 @@ async function respond<T>(
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
+    getWeekly.invalidate();
     return NextResponse.json(shape(result.value), { status: okStatus });
   } catch (error) {
     console.error("[api/tools/client-health/clients]", error);

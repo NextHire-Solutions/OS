@@ -2,26 +2,38 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ChevronUp,
-  ChevronDown,
-  Check,
-  Copy,
-  Mail as MailIcon,
-  Phone,
-  MapPin,
-  Building2,
-  Globe,
-  Megaphone,
-  Users,
-  Inbox,
-} from "lucide-react";
-import { LabelChip } from "@/components/master-inbox/label-chip";
+import { ChevronUp, ChevronDown, Check, Copy } from "lucide-react";
 import { SubsequenceSection } from "@/components/master-inbox/subsequence-status";
 import { FollowupCampaignPicker } from "@/components/master-inbox/followup-campaign-picker";
+import { labelClass } from "@/components/screens/master-inbox/mockup/tabs";
 import { toast } from "sonner";
 import { cn } from "@/lib/tools/master-inbox/utils";
 import type { ThreadDetail } from "@/lib/tools/master-inbox/inbox/thread-detail";
+
+/*
+ * ---------------------------------------------------------------------------
+ * WHAT CHANGED IN THIS FILE, AND WHAT DID NOT
+ *
+ * MARKUP only. The panel is rebuilt on `workspace.css`'s own right-hand-pane
+ * vocabulary — `.pcol`, `.phd`, `.pp`, `.pp-tabs`, `.pp-tab`, `.pcard`,
+ * `.pcard-h`, `.prow` with its `.k` / `.v` columns, `.av`, `.cbx` — instead of
+ * Tailwind boxes with a `rounded-lg border` and an underlined tab strip.
+ *
+ * Every derivation, fetch, toast and piece of state is unchanged: the
+ * `custom_fields` indexing and `find()` resolution order, the email and phone
+ * de-duplication, the POST/PATCH calls to `agent-email` and `agent-phone`, the
+ * width persistence, the pointer-drag resize, the provider split between
+ * subsequences and follow-up campaigns.
+ *
+ * Two things are new, and both are the design's own answer to something the
+ * Tailwind version did by hand:
+ *
+ *   · label chips use `labelClass()` — the SAME mapper the conversation list
+ *     uses — so a label is one colour across the product rather than
+ *     emerald-100 here and `.lc-green` two panes to the left.
+ *
+ *   · "preferred" is the design's `.cbx`, the same checkbox the list rows use.
+ */
 
 type TabId = "details" | "attachments" | "notes";
 
@@ -116,46 +128,39 @@ export function ProspectPanel({ detail }: { detail: ThreadDetail }) {
   }
 
   return (
-    <aside
-      style={{ width: `${width}px` }}
-      className="relative shrink-0 border-l bg-background overflow-y-auto"
-    >
-      {/* Resize handle — left edge. */}
+    /*
+     * `.pcol` is the design's pane — a column that owns its own scrolling.
+     * `.mi-prospect` adds the two things the design file cannot know about:
+     * the inline width the user dragged it to, and the z-index that keeps this
+     * pane above the composer's overlay (mi-conversation.css §1).
+     */
+    <aside style={{ width: `${width}px` }} className="pcol mi-prospect">
+      {/* Resize handle — left edge. Drawn like the rail's own grip. */}
       <div
         onPointerDown={onHandlePointerDown}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize panel"
-        className={cn(
-          "absolute top-0 left-0 z-10 h-full w-1.5 -ml-px cursor-col-resize select-none",
-          "transition-colors hover:bg-accent/60",
-          resizing && "bg-accent",
-        )}
+        className={cn("mi-prospect-grip", resizing && "drag")}
       />
 
-      <div className="h-10 border-b flex items-center px-4">
-        <span className="text-sm font-medium">Prospect details</span>
-      </div>
+      <div className="phd">Prospect details</div>
 
-      <div className="p-4 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="size-9 rounded-md bg-zinc-100 text-zinc-700 flex items-center justify-center text-sm font-semibold shrink-0">
-            {initials}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold truncate flex items-center gap-1.5">
-              {lead.full_name ?? lead.email ?? "Unknown"}
-            </div>
+      <div className="pp">
+        <div className="pp-id">
+          <span className="tile pp-av">{initials}</span>
+          <div className="who">
+            <b>{lead.full_name ?? lead.email ?? "Unknown"}</b>
             {lead.email ? (
-              <div className="text-xs text-muted-foreground truncate flex items-center gap-1.5">
-                <span className="truncate">{lead.email}</span>
+              <div className="mail">
+                <span>{lead.email}</span>
                 <button
                   type="button"
                   onClick={() => copy(lead.email!)}
-                  className="hover:text-foreground shrink-0"
+                  className="cp"
                   aria-label="Copy email"
                 >
-                  <Copy className="size-3" />
+                  <Copy />
                 </button>
               </div>
             ) : null}
@@ -163,25 +168,24 @@ export function ProspectPanel({ detail }: { detail: ThreadDetail }) {
         </div>
 
         {labels.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="pp-chips">
             {labels.map((l) => (
-              <LabelChip key={l.id} name={l.name} color={l.color} />
+              <span key={l.id} className={labelClass(l.color)}>
+                {l.name}
+              </span>
             ))}
           </div>
         ) : null}
 
-        <div className="flex items-center gap-4 border-b">
+        <div className="pp-tabs" role="tablist" aria-label="Prospect detail sections">
           {(["details", "attachments", "notes"] as TabId[]).map((t) => (
             <button
               key={t}
               type="button"
+              role="tab"
+              aria-selected={tab === t}
               onClick={() => setTab(t)}
-              className={cn(
-                "text-sm pb-2 capitalize transition-colors",
-                tab === t
-                  ? "text-foreground font-medium border-b-2 border-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
+              className={cn("pp-tab", tab === t && "on")}
             >
               {t}
             </button>
@@ -190,11 +194,9 @@ export function ProspectPanel({ detail }: { detail: ThreadDetail }) {
 
         {tab === "details" ? <DetailsTab detail={detail} onCopy={copy} /> : null}
         {tab === "attachments" ? (
-          <div className="text-sm text-muted-foreground py-2">No attachments yet.</div>
+          <div className="pp-empty">No attachments yet.</div>
         ) : null}
-        {tab === "notes" ? (
-          <div className="text-sm text-muted-foreground py-2">No notes yet.</div>
-        ) : null}
+        {tab === "notes" ? <div className="pp-empty">No notes yet.</div> : null}
       </div>
     </aside>
   );
@@ -308,48 +310,45 @@ function DetailsTab({
         : null;
 
   return (
-    <div className="space-y-3">
+    <>
       {/* ---------------- Card 1 — Agent ---------------- */}
-      <Card title="Agent" defaultOpen>
-        <div className="space-y-px">
-          <Field icon={Users} label="Name" value={lead.full_name} onCopy={onCopy} />
-          <AgentEmails
-            threadId={detail.id}
-            emails={emailList}
-            preferred={preferredEmail ?? emailList[0] ?? null}
-            onCopy={onCopy}
-          />
-          <AgentPhones
-            threadId={detail.id}
-            phones={phoneList}
-            preferred={preferredPhone ?? phoneList[0] ?? null}
-            onCopy={onCopy}
-          />
-          <Field icon={Building2} label="Company" value={company} onCopy={onCopy} />
-          <Field icon={MapPin} label="Location" value={location} onCopy={onCopy} />
-          <Field icon={Globe} label="Website" value={website} onCopy={onCopy} />
-          <Field icon={Megaphone} label="Campaign" value={detail.campaign_name} onCopy={onCopy} />
-          <Field icon={Users} label="Client" value={detail.client_name} onCopy={onCopy} />
-          <Field icon={Inbox} label="Source" value={sourceLabel} />
-        </div>
-
-        {/* Provider-specific sequencing action. */}
-        {detail.source_provider === "instantly" && detail.campaign_name ? (
-          <div className="mt-3">
+      <Card
+        title="Agent"
+        defaultOpen
+        /* Provider-specific sequencing action, in the card's own footer. */
+        footer={
+          detail.source_provider === "instantly" && detail.campaign_name ? (
             <SubsequenceSection threadId={detail.id} />
-          </div>
-        ) : null}
-        {detail.source_provider === "emailbison" ? (
-          <div className="mt-3">
+          ) : detail.source_provider === "emailbison" ? (
             <FollowupCampaignPicker threadId={detail.id} />
-          </div>
-        ) : null}
+          ) : null
+        }
+      >
+        <Field label="Name" value={lead.full_name} onCopy={onCopy} />
+        <AgentEmails
+          threadId={detail.id}
+          emails={emailList}
+          preferred={preferredEmail ?? emailList[0] ?? null}
+          onCopy={onCopy}
+        />
+        <AgentPhones
+          threadId={detail.id}
+          phones={phoneList}
+          preferred={preferredPhone ?? phoneList[0] ?? null}
+          onCopy={onCopy}
+        />
+        <Field label="Company" value={company} onCopy={onCopy} />
+        <Field label="Location" value={location} onCopy={onCopy} />
+        <Field label="Website" value={website} onCopy={onCopy} />
+        <Field label="Campaign" value={detail.campaign_name} onCopy={onCopy} />
+        <Field label="Client" value={detail.client_name} onCopy={onCopy} />
+        <Field label="Source" value={sourceLabel} />
       </Card>
 
       {/* ---------------- Card 2 — Lead details ---------------- */}
       {card2.length > 0 ? (
         <Card title="Lead details" defaultOpen>
-          <dl className="grid grid-cols-[minmax(96px,auto)_1fr] gap-x-3 gap-y-2 text-sm">
+          <dl>
             {card2.map((row) => (
               <FieldPair
                 key={`${row.label}-${row.value}`}
@@ -361,12 +360,10 @@ function DetailsTab({
           </dl>
         </Card>
       ) : null}
-    </div>
+    </>
   );
 }
 
-// One labelled row in Card 1 — icon, label, value. Value wraps (never
-// truncated) so long campaign names stay fully readable; URLs linkify.
 // Agent email(s), with a "+ Add email" action and a "mark as preferred" checkbox
 // (shown when there are 2+ emails), mirroring AgentPhones.
 //
@@ -461,88 +458,67 @@ function AgentEmails({
   }
 
   return (
-    <div>
-      {emails.length > 0 ? (
-        <div className="group flex items-start gap-2.5 py-1.5">
-          <MailIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Email
-            </div>
-            {multi ? (
-              <div className="mt-1 space-y-1">
-                {emails.map((e) => {
-                  const isPref = sameEmail(e, preferred);
-                  return (
-                    <div key={e} className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        role="checkbox"
-                        aria-checked={isPref}
-                        disabled={busyEmail !== null}
-                        onClick={() => markPreferred(e)}
-                        className={cn(
-                          "flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
-                          isPref
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-muted-foreground/40 hover:border-foreground",
-                          busyEmail !== null && "opacity-60",
-                        )}
-                        aria-label={isPref ? "Preferred email" : "Mark as preferred"}
-                        title={isPref ? "Preferred email" : "Mark as preferred"}
-                      >
-                        {isPref ? <Check className="size-3" /> : null}
-                      </button>
-                      <span className="min-w-0 flex-1 break-words text-sm leading-snug">
-                        {e}
-                      </span>
-                      {isPref ? (
-                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Preferred
-                        </span>
-                      ) : null}
-                      {onCopy ? (
-                        <button
-                          type="button"
-                          onClick={() => onCopy(e)}
-                          className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
-                          aria-label="Copy email"
-                        >
-                          <Copy className="size-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                <div className="pt-0.5 text-[11px] text-muted-foreground">
-                  The preferred email is shown in the client portal at introduction.
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-start gap-1.5">
-                <span className="min-w-0 flex-1 break-words text-sm leading-snug">
-                  {emails[0]}
-                </span>
-                {onCopy ? (
+    <div className="prow">
+      <span className="k">Email</span>
+      <div className="v">
+        {multi ? (
+          <div className="pp-multi">
+            {emails.map((e) => {
+              const isPref = sameEmail(e, preferred);
+              return (
+                <div key={e} className="one">
                   <button
                     type="button"
-                    onClick={() => onCopy(emails[0])}
-                    className="mt-0.5 shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
-                    aria-label="Copy email"
+                    role="checkbox"
+                    aria-checked={isPref}
+                    disabled={busyEmail !== null}
+                    onClick={() => markPreferred(e)}
+                    className="cbx"
+                    aria-label={isPref ? "Preferred email" : "Mark as preferred"}
+                    title={isPref ? "Preferred email" : "Mark as preferred"}
                   >
-                    <Copy className="size-3" />
+                    {isPref ? <Check /> : null}
                   </button>
-                ) : null}
-              </div>
-            )}
+                  <span className="val">{e}</span>
+                  {isPref ? <span className="pref">Preferred</span> : null}
+                  {onCopy ? (
+                    <button
+                      type="button"
+                      onClick={() => onCopy(e)}
+                      className="cp"
+                      aria-label="Copy email"
+                    >
+                      <Copy />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+            <div className="pp-hint">
+              The preferred email is shown in the client portal at introduction.
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : emails.length === 1 ? (
+          <div className="pp-multi">
+            <div className="one">
+              <span className="val">{emails[0]}</span>
+              {onCopy ? (
+                <button
+                  type="button"
+                  onClick={() => onCopy(emails[0])}
+                  className="cp"
+                  aria-label="Copy email"
+                >
+                  <Copy />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
-      {/* Add-email affordance, aligned under the field value column. */}
-      <div className="pl-6">
+        {/* Add-email affordance, in the value column under the addresses. */}
         {open ? (
-          <div className="flex items-center gap-1.5 py-1.5">
+          <div className="pp-add">
             <input
               autoFocus
               type="email"
@@ -556,33 +532,26 @@ function AgentEmails({
                 }
               }}
               placeholder="name@example.com"
-              className="h-7 flex-1 rounded-md border bg-background px-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-ring"
+              aria-label="New email address"
             />
-            <button
-              type="button"
-              onClick={addEmail}
-              disabled={saving}
-              className="h-7 rounded-md bg-foreground px-2.5 text-[12px] font-medium text-background disabled:opacity-60"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                setValue("");
-              }}
-              className="h-7 px-1.5 text-[12px] text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
+            <div className="row">
+              <button type="button" onClick={addEmail} disabled={saving} className="pp-btn pri">
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setValue("");
+                }}
+                className="pp-btn"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="py-1 text-[12px] font-medium text-muted-foreground hover:text-foreground"
-          >
+          <button type="button" onClick={() => setOpen(true)} className="pp-link">
             + Add email
           </button>
         )}
@@ -702,88 +671,67 @@ function AgentPhones({
   }
 
   return (
-    <div>
-      {phones.length > 0 ? (
-        <div className="group flex items-start gap-2.5 py-1.5">
-          <Phone className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Phone
-            </div>
-            {multi ? (
-              <div className="mt-1 space-y-1">
-                {phones.map((p) => {
-                  const isPref = samePhone(p, preferred);
-                  return (
-                    <div key={p} className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        role="checkbox"
-                        aria-checked={isPref}
-                        disabled={busyPhone !== null}
-                        onClick={() => markPreferred(p)}
-                        className={cn(
-                          "flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
-                          isPref
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-muted-foreground/40 hover:border-foreground",
-                          busyPhone !== null && "opacity-60",
-                        )}
-                        aria-label={isPref ? "Preferred number" : "Mark as preferred"}
-                        title={isPref ? "Preferred number" : "Mark as preferred"}
-                      >
-                        {isPref ? <Check className="size-3" /> : null}
-                      </button>
-                      <span className="min-w-0 flex-1 break-words text-sm leading-snug">
-                        {p}
-                      </span>
-                      {isPref ? (
-                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Preferred
-                        </span>
-                      ) : null}
-                      {onCopy ? (
-                        <button
-                          type="button"
-                          onClick={() => onCopy(p)}
-                          className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
-                          aria-label="Copy phone"
-                        >
-                          <Copy className="size-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                <div className="pt-0.5 text-[11px] text-muted-foreground">
-                  The preferred number is shown in the client portal at introduction.
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-start gap-1.5">
-                <span className="min-w-0 flex-1 break-words text-sm leading-snug">
-                  {phones[0]}
-                </span>
-                {onCopy ? (
+    <div className="prow">
+      <span className="k">Phone</span>
+      <div className="v">
+        {multi ? (
+          <div className="pp-multi">
+            {phones.map((p) => {
+              const isPref = samePhone(p, preferred);
+              return (
+                <div key={p} className="one">
                   <button
                     type="button"
-                    onClick={() => onCopy(phones[0])}
-                    className="mt-0.5 shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
-                    aria-label="Copy phone"
+                    role="checkbox"
+                    aria-checked={isPref}
+                    disabled={busyPhone !== null}
+                    onClick={() => markPreferred(p)}
+                    className="cbx"
+                    aria-label={isPref ? "Preferred number" : "Mark as preferred"}
+                    title={isPref ? "Preferred number" : "Mark as preferred"}
                   >
-                    <Copy className="size-3" />
+                    {isPref ? <Check /> : null}
                   </button>
-                ) : null}
-              </div>
-            )}
+                  <span className="val">{p}</span>
+                  {isPref ? <span className="pref">Preferred</span> : null}
+                  {onCopy ? (
+                    <button
+                      type="button"
+                      onClick={() => onCopy(p)}
+                      className="cp"
+                      aria-label="Copy phone"
+                    >
+                      <Copy />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+            <div className="pp-hint">
+              The preferred number is shown in the client portal at introduction.
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : phones.length === 1 ? (
+          <div className="pp-multi">
+            <div className="one">
+              <span className="val">{phones[0]}</span>
+              {onCopy ? (
+                <button
+                  type="button"
+                  onClick={() => onCopy(phones[0])}
+                  className="cp"
+                  aria-label="Copy phone"
+                >
+                  <Copy />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
-      {/* Add-phone affordance, aligned under the field value column. */}
-      <div className="pl-6">
+        {/* Add-phone affordance, in the value column under the numbers. */}
         {open ? (
-          <div className="flex items-center gap-1.5 py-1.5">
+          <div className="pp-add">
             <input
               autoFocus
               value={value}
@@ -796,33 +744,26 @@ function AgentPhones({
                 }
               }}
               placeholder="+1 (305) 555-0000"
-              className="h-7 flex-1 rounded-md border bg-background px-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-ring"
+              aria-label="New phone number"
             />
-            <button
-              type="button"
-              onClick={addPhone}
-              disabled={saving}
-              className="h-7 rounded-md bg-foreground px-2.5 text-[12px] font-medium text-background disabled:opacity-60"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                setValue("");
-              }}
-              className="h-7 px-1.5 text-[12px] text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
+            <div className="row">
+              <button type="button" onClick={addPhone} disabled={saving} className="pp-btn pri">
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setValue("");
+                }}
+                className="pp-btn"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="py-1 text-[12px] font-medium text-muted-foreground hover:text-foreground"
-          >
+          <button type="button" onClick={() => setOpen(true)} className="pp-link">
             + Add phone
           </button>
         )}
@@ -831,47 +772,49 @@ function AgentPhones({
   );
 }
 
+/*
+ * One labelled row in Card 1 — the design's `.prow` exactly as the mockup
+ * draws it: an uppercase key column, and a value that wraps rather than
+ * truncating so a long campaign name stays readable and a URL linkifies.
+ *
+ * The tool put a lucide glyph in front of every label. The approved mockup
+ * does not, and the glyph was decoration — the label text is identical and
+ * more explicit — so it goes.
+ */
 function Field({
-  icon: Icon,
   label,
   value,
   onCopy,
 }: {
-  icon: typeof MailIcon;
   label: string;
   value: string | null | undefined;
   onCopy?: (v: string) => void;
 }) {
   if (!value) return null;
   return (
-    <div className="group flex items-start gap-2.5 py-1.5">
-      <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </div>
-        <div className="text-sm break-words leading-snug">
-          <LinkValue value={value} />
-        </div>
-      </div>
+    <div className="prow">
+      <span className="k">{label}</span>
+      <span className="v">
+        <LinkValue value={value} />
+      </span>
       {onCopy ? (
         <button
           type="button"
           onClick={() => onCopy(value)}
-          className="mt-0.5 shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
+          className="cp"
           aria-label={`Copy ${label}`}
         >
-          <Copy className="size-3" />
+          <Copy />
         </button>
       ) : null}
     </div>
   );
 }
 
-// Compact key/value row for Card 2. The copy button sits inline with
-// the value and only reveals itself on group-hover so the layout stays
-// quiet at rest. `group/row` scopes the hover to this <dd>, not the
-// surrounding card.
+// Compact key/value row for Card 2 — the same `.prow` without the glyph, so a
+// long custom-field name wraps in the key column rather than being clipped.
+// The copy button only reveals itself on row hover, so the card stays quiet at
+// rest.
 function FieldPair({
   label,
   value,
@@ -882,24 +825,22 @@ function FieldPair({
   onCopy?: (v: string) => void;
 }) {
   return (
-    <>
-      <dt className="text-xs text-muted-foreground break-words pt-0.5">{label}</dt>
-      <dd className="group/row flex items-start gap-2 break-words leading-snug">
-        <div className="min-w-0 flex-1">
-          <LinkValue value={value} />
-        </div>
-        {onCopy ? (
-          <button
-            type="button"
-            onClick={() => onCopy(value)}
-            className="mt-0.5 shrink-0 text-muted-foreground/0 transition-colors group-hover/row:text-muted-foreground hover:!text-foreground"
-            aria-label={`Copy ${label}`}
-          >
-            <Copy className="size-3" />
-          </button>
-        ) : null}
+    <div className="prow plain">
+      <dt className="k">{label}</dt>
+      <dd className="v">
+        <LinkValue value={value} />
       </dd>
-    </>
+      {onCopy ? (
+        <button
+          type="button"
+          onClick={() => onCopy(value)}
+          className="cp"
+          aria-label={`Copy ${label}`}
+        >
+          <Copy />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -908,12 +849,7 @@ function LinkValue({ value }: { value: string }) {
   const v = value.trim();
   if (/^https?:\/\/\S+$/i.test(v)) {
     return (
-      <a
-        href={v}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 hover:underline break-all"
-      >
+      <a href={v} target="_blank" rel="noopener noreferrer">
         {v}
       </a>
     );
@@ -929,32 +865,33 @@ function prettifyKey(key: string): string {
     .trim();
 }
 
-// Collapsible titled card.
+// Collapsible titled card — the design's `.pcard`, whose `.pcard-h` heading
+// doubles as the toggle.
 function Card({
   title,
   children,
+  footer = null,
   defaultOpen = true,
 }: {
   title: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-lg border bg-card">
+    <div className="pcard">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-semibold hover:bg-accent/40 transition-colors"
+        className="pcard-h"
+        aria-expanded={open}
       >
         {title}
-        {open ? (
-          <ChevronUp className="size-3.5 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="size-3.5 text-muted-foreground" />
-        )}
+        {open ? <ChevronUp /> : <ChevronDown />}
       </button>
-      {open ? <div className="px-3 pb-3 pt-0.5">{children}</div> : null}
+      {open ? children : null}
+      {open && footer ? <div className="pcard-foot">{footer}</div> : null}
     </div>
   );
 }

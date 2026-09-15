@@ -373,3 +373,11 @@ No wiring change is needed, so there is no `CLIENT-HEALTH-WIRING.md`. All three
 screens were already addressed and all three were confirmed serving:
 `/clients` → Weekly, `/clients/biweekly` → Bi-Weekly, `/clients/success` →
 Client Success.
+
+> **2026-09-15 — sync worker ported in-process.** `lib/session.ts` (the proxy to the live
+> app) is removed; `POST /api/tools/client-health/sync` runs `runSync()` in this process
+> with a lock and a fail-closed `CLIENT_HEALTH_SYNC_SECRET` (or the workspace session);
+> the `*/15` cron cadence is reproduced by a server ticker started from
+> `src/instrumentation.ts` plus the browser tick, both gated by
+> `CLIENT_HEALTH_SYNC_ENABLED=1`. `CLIENT_HEALTH_DASHBOARD_PASSWORD` is no longer read by
+> app code. Rows 1.7, 1.8 and 2.5 below predate this and describe the proxy era.

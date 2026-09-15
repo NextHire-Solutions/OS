@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createStage, getStagesBoard } from "@/lib/tools/onboarding/stages";
+import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
 
 /*
  * Onboarding stages — the team's own board, readable and writable.
@@ -36,5 +37,6 @@ export async function POST(request: Request) {
   }
   const result = await createStage(parsed.data.name);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+  getOnboardingPipeline.invalidate();
   return NextResponse.json(result);
 }

@@ -7,9 +7,10 @@ import { createServerSupabase } from "@/lib/supabase/server";
 //
 // PUT    — upsert the current composer state (subject, body, cc/bcc,
 //          channel choice, signature toggle). Called every ~1.2s by
-//          the composer's debounced save effect, AND on component
-//          unmount via navigator.sendBeacon so leaving the thread
-//          mid-typing still persists.
+//          the composer's debounced save effect.
+// POST   — identical to PUT. sendBeacon can only POST, and the
+//          composer's unmount flush uses it; see the note above
+//          that handler.
 // DELETE — discard the draft on this thread. Used by the explicit
 //          "Discard draft" button and (separately) by the reply
 //          route after a successful send so the draft doesn't
@@ -99,4 +100,28 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
+}
+
+// POST — the same upsert as PUT, and the reason it exists is worth
+// stating plainly, because the omission was invisible for as long as
+// the feature has shipped.
+//
+// `navigator.sendBeacon` CANNOT issue a PUT. The spec gives it no
+// method argument at all; every beacon is a POST. So the unmount
+// flush in composer.tsx — the one path whose entire job is "the user
+// is navigating away mid-typing, persist now" — was hitting a route
+// that exported only PUT and DELETE, and Next answered 405 every
+// single time. The debounced ~1.2s autosave (a real fetch,a real PUT)
+// masked it: you only lost work typed in the last second or so before
+// leaving, which reads as "it didn't save that last bit" rather than
+// as a broken endpoint.
+//
+// Delegating rather than duplicating keeps one validator, one row
+// shape and one workspace scope — a second copy of the upsert would
+// drift the first time either is edited.
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ threadId: string }> },
+) {
+  return PUT(request, context);
 }

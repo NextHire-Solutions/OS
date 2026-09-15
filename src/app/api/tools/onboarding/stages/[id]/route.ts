@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { deleteStage, moveStage, updateStage } from "@/lib/tools/onboarding/stages";
 import { STAGE_COLORS } from "@/lib/tools/onboarding/stage-types";
+import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
 
 /*
  * One stage: rename, recolour, reorder, delete.
@@ -46,6 +47,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (!updated.ok) return NextResponse.json({ error: updated.error }, { status: 400 });
   }
 
+  getOnboardingPipeline.invalidate();
   return NextResponse.json({ ok: true });
 }
 
@@ -53,6 +55,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   const { id } = await context.params;
   const result = await deleteStage(id);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+  getOnboardingPipeline.invalidate();
   // `moved` is how many clients just became unplaced — the screen says so.
   return NextResponse.json(result);
 }

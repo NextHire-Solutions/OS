@@ -4,6 +4,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createEmailBisonClient } from "@/lib/tools/master-inbox/emailbison/client";
 import { createInstantlyClient, InstantlyError } from "@/lib/tools/master-inbox/instantly/client";
+import { plainTextToHtml } from "@/lib/tools/master-inbox/inbox/plain-text-html";
 
 // Sends an outbound reply for the given thread via EmailBison's
 // POST /api/replies/{id}/reply endpoint.
@@ -173,7 +174,9 @@ export async function POST(
   // owning this thread can see/reply to it.
   const { data: thread } = await userClient
     .from("threads")
-    .select("id, workspace_id, lead_id, channel_id, outbound_sender_email, source_provider, instantly_thread_id")
+    // `subject` is selected so a request that omits one can fall back to the
+    // conversation's own subject — see the Instantly send below.
+    .select("id, workspace_id, lead_id, channel_id, outbound_sender_email, source_provider, instantly_thread_id, subject")
     .eq("id", threadId)
     .maybeSingle();
   if (!thread) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
@@ -227,6 +230,7 @@ export async function POST(
         senderOverride?.instantlyEaccount ?? thread.outbound_sender_email,
       payload,
       attachments,
+      threadSubject: (thread.subject as string | null) ?? null,
     });
   }
 
@@ -515,8 +519,10 @@ async function sendInstantlyReply(args: {
   outboundSenderEmail: string | null;
   payload: ParsedInput;
   attachments: Array<{ name: string; blob: Blob }>;
+  /** The conversation's own subject, used when the request omits one. */
+  threadSubject: string | null;
 }): Promise<NextResponse> {
-  const { admin, threadId, workspaceId, outboundSenderEmail, payload, attachments } = args;
+  const { admin, threadId, workspaceId, outboundSenderEmail, payload, attachments, threadSubject } = args;
 
   if (attachments.length > 0) {
     return NextResponse.json(
@@ -598,11 +604,13 @@ async function sendInstantlyReply(args: {
         eaccount: outboundSenderEmail,
         reply_to_uuid: replyTarget.instantly_email_id,
         to_address_email_list: toCsv!,
-        subject: payload.subject ?? "(forward)",
+        subject: payload.subject ?? threadSubject ?? "(forward)",
+        // Same conversion as the reply path below — a `text` body reaches the
+        // mailbox with its line breaks collapsed.
         body:
           payload.content_type === "html"
             ? { html: payload.body }
-            : { text: payload.body },
+            : { html: plainTextToHtml(payload.body) },
         cc_address_email_list: recipientsCsv(payload.cc),
         bcc_address_email_list: recipientsCsv(payload.bcc),
         include_original_body: payload.inject_previous_email_body,
@@ -611,11 +619,35 @@ async function sendInstantlyReply(args: {
     } else {
       const res = await instantly.sendReply({
         reply_to_uuid: replyTarget.instantly_email_id,
-        subject: payload.subject,
+        /*
+         * Fall back to the conversation's own subject.
+         *
+         * `subject` is optional in this route's schema but REQUIRED by
+         * Instantly: omitting it fails the whole send with
+         * `body must have required property 'subject'`, surfaced as a 502 that
+         * says nothing about the real cause. The composer always sends one, so
+         * the UI never hit it — but a script or an integration would, and the
+         * thread's subject is the obvious right answer anyway. The forward
+         * branch above already defaults for the same reason.
+         */
+        subject: payload.subject ?? threadSubject ?? "(no subject)",
+        /*
+         * A text body is converted to HTML before sending.
+         *
+         * Instantly renders a `text` body with its line breaks collapsed — a
+         * 40-paragraph reply arrived in the mailbox as one unbroken wall of
+         * text, and a short one lost the blank line before its second
+         * paragraph. The composer never hit this because it converts in the
+         * browser and always sends `html`; only an API caller asking for
+         * `text` was affected.
+         *
+         * The stored `body_text` below keeps the original with its newlines
+         * intact, so the conversation still reads correctly in the inbox.
+         */
         body:
           payload.content_type === "html"
             ? { html: payload.body }
-            : { text: payload.body },
+            : { html: plainTextToHtml(payload.body) },
         eaccount: outboundSenderEmail ?? undefined,
         cc_address_email_list: recipientsCsv(payload.cc),
         bcc_address_email_list: recipientsCsv(payload.bcc),

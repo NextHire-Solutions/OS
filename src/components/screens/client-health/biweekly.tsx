@@ -6,7 +6,7 @@ import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
 } from "@/lib/tools/client-health/clientForm";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
-import { deriveRows } from "@/lib/tools/client-health/summarize";
+import { deriveRows, funnelRates, summarize } from "@/lib/tools/client-health/summarize";
 import type { DashboardClient } from "@/lib/tools/client-health/types";
 import {
   biweeklyRows, sortBiWeekly, fmtDateUTC,
@@ -14,10 +14,12 @@ import {
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 import { ClientModal } from "./client-modal";
-import { EMPTY_FILTERS, FilterBar, type FilterBarState } from "./filter-bar";
+import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
-import { SyncButton } from "./sync-button";
 import { ToastHost } from "./toast";
+import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
+import { SummaryCards } from "./summary-cards";
+import { setFilters, useClientHealthView } from "./view-state";
 
 /*
  * Client Health — Bi-Weekly.
@@ -34,6 +36,11 @@ import { ToastHost } from "./toast";
  * not the week's Monday. Every value on this screen is a number of days until
  * a date, so measuring them from Monday would overstate every one of them by
  * however far into the week you happen to be reading.
+ *
+ * The week and the filters are shared with Weekly (view-state.ts). In the tool
+ * the header's week arrows and one filtered list feed every view, so stepping
+ * back a week narrows the "At Risk" / "Done" subset here exactly as it does
+ * there — the billing arithmetic itself is always measured from today.
  */
 
 const PLAN_CLASS: Record<string, string> = {
@@ -53,24 +60,28 @@ const COLUMNS: { col: BwSortCol; label: string; title: string }[] = [
 
 function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const now = useMemo(() => new Date(data.now), [data.now]);
-  const [filters, setFilters] = useState<FilterBarState>(EMPTY_FILTERS);
+  const { filters } = useClientHealthView();
+  const week = useSelectedWeek(data);
+  const { key, isCurrent } = week;
   const [sort, setSort] = useState<{ col: BwSortCol; dir: "desc" | "asc" } | null>(null);
   const [modal, setModal] = useState<ClientFormState | null>(null);
 
+  const openAdd = () => setModal(blankForm(todayLocalISO()));
   const openEdit = (c: DashboardClient) => setModal(formForClient(c));
 
   // Filtered with the Weekly view's own predicates, so "At Risk" means the
-  // same thing on both screens.
-  // The current week's rows, derived rather than sent — see weekly.ts.
-  // The server's rows when it rendered this screen — `derive()` reads the
-  // local clock, so deriving again would break hydration. See weekly.ts.
+  // same thing on both screens — and for the same week.
+  // The server's rows when it rendered this screen and the week is current —
+  // `derive()` reads the local clock, so deriving again would break hydration.
+  // Once the reader changes week there is no server render to match. See
+  // weekly.ts.
   const rowsAll = useMemo(
-    () => data.rows ?? deriveRows(data.clients, data.weekKey),
-    [data.rows, data.clients, data.weekKey],
+    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
+    [data.rows, data.clients, key, isCurrent],
   );
 
   const filtered = useMemo(
-    () => applyFilters(rowsAll, { ...filters, sort: null }, now),
+    () => applyFilters(rowsAll, filters, now),
     [rowsAll, filters, now],
   );
 
@@ -78,6 +89,21 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
     () => sortBiWeekly(biweeklyRows(filtered.map((r) => r.client), now), sort),
     [filtered, now, sort],
   );
+  /*
+   * The 24 cards use the WEEKLY rows and summary — the same numbers Weekly
+   * shows, from the same server-derived data when on the current week — not
+   * this view's own row shape. Otherwise "At Risk" could differ between tabs.
+   */
+  const weeklyRows = useMemo(
+    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
+    [isCurrent, data.rows, data.clients, key],
+  );
+  const summary = useMemo(
+    () => (isCurrent && data.summary ? data.summary : summarize(weeklyRows, key)),
+    [isCurrent, data.summary, weeklyRows, key],
+  );
+  const lifetimeRates = funnelRates(summary.lifetime);
+  const weekRates = funnelRates(summary.week);
 
   // 1st click → desc, 2nd → asc, 3rd → back to the default order.
   const cycleSort = (col: BwSortCol) =>
@@ -88,7 +114,7 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const unset = rows.filter((r) => r.billing === null).length;
 
   return (
-    <div className="wrap">
+    <div className="wrap wrap-wide">
       {data.source === "seed" ? (
         <div className="anno">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
@@ -96,9 +122,8 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </div>
       ) : null}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 18 }}>
-        <SyncButton />
-      </div>
+      <ClientHealthToolbar week={week} onAdd={openAdd} sync={data.sync} now={now} />
+      <SummaryCards s={summary} lifetime={lifetimeRates} week={weekRates} isCurrent={isCurrent} weekKey={key} />
 
       <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <Card label="Clients" value={rows.length} sub="in this cycle view" />
@@ -113,6 +138,7 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <div className="tbl-title">Billing Cycles</div>
             <div className="tbl-sub">
               Introductions since each client&rsquo;s last billing day, against a target scaled to their interval
+              {isCurrent ? "" : ` · status filters as of week of ${weekLabel(key)}`}
               {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
             </div>
           </div>

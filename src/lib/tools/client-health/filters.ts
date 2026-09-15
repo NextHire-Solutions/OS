@@ -25,9 +25,6 @@ export type Filter =
   | "active" | "paused" | "inactive"
   | "client-paused" | "hidden";
 
-export type SortCol = "leftWeek" | "campaigns";
-export interface Sort { col: SortCol; dir: "asc" | "desc" }
-
 /** "all", or a number of days — the next billing date must fall inside it. */
 export type BillingWindow = "all" | "7" | "14" | "30";
 
@@ -82,7 +79,6 @@ export interface FilterState {
   filter: Filter;
   /** A plan id, or "all". Orthogonal to `filter`. */
   plan: string;
-  sort: Sort | null;
   /** An IANA time-zone string, or "all". */
   tz?: string;
   /** Only clients whose NEXT billing date falls within this many days. */
@@ -164,16 +160,8 @@ export function applyFilters(rows: WeeklyRow[], o: FilterState, now: Date = new 
     });
   }
 
-  if (o.sort) {
-    const mul = o.sort.dir === "desc" ? 1 : -1;
-    const score = o.sort.col === "leftWeek"
-      ? (r: WeeklyRow) => r.derived.leftThisWeek
-      : (r: WeeklyRow) => r.derived.campaignsAvgPct;
-    // Copied before sorting: the caller's array is memoised upstream and
-    // sorting it in place would mutate a value React believes is unchanged.
-    list = [...list].sort((a, b) => mul * (score(b) - score(a)));
-  }
-
+  // Sorting is not done here. The tool's sixteen column sorts live in
+  // sorting.ts (`sortWeekly`), applied by the screen AFTER filtering.
   return list;
 }
 

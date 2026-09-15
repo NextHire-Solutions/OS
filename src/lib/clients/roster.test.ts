@@ -19,8 +19,17 @@ import assert from "node:assert/strict";
 
 import { ROSTER, isKnownNonClient, keyOf, matchRoster, resolve } from "./roster.ts";
 
-test("the roster is the 36 clients the business named", () => {
-  assert.equal(ROSTER.length, 36);
+/*
+ * A tripwire, not a formality. It fired when Cain Realty Group was added,
+ * which is exactly its job: the roster decides every client count in the
+ * workspace, so it must never change by accident.
+ *
+ * 36 → 37 on 2026-09-14: Cain Realty Group was onboarded in Master Inbox
+ * (portal live from 13:55 UTC) and existed in no other tool. Adopted into the
+ * roster and the OS client list on the business's say-so.
+ */
+test("the roster is the 37 clients the business named", () => {
+  assert.equal(ROSTER.length, 37);
 });
 
 test("no two clients share a comparison key", () => {
@@ -98,7 +107,10 @@ test("an unrecognised name is reported, never dropped", () => {
 
 test("a roster client no tool has is reported as missing", () => {
   const m = matchRoster(["54 Realty"]);
-  assert.equal(m.missing.length, 35);
+  // Derived from ROSTER rather than hard-coded, so adding a client updates one
+  // number instead of two — the second is how a stale test starts passing for
+  // the wrong reason.
+  assert.equal(m.missing.length, ROSTER.length - 1);
   assert.equal(m.matched.size, 1);
 });
 

@@ -1,0 +1,197 @@
+/*
+ * agent-search — this tool's own stylesheet, and nobody else's.
+ *
+ * Every selector here MUST be scoped to this tool's own screens. The reason is
+ * a bug this file exists to prevent: `.mi-list` was used both for a client
+ * link in the Master Inbox rail and for the thread-list container, so the
+ * rail's `display:flex` laid fifty threads out sideways as 52px slivers. One
+ * name, two meanings, and an inbox that looked empty.
+ *
+ * So everything below hangs off `.as-screen`, a class carried ONLY by the root
+ * <div> of the five Agent Search screens (search, master, accounts, mls,
+ * import). It is not the design's `.as` — that name is two letters long and
+ * would be a landmine for exactly the reason above. `.as-screen` appears
+ * nowhere else in the repo, which is what makes these rules safe to write.
+ *
+ * Load order is set in globals.css; this file is imported after the shared
+ * sheets, so it wins ties without needing !important.
+ */
+
+/* ===================================================================== *
+ * RESULT PANELS — the three source panels on Search
+ * ===================================================================== */
+
+/*
+ * Two up, not one.
+ *
+ * The design lays the source panels out as a grid of cards; the port stacked
+ * them full width, so three empty panels ate 580px of vertical space and the
+ * screen read as a wall of "No results yet." rather than a dashboard.
+ *
+ * `auto-fit` rather than a fixed `1fr 1fr` so the grid collapses to a single
+ * column on a narrow window instead of squeezing two 300px panels together.
+ */
+.as-screen .as-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+/* The design's `.as-res` carries its own bottom margin for the stacked case.
+   Inside the grid the gap does that job, and both together double-spaces. */
+.as-screen .as-panels > .as-res { margin-bottom: 0; }
+
+/*
+ * An odd panel out spans the row rather than leaving a hole.
+ *
+ * Three sources in a two-column grid puts Realtor.com alone in the bottom-left
+ * with dead space beside it. The design's own grid had a fourth card to fill
+ * that slot; this port has three, so the last one widens instead.
+ */
+.as-screen .as-panels > .as-res:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+/*
+ * A panel holding a table takes the full width, whatever the count.
+ *
+ * The full Courted set is 77 columns. It scrolls inside `.tbl-scroll` either
+ * way, but reading it through a 430px window is a worse answer than giving the
+ * one panel that has data the whole row.
+ */
+.as-screen .as-panels > .as-res.as-has-rows { grid-column: 1 / -1; }
+
+/*
+ * Dimming.
+ *
+ * The tool fades a panel that is not part of the current run to 0.4 rather
+ * than hiding it, so the layout does not jump when a run starts. The port
+ * applied that from `state.active`, which is only ever true DURING a run — so
+ * before anyone had searched, all three panels sat at 0.4 and the whole screen
+ * looked disabled. The class is now driven by the source toggles at rest and
+ * by the run once one exists; see `ResultPanel` in shared.tsx.
+ */
+.as-screen .as-res { transition: opacity .18s; }
+.as-screen .as-res.as-dim { opacity: .4; }
+
+/* The count and the pill sit hard right of the title; the export button then
+   follows the count rather than being pushed to the far edge on its own. */
+.as-screen .as-res-h .as-btn { flex: none; margin-left: 4px; }
+
+/* A source panel's empty state should not be as tall as a table. */
+.as-screen .as-panels .as-body { padding: 34px 22px; }
+
+/* ===================================================================== *
+ * BUTTONS
+ * ===================================================================== */
+
+/*
+ * Disabled buttons.
+ *
+ * These were dimmed with an inline `opacity:.45`, which on a solid blue button
+ * leaves white text on pale blue — somewhere around 1.9:1, illegible. A
+ * disabled control still has to be readable; it just must not look pressable.
+ */
+.as-screen .as-btn:disabled {
+  background: var(--inset);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.as-screen .as-btn.ghost:disabled {
+  background: var(--inset);
+  color: var(--muted);
+  border-color: var(--line);
+}
+.as-screen .as-btn:disabled:hover { background: var(--inset); }
+
+/* A button in a table cell must not wrap. "Re-scrape" was breaking after the
+   hyphen into a two-line, 55px-tall button in every one of the nine rows. */
+.as-screen .atbl .as-btn { white-space: nowrap; }
+
+/* ===================================================================== *
+ * COURTED ACCOUNTS — the table
+ * ===================================================================== */
+
+/* Nine accounts, six columns, and one of them is a sentence. Give the long
+   ones room to wrap and keep the short ones from being squeezed by them. */
+.as-screen .as-acct-tbl td { vertical-align: top; }
+.as-screen .as-acct-tbl .as-acct-email { white-space: nowrap; }
+
+/* ===================================================================== *
+ * IMPORT PROFILE URLs
+ * ===================================================================== */
+
+/*
+ * Sheet link OR CSV — side by side, as the design has them.
+ *
+ * The port used the bare `.as-grid`, which is `display:grid` with no columns
+ * declared, so it fell to one column: a full-width URL box, a stranded "or",
+ * and a full-width textarea below it. They are alternatives, and alternatives
+ * belong beside each other with the "or" between.
+ */
+.as-screen .as-io {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+}
+.as-screen .as-io > .as-or {
+  align-self: center;
+  padding-top: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* One column when there is not room for two, with the "or" as a real divider
+   rather than a word floating in the middle of the card. */
+@media (max-width: 1080px) {
+  .as-screen .as-io { grid-template-columns: minmax(0, 1fr); }
+  .as-screen .as-io > .as-or { padding-top: 0; text-align: center; }
+}
+
+/*
+ * The file picker.
+ *
+ * A bare <input type=file> rendered as an unstyled "Choose file / No file
+ * chosen" in 12.5px muted grey — the button was the same colour as the label
+ * next to it and read as disabled text rather than a control. Style the button
+ * part; the filename stays muted because it is a status, not an action.
+ */
+.as-screen .as-file {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+  max-width: 100%;
+}
+.as-screen .as-file::file-selector-button {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 7px 13px;
+  margin-right: 10px;
+  cursor: pointer;
+}
+.as-screen .as-file::file-selector-button:hover { background: var(--inset); }
+
+/* ===================================================================== *
+ * MLS MONITOR
+ * ===================================================================== */
+
+/* The per-account blocks are a list of many short lines; give the MLS rows a
+   little breathing room so nine of them do not read as one grey slab. */
+.as-screen .as-mls-block { line-height: 1.5; }
+
+/* ===================================================================== *
+ * NARROW WINDOWS
+ * ===================================================================== */
+
+@media (max-width: 900px) {
+  .as-screen .as-panels { grid-template-columns: minmax(0, 1fr); }
+  /* The header's status badges drop under the title rather than crushing it. */
+  .as-screen .as-hd { flex-wrap: wrap; }
+  .as-screen .as-stat { margin-left: 0; }
+}

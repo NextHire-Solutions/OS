@@ -2,11 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { Loader2, Plus, X, Pencil, Trash2, Check } from "lucide-react";
+import { Plus, X, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/mi-ui/button";
-import { Input } from "@/components/mi-ui/input";
-import { Label } from "@/components/mi-ui/label";
 import {
   Dialog,
   DialogContent,
@@ -15,6 +12,35 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/mi-ui/dialog";
+import {
+  Btn,
+  ConfirmButton,
+  Field,
+  IconBtn,
+  ToastHost,
+  useShowToast,
+} from "./ui";
+
+/*
+ * Clients.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT MOVED
+ *
+ * The list is now the design's `.tbl-wrap` with its own row rhythm, the aliases
+ * are the design's chips, and the editor keeps the shared Dialog. Every fetch,
+ * the optimistic create / update / delete, and the background re-sync that
+ * corrects `thread_count` are the code that was already here.
+ *
+ * Two behaviour changes, both in SETTINGS-PARITY.md:
+ *
+ *   · delete was `window.confirm`. It is the arm-then-fire button now, and the
+ *     consequence the native dialog spelled out — "threads tagged with it will
+ *     be untagged, and re-tagged on the next webhook" — is on the button.
+ *   · every message went to `sonner`, whose `<Toaster />` this app never
+ *     mounts, so adding a client has been confirming nothing. They go to the
+ *     workspace's own status line now.
+ */
 
 interface ClientRow {
   id: string;
@@ -26,6 +52,14 @@ interface ClientRow {
 }
 
 export function ClientsManager({ initial }: { initial: ClientRow[] }) {
+  return (
+    <ToastHost>
+      <ClientsBody initial={initial} />
+    </ToastHost>
+  );
+}
+
+function ClientsBody({ initial }: { initial: ClientRow[] }) {
   const router = useRouter();
   const [rows, setRows] = useState<ClientRow[]>(initial);
   const [addOpen, setAddOpen] = useState(false);
@@ -60,30 +94,48 @@ export function ClientsManager({ initial }: { initial: ClientRow[] }) {
     backgroundResync();
   }
 
+  const configured = rows.filter((r) => !r.is_system).length;
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {rows.filter((r) => !r.is_system).length} client
-          {rows.filter((r) => !r.is_system).length === 1 ? "" : "s"} configured.
-          Add aliases to catch variations in campaign names
-          (e.g. <code className="text-xs">C21 Results Elite Team</code> as an alias
-          for <code className="text-xs">C21 Results - Elite Team</code>).
-        </p>
-        <Button onClick={() => setAddOpen(true)} size="sm" className="gap-1.5">
-          <Plus className="size-4" /> Add client
-        </Button>
+    <>
+      <div className="mis-bar">
+        <span className="mis-count tnum">
+          {configured} client{configured === 1 ? "" : "s"} configured
+        </span>
+        <span className="mis-gap" />
+        <Btn primary onClick={() => setAddOpen(true)} data-mis="add-client">
+          <Plus aria-hidden />
+          Add client
+        </Btn>
       </div>
 
-      <div className="rounded-lg border bg-card divide-y">
-        {rows.map((c) => (
-          <ClientRowView
-            key={c.id}
-            row={c}
-            onEdit={() => setEditing(c)}
-            onDeleted={() => applyDelete(c.id)}
-          />
-        ))}
+      <div className="anno new mis-sec" style={{ margin: 0 }}>
+        <span>
+          <b>Aliases catch variations in a campaign name.</b> Add{" "}
+          <code style={{ fontFamily: "var(--mono)", fontSize: 12 }}>C21 Results Elite Team</code>{" "}
+          as an alias for{" "}
+          <code style={{ fontFamily: "var(--mono)", fontSize: 12 }}>C21 Results - Elite Team</code>{" "}
+          and both campaigns tag to the same client.
+        </span>
+      </div>
+
+      <div className="tbl-wrap mis-sec">
+        <div className="mis-list">
+          {rows.map((c) => (
+            <ClientRowView
+              key={c.id}
+              row={c}
+              onEdit={() => setEditing(c)}
+              onDeleted={() => applyDelete(c.id)}
+            />
+          ))}
+          {rows.length === 0 ? (
+            <div className="mis-empty">
+              <b>No clients yet</b>
+              <p>Add one so inbound replies can be tagged against it.</p>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {addOpen ? (
@@ -108,7 +160,7 @@ export function ClientsManager({ initial }: { initial: ClientRow[] }) {
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -121,20 +173,20 @@ function ClientRowView({
   onEdit: () => void;
   onDeleted: () => void;
 }) {
+  const show = useShowToast();
   const [deleting, setDeleting] = useState(false);
 
   async function handleDelete() {
     if (row.is_system) return;
-    if (!confirm(`Delete client "${row.name}"? Threads tagged with it will be untagged (and re-tagged on next webhook).`)) return;
     setDeleting(true);
     try {
       const res = await fetch(`/api/tools/master-inbox/clients/${row.id}`, { method: "DELETE" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(j.error ?? "Delete failed");
+        show({ text: j.error ?? "Delete failed", bad: true });
         return;
       }
-      toast.success(`Deleted ${row.name}`);
+      show({ text: `Deleted ${row.name}` });
       onDeleted();
     } finally {
       setDeleting(false);
@@ -142,55 +194,65 @@ function ClientRowView({
   }
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 hover:bg-accent/30 transition-colors">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-sm">{row.name}</span>
+    <div className="mis-row" data-mis-client={row.name}>
+      <div className="mis-row-m">
+        <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+          <span className="mis-row-n">{row.name}</span>
           {row.is_system ? (
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1.5 py-0.5">
+            <span className="plan plan-min" title="Replies that match no client land here.">
               fallback
             </span>
           ) : null}
-          <span className="text-xs text-muted-foreground ml-auto tabular-nums">
+          <span className="mis-count tnum" style={{ marginLeft: "auto" }}>
             {row.thread_count} thread{row.thread_count === 1 ? "" : "s"}
           </span>
         </div>
         {row.aliases.length > 0 ? (
-          <div className="mt-1.5 flex flex-wrap gap-1">
+          <div className="mis-tags" style={{ marginTop: 9 }}>
             {row.aliases.map((a) => (
-              <span
-                key={a}
-                className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] border bg-sky-50 text-sky-700 border-sky-200"
-              >
+              <span key={a} className="mis-tag mis-tag-q">
                 {a}
               </span>
             ))}
           </div>
         ) : (
-          <p className="mt-1.5 text-xs text-muted-foreground">No aliases.</p>
+          <div className="mis-row-s">No aliases.</div>
         )}
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <Button
-          variant="ghost"
-          size="sm"
+      <div className="mis-row-a">
+        <IconBtn
+          label={`Edit ${row.name}`}
           onClick={onEdit}
           disabled={row.is_system}
-          className="h-7 px-2"
-          aria-label="Edit"
+          title={
+            row.is_system
+              ? "The fallback client is created by the system and cannot be edited."
+              : `Edit ${row.name}`
+          }
         >
-          <Pencil className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleDelete}
-          disabled={deleting || row.is_system}
-          className="h-7 px-2 text-muted-foreground hover:text-red-600"
-          aria-label="Delete"
-        >
-          {deleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-        </Button>
+          <Pencil aria-hidden />
+        </IconBtn>
+        {row.is_system ? (
+          <IconBtn
+            label={`Delete ${row.name}`}
+            danger
+            disabled
+            title="The fallback client is created by the system and cannot be deleted."
+          >
+            <Trash2 aria-hidden />
+          </IconBtn>
+        ) : (
+          <ConfirmButton
+            compact
+            label="Delete"
+            armedLabel="Confirm delete"
+            title={`Delete client “${row.name}”? Threads tagged with it are untagged, and re-tagged on the next webhook.`}
+            disabled={deleting}
+            onConfirm={() => void handleDelete()}
+          >
+            <Trash2 aria-hidden />
+          </ConfirmButton>
+        )}
       </div>
     </div>
   );
@@ -209,6 +271,7 @@ function ClientFormDialog({
   // updates instantly without waiting for /api/clients to re-list.
   onSaved: (row: ClientRow) => void;
 }) {
+  const show = useShowToast();
   const [name, setName] = useState(initial?.name ?? "");
   const [aliases, setAliases] = useState<string[]>(initial?.aliases ?? []);
   const [draft, setDraft] = useState("");
@@ -227,12 +290,15 @@ function ClientFormDialog({
 
   async function save() {
     if (!name.trim()) {
-      toast.error("Name is required");
+      show({ text: "Name is required", bad: true });
       return;
     }
     setSaving(true);
     try {
-      const url = mode === "create" ? "/api/tools/master-inbox/clients" : `/api/tools/master-inbox/clients/${initial!.id}`;
+      const url =
+        mode === "create"
+          ? "/api/tools/master-inbox/clients"
+          : `/api/tools/master-inbox/clients/${initial!.id}`;
       const res = await fetch(url, {
         method: mode === "create" ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -243,10 +309,10 @@ function ClientFormDialog({
         client?: { id: string; name: string; slug: string; aliases: string[] };
       };
       if (!res.ok) {
-        toast.error(j.error ?? "Save failed");
+        show({ text: j.error ?? "Save failed", bad: true });
         return;
       }
-      toast.success(mode === "create" ? `Added ${name}` : `Updated ${name}`);
+      show({ text: mode === "create" ? `Added ${name.trim()}` : `Updated ${name.trim()}` });
       // Caller wants a ClientRow; thread_count and is_system aren't
       // returned by the create/update endpoints so we fill them in
       // optimistically. backgroundResync() corrects thread_count
@@ -268,32 +334,35 @@ function ClientFormDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>{mode === "create" ? "Add client" : `Edit ${initial?.name}`}</DialogTitle>
           <DialogDescription>
-            Threads whose campaign name contains the client name (or any alias)
-            get auto-tagged. Longest match wins.
+            Threads whose campaign name contains the client name (or any alias) get auto-tagged.
+            Longest match wins.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="client-name">Name</Label>
-            <Input
+        <div className="mis-form">
+          <Field label="Name" htmlFor="client-name">
+            <input
               id="client-name"
+              className="inp"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Brooklyn Group"
               autoFocus
             />
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="client-alias">Aliases (optional)</Label>
-            <div className="flex gap-2">
-              <Input
+          <div className="mis-f">
+            <label className="mis-l" htmlFor="client-alias">
+              Aliases <span className="mis-opt">(optional)</span>
+            </label>
+            <div className="mis-inline">
+              <input
                 id="client-alias"
+                className="inp"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -304,31 +373,27 @@ function ClientFormDialog({
                 }}
                 placeholder="e.g. C21 Results Elite Team"
               />
-              <Button type="button" variant="outline" onClick={addAlias} disabled={!draft.trim()}>
+              <Btn onClick={addAlias} disabled={!draft.trim()}>
                 Add
-              </Button>
+              </Btn>
             </div>
             {aliases.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5 pt-2">
+              <div className="mis-tags" style={{ marginTop: 10 }}>
                 {aliases.map((a) => (
-                  <span
-                    key={a}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border bg-sky-50 text-sky-700 border-sky-200"
-                  >
+                  <span key={a} className="mis-tag">
                     {a}
                     <button
                       type="button"
                       onClick={() => setAliases(aliases.filter((x) => x !== a))}
-                      className="hover:text-sky-900"
                       aria-label={`Remove ${a}`}
                     >
-                      <X className="size-3" />
+                      <X aria-hidden />
                     </button>
                   </span>
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">
+              <p className="mis-hint">
                 No aliases yet. Add common variations of the campaign name to broaden matching.
               </p>
             )}
@@ -336,12 +401,11 @@ function ClientFormDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving || !name.trim()} className="gap-1.5">
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {mode === "create" ? "Add client" : "Save"}
+          <Button onClick={save} disabled={saving || !name.trim()} data-mis="save-client">
+            {saving ? "Saving…" : mode === "create" ? "Add client" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

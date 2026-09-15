@@ -5,20 +5,23 @@
  * one: `DismissReminderButton` was never mounted, so the only action the page
  * has did not exist. Found by scripts/inbox-inventory.mjs (0 of 3 components).
  *
- * The tabs are the design's (see mockup/tabs.tsx); everything else — the
- * loaders, the grouping, the dismiss action — is the tool's.
+ * The tab strip is the tool's `TabBar`, as on every other inbox screen;
+ * everything else — the loaders, the grouping, the dismiss action — is the
+ * tool's as well.
  */
 
-import Link from "next/link";
+import "@/app/mi-inbox.css";
+
 import { Clock, Mail, ArrowRight } from "lucide-react";
 import { requireSession } from "@/lib/auth/workspace";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { TopBar } from "@/components/master-inbox/top-bar";
-import { MockupTabs } from "./mockup/tabs";
+import { TabBar } from "@/components/master-inbox/tab-bar";
 import { loadViewCounts } from "@/lib/tools/master-inbox/inbox/views";
 import { loadViews } from "@/lib/tools/master-inbox/inbox/views";
 import { loadLabels } from "@/lib/tools/master-inbox/inbox/labels";
 import { DismissReminderButton } from "@/components/master-inbox/dismiss-reminder-button";
+import { InboxLink, InboxNavProvider } from "@/components/master-inbox/inbox-nav";
 
 
 interface ReminderRow {
@@ -76,70 +79,68 @@ export async function RemindersScreen() {
 
   return (
     <div className="mi-theme">
-      <TopBar />
-      <MockupTabs
-        views={views.map((v) => ({ id: v.id, slug: v.slug, name: v.name }))}
-        activeSlug=""
-        counts={viewCounts}
-      />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-8 py-8">
-          <div className="mb-6">
-            <h1 className="text-xl font-semibold tracking-tight">Reminders</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Threads you&apos;ve snoozed. They auto-return to your inbox at the scheduled
-              time the next time you open this page.
-            </p>
-          </div>
-
-          {reminders.length === 0 ? (
-            <div className="rounded-lg border bg-card p-10 text-center">
-              <Clock className="size-7 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm font-medium">No snoozed threads</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Open any thread and click the clock icon in the toolbar to snooze it.
+      <InboxNavProvider>
+        <TopBar />
+        <TabBar views={views} activeSlug={null} labels={labels} viewCounts={viewCounts} />
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-3xl mx-auto px-8 py-8">
+            <div className="mb-6">
+              <h1 className="text-xl font-semibold tracking-tight">Reminders</h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Threads you&apos;ve snoozed. They auto-return to your inbox at the scheduled
+                time the next time you open this page.
               </p>
             </div>
-          ) : (
-            <ul className="rounded-lg border bg-card divide-y">
-              {reminders.map((r) => {
-                const thread = r.threads;
-                const lead = thread?.leads;
-                const remindAt = new Date(r.remind_at);
-                return (
-                  <li key={r.id} className="flex items-center gap-3 px-4 py-3">
-                    <div className="size-9 rounded-md bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                      <Mail className="size-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">
-                        {lead?.full_name || lead?.email || "Unknown"}
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {thread?.subject || "(no subject)"}
-                      </p>
-                    </div>
-                    <div className="text-xs text-muted-foreground tabular-nums shrink-0">
-                      <Clock className="size-3 inline-block mr-1 -mt-0.5" />
-                      {remindAt.toLocaleString()}
-                    </div>
-                    <DismissReminderButton threadId={r.thread_id} />
-                    {thread?.id ? (
-                      <Link
-                        href={`/inbox/all-email/${thread.id}`}
-                        className="size-8 rounded-md flex items-center justify-center hover:bg-accent text-muted-foreground hover:text-foreground"
-                        aria-label="Open thread"
-                      >
-                        <ArrowRight className="size-4" />
-                      </Link>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+
+            {reminders.length === 0 ? (
+              <div className="rounded-lg border bg-card p-10 text-center">
+                <Clock className="size-7 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">No snoozed threads</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Open any thread and click the clock icon in the toolbar to snooze it.
+                </p>
+              </div>
+            ) : (
+              <ul className="rounded-lg border bg-card divide-y">
+                {reminders.map((r) => {
+                  const thread = r.threads;
+                  const lead = thread?.leads;
+                  const remindAt = new Date(r.remind_at);
+                  return (
+                    <li key={r.id} className="flex items-center gap-3 px-4 py-3">
+                      <div className="size-9 rounded-md bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                        <Mail className="size-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">
+                          {lead?.full_name || lead?.email || "Unknown"}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {thread?.subject || "(no subject)"}
+                        </p>
+                      </div>
+                      <div className="text-xs text-muted-foreground tabular-nums shrink-0">
+                        <Clock className="size-3 inline-block mr-1 -mt-0.5" />
+                        {remindAt.toLocaleString()}
+                      </div>
+                      <DismissReminderButton threadId={r.thread_id} />
+                      {thread?.id ? (
+                        <InboxLink
+                          href={`/inbox/all-email/${thread.id}`}
+                          className="size-8 rounded-md flex items-center justify-center hover:bg-accent text-muted-foreground hover:text-foreground"
+                          aria-label="Open thread"
+                        >
+                          <ArrowRight className="size-4" />
+                        </InboxLink>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
-      </div>
+      </InboxNavProvider>
     </div>
   );
 }

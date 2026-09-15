@@ -239,7 +239,9 @@ export function PipelineBoard({
   useEffect(() => setEntries(initial), [initial]);
 
   const [search, setSearch] = useState("");
-  const [stageFilter, setStageFilter] = useState<Set<PipelineStage>>(new Set());
+  // Holds display keys — a canonical stage OR a custom_stage_key — so custom
+  // stages get filter bubbles too.
+  const [stageFilter, setStageFilter] = useState<Set<string>>(new Set());
   const [replaceOnly, setReplaceOnly] = useState(false);
   const [openNotes, setOpenNotes] = useState<PipelineEntry | null>(null);
   const [openConversation, setOpenConversation] = useState<PipelineEntry | null>(null);
@@ -282,7 +284,8 @@ export function PipelineBoard({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return entries.filter((e) => {
-      if (stageFilter.size > 0 && !stageFilter.has(e.stage)) return false;
+      if (stageFilter.size > 0 && !stageFilter.has(e.custom_stage_key ?? e.stage))
+        return false;
       if (replaceOnly && e.stage !== "no_show") return false;
       if (q) {
         const hay = [e.lead_name, e.lead_email, e.current_brokerage, e.lead_phone]
@@ -306,20 +309,48 @@ export function PipelineBoard({
 
   // Per-stage counts for the filter chips.
   const stageCounts = useMemo(() => {
-    const m: Record<PipelineStage, number> = {
-      introduction: 0,
-      phone_screen_scheduled: 0,
-      phone_screen: 0,
-      interview_scheduled: 0,
-      interview: 0,
-      hired: 0,
-      keep_warm: 0,
-      we_they_rejected: 0,
-      no_show: 0,
-    };
-    for (const e of entries) m[e.stage] += 1;
+    const m: Record<string, number> = {};
+    for (const e of entries) {
+      const k = e.custom_stage_key ?? e.stage;
+      m[k] = (m[k] ?? 0) + 1;
+    }
     return m;
   }, [entries]);
+
+  /*
+   * The stages that get a filter bubble.
+   *
+   * `custom_stage_key` is a DISPLAY overlay: a lead parked in a custom stage
+   * still carries its canonical `pipeline_stage`, and the funnel and reporting
+   * keep reading that. Only grouping, counting and filtering use
+   * `custom_stage_key ?? stage`. The two are never collapsed.
+   *
+   * So the bubble list comes from the full manage_stages set (canonical +
+   * custom, minus hidden) when the client has it, and from the canonical
+   * visible set otherwise — which is exactly what every client without the flag
+   * saw before. A custom stage carries an operator-chosen hex, applied inline;
+   * a canonical one takes its tone from mi-portals.css via `data-stage`.
+   */
+  const filterStages = useMemo<
+    Array<{ key: string; label: string; hex: string | null; canonical: boolean }>
+  >(() => {
+    if (manageStagesEnabled && manageStages && manageStages.length > 0) {
+      return manageStages
+        .filter((d) => !d.hidden)
+        .map((d) => ({
+          key: d.key,
+          label: d.label,
+          hex: d.kind === "custom" ? d.color : null,
+          canonical: d.kind === "canonical",
+        }));
+    }
+    return visibleStages.map((st) => ({
+      key: st,
+      label: stageLabels[st],
+      hex: null,
+      canonical: true,
+    }));
+  }, [manageStagesEnabled, manageStages, visibleStages, stageLabels]);
 
   async function patch(id: string, body: Partial<PipelineEntry>) {
     const res = await fetch(`/api/tools/master-inbox/portal/${token}/pipeline/${id}`, {
@@ -336,7 +367,7 @@ export function PipelineBoard({
     return true;
   }
 
-  function toggleStageFilter(s: PipelineStage) {
+  function toggleStageFilter(s: string) {
     setStageFilter((cur) => {
       const next = new Set(cur);
       if (next.has(s)) next.delete(s);
@@ -648,7 +679,7 @@ export function PipelineBoard({
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pb-12 pt-6 sm:px-6">
+    <div className="mi-portals-wrap !pt-4">
       {manageStagesEnabled && manageStages ? (
         <StageManager token={token} stages={manageStages} />
       ) : (
@@ -670,23 +701,23 @@ export function PipelineBoard({
         <>
           {/* Filter row */}
           <div className="mb-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#9aa0ab]" />
+            <div className="mi-portals-toolbar">
+              <div className="srch">
+                <Search />
                 <input
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search candidates…"
-                  className="h-9 w-full rounded-lg border border-[#ebecf0] bg-white pl-8 pr-3 text-[13px] placeholder:text-[#9aa0ab] focus:border-[#bcd5f1] focus:outline-none focus:ring-2 focus:ring-[#eaf2fd] sm:w-64"
+                  className="inp"
+                  aria-label="Search candidates"
                 />
               </div>
-              <label className="inline-flex h-9 items-center gap-2 rounded-md border border-[#ebecf0] bg-white px-3 text-[13px] text-[#5b6472]">
+              <label className="mi-portals-check">
                 <input
                   type="checkbox"
                   checked={replaceOnly}
                   onChange={(e) => setReplaceOnly(e.target.checked)}
-                  className="size-3.5 accent-[#1565C0]"
                 />
                 Replacements only
               </label>
@@ -709,17 +740,12 @@ export function PipelineBoard({
               ) : null}
               {kanbanViewEnabled ? (
                 <div className="inline-flex items-center gap-2">
-                  <span className="text-[12px] text-[#5b6472]">View as:</span>
-                  <div className="inline-flex h-9 overflow-hidden rounded-md border border-[#ebecf0] bg-white">
+                  <span className="text-[12.5px] text-[#5b6472]">View as:</span>
+                  <div className="seg">
                     <button
                       type="button"
                       onClick={() => changeView("list")}
-                      className={cn(
-                        "px-3 text-[12px] font-medium transition-colors",
-                        viewMode === "list"
-                          ? "bg-[#eaf2fd] text-[#1565C0]"
-                          : "text-[#5b6472] hover:bg-[#f6f7f9]",
-                      )}
+                      className={cn(viewMode === "list" && "on")}
                     >
                       List
                     </button>
@@ -730,42 +756,50 @@ export function PipelineBoard({
                     <button
                       type="button"
                       onClick={() => changeView("kanban")}
-                      className={cn(
-                        "border-l border-[#ebecf0] px-3 text-[12px] font-medium transition-colors",
-                        viewMode === "kanban"
-                          ? "bg-[#eaf2fd] text-[#1565C0]"
-                          : "text-[#5b6472] hover:bg-[#f6f7f9]",
-                      )}
+                      className={cn(viewMode === "kanban" && "on")}
                     >
                       Board
                     </button>
                   </div>
                 </div>
               ) : null}
-              <span className="ml-auto text-[12px] text-[#9aa0ab]">
+              <span className="mi-portals-count">
                 {filtered.length.toLocaleString()} of {entries.length.toLocaleString()} candidates
               </span>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {visibleStages.map((s) => {
-                const active = stageFilter.has(s);
-                const style = STAGE_STYLE[s];
+            {/*
+              * The nine stage hues are kept — they are a workflow gradient a
+              * recruiter reads at a glance, and the client's own portal shows
+              * the same nine, so they are not ours to collapse into the
+              * design's four semantic tones. What changes is the chip IDIOM:
+              * the design tints the ground and saturates the TEXT (`.lc-*`),
+              * where the tool filled the chip and went white. Handled by
+              * `[data-stage-chip]` in mi-portals.css.
+              */}
+            <div className="mi-portals-chiprow">
+              {filterStages.map((st) => {
+                const active = stageFilter.has(st.key);
+                const style = st.canonical
+                  ? STAGE_STYLE[st.key as PipelineStage]
+                  : null;
                 return (
                   <button
-                    key={s}
+                    key={st.key}
                     type="button"
-                    onClick={() => toggleStageFilter(s)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-all",
-                      active
-                        ? `${style.bg} ${style.text} border-transparent`
-                        : "border-[#ebecf0] bg-white text-[#5b6472] hover:bg-[#f6f7f9]",
-                    )}
+                    onClick={() => toggleStageFilter(st.key)}
+                    data-stage-chip
+                    /* Canonical stages take their tinted tone from
+                       mi-portals.css; a custom stage carries an
+                       operator-chosen hex, so it is filled inline and marked
+                       so the stylesheet can put white text on it. */
+                    data-stage={st.hex ? undefined : st.key}
+                    data-custom={st.hex ? "true" : undefined}
+                    data-on={active ? "true" : "false"}
+                    style={active && st.hex ? { backgroundColor: st.hex } : undefined}
+                    className={cn(active && !st.hex && `${style?.bg ?? ""} ${style?.text ?? ""}`)}
                   >
-                    {stageLabels[s]}
-                    <span className={cn("tabular-nums", active ? "" : "text-[#9aa0ab]")}>
-                      {stageCounts[s]}
-                    </span>
+                    {st.label}
+                    <span className="tabular-nums">{stageCounts[st.key] ?? 0}</span>
                   </button>
                 );
               })}
@@ -773,7 +807,7 @@ export function PipelineBoard({
                 <button
                   type="button"
                   onClick={() => setStageFilter(new Set())}
-                  className="text-[11.5px] font-medium text-[#1565C0] hover:underline"
+                  className="ml-1 text-[12px] font-medium text-[#1565C0] hover:underline"
                 >
                   Clear filter
                 </button>
@@ -786,20 +820,8 @@ export function PipelineBoard({
               disabled and the leading label nudges the user to tick a
               row. When at least one row is selected the bar lights up
               and the label switches to a live count. */}
-          <div
-            className={cn(
-              "mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-[12.5px] transition-colors",
-              selected.size > 0
-                ? "border-[#d4e4f8] bg-[#eaf2fd]"
-                : "border-[#ebecf0] bg-white",
-            )}
-          >
-            <span
-              className={cn(
-                "font-medium",
-                selected.size > 0 ? "text-[#1565C0]" : "text-[#5b6472]",
-              )}
-            >
+          <div className="mi-portals-bulk mb-3" data-active={selected.size > 0 ? "true" : "false"}>
+            <span>
               {selected.size > 0
                 ? `${selected.size} selected`
                 : "Bulk actions — tick rows below to enable"}
@@ -947,12 +969,12 @@ export function PipelineBoard({
           {/* Table (md+) — scrolls horizontally if container shrinks. */}
           <div
             className={cn(
-              "hidden overflow-hidden rounded-2xl border border-[#ebecf0] bg-white shadow-sm transition-opacity duration-500",
+              "tbl-wrap hidden transition-opacity duration-500",
               kanbanViewEnabled && viewMode === "kanban" ? "" : "md:block",
               mounted ? "opacity-100" : "opacity-0",
             )}
           >
-            <div className="grid grid-cols-[36px_1.4fr_1.1fr_140px_130px_200px_60px] items-center gap-3 border-b border-[#ebecf0] bg-[#fafbfc] px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#9aa0ab]">
+            <div className="mi-portals-grid-head grid grid-cols-[36px_1.4fr_1.1fr_140px_130px_200px_60px] items-center gap-3">
               <div>
                 <input
                   type="checkbox"
@@ -1209,7 +1231,7 @@ function CsvUploadDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl" data-portal-surface>
         <DialogHeader>
           <DialogTitle>Import candidates from CSV</DialogTitle>
         </DialogHeader>
@@ -1371,8 +1393,9 @@ function PipelineRow({
   const phone = entry.lead_phone || pickFirstString(cf, PHONE_KEYS) || null;
   return (
     <div
+      data-pipeline-row
       className={cn(
-        "grid grid-cols-[36px_1.4fr_1.1fr_140px_130px_200px_60px] items-start gap-3 px-4 py-3 transition-colors",
+        "mi-portals-grid-row grid grid-cols-[36px_1.4fr_1.1fr_140px_130px_200px_60px] items-start gap-3 !border-b-0 transition-colors",
         expanded ? "bg-[#fafbfc]" : "hover:bg-[#fafbfc]",
         selected ? "bg-[#eaf2fd] hover:bg-[#eaf2fd]" : "",
       )}
@@ -1404,7 +1427,16 @@ function PipelineRow({
         aria-expanded={expanded}
       >
         <Avatar name={entry.lead_name ?? entry.lead_email ?? "?"} />
-        <div className="min-w-0">
+        {/*
+          `flex-1` alongside `min-w-0`, not `min-w-0` alone.
+          `min-w-0` lets this column shrink so its text can truncate, but with
+          no `flex-1` it never claims a share of the row either — so below about
+          1100px it collapsed to 2px while the "Agent profile", "Conversation"
+          and source chips inside it stayed ~90px, spilling out of a box that
+          had no width. The sibling block at the bottom of this file already
+          pairs the two; this one was missing its half.
+        */}
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span
               className={cn(
@@ -1814,8 +1846,9 @@ function AssignedSelector({
         render={
           <button
             type="button"
+            data-assign-selector
             className={cn(
-              "inline-flex h-7 max-w-[140px] items-center gap-1 rounded-md border px-2 text-[11.5px] font-medium transition-colors",
+              "inline-flex h-7 max-w-[140px] items-center gap-1 rounded-lg border px-2 text-[11.5px] font-medium transition-colors",
               value
                 ? "border-[#d4e4f8] bg-[#eaf2fd] text-[#1565C0] hover:bg-[#dbe9fa]"
                 : "border-[#ebecf0] bg-white text-[#9aa0ab] hover:bg-[#f6f7f9]",
@@ -1899,9 +1932,15 @@ function StageSelector({
         render={
           <button
             type="button"
+            data-stage-selector
+            data-stage-pill
+            /* A custom stage carries an operator-chosen hex, so it keeps the
+               inline fill; the nine canonical stages take the design's tinted
+               chip from mi-portals.css. */
+            data-stage={valHex ? undefined : value}
             className={cn(
-              "inline-flex items-center justify-between gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-all hover:brightness-95",
-              valHex ? "text-white" : cn(valStyle?.bg, valStyle?.text),
+              "justify-between",
+              valHex && "rounded-full px-2.5 py-1 text-[11.5px] font-semibold text-white transition-all hover:brightness-95",
             )}
             style={valHex ? { backgroundColor: valHex } : undefined}
           >
@@ -2135,6 +2174,7 @@ function NotesSheet({
   return (
     <Sheet open onOpenChange={(v) => !v && onClose()}>
       <SheetContent
+        data-portal-surface
         side="right"
         className="flex w-full flex-col gap-0 bg-white p-0 sm:max-w-md"
         showCloseButton={false}
@@ -2569,7 +2609,7 @@ function EditLeadDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg" data-portal-surface>
         <DialogHeader>
           <DialogTitle>
             {target.mode === "create" ? "Add a candidate" : "Edit lead"}

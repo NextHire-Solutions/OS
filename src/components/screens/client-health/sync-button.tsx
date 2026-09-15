@@ -8,8 +8,9 @@ import { refreshClientHealth } from "./load";
 /*
  * "Sync now" — the same button Client Health's own dashboard has.
  *
- * It triggers that tool's sync worker rather than doing anything itself, so
- * whatever the tool does today, this does. See the sync API route.
+ * It runs the tool's sync worker, which now lives in this process
+ * (src/lib/tools/client-health/sync/) rather than behind a proxy to the live
+ * app. See the sync API route.
  *
  * Three things this gets right that a naive version would not:
  *
@@ -23,7 +24,7 @@ import { refreshClientHealth } from "./load";
  *   their sync failed when it merely outlived the request is how you get three
  *   concurrent syncs.
  */
-export function SyncButton({ onDone }: { onDone?: () => void }) {
+export function SyncButton() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ text: string; bad?: boolean } | null>(null);
 
@@ -40,7 +41,6 @@ export function SyncButton({ onDone }: { onDone?: () => void }) {
       const result = await runSync();
       // The tool has new numbers; ours are now stale by definition.
       await refreshClientHealth();
-      onDone?.();
       setToast({ text: describeSync(result) });
     } catch (error) {
       setToast({
@@ -62,7 +62,7 @@ export function SyncButton({ onDone }: { onDone?: () => void }) {
         title={
           busy
             ? "Syncing — this walks every campaign on Instantly and EmailBison"
-            : "Pull the latest from Instantly, EmailBison and Master Inbox"
+            : "Pull the latest from Instantly, EmailBison and Master Inbox now (it also runs every 15 minutes while this screen is open)"
         }
         style={busy ? { opacity: 0.65, cursor: "progress" } : undefined}
       >

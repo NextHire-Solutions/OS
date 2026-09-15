@@ -65,6 +65,29 @@ export const env = {
   get EMAILBISON_API_KEY() {
     return lazyOptional("EMAILBISON_API_KEY")();
   },
+  // Shared secret the EmailBison receiver expects as `?token=` (or
+  // x-webhook-token). The tool treated an unset secret as "accept anything";
+  // here the receiver refuses with 503 until it is set — see
+  // webhooks/verify.ts for why the port fails closed.
+  get EMAILBISON_WEBHOOK_SECRET() {
+    return lazyOptional("EMAILBISON_WEBHOOK_SECRET")();
+  },
+  // Bootstrap secret for POST /webhooks/register. The tool fell back to the
+  // service-role key when this was unset; the port does not — 503 instead.
+  get WEBHOOK_REGISTER_SECRET() {
+    return lazyOptional("WEBHOOK_REGISTER_SECRET")();
+  },
+  // Bearer token for /cron/sync-external-intros, the same shape as
+  // ANALYTICS_CRON_SECRET. Unset means the endpoint refuses every caller.
+  get CRON_SECRET() {
+    return lazyOptional("CRON_SECRET")();
+  },
+  // "1" starts the in-process scheduler (sync/scheduler.ts) in this Node
+  // process. Anything else, or unset, leaves scheduling to an external cron
+  // hitting the endpoint above.
+  get CRON_ENABLED() {
+    return lazyOptional("CRON_ENABLED")();
+  },
   // Symmetric key used by pgcrypto to encrypt per-workspace API keys
   // (AI provider keys, OAuth tokens). Must be set in production.
   get APP_ENCRYPTION_KEY() {

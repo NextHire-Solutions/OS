@@ -5,66 +5,26 @@ import {
   note,
   type MetricsResult,
   type Note,
-  type ProbeContext,
   type ToolMetric,
 } from "./types";
 import { classifyReach } from "@/lib/http/classify";
-import { optionalEnv } from "@/lib/env";
+import { clientStatuses } from "@/lib/tools/client-health/publish";
 
 /*
  * Client Health ("Shaurs") — Next 15, Supabase-backed, per-client outreach
  * health from Instantly + Master Inbox.
  *
- * Two paths, and which one runs depends on whether the read token is set:
- *
- *   /api/clients/status   x-admin-token: READ_ONLY_TOKEN. The good one —
- *                         returns {total, counts:{active,paused,churned}}
- *                         already aggregated.
- *
- *   /api/clients          public, no auth, ~200KB roster. The fallback. We
- *                         derive a count from it and say so in a note, because
- *                         a number with a caveat beats an empty card.
+ * Reach still probes the live app's front door — that is what the status
+ * board is asking about. The metrics no longer go through it: the workspace
+ * holds Client Health's database now, and `clientStatuses()` answers exactly
+ * what the tool's GET /api/clients/status did — {total, counts:{active,
+ * paused, churned}} — without a hop to an app being switched off, and without
+ * needing CLIENT_HEALTH_READ_TOKEN in this process at all.
  *
  * This app has no URL state at all — the filter pills are pure useState — so
  * there are genuinely no deep links beyond root. `verified` exists on DeepLink
  * precisely so we don't invent `/?filter=risk` and ship a dead chip.
  */
-
-function num(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-async function loadStatus(ctx: ProbeContext) {
-  const token = optionalEnv("CLIENT_HEALTH_READ_TOKEN");
-  if (!token) return null;
-
-  const res = await ctx.http(`${ctx.baseUrl}/api/clients/status`, {
-    timeoutMs: ctx.policy.metricsTimeoutMs,
-    headers: { "x-admin-token": token },
-  });
-  if (!res.ok) throw new Error(`clients/status returned ${res.status ?? "no response"}`);
-
-  const body = asRecord(res.json);
-  if (!body) throw new Error("clients/status returned a non-JSON body");
-  return body;
-}
-
-async function loadRoster(ctx: ProbeContext) {
-  const res = await ctx.http(`${ctx.baseUrl}/api/clients`, {
-    timeoutMs: ctx.policy.metricsTimeoutMs,
-  });
-  if (!res.ok) throw new Error(`clients returned ${res.status ?? "no response"}`);
-
-  const clients = asRecord(res.json)?.clients;
-  if (!Array.isArray(clients)) throw new Error("clients returned an unexpected shape");
-  return clients as Array<Record<string, unknown>>;
-}
 
 export const clientHealthConnector = defineConnector({
   id: "client-health",
@@ -80,7 +40,7 @@ export const clientHealthConnector = defineConnector({
 
   env: {
     required: ["CLIENT_HEALTH_URL"],
-    optional: ["CLIENT_HEALTH_READ_TOKEN"],
+    optional: ["CLIENT_HEALTH_SUPABASE_URL", "CLIENT_HEALTH_SUPABASE_SERVICE_ROLE_KEY"],
   },
 
   policy: { ...DEFAULT_POLICY },
@@ -92,39 +52,19 @@ export const clientHealthConnector = defineConnector({
     return classifyReach(res, ctx.policy.slowMs);
   },
 
-  async metrics(ctx): Promise<MetricsResult> {
+  async metrics(): Promise<MetricsResult> {
     const metrics: ToolMetric[] = [];
     const notes: Note[] = [];
 
     try {
-      const status = await loadStatus(ctx);
-
-      if (status) {
-        const counts = asRecord(status.counts) ?? {};
-        const churned = num(counts.churned);
-        metrics.push(
-          metric("total", "Clients", num(status.total), "compact"),
-          metric("active", "Active", num(counts.active), "compact", { intent: "good" }),
-          metric("churned", "Churned", churned, "compact", {
-            intent: churned && churned > 0 ? "warn" : "neutral",
-          }),
-        );
-        return { metrics, notes };
-      }
-
-      // No token configured — fall back to the public roster.
-      const roster = await loadRoster(ctx);
-      const production = roster.filter((c) => c.plan === "production").length;
+      const status = await clientStatuses();
+      const churned = status.counts.churned;
       metrics.push(
-        metric("total", "Clients", roster.length, "compact"),
-        metric("production", "In production", production, "compact", { intent: "good" }),
-      );
-      notes.push(
-        note(
-          "info",
-          "Unlocks active / paused / churned counts",
-          "CLIENT_HEALTH_READ_TOKEN",
-        ),
+        metric("total", "Clients", status.total, "compact"),
+        metric("active", "Active", status.counts.active, "compact", { intent: "good" }),
+        metric("churned", "Churned", churned, "compact", {
+          intent: churned > 0 ? "warn" : "neutral",
+        }),
       );
       return { metrics, notes };
     } catch (error) {

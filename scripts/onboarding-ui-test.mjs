@@ -274,11 +274,21 @@ try {
       box.dispatchEvent(new Event('input', { bubbles: true }));
       return "typed";
     })()`);
-    await sleep(400);
-    const saveLive = await r.tab.eval(`(() => {
-      const b = [...document.querySelectorAll('section.screen.on button')].find(x => x.textContent.trim() === 'Save names');
-      return b ? !b.disabled : null;
-    })()`);
+    /*
+     * Poll instead of sleeping a fixed 400ms. React has to re-render before the
+     * button un-disables, and on a loaded machine that occasionally took longer
+     * than the sleep — so this failed with "typed=typed save=false", which reads
+     * as a dead Save button rather than as a test that looked too early.
+     */
+    let saveLive = null;
+    for (let i = 0; i < 40; i++) {
+      saveLive = await r.tab.eval(`(() => {
+        const b = [...document.querySelectorAll('section.screen.on button')].find(x => x.textContent.trim() === 'Save names');
+        return b ? !b.disabled : null;
+      })()`);
+      if (saveLive === true) break;
+      await sleep(100);
+    }
     check("Settings: typing a caption enables Save names", typed === "typed" && saveLive === true, `typed=${typed} save=${saveLive}`);
     await r.tab.close();
   }

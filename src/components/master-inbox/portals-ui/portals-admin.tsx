@@ -14,6 +14,7 @@ import {
   Globe,
   Sparkles,
   ChevronRight,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/tools/master-inbox/utils";
@@ -26,7 +27,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/mi-ui/dialog";
-import { PortalLogo } from "@/components/master-inbox/portals-ui/portal-logo";
 import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 /*
  * The row type lives with the screen that builds it. In the tool that is the
@@ -78,18 +78,33 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
   const withIntros = rows.filter((r) => r.intro_count > 0).length;
 
   return (
-    // flex-1 + overflow-y-auto: this page lives inside AppShell's <main>,
-    // which is overflow-hidden — so the page must own its own scroll.
-    <div className="flex-1 overflow-y-auto bg-[#f6f7f9] text-[#0f1320] antialiased">
-      <div className="mx-auto max-w-5xl px-8 py-10">
+    /*
+     * `mi-theme` re-points Tailwind's semantic tokens at the mockup's palette,
+     * exactly as the other Master Inbox screens do; `mi-portals` scopes this
+     * screen's own rules (src/app/mi-portals.css). This screen and the
+     * drill-down were the only two inbox screens that carried neither, which is
+     * most of why they still looked like the tool.
+     *
+     * flex-1 + overflow-y-auto: this page lives inside AppShell's <main>,
+     * which is overflow-hidden — so the page must own its own scroll.
+     */
+    <div className="mi-theme mi-portals">
+      <div className="mi-portals-wrap">
         {/* ---- Header ---- */}
-        <div className="flex items-start gap-3.5">
-          <div className="rounded-xl border border-[#ebecf0] bg-white p-2 shadow-sm">
-            <PortalLogo className="h-8 w-auto" />
+        <div className="mi-portals-head">
+          {/*
+            * The workspace gives every screen the same header mark: a soft
+            * tinted tile with one glyph (`.as-logo` in workspace.css). The
+            * tool put the BrokerStaffer wordmark in a white box here, which
+            * reads as a second brand sitting inside the workspace — and, since
+            * the OS has no /portal/* route, rendered as a broken image.
+            */}
+          <div className="mi-portals-mark" aria-hidden>
+            <Globe />
           </div>
           <div>
-            <h1 className="text-[22px] font-semibold tracking-tight">Client Portals</h1>
-            <p className="mt-0.5 max-w-lg text-sm leading-relaxed text-[#5b6472]">
+            <h1>Client Portals</h1>
+            <p>
               Every client gets a private, login-free page of their Introduction
               leads. Manage and share the links here.
             </p>
@@ -97,7 +112,7 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
         </div>
 
         {/* ---- Summary ---- */}
-        <div className="my-7 grid grid-cols-3 gap-4">
+        <div className="cards">
           <SummaryCard
             icon={Users}
             label="Clients"
@@ -119,54 +134,75 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
           />
         </div>
 
-        {/* ---- Search ---- */}
-        <div className="relative mb-4 max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#9aa0ab]" />
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search clients…"
-            className="h-10 w-full rounded-xl border border-[#ebecf0] bg-white pl-9 pr-3 text-sm placeholder:text-[#9aa0ab] focus:border-[#bcd5f1] focus:outline-none focus:ring-2 focus:ring-[#eaf2fd]"
-          />
-        </div>
-
         {/* ---- Client list ---- */}
-        <div className="overflow-hidden rounded-2xl border border-[#ebecf0] bg-white shadow-sm">
-          <div className="grid grid-cols-[1fr_84px_128px_72px_128px] gap-3 border-b border-[#f0f1f4] bg-[#fafbfc] px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[#9aa0ab]">
-            <div>Client</div>
-            <div className="text-center">Intros</div>
-            <div>Last intro</div>
-            <div className="text-center">Live</div>
-            <div className="text-right">Actions</div>
+        <div className="tbl-wrap">
+          <div className="tbl-head">
+            <div>
+              <div className="tbl-title">Portals</div>
+              <div className="tbl-sub">
+                {filtered.length === rows.length
+                  ? `${rows.length} clients · ${livePortals} live`
+                  : `${filtered.length} of ${rows.length} clients`}
+              </div>
+            </div>
+            {/* ---- Search ---- */}
+            <div className="srch">
+              <Search />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search clients…"
+                className="inp"
+                aria-label="Search clients"
+              />
+            </div>
           </div>
 
           {filtered.length === 0 ? (
-            <div className="px-5 py-16 text-center text-sm text-[#9aa0ab]">
+            <div className="px-[18px] py-16 text-center text-[13.5px] text-[#9aa0ab]">
               No clients match “{search}”.
             </div>
           ) : (
-            filtered.map((r) => (
-              <PortalRow
-                key={r.id}
-                row={r}
-                onEdit={() => setEditing(r)}
-                onToggle={(enabled) => {
-                  void patchPortal(r.id, { portal_enabled: enabled }).then((ok) => {
-                    if (ok) {
-                      toast.success(enabled ? "Portal enabled" : "Portal disabled");
-                      router.refresh();
-                    }
-                  });
-                }}
-              />
-            ))
+            <div className="tbl-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Client</th>
+                    <th className="text-center">Intros</th>
+                    <th>Last intro</th>
+                    <th className="text-center">Live</th>
+                    <th className="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((r) => (
+                    <PortalRow
+                      key={r.id}
+                      row={r}
+                      onEdit={() => setEditing(r)}
+                      onToggle={(enabled) => {
+                        void patchPortal(r.id, { portal_enabled: enabled }).then((ok) => {
+                          if (ok) {
+                            toast.success(enabled ? "Portal enabled" : "Portal disabled");
+                            router.refresh();
+                          }
+                        });
+                      }}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
-        <p className="mt-4 text-xs leading-relaxed text-[#9aa0ab]">
-          Anyone with a portal link can open it — there is no password. Keep the
-          random suffix in each URL so links can&apos;t be guessed.
+        <p className="anno">
+          <TriangleAlert />
+          <span>
+            Anyone with a portal link can open it — <b>there is no password</b>.
+            Keep the random suffix in each URL so links can&apos;t be guessed.
+          </span>
         </p>
       </div>
 
@@ -195,50 +231,23 @@ function SummaryCard({
   hint: string;
   accent?: boolean;
 }) {
+  /*
+   * The design leads with the LABEL and follows with a 32px number; the tool
+   * led with a tinted tile and a 34px number, and spent a blue gradient on the
+   * third card. The design has no gradient card — its emphasis is the accent
+   * spent on the number itself (`.n-intros`), which is what `.card.accent`
+   * does in mi-portals.css.
+   */
   return (
-    <div
-      className={cn(
-        "relative overflow-hidden rounded-2xl border p-5 shadow-sm",
-        accent
-          ? "border-transparent bg-gradient-to-br from-[#1565C0] to-[#2f7fe0] text-white"
-          : "border-[#ebecf0] bg-white",
-      )}
-    >
-      {accent ? (
-        <div
-          className="pointer-events-none absolute -right-8 -top-10 size-36 rounded-full opacity-40 blur-2xl"
-          style={{ background: "radial-gradient(circle, #ffffff 0%, transparent 70%)" }}
-        />
-      ) : null}
-      <div className="relative">
-        <div
-          className={cn(
-            "inline-flex size-9 items-center justify-center rounded-xl",
-            accent ? "bg-white/15" : "bg-[#eaf2fd]",
-          )}
-        >
-          <Icon className={cn("size-[18px]", accent ? "text-white" : "text-[#1565C0]")} />
-        </div>
-        <div
-          className={cn(
-            "mt-3 text-[34px] font-semibold leading-none tracking-tight tabular-nums",
-            accent ? "text-white" : "text-[#0f1320]",
-          )}
-        >
-          {value}
-        </div>
-        <div
-          className={cn(
-            "mt-1.5 text-[13px] font-medium",
-            accent ? "text-white" : "text-[#0f1320]",
-          )}
-        >
-          {label}
-        </div>
-        <div className={cn("text-[11.5px]", accent ? "text-white/70" : "text-[#9aa0ab]")}>
-          {hint}
-        </div>
+    <div className={cn("card", accent && "accent")} data-portal-stat>
+      <div className="card-top">
+        <span className="card-ico">
+          <Icon />
+        </span>
+        <span className="card-l">{label}</span>
       </div>
+      <div className="card-n tnum">{value.toLocaleString()}</div>
+      <div className="card-s">{hint}</div>
     </div>
   );
 }
@@ -273,33 +282,38 @@ function PortalRow({
   }
 
   return (
-    <div className="grid grid-cols-[1fr_84px_128px_72px_128px] items-center gap-3 border-b border-[#f0f1f4] px-5 py-3.5 transition-colors last:border-0 hover:bg-[#fafbfc]">
+    <tr data-portal-row>
       {/* Client */}
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#eaf2fd] text-xs font-semibold text-[#1565C0]">
-          {clientInitials(row.name)}
+      <td>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="mi-portals-av">{clientInitials(row.name)}</span>
+          <div className="min-w-0">
+            {/*
+             * The OS routes every screen through one catch-all, so a client
+             * drill-down is /inbox/portals/<id>. This used to link at
+             * /portals/<id> — the tool's own path — which `idForPath` does not
+             * recognise, so it fell through to Home. The 47-portal list linked
+             * at a screen nobody could reach from it.
+             */}
+            <Link href={`/inbox/portals/${row.id}`} className="cname group block truncate">
+              {row.name}
+              <ChevronRight className="ml-0.5 inline size-3.5 -translate-y-px text-[#c2c7d0] transition-transform group-hover:translate-x-0.5 group-hover:text-[#1565C0]" />
+            </Link>
+            {portalPath ? (
+              <div className="csince truncate">{portalPath}</div>
+            ) : (
+              <div className="text-[11.5px] text-[#c23934]">No portal URL set</div>
+            )}
+          </div>
         </div>
-        <div className="min-w-0">
-          <Link
-            href={`/portals/${row.id}`}
-            className="group block truncate text-[14px] font-medium transition-colors hover:text-[#1565C0]"
-          >
-            {row.name}
-            <ChevronRight className="ml-0.5 inline size-3.5 -translate-y-px text-[#c2c7d0] transition-transform group-hover:translate-x-0.5 group-hover:text-[#1565C0]" />
-          </Link>
-          {portalPath ? (
-            <div className="truncate font-mono text-[11px] text-[#9aa0ab]">{portalPath}</div>
-          ) : (
-            <div className="text-[11px] text-[#c23934]">No portal URL set</div>
-          )}
-        </div>
-      </div>
+      </td>
 
       {/* Intros */}
-      <div className="flex justify-center">
+      <td className="text-center">
         <span
+          data-portal-intros
           className={cn(
-            "inline-flex h-7 min-w-9 items-center justify-center rounded-full px-2.5 text-[13px] font-semibold tabular-nums",
+            "inline-flex h-[26px] min-w-[34px] items-center justify-center rounded-lg px-2.5 text-[13px] font-semibold tabular-nums",
             row.intro_count > 0
               ? "bg-[#eaf2fd] text-[#1565C0]"
               : "bg-[#f0f1f4] text-[#9aa0ab]",
@@ -307,45 +321,52 @@ function PortalRow({
         >
           {row.intro_count}
         </span>
-      </div>
+      </td>
 
       {/* Last intro */}
-      <div className="text-[13px] text-[#5b6472]">{formatLastIntro(row.last_intro_at)}</div>
+      <td className="text-[13px] text-[#5b6472] whitespace-nowrap">
+        {formatLastIntro(row.last_intro_at)}
+      </td>
 
       {/* Portal toggle */}
-      <div className="flex justify-center">
-        <Switch
-          checked={row.portal_enabled}
-          onCheckedChange={(v) => onToggle(Boolean(v))}
-          aria-label="Portal enabled"
-        />
-      </div>
+      <td>
+        <div className="flex justify-center">
+          <Switch
+            checked={row.portal_enabled}
+            onCheckedChange={(v) => onToggle(Boolean(v))}
+            aria-label="Portal enabled"
+          />
+        </div>
+      </td>
 
       {/* Actions */}
-      <div className="flex items-center justify-end gap-0.5">
-        <IconAction
-          icon={copied ? Check : Copy}
-          label="Copy link"
-          onClick={copyLink}
-          disabled={!portalAbsoluteUrl}
-        />
-        <IconAction icon={Pencil} label="Edit URL" onClick={onEdit} />
-        {isLive && portalAbsoluteUrl ? (
-          <a
-            href={portalAbsoluteUrl}
-            target="_blank"
-            rel="noopener"
-            className="inline-flex size-8 items-center justify-center rounded-lg text-[#9aa0ab] transition-all hover:bg-[#eaf2fd] hover:text-[#1565C0]"
-            aria-label="Open live portal"
-            title="Open live portal"
-          >
-            <ExternalLink className="size-4" />
-          </a>
-        ) : (
-          <span className="size-8" />
-        )}
-      </div>
-    </div>
+      <td>
+        <div className="flex items-center justify-end gap-0.5">
+          <IconAction
+            icon={copied ? Check : Copy}
+            label="Copy link"
+            onClick={copyLink}
+            disabled={!portalAbsoluteUrl}
+            on={copied}
+          />
+          <IconAction icon={Pencil} label="Edit URL" onClick={onEdit} />
+          {isLive && portalAbsoluteUrl ? (
+            <a
+              href={portalAbsoluteUrl}
+              target="_blank"
+              rel="noopener"
+              className="ib"
+              aria-label="Open live portal"
+              title="Open live portal"
+            >
+              <ExternalLink />
+            </a>
+          ) : (
+            <span className="inline-block size-[34px]" />
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -354,11 +375,15 @@ function IconAction({
   label,
   onClick,
   disabled,
+  on,
 }: {
   icon: typeof Copy;
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  // Momentary success state — the design tints the icon rather than swapping
+  // the button, so the row does not shift when "Copied" flashes.
+  on?: boolean;
 }) {
   return (
     <button
@@ -367,9 +392,9 @@ function IconAction({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className="inline-flex size-8 items-center justify-center rounded-lg text-[#9aa0ab] transition-all hover:bg-[#f0f2f5] hover:text-[#0f1320] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+      className={cn("ib", on && "on")}
     >
-      <Icon className="size-4" />
+      <Icon />
     </button>
   );
 }
@@ -439,25 +464,25 @@ function EditPortalUrlDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" data-portal-surface>
         <DialogHeader>
           <DialogTitle>Portal URL — {row.name}</DialogTitle>
         </DialogHeader>
         <div className="space-y-2">
-          <label className="text-xs font-medium text-[#5b6472]">Custom URL slug</label>
-          <div className="flex items-center overflow-hidden rounded-lg border border-[#ebecf0] bg-white focus-within:border-[#bcd5f1] focus-within:ring-2 focus-within:ring-[#eaf2fd]">
-            <span className="whitespace-nowrap border-r border-[#ebecf0] bg-[#fafbfc] px-2.5 py-2 font-mono text-xs text-[#9aa0ab]">
+          <label className="prow-k">Custom URL slug</label>
+          <div className="flex items-center overflow-hidden rounded-[12px] border border-[#ebecf0] bg-white focus-within:border-[#bcd5f1] focus-within:ring-2 focus-within:ring-[#eaf2fd]">
+            <span className="whitespace-nowrap border-r border-[#ebecf0] bg-[#fafbfc] px-3 py-2.5 font-mono text-[12px] text-[#9aa0ab]">
               /portal/
             </span>
             <input
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              className="flex-1 bg-transparent px-2.5 py-2 font-mono text-sm focus:outline-none"
+              className="flex-1 bg-transparent px-3 py-2.5 font-mono text-[13.5px] focus:outline-none"
               placeholder="brooklyn-group-a1b2c3"
               autoFocus
             />
           </div>
-          <p className="text-[11px] leading-relaxed text-[#9aa0ab]">
+          <p className="text-[11.5px] leading-relaxed text-[#9aa0ab]">
             Anyone with this link can view the portal — there is no password. Keep
             the random suffix so it can&apos;t be guessed. Letters, numbers,
             hyphens and underscores only; 8 characters minimum.

@@ -52,8 +52,17 @@ interface PortalResponse {
  * page around them.
  */
 async function fetchPortal(from: string, to: string): Promise<PortalResponse | null> {
-  const base = process.env.PORTAL_BASE_URL;
-  const token = process.env.PORTAL_TOKEN;
+
+  /*
+   * NAMESPACED, and pointed at the Master Inbox rather than at a separate
+   * "portal" host. `/api/metrics/follow-up-time` is the Master Inbox's own
+   * public route — no auth, no headers, `token` ignored — and it is the SAME
+   * endpoint the tool has always called, since the portal is served by that
+   * app. The workspace already holds MASTER_INBOX_URL; this variable exists so
+   * the two can be pointed apart later without editing code.
+   */
+  const base = process.env.ANALYTICS_PORTAL_BASE_URL;
+  const token = process.env.ANALYTICS_PORTAL_TOKEN;
   if (!base || !token) return null;
 
   try {

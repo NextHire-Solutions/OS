@@ -33,12 +33,31 @@ export function adminEmails(): string[] {
     .filter(Boolean);
 }
 
+/** The addresses in AUTH_USERS — the Railway-managed allow-list. Never hashes. */
+function authUserEmails(): string[] {
+  const raw = process.env.AUTH_USERS;
+  if (!raw) return [];
+  return raw
+    .split(/[\n,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => entry.slice(0, entry.lastIndexOf(":") === -1 ? undefined : entry.lastIndexOf(":")).trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export function isAdmin(email: string | null | undefined): boolean {
   if (!email) return false;
   const admins = adminEmails();
-  // Unset => everyone signed in. See the note above.
-  if (admins.length === 0) return true;
-  return admins.includes(email.trim().toLowerCase());
+  const key = email.trim().toLowerCase();
+  /*
+   * Unset => everyone in AUTH_USERS. See the note above — with one addition:
+   * "everyone signed in" once meant exactly AUTH_USERS, and since 0004 it does
+   * not. An invited person is never an admin by default; the fail-open only
+   * ever reaches the Railway-managed allow-list. The first live invite came
+   * back as "Owner, every tool" before this line existed.
+   */
+  if (admins.length === 0) return authUserEmails().includes(key);
+  return admins.includes(key);
 }
 
 export function describeAdmins(): { governed: boolean; count: number } {

@@ -5,6 +5,8 @@ import { getMondayOf, weekKey } from "./derive";
 import { deriveRows, summarize, type WeeklyRow, type WeeklySummary } from "./summarize";
 import type { NamedCampaign } from "./clientForm";
 import type { DashboardClient } from "./types";
+import { syncHealth, type SyncHealth } from "./sync/health";
+import { ttlCache } from "@/lib/cache/ttl";
 
 /*
  * Client Health — the Weekly view, computed exactly as the tool computes it.
@@ -86,14 +88,43 @@ export interface ClientHealthWeeklyData {
   summary?: WeeklySummary;
   source: "supabase" | "seed";
   error?: string;
+  /*
+   * When the sync last ran and whether it worked, from `sync_runs` — the
+   * tool's own audit table. Null when it could not be read (seed data, or a
+   * database that predates the table), in which case the screens say nothing
+   * rather than something wrong. Refreshed with the rest: `triggerSync`
+   * invalidates this cache after every run, so "Synced just now" is true.
+   */
+  sync: SyncHealth | null;
 }
 
 const named = (list: { id: string; name: string }[]): NamedCampaign[] =>
   list.map((c) => ({ id: c.id, name: c.name }));
 
-export async function getWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData> {
-  const { clients, allInstantlyCampaigns, allBisonCampaigns, source, error } =
-    await loadDashboardClients();
+/*
+ * Cached, because this was the slowest thing in the workspace.
+ *
+ * `loadDashboardClients()` paginates the whole 26-week `weekly_metrics` window
+ * — 2,496 rows today — plus every client and campaign, and it ran on EVERY
+ * render of /clients, /clients/biweekly and /clients/success. Measured against
+ * production: 2,093ms to first byte, before the browser had parsed anything.
+ *
+ * Nothing about the numbers changes. The sync writes weekly metrics on its own
+ * cadence, so a result that is up to a minute old is the same result; this
+ * only stops three screens each paying two seconds to recompute an identical
+ * answer. Every Master Inbox loader already works this way — see
+ * `inbox/campaigns.ts`, which cites the same reason.
+ *
+ * Keyed by `weekOffset` so navigating to another week is its own entry rather
+ * than serving last week's rows for this week.
+ */
+async function loadWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData> {
+  const [{ clients, allInstantlyCampaigns, allBisonCampaigns, source, error }, sync] =
+    await Promise.all([
+      loadDashboardClients(),
+      // One small indexed read; a failure here must not take the dashboard down.
+      syncHealth().catch(() => null),
+    ]);
 
   const monday = getMondayOf(new Date());
   monday.setDate(monday.getDate() + weekOffset * 7);
@@ -110,6 +141,7 @@ export async function getWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData>
     summary: summarize(rows, key),
     source,
     error,
+    sync,
   };
 }
 
@@ -123,3 +155,8 @@ export function withoutDerived(data: ClientHealthWeeklyData): ClientHealthWeekly
   const { rows: _rows, summary: _summary, ...rest } = data;
   return rest;
 }
+
+export const getWeekly = ttlCache(loadWeekly, {
+  ttlMs: 60_000,
+  key: (weekOffset = 0) => String(weekOffset),
+});

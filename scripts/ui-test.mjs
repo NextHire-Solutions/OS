@@ -65,7 +65,9 @@ const SCREENS = [
   { path: "/inbox/archive",       expect: 'a[href^="/inbox/archive/"]', min: 3, label: "Inbox · Archive" },
   { path: "/leads",               expect: "section.screen.on *", min: 3, label: "Inbox · Leads" },
   { path: "/inbox/reminders",     expect: "section.screen.on *", min: 3, label: "Inbox · Reminders" },
-  { path: "/inbox/settings",      expect: ".mi-settings-tabs .fp", min: 8, label: "Inbox · Settings" },
+  // 7, not 8: Webhooks was removed from the strip at the user's request. The
+  // component and its route stay, so the tool's own copy is unaffected.
+  { path: "/inbox/settings",      expect: ".mi-settings-tabs .fp", min: 7, label: "Inbox · Settings" },
   { path: "/inbox/portals",       expect: "section.screen.on *", min: 20, label: "Inbox · Portals" },
   { path: "/inbox/portals/c370499d-8cc4-4c1f-93b0-f75d363b108d", expect: "section.screen.on *", min: 50, label: "Portal · one client" },
   { path: "/inbox/settings/templates",   expect: 'input[placeholder*="emplate"]', min: 1, label: "Settings · Templates" },
@@ -73,8 +75,55 @@ const SCREENS = [
   { path: "/inbox/settings/reply-agents",expect: '.mi-settings-body *', min: 10, label: "Settings · Agents" },
   { path: "/inbox/settings/ai-labeling", expect: '.mi-settings-body *', min: 10, label: "Settings · AI" },
   { path: "/inbox/settings/members",     expect: '.mi-settings-body *', min: 5,  label: "Settings · Members" },
-  { path: "/client-health",       expect: "table tr, [role=row]",     min: 5, label: "Client Health" },
-  { path: "/clients",             expect: "table tr, [role=row]",     min: 5, label: "Clients roster" },
+  /*
+   * Client Health lives at /clients — `PRODUCT_SLUG` maps the `clients`
+   * product to that slug, and its three views are real addresses here even
+   * though the live tool renders them as one page with no URL of their own.
+   *
+   * These two lines used to read /client-health (not a route at all — it falls
+   * back to Home, which renders its table client-side, so the suite saw an
+   * empty pane and blamed the screen) and labelled /clients "Clients roster".
+   * The workspace's own roster is /roster.
+   */
+  { path: "/clients",             expect: "table tr, [role=row]",     min: 5, label: "Client Health · Weekly" },
+  { path: "/clients/biweekly",    expect: "table tr, [role=row]",     min: 5, label: "Client Health · Bi-Weekly" },
+  { path: "/clients/success",     expect: "table tr, [role=row]",     min: 5, label: "Client Health · Success" },
+  { path: "/roster",              expect: "table tr, [role=row]",     min: 5, label: "Clients roster" },
+
+  /*
+   * The other eighteen screens.
+   *
+   * These were never render-tested. They appeared only in the popover sweep,
+   * which opens dropdowns and measures them — it says nothing about whether
+   * the page behind them drew anything, whether the console threw, or whether
+   * a request 500'd. Every Analytics, Onboarding and Agent Search screen was
+   * in that gap, which is more than half the workspace.
+   *
+   * Each `min` below is set from what the screen ACTUALLY renders (measured,
+   * not guessed) and then cut to roughly a third, so the check fails on a
+   * blank or broken screen without flaking when a list is short that day.
+   */
+  { path: "/performance",             expect: "table tr, [role=row]",  min: 5,  label: "Performance" },
+  { path: "/admin/team",              expect: "section.screen.on *",   min: 40, label: "Team access" },
+
+  { path: "/analytics/campaign",      expect: ".card, .kpi, .k",       min: 6,  label: "Analytics · Campaign" },
+  { path: "/analytics/infrastructure",expect: "section.screen.on *",   min: 30, label: "Analytics · Infrastructure" },
+  { path: "/analytics/attribution",   expect: "table tr",              min: 20, label: "Analytics · Attribution" },
+  { path: "/analytics/copy",          expect: "table tr",              min: 8,  label: "Analytics · Copy & Offer" },
+  { path: "/analytics/campaigns",     expect: "table tr",              min: 50, label: "Analytics · Campaigns" },
+  { path: "/analytics/schedule",      expect: "section.screen.on *",   min: 50, label: "Analytics · Schedule" },
+  { path: "/analytics/clients",       expect: "table tr",              min: 40, label: "Analytics · Clients" },
+
+  { path: "/onboarding/pipeline",     expect: "table tr",              min: 15, label: "Onboarding · Pipeline" },
+  { path: "/onboarding/stages",       expect: "table tr",              min: 5,  label: "Onboarding · Stages" },
+  { path: "/onboarding/templates",    expect: "section.screen.on *",   min: 50, label: "Onboarding · Templates" },
+  { path: "/onboarding/settings",     expect: "table tr",              min: 6,  label: "Onboarding · Settings" },
+
+  { path: "/search/search",           expect: "section.screen.on *",   min: 25, label: "Agent Search · Search" },
+  { path: "/search/master",           expect: "section.screen.on *",   min: 10, label: "Agent Search · Master List" },
+  { path: "/search/accounts",         expect: "section.screen.on *",   min: 12, label: "Agent Search · Accounts" },
+  { path: "/search/mls",              expect: "section.screen.on *",   min: 40, label: "Agent Search · MLS monitor" },
+  { path: "/search/import",           expect: "section.screen.on *",   min: 15, label: "Agent Search · Import" },
 ];
 
 const cookie = await token();

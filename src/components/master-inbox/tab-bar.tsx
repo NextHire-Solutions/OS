@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import Link from "next/link";
+import { InboxLink } from "@/components/master-inbox/inbox-nav";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { MoreHorizontal, Plus, GripVertical } from "lucide-react";
 import { cn } from "@/lib/tools/master-inbox/utils";
@@ -347,7 +347,7 @@ function TabItem({
 }: TabItemProps & { draggable: boolean }) {
   return (
     <div className="relative flex items-stretch">
-      <Link
+      <InboxLink
         href={buildHref(view.slug)}
         className={cn(
           "group flex items-center gap-1.5 px-3 h-12 text-[13.5px] font-medium text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap",
@@ -405,7 +405,7 @@ function TabItem({
         {isActive ? (
           <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-foreground rounded-t" />
         ) : null}
-      </Link>
+      </InboxLink>
     </div>
   );
 }

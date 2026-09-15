@@ -53,6 +53,26 @@
   --border-strong: var(--line);
   --hairline: var(--line-soft);
 
+  /*
+   * Raised surfaces — panels, popovers, dropdown menus.
+   *
+   * These were NEVER DEFINED, and the consequence was not subtle: `bg-card`
+   * and `bg-popover` resolve through them, so every surface using either
+   * painted nothing at all. The Filters panel was fully transparent — its
+   * "No filters yet" copy and its Save / Apply buttons floated on top of the
+   * thread rows with the list legible straight through them. The same was true
+   * of every dropdown menu in the tool's shadcn layer: five files use
+   * `bg-card`, six use `bg-popover`.
+   *
+   * White rather than `--surface`, deliberately. A popover has to separate
+   * itself from the pane it covers, and the pane is already `--surface`; a
+   * popover the same colour as its background is invisible even with a border.
+   */
+  --card: var(--white);
+  --card-foreground: var(--ink);
+  --popover: var(--white);
+  --popover-foreground: var(--ink);
+
   /* Accent = the design's inset grey. This is the pair that was undefined. */
   --accent: var(--inset);
   --accent-foreground: var(--ink);
@@ -175,7 +195,21 @@
     position: absolute;
     inset-block: 0;
     right: 0;
-    width: min(600px, 62%);
+    width: min(600px, 92%);
+    /*
+     * 92%, not 62%.
+     *
+     * 62% of a pane that is itself only ~530px wide put the reply box at about
+     * 330px: the body wrapped every five or six words, and the From and To
+     * addresses were both clipped mid-address. The tool's own composer is a
+     * 480px column, and 92% here lands at ~490px on a 1512px screen — the same
+     * writing space the tool gives, rather than a third of it.
+     *
+     * The 62% was there to leave some conversation visible behind the overlay.
+     * At these widths that was a false economy: neither the reply nor the
+     * message behind it was readable. The quoted original is inside the
+     * composer anyway, which is where someone actually reads it while writing.
+     */
     z-index: 30;
     box-shadow: -14px 0 40px rgba(13, 21, 38, 0.13);
     background: var(--surface);

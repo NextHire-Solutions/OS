@@ -1,7 +1,6 @@
 import "server-only";
 
-import { httpProbe } from "@/lib/http/probe";
-import { baseUrlEnv, optionalEnv } from "@/lib/env";
+import { listClientRows } from "@/lib/tools/client-health/publish";
 
 /*
  * The Performance screen: client base, plan mix and movement.
@@ -26,14 +25,20 @@ import { baseUrlEnv, optionalEnv } from "@/lib/env";
  *     because it never subtracts anyone. It is labelled as what it is.
  */
 
-const TIMEOUT = 12_000;
-
 export interface PlanBreakdown {
   plan: string;
   label: string;
   count: number;
-  /** Introductions promised per week, from the plan's own target. */
+  /** Introductions promised per week, when every client on the plan agrees. */
   weeklyTarget: number | null;
+  /*
+   * The spread, for when they do not. Without this the card fell back to the
+   * words "mixed weekly targets" — printed identically under all three plans,
+   * which tells the reader nothing they could not already see. A range is the
+   * same honesty with the actual numbers in it.
+   */
+  targetMin: number | null;
+  targetMax: number | null;
 }
 
 export interface MonthRow {
@@ -86,22 +91,18 @@ export async function getPerformance(): Promise<Performance> {
     unavailable: null,
   };
 
-  const token = optionalEnv("CLIENT_HEALTH_READ_TOKEN");
-  if (!token) return { ...empty, unavailable: "CLIENT_HEALTH_READ_TOKEN not set" };
-
-  const res = await httpProbe(`${baseUrlEnv("CLIENT_HEALTH_URL")}/api/clients`, {
-    timeoutMs: TIMEOUT,
-    headers: { "x-admin-token": token },
-  });
-  if (res.status === 401) {
-    return { ...empty, unavailable: "Client Health refused the read token" };
+  // Read from Client Health's database — the same rows the tool's
+  // GET /api/clients returned, without the HTTP hop to an app being switched
+  // off. A missing credential or a failed query degrades this screen alone.
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await listClientRows();
+  } catch (error) {
+    return {
+      ...empty,
+      unavailable: error instanceof Error ? error.message : "Client Health is unreachable",
+    };
   }
-  if (!res.ok) {
-    return { ...empty, unavailable: `Client Health returned ${res.status ?? "no response"}` };
-  }
-
-  const rows = asRecord(res.json)?.clients;
-  if (!Array.isArray(rows)) return { ...empty, unavailable: "Unexpected response shape" };
 
   const clients = rows.flatMap((raw) => {
     const row = asRecord(raw);
@@ -122,21 +123,32 @@ export async function getPerformance(): Promise<Performance> {
   const paused = clients.filter((c) => !c.hidden && c.paused).length;
   const active = clients.length - churned - paused;
 
-  const planCounts = new Map<string, { count: number; target: number | null }>();
+  const planCounts = new Map<
+    string,
+    { count: number; target: number | null; min: number | null; max: number | null }
+  >();
   for (const client of clients) {
-    const entry = planCounts.get(client.plan) ?? { count: 0, target: client.weeklyTarget };
+    const entry =
+      planCounts.get(client.plan) ??
+      { count: 0, target: client.weeklyTarget, min: null, max: null };
     entry.count += 1;
     // Targets vary per client; show one only when the whole plan agrees.
     if (entry.target !== client.weeklyTarget) entry.target = null;
+    if (typeof client.weeklyTarget === "number") {
+      entry.min = entry.min === null ? client.weeklyTarget : Math.min(entry.min, client.weeklyTarget);
+      entry.max = entry.max === null ? client.weeklyTarget : Math.max(entry.max, client.weeklyTarget);
+    }
     planCounts.set(client.plan, entry);
   }
 
   const plans: PlanBreakdown[] = [...planCounts.entries()]
-    .map(([plan, { count, target }]) => ({
+    .map(([plan, { count, target, min, max }]) => ({
       plan,
       label: PLAN_LABEL[plan] ?? plan,
       count,
       weeklyTarget: target,
+      targetMin: min,
+      targetMax: max,
     }))
     .sort((a, b) => b.count - a.count);
 

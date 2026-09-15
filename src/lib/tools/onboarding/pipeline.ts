@@ -3,6 +3,9 @@ import "server-only";
 import { getCorofySupabase } from "../corofy/supabase";
 import { resolve } from "@/lib/clients/roster";
 
+import { progressFor, type Progress } from "./step-state";
+import { ttlCache } from "@/lib/cache/ttl";
+
 /*
  * Onboarding — the pipeline, read from the orchestrator's own tables.
  *
@@ -34,6 +37,15 @@ export interface OnboardingClient {
   brand: string | null;
   officeName: string | null;
   primaryContact: string | null;
+  /** From the `primary_contact` JSON — the person the Typeform named. */
+  contactName: string | null;
+  contactEmail: string | null;
+  /** Their photo, when one was set on the client; the screen falls back to initials. */
+  photoUrl: string | null;
+  salespersonId: string | null;
+  /** Joined from `orch_salespeople`, exactly as the tool's pipeline joins it. */
+  salespersonName: string | null;
+  salespersonPhoto: string | null;
   status: string | null;
   stageId: string | null;
   stageName: string | null;
@@ -59,6 +71,22 @@ export interface OnboardingClient {
   /** Introductions the orchestrator has recorded for this client. */
   intros: number;
   lastIntroAt: string | null;
+  /**
+   * Profile completion — the share of onboarding steps that have run. It counts
+   * ticks, so it moves only when a step actually runs.
+   */
+  progress: Progress;
+}
+
+/** One row of the "Recent client replies" feed — the latest across ALL clients. */
+export interface RecentReply {
+  id: string;
+  clientId: string;
+  clientName: string | null;
+  fromEmail: string | null;
+  subject: string | null;
+  snippet: string | null;
+  receivedAt: string | null;
 }
 
 export interface OnboardingPipeline {
@@ -72,6 +100,8 @@ export interface OnboardingPipeline {
    */
   now: string;
   clients: OnboardingClient[];
+  /** The tool's dashboard feed: the eight newest replies across every client. */
+  replies: RecentReply[];
   error: string | null;
 }
 
@@ -89,8 +119,47 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
  */
 type Row = Record<string, unknown>;
 const rows = (data: unknown): Row[] => (Array.isArray(data) ? (data as Row[]) : []);
+const obj = (v: unknown): Row => (v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {});
 
-export async function getOnboardingPipeline(): Promise<OnboardingPipeline> {
+/**
+ * Latest replies across ALL clients — the tool's `getRecentReplies`.
+ *
+ * A failure here is an empty feed rather than a failed screen, which is how the
+ * tool treats it too (`.catch(() => [])`).
+ */
+async function getRecentReplies(limit = 8): Promise<RecentReply[]> {
+  const { data, error } = await getCorofySupabase()
+    .from("orch_email_replies")
+    .select("id, client_id, from_email, subject, snippet, received_at, clients:orch_clients(client_name)")
+    .order("received_at", { ascending: false })
+    .limit(limit);
+  if (error) return [];
+  return rows(data).map((r) => ({
+    id: String(r.id),
+    clientId: String(r.client_id),
+    clientName: str(obj(r.clients).client_name),
+    fromEmail: str(r.from_email),
+    subject: str(r.subject),
+    snippet: typeof r.snippet === "string" ? r.snippet : null,
+    receivedAt: str(r.received_at),
+  }));
+}
+
+/*
+ * Cached for a few seconds, served stale for a few minutes while it refreshes.
+ *
+ * The screen is four table reads plus a progress pass, 1.5s on production —
+ * and every visit, every stage change and every 30-second poll paid it in
+ * full. Writers call `getOnboardingPipeline.invalidate()` so a stage moved
+ * from the board is on the next read, not ten seconds later.
+ */
+export const getOnboardingPipeline = ttlCache(computeOnboardingPipeline, {
+  ttlMs: 10_000,
+  staleMs: 5 * 60_000,
+  key: () => "pipeline",
+});
+
+async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
   try {
     const sb = getCorofySupabase();
 
@@ -99,18 +168,21 @@ export async function getOnboardingPipeline(): Promise<OnboardingPipeline> {
      * the only thing the screen needs from a table with hundreds of rows per
      * client. Three small reads beat one wide join.
      */
-    const [stagesRes, clientsRes, introsRes] = await Promise.all([
+    const [stagesRes, clientsRes, introsRes, replies] = await Promise.all([
       sb.from("orch_stages").select("id,name,sort,color").order("sort"),
       sb
         .from("orch_clients")
         .select(
           "id,client_name,brand,office_name,primary_contact,status,stage_id,plan," +
             "weekly_target,mls,location,stripe_paid,stripe_paid_at,stripe_amount," +
-            "bison_campaign_status,bison_leads_exported,leads_inreview,copy_status," +
-            "portal_url,onboarding_date,created_at,updated_at,health_status",
+            "bison_campaign_id,bison_campaign_status,bison_leads_exported,leads_inreview,copy_status," +
+            "portal_url,onboarding_date,created_at,updated_at,health_status,photo_url,salesperson_id," +
+            // The same join the tool's getClients makes — the roster row, by its FK.
+            "salespeople:orch_salespeople!orch_clients_salesperson_id_fkey(id,name,photo_url)",
         )
         .order("created_at", { ascending: false }),
       sb.from("orch_introductions").select("client_id,created_at"),
+      getRecentReplies(8).catch((): RecentReply[] => []),
     ]);
 
     if (stagesRes.error) throw new Error(stagesRes.error.message);
@@ -137,16 +209,36 @@ export async function getOnboardingPipeline(): Promise<OnboardingPipeline> {
       introCount.set(id, cur);
     }
 
-    const clients: OnboardingClient[] = rows(clientsRes.data).map((c) => {
+    // One query for every client's progress, as the tool does — not one per row.
+    const clientRows = rows(clientsRes.data);
+    const progress = await progressFor(
+      clientRows.map((c) => ({
+        id: String(c.id),
+        portal_url: str(c.portal_url),
+        leads_inreview: !!c.leads_inreview,
+        bison_leads_exported: !!c.bison_leads_exported,
+        bison_campaign_id: str(c.bison_campaign_id),
+      })),
+    ).catch((): Record<string, Progress> => ({}));
+
+    const clients: OnboardingClient[] = clientRows.map((c) => {
       const id = String(c.id);
       const name = str(c.client_name) ?? str(c.brand) ?? str(c.office_name) ?? "Unnamed";
       const counts = introCount.get(id);
+      const contact = obj(c.primary_contact);
+      const salesperson = obj(c.salespeople);
       return {
         id,
         name,
         brand: str(c.brand),
         officeName: str(c.office_name),
         primaryContact: str(c.primary_contact),
+        contactName: str(contact.name),
+        contactEmail: str(contact.email),
+        photoUrl: str(c.photo_url),
+        salespersonId: str(c.salesperson_id),
+        salespersonName: str(salesperson.name),
+        salespersonPhoto: str(salesperson.photo_url),
         status: str(c.status),
         stageId: str(c.stage_id),
         stageName: c.stage_id ? (stageName.get(String(c.stage_id)) ?? null) : null,
@@ -171,15 +263,17 @@ export async function getOnboardingPipeline(): Promise<OnboardingPipeline> {
         rosterName: resolve(name)?.name ?? null,
         intros: counts?.n ?? 0,
         lastIntroAt: counts?.last ?? null,
+        progress: progress[id] ?? { done: 0, total: 0, pct: 0 },
       };
     });
 
-    return { stages, clients, now: new Date().toISOString(), error: null };
+    return { stages, clients, replies, now: new Date().toISOString(), error: null };
   } catch (error) {
     // A failure costs this screen, never the workspace.
     return {
       stages: [],
       clients: [],
+      replies: [],
       now: new Date().toISOString(),
       error: error instanceof Error ? error.message : "Onboarding is unreachable",
     };

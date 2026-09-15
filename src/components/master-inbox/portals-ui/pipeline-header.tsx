@@ -64,20 +64,21 @@ export function PipelineHeader({
   clientName: string;
 }) {
   return (
-    <header className="mx-auto max-w-6xl px-4 pt-6 sm:px-6 sm:pt-8">
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9aa0ab]">
-        {clientName} · Recruiting Pipeline
-      </div>
-      <h1 className="text-[22px] font-semibold leading-tight tracking-tight text-[#0f1320] sm:text-[26px]">
-        Every introduction, end to end
-      </h1>
+    /*
+     * `.mi-portals-wrap` is the design's page container (1500px, 26px gutters).
+     * The tool centres on max-w-6xl, which leaves a workspace stage half empty
+     * once the 264px rail is taken out.
+     */
+    <header className="mi-portals-wrap !pb-0">
+      <div className="mi-portals-eyebrow">{clientName} · Recruiting Pipeline</div>
+      <h1>Every introduction, end to end</h1>
       {/* Nicole Collins intro — sits directly under the title so the
           brokerage sees who's sending intros the moment the page loads.
           The photo file lives at /public/portal/nicole-collins.png.
           On a fresh deploy that hasn't dropped the asset in place yet,
           the <img> falls back to the initials block via the onError
           handler so the row never looks broken. */}
-      <div className="mt-4 flex items-center gap-4 rounded-2xl border border-[#ebecf0] bg-white p-4 shadow-sm sm:p-5">
+      <div className="card mt-4 flex items-center gap-4 !p-4 sm:!p-5">
         <NicolePhoto />
         <p className="min-w-0 text-[13.5px] leading-relaxed text-[#5b6472]">
           <span className="font-medium text-[#0f1320]">Nicole Collins</span>{" "}
@@ -120,6 +121,23 @@ function NicolePhoto() {
       src="/portal/nicole-collins.png"
       alt="Nicole Collins"
       onError={() => setErrored(true)}
+      /*
+       * `onError` alone is not enough HERE.
+       *
+       * /portal/* is deliberately excluded from this workspace — only the live
+       * service serves those routes — so the OS's catch-all answers
+       * /portal/nicole-collins.png with 200 and a page of HTML rather than a
+       * 404. The browser gets a successful response it cannot decode, which
+       * does not reliably reach `onError`, and the header rendered a broken
+       * image with its alt text showing where the initials block should be.
+       *
+       * A zero natural width after load is the same condition stated in a way
+       * that catches both: a real 404 and a 200 that is not an image. The photo
+       * still renders wherever the asset is actually served.
+       */
+      onLoad={(e) => {
+        if (e.currentTarget.naturalWidth === 0) setErrored(true);
+      }}
       className="size-[72px] shrink-0 rounded-full object-cover ring-1 ring-[#ebecf0]"
     />
   );
@@ -135,7 +153,7 @@ export function PipelineFooterInfo() {
   // sees the additional Interview Scheduled stage in this legend.
   const legendOrder = useVisibleStages();
   return (
-    <section className="mx-auto mt-2 max-w-6xl px-4 pb-12 sm:px-6">
+    <section className="mi-portals-wrap !pt-2">
       <Disclosure
         title="Best practices when an intro lands"
         accent="bg-[#f4f9ff] border-[#d4e4f8]"
@@ -176,8 +194,11 @@ export function PipelineFooterInfo() {
             {legendOrder.map((s) => (
               <Fragment key={s}>
                 <span
+                  data-stage-chip
+                  data-stage={s}
+                  data-on="true"
                   className={cn(
-                    "mt-0.5 inline-flex shrink-0 items-center justify-center self-start rounded-full px-2 py-0.5 text-center text-[10.5px] font-semibold text-white",
+                    "mt-0.5 shrink-0 self-start justify-center text-center",
                     LEGEND_STYLE[s],
                   )}
                 >
@@ -209,29 +230,18 @@ function Disclosure({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div
-      className={cn(
-        "rounded-2xl border bg-white",
-        accent ?? "border-[#ebecf0]",
-      )}
-    >
+    <div className={cn("mi-portals-disc", accent)}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left sm:px-5"
         aria-expanded={open}
       >
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-[#1565C0]">
-          {title}
-        </span>
+        <span>{title}</span>
         <ChevronDown
-          className={cn(
-            "size-4 shrink-0 text-[#9aa0ab] transition-transform",
-            open ? "rotate-180" : "",
-          )}
+          className={cn("size-4 shrink-0 transition-transform", open ? "rotate-180" : "")}
         />
       </button>
-      {open ? <div className="px-4 pb-4 sm:px-5 sm:pb-5">{children}</div> : null}
+      {open ? <div className="px-[18px] pb-[18px]">{children}</div> : null}
     </div>
   );
 }

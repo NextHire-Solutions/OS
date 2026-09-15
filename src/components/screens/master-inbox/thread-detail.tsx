@@ -25,6 +25,8 @@
  *   one sets the page's speed, and without these you are guessing which.
  */
 
+import "@/app/mi-inbox.css";
+
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/master-inbox/top-bar";
 import { TabBar } from "@/components/master-inbox/tab-bar";
@@ -34,6 +36,7 @@ import { ThreadView } from "@/components/master-inbox/thread-view";
 import { ProspectPanel } from "@/components/master-inbox/prospect-panel";
 import { RealtimeRefresher } from "@/components/master-inbox/realtime-refresher";
 import { ClickRenderTiming } from "@/components/master-inbox/perf-timing";
+import { InboxNavProvider } from "@/components/master-inbox/inbox-nav";
 import { requireSession } from "@/lib/auth/workspace";
 import { loadThreads } from "@/lib/tools/master-inbox/inbox/threads";
 import { loadThreadDetail } from "@/lib/tools/master-inbox/inbox/thread-detail";
@@ -148,72 +151,101 @@ export async function ThreadDetail({ view, threadId, f, list, page, q }: ThreadD
      * drawn in the design's own classes, is untouched.
      */
     <div className="mi-theme">
-      <TopBar />
-      <TabBar views={views} activeSlug={view} labels={labels} viewCounts={viewCounts} />
-      <FilterBar
-        initialFilter={initialFilter}
-        labels={labels}
-        channels={channels}
-        campaigns={campaigns}
-        clients={clients}
-        currentViewId={currentView?.id ?? null}
-        currentViewName={currentView?.name ?? null}
-      />
-      <div className="flex-1 min-h-0 flex">
-        <aside className="w-[300px] shrink-0 border-r flex flex-col overflow-hidden">
-          <div className="px-4 h-10 flex items-center text-sm font-medium border-b">
-            All messages
-          </div>
-          <ThreadList
-            threads={threadPage.rows}
-            basePath={`/inbox/${view}`}
-            activeId={threadId}
-            compact
+      <InboxNavProvider>
+        <TopBar />
+
+        {/*
+         * The SAME tab strip the list screen draws.
+         *
+         * Both screens render the tool's `TabBar` — create, rename, delete and
+         * reorder work from either — so clicking a conversation never swaps one
+         * design of tab for another. Fed by the same `loadViews` /
+         * `loadViewCounts` already loaded above.
+         */}
+        <TabBar views={views} activeSlug={view} labels={labels} viewCounts={viewCounts} />
+
+        {/* The design's filter band, holding the tool's 921-line filter builder. */}
+        <div className="mi-filter">
+          <FilterBar
+            initialFilter={initialFilter}
             labels={labels}
-            lists={lists}
-            total={threadPage.total}
-            page={threadPage.page}
-            pageSize={threadPage.pageSize}
-            view={view}
+            channels={channels}
+            campaigns={campaigns}
+            clients={clients}
+            currentViewId={currentView?.id ?? null}
+            currentViewName={currentView?.name ?? null}
           />
-        </aside>
-        <ThreadView
-          detail={detail}
-          availableLabels={labels}
-          channels={channels
-            .filter(
-              (c): c is typeof c & {
-                provider: "instantly" | "emailbison" | "unipile";
-                display_name: string;
-              } => Boolean(c.provider) && Boolean(c.display_name),
-            )
-            .map((c) => ({
-              id: c.id,
-              provider: c.provider,
-              display_name: c.display_name,
-              instantly_account_id: c.instantly_account_id ?? null,
-              email:
-                c.instantly_account_id ??
-                c.external_account_id ??
-                emailByChannelId[c.id] ??
-                null,
-            }))}
-          backHref={`/inbox/${view}${buildSuffix(f, list, page, q)}`}
-          prevThreadHref={(() => {
-            const idx = threadPage.rows.findIndex((t) => t.id === threadId);
-            const prev = idx > 0 ? threadPage.rows[idx - 1] : null;
-            return prev ? `/inbox/${view}/${prev.id}${buildSuffix(f, list, page, q)}` : null;
-          })()}
-          nextThreadHref={(() => {
-            const idx = threadPage.rows.findIndex((t) => t.id === threadId);
-            const next = idx >= 0 && idx < threadPage.rows.length - 1 ? threadPage.rows[idx + 1] : null;
-            return next ? `/inbox/${view}/${next.id}${buildSuffix(f, list, page, q)}` : null;
-          })()}
-        />
-        <ProspectPanel detail={detail} />
-      </div>
-      <RealtimeRefresher workspaceId={session.activeWorkspace.id} />
-      <ClickRenderTiming threadId={threadId} />
+        </div>
+
+        {/*
+         * The design's three-pane thread screen: list · conversation · prospect.
+         * `.mi-conv` is `.pane3` done in flex rather than grid, because the third
+         * pane carries a width the user dragged it to — see mi-conversation.css.
+         *
+         * The rail runs the tool's `<ThreadList compact>` unchanged: it carries
+         * scroll memory across navigations, optimistic read state, pagination and
+         * the click→render timing probe, none of which a repaint is worth losing.
+         * It is restyled from CSS instead.
+         */}
+        <div className="mi-conv">
+          <aside className="pcol mi-conv-rail">
+            {/*
+              No extra "All messages" heading. The mockup's rail has exactly one
+              header row and it is the COUNT — "1–50 of 1,284" — which the tool's
+              own strip already renders, together with the pagination arrows that
+              a static label would have pushed onto a second row.
+            */}
+            <ThreadList
+              threads={threadPage.rows}
+              basePath={`/inbox/${view}`}
+              activeId={threadId}
+              compact
+              labels={labels}
+              lists={lists}
+              total={threadPage.total}
+              page={threadPage.page}
+              pageSize={threadPage.pageSize}
+              view={view}
+            />
+          </aside>
+          <ThreadView
+            detail={detail}
+            availableLabels={labels}
+            channels={channels
+              .filter(
+                (c): c is typeof c & {
+                  provider: "instantly" | "emailbison" | "unipile";
+                  display_name: string;
+                } => Boolean(c.provider) && Boolean(c.display_name),
+              )
+              .map((c) => ({
+                id: c.id,
+                provider: c.provider,
+                display_name: c.display_name,
+                instantly_account_id: c.instantly_account_id ?? null,
+                email:
+                  c.instantly_account_id ??
+                  c.external_account_id ??
+                  emailByChannelId[c.id] ??
+                  null,
+              }))}
+            backHref={`/inbox/${view}${buildSuffix(f, list, page, q)}`}
+            prevThreadHref={(() => {
+              const idx = threadPage.rows.findIndex((t) => t.id === threadId);
+              const prev = idx > 0 ? threadPage.rows[idx - 1] : null;
+              return prev ? `/inbox/${view}/${prev.id}${buildSuffix(f, list, page, q)}` : null;
+            })()}
+            nextThreadHref={(() => {
+              const idx = threadPage.rows.findIndex((t) => t.id === threadId);
+              const next = idx >= 0 && idx < threadPage.rows.length - 1 ? threadPage.rows[idx + 1] : null;
+              return next ? `/inbox/${view}/${next.id}${buildSuffix(f, list, page, q)}` : null;
+            })()}
+          />
+          <ProspectPanel detail={detail} />
+        </div>
+        <RealtimeRefresher workspaceId={session.activeWorkspace.id} />
+        <ClickRenderTiming threadId={threadId} />
+      </InboxNavProvider>
     </div>
   );
 }

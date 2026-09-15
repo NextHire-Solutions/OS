@@ -4,7 +4,7 @@ import { cache } from "react";
 
 import { normaliseName } from "@/lib/reconcile/names";
 import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
-import { getMasterInboxSupabase, workspaceId } from "@/lib/tools/master-inbox/supabase";
+import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 
 /*
  * The one client list the whole OS agrees on.
@@ -64,11 +64,16 @@ export interface CanonicalClient {
  * rendering the same list render it the same way.
  */
 async function fetchCanonical(): Promise<CanonicalClient[]> {
-  const ws = await workspaceId();
+  /*
+   * No workspace filter: `clients` is a GLOBAL catalog in Master Inbox and has
+   * no `workspace_id` column, as its own API route says. The filter that used
+   * to be here threw 42703 on every call, so this whole module reported the
+   * client list as unavailable. It had no callers, which is the only reason
+   * nothing broke.
+   */
   const { data, error } = await getMasterInboxSupabase()
     .from("clients")
     .select("id, name, slug, aliases, portal_token, portal_enabled")
-    .eq("workspace_id", ws)
     .order("name");
 
   // An empty list is a legitimate answer; a failed read is not. Returning []

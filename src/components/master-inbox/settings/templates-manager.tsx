@@ -2,20 +2,8 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Plus,
-  Pencil,
-  Trash2,
-  Loader2,
-  FileText,
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  Search,
-} from "lucide-react";
-import { toast } from "sonner";
+import { Plus, Pencil, Trash2, ChevronRight } from "lucide-react";
 import { Button } from "@/components/mi-ui/button";
-import { Input } from "@/components/mi-ui/input";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +12,32 @@ import {
   DialogTitle,
 } from "@/components/mi-ui/dialog";
 import dynamic from "next/dynamic";
+import { Btn, Field, Find, IconBtn, ToastHost, useShowToast } from "./ui";
+
+/*
+ * Templates.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT MOVED
+ *
+ * The panel is now a page of the design's cards: one `.tbl-wrap` per category,
+ * each with the design's own collapsing header, and rows in the same 14px /
+ * 20px rhythm as a `td`. The editor dialog keeps the shared Dialog primitive —
+ * it renders through a portal alongside every other popup in the inbox, and
+ * `mi-skin.css` already gives that portal the design's card.
+ *
+ * Every field, the datalist of existing categories, the rich editor with its
+ * variables and its link dialog, the dual HTML + plain-text output, and the
+ * delete confirmation are all the code that was already here.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE BEHAVIOUR FIX
+ *
+ * Save and delete reported through `sonner`'s `toast`. `<Toaster />` is not
+ * mounted anywhere in this app — so for as long as this panel has been in the
+ * workspace, saving a template has confirmed NOTHING and failing to save has
+ * warned NOBODY. Both now go through the workspace's own status line.
+ */
 
 /*
  * Same reasoning as the composer's editor — see composer.tsx. This one is
@@ -37,7 +51,9 @@ const TemplateRichEditor = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="min-h-[200px] rounded-md border bg-background" aria-busy="true" />
+      <div className="mis-ed" aria-busy="true">
+        <div className="mis-ed-load">Loading editor…</div>
+      </div>
     ),
   },
 );
@@ -57,6 +73,24 @@ const UNCATEGORISED = "Uncategorised";
 
 // Bucket templates by category — named categories alphabetically,
 // "Uncategorised" always last.
+/*
+ * Plain text → the HTML a rich editor round-trips without losing shape.
+ *
+ * Blank lines become separate paragraphs, single newlines become <br>, and the
+ * text is escaped first so a template containing "<" or "&" cannot inject
+ * markup into the editor. Template variables like {{lead.name}} pass through
+ * untouched — they are not HTML and must survive verbatim.
+ */
+function plainTextToHtml(text: string): string {
+  if (!text.trim()) return "";
+  const escape = (t: string) =>
+    t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text
+    .split(/\n{2,}/)
+    .map((block) => `<p>${escape(block).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
 function groupByCategory(
   rows: TemplateRow[],
 ): Array<{ category: string; templates: TemplateRow[] }> {
@@ -77,6 +111,14 @@ function groupByCategory(
 }
 
 export function TemplatesManager({ initial }: { initial: TemplateRow[] }) {
+  return (
+    <ToastHost>
+      <TemplatesBody initial={initial} />
+    </ToastHost>
+  );
+}
+
+function TemplatesBody({ initial }: { initial: TemplateRow[] }) {
   const router = useRouter();
   const [editing, setEditing] = useState<TemplateRow | "new" | null>(null);
   const [deleting, setDeleting] = useState<TemplateRow | null>(null);
@@ -100,61 +142,70 @@ export function TemplatesManager({ initial }: { initial: TemplateRow[] }) {
     () =>
       Array.from(
         new Set(
-          initial
-            .map((t) => (t.category ?? "").trim())
-            .filter((c) => c.length > 0),
+          initial.map((t) => (t.category ?? "").trim()).filter((c) => c.length > 0),
         ),
       ).sort((a, b) => a.localeCompare(b)),
     [initial],
   );
 
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search templates…"
-            className="h-9 w-full rounded-lg border bg-background pl-8 pr-3 text-sm placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-ring/30"
-          />
-        </div>
-        <span className="text-xs text-muted-foreground">
+    <>
+      <div className="mis-bar">
+        <Find
+          value={search}
+          onChange={setSearch}
+          label="Search templates"
+          placeholder="Search templates…"
+          name="template_search"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+        />
+        <span className="mis-count tnum">
           {filtered.length} of {initial.length} template{initial.length === 1 ? "" : "s"}
         </span>
-        <Button size="sm" onClick={() => setEditing("new")} className="gap-1.5">
-          <Plus className="size-4" />
+        <span className="mis-gap" />
+        <Btn primary onClick={() => setEditing("new")} data-mis="new-template">
+          <Plus aria-hidden />
           New template
-        </Button>
+        </Btn>
       </div>
 
       {initial.length === 0 ? (
-        <div className="rounded-lg border border-dashed bg-card p-12 text-center">
-          <FileText className="size-8 mx-auto text-muted-foreground" />
-          <p className="mt-3 text-sm font-medium">No templates yet</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Create your first reusable reply snippet — group them into categories
-            to stay organised.
-          </p>
+        <div className="mis-sec card">
+          <div className="mis-empty">
+            <svg viewBox="0 0 24 24" aria-hidden>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+              <path d="M14 2v6h6M9 13h6M9 17h4" />
+            </svg>
+            <b>No templates yet</b>
+            <p>
+              Create your first reusable reply snippet — group them into categories to stay
+              organised.
+            </p>
+            <Btn primary onClick={() => setEditing("new")}>
+              New template
+            </Btn>
+          </div>
         </div>
       ) : groups.length === 0 ? (
-        <div className="rounded-lg border border-dashed bg-card p-8 text-center text-sm text-muted-foreground">
-          No templates match &quot;{search}&quot;.
+        <div className="mis-sec card">
+          <div className="mis-empty">
+            <b>No templates match &ldquo;{search}&rdquo;.</b>
+            <p>Try a shorter term — the search reads the name, the body, the subject and the
+              category.</p>
+          </div>
         </div>
       ) : (
-        <div className="space-y-3">
-          {groups.map((g) => (
-            <CategorySection
-              key={g.category}
-              category={g.category}
-              templates={g.templates}
-              onEdit={setEditing}
-              onDelete={setDeleting}
-            />
-          ))}
-        </div>
+        groups.map((g) => (
+          <CategorySection
+            key={g.category}
+            category={g.category}
+            templates={g.templates}
+            onEdit={setEditing}
+            onDelete={setDeleting}
+          />
+        ))
       )}
 
       {editing ? (
@@ -178,7 +229,7 @@ export function TemplatesManager({ initial }: { initial: TemplateRow[] }) {
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -195,59 +246,53 @@ function CategorySection({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <div className="rounded-lg border bg-card overflow-hidden">
+    <div className="tbl-wrap mis-sec">
       <button
         type="button"
+        className="mis-cat"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-accent/40 transition-colors"
       >
-        {open ? (
-          <ChevronDown className="size-4 text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronRight className="size-4 text-muted-foreground shrink-0" />
-        )}
-        <Folder className="size-4 text-muted-foreground shrink-0" />
-        <span className="text-sm font-semibold">{category}</span>
-        <span className="text-xs text-muted-foreground">{templates.length}</span>
+        {/* One chevron that rotates, rather than two icons that swap — the
+            rotation is the design's own accordion affordance (`.chev`). */}
+        <ChevronRight className="mis-chev" aria-hidden />
+        <b>{category}</b>
+        <span className="mis-n tnum">{templates.length}</span>
       </button>
       {open ? (
-        <div className="divide-y border-t">
+        <div className="mis-list mis-cat-b">
           {templates.map((t) => (
-            <div key={t.id} className="flex items-start gap-3 px-4 py-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{t.name}</div>
+            <div key={t.id} className="mis-row" data-mis-template={t.name}>
+              <div className="mis-row-m">
+                <div className="mis-row-n">{t.name}</div>
                 {t.subject ? (
-                  <div className="text-xs text-muted-foreground/80 mt-0.5">
-                    Subject: <span className="font-medium">{t.subject}</span>
+                  <div className="mis-row-s">
+                    Subject: <b style={{ color: "var(--ink-2)", fontWeight: 600 }}>{t.subject}</b>
                   </div>
                 ) : null}
-                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2 whitespace-pre-wrap">
-                  {t.body || "(empty)"}
-                </div>
-                {(t.cc || t.bcc) ? (
-                  <div className="text-[10.5px] text-muted-foreground/70 mt-1 space-x-2">
+                <div className="mis-row-s mis-clamp">{t.body || "(empty)"}</div>
+                {t.cc || t.bcc ? (
+                  <div className="mis-row-s" style={{ display: "flex", gap: 14 }}>
                     {t.cc ? <span>CC: {t.cc}</span> : null}
                     {t.bcc ? <span>BCC: {t.bcc}</span> : null}
                   </div>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => onEdit(t)}
-                  aria-label="Edit"
-                  className="size-8 rounded-md inline-flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                >
-                  <Pencil className="size-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(t)}
-                  aria-label="Delete"
-                  className="size-8 rounded-md inline-flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-red-600 transition-colors"
-                >
-                  <Trash2 className="size-4" />
-                </button>
+              <div className="mis-row-a">
+                <IconBtn label={`Edit ${t.name}`} onClick={() => onEdit(t)}>
+                  <Pencil aria-hidden />
+                </IconBtn>
+                {/*
+                  Unlike the other panels this delete keeps its own DIALOG
+                  rather than becoming an arm-then-fire button: it is not a
+                  `window.confirm`, it is a real dialog the tool wrote, it
+                  names the template and explains the blast radius, and a test
+                  can drive it. Changing it would remove a warning, not a
+                  native-modal problem.
+                */}
+                <IconBtn label={`Delete ${t.name}`} danger onClick={() => onDelete(t)}>
+                  <Trash2 aria-hidden />
+                </IconBtn>
               </div>
             </div>
           ))}
@@ -268,6 +313,7 @@ function EditDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const show = useShowToast();
   const [name, setName] = useState(template?.name ?? "");
   const [subject, setSubject] = useState(template?.subject ?? "");
   const [cc, setCc] = useState(template?.cc ?? "");
@@ -275,20 +321,38 @@ function EditDialog({
   // Body is stored as both rich HTML (for the composer / future inbound
   // mail clients that respect it) and plain text (legacy `body` column,
   // also used as a fallback for variable substitution).
-  const initialHtml = template?.body_html ?? template?.body ?? "";
+  /*
+   * Falling back to the plain `body` means converting it, not handing it over.
+   *
+   * Two things were wrong here. `??` only falls back on null/undefined, so a
+   * body_html of "" was used as-is and opened an empty editor. And when it did
+   * fall back, it passed PLAIN TEXT into a rich-text editor — HTML collapses
+   * newlines, so a template stored as "Hey {{lead.name}},\n\nI'd like to…"
+   * opened as one run-on paragraph. Press Save on that and the paragraph breaks
+   * are written back flattened: the formatting is destroyed by having looked at
+   * it. One of the 44 templates is in this state today (body_html empty, body
+   * full of newlines), so this is a live data-loss path, not a hypothetical.
+   */
+  const initialHtml = template?.body_html?.trim()
+    ? template.body_html
+    : plainTextToHtml(template?.body ?? "");
   const [bodyHtml, setBodyHtml] = useState(initialHtml);
   const [bodyText, setBodyText] = useState(template?.body ?? "");
   const [category, setCategory] = useState(template?.category ?? "");
   const [pending, startTransition] = useTransition();
+  const [saving, setSaving] = useState(false);
 
   async function save() {
     if (!name.trim()) {
-      toast.error("Give the template a name");
+      show({ text: "Give the template a name", bad: true });
       return;
     }
     const isEdit = template !== null;
+    setSaving(true);
     const res = await fetch(
-      isEdit ? `/api/tools/master-inbox/reply-templates/${template.id}` : "/api/tools/master-inbox/reply-templates",
+      isEdit
+        ? `/api/tools/master-inbox/reply-templates/${template.id}`
+        : "/api/tools/master-inbox/reply-templates",
       {
         method: isEdit ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -303,35 +367,38 @@ function EditDialog({
         }),
       },
     );
+    setSaving(false);
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      toast.error(json.error ?? "Save failed");
+      show({ text: json.error ?? "Save failed", bad: true });
       return;
     }
-    toast.success(isEdit ? "Template updated" : "Template created");
+    show({ text: isEdit ? `Saved “${name.trim()}”` : `Created “${name.trim()}”` });
     startTransition(() => onSaved());
   }
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent style={{ maxWidth: "min(760px, calc(100vw - 2rem))" }}>
         <DialogHeader>
           <DialogTitle>{template ? "Edit template" : "New template"}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Name</label>
-              <Input
+        <div className="mis-form mis-scroll">
+          <div className="mis-g mis-g2">
+            <Field label="Name">
+              <input
+                className="inp"
+                aria-label="Template name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Schedule a call"
                 autoFocus
               />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Category</label>
-              <Input
+            </Field>
+            <Field label="Category">
+              <input
+                className="inp"
+                aria-label="Template category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 placeholder="Choose or type a category…"
@@ -342,45 +409,45 @@ function EditDialog({
                   <option key={c} value={c} />
                 ))}
               </datalist>
-            </div>
+            </Field>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">
-              Subject{" "}
-              <span className="text-muted-foreground/70 font-normal">
-                (optional · only used on forward / new emails — replies keep the
-                existing subject)
-              </span>
-            </label>
-            <Input
+          <Field
+            label="Subject"
+            optional="(optional · only used on forward / new emails — replies keep the existing subject)"
+          >
+            <input
+              className="inp"
+              aria-label="Template subject"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Pre-fill the subject line"
             />
-          </div>
+          </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">CC</label>
-              <Input
+          <div className="mis-g mis-g2">
+            <Field label="CC">
+              <input
+                className="inp"
+                aria-label="Template CC"
                 value={cc}
                 onChange={(e) => setCc(e.target.value)}
                 placeholder="comma-separated emails"
               />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">BCC</label>
-              <Input
+            </Field>
+            <Field label="BCC">
+              <input
+                className="inp"
+                aria-label="Template BCC"
                 value={bcc}
                 onChange={(e) => setBcc(e.target.value)}
                 placeholder="comma-separated emails"
               />
-            </div>
+            </Field>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Body</label>
+          <div className="mis-f">
+            <span className="mis-l">Body</span>
             <TemplateRichEditor
               valueHtml={bodyHtml}
               onChange={({ html, text }) => {
@@ -388,7 +455,7 @@ function EditDialog({
                 setBodyText(text);
               }}
               placeholder={
-                "Write the reply text…\nUse the Insert variable dropdown for {{lead.first_name}}, {{lead.company}}, etc."
+                "Write the reply text…\nUse the Insert variable menu for {{lead.first_name}}, {{lead.company}}, etc."
               }
             />
           </div>
@@ -397,8 +464,8 @@ function EditDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={pending || !name.trim()}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+          <Button onClick={save} disabled={pending || saving || !name.trim()}>
+            {saving ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -415,24 +482,26 @@ function DeleteDialog({
   onClose: () => void;
   onDeleted: () => void;
 }) {
+  const show = useShowToast();
   const [pending, startTransition] = useTransition();
   async function confirmDelete() {
     const res = await fetch(`/api/tools/master-inbox/reply-templates/${template.id}`, {
       method: "DELETE",
     });
     if (!res.ok) {
-      toast.error("Delete failed");
+      show({ text: "Delete failed", bad: true });
       return;
     }
+    show({ text: `Deleted “${template.name}”` });
     startTransition(() => onDeleted());
   }
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete &quot;{template.name}&quot;?</DialogTitle>
+          <DialogTitle>Delete &ldquo;{template.name}&rdquo;?</DialogTitle>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">
+        <p className="mis-sub" style={{ marginTop: 0 }}>
           This template will be removed for everyone in the workspace.
         </p>
         <DialogFooter>
@@ -442,7 +511,12 @@ function DeleteDialog({
           <Button
             onClick={confirmDelete}
             disabled={pending}
-            className="bg-red-600 hover:bg-red-700 text-white"
+            data-mis="confirm-delete-template"
+            style={{
+              background: "var(--red)",
+              borderColor: "var(--red)",
+              color: "#fff",
+            }}
           >
             Delete
           </Button>

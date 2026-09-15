@@ -1,9 +1,20 @@
+/*
+ * The list's own column proportions.
+ *
+ * `globals.css` is a shared file this tool does not own, so this sheet is
+ * pulled in from the screen that needs it rather than added to the app-wide
+ * import chain. Next dedupes it across the three screens that import it.
+ */
+import "@/app/mi-inbox.css";
+
 import { TopBar } from "@/components/master-inbox/top-bar";
-import { MockupTabs } from "./mockup/tabs";
+import { TabBar } from "@/components/master-inbox/tab-bar";
 import { MockupThreadList } from "./mockup/list";
+import { ClientLists } from "./mockup/client-lists";
 import { FilterBar } from "@/components/master-inbox/filter-bar";
 import { EmptyInbox } from "@/components/master-inbox/empty-state";
 import { RealtimeRefresher } from "@/components/master-inbox/realtime-refresher";
+import { InboxNavProvider } from "@/components/master-inbox/inbox-nav";
 import { requireSession } from "@/lib/auth/workspace";
 import { loadThreads } from "@/lib/tools/master-inbox/inbox/threads";
 import { loadViews, loadViewBySlug, loadViewCounts } from "@/lib/tools/master-inbox/inbox/views";
@@ -11,6 +22,7 @@ import { loadLabels } from "@/lib/tools/master-inbox/inbox/labels";
 import { loadChannels } from "@/lib/tools/master-inbox/inbox/channels";
 import { loadCampaigns } from "@/lib/tools/master-inbox/inbox/campaigns";
 import { loadClients } from "@/lib/tools/master-inbox/inbox/clients";
+import { loadLists, loadListUnseenCounts } from "@/lib/tools/master-inbox/inbox/lists";
 import { decodeFilter, type FilterRow, type FilterState } from "@/lib/tools/master-inbox/inbox/filters";
 
 /*
@@ -39,7 +51,7 @@ import { decodeFilter, type FilterRow, type FilterState } from "@/lib/tools/mast
  *      screen on the first render with no client-side redirect. The values are
  *      the same values; only who parses them moves.
  *
- *   2. Nine loaders run in one `Promise.all`, exactly as the tool does it.
+ *   2. Ten loaders run in one `Promise.all`, exactly as the tool does it.
  *      Worth stating because it is load-bearing rather than tidy: run in
  *      sequence these are nine round-trips to Supabase, and the inbox is the
  *      screen people keep open all day. The tool learned this the expensive
@@ -64,7 +76,7 @@ export async function FullInbox({ view, f, list, page, q }: FullInboxProps) {
   const pageNum = Math.max(1, Number(page ?? "1") || 1);
   const searchQuery = q?.trim() || null;
 
-  const [threadPage, views, viewCounts, labels, channels, campaigns, clients, currentView] =
+  const [threadPage, views, viewCounts, labels, channels, campaigns, clients, lists, currentView, listCounts] =
     await Promise.all([
       loadThreads(session.activeWorkspace.id, view, filterFromUrl, list ?? null, pageNum, searchQuery),
       loadViews(session.activeWorkspace.id),
@@ -73,7 +85,19 @@ export async function FullInbox({ view, f, list, page, q }: FullInboxProps) {
       loadChannels(session.activeWorkspace.id),
       loadCampaigns(session.activeWorkspace.id),
       loadClients(session.activeWorkspace.id),
+      /*
+       * The client lists rail. Dropped when this screen was rebuilt against the
+       * mockup — a feature lost to a change that was only meant to alter
+       * appearance. Restored, and rendered beside the conversations.
+       */
+      loadLists(session.activeWorkspace.id),
       loadViewBySlug(session.activeWorkspace.id, view),
+      /*
+       * The per-list "N new" pill. The tool loads this beside `loadLists` in
+       * its app-shell (components/layout/app-shell.tsx); here the rail is
+       * part of the screen, so the screen loads it.
+       */
+      loadListUnseenCounts(session.activeWorkspace.id),
     ]);
 
   // A view's saved filter is the starting point when the URL carries none —
@@ -99,55 +123,68 @@ export async function FullInbox({ view, f, list, page, q }: FullInboxProps) {
      * panel. See src/app/inbox-theme.css.
      */
     <div className="mi-theme">
-      <TopBar />
+      <InboxNavProvider>
+        <TopBar />
 
-      {/*
-       * The design's tabs and list, the tool's data.
-       *
-       * The tool's own TabBar and ThreadList are Tailwind components that look
-       * like the tool. The approved mockup draws both differently — pill tabs
-       * with a count, and a row of fixed columns rather than one long preview
-       * line — and that is markup, not colour, so no token remapping reaches
-       * it.
-       *
-       * What is NOT swapped: everything below the list. FilterBar is the tool's
-       * 921-line filter builder, and opening a conversation lands in the tool's
-       * ThreadView with its composer, attachments, forward, templates, AI
-       * drafts, snooze, subsequences and prospect panel. The mockup does not
-       * draw any of those, so re-doing them would only lose features.
-       */}
-      <MockupTabs
-        views={views.map((v) => ({ id: v.id, slug: v.slug, name: v.name }))}
-        activeSlug={view}
-        counts={viewCounts}
-      />
+        {/*
+         * The tool's own tab strip.
+         *
+         * This was the design's `MockupTabs` — a row of pill links — and the
+         * swap was not for looks. The mockup's tabs could only NAVIGATE: the
+         * "+" that creates a view, the per-tab menu with Rename and Delete, and
+         * drag-to-reorder all live in the tool's TabBar, which was ported and
+         * then never rendered. Losing them meant every view in the strip was
+         * frozen exactly as the tool had left it.
+         *
+         * The counts are unchanged: `loadViewCounts` keys its map by view id and
+         * TabBar reads `viewCounts[view.id]` for the "N new" pill and the `%`.
+         *
+         * The list below is still the design's — a row of fixed columns rather
+         * than the tool's one long preview line — and everything past it
+         * (FilterBar, and the conversation screen's composer, prospect panel,
+         * snooze and subsequences) is the tool's, so no feature is re-drawn.
+         */}
+        <TabBar views={views} activeSlug={view} labels={labels} viewCounts={viewCounts} />
 
-      <div className="mi-filter">
-        <FilterBar
-          initialFilter={initialFilter}
-          labels={labels}
-          channels={channels}
-          campaigns={campaigns}
-          clients={clients}
-          currentViewId={currentView?.id ?? null}
-          currentViewName={currentView?.name ?? null}
-        />
-      </div>
+        <div className="mi-filter">
+          <FilterBar
+            initialFilter={initialFilter}
+            labels={labels}
+            channels={channels}
+            campaigns={campaigns}
+            clients={clients}
+            currentViewId={currentView?.id ?? null}
+            currentViewName={currentView?.name ?? null}
+          />
+        </div>
 
-      {threadPage.rows.length === 0 && threadPage.total === 0 ? (
-        <EmptyInbox view={view} />
-      ) : (
-        <MockupThreadList
-          threads={threadPage.rows}
-          view={view}
-          total={threadPage.total}
-          page={threadPage.page}
-          pageSize={threadPage.pageSize}
-          now={now}
-        />
-      )}
+        {/*
+          Lists beside conversations, as the tool draws it: choosing a client
+          filters the list via `?list=<id>`, which `loadThreads` already handles.
+        */}
+        <div className="mi-split">
+          <ClientLists lists={lists} activeListId={list ?? null} view={view} listCounts={listCounts} />
 
-      <RealtimeRefresher workspaceId={session.activeWorkspace.id} />
+          <div className="mi-split-main">
+        {threadPage.rows.length === 0 && threadPage.total === 0 ? (
+          <EmptyInbox view={view} />
+        ) : (
+          <MockupThreadList
+            threads={threadPage.rows}
+            view={view}
+            total={threadPage.total}
+            page={threadPage.page}
+            pageSize={threadPage.pageSize}
+            now={now}
+            labels={labels}
+            lists={lists}
+          />
+        )}
+          </div>
+        </div>
+
+        <RealtimeRefresher workspaceId={session.activeWorkspace.id} />
+      </InboxNavProvider>
     </div>
   );
 }

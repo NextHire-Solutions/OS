@@ -1,8 +1,11 @@
 import "server-only";
 
 import { getCorofySupabase } from "../corofy/supabase.ts";
-import type { BaselineIndex, MlsEntry } from "./baseline.ts";
-import { mlsDisplayName } from "./format.ts";
+import type { BaselineIndex } from "./baseline.ts";
+import { mergeAccounts, REFRESH_WINDOW_DAYS, type CourtedAccount, type Rec } from "./courted-accounts.ts";
+import { scraper } from "./scraper.ts";
+
+export { REFRESH_WINDOW_DAYS, type CourtedAccount } from "./courted-accounts.ts";
 
 /*
  * The two state tables Agent Search's schedulers keep — read natively.
@@ -33,35 +36,24 @@ import { mlsDisplayName } from "./format.ts";
  * tool. It is marked as new in AGENT-SEARCH-PARITY.md rather than counted as
  * parity.
  *
+ * The accounts list is the UNION of the two tables, each left-joined onto the
+ * other — see courted-accounts.ts for why, and for what still cannot be
+ * listed (the configured emails themselves, which only exist in Railway).
+ *
  * Read-only. The schedulers keep writing on the live service.
  */
 
-const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
-const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-type Rec = Record<string, unknown>;
 const rows = (data: unknown): Rec[] => (Array.isArray(data) ? (data as Rec[]) : []);
-
-/** REFRESH_WINDOW_DAYS on the live service. Not set there, so the default. */
-export const REFRESH_WINDOW_DAYS = 15;
-
-export interface CourtedAccount {
-  email: string;
-  /** Total agents this account can see across every MLS, at the last scan. */
-  total: number | null;
-  mls: MlsEntry[];
-  scannedAt: string | null;
-  /** From refresh_state. */
-  lastRefreshedAt: string | null;
-  lastStatus: string | null;
-  lastMessage: string | null;
-  /** Whole days since the last full re-scrape. null when never refreshed. */
-  daysSinceRefresh: number | null;
-  /** True when it has gone past REFRESH_WINDOW_DAYS — the scheduler is behind. */
-  overdue: boolean;
-}
 
 export interface CourtedState {
   accounts: CourtedAccount[];
+  /**
+   * How many Courted logins the live service has configured — its own
+   * `GET /api/status` → `courtedAccounts`. Null when it could not be asked.
+   * More than `accounts.length` means some account has not been seen by
+   * either scheduler yet.
+   */
+  configuredAccounts: number | null;
   /** Sum of every account's agent total. Accounts overlap, so this is a ceiling. */
   reachableAgents: number | null;
   /** Most recent MLS scan across all accounts. */
@@ -70,77 +62,36 @@ export interface CourtedState {
   error: string | null;
 }
 
-const DAY = 24 * 60 * 60 * 1000;
-
-function parseMls(value: unknown): MlsEntry[] {
-  // The column is jsonb, so supabase-js hands back a parsed array. A string
-  // would mean the column type changed under us; parse it rather than render
-  // an empty list and call that "no MLS".
-  let list: unknown = value;
-  if (typeof value === "string") {
-    try { list = JSON.parse(value); } catch { return []; }
+/** The configured count from the live service; never fatal. */
+async function configuredCount(): Promise<number | null> {
+  try {
+    const r = await scraper.status();
+    const n = r.ok ? r.body?.courtedAccounts : null;
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
   }
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter((m): m is Rec => Boolean(m) && typeof m === "object")
-    .map((m) => {
-      const code = str(m.code) ?? "";
-      const name = str(m.name) ?? "";
-      return { code, name, label: mlsDisplayName({ code, name }), count: num(m.count) };
-    })
-    .filter((m) => m.code !== "")
-    // Biggest MLS first — that is the order the tool's own detectAccountMls
-    // returns and the order the operator reads them in.
-    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
 }
 
 export async function getCourtedState(): Promise<CourtedState> {
   try {
     const sb = getCorofySupabase();
-    const [monitor, refresh] = await Promise.all([
+    const [monitor, refresh, configured] = await Promise.all([
       sb.from("mls_monitor_state").select("email,mls,total,scanned_at"),
       sb.from("refresh_state").select("email,last_refreshed_at,last_status,last_message"),
+      configuredCount(),
     ]);
 
     if (monitor.error) throw new Error(monitor.error.message);
     // refresh_state failing is not fatal: the MLS list is still worth showing.
-    const refreshBy = new Map<string, Rec>();
-    for (const r of rows(refresh.data)) {
-      const email = str(r.email);
-      if (email) refreshBy.set(email.toLowerCase(), r);
-    }
-
-    const now = Date.now();
-    const accounts: CourtedAccount[] = rows(monitor.data)
-      .map((r) => {
-        const email = (str(r.email) ?? "").toLowerCase();
-        const ref = refreshBy.get(email);
-        const lastRefreshedAt = ref ? str(ref.last_refreshed_at) : null;
-        const ms = lastRefreshedAt ? Date.parse(lastRefreshedAt) : NaN;
-        const daysSinceRefresh = Number.isFinite(ms) ? Math.floor((now - ms) / DAY) : null;
-        return {
-          email,
-          total: num(r.total),
-          mls: parseMls(r.mls),
-          scannedAt: str(r.scanned_at),
-          lastRefreshedAt,
-          lastStatus: ref ? str(ref.last_status) : null,
-          lastMessage: ref ? str(ref.last_message) : null,
-          daysSinceRefresh,
-          // Never-refreshed counts as overdue: the scheduler's own pickDueAccount
-          // puts those first, so the screen should agree with it.
-          overdue: daysSinceRefresh === null || daysSinceRefresh > REFRESH_WINDOW_DAYS,
-        };
-      })
-      // Most overdue first. This is the order the refresh scheduler will
-      // actually work through, so the top row is the account it does next.
-      .sort((a, b) => (b.daysSinceRefresh ?? Number.MAX_SAFE_INTEGER) - (a.daysSinceRefresh ?? Number.MAX_SAFE_INTEGER));
+    const accounts = mergeAccounts(rows(monitor.data), refresh.error ? [] : rows(refresh.data), Date.now());
 
     const totals = accounts.map((a) => a.total).filter((t): t is number => t !== null);
     const scans = accounts.map((a) => a.scannedAt).filter((s): s is string => s !== null).sort();
 
     return {
       accounts,
+      configuredAccounts: configured,
       reachableAgents: totals.length ? totals.reduce((a, b) => a + b, 0) : null,
       lastScanAt: scans.length ? scans[scans.length - 1] : null,
       refreshWindowDays: REFRESH_WINDOW_DAYS,
@@ -149,6 +100,7 @@ export async function getCourtedState(): Promise<CourtedState> {
   } catch (error) {
     return {
       accounts: [],
+      configuredAccounts: null,
       reachableAgents: null,
       lastScanAt: null,
       refreshWindowDays: REFRESH_WINDOW_DAYS,

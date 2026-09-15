@@ -21,12 +21,18 @@ import type {
 // used for backfill and for sending replies.
 
 export class InstantlyError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly body: unknown,
-  ) {
+  // Assigned explicitly rather than as constructor parameter properties, for
+  // the reason given on NotConfiguredError in src/lib/env.ts: Node's
+  // type-stripping cannot remove parameter properties, so `node --test`
+  // refused to load any module that imported this client — which was every
+  // sync module. Same class, same fields.
+  readonly status: number;
+  readonly body: unknown;
+
+  constructor(message: string, status: number, body: unknown) {
     super(message);
+    this.status = status;
+    this.body = body;
   }
 }
 

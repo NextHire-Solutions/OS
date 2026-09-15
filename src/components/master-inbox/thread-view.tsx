@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
@@ -17,28 +17,42 @@ import {
   ReplyAll,
   Forward,
 } from "lucide-react";
-import { Button } from "@/components/mi-ui/button";
 import { Composer } from "@/components/master-inbox/composer";
 import { LabelPickerButton } from "@/components/master-inbox/label-picker";
 import { SnoozeButton } from "@/components/master-inbox/snooze-button";
 import { MoveAgentMenu } from "@/components/master-inbox/move-agent-menu";
 import { cn } from "@/lib/tools/master-inbox/utils";
 import { sanitizeEmailHtml } from "@/lib/tools/master-inbox/inbox/sanitize-email-html";
+import { fullStamp } from "@/lib/workspace/dates";
 import type { ThreadDetail, MessageRow } from "@/lib/tools/master-inbox/inbox/thread-detail";
 import type { LabelRow } from "@/lib/tools/master-inbox/inbox/labels-shared";
 
-const COLLAPSED_HEIGHT_PX = 140;
+/*
+ * ---------------------------------------------------------------------------
+ * WHAT CHANGED IN THIS FILE, AND WHAT DID NOT
+ *
+ * The MARKUP is rebuilt against `workspace.css`'s own thread-detail vocabulary
+ * — `.phd`, `.ptool`, `.ib`, `.msgs`, `.msg`, `.msg-who`, `.ava`, `.msg-hd`,
+ * `.msg-hdrs`, `.msg-body` — which the design has always carried and this
+ * screen never used. Anything the design does not draw (the collapse fade, the
+ * armed delete, the reply pill) lives in `src/app/mi-conversation.css`.
+ *
+ * The BEHAVIOUR is untouched. Every function below — `resolveInboundSenderName`,
+ * `displayNameFromBody`, `buildForwardBody`, `recipientField`,
+ * `buildReplyRecipients`, the compose-state machine, the bulk-action calls —
+ * is byte-identical to the version that shipped, apart from two deliberate
+ * corrections called out where they happen:
+ *
+ *   · `formatTime` is gone. It built a fresh `Intl` format on every message and
+ *     called `toLocaleString` directly; the repo's `fullStamp` is the pinned,
+ *     memoised, hydration-safe answer (see src/lib/workspace/dates.ts).
+ *
+ *   · Delete no longer calls `window.confirm`. That suspends the page, so the
+ *     delete path could not be driven by any test — it is now the repo's
+ *     two-click arm-then-fire.
+ */
 
-function formatTime(ts: string | null): string {
-  if (!ts) return "";
-  return new Date(ts).toLocaleString("en-US", { timeZone: "America/New_York",
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+const COLLAPSED_HEIGHT_PX = 140;
 
 function initials(name: string | null | undefined, email: string | null | undefined): string {
   const src = name || email || "?";
@@ -179,24 +193,52 @@ export function ThreadView({
     const ok = await bulkAction({ action: "status", thread_ids: [detail.id], status: nextStatus });
     if (ok) startTransition(() => router.push(backHref));
   }
+
+  /*
+   * ARM, THEN FIRE — the replacement for `window.confirm`.
+   *
+   * `confirm()` suspends the whole page on a native modal that lives outside
+   * the DOM: no automated test can answer it, so the one genuinely destructive
+   * action on this screen was the one action that could never be exercised.
+   *
+   * The first click arms the button — it turns red and the strip says
+   * "Delete — click again" — and a second click inside four seconds fires.
+   * Restoring FROM trash is not destructive and still fires on the first click.
+   */
+  const [armDelete, setArmDelete] = useState(false);
+  useEffect(() => {
+    if (!armDelete) return;
+    const t = setTimeout(() => setArmDelete(false), 4000);
+    return () => clearTimeout(t);
+  }, [armDelete]);
+
   async function toggleTrash() {
-    if (!isTrashed && !confirm("Move this thread to trash?")) return;
+    if (!isTrashed && !armDelete) {
+      setArmDelete(true);
+      return;
+    }
+    setArmDelete(false);
     const nextStatus = isTrashed ? "open" : "trash";
     const ok = await bulkAction({ action: "status", thread_ids: [detail.id], status: nextStatus });
     if (ok) startTransition(() => router.push(backHref));
   }
 
   return (
-    // Top-level layout switched from column→row so the composer can
-    // sit as a flex sibling of the messages column instead of
-    // overlaying everything (which used to hide the prospect panel
-    // on the right whenever a reply was open). Below `lg` the
-    // composer falls back to the old fixed overlay — see the wrapper
-    // class on the composer container.
-    <section className="flex-1 min-w-0 flex bg-background relative">
-      <div className="flex-1 min-w-0 flex flex-col">
-      {/* Toolbar */}
-      <div className="h-10 border-b flex items-center px-3 gap-1">
+    /*
+     * `.pcol.mid` is the design's middle pane of the three-pane thread screen —
+     * a column with a hairline on either side. `.mi-conv-main` adds the one
+     * thing the design file cannot know about: `position: relative`, which is
+     * what lets `inbox-theme.css` float the composer OVER this pane instead of
+     * splitting it into a 46px column of single words.
+     */
+    <section className="pcol mid mi-conv-main">
+      {/*
+       * ONE toolbar, in the mockup's order: the three moves between threads,
+       * a spacer, then the actions on this thread. The design draws no heading
+       * above it — each message card already carries its own subject, and a
+       * second title row would cost the conversation 54px of reading height.
+       */}
+      <div className="ptool">
         <ToolbarIconButton icon={ChevronLeft} label="Back" href={backHref} />
         <ToolbarIconButton
           icon={ChevronUp}
@@ -210,18 +252,26 @@ export function ThreadView({
           href={nextThreadHref ?? undefined}
           disabled={!nextThreadHref}
         />
-        <div className="flex-1" />
+        <span className="spacer" />
         <ToolbarIconButton
           icon={RefreshCw}
           label="Refresh"
           onClick={() => startTransition(() => router.refresh())}
           disabled={pending}
         />
+        {/*
+         * `compact` is the tool's OWN icon-only variant, and its comment names
+         * this exact toolbar as where it belongs. It was never switched on
+         * here, so a labelled "Move agent ⌄" button sat in a strip of icons —
+         * 110px the pane does not have once the rail, the list and the panel
+         * have taken theirs. The label survives as the title and aria-label.
+         */}
         <MoveAgentMenu
           threadIds={[detail.id]}
           currentClientId={detail.client_id}
           onMoved={() => startTransition(() => router.refresh())}
           disabled={pending}
+          compact
         />
         <LabelPickerButton
           threadId={detail.id}
@@ -241,56 +291,58 @@ export function ThreadView({
           onClick={toggleArchive}
           disabled={pending}
         />
+        {armDelete ? (
+          <span className="mi-arm-note" role="status">
+            Delete — click again
+          </span>
+        ) : null}
         <ToolbarIconButton
           icon={isTrashed ? RotateCcw : Trash2}
-          label={isTrashed ? "Restore from trash" : "Delete"}
+          label={isTrashed ? "Restore from trash" : armDelete ? "Confirm delete" : "Delete"}
           onClick={toggleTrash}
           disabled={pending}
+          armed={armDelete}
         />
       </div>
 
-      {/* Messages — oldest first, newest at bottom. Full pane width so
-          inbound cards sit flush left and outbound flush right. */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="py-6 px-6 space-y-3">
-          {messages.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-12">
-              No messages in this thread yet.
-            </p>
-          ) : (
-            messages.map((m) => (
-              <MessageBlock
-                key={m.id}
-                message={m}
-                leadName={leadName}
-                leadEmail={detail.lead.email ?? null}
-                youName={youName}
-                ourSenderEmail={ourSenderEmail}
-                onReply={() => setComposeState({ mode: "reply", source: m, replyAll: false })}
-                onReplyAll={() => setComposeState({ mode: "reply", source: m, replyAll: true })}
-                onForward={() => setComposeState({ mode: "forward", source: m })}
-              />
-            ))
-          )}
-        </div>
+      {/* Messages — oldest first, newest at bottom. `.msgs` is the design's
+          scrolling column; inbound cards sit flush left and outbound flush
+          right inside it. */}
+      <div className="msgs">
+        {messages.length === 0 ? (
+          <p className="mi-msgs-empty">No messages in this thread yet.</p>
+        ) : (
+          messages.map((m) => (
+            <MessageBlock
+              key={m.id}
+              message={m}
+              leadName={leadName}
+              leadEmail={detail.lead.email ?? null}
+              youName={youName}
+              ourSenderEmail={ourSenderEmail}
+              onReply={() => setComposeState({ mode: "reply", source: m, replyAll: false })}
+              onReplyAll={() => setComposeState({ mode: "reply", source: m, replyAll: true })}
+              onForward={() => setComposeState({ mode: "forward", source: m })}
+            />
+          ))
+        )}
       </div>
 
       {/* Floating Reply — shortcut for opening the composer. Hidden
           while the composer is open so it doesn't overlap (and
           intercept clicks on) the composer's own Send button: the
-          composer became a flex sibling at lg+ in 2026-05, which put
-          this absolute-positioned button right on top of the
-          composer footer. */}
+          composer overlays this pane from the right, and this pill
+          sits exactly where its footer lands. */}
       {!composeState ? (
-        <Button
+        <button
+          type="button"
+          className="mi-reply-fab"
           onClick={() => setComposeState({ mode: "reply", source: null, replyAll: false })}
-          className="absolute bottom-4 right-4 gap-1.5 shadow-lg z-10"
         >
-          <ReplyIcon className="size-4" />
+          <ReplyIcon />
           Reply
-        </Button>
+        </button>
       ) : null}
-      </div>
 
       {composeState ? (
         <Composer
@@ -436,9 +488,10 @@ function buildForwardBody(source: MessageRow, detail: ThreadDetail): string {
     source.direction === "inbound"
       ? detail.lead.full_name ?? detail.lead.email ?? "Unknown"
       : "You";
-  const when = source.sent_at
-    ? new Date(source.sent_at).toLocaleString("en-US", { timeZone: "America/New_York" })
-    : "";
+  // The forwarded quote's own Date: line. `fullStamp` is the repo's pinned
+  // Eastern formatter — one instant for the server render and the browser's,
+  // which is why nothing here reads the clock or the viewer's locale.
+  const when = fullStamp(source.sent_at);
 
   // body_text is the preferred source — but it's often stored as an
   // empty string when the sender's mail client only emitted HTML.
@@ -606,27 +659,31 @@ function buildReplyRecipients(
   return { to: { email: toEmail, name: toName }, cc, bcc };
 }
 
+/*
+ * The design's `.ib`: a 36px borderless icon button that fills on hover.
+ * `is-off` replaces the tool's `opacity-40 pointer-events-none` pair, and
+ * `is-armed` is the red state the delete button takes between its two clicks.
+ */
 function ToolbarIconButton({
   icon: Icon,
   label,
   href,
   onClick,
   disabled = false,
+  armed = false,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   label: string;
   href?: string;
   onClick?: () => void;
   disabled?: boolean;
+  armed?: boolean;
 }) {
-  const className = cn(
-    "size-8 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors",
-    disabled && "opacity-40 pointer-events-none",
-  );
+  const className = cn("ib", disabled && "is-off", armed && "is-armed");
   if (href) {
     return (
       <a href={href} className={className} aria-label={label} title={label}>
-        <Icon className="size-[15px]" strokeWidth={2} />
+        <Icon />
       </a>
     );
   }
@@ -639,7 +696,7 @@ function ToolbarIconButton({
       className={className}
       aria-label={label}
     >
-      <Icon className="size-[15px]" strokeWidth={2} />
+      <Icon />
     </button>
   );
 }
@@ -689,54 +746,33 @@ function MessageBlock({
   const senderInitials = initials(senderLabel, senderEmail);
 
   return (
-    <div
-      className={cn(
-        // Direction-based alignment: outbound right, inbound left, max ~85% width
-        "max-w-[88%]",
-        outbound ? "ml-auto" : "mr-auto",
-      )}
-    >
+    /*
+     * The design gives `.msg` both the card AND the alignment, but draws
+     * `.msg-who` above the card's border — so the alignment moves out to this
+     * wrapper and `.msg` goes on being the card. See mi-conversation.css §3.
+     *
+     * Direction is still what tells the two sides apart: inbound left with a
+     * green avatar, outbound right with the brand blue one, exactly as
+     * `.ava.in` / `.ava.out` are drawn in workspace.css.
+     */
+    <div className={cn("mi-msg", outbound ? "out" : "in")}>
       {/* Sender header */}
-      <div
-        className={cn(
-          "flex items-center gap-2 text-xs pb-1.5",
-          outbound ? "justify-end" : "justify-start",
-        )}
-      >
-        {!outbound ? (
-          <Avatar initials={senderInitials} className="bg-emerald-100 text-emerald-800" />
-        ) : null}
-        {senderEmail ? (
-          <span className="text-muted-foreground">({senderEmail})</span>
-        ) : null}
-        <span className="font-medium text-foreground">{senderLabel}</span>
-        {outbound ? <Avatar initials={senderInitials} className="bg-blue-500 text-white" /> : null}
+      <div className="msg-who">
+        {!outbound ? <Avatar initials={senderInitials} side="in" /> : null}
+        {senderEmail ? <span className="mut">({senderEmail})</span> : null}
+        <b>{senderLabel}</b>
+        {outbound ? <Avatar initials={senderInitials} side="out" /> : null}
       </div>
 
       {/* Message card */}
-      <div
-        className={cn(
-          "rounded-xl border bg-card overflow-hidden",
-          // Inbound cards have a subtle green tint to differentiate lead replies
-          !outbound && "border-emerald-200/80 bg-emerald-50/30",
-        )}
-      >
+      <div className={cn("msg", outbound ? "out" : "in")}>
         {/* Card header */}
-        <div
-          className={cn(
-            "flex items-center justify-between px-4 py-2.5 border-b",
-            !outbound && "border-emerald-200/60",
-          )}
-        >
-          <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-sm font-semibold truncate">
-              {message.subject || "(no subject)"}
-            </span>
-            <span className="text-xs text-muted-foreground shrink-0">
-              {formatTime(message.sent_at)}
-            </span>
+        <div className="msg-hd">
+          <div className="hd-l">
+            <span className="msg-sub">{message.subject || "(no subject)"}</span>
+            <span className="tm tnum">{fullStamp(message.sent_at)}</span>
           </div>
-          <div className="flex items-center gap-0.5 shrink-0 text-muted-foreground">
+          <div className="msg-acts">
             {/* Action icons only make sense on lead replies. On our own
                 outbound sends, replying to ourselves is meaningless. */}
             {!outbound ? (
@@ -758,49 +794,43 @@ function MessageBlock({
           message={message}
           senderLabel={senderLabel}
           senderEmail={senderEmail}
-          outbound={outbound}
         />
 
         {/* Body with collapse/expand */}
-        <div className="relative">
+        <div className="mi-msg-clip">
           <div
-            className="px-4 py-3 text-sm leading-relaxed overflow-hidden transition-[max-height] duration-150"
+            className="msg-body"
             style={{
               maxHeight: expanded ? "none" : `${COLLAPSED_HEIGHT_PX}px`,
+              overflowY: "hidden",
             }}
           >
             {message.body_html ? (
               <div
                 // `!` on the anchor colour/underline so they beat the
                 // global a:link/a:visited { color: inherit } reset in
-                // app/globals.css. Brand blue #1565C0 matches the
-                // composer + portal accent.
-                className="prose prose-sm max-w-none [&_a]:!text-[#1565C0] [&_a]:!underline [&_img]:max-w-full"
+                // app/globals.css. #0165FE is the design's single blue
+                // (`--blue` in workspace.css) rather than the tool's
+                // near-miss #1565C0.
+                className="max-w-none [&_a]:!text-[#0165FE] [&_a]:!underline [&_img]:max-w-full"
                 dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(message.body_html) }}
               />
             ) : (
-              <pre className="whitespace-pre-wrap font-sans">{message.body_text ?? ""}</pre>
+              <pre>{message.body_text ?? ""}</pre>
             )}
           </div>
-          {!expanded ? (
-            <div
-              className={cn(
-                "absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t to-transparent pointer-events-none",
-                outbound ? "from-card" : "from-emerald-50/80",
-              )}
-            />
-          ) : null}
+          {!expanded ? <div className="mi-msg-fade" /> : null}
         </div>
 
         {/* Expand chevron */}
-        <div className="flex justify-center border-t py-0.5">
+        <div className="mi-msg-more">
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="size-6 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent transition-colors"
             aria-label={expanded ? "Collapse" : "Expand"}
+            aria-expanded={expanded}
           >
-            {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+            {expanded ? <ChevronUp /> : <ChevronDown />}
           </button>
         </div>
       </div>
@@ -818,14 +848,8 @@ function CardIcon({
   onClick?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      className="size-7 rounded-md flex items-center justify-center hover:bg-accent hover:text-foreground transition-colors"
-      aria-label={label}
-    >
-      <Icon className="size-3.5" strokeWidth={2} />
+    <button type="button" onClick={onClick} title={label} className="ib" aria-label={label}>
+      <Icon />
     </button>
   );
 }
@@ -834,50 +858,32 @@ function MessageHeaders({
   message,
   senderLabel,
   senderEmail,
-  outbound,
 }: {
   message: MessageRow;
   senderLabel: string;
   senderEmail: string | null;
-  outbound: boolean;
 }) {
   const toAddrs = toAddrsFromMessage(message);
   const ccAddrs = ccsFromMessage(message);
   // Nothing useful → render nothing rather than an empty row.
   if (!senderEmail && toAddrs.length === 0 && ccAddrs.length === 0) return null;
   return (
-    <div
-      className={cn(
-        "px-4 py-2 text-[11.5px] text-muted-foreground space-y-0.5 border-b",
-        !outbound && "border-emerald-200/60",
-      )}
-    >
+    <div className="msg-hdrs">
       {senderEmail ? (
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-semibold uppercase tracking-wide text-[10px] text-muted-foreground/80 w-7 shrink-0">
-            From
-          </span>
-          <span className="break-all">
-            {senderLabel}
-            {senderEmail ? ` <${senderEmail}>` : ""}
-          </span>
-        </div>
+        <span>
+          <b>From</b> {senderLabel}
+          {senderEmail ? ` <${senderEmail}>` : ""}
+        </span>
       ) : null}
       {toAddrs.length > 0 ? (
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-semibold uppercase tracking-wide text-[10px] text-muted-foreground/80 w-7 shrink-0">
-            To
-          </span>
-          <span className="break-all">{toAddrs.join(", ")}</span>
-        </div>
+        <span>
+          <b>To</b> {toAddrs.join(", ")}
+        </span>
       ) : null}
       {ccAddrs.length > 0 ? (
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-semibold uppercase tracking-wide text-[10px] text-muted-foreground/80 w-7 shrink-0">
-            Cc
-          </span>
-          <span className="break-all">{ccAddrs.join(", ")}</span>
-        </div>
+        <span>
+          <b>Cc</b> {ccAddrs.join(", ")}
+        </span>
       ) : null}
     </div>
   );
@@ -904,15 +910,7 @@ function MessageHeaders({
 // can't be. (Moved to lib/inbox/sanitize-email-html.ts so the
 // portal's read-only conversation sheet can share the same pass.)
 
-function Avatar({ initials, className }: { initials: string; className?: string }) {
-  return (
-    <span
-      className={cn(
-        "size-6 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0",
-        className,
-      )}
-    >
-      {initials}
-    </span>
-  );
+/** The design's `.ava` — green for the lead's side, blue for ours. */
+function Avatar({ initials, side }: { initials: string; side: "in" | "out" }) {
+  return <span className={`ava ${side}`}>{initials}</span>;
 }

@@ -1,0 +1,12 @@
+/*
+ * client-health — this tool's own stylesheet, and nobody else's.
+ *
+ * Every selector here MUST be scoped to this tool's own screens. The reason is
+ * a bug this file exists to prevent: `.mi-list` was used both for a client
+ * link in the Master Inbox rail and for the thread-list container, so the
+ * rail's `display:flex` laid fifty threads out sideways as 52px slivers. One
+ * name, two meanings, and an inbox that looked empty.
+ *
+ * Load order is set in globals.css; this file is imported after the shared
+ * sheets, so it wins ties without needing !important.
+ */

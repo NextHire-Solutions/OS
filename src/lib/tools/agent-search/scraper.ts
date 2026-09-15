@@ -49,6 +49,15 @@ import { baseUrlEnv, optionalEnv } from "@/lib/env";
 
 const SLOW_MS = 180_000;  // login + MLS enumeration across nine accounts
 const FAST_MS = 30_000;
+/*
+ * How long a fire-and-poll call waits for an EARLY answer before reporting
+ * "started". The two handlers this applies to refuse quickly — "No Courted
+ * accounts configured", "A refresh is already running", "No such account" —
+ * and otherwise resolve only when a multi-hour sweep finishes. Twelve seconds
+ * is long enough for every refusal to arrive and short enough that a person
+ * is not left watching a spinner.
+ */
+const START_MS = 12_000;
 
 export interface ScraperReply<T> {
   ok: boolean;
@@ -130,6 +139,83 @@ export async function callScraper<T = unknown>(
   }
 }
 
+/** What a fire-and-poll call returns when the upstream is still working. */
+export interface Started {
+  started: true;
+  pending: true;
+  message: string;
+}
+
+/**
+ * Start a long upstream job and come back before it finishes.
+ *
+ * `POST /api/courted/refresh/run` and `POST /api/courted/mls-monitor/run`
+ * resolve only when the whole sweep is done — `runRefreshOnce` awaits
+ * `runCourted(job)` for an entire account, `runScan` logs into every account
+ * in series. Waiting on that with a timeout and then aborting reported
+ * "failed" for a run that was, in fact, proceeding normally, and the tool's
+ * schedulers recorded its result in Supabase an hour later.
+ *
+ * So: send the request, wait START_MS for an early refusal, and if none
+ * comes report `{ started: true }` with 202. The request is left in flight
+ * rather than aborted — Express does not cancel a handler when its client
+ * goes away, so the sweep continues either way, but leaving the socket open
+ * costs nothing and never surprises the upstream with a reset. The caller
+ * then polls the state the job records (`refresh_state` / `mls_monitor_state`,
+ * via GET courted-state) until it lands.
+ */
+export async function fireScraper<T = unknown>(
+  path: string,
+  body: unknown,
+  message: string,
+): Promise<ScraperReply<T | Started>> {
+  let base: string;
+  try {
+    base = scraperBase();
+  } catch {
+    return {
+      ok: false,
+      status: 503,
+      body: { error: "SCRAPER_URL is not set — Agent Search is not connected." } as T,
+    };
+  }
+
+  const request: Promise<ScraperReply<T>> = fetch(`${base}${path}`, {
+    method: "POST",
+    headers: headers(true),
+    body: JSON.stringify(body ?? {}),
+    cache: "no-store",
+  })
+    .then(async (res) => {
+      const text = await res.text();
+      let parsed: unknown;
+      try {
+        parsed = text ? JSON.parse(text) : {};
+      } catch {
+        parsed = { error: `Agent Search returned a non-JSON response (${res.status}): ${text.slice(0, 300)}` };
+      }
+      return { ok: res.ok, status: res.status, body: parsed as T };
+    })
+    .catch((error: unknown) => ({
+      ok: false,
+      status: 502,
+      body: { error: error instanceof Error ? error.message : "Agent Search is unreachable" } as T,
+    }));
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const early = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), START_MS);
+  });
+
+  const first = await Promise.race([request, early]);
+  clearTimeout(timer);
+  if (first) return first;
+
+  // Still running. The promise is already settled-safe (its catch returns a
+  // reply), so leaving it is not an unhandled rejection waiting to happen.
+  return { ok: true, status: 202, body: { started: true, pending: true, message } };
+}
+
 /** A raw passthrough, for the CSV export — the body is not JSON. */
 export async function streamScraper(path: string): Promise<Response> {
   let base: string;
@@ -187,9 +273,15 @@ export const scraper = {
     "/api/courted/mls-scan", { method: "POST", body: {} }),
   mlsScan: (id: string) => callScraper(`/api/courted/mls-scan/${encodeURIComponent(id)}`),
   stopMlsScan: (id: string) => callScraper(`/api/courted/mls-scan/${encodeURIComponent(id)}/stop`, { method: "POST", body: {} }),
-  runMlsMonitor: () => callScraper("/api/courted/mls-monitor/run", { method: "POST", body: {}, timeoutMs: SLOW_MS }),
+  // Fire-and-poll — see fireScraper. The result lands in mls_monitor_state
+  // (every account's scanned_at moves) and refresh_state (that account's
+  // last_refreshed_at moves); the screens watch GET courted-state for it.
+  runMlsMonitor: () =>
+    fireScraper("/api/courted/mls-monitor/run", {},
+      "Monitor started — it logs into every account in turn. The server baseline updates when it finishes."),
   runRefresh: (email?: string) =>
-    callScraper("/api/courted/refresh/run", { method: "POST", body: email ? { email } : {}, timeoutMs: SLOW_MS }),
+    fireScraper("/api/courted/refresh/run", email ? { email } : {},
+      `Re-scrape started${email ? ` for ${email}` : ""} — a whole-account sweep. Its result is recorded when it finishes.`),
 
   // --- import profile urls (enrichment) ---
   resolveEnrich: (body: unknown) => callScraper("/api/enrich/resolve", { method: "POST", body, timeoutMs: SLOW_MS }),

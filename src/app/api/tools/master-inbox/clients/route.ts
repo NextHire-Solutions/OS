@@ -194,6 +194,9 @@ export async function POST(request: Request) {
     insertRow.feature_flags = {
       manage_stages: true,
       pipeline_kanban_view: true,
+      // pipeline_board_enhanced — per-stage aggregated sales volume in the
+      // board view. Added upstream on 11 Sep 2026; new portals launch with it.
+      pipeline_board_enhanced: true,
     };
   }
   // Widen the returned column set so the caller gets everything

@@ -1,0 +1,401 @@
+/* ===========================================================================
+   The Master Inbox conversation LIST — column proportions.
+
+   ---------------------------------------------------------------------------
+   WHY THIS FILE EXISTS
+
+   `workspace.css` carries the design's row verbatim and `shell.css` carries the
+   shell's amendments to it. Both are shared files this tool does not own, so
+   the inbox's own corrections live here, at a higher specificity, scoped under
+   `.mi-theme` — which is the wrapper `full-inbox.tsx` puts around the screen.
+   Nothing outside the Master Inbox can be reached by anything in this file.
+
+   ---------------------------------------------------------------------------
+   WHAT WAS WRONG
+
+   Measured on /inbox/all-email at a 1512px window, against real data:
+
+       cell      width    content width
+       sndr      165      165
+       chips     284      374      <- sliced by overflow:hidden, mid-word
+       subj      196      196
+       prev       89      647      <- the line people actually read
+       tm         60       60
+
+   Two separate failures, both invisible in the markup:
+
+   1. `.chips` is `overflow:hidden` with a 30% cap, so the cluster was CLIPPED
+      rather than truncated: "Not Inte", "Keep W", "Introduct" — a hard slice
+      with no ellipsis, because the clip happens on the container, not the chip.
+
+   2. `.c-camp` sets `overflow:hidden`, which resolves its `min-width:auto` to
+      ZERO. Under pressure it collapsed to 16px — its own left and right
+      padding — and rendered one character of the campaign name. That is the
+      stray "T"/"D"/"M" sitting in front of every label chip: not a bullet, not
+      an icon, the first letter of "The Keyes Company" in a chip crushed out of
+      existence.
+
+   ---------------------------------------------------------------------------
+   THE FIX
+
+   Every chip gets a `min-width` floor and truncates itself with an ellipsis, so
+   the cluster's clip never has anything to slice. The preview gets a floor of
+   its own and pushes back against the chips instead of being the only cell that
+   yields. Shrink factors order who gives way first: chips, then subject, and
+   the preview not at all.
+
+   ---------------------------------------------------------------------------
+   WHY THE CAMPAIGN CHIP DISAPPEARS ON A NARROW STAGE
+
+   The design's row gets 1228px because the design has no client rail. Here the
+   rail is 218px of it, and four chips of real data — "EMAILBISON", "Douglas
+   Elliman NYC", "Douglas Elliman NYC 2 + Nicole +REBNY", "Unable to
+   Categorize" — do not fit in what is left however they are apportioned. So
+   below the width where it can show something worth reading, the campaign chip
+   is dropped rather than truncated to three letters of a name that begins with
+   the client chip next to it. Widen the window or collapse the rail and it
+   comes back.
+
+   A container query rather than a viewport one, because the two things that
+   change this column's width — the workspace rail collapsing and the client
+   rail hiding itself under 1180px — are not the viewport.
+   =========================================================================== */
+
+.mi-theme .mi-split-main {
+  container-type: inline-size;
+  container-name: mi-main;
+}
+
+/*
+ * The client rail.
+ *
+ * Its width is no longer a stylesheet number. The tool's sidebar is
+ * user-resizable — a drag handle on its right edge, 200–480px, the choice
+ * kept in localStorage under `sales-inbox-sidebar-width` — and
+ * mockup/client-lists.tsx ports that, so the width arrives as an inline style
+ * (the tool's 232px default until the saved value is restored after mount).
+ * The earlier 184px override went with it.
+ *
+ * The rail is also a column now rather than one scroller: the search box has
+ * to stay put above the lists while a long client catalogue scrolls beneath
+ * it, as the tool's sidebar keeps its search above the `overflow-y-auto` nav.
+ * Scoped override of shell.css's `.mi-lists`, which this tool does not own.
+ */
+.mi-theme .mi-lists {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mi-theme .mi-lists-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+ * Under 1180px the rail hides, as shell.css already says — but that rule is
+ * `.mi-lists` alone, and the `display: flex` two rules up out-specifies it.
+ * Left like that, an 1100px window kept a 232px rail beside a 574px
+ * conversation pane, and every row's preview and timestamp ran 35–159px past
+ * the row's right edge. Same breakpoint, restated at this specificity.
+ */
+@media (max-width: 1180px) {
+  .mi-theme .mi-lists { display: none; }
+}
+
+/* The search box — the tool's `listSearch` input, in the design's chrome. */
+.mi-theme .mi-list-search {
+  position: relative;
+  flex: none;
+  margin: 4px 0 8px;
+}
+.mi-theme .mi-list-search svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.mi-theme .mi-list-search input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px 0 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  outline: none;
+}
+.mi-theme .mi-list-search input::placeholder { color: var(--muted); }
+.mi-theme .mi-list-search input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue);
+}
+
+/*
+ * The indicator slot. Fixed width so names align whether the row shows a
+ * status dot or — when the status feed has no answer for that client — the
+ * list's own emoji (`list.icon ?? "📁"`), which is the tool's rule.
+ */
+.mi-theme .mi-list-ind {
+  width: 16px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mi-theme .mi-list-icon { font-size: 14px; line-height: 1; }
+
+/*
+ * The resize grip on the rail's right edge, drawn the way the prospect
+ * panel's is (mi-conversation.css §5): an invisible 11px target that shows a
+ * short blue bar on hover and a solid one while dragging.
+ */
+.mi-theme .mi-lists .mi-lists-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -5px;
+  width: 11px;
+  z-index: 20;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mi-theme .mi-lists .mi-lists-grip::before {
+  content: "";
+  width: 2px;
+  height: 38px;
+  border-radius: 2px;
+  background: var(--blue);
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition: opacity 0.22s var(--sp-smooth, ease), transform 0.3s var(--sp-smooth, ease);
+}
+.mi-theme .mi-lists .mi-lists-grip:hover::before { opacity: 0.5; transform: scaleY(1); }
+.mi-theme .mi-lists .mi-lists-grip.drag::before { opacity: 0.95; transform: scaleY(1); }
+
+/*
+ * In-screen navigation feedback. `.mi-nav-stage` and `.mi-nav-skel` are the
+ * wrappers `InboxNavProvider` (components/master-inbox/inbox-nav.tsx) puts
+ * around the screen and around `InboxSkeleton`; `contents` keeps TopBar,
+ * TabBar and the split as direct flex children of `.mi-theme`, exactly as
+ * they were before the wrapper existed. `hidden` on the stage wins.
+ */
+.mi-theme .mi-nav-stage,
+.mi-theme .mi-nav-skel { display: contents; }
+.mi-theme .mi-nav-stage[hidden] { display: none; }
+
+/* Slightly tighter than the design's 26px/14px, which was drawn for a stage
+   with no client rail beside the conversations. */
+.mi-theme .mi-row {
+  gap: 10px;
+  padding: 0 20px;
+  min-width: 0;
+}
+
+.mi-theme .mi-row .sndr {
+  width: 150px;
+  flex: none;
+}
+
+/* ── The chip cluster ───────────────────────────────────────────────────── */
+.mi-theme .mi-row .chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* Gives way before the subject does, and long before the preview. */
+  flex: 0 6 auto;
+  min-width: 0;
+  max-width: 36%;
+  /* A backstop only. With the rules below the children fit; this is here so a
+     pathological width degrades to a clip rather than to an overlap. */
+  overflow: hidden;
+}
+
+/* Truncation belongs to the chip, not to the cluster around it. */
+.mi-theme .mi-row .chips > .c,
+.mi-theme .mi-row .chips > .lc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The provider is one word at a fixed size and is never worth truncating. */
+.mi-theme .mi-row .chips > .c-inst,
+.mi-theme .mi-row .chips > .c-bison {
+  flex: 0 0 auto;
+}
+
+/*
+ * The label chip does not shrink.
+ *
+ * It is what the entire tab strip filters on and the one chip an operator
+ * scans the column for, so it is the wrong thing to truncate — "Not Inte…"
+ * and "Keep Wa…" were the complaint. 10rem clears the longest label in the
+ * workspace ("No Show / No Response") with room to spare, and `max-width`
+ * rather than a `min-width` floor so that "OOO" stays a small pill instead of
+ * being padded out to a wide one.
+ */
+.mi-theme .mi-row .chips > .lc {
+  /*
+   * `0 1 auto`, not `0 0 auto`.
+   *
+   * Refusing to shrink is right while there is room and wrong when there is
+   * not: at 1280px the cluster is 110px and its four chips want 179px, so the
+   * label simply walked out of its container — 111px past it for "Unable to
+   * Categorize" — and `overflow:hidden` sliced whatever crossed the edge. A
+   * chip that shrinks reaches its own `text-overflow: ellipsis` instead, which
+   * says "there is more here" rather than lying by omission.
+   *
+   * The 3rem floor keeps a shrunken chip readable ("Not…" rather than a bare
+   * ellipsis), and `max-width` still stops "OOO" from being padded into a wide
+   * pill.
+   */
+  flex: 0 1 auto;
+  min-width: 3rem;
+  max-width: 10rem;
+}
+
+
+/* So the cluster's shrink lands here instead. The client is also the rail's
+   own filter and the first half of the campaign chip beside it, so it is the
+   one that can afford to lose characters. */
+.mi-theme .mi-row .chips > .c-client {
+  flex: 0 4 auto;
+  min-width: 5rem;
+  max-width: 9rem;
+}
+
+.mi-theme .mi-row .chips > .c-camp {
+  flex: 0 6 auto;
+  min-width: 7rem;
+  max-width: 11rem;
+}
+
+/* ── Subject and preview ────────────────────────────────────────────────── */
+/*
+ * The design caps the subject at 26%. Real subjects here are near-duplicates
+ * of each other — "Re: Confidential Conversation?" on a quarter of the page —
+ * while the preview is the line that says whether a reply needs opening. So
+ * the subject cedes a few points to it.
+ */
+.mi-theme .mi-row .subj {
+  flex: 0 3 auto;
+  min-width: 0;
+  max-width: 21%;
+}
+
+/*
+ * `flex-basis: 0` with a floor.
+ *
+ * Basis auto would make the preview's 647px of text its starting size and blow
+ * the row apart; basis 0 with no floor is what left it 89px wide. The floor is
+ * what makes the chips and the subject give way instead. 165px is inside the
+ * 147–260px the design's own rows give this cell.
+ */
+.mi-theme .mi-row .prev {
+  flex: 1 1 0;
+  min-width: 165px;
+}
+
+.mi-theme .mi-row .tm {
+  flex: none;
+}
+
+@container mi-main (width < 1180px) {
+  .mi-theme .mi-row .chips > .c-camp { display: none; }
+
+  /*
+   * And the cluster stops shrinking once its own chips no longer fit.
+   *
+   * `min-width: 0` lets a flex item shrink past its contents, which is what
+   * `.chips` was doing: squeezed to 110px while the three chips inside it
+   * needed 179px, so each one overflowed by exactly the same 24px on every
+   * row. Raising `max-width` changed nothing, which was the clue — the cap was
+   * never the binding constraint, the shrink was.
+   *
+   * `min-content` is the width below which the children genuinely do not fit.
+   * The cluster yields to the subject and the preview right up to that point
+   * and no further, so the overflow has nowhere left to come from.
+   */
+  /*
+   * Superseded, and kept only as this note: `min-width: min-content` was
+   * written before the chips learned to shrink to an ellipsis with their own
+   * floors (3rem label, 5rem client). With those floors in place it did the
+   * opposite of its job — a thread in two lists ("Introduction" + "No Show /
+   * No Response") made the cluster demand 478px on a 986px pane and pushed
+   * the preview and timestamp out of the row. The floors are the guarantee
+   * now; the cluster itself gets a little more of the row to hold them.
+   */
+  .mi-theme .mi-row .chips { max-width: 40%; min-width: 272px; }
+}
+
+/* Under ~860px even three chips crowd the preview out; the client is also the
+   rail's own filter, so it is the next to go. */
+@container mi-main (width < 860px) {
+  .mi-theme .mi-row .chips > .c-client { display: none; }
+  /*
+   * The cluster's floor is the sum of its chips' floors — provider (81px) +
+   * two 3rem list chips + gaps — because a floor of 0 let the row crush it
+   * to 72px with 134px of chips inside, and a floor of `min-content` let
+   * nowrap chips demand their full 478px. 272px above includes the 5rem
+   * client chip; here it is hidden, so 192px.
+   */
+  .mi-theme .mi-row .chips { min-width: 192px; }
+}
+
+/*
+ * A row never draws outside itself.
+ *
+ * The rail is user-resizable up to 480px, so the conversation pane can be
+ * squeezed to ~500px on a 1280px window even with everything above in place.
+ * Below 700px the sender and preview give up their fixed floors — 150px and
+ * 165px are the design's figures for a pane twice that wide — and the row
+ * clips as the last resort, so a timestamp is truncated rather than painted
+ * over whatever sits to the right.
+ */
+.mi-theme .mi-row { overflow: hidden; }
+
+/*
+ * Last on purpose. Three container blocks set the cluster's floor (272px,
+ * 192px, 81px); the cascade takes the LAST matching one, and all three match
+ * a 506px pane. With this block above the 860px one, the 192px floor won and
+ * the rail-at-480px layout overflowed by 82px on every row.
+ */
+@container mi-main (width < 700px) {
+  .mi-theme .mi-row .sndr { width: 110px; }
+  .mi-theme .mi-row .prev { min-width: 80px; }
+  .mi-theme .mi-row .chips { min-width: 81px; }
+  .mi-theme .mi-row .subj { max-width: 18%; }
+  /* The list chip is 135px on its own, and the only way this pane gets this
+     narrow is the rail beside it being wide — which already names the list. */
+  .mi-theme .mi-row .chips > .lc { display: none; }
+}
+
+/*
+ * `.no-scrollbar`, which the tool's TabBar puts on its tab strip
+ * ("flex items-stretch gap-0 overflow-x-auto no-scrollbar -mb-px").
+ *
+ * The tool never defines it: it is not in its globals.css and no scrollbar
+ * plugin is among its dependencies, so on a platform with classic (non-
+ * overlay) scrollbars the strip grows by the scrollbar's height and overflows
+ * the 48px header — measured at 63px on production. This is the utility's
+ * conventional definition, so the strip is exactly the header's height on
+ * every platform. Global, not under `.mi-theme`: the strip is the same
+ * component on every inbox screen.
+ */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }

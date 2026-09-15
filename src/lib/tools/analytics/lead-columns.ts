@@ -1,3 +1,4 @@
+import { dayStamp } from "@/lib/workspace/dates";
 import { DASH, fullNumber } from "./format.ts";
 
 /*
@@ -31,12 +32,13 @@ export interface LeadRow {
   leadStatus: string | null;
   status: string;
   stepReached: number | null;
-  sends: number;
+  /** Null when the lead is known contacted but no send row survives (072). */
+  sends: number | null;
   firstSentAt: string | null;
   lastSentAt: string | null;
-  opens: number;
-  uniqueOpens: number;
-  clicks: number;
+  opens: number | null;
+  uniqueOpens: number | null;
+  clicks: number | null;
   replies: number;
   positive: number;
   bounces: number;
@@ -61,8 +63,21 @@ export interface LeadColumnDef {
   sortKey?: string;
 }
 
-const date = (value: string | null) =>
-  value ? new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : DASH;
+/*
+ * THE ONE BEHAVIOURAL FIX IN AN OTHERWISE VERBATIM FILE.
+ *
+ * The tool writes `new Date(value).toLocaleDateString("en-US", { month, day })`
+ * — locale pinned, TIMEZONE NOT. The default is the runtime's own zone, which
+ * is UTC on the server and Eastern in the browser, so a timestamp between
+ * 00:00 and 05:00 UTC renders as two different days on the two sides of
+ * hydration. That is React error #418, and it is the bug `lib/workspace/dates.ts`
+ * exists to stop — its header records three separate occurrences in this repo.
+ *
+ * `dayStamp` is the same "Jun 30" shape with America/New_York pinned, which is
+ * the timezone the business runs on and the one `campaign_leads.first_sent_at`
+ * is bucketed against everywhere else.
+ */
+const date = (value: string | null) => (value ? dayStamp(value) : DASH);
 
 /** The twelve custom variables this workspace actually carries. */
 const ATTRIBUTES: Array<[string, string]> = [

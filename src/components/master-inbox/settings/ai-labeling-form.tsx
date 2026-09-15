@@ -1,14 +1,53 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Play, Eye, EyeOff } from "lucide-react";
-import { Button } from "@/components/mi-ui/button";
-import { Input } from "@/components/mi-ui/input";
-import { Textarea } from "@/components/mi-ui/textarea";
+import { Eye, EyeOff } from "lucide-react";
 import { Switch } from "@/components/mi-ui/switch";
-import { LabelChip } from "@/components/master-inbox/label-chip";
+import { fullStamp } from "@/lib/workspace/dates";
 import type { LabelRow } from "@/lib/tools/master-inbox/inbox/labels-shared";
+import {
+  Btn,
+  Chip,
+  ConfirmButton,
+  Field,
+  IconBtn,
+  Section,
+  ToastHost,
+  ToggleRow,
+} from "./ui";
+
+/*
+ * AI labelling.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT MOVED
+ *
+ * Four Tailwind boxes become four of the design's cards; the switch rows become
+ * the design's recessed groups; the candidate labels become the same chips the
+ * inbox draws, dimmed when off; the progress bar becomes the design's `.track`.
+ * The streaming NDJSON reader, every config field, the model picker's two modes
+ * and the whole run report are the code that was already here.
+ *
+ * ---------------------------------------------------------------------------
+ * THREE FIXES
+ *
+ *   · `Clear` and `Run on historical replies` were guarded by `window.confirm`.
+ *     Both spend real money or destroy a saved secret, so the guard matters —
+ *     but a native modal suspends the page and cannot be driven, which means
+ *     neither control could ever be proven to work. Both are arm-then-fire now,
+ *     carrying the same warning in their titles.
+ *
+ *   · "Last run" was `new Date(...).toLocaleString(...)` written out inline. It
+ *     pinned the zone, so it was not the hydration bug this repo has shipped
+ *     three times — but it was one edit away from being it. It goes through
+ *     `lib/workspace/dates.ts` like every other stamp in the workspace.
+ *
+ *   · The candidate-label chips were `<button>` wrappers with no pressed state,
+ *     so "on" and "off" were conveyed by opacity alone — invisible to a screen
+ *     reader and to a test. They carry `aria-pressed` now, and the stylesheet
+ *     keys the dimming off it.
+ */
 
 interface BackfillReport {
   scanned: number;
@@ -58,19 +97,8 @@ const PROVIDERS = [
 ] as const;
 
 const MODEL_OPTIONS: Record<string, string[]> = {
-  openai: [
-    "gpt-4o-mini",
-    "gpt-4o",
-    "gpt-4.1-mini",
-    "gpt-4.1",
-    "gpt-5-mini",
-    "gpt-5",
-  ],
-  anthropic: [
-    "claude-haiku-4-5-20251001",
-    "claude-sonnet-4-6",
-    "claude-opus-4-7",
-  ],
+  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5"],
+  anthropic: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"],
   openrouter: [
     "openai/gpt-4o-mini",
     "openai/gpt-4o",
@@ -89,7 +117,15 @@ const DEFAULT_MODELS: Record<string, string> = {
   vllm: "meta-llama/Llama-3.1-8B-Instruct",
 };
 
-export function AiLabelingForm({
+export function AiLabelingForm(props: { initial: ServerConfig | null; labels: LabelRow[] }) {
+  return (
+    <ToastHost>
+      <AiLabelingBody {...props} />
+    </ToastHost>
+  );
+}
+
+function AiLabelingBody({
   initial,
   labels,
 }: {
@@ -152,7 +188,6 @@ export function AiLabelingForm({
   }
 
   async function clearKey() {
-    if (!confirm("Clear the saved API key?")) return;
     setError(null);
     setMessage(null);
     const res = await fetch("/api/tools/master-inbox/ai-labeling", {
@@ -169,7 +204,6 @@ export function AiLabelingForm({
   }
 
   async function runBackfill() {
-    if (!confirm("Run AI labeling on every open thread? Uses your API credits.")) return;
     setError(null);
     setMessage(null);
     setRunReport(null);
@@ -223,22 +257,23 @@ export function AiLabelingForm({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-lg border bg-card p-5 space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium">Enable AI labeling</p>
-            <p className="text-xs text-muted-foreground">
-              When a new inbound reply arrives, automatically apply one of your labels.
-            </p>
-          </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
-        </div>
+    <>
+      <Section
+        title="Provider"
+        sub="When a new inbound reply arrives, the model picks one of your labels for it."
+      >
+        <ToggleRow
+          title="Enable AI labelling"
+          hint="Off, replies arrive untagged and wait for a reply manager."
+        >
+          <Switch checked={enabled} aria-label="Enable AI labelling" onCheckedChange={setEnabled} />
+        </ToggleRow>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Provider</label>
+        <div className="mis-g mis-g2" style={{ marginTop: 16 }}>
+          <Field label="Provider">
             <select
+              className="sel"
+              aria-label="Provider"
               value={provider}
               onChange={(e) => {
                 const next = e.target.value as ServerConfig["provider"];
@@ -246,7 +281,6 @@ export function AiLabelingForm({
                 // Bump model to a sensible default for the new provider.
                 setModel(DEFAULT_MODELS[next] ?? "");
               }}
-              className="w-full h-9 rounded-md border bg-background px-3 text-sm"
             >
               {PROVIDERS.map((p) => (
                 <option key={p.value} value={p.value}>
@@ -254,219 +288,213 @@ export function AiLabelingForm({
                 </option>
               ))}
             </select>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Model</label>
-            <ModelPicker
-              provider={provider}
-              value={model}
-              onChange={setModel}
-            />
+          </Field>
+          <div className="mis-f">
+            <span className="mis-l">Model</span>
+            <ModelPicker provider={provider} value={model} onChange={setModel} />
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium">API Key</label>
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Input
-                // Browser password managers were auto-filling this slot
-                // with the user's login password (because of type=password
-                // + the page being inside the app shell). The readOnly-
-                // until-focus trick is the only reliable way to block
-                // that — the autofill heuristic can't target a readonly
-                // field at mount time.
-                type={showKey ? "text" : "password"}
-                name="ai-provider-key"
-                autoComplete="off"
-                aria-autocomplete="none"
-                data-1p-ignore
-                data-lpignore="true"
-                data-form-type="other"
-                readOnly
-                onFocus={(e) => e.currentTarget.removeAttribute("readonly")}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={
-                  initial?.has_api_key ? "•••••••• (saved — leave blank to keep)" : "sk-…"
-                }
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey((v) => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 size-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground"
-                aria-label="Show key"
-              >
-                {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-              </button>
+        <div style={{ marginTop: 16 }}>
+          <Field
+            label="API key"
+            hint="Stored encrypted with pgcrypto. Never sent to the browser after save."
+          >
+            <div className="mis-inline">
+              <div className="mis-reveal">
+                <input
+                  className="inp"
+                  aria-label="AI provider API key"
+                  // Browser password managers were auto-filling this slot with
+                  // the user's login password (because of type=password + the
+                  // page being inside the app shell). The readOnly-until-focus
+                  // trick is the only reliable way to block that — the autofill
+                  // heuristic can't target a readonly field at mount time.
+                  type={showKey ? "text" : "password"}
+                  name="ai-provider-key"
+                  autoComplete="off"
+                  aria-autocomplete="none"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
+                  readOnly
+                  onFocus={(e) => e.currentTarget.removeAttribute("readonly")}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={
+                    initial?.has_api_key ? "•••••••• (saved — leave blank to keep)" : "sk-…"
+                  }
+                />
+                <IconBtn
+                  label={showKey ? "Hide key" : "Show key"}
+                  onClick={() => setShowKey((v) => !v)}
+                >
+                  {showKey ? <EyeOff aria-hidden /> : <Eye aria-hidden />}
+                </IconBtn>
+              </div>
+              {initial?.has_api_key ? (
+                <ConfirmButton
+                  label="Clear"
+                  armedLabel="Confirm clear"
+                  title="Clear the saved API key? Labelling stops until a new one is saved."
+                  disabled={pending}
+                  onConfirm={() => void clearKey()}
+                />
+              ) : null}
             </div>
-            {initial?.has_api_key ? (
-              <Button variant="outline" size="sm" onClick={clearKey} disabled={pending}>
-                Clear
-              </Button>
-            ) : null}
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Stored encrypted with pgcrypto. Never sent to the browser after save.
-          </p>
+          </Field>
         </div>
-      </div>
+      </Section>
 
-      <div className="rounded-lg border bg-card p-5 space-y-4">
-        <p className="text-sm font-medium">Behavior</p>
+      <Section title="Behaviour">
+        <ToggleRow
+          title="Re-label ongoing replies"
+          hint="If a new inbound arrives on a thread that is already AI-labelled, replace the label with the latest classification."
+        >
+          <Switch
+            checked={relabel}
+            aria-label="Re-label ongoing replies"
+            onCheckedChange={setRelabel}
+          />
+        </ToggleRow>
+        <ToggleRow
+          title="Include in historical backfill"
+          hint="When you run on historical replies, include threads created before AI was enabled."
+        >
+          <Switch
+            checked={labelOld}
+            aria-label="Include in historical backfill"
+            onCheckedChange={setLabelOld}
+          />
+        </ToggleRow>
+      </Section>
 
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm">Re-label ongoing replies</p>
-            <p className="text-xs text-muted-foreground">
-              If a new inbound arrives on a thread that's already AI-labeled, replace the label
-              with the latest classification.
-            </p>
-          </div>
-          <Switch checked={relabel} onCheckedChange={setRelabel} />
-        </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm">Include in historical backfill</p>
-            <p className="text-xs text-muted-foreground">
-              When you click "Run on historical replies", include threads created before AI was
-              enabled.
-            </p>
-          </div>
-          <Switch checked={labelOld} onCheckedChange={setLabelOld} />
-        </div>
-      </div>
-
-      <div className="rounded-lg border bg-card p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Candidate labels</p>
-            <p className="text-xs text-muted-foreground">
-              The model will only pick one of the labels you turn ON below.
-              Click any chip to toggle it.
-            </p>
-          </div>
-          <span className="text-xs text-muted-foreground">
+      <Section
+        title="Candidate labels"
+        sub="The model may only pick a label that is turned on. Click a chip to toggle it."
+        action={
+          <span className="mis-count tnum">
             {categorySet.length} / {labels.length} on
           </span>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
+        }
+      >
+        <div className="mis-chips">
           {labels.map((l) => {
             const selected = categorySet.includes(l.name);
             return (
               <button
                 key={l.id}
                 type="button"
+                aria-pressed={selected}
                 onClick={() => toggleCategory(l.name)}
                 title={
                   selected
-                    ? `On — AI may apply "${l.name}"`
-                    : `Off — AI will never apply "${l.name}"`
+                    ? `On — AI may apply “${l.name}”`
+                    : `Off — AI will never apply “${l.name}”`
                 }
-                className={selected ? "" : "opacity-40 hover:opacity-100 transition-opacity"}
               >
-                <LabelChip name={l.name} color={l.color} />
+                <Chip name={l.name} color={l.color} />
               </button>
             );
           })}
         </div>
-        <div className="rounded-md border border-dashed bg-muted/30 p-3 text-[12px] text-muted-foreground space-y-1.5">
-          <p>
-            <span className="font-medium text-foreground">Turned off:</span>{" "}
-            A label that is greyed out above will never be applied by the AI
-            to a new reply. Existing assignments stay on the conversations
-            they&apos;re already on.
-          </p>
-          <p>
-            <span className="font-medium text-foreground">No match:</span>{" "}
-            When the AI can&apos;t confidently pick any of the turned-on
-            labels, the conversation stays untagged and surfaces in the{" "}
-            <span className="font-medium">Open Responses</span> view so a
-            reply manager can categorise it manually.
-          </p>
-        </div>
-      </div>
 
-      <div className="rounded-lg border bg-card p-5 space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium">Custom system prompt</p>
-            <p className="text-xs text-muted-foreground">
-              Override the default classification prompt. Use this to tune classification for your
-              specific industry or rules.
-            </p>
-          </div>
-          <Switch checked={useCustomPrompt} onCheckedChange={setUseCustomPrompt} />
+        <div className="anno" style={{ margin: "16px 0 0", display: "block" }}>
+          <p>
+            <b>Turned off.</b> A dimmed label above is never applied by the AI to a new reply.
+            Existing assignments stay on the conversations they are already on.
+          </p>
+          <p style={{ marginTop: 6 }}>
+            <b>No match.</b> When the AI cannot confidently pick any of the turned-on labels, the
+            conversation stays untagged and surfaces in <b>Open Responses</b> so a reply manager
+            can categorise it by hand.
+          </p>
         </div>
+      </Section>
+
+      <Section
+        title="Custom system prompt"
+        sub="Override the default classification prompt to tune it for your industry or rules."
+      >
+        <ToggleRow title="Use a custom prompt" hint="Off, the built-in triage prompt is used.">
+          <Switch
+            checked={useCustomPrompt}
+            aria-label="Use a custom prompt"
+            onCheckedChange={setUseCustomPrompt}
+          />
+        </ToggleRow>
         {useCustomPrompt ? (
-          <Textarea
+          <textarea
+            className="inp"
+            aria-label="Custom system prompt"
+            style={{ width: "100%", marginTop: 14, minHeight: 160 }}
             value={customPrompt}
             onChange={(e) => setCustomPrompt(e.target.value)}
             rows={8}
-            placeholder="You are a sales-inbox triage classifier..."
+            placeholder="You are a sales-inbox triage classifier…"
           />
         ) : null}
-      </div>
-
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      {message ? <p className="text-sm text-emerald-600">{message}</p> : null}
+      </Section>
 
       {running && progress ? <ProgressBar progress={progress} /> : null}
       {runReport ? <RunReportCard report={runReport} /> : null}
 
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline"
-          onClick={runBackfill}
+      <div className="mis-act">
+        <ConfirmButton
+          label={running ? "Running…" : "Run on historical replies"}
+          armedLabel="Confirm — spend API credits"
+          title="Run AI labelling on every open thread. This uses your API credits."
           disabled={running || pending || !initial?.has_api_key}
-          className="gap-2"
-        >
-          <Play className="size-3.5" />
-          {running ? "Running…" : "Run on historical replies"}
-        </Button>
-        <div className="flex items-center gap-3">
-          {initial?.last_run_at ? (
-            <span className="text-xs text-muted-foreground">
-              Last run {new Date(initial.last_run_at).toLocaleString("en-US", { timeZone: "America/New_York" })}
-            </span>
-          ) : null}
-          <Button onClick={save} disabled={pending} className="gap-2">
-            <Sparkles className="size-3.5" />
-            Save
-          </Button>
-        </div>
+          onConfirm={() => void runBackfill()}
+        />
+        <span className="mis-gap" />
+        {error ? (
+          <span className="mis-err" role="alert">
+            {error}
+          </span>
+        ) : null}
+        {message ? (
+          <span className="mis-ok" role="status">
+            {message}
+          </span>
+        ) : null}
+        {initial?.last_run_at ? (
+          <span className="mis-stamp">Last run {fullStamp(initial.last_run_at)}</span>
+        ) : null}
+        <Btn primary onClick={save} disabled={pending} data-mis="save-ai">
+          Save
+        </Btn>
       </div>
-    </div>
+    </>
   );
 }
 
 function RunReportCard({ report }: { report: BackfillReport }) {
   const skipRows: Array<{ label: string; value: number; hint?: string }> = [
     {
-      label: "Already labeled (and re-label is off)",
+      label: "Already labelled (and re-label is off)",
       value: report.skipped_already_labeled,
-      hint: "Turn on 'Re-label ongoing replies' to overwrite these.",
+      hint: "Turn on “Re-label ongoing replies” to overwrite these.",
     },
     {
       label: "No inbound message on thread",
       value: report.no_inbound,
-      hint: "Thread had only outbound messages — nothing to classify.",
+      hint: "The thread had only outbound messages — nothing to classify.",
     },
     {
       label: "Model returned NONE",
       value: report.skipped_model_returned_none,
-      hint: "Prompt was too strict for the reply or the reply was empty/system noise.",
+      hint: "The prompt was too strict for the reply, or the reply was empty / system noise.",
     },
     {
       label: "Model returned a name not in your labels",
       value: report.skipped_no_match,
-      hint: "Tighten the candidate list or refine the prompt to use exact names.",
+      hint: "Tighten the candidate list, or refine the prompt to use exact names.",
     },
     {
-      label: "AI labeling disabled",
+      label: "AI labelling disabled",
       value: report.skipped_disabled,
-      hint: "Run-on-webhook is off. Backfill ran in force mode anyway, so this should be 0.",
+      hint: "Run-on-webhook is off. The backfill ran in force mode anyway, so this should be 0.",
     },
     { label: "No API key configured", value: report.skipped_no_key },
     { label: "No AI config row", value: report.skipped_no_config },
@@ -475,65 +503,61 @@ function RunReportCard({ report }: { report: BackfillReport }) {
   ].filter((r) => r.value > 0);
 
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">Run report</p>
-        <p className="text-xs text-muted-foreground">
-          {report.labeled} labeled · {report.scanned} scanned
-        </p>
-      </div>
-
-      {report.sample_labels.length > 0 ? (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-1.5">
-            Sample classifications
-          </p>
-          <ul className="text-xs space-y-0.5">
-            {report.sample_labels.map((s) => (
-              <li key={s.thread_id} className="flex items-center gap-2 text-muted-foreground">
-                <span className="font-mono text-[10px] truncate w-32">{s.thread_id}</span>
-                <span className="text-foreground">→ {s.label}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {skipRows.length > 0 ? (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-1.5">
-            Why some weren't labeled
-          </p>
-          <ul className="text-xs space-y-1.5">
-            {skipRows.map((r) => (
-              <li key={r.label} className="flex items-start gap-2">
-                <span className="font-mono text-[11px] bg-muted px-1.5 py-0.5 rounded shrink-0">
-                  {r.value}
-                </span>
-                <div>
-                  <p>{r.label}</p>
-                  {r.hint ? <p className="text-muted-foreground">{r.hint}</p> : null}
+    <Section
+      title="Run report"
+      action={
+        <span className="mis-count tnum">
+          {report.labeled} labelled · {report.scanned} scanned
+        </span>
+      }
+    >
+      <div className="mis-report">
+        {report.sample_labels.length > 0 ? (
+          <div>
+            <div className="mis-l">Sample classifications</div>
+            <div className="mis-report-l">
+              {report.sample_labels.map((s) => (
+                <div key={s.thread_id}>
+                  <span className="mis-mono">{s.thread_id.slice(0, 8)}</span>
+                  <span>→ {s.label}</span>
                 </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+              ))}
+            </div>
+          </div>
+        ) : null}
 
-      {report.sample_errors.length > 0 ? (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-1.5">Sample errors</p>
-          <ul className="text-xs space-y-0.5">
-            {report.sample_errors.map((s, i) => (
-              <li key={i} className="text-red-600">
-                <span className="font-mono text-[10px] mr-2">{s.thread_id.slice(0, 8)}</span>
-                {s.error}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
+        {skipRows.length > 0 ? (
+          <div>
+            <div className="mis-l">Why some were not labelled</div>
+            <div className="mis-report-l">
+              {skipRows.map((r) => (
+                <div key={r.label}>
+                  <span className="mis-num">{r.value}</span>
+                  <div>
+                    <div style={{ color: "var(--ink-2)" }}>{r.label}</div>
+                    {r.hint ? <div className="mut">{r.hint}</div> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {report.sample_errors.length > 0 ? (
+          <div>
+            <div className="mis-l">Sample errors</div>
+            <div className="mis-report-l">
+              {report.sample_errors.map((s, i) => (
+                <div key={i} style={{ color: "var(--red)" }}>
+                  <span className="mis-mono">{s.thread_id.slice(0, 8)}</span>
+                  <span>{s.error}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </Section>
   );
 }
 
@@ -542,38 +566,46 @@ function ProgressBar({ progress }: { progress: BackfillProgress }) {
   const pct = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
   const remaining = Math.max(0, total - scanned);
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-2">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium">
-          Labeling threads… {scanned} / {total}
-        </span>
-        <span className="text-muted-foreground tabular-nums">{pct}%</span>
+    <Section>
+      <div className="mis-prog-h">
+        <b>
+          Labelling threads… <span className="tnum">{scanned}</span> /{" "}
+          <span className="tnum">{total}</span>
+        </b>
+        <span>{pct}%</span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full bg-primary transition-[width] duration-200 ease-out"
-          style={{ width: `${pct}%` }}
-        />
+      {/* The design's own meter — `.track` with a single blue fill. */}
+      <div
+        className="track"
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Backfill progress"
+      >
+        <i style={{ width: `${pct}%` }} />
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground tabular-nums">
+      <div className="mis-prog-f">
         <span>
-          <span className="text-foreground font-medium">{labeled}</span> labeled
+          <b>{labeled}</b> labelled
         </span>
         <span>
-          <span className="text-foreground font-medium">{remaining}</span> remaining
+          <b>{remaining}</b> remaining
         </span>
         {errors > 0 ? (
-          <span className="text-red-600">
-            <span className="font-medium">{errors}</span> errors
+          <span className="mis-bad">
+            <b>{errors}</b> errors
           </span>
         ) : null}
       </div>
-    </div>
+    </Section>
   );
 }
 
-// Two-mode model picker: a dropdown of presets per provider, plus a
-// "Custom…" option that reveals a free-text input for newer/unlisted models.
+/*
+ * Two-mode model picker: a dropdown of presets per provider, plus a "Custom…"
+ * option that reveals a free-text input for newer or unlisted models.
+ */
 function ModelPicker({
   provider,
   value,
@@ -586,32 +618,64 @@ function ModelPicker({
   const presets = MODEL_OPTIONS[provider] ?? [];
   const isCustom = !presets.includes(value);
   const [mode, setMode] = useState<"preset" | "custom">(isCustom ? "custom" : "preset");
+  const box = useRef<HTMLInputElement | null>(null);
+  /*
+   * Focus on the TRANSITION, never on mount.
+   *
+   * This was `autoFocus`, which is subtly wrong here. Unlike the three other
+   * autofocused fields on these panels, this one is NOT dialog-only markup: it
+   * renders on the server whenever the saved model is not a preset for the
+   * saved provider, which is precisely what choosing "Custom…" and saving
+   * leaves behind. So for any workspace running a custom model id, merely
+   * opening this tab yanked the caret into a text box and scrolled the page to
+   * it — every time.
+   *
+   * Choosing "Custom…" should put the caret in the box. Arriving at a page that
+   * happens to have a custom model saved should not.
+   *
+   * (It was also suspected of causing a hydration mismatch, on the reasoning
+   * that React serialises `autoFocus` into the SSR HTML and applies it as a
+   * property on the client. That was checked rather than assumed —
+   * `scripts/settings-probe.mjs --hydration-ai-custom` puts the config into
+   * exactly that state and loads the page — and React 19 does not warn. The
+   * probe stays, because it is the only way to reach this branch from a test.)
+   */
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    if (mode === "custom") box.current?.focus();
+  }, [mode]);
 
   if (mode === "custom") {
     return (
-      <div className="flex items-center gap-2">
-        <Input
+      <div className="mis-inline">
+        <input
+          ref={box}
+          className="inp"
+          aria-label="Custom model id"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="model-id"
-          autoFocus
         />
-        <button
-          type="button"
+        <Btn
           onClick={() => {
             setMode("preset");
             onChange(presets[0] ?? "");
           }}
-          className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
         >
           Use preset
-        </button>
+        </Btn>
       </div>
     );
   }
 
   return (
     <select
+      className="sel"
+      aria-label="Model"
       value={value}
       onChange={(e) => {
         const v = e.target.value;
@@ -622,7 +686,6 @@ function ModelPicker({
           onChange(v);
         }
       }}
-      className="w-full h-9 rounded-md border bg-background px-3 text-sm"
     >
       {presets.map((m) => (
         <option key={m} value={m}>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { ALL_COLUMNS, KEY_COLUMNS, type SourceId } from "@/lib/tools/agent-search/columns";
+import type { CourtedState } from "@/lib/tools/agent-search/courted-state";
 import { cellKind, countLabel } from "@/lib/tools/agent-search/format";
 import type { JobStatus, SourceState } from "./job-store";
 
@@ -73,6 +74,63 @@ export function useStatus(): StatusInfo | null {
     return () => { live = false; };
   }, []);
   return status;
+}
+
+/* ------------------------------------------------------ long-running jobs */
+
+/** A fire-and-poll route's early answer: the upstream refused or finished. */
+export interface FireReply {
+  error?: string;
+  ok?: boolean;
+  message?: string;
+  started?: boolean;
+  pending?: boolean;
+}
+
+/**
+ * Watch GET courted-state until `done` says the job's result has landed.
+ *
+ * The refresh and the monitor resolve upstream only when a multi-hour sweep
+ * finishes, so the workspace's routes answer 202 `{ started }` and the proof
+ * of completion is the row the scheduler writes — `refresh_state` for a
+ * re-scrape, `mls_monitor_state` for the monitor. Fifteen seconds between
+ * looks: the runs take minutes to hours, and the read is a two-table select.
+ * A failed poll is "still running", not an error — the same rule as
+ * `waitForAccounts`. Resolves null when `maxMs` passes with no result.
+ */
+export function pollCourtedState(
+  done: (s: CourtedState) => boolean,
+  opts: { intervalMs?: number; maxMs?: number; onTick?: (elapsedMs: number) => void } = {},
+): Promise<CourtedState | null> {
+  const { intervalMs = 15_000, maxMs = 8 * 60 * 60 * 1000, onTick } = opts;
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    const tick = () => {
+      fetch("/api/tools/agent-search/courted-state", { cache: "no-store", credentials: "same-origin" })
+        .then((r) => r.json())
+        .then((s: CourtedState) => {
+          if (!s.error && done(s)) { resolve(s); return; }
+          again();
+        })
+        .catch(again);
+    };
+    const again = () => {
+      const elapsed = Date.now() - t0;
+      if (elapsed >= maxMs) { resolve(null); return; }
+      onTick?.(elapsed);
+      setTimeout(tick, intervalMs);
+    };
+    setTimeout(tick, intervalMs);
+  });
+}
+
+/** "4 min", "1 h 12 min" — for a "still running" line. */
+export function elapsedLabel(ms: number): string {
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return "under a minute";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  return `${h} h ${mins % 60} min`;
 }
 
 /*
@@ -204,28 +262,46 @@ export const SOURCE_LABEL: Record<SourceId, string> = {
  * would show 0 for an hour. That is `countLabel`, ported from app.js.
  */
 export function ResultPanel(
-  { source, state, columns, onExport }:
-  { source: SourceId; state: SourceState; columns: readonly string[]; onExport?: () => void },
+  { source, state, columns, onExport, dim }:
+  {
+    source: SourceId; state: SourceState; columns: readonly string[];
+    onExport?: () => void;
+    /**
+     * Fade this panel back.
+     *
+     * The tool dims a source that is not in the current run rather than hiding
+     * it, so the layout does not jump when a run starts. Left to
+     * `state.active` this was true for all three panels until someone pressed
+     * Search — an opening screen where every panel looked switched off. The
+     * caller decides now: the toggles at rest, the run once there is one.
+     */
+    dim?: boolean;
+  },
 ) {
   const count = countLabel(state.rows.length, state.serverCount, state.total);
+  const hasRows = state.rows.length > 0;
   return (
     <div
-      className={`as-res ${TONE[source]}`}
-      style={{ opacity: state.active ? 1 : 0.4, transition: "opacity .18s" }}
+      className={`as-res ${TONE[source]}${dim ? " as-dim" : ""}${hasRows ? " as-has-rows" : ""}`}
     >
       <div className="as-res-h">
         <h3>{SOURCE_LABEL[source]}</h3>
         <StatusPill status={state.status} />
         <span className="as-cnt tnum">{count}</span>
-        {onExport ? (
-          <button
-            className="as-btn ghost" onClick={onExport}
-            disabled={state.rows.length === 0}
-            style={state.rows.length === 0 ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
-          >
-            Export CSV
-          </button>
-        ) : null}
+        {/*
+          Always rendered, disabled until there is something to export — the
+          design shows this button on every panel. Building it only once a job
+          existed meant the panel headers silently changed shape the moment a
+          search started, and there was no affordance beforehand to say an
+          export was ever going to be possible.
+        */}
+        <button
+          className="as-btn ghost" onClick={onExport}
+          disabled={!onExport || !hasRows}
+          title={hasRows ? "Download these rows as CSV" : "Nothing to export yet"}
+        >
+          Export CSV
+        </button>
       </div>
       {state.message ? (
         <div style={{

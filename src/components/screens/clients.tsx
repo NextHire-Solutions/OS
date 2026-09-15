@@ -1,8 +1,14 @@
 "use client";
 
+import { useState } from "react";
+
 import type { ClientsOverview, ClientRow } from "@/lib/clients/overview";
+import { CLIENT_STATUSES, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
 
 import { Lazy, PlaceholderScreen } from "./lazy";
+import { OnboardClient } from "./clients-onboard";
+import { DeleteClient } from "./clients-delete";
+import { EditClient } from "./clients-edit";
 import { dateStamp } from "@/lib/workspace/dates";
 
 /*
@@ -24,14 +30,17 @@ const PLAN_CLASS: Record<string, string> = {
   partner: "plan-partner",
 };
 
-function ClientsView({ data }: { data: ClientsOverview }) {
+function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: () => void }) {
   const present = (fn: (r: ClientRow) => boolean) => data.rows.filter(fn).length;
 
   return (
     <>
-      <div className="hero">
-        <h1>Clients</h1>
-        <p>{data.rows.length} clients · what each tool knows about them</p>
+      <div className="hero" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <h1>Clients</h1>
+          <p>{data.rows.length} clients · what each tool knows about them</p>
+        </div>
+        <OnboardClient />
       </div>
 
       <div className="wrap">
@@ -57,6 +66,18 @@ function ClientsView({ data }: { data: ClientsOverview }) {
           />
         </div>
 
+        {/*
+          Says which list is on screen. The roster fallback renders an identical
+          table, so without this a database outage would look like a normal day
+          — and every status change would silently fail to save.
+        */}
+        {data.sourceNote ? (
+          <p style={note}>
+            <b>Showing the code roster.</b> {data.sourceNote}. Status changes cannot be
+            saved until the stored list is available.
+          </p>
+        ) : null}
+
         <div className="tbl-wrap">
           <div className="tbl-head">
             <div>
@@ -74,16 +95,24 @@ function ClientsView({ data }: { data: ClientsOverview }) {
                   <th>Client</th>
                   <th>Plan</th>
                   <th>Status</th>
+                  <th>Onboarding</th>
                   <th>Weekly target</th>
                   <th>Introductions</th>
                   <th>Last intro</th>
                   <th>Campaigns</th>
                   <th>Sent</th>
+                  <th>Portal</th>
+                  <th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
                 {data.rows.map((row) => (
-                  <Row key={row.client.name} row={row} />
+                  <Row
+                    key={row.client.name}
+                    row={row}
+                    editable={data.source === "os_clients"}
+                    onChanged={onChanged}
+                  />
                 ))}
               </tbody>
             </table>
@@ -138,8 +167,8 @@ const note: React.CSSProperties = {
   maxWidth: "90ch",
 };
 
-function Row({ row }: { row: ClientRow }) {
-  const { client, health, inbox, analytics } = row;
+function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; onChanged: () => void }) {
+  const { client, health, inbox, analytics, os, portalUrl } = row;
   return (
     <tr>
       <td><div className="cname">{client.name}</div></td>
@@ -154,14 +183,26 @@ function Row({ row }: { row: ClientRow }) {
         )}
       </td>
 
+      {/*
+        The status the BUSINESS set, not the one Client Health derives. They can
+        disagree — a client paused in the OS may still be active there — and the
+        disagreement is worth seeing, so it is marked rather than hidden or
+        silently overwritten.
+      */}
       <td>
-        {health.status ? (
-          <span className={`badge ${health.status === "active" ? "s-done" : "s-pending"}`}>
-            <span className="dot" />
-            {health.status.charAt(0).toUpperCase() + health.status.slice(1)}
-          </span>
+        <StatusCell
+          id={os.id}
+          status={os.status}
+          editable={editable}
+          healthStatus={health.status}
+        />
+      </td>
+
+      <td>
+        {os.inOnboarding ? (
+          <span className="badge s-done"><span className="dot" />In pipeline</span>
         ) : (
-          <span className="api-none">—</span>
+          <span className="api-none" title="No row in the Onboarding tool. Not a problem — only clients that came through intake have one.">—</span>
         )}
       </td>
 
@@ -186,7 +227,163 @@ function Row({ row }: { row: ClientRow }) {
       </td>
 
       <td>{analytics.sent === null ? <span className="api-none">—</span> : <span className="tnum">{analytics.sent.toLocaleString("en-US")}</span>}</td>
+
+      {/*
+        The portal link. Opens in a new tab because it is a DIFFERENT product —
+        a login-free client-facing page on another host — and losing the roster
+        to navigate there is not what anyone means by clicking it.
+      */}
+      <td>
+        {portalUrl ? (
+          <a
+            href={portalUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mut"
+            style={{ fontSize: 12, color: "var(--blue)", whiteSpace: "nowrap" }}
+            title={portalUrl}
+          >
+            Open ↗
+          </a>
+        ) : (
+          <span className="api-none" title="This client has no portal. Onboarding creates one; a client adopted from another tool may not have.">—</span>
+        )}
+      </td>
+
+      {/*
+        The row action. Deliberately last, unlabelled and quiet: it is the one
+        irreversible control on the screen, and it must not sit where a cursor
+        lands by accident. Only available once the client has a stored record —
+        there is nothing to remove otherwise.
+      */}
+      <td style={{ textAlign: "right" }}>
+        {editable && os.id ? (
+          <span style={{ display: "inline-flex", gap: 2, alignItems: "center" }}>
+            <EditClient
+              client={{
+                id: os.id,
+                name: client.name,
+                aliases: client.aliases ?? [],
+                status: os.status,
+                plan: health.plan,
+                weeklyTarget: health.weeklyTarget,
+              }}
+              onSaved={onChanged}
+            />
+            <DeleteClient id={os.id} name={client.name} onDeleted={onChanged} />
+          </span>
+        ) : null}
+      </td>
     </tr>
+  );
+}
+
+/*
+ * The status cell, editable in place.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A SELECT AND NOT A MENU OF ACTIONS
+ *
+ * Because every value is reachable from every other one. A client marked
+ * churned in error must be as easy to set back to active as it was to change —
+ * there is no delete anywhere in this feature, and status is the only thing
+ * that moves, so it is a field rather than a decision.
+ *
+ * Saving is optimistic: the new value paints immediately and reverts if the
+ * write fails. A cell that sat on "saving…" would invite a second click, and
+ * the second click is how someone changes a status twice by accident.
+ *
+ * Changing this does NOT pause billing, disable a portal or stop a campaign.
+ * It records what the business says. Those remain deliberate acts in the tools
+ * that own them, which is why nothing here contacts a tool.
+ */
+function StatusCell({
+  id,
+  status,
+  editable,
+  healthStatus,
+}: {
+  id: string | null;
+  status: ClientStatus;
+  editable: boolean;
+  healthStatus: string | null;
+}) {
+  const [value, setValue] = useState<ClientStatus>(status);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState("");
+
+  async function change(next: ClientStatus) {
+    if (!id || next === value) return;
+    const previous = value;
+    setValue(next);
+    setSaving(true);
+    setFailed("");
+    try {
+      const res = await fetch("/api/workspace/clients/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: next }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      // Put it back. Showing the new value after a failed write would be a
+      // lie that survives until the next reload.
+      setValue(previous);
+      setFailed(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editable || !id) {
+    return (
+      <span className={`badge ${value === "active" ? "s-done" : "s-pending"}`}>
+        <span className="dot" />
+        {statusLabel(value)}
+      </span>
+    );
+  }
+
+  /*
+   * Client Health derives its own status from its own flags. When the two
+   * disagree that is worth seeing — it usually means someone paused a client
+   * in one place and not the other — so it is noted beside the field rather
+   * than resolved by guessing which is right.
+   */
+  const disagrees = healthStatus && healthStatus !== value;
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <select
+        className="inp"
+        value={value}
+        disabled={saving}
+        aria-label="Client status"
+        style={{
+          padding: "3px 6px", fontSize: 12.5, minWidth: 96,
+          opacity: saving ? 0.6 : 1,
+          borderColor: value === "active" ? undefined : "var(--yellow)",
+        }}
+        onChange={(e) => void change(e.target.value as ClientStatus)}
+      >
+        {CLIENT_STATUSES.map((s) => (
+          <option key={s} value={s}>{statusLabel(s)}</option>
+        ))}
+      </select>
+      {disagrees ? (
+        <span
+          className="mut"
+          style={{ fontSize: 11 }}
+          title={`Client Health has this client as "${healthStatus}". Neither is changed by the other.`}
+        >
+          CH: {healthStatus}
+        </span>
+      ) : null}
+      {failed ? <span style={{ fontSize: 11, color: "var(--red)" }} title={failed}>not saved</span> : null}
+    </span>
   );
 }
 
@@ -229,7 +426,12 @@ export function ClientsScreen({ initial }: { initial: ClientsOverview | null }) 
       label="The client roster"
       skeleton={<PlaceholderScreen cards={4} />}
     >
-      {(d) => <ClientsView data={d} />}
+      {/*
+        A delete or an onboard changes the list, so the screen re-reads rather
+        than patching its own copy — the table shows what each TOOL holds, and
+        only a refetch can know that.
+      */}
+      {(d) => <ClientsView data={d} onChanged={() => window.location.reload()} />}
     </Lazy>
   );
 }

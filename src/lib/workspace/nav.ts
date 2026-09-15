@@ -78,8 +78,18 @@ export const NAV: NavSection[] = [
         children: [
           { id: "all-email", label: "All Email", path: "/inbox/all-email", verified: true, badgeKey: "inbox-unread" },
           { id: "reminders", label: "Reminders", path: "/reminders", verified: true, badgeKey: "reminders" },
-          { id: "leads", label: "Leads", path: "/leads", verified: true },
+          /*
+           * Leads was removed at the user's request: the workspace's own
+           * Clients page is the roster now, and the tool's Leads view listed
+           * the same people from Master Inbox's side of the fence. Its route
+           * still resolves — an old bookmark degrades to All Email rather
+           * than 404ing — it simply is not offered in the rail.
+           */
           { id: "archive", label: "Archive", path: "/inbox/archive", verified: true },
+          // Trash is the third folder in the tool's sidebar (Reminders, Archive,
+          // Trash). Without this entry a trashed conversation could only be
+          // found, restored or purged by typing the URL.
+          { id: "trash", label: "Trash", path: "/inbox/trash", verified: true },
           // The MASTER portal list — the admin table of which clients have a
           // portal. The individual client portals it links to live on
           // portal.brokerstaffer.com and are deliberately outside the
@@ -119,12 +129,14 @@ export const NAV: NavSection[] = [
         baseUrlEnv: "ANALYTICS_URL",
         children: [
           { id: "campaign", label: "Campaign", path: "/analytics/campaign", verified: true },
+          // Email volume — the tool's second tab; a whole page the workspace never had.
+          { id: "volume", label: "Volume", path: "/analytics/volume", verified: true },
           { id: "infrastructure", label: "Infrastructure", path: "/analytics/infrastructure", verified: true },
           { id: "attribution", label: "Attribution", path: "/analytics/attribution", verified: true },
           { id: "copy", label: "Copy & Offer", path: "/analytics/copy-offer", verified: true },
-          { id: "campaigns", label: "Campaigns", path: "/campaigns", verified: true },
-          { id: "schedule", label: "Schedule", path: "/schedule", verified: true },
-          { id: "clients", label: "Clients", path: "/clients", verified: true },
+          { id: "campaigns", label: "Campaigns", path: "/analytics/campaigns", verified: true },
+          { id: "schedule", label: "Schedule", path: "/analytics/schedule", verified: true },
+          { id: "clients", label: "Clients", path: "/analytics/clients", verified: true },
         ],
       },
       {
@@ -149,10 +161,10 @@ export const NAV: NavSection[] = [
           // items, which needs anchors the app does not have yet — so these are
           // unverified on purpose and every one lands on the same page for now.
           { id: "search", label: "Search", path: "/", verified: true },
-          { id: "master", label: "Master List", path: "/#master", verified: false },
-          { id: "accounts", label: "Courted accounts", path: "/#accounts", verified: false },
-          { id: "mls", label: "MLS monitor", path: "/#mls", verified: false },
-          { id: "import", label: "Import Profile URLs", path: "/#import", verified: false },
+          { id: "master", label: "Master List", path: "/", verified: true },
+          { id: "accounts", label: "Courted accounts", path: "/", verified: true },
+          { id: "mls", label: "MLS monitor", path: "/", verified: true },
+          { id: "import", label: "Import Profile URLs", path: "/", verified: true },
         ],
       },
     ],
@@ -247,6 +259,7 @@ const PAGE_PATH: Record<string, string> = {
   performance: "/performance",
   roster: "/roster",
   "team-access": "/team",
+  account: "/account",
 };
 
 /** The address for a destination id. */
@@ -269,6 +282,9 @@ export function idForPath(pathname: string): string {
   if (segments.length === 0) return "home";
 
   const [first, second] = segments;
+  // The rail files Team access under "Admin", and the audit and timing
+  // harnesses address it as /admin/team — a refresh there rendered Home.
+  if (first === "admin" && (second === "team" || second === undefined)) return "team-access";
 
   for (const [id, path] of Object.entries(PAGE_PATH)) {
     if (path === `/${first}`) return id;
@@ -283,6 +299,12 @@ export function idForPath(pathname: string): string {
   if (!second) return `${tool}:${product.children[0]?.id ?? ""}`;
   // An unrecognised leaf opens the product's first screen rather than a blank
   // pane — a stale link should degrade to something useful.
-  const leaf = product.children.find((c) => c.id === second);
+  const leaf = product.children.find(
+      // The id is the workspace's own segment; the declared `path` is the
+      // tool's. Accepting both means a link copied from the deployed tool
+      // (/analytics/copy-offer) lands on the same screen as /analytics/copy
+      // instead of falling through to the product's first child.
+      (c) => c.id === second || c.path === `/${tool}/${second}`,
+    );
   return `${tool}:${leaf?.id ?? product.children[0]?.id ?? ""}`;
 }

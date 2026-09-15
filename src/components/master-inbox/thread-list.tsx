@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { InboxLink } from "@/components/master-inbox/inbox-nav";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Mail, Paperclip, ChevronLeft, ChevronRight } from "lucide-react";
 import { Checkbox } from "@/components/mi-ui/checkbox";
@@ -154,7 +154,7 @@ export function ThreadList({
             const unread = !isSeen(t);
             return (
               <li key={t.id} className="border-b">
-                <Link
+                <InboxLink
                   href={href}
                   onClick={onLinkClick}
                   className={cn(
@@ -230,7 +230,7 @@ export function ThreadList({
                       ) : null}
                     </div>
                   </div>
-                </Link>
+                </InboxLink>
               </li>
             );
           })}
@@ -293,7 +293,7 @@ export function ThreadList({
                   onCheckedChange={() => toggle(t.id)}
                 />
               </div>
-              <Link
+              <InboxLink
                 href={threadHref(t.id)}
                 onClick={() => markOpened(t.id)}
                 className="flex items-center gap-3 flex-1 min-w-0"
@@ -332,7 +332,7 @@ export function ThreadList({
                 <div className="shrink-0 text-xs text-muted-foreground tabular-nums">
                   <RelativeTime iso={t.last_message_at} />
                 </div>
-              </Link>
+              </InboxLink>
             </li>
           ))}
         </ul>
@@ -495,7 +495,7 @@ function PaginationControls({
       <span className={cn("text-xs text-muted-foreground tabular-nums mr-1", compact && "text-[11px]")}>
         Page {cur} / {totalPages}
       </span>
-      <Link
+      <InboxLink
         href={prevDisabled ? "#" : href(cur - 1)}
         aria-label="Previous page"
         aria-disabled={prevDisabled}
@@ -507,8 +507,8 @@ function PaginationControls({
         )}
       >
         <ChevronLeft className="size-3.5" />
-      </Link>
-      <Link
+      </InboxLink>
+      <InboxLink
         href={nextDisabled ? "#" : href(cur + 1)}
         aria-label="Next page"
         aria-disabled={nextDisabled}
@@ -520,7 +520,7 @@ function PaginationControls({
         )}
       >
         <ChevronRight className="size-3.5" />
-      </Link>
+      </InboxLink>
     </div>
   );
 }

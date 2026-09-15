@@ -7,6 +7,7 @@ import { licenseKey, normEmail, normLicense, normPhone, validEmail, validPhone10
 import { buildMaster } from "./merge.ts";
 import { detectSource, enrichCost, extractUrls, normalizeUrl, parseCsvGrid, parseDataset, summarize, toCsvExportUrl } from "./sheet-source.ts";
 import { diffAccount, indexScan, type ScannedAccount } from "./baseline.ts";
+import { mergeAccounts } from "./courted-accounts.ts";
 import {
   buildEnrichPayload, buildSearchPayload, buildSweepPayload,
   type EnrichPayload, type SearchForm, type SearchPayload,
@@ -626,4 +627,48 @@ test("an enrichment payload carries the sheet, the csv and the concurrency", () 
     csv: "",
     concurrency: 4,
   });
+});
+
+/* ========================================================================= */
+/* courted accounts — the union of the two scheduler tables                  */
+/* ========================================================================= */
+
+test("an account seen only by the refresh scheduler is still listed", () => {
+  const now = Date.parse("2026-09-15T12:00:00Z");
+  const accounts = mergeAccounts(
+    [{ email: "A@x.com", total: 10, mls: [{ code: "M1", name: "One", count: 10 }], scanned_at: "2026-09-14T00:00:00Z" }],
+    [
+      { email: "a@x.com", last_refreshed_at: "2026-09-10T00:00:00Z", last_status: "ok", last_message: "done" },
+      { email: "new@x.com", last_refreshed_at: "2026-09-15T00:00:00Z", last_status: "error", last_message: "login failed" },
+    ],
+    now,
+  );
+  assert.deepEqual(accounts.map((a) => a.email).sort(), ["a@x.com", "new@x.com"]);
+  const fresh = accounts.find((a) => a.email === "new@x.com")!;
+  assert.equal(fresh.scannedAt, null);
+  assert.equal(fresh.total, null);
+  assert.deepEqual(fresh.mls, []);
+  assert.equal(fresh.lastStatus, "error");
+  // The monitor's row and the refresh row for the same login are joined by
+  // lower-cased email.
+  const joined = accounts.find((a) => a.email === "a@x.com")!;
+  assert.equal(joined.total, 10);
+  assert.equal(joined.daysSinceRefresh, 5);
+  assert.equal(joined.overdue, false);
+});
+
+test("an account seen only by the monitor is overdue and sorts first", () => {
+  const now = Date.parse("2026-09-15T12:00:00Z");
+  const accounts = mergeAccounts(
+    [
+      { email: "never@x.com", total: 1, mls: [], scanned_at: "2026-09-14T00:00:00Z" },
+      { email: "old@x.com", total: 1, mls: [], scanned_at: "2026-09-14T00:00:00Z" },
+    ],
+    [{ email: "old@x.com", last_refreshed_at: "2026-08-01T00:00:00Z", last_status: "ok", last_message: "" }],
+    now,
+  );
+  assert.deepEqual(accounts.map((a) => a.email), ["never@x.com", "old@x.com"]);
+  assert.equal(accounts[0].overdue, true);
+  assert.equal(accounts[0].daysSinceRefresh, null);
+  assert.equal(accounts[1].overdue, true);
 });

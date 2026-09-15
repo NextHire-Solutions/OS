@@ -17,7 +17,6 @@ import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import Placeholder from "@tiptap/extension-placeholder";
-import { cn } from "@/lib/tools/master-inbox/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,16 +26,31 @@ import {
 import { TEMPLATE_VARIABLES } from "@/lib/tools/master-inbox/inbox/template-variables";
 import { LinkDialog } from "@/components/master-inbox/link-dialog";
 
-// Rich text editor for reply templates. Outputs HTML (for body_html)
-// and exposes the plain-text projection (for the legacy `body`
-// column) via getText() on the editor instance.
-//
-// Toolbar: Insert variable, paragraph/H2, bold/italic/underline/
-// strikethrough, bulleted + numbered list, link, plus the variables
-// dropdown that wraps the picked token as {{key}} at the caret. We
-// deliberately avoid font-family / size controls — the recipient's
-// mail client strips those anyway and they were the riskiest part of
-// the mockup (per-mail-client rendering differences).
+/*
+ * Rich text editor for reply templates. Outputs HTML (for body_html) and
+ * exposes the plain-text projection (for the legacy `body` column) via
+ * getText() on the editor instance.
+ *
+ * Toolbar: Insert variable, H2, bold/italic/underline/strikethrough, bulleted
+ * and numbered list, link, plus the variables dropdown that wraps the picked
+ * token as {{key}} at the caret. Font family and size are deliberately absent —
+ * the recipient's mail client strips those anyway.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT CHANGED IN THE REBUILD
+ *
+ * Nothing about the editor. Every extension, every command and every toolbar
+ * item is the same; the plain-text collapse of TipTap's triple newlines is the
+ * same.
+ *
+ * What changed is that the chrome is no longer Tailwind. The editing surface
+ * used to carry a 33-class `editorProps.attributes.class` string — including
+ * the block styles for headings, lists and links — which meant a template body
+ * rendered in the tool's typography inside a workspace that uses the design's.
+ * Those block styles now live in `mi-settings.css` under `.mis-ed .tiptap`, at
+ * the same 14px / 1.65 the design gives a message body, so what you type looks
+ * like what the conversation view will show.
+ */
 
 export function TemplateRichEditor({
   valueHtml,
@@ -66,10 +80,27 @@ export function TemplateRichEditor({
     // suppressContentEditableWarning: avoid React's warning on TipTap's
     // contenteditable root (false here = silenced).
     immediatelyRender: false,
+    /*
+     * The toolbar's pressed states DID NOT WORK before this line, and it took
+     * driving them in a browser to notice.
+     *
+     * `@tiptap/react` v3 defaults `shouldRerenderOnTransaction` to false — it
+     * is a real performance decision for a big document — but every one of the
+     * eight toolbar buttons below asks `editor.isActive(...)` during render.
+     * With no re-render on a transaction, that answer was computed once when
+     * the editor mounted and never again: Bold never lit up, and neither did
+     * the heading, the lists or the link. The tool's markup had the same
+     * problem, so nobody had ever seen this toolbar show its own state.
+     *
+     * A reply template is a few hundred words, so the re-render is cheap and
+     * it is the whole point of having a toolbar.
+     */
+    shouldRerenderOnTransaction: true,
     editorProps: {
       attributes: {
-        class:
-          "tiptap min-h-[260px] max-h-[420px] overflow-y-auto px-3 py-2 text-sm focus:outline-none [&_p]:my-1 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-blue-600 [&_a]:underline",
+        // Just the hook. The look is `.mis-ed .tiptap` in mi-settings.css.
+        class: "tiptap",
+        "aria-label": "Template body",
       },
     },
     onUpdate: ({ editor }) => {
@@ -101,14 +132,14 @@ export function TemplateRichEditor({
 
   if (!editor) {
     return (
-      <div className="rounded-md border bg-background min-h-[260px] flex items-center justify-center text-xs text-muted-foreground">
-        Loading editor…
+      <div className="mis-ed">
+        <div className="mis-ed-load">Loading editor…</div>
       </div>
     );
   }
 
   return (
-    <div className="rounded-md border bg-background flex flex-col">
+    <div className="mis-ed">
       <Toolbar editor={editor} />
       <EditorContent editor={editor} />
     </div>
@@ -127,8 +158,7 @@ function Toolbar({ editor }: { editor: Editor }) {
     const { state } = editor;
     const { from, to } = state.selection;
     const selectedText = state.doc.textBetween(from, to);
-    const existingUrl =
-      (editor.getAttributes("link").href as string | undefined) ?? "";
+    const existingUrl = (editor.getAttributes("link").href as string | undefined) ?? "";
     setLinkInitialText(selectedText);
     setLinkInitialUrl(existingUrl);
     setLinkOpen(true);
@@ -139,23 +169,14 @@ function Toolbar({ editor }: { editor: Editor }) {
     const { from, to } = state.selection;
     const selectedText = state.doc.textBetween(from, to);
     if (isEditingLink || (selectedText && text === selectedText)) {
-      editor
-        .chain()
-        .focus()
-        .extendMarkRange("link")
-        .setLink({ href: url })
-        .run();
+      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
     } else {
       const safeText = text
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
       const safeUrl = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-      editor
-        .chain()
-        .focus()
-        .insertContent(`<a href="${safeUrl}">${safeText}</a>`)
-        .run();
+      editor.chain().focus().insertContent(`<a href="${safeUrl}">${safeText}</a>`).run();
     }
   }
 
@@ -168,29 +189,28 @@ function Toolbar({ editor }: { editor: Editor }) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-0.5 border-b bg-muted/40 px-2 py-1.5">
+    <div className="mis-ed-t" role="toolbar" aria-label="Formatting">
       {/* Insert variable */}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <button
-              type="button"
-              className="h-7 px-2 inline-flex items-center gap-1 rounded text-[12px] font-medium text-foreground/80 hover:bg-accent transition-colors"
-              title="Insert variable"
-            >
-              Insert variable <ChevronDown className="size-3" />
+            <button type="button" className="mis-ed-v" title="Insert variable">
+              Insert variable <ChevronDown aria-hidden />
             </button>
           }
         />
-        <DropdownMenuContent align="start" className="w-64 max-h-72 overflow-y-auto">
+        <DropdownMenuContent
+          align="start"
+          style={{ width: 268, maxHeight: 300, overflowY: "auto" }}
+        >
           {TEMPLATE_VARIABLES.map((v) => (
             <DropdownMenuItem
               key={v.key}
               onClick={() => insertVariable(v.key)}
-              className="flex flex-col items-start gap-0"
+              className="mis-var"
             >
-              <span className="text-[13px]">{v.label}</span>
-              <code className="font-mono text-[11px] text-muted-foreground">{`{{${v.key}}}`}</code>
+              <span>{v.label}</span>
+              <code>{`{{${v.key}}}`}</code>
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
@@ -204,7 +224,7 @@ function Toolbar({ editor }: { editor: Editor }) {
         onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
         title="Heading"
       >
-        <Heading2 className="size-3.5" />
+        <Heading2 aria-hidden />
       </ToolbarButton>
 
       <Sep />
@@ -215,28 +235,28 @@ function Toolbar({ editor }: { editor: Editor }) {
         onClick={() => editor.chain().focus().toggleBold().run()}
         title="Bold (⌘B)"
       >
-        <Bold className="size-3.5" />
+        <Bold aria-hidden />
       </ToolbarButton>
       <ToolbarButton
         active={isActive("italic")}
         onClick={() => editor.chain().focus().toggleItalic().run()}
         title="Italic (⌘I)"
       >
-        <Italic className="size-3.5" />
+        <Italic aria-hidden />
       </ToolbarButton>
       <ToolbarButton
         active={isActive("underline")}
         onClick={() => editor.chain().focus().toggleUnderline().run()}
         title="Underline (⌘U)"
       >
-        <UnderlineIcon className="size-3.5" />
+        <UnderlineIcon aria-hidden />
       </ToolbarButton>
       <ToolbarButton
         active={isActive("strike")}
         onClick={() => editor.chain().focus().toggleStrike().run()}
         title="Strikethrough"
       >
-        <Strikethrough className="size-3.5" />
+        <Strikethrough aria-hidden />
       </ToolbarButton>
 
       <Sep />
@@ -247,25 +267,21 @@ function Toolbar({ editor }: { editor: Editor }) {
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         title="Bulleted list"
       >
-        <List className="size-3.5" />
+        <List aria-hidden />
       </ToolbarButton>
       <ToolbarButton
         active={isActive("orderedList")}
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
         title="Numbered list"
       >
-        <ListOrdered className="size-3.5" />
+        <ListOrdered aria-hidden />
       </ToolbarButton>
 
       <Sep />
 
       {/* Link */}
-      <ToolbarButton
-        active={isActive("link")}
-        onClick={openLinkDialog}
-        title="Add / edit link"
-      >
-        <LinkIcon className="size-3.5" />
+      <ToolbarButton active={isActive("link")} onClick={openLinkDialog} title="Add / edit link">
+        <LinkIcon aria-hidden />
       </ToolbarButton>
       <LinkDialog
         open={linkOpen}
@@ -295,10 +311,14 @@ function ToolbarButton({
       type="button"
       onClick={onClick}
       title={title}
-      className={cn(
-        "h-7 w-7 inline-flex items-center justify-center rounded text-foreground/70 hover:bg-accent transition-colors",
-        active && "bg-accent text-foreground",
-      )}
+      /*
+       * `aria-pressed` rather than a class: it is the state the control
+       * actually has, the stylesheet keys the raised "on" look off it, and a
+       * screen reader — or a test — can read whether Bold is currently on.
+       */
+      aria-pressed={Boolean(active)}
+      aria-label={title}
+      className="mis-ed-b"
     >
       {children}
     </button>
@@ -306,5 +326,5 @@ function ToolbarButton({
 }
 
 function Sep() {
-  return <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />;
+  return <span className="mis-ed-sep" aria-hidden="true" />;
 }

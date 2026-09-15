@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   BILLING_WINDOW_OPTIONS,
@@ -14,6 +14,7 @@ import {
   type Filter,
   type FilterState,
 } from "@/lib/tools/client-health/filters";
+import { AnchoredPanel } from "@/components/ui/anchored-panel";
 
 /*
  * The filter row, shared by all three Client Health screens.
@@ -43,23 +44,12 @@ export const EMPTY_FILTERS: FilterBarState = {
   search: "",
   filter: "all",
   plan: "all",
-  sort: null,
   tz: "all",
   billingWindow: "all",
   dateFrom: null,
   dateTo: null,
   datePreset: null,
 };
-
-/** How many of the four non-search filters are narrowing the list. */
-export function activeFilterCount(f: FilterBarState): number {
-  return (
-    (f.plan !== "all" ? 1 : 0) +
-    (f.tz !== "all" ? 1 : 0) +
-    (f.billingWindow !== "all" ? 1 : 0) +
-    (f.datePreset ? 1 : 0)
-  );
-}
 
 const on = (active: boolean): React.CSSProperties =>
   active
@@ -176,23 +166,15 @@ function DateFilter({
   now: Date;
 }) {
   const [open, setOpen] = useState(false);
-  const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
 
-  // Dismiss on an outside click or Escape. A popover you can only close by
-  // finding its own button again is a popover that covers the table.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  /*
+   * Dismissal — outside click and Escape — now lives in AnchoredPanel, and it
+   * HAS to. The panel is portalled to <body>, so a handler asking "is the
+   * click inside my wrapper?" answers no for every click inside the panel
+   * itself and shuts it the instant you touch a date field.
+   */
 
   const label =
     value.datePreset === "custom"
@@ -214,8 +196,9 @@ function DateFilter({
   };
 
   return (
-    <div ref={wrap} style={{ position: "relative" }}>
+    <div style={{ position: "relative" }}>
       <button
+        ref={trigger}
         className="btn"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -226,23 +209,20 @@ function DateFilter({
         {label}
       </button>
 
-      {open ? (
-        <div
-          role="dialog"
-          aria-label="Filter by start date"
-          style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            right: 0,
-            zIndex: 30,
-            width: 250,
-            padding: 14,
-            background: "var(--surface)",
-            border: "1px solid var(--line)",
-            borderRadius: "var(--r-md)",
-            boxShadow: "var(--sh-raise)",
-          }}
-        >
+      {/*
+        Portalled: this bar sits in a scrolling toolbar, and an absolutely
+        positioned panel inside it was clipped to nothing — 0% of a 250x372
+        panel was on screen. See ui/anchored-panel.tsx.
+      */}
+      <AnchoredPanel
+        anchorRef={trigger}
+        open={open}
+        onClose={close}
+        width={250}
+        align="end"
+        label="Filter by start date"
+      >
+        <div style={{ padding: 14, overflowY: "auto", flex: 1, minHeight: 0 }}>
           <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
             {DATE_PRESETS.map((p) => (
               <button
@@ -298,12 +278,12 @@ function DateFilter({
             >
               Clear
             </button>
-            <button className="btn btn-pri" style={{ flex: 1 }} onClick={() => setOpen(false)}>
+            <button className="btn btn-pri" style={{ flex: 1 }} onClick={close}>
               Done
             </button>
           </div>
         </div>
-      ) : null}
+      </AnchoredPanel>
     </div>
   );
 }

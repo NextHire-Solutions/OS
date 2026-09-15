@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { InboxLink, useInboxNav } from "@/components/master-inbox/inbox-nav";
 import { Search, Loader2, Mail } from "lucide-react";
 
 interface SearchHit {
@@ -15,7 +15,9 @@ interface SearchHit {
 }
 
 export function TopBar() {
-  const router = useRouter();
+  // Search navigations go through the screen's transition so the
+  // skeleton shows while the server responds — see inbox-nav.tsx.
+  const { navigate } = useInboxNav();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
@@ -30,7 +32,7 @@ export function TopBar() {
       const next = new URLSearchParams(searchParams.toString());
       next.delete("q");
       const qs = next.toString();
-      router.push(qs ? `${pathname}?${qs}` : pathname);
+      navigate(qs ? `${pathname}?${qs}` : pathname);
     }
   }
   const [results, setResults] = useState<SearchHit[]>([]);
@@ -110,7 +112,7 @@ export function TopBar() {
       // thread list via ?q=, not a separate results page. (Click a
       // dropdown row to jump straight to one thread instead.)
       setOpen(false);
-      router.push(`/inbox/all-email?q=${encodeURIComponent(q)}`);
+      navigate(`/inbox/all-email?q=${encodeURIComponent(q)}`);
     } else if (e.key === "Escape") {
       setOpen(false);
     }
@@ -149,7 +151,7 @@ export function TopBar() {
                   const name = hit.lead_full_name || hit.lead_email || "Unknown";
                   return (
                     <li key={hit.id}>
-                      <Link
+                      <InboxLink
                         href={`/inbox/all-email/${hit.id}`}
                         onClick={() => {
                           setOpen(false);
@@ -173,7 +175,7 @@ export function TopBar() {
                         <div className="text-xs text-muted-foreground truncate max-w-[40%]">
                           {hit.subject ?? ""}
                         </div>
-                      </Link>
+                      </InboxLink>
                     </li>
                   );
                 })}

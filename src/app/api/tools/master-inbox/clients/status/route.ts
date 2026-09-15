@@ -1,26 +1,53 @@
 import { NextResponse } from "next/server";
-import { createServerSupabase } from "@/lib/supabase/server";
-import { ttlCache } from "@/lib/cache/ttl";
-import { env } from "@/lib/env";
+
+import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
+import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-health/supabase";
 import {
   normalizeClientName,
   type ClientStatus,
 } from "@/lib/tools/master-inbox/inbox/lists-shared";
 
-// GET /api/clients/status  (internal — called by the sidebar Client List)
-//
-// Proxies the EXTERNAL client-status feed (a separate app; MasterInbox does
-// not own this data) so the browser never sees the admin token. Returns the
-// authoritative status counts plus a normalized name → status map the sidebar
-// uses to stamp 🟢/🟡/🔴 on each client folder.
-//
-// FAIL OPEN — the sidebar is live for clients. Any problem (env unset, feed
-// down, timeout, bad JSON) returns HTTP 200 { ok: false } with no status, so
-// the sidebar renders exactly as it did before. This endpoint must never be
-// able to break the inbox.
-
 export const dynamic = "force-dynamic";
-export const fetchCache = "force-no-store";
+
+/*
+ * Which clients are active, paused or churned.
+ *
+ * Drives the coloured dot beside each client in the inbox's list rail.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS READS THE DATABASE RATHER THAN THE CLIENT HEALTH APP
+ *
+ * The tool's version proxies to Client Health's `/api/clients/status` with an
+ * admin token. That made sense when the OS was a window onto five live
+ * products. It does not now: Client Health is being switched off, and on the
+ * day it goes the dots would silently stop appearing — the rail would still
+ * render, every client would look the same, and nobody would know the health
+ * signal had gone.
+ *
+ * The OS already reads Client Health's database directly for the weekly,
+ * bi-weekly and success screens. Reading it here removes a dependency on an app
+ * that is scheduled to disappear, and removes an admin token from the path.
+ *
+ * ---------------------------------------------------------------------------
+ * THE STATUS RULES, AND WHERE THEY COME FROM
+ *
+ *   churned  hidden = true            (checked first — a churned client may
+ *                                      also carry client_paused)
+ *   paused   client_paused = true
+ *   active   neither
+ *
+ * Verified against the live table: 48 clients → 35 active, 5 paused, 8 churned,
+ * which matches what Client Health's own dashboard reports.
+ *
+ * ---------------------------------------------------------------------------
+ * KEYED BY NORMALISED NAME
+ *
+ * Client Health and Master Inbox hold the same clients under different ids and
+ * slightly different display names — "C21 Results - Elite Team" against "C21
+ * Results Elite Team". Name is the only join key available, so both sides run
+ * it through the tool's own `normalizeClientName`. Sharing that helper rather
+ * than re-deriving it is what stops the two drifting apart.
+ */
 
 type StatusResponse = {
   ok: boolean;
@@ -29,72 +56,46 @@ type StatusResponse = {
 };
 
 const EMPTY: StatusResponse = { ok: false, counts: null, byName: {} };
-const FEED_TIMEOUT_MS = 4000;
 
-// Module-scope TTL cache: the feed changes rarely and every staff page load
-// hits this, so cache for 5 min. Single workspace → a constant key.
+/*
+ * Five minutes. Health changes when somebody pauses or churns a client — a
+ * deliberate, rare act — and every staff page load asks for this.
+ */
 const loadStatus = ttlCache(
   async (): Promise<StatusResponse> => {
-    const feedUrl = env.CLIENT_STATUS_URL;
-    const feedToken = env.CLIENT_STATUS_TOKEN;
-    if (!feedUrl || !feedToken) return EMPTY;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FEED_TIMEOUT_MS);
     try {
-      const res = await fetch(feedUrl, {
-        headers: { "x-admin-token": feedToken },
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!res.ok) return EMPTY;
-      const data = (await res.json()) as {
-        counts?: Record<string, number>;
-        clients?: Array<{ name?: string; status?: string }>;
-      };
+      const { data, error } = await getClientHealthSupabase()
+        .from("clients")
+        .select("name, hidden, client_paused");
+
+      if (error || !data) return EMPTY;
+
       const byName: Record<string, ClientStatus> = {};
-      for (const c of data.clients ?? []) {
-        if (!c?.name) continue;
-        if (c.status === "active" || c.status === "paused" || c.status === "churned") {
-          byName[normalizeClientName(c.name)] = c.status;
-        }
+      const counts: Record<ClientStatus, number> = { active: 0, paused: 0, churned: 0 };
+
+      for (const row of data as Array<{ name: string | null; hidden: boolean | null; client_paused: boolean | null }>) {
+        if (!row?.name) continue;
+        const status: ClientStatus = row.hidden
+          ? "churned"
+          : row.client_paused
+            ? "paused"
+            : "active";
+        byName[normalizeClientName(row.name)] = status;
+        counts[status] += 1;
       }
-      const counts =
-        data.counts &&
-        typeof data.counts.active === "number"
-          ? {
-              active: data.counts.active ?? 0,
-              paused: data.counts.paused ?? 0,
-              churned: data.counts.churned ?? 0,
-            }
-          : null;
+
       return { ok: true, counts, byName };
     } catch {
-      // timeout / network / parse — swallow, fail open.
+      /*
+       * Fail open, deliberately. This decorates the rail; it must never be able
+       * to break it. The caller gets ok:false and renders without dots.
+       */
       return EMPTY;
-    } finally {
-      clearTimeout(timer);
     }
   },
-  { ttlMs: 300_000, key: () => "client-status" },
+  { ttlMs: 5 * 60_000 },
 );
 
 export async function GET() {
-  // Staff-only: this is called from the authenticated sidebar. A logged-out
-  // caller simply gets ok:false (never the token or the data).
-  try {
-    const supabase = await createServerSupabase();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json(EMPTY);
-  } catch {
-    return NextResponse.json(EMPTY);
-  }
-
-  try {
-    return NextResponse.json(await loadStatus());
-  } catch {
-    return NextResponse.json(EMPTY);
-  }
+  return NextResponse.json(await loadStatus());
 }

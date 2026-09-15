@@ -28,6 +28,9 @@
 @import "./inbox-theme.css";
 /* Unlayered on purpose — see the note at the top of the file. */
 @import "./mi-skin.css";
+@import "./mi-portals.css";
+@import "./mi-conversation.css";
+@import "./mi-settings.css";
 
 /*
  * `dark:` is opt-in, not OS-driven.
@@ -69,6 +72,23 @@
 
 @theme inline {
   --color-background: var(--background);
+  /*
+   * `bg-card` and `bg-popover` compile to nothing without these.
+   *
+   * Tailwind 4 generates a utility only when its `--color-*` token exists, so
+   * with no mapping here the classes were inert — not "wrong colour", ABSENT.
+   * The Filters panel rendered fully transparent, its Save and Apply buttons
+   * floating over the thread rows with the list readable straight through
+   * them, and every dropdown in the tool's shadcn layer did the same: five
+   * files use `bg-card`, six use `bg-popover`.
+   *
+   * Defining `--card` alone (see inbox-theme.css) was not enough and looked
+   * like it had failed; the mapping is the half that was missing.
+   */
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-surface-sunken: var(--surface-sunken);
@@ -205,3 +225,13 @@
     animation: none;
   }
 }
+
+/* Per-tool sheets. Each is owned by one tool and scoped to its own screens. */
+@import "./tool-client-health.css";
+@import "./tool-analytics.css";
+@import "./tool-onboarding.css";
+@import "./tool-agent-search.css";
+/* The ported Master Inbox dialogs, menus and popovers animate with animate-in /
+   animate-out, which come from tw-animate-css — installed, and never imported,
+   so every one of them appeared with no transition at all. */
+@import "tw-animate-css";
