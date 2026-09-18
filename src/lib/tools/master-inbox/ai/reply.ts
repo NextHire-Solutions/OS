@@ -54,6 +54,17 @@ export interface DraftInput {
   // Full thread history, oldest → newest. The last entry should be the
   // most recent inbound message (the one we're replying to).
   conversation: ConversationTurn[];
+  /*
+   * The house style, the objection playbook and the nearest real replies we
+   * have sent, already rendered as prompt text by ai/retrieval.ts.
+   *
+   * Optional and empty-by-default on purpose: when the corpus has not been
+   * built, or the migration has not been run, or retrieval fails for any
+   * reason, this is "" and the prompt is byte-for-byte what it was before this
+   * feature existed. There is no flag to forget to set — absence IS the old
+   * behaviour.
+   */
+  guidance?: string;
 }
 
 export interface DraftResult {
@@ -80,7 +91,12 @@ const PER_TURN_CAP = 3000;
 // inbound — that's what we're replying to).
 const TOTAL_CONVERSATION_CAP = 24_000;
 
-function renderUserPrompt(input: DraftInput): string {
+/*
+ * Exported for the tests: the ORDER of this prompt is a decision, not an
+ * accident — precedent goes last, immediately before the instruction to write —
+ * and a property like that is only protected if something asserts it.
+ */
+export function renderUserPrompt(input: DraftInput): string {
   const lengthHint =
     input.responseLength === "short"
       ? "Keep it under 2 sentences."
@@ -104,6 +120,12 @@ function renderUserPrompt(input: DraftInput): string {
     "",
     conversationBlock,
     "",
+    /*
+     * Precedent goes AFTER the conversation and immediately BEFORE the
+     * instruction to write. The nearest real reply is the most useful thing in
+     * the prompt, and it should be the last thing read before writing.
+     */
+    ...(input.guidance && input.guidance.trim().length > 0 ? [input.guidance, ""] : []),
     "Now write OUR reply to the LAST message above. Use the full conversation as context — reference what was already discussed, do not repeat past pitches, and respond directly to the lead's most recent message.",
   ].join("\n");
 }
