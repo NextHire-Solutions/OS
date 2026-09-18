@@ -14,6 +14,7 @@ import {
   type CampaignSettingsPatch,
   applyCampaignAction,
 } from "./actions";
+import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
 import { AssignInboxesDialog } from "./assign-inboxes-dialog";
 import { BulkDeployPanel, useBulkDeploy } from "./bulk-deploy";
 import { CampaignLeads } from "./campaign-leads";
@@ -166,6 +167,13 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
   if (!data) return <div className="wrap an-screen"><div className="mut">Loading…</div></div>;
 
   const c = data.campaign;
+  /*
+   * The response carries `platform` only on the Instantly branch — EmailBison
+   * responses predate the field — so reading it directly makes every EmailBison
+   * campaign look platform-less, and the Inboxes button below then never
+   * appeared on one. The id itself is unambiguous (bigint vs uuid).
+   */
+  const platform = data.platform ?? platformOfId(id);
   const isInstantly = data.platform === "instantly";
   const steps = data.sequence ?? [];
   const spintax = spintaxOf(
@@ -234,11 +242,11 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
           mailboxes send for it. It has no eligibility rule — any campaign can
           be given inboxes — and the tool offers it for both platforms.
         */}
-        {data.platform ? (
+        {platform ? (
           <>
             <Btn onClick={() => setAssigningInboxes(true)}>Inboxes</Btn>
             <AssignInboxesDialog
-              targets={[{ platform: data.platform, id: String(c.id) }]}
+              targets={[{ platform, id: String(c.id) }]}
               open={assigningInboxes}
               onOpenChange={setAssigningInboxes}
               onDone={() => void reload()}
