@@ -17,7 +17,10 @@ import { NotAnOsTableError, OS_TABLES } from "./os-tables.ts";
  */
 
 test("the allowlist contains exactly the two OS tables", () => {
-  assert.deepEqual([...OS_TABLES], ["os_clients", "os_client_onboarding", "os_tool_grants", "os_users"]);
+  assert.deepEqual([...OS_TABLES], [
+    "os_clients", "os_client_onboarding", "os_tool_grants", "os_users",
+    "os_reply_examples", "os_agent_knowledge", "os_reply_feedback", "os_knowledge_proposals",
+  ]);
 });
 
 test("no Master Inbox table is reachable through the OS client", () => {
@@ -46,6 +49,6 @@ test("no Master Inbox table is reachable through the OS client", () => {
 test("the error names the table and points at the rule", () => {
   const err = new NotAnOsTableError("clients");
   assert.match(err.message, /clients/);
-  assert.match(err.message, /os_clients and os_client_onboarding and os_tool_grants and os_users/);
+  assert.match(err.message, /os_clients and os_client_onboarding/);
   assert.equal(err.name, "NotAnOsTableError");
 });

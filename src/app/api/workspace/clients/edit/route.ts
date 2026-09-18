@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { editClient, validateEdit, type ClientEdit } from "@/lib/clients/edit";
+import { editClient, InvalidEditError, validateEdit, type ClientEdit } from "@/lib/clients/edit";
 
 /*
  * Edit a client.
@@ -36,6 +36,15 @@ export async function POST(request: Request) {
     const result = await editClient(id, edit as ClientEdit);
     return NextResponse.json(result);
   } catch (error) {
+    /*
+     * Some checks need the saved row — whether a contact already has a name,
+     * for one — so they run inside editClient rather than in validateEdit.
+     * They are still the caller's mistake, and answering 502 would show a
+     * person a server error instead of the sentence telling them what to fix.
+     */
+    if (error instanceof InvalidEditError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not edit the client" },
       { status: 502 },

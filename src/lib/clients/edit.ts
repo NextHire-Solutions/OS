@@ -67,6 +67,17 @@ export interface ClientEdit {
   contactName?: string | null;
   contactRole?: string | null;
   contactEmail?: string | null;
+  /*
+   * The second and third people to introduce an agent to. Each is all-or-
+   * nothing: a name and a role together, optionally an address. Clearing the
+   * name and the role removes that person from the sentence.
+   */
+  contact2Name?: string | null;
+  contact2Role?: string | null;
+  contact2Email?: string | null;
+  contact3Name?: string | null;
+  contact3Role?: string | null;
+  contact3Email?: string | null;
   brokerage?: string | null;
   plan?: (typeof PLANS)[number];
   weeklyTarget?: number;
@@ -93,11 +104,32 @@ interface Row {
   contact_name: string | null;
   contact_role: string | null;
   contact_email: string | null;
+  contact2_name: string | null;
+  contact2_role: string | null;
+  contact2_email: string | null;
+  contact3_name: string | null;
+  contact3_role: string | null;
+  contact3_email: string | null;
   brokerage: string | null;
 }
 
-/** The four fields that make up the introduction macro. */
-const INTRO_KEYS = ["contactName", "contactRole", "contactEmail", "brokerage"] as const;
+/** Every field that makes up the introduction macro. */
+const INTRO_KEYS = [
+  "contactName", "contactRole", "contactEmail",
+  "contact2Name", "contact2Role", "contact2Email",
+  "contact3Name", "contact3Role", "contact3Email",
+  "brokerage",
+] as const;
+
+/** The three contact slots, so validation and saving can walk them. */
+const CONTACT_SLOTS = [
+  { ord: "First",  name: "contactName",  role: "contactRole",  email: "contactEmail",
+    col: { name: "contact_name",  role: "contact_role",  email: "contact_email"  } },
+  { ord: "Second", name: "contact2Name", role: "contact2Role", email: "contact2Email",
+    col: { name: "contact2_name", role: "contact2_role", email: "contact2_email" } },
+  { ord: "Third",  name: "contact3Name", role: "contact3Role", email: "contact3Email",
+    col: { name: "contact3_name", role: "contact3_role", email: "contact3_email" } },
+] as const;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -124,20 +156,84 @@ export function validateEdit(edit: ClientEdit): string[] {
   if (edit.billingInterval !== undefined && !BILLING_INTERVALS.includes(edit.billingInterval)) {
     errors.push(`Billing interval must be one of ${BILLING_INTERVALS.join(", ")}.`);
   }
-  for (const [label, v, max] of [
-    ["Contact name", edit.contactName, 160],
-    ["Their role", edit.contactRole, 120],
-    ["Brokerage", edit.brokerage, 160],
-  ] as const) {
+  const lengths: Array<readonly [string, unknown, number]> = [["Brokerage", edit.brokerage, 160]];
+  for (const slot of CONTACT_SLOTS) {
+    lengths.push([`${slot.ord} contact name`, edit[slot.name], 160]);
+    lengths.push([`${slot.ord} contact's role`, edit[slot.role], 120]);
+  }
+  for (const [label, v, max] of lengths) {
     if (typeof v === "string" && v.length > max) {
       errors.push(`${label} is ${v.length} characters; the introduction template allows ${max}.`);
     }
   }
-  // An empty string clears the address; anything else has to be one.
-  if (typeof edit.contactEmail === "string" && edit.contactEmail.trim() && !EMAIL.test(edit.contactEmail.trim())) {
-    errors.push("Contact email must be a valid email address.");
+  for (const slot of CONTACT_SLOTS) {
+    // An empty string clears the address; anything else has to be one.
+    const email = edit[slot.email];
+    if (typeof email === "string" && email.trim() && !EMAIL.test(email.trim())) {
+      errors.push(`${slot.ord} contact email must be a valid email address.`);
+    }
   }
+  /*
+   * Half a person is refused too, but not here.
+   *
+   * An edit carries only the fields that CHANGED — correcting a role sends
+   * the role and nothing else — so this function cannot tell "no name" from
+   * "the name is already stored". That check needs the saved row, so it lives
+   * in `settledContacts` and runs inside `editClient`.
+   */
   return errors;
+}
+
+/**
+ * Each contact slot as it will stand AFTER this edit, and what is wrong with it.
+ *
+ * The edit supplies a value only for what changed, so every field falls back
+ * to the stored one. That is the only way to tell someone correcting a role
+ * apart from someone leaving a person half-filled in.
+ *
+ * The sentence reads "<name>, <role>". A name with no role would render
+ * "Shaurs Patel, at Oz Group"; a role with no name reads as a stray phrase.
+ * Either is refused before anything is written.
+ */
+/**
+ * The caller sent something that cannot be saved.
+ *
+ * Distinct from every other failure `editClient` can throw, which are upstream
+ * problems. The route answers this one with 400 and the message, and the other
+ * kind with 502 — so a person correcting a contact reads "Second contact needs
+ * a role as well as a name" instead of a server error.
+ */
+export class InvalidEditError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidEditError";
+  }
+}
+
+export function settledContacts(
+  edit: ClientEdit,
+  row: Pick<Row, "contact_name" | "contact_role" | "contact_email" |
+    "contact2_name" | "contact2_role" | "contact2_email" |
+    "contact3_name" | "contact3_role" | "contact3_email">,
+): { people: Array<{ name: string | null; role: string | null; email: string | null }>; errors: string[] } {
+  const blank = (v: string | null | undefined) => (v ?? "").trim() || null;
+  const errors: string[] = [];
+  const people = CONTACT_SLOTS.map((slot) => {
+    const person = {
+      name: edit[slot.name] !== undefined ? blank(edit[slot.name]) : row[slot.col.name],
+      role: edit[slot.role] !== undefined ? blank(edit[slot.role]) : row[slot.col.role],
+      email: edit[slot.email] !== undefined ? blank(edit[slot.email]) : row[slot.col.email],
+    };
+    // Only complain about a slot this edit actually touched, so correcting a
+    // plan never trips over a contact someone left half-filled months ago.
+    const touched = [slot.name, slot.role, slot.email].some((k) => edit[k] !== undefined);
+    if (touched) {
+      if (person.name && !person.role) errors.push(`${slot.ord} contact needs a role as well as a name.`);
+      if (person.role && !person.name) errors.push(`${slot.ord} contact needs a name as well as a role.`);
+    }
+    return person;
+  });
+  return { people, errors };
 }
 
 export async function editClient(id: string, edit: ClientEdit): Promise<EditResult> {
@@ -147,13 +243,19 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   const { data, error } = await osTable("os_clients")
     .select(
       "id, name, an_client_id, ch_client_id, mi_client_id, " +
-        "contact_name, contact_role, contact_email, brokerage",
+        "contact_name, contact_role, contact_email, " +
+        "contact2_name, contact2_role, contact2_email, " +
+        "contact3_name, contact3_role, contact3_email, brokerage",
     )
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(`Could not read the client: ${error.message}`);
   if (!data) throw new Error("No such client");
   const row = data as unknown as Row;
+
+  // Refused before anything is written, so a rejected edit changes nothing.
+  const settledNow = settledContacts(edit, row);
+  if (settledNow.errors.length) throw new InvalidEditError(settledNow.errors.join(" "));
 
   const updated: string[] = [];
   const failed: EditResult["failed"] = [];
@@ -168,9 +270,11 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   // A blank field is a deliberate clear, not "leave it alone" — the dialog
   // only sends a key when its value actually changed.
   const blankToNull = (v: string | null | undefined) => (v ?? "").trim() || null;
-  if (edit.contactName !== undefined) local.contact_name = blankToNull(edit.contactName);
-  if (edit.contactRole !== undefined) local.contact_role = blankToNull(edit.contactRole);
-  if (edit.contactEmail !== undefined) local.contact_email = blankToNull(edit.contactEmail);
+  for (const slot of CONTACT_SLOTS) {
+    if (edit[slot.name] !== undefined) local[slot.col.name] = blankToNull(edit[slot.name]);
+    if (edit[slot.role] !== undefined) local[slot.col.role] = blankToNull(edit[slot.role]);
+    if (edit[slot.email] !== undefined) local[slot.col.email] = blankToNull(edit[slot.email]);
+  }
   if (edit.brokerage !== undefined) local.brokerage = blankToNull(edit.brokerage);
   if (Object.keys(local).length > 1) {
     const { error: e } = await osTable("os_clients").update(local).eq("id", id);
@@ -186,11 +290,13 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
    * it, not from here.
    */
   if (INTRO_KEYS.some((k) => edit[k] !== undefined)) {
+    const settled = settledNow.people;
     const after = {
       name: row.name,
-      contactName: edit.contactName !== undefined ? blankToNull(edit.contactName) : row.contact_name,
-      contactRole: edit.contactRole !== undefined ? blankToNull(edit.contactRole) : row.contact_role,
-      contactEmail: edit.contactEmail !== undefined ? blankToNull(edit.contactEmail) : row.contact_email,
+      contactName: settled[0].name,
+      contactRole: settled[0].role,
+      contactEmail: settled[0].email,
+      extraContacts: settled.slice(1),
       brokerage: edit.brokerage !== undefined ? blankToNull(edit.brokerage) : row.brokerage,
     };
     try {

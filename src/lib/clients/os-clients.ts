@@ -38,6 +38,13 @@ export interface OsClient {
     role: string | null;
     email: string | null;
     brokerage: string | null;
+    /*
+     * The second and third people, when this client introduces to more than
+     * one. Always two entries, either of which may be entirely empty, so the
+     * edit form can render three fixed slots without counting.
+     * See migrations/0007_os_client_contacts_2_3.sql.
+     */
+    extra: Array<{ name: string | null; role: string | null; email: string | null }>;
   };
   notes: string | null;
   createdAt: string;
@@ -55,7 +62,9 @@ const LINK_COLUMN: Record<ToolKey, string> = {
 const SELECT =
   "id, name, slug, aliases, status, source, notes, created_at, updated_at, " +
   "mi_client_id, ch_client_id, an_client_id, orch_client_id, " +
-  "contact_name, contact_role, contact_email, brokerage";
+  "contact_name, contact_role, contact_email, " +
+  "contact2_name, contact2_role, contact2_email, " +
+  "contact3_name, contact3_role, contact3_email, brokerage";
 
 type Row = Record<string, unknown>;
 
@@ -78,6 +87,11 @@ function toClient(row: Row): OsClient {
       role: (row.contact_role as string | null) ?? null,
       email: (row.contact_email as string | null) ?? null,
       brokerage: (row.brokerage as string | null) ?? null,
+      extra: [2, 3].map((n) => ({
+        name: (row[`contact${n}_name`] as string | null) ?? null,
+        role: (row[`contact${n}_role`] as string | null) ?? null,
+        email: (row[`contact${n}_email`] as string | null) ?? null,
+      })),
     },
     notes: (row.notes as string | null) ?? null,
     createdAt: String(row.created_at ?? ""),

@@ -46,6 +46,94 @@ export interface IntroMacroClient {
    * exactly what it sent. Everything else derives it.
    */
   contactFirstName?: string | null;
+  /**
+   * The first contact's address, copied in by the Introduce button.
+   *
+   * Optional because the macro's WORDING never uses it — only the Cc does —
+   * and every caller that renders wording without one keeps working.
+   */
+  contactEmail?: string | null;
+  /**
+   * The second and third people to introduce the agent to, when the client
+   * has them. Clients asked to introduce an agent to a team leader, a
+   * managing broker and an owner at once, with all three copied in.
+   *
+   * Optional and separate from the first contact so that every caller written
+   * before this existed keeps producing exactly the sentence it produced
+   * before — see `renderIntroMacroTemplate`.
+   */
+  extraContacts?: IntroMacroContact[] | null;
+}
+
+/** One of the people an agent is introduced to. */
+export interface IntroMacroContact {
+  /** "Shaurs Patel". */
+  name: string | null;
+  /** "Managing Broker" — how it reads in the sentence. */
+  role: string | null;
+  /** Copied in by the Introduce button. Not needed to be named. */
+  email?: string | null;
+  /** Overrides the first name derived from `name`. */
+  firstName?: string | null;
+}
+
+/**
+ * Everyone this client introduces to, first contact first, in order.
+ *
+ * A person counts only when they have BOTH a name and a role: the sentence
+ * reads "<name>, <role>", so half a contact would render "Shaurs Patel, at
+ * Oz Group". Half-filled people are refused at the edit screen rather than
+ * quietly dropped here, but this stays defensive — it is also what the
+ * composer and the template writer read.
+ */
+export function introContacts(client: IntroMacroClient): IntroMacroContact[] {
+  const all: IntroMacroContact[] = [
+    {
+      name: client.contactName,
+      role: client.contactRole,
+      email: client.contactEmail ?? null,
+      firstName: client.contactFirstName ?? null,
+    },
+    ...(client.extraContacts ?? []),
+  ];
+  return all.filter((c) => (c.name ?? "").trim() && (c.role ?? "").trim());
+}
+
+/** Every address to copy in, de-duplicated, in the order the people appear. */
+export function introContactEmails(client: IntroMacroClient): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of introContacts(client)) {
+    const email = (c.email ?? "").trim();
+    if (!email) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(email);
+  }
+  return out;
+}
+
+/**
+ * "A", "A and B", "A, B and C" — the plain English list.
+ *
+ * No comma before the final "and": these are bare first names with nothing
+ * inside them to confuse, and it matches how the client writes it.
+ */
+function joinPlain(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * "A, Role", "A, Role, and B, Role" — the list of named people.
+ *
+ * A comma DOES precede the final "and" here, because every item already
+ * contains a comma of its own and without it the last two run together.
+ */
+function joinNamed(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
 }
 
 /** The fields the macro cannot be written without. */
@@ -80,25 +168,61 @@ export function firstNameOf(full: string | null | undefined): string {
 }
 
 /**
+ * "Nicole Collins, Team Leader" — everyone this client introduces to, exactly
+ * as the macro's first line names them.
+ *
+ * Exported so the edit screen's live preview shows the real sentence rather
+ * than an approximation of it. One function, so the two cannot drift.
+ */
+export function introPeopleSentence(client: IntroMacroClient): string {
+  const contacts = introContacts(client);
+  const named = contacts.length
+    ? contacts.map((c) => `${(c.name ?? "").trim()}, ${(c.role ?? "").trim()}`)
+    : [`${(client.contactName ?? "").trim()}, ${(client.contactRole ?? "").trim()}`];
+  return joinNamed(named);
+}
+
+/**
  * The macro, with the client's details filled in and the lead's left as
  * `{{lead.*}}` placeholders.
  *
  * Byte-for-byte the wording that has been going into `reply_templates` since
  * onboarding was built; a test pins it so an edit here cannot silently change
  * what every existing client's template says.
+ *
+ * A client with two or three contacts names all of them on the SAME line —
+ * "I'd like to introduce you to A, Role, B, Role, and C, Role at Oz Group" —
+ * and the two sentences that follow address them together. With one contact
+ * every join collapses to that one person, so the output is identical to what
+ * it has always been. That is the whole reason the lists are built rather than
+ * branched on: there is no separate one-contact path to drift.
  */
 export function renderIntroMacroTemplate(client: IntroMacroClient): string {
   const brokerage = (client.brokerage ?? "").trim() || client.name;
-  const fullName = (client.contactName ?? "").trim();
-  const role = (client.contactRole ?? "").trim();
-  const firstName = (client.contactFirstName ?? "").trim() || firstNameOf(fullName);
+  const contacts = introContacts(client);
+
+  // Defensive: a caller with no usable contact at all still gets the shape it
+  // used to get, with empty values, rather than a sentence with holes in it.
+  const firsts = contacts.length
+    ? contacts.map((c) => (c.firstName ?? "").trim() || firstNameOf(c.name))
+    : [(client.contactFirstName ?? "").trim() || firstNameOf(client.contactName)];
+
+  const people = introPeopleSentence(client);
+  const firstNames = joinPlain(firsts);
 
   return (
-    `Hey {{lead.name}},\n\n` +
-    `I'd like to introduce you to ${fullName}, ${role} at ${brokerage}\n\n` +
-    `${firstName}, I recently connected with {{lead.first_name}}, ` +
+    /*
+     * The lead's FIRST name, not their full name.
+     *
+     * It was `{{lead.name}}`, which produced "Hey Gisele Abrantes Trautman,".
+     * Nobody opens an email to a person they are about to introduce with all
+     * three of their names. Changed on the client's instruction.
+     */
+    `Hey {{lead.first_name}},\n\n` +
+    `I'd like to introduce you to ${people} at ${brokerage}\n\n` +
+    `${firstNames}, I recently connected with {{lead.first_name}}, ` +
     `who can be reached directly at {{lead.phone_number}} and is currently with {{lead.company}}.\n\n` +
-    `{{lead.first_name}}, ${firstName} will be in touch directly to ` +
+    `{{lead.first_name}}, ${firstNames} will be in touch directly to ` +
     `learn more about your business and discuss the opportunity in greater detail.\n\n` +
     `I hope you have a productive conversation!\n\n` +
     `Best,\n{{sender.name}}\nTalent Acquisition | ${brokerage}`
@@ -108,4 +232,43 @@ export function renderIntroMacroTemplate(client: IntroMacroClient): string {
 /** The name given to a client's stored template. Used to find it again. */
 export function introTemplateName(clientName: string): string {
   return `Intro Macro - ${clientName}`;
+}
+
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Did the introduction the button drafted actually go out?
+ *
+ * The Introduce button only DRAFTS. Between the click and the send the
+ * operator may delete what it inserted and write something else entirely —
+ * and labelling that thread "Introduction" is not a quiet bookkeeping act. It
+ * messages the client, posts to Slack, and opens a pipeline entry pushed to
+ * Follow Up Boss. An introduction announced but never sent is worse than one
+ * labelled by hand a minute later.
+ *
+ * So the label is applied after a successful send, and only when the sent body
+ * still carries a line the button put there.
+ *
+ * Whole lines of 25 characters or more are the unit of comparison, compared
+ * with whitespace collapsed and case ignored. That survives everything the
+ * operator legitimately does around the macro — reformatting, appending a
+ * signature, rewriting the greeting, editing one paragraph — while a macro
+ * that has been deleted matches nothing. The macro offers four such lines, so
+ * a single reworded sentence does not lose the label.
+ *
+ * When in doubt it returns false, which costs an operator one manual label
+ * rather than sending a client a false announcement.
+ */
+export function introWasSent(inserted: string, sent: string): boolean {
+  const haystack = collapseForMatch(sent);
+  if (!haystack) return false;
+  return inserted
+    .split("\n")
+    .map(collapseForMatch)
+    .filter((line) => line.length >= 25)
+    .some((line) => haystack.includes(line));
+}
+
+function collapseForMatch(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
 }

@@ -70,6 +70,17 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("");
   const [contactEmail, setContactEmail] = useState("");
+  /*
+   * A second and third person to introduce to, filled in here or later in
+   * Clients → Edit. Both start empty and only appear when asked for.
+   */
+  const [extras, setExtras] = useState([
+    { name: "", role: "", email: "" },
+    { name: "", role: "", email: "" },
+  ]);
+  const [extraSlots, setExtraSlots] = useState(0);
+  const setExtra = (i: number, patch: Partial<(typeof extras)[number]>) =>
+    setExtras((cur) => cur.map((p, n) => (n === i ? { ...p, ...patch } : p)));
 
   const [failed, setFailed] = useState("");
   /*
@@ -152,6 +163,10 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
                 clientFirstName: fullName.trim().split(/\s+/)[0] ?? "",
                 clientRole: role,
                 contactEmail: contactEmail.trim() || undefined,
+                extraContacts: extras
+                  .slice(0, extraSlots)
+                  .filter((p) => p.name.trim() || p.role.trim() || p.email.trim())
+                  .map((p) => ({ name: p.name.trim(), role: p.role.trim(), email: p.email.trim() })),
               }
             : undefined,
         }),
@@ -265,8 +280,55 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
                     onChange={(e) => setContactEmail(e.target.value)} />
                 </label>
               </div>
+              {/*
+                A second and third person, for clients who introduce an agent
+                to a team leader, a managing broker and an owner at once. All
+                of them are named in the same sentence and all are copied in.
+              */}
+              {extras.slice(0, extraSlots).map((person, i) => (
+                <div key={i} style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 650, color: "var(--muted)" }}>
+                      {i === 0 ? "Second person" : "Third person"}
+                    </span>
+                    {i === extraSlots - 1 ? (
+                      <button type="button" className="btn-ghost" style={{ fontSize: 11.5, padding: "2px 8px" }}
+                        onClick={() => { setExtra(i, { name: "", role: "", email: "" }); setExtraSlots(i); }}>
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+                    <label style={FIELD}>
+                      <span style={LABEL}>Full name</span>
+                      <input className="inp" value={person.name}
+                        placeholder={i === 0 ? "Shaurs Patel" : "Eddy Chen"}
+                        onChange={(e) => setExtra(i, { name: e.target.value })} />
+                    </label>
+                    <label style={FIELD}>
+                      <span style={LABEL}>Their role</span>
+                      <input className="inp" value={person.role}
+                        placeholder={i === 0 ? "Managing Broker" : "Broker and Owner"}
+                        onChange={(e) => setExtra(i, { role: e.target.value })} />
+                    </label>
+                    <label style={FIELD}>
+                      <span style={LABEL}>Their email</span>
+                      <input className="inp" type="email" value={person.email} placeholder="name@brokerage.com"
+                        onChange={(e) => setExtra(i, { email: e.target.value })} />
+                    </label>
+                  </div>
+                </div>
+              ))}
+              {extraSlots < 2 ? (
+                <button type="button" className="btn-ghost"
+                  style={{ marginTop: 10, fontSize: 11.5, padding: "3px 9px" }}
+                  onClick={() => setExtraSlots(extraSlots + 1)}>
+                  + Add another person
+                </button>
+              ) : null}
               <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8, lineHeight: 1.55 }}>
-                The contact email is copied into <b>Cc</b> whenever the introduction is inserted.
+                Everyone named here goes into the same introduction, and their emails are copied
+                into <b>Cc</b> whenever it is inserted.
               </div>
             </>
           ) : null}

@@ -39,6 +39,94 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 console.log(`\nINTRODUCE — the intro macro end to end\n${"=".repeat(74)}\n`);
 
+/* ===================================================== 0a. three contacts */
+console.log("0a. One, two or three people, named on one line\n");
+{
+  const { renderIntroMacroTemplate, introContactEmails, introPeopleSentence, introContacts } =
+    await import("../src/lib/tools/master-inbox/inbox/intro-macro.ts");
+  const base = { name: "Oz Group", contactName: "Nicole Collins", contactRole: "Team Leader",
+                 contactEmail: "nicole@oz.test", brokerage: "Oz Group" };
+  const second = { name: "Shaurs Patel", role: "Managing Broker", email: "shaurs@oz.test" };
+  const third  = { name: "Eddy Chen", role: "Broker and Owner", email: "eddy@oz.test" };
+  const line = (t) => t.split("\n").find((l) => l.startsWith("I'd like"));
+
+  // The wording every existing client's template already says. If this moves,
+  // 58 stored templates quietly disagree with what the button inserts.
+  const one = renderIntroMacroTemplate(base);
+  check("the greeting is the lead's first name",
+    one.startsWith("Hey {{lead.first_name}},"), one.split("\n")[0]);
+  check("one contact reads exactly as it always has",
+    line(one) === "I'd like to introduce you to Nicole Collins, Team Leader at Oz Group", line(one));
+  check("one contact still addresses them by first name alone",
+    one.includes("\nNicole, I recently connected with") && one.includes(", Nicole will be in touch"));
+
+  const two = renderIntroMacroTemplate({ ...base, extraContacts: [second] });
+  check("two contacts are named on the same line",
+    line(two) === "I'd like to introduce you to Nicole Collins, Team Leader, and Shaurs Patel, Managing Broker at Oz Group",
+    line(two));
+  check("two contacts are addressed together",
+    two.includes("\nNicole and Shaurs, I recently connected") && two.includes(", Nicole and Shaurs will be in touch"));
+
+  const three = renderIntroMacroTemplate({ ...base, extraContacts: [second, third] });
+  check("three contacts are named on the same line",
+    line(three) === "I'd like to introduce you to Nicole Collins, Team Leader, Shaurs Patel, Managing Broker, and Eddy Chen, Broker and Owner at Oz Group",
+    line(three));
+  check("three contacts are addressed together",
+    three.includes("\nNicole, Shaurs and Eddy, I recently connected") && three.includes(", Nicole, Shaurs and Eddy will be in touch"));
+  check("the brokerage and sign-off are untouched by extra people",
+    three.trim().endsWith("Talent Acquisition | Oz Group") && three.includes("I hope you have a productive conversation!"));
+
+  check("every contact's address is copied in, in order",
+    JSON.stringify(introContactEmails({ ...base, extraContacts: [second, third] })) ===
+      JSON.stringify(["nicole@oz.test", "shaurs@oz.test", "eddy@oz.test"]));
+  check("the same address twice is only copied in once",
+    JSON.stringify(introContactEmails({ ...base, extraContacts: [{ ...second, email: "NICOLE@OZ.TEST" }] })) ===
+      JSON.stringify(["nicole@oz.test"]));
+  check("a person with no address is still named",
+    line(renderIntroMacroTemplate({ ...base, extraContacts: [{ name: "Ann Lee", role: "Recruiter" }] }))
+      .includes("and Ann Lee, Recruiter at Oz Group"));
+
+  // Half a person would render "Shaurs Patel, at Oz Group".
+  check("a name with no role is left out of the sentence",
+    introContacts({ ...base, extraContacts: [{ name: "Shaurs Patel", role: "" }] }).length === 1);
+  check("a role with no name is left out of the sentence",
+    introContacts({ ...base, extraContacts: [{ name: "", role: "Managing Broker" }] }).length === 1);
+  check("an empty extra slot changes nothing",
+    renderIntroMacroTemplate({ ...base, extraContacts: [{ name: "", role: "", email: "" }, { name: "", role: "", email: "" }] }) === one);
+
+  // The edit screen's preview must be the real sentence, not a lookalike.
+  check("the edit screen's preview is the same text the email will carry",
+    line(three) === `I'd like to introduce you to ${introPeopleSentence({ ...base, extraContacts: [second, third] })} at Oz Group`);
+}
+
+/* ================================================ 0. the send-time guard */
+console.log("0. The label only follows a send that really is the introduction\n");
+{
+  const { introWasSent, renderIntroMacroTemplate } = await import("../src/lib/tools/master-inbox/inbox/intro-macro.ts");
+  const macro = renderIntroMacroTemplate({ name: "Oz Group", contactName: "Nicole Collins", contactRole: "Team Leader", brokerage: "Oz Group" })
+    .replace(/\{\{lead\.name\}\}/g, "Karen Diaz")
+    .replace(/\{\{lead\.first_name\}\}/g, "Karen")
+    .replace(/\{\{lead\.phone_number\}\}/g, "555-0134")
+    .replace(/\{\{lead\.company\}\}/g, "Coastal Realty")
+    .replace(/\{\{sender\.name\}\}/g, "Alma");
+
+  check("sent exactly as inserted → label", introWasSent(macro, macro));
+  check("a signature appended → still the introduction",
+    introWasSent(macro, macro + "\n\n--\nAlma Nowatzke\nTalent Acquisition"));
+  check("reformatted whitespace → still the introduction",
+    introWasSent(macro, macro.replace(/\n\n/g, "\n").replace(/ /g, "  ")));
+  check("the greeting rewritten → still the introduction",
+    introWasSent(macro, macro.replace("Hey Karen Diaz,", "Hi Karen -")));
+  check("a typed note above the macro → still the introduction",
+    introWasSent(macro, "Quick note before I hand you over.\n\n" + macro));
+  check("macro deleted, something else sent → NO label",
+    !introWasSent(macro, "Thanks Karen, I'll come back to you next week once I hear from the team."));
+  check("empty body → NO label", !introWasSent(macro, ""));
+  check("nothing was ever inserted → NO label", !introWasSent("", macro));
+  check("a short shared line is not a match",
+    !introWasSent("Best,\nAlma", "Best,\nSomeone else entirely"));
+}
+
 /* ============================================================ A. storage */
 console.log("A. Details are stored, and the template follows them\n");
 
@@ -76,7 +164,12 @@ try {
         body.includes(`${CONTACT.name}, ${CONTACT.role} at ${CONTACT.brokerage}`),
         body.split("\n")[2]?.slice(0, 80));
       check("the lead's values are still placeholders for insert time",
-        ["{{lead.name}}", "{{lead.first_name}}", "{{lead.phone_number}}", "{{lead.company}}", "{{sender.name}}"].every((t) => body.includes(t)));
+        ["{{lead.first_name}}", "{{lead.phone_number}}", "{{lead.company}}", "{{sender.name}}"].every((t) => body.includes(t)));
+  // The greeting opens with the first name. It opened with the full name and
+  // produced "Hey Gisele Abrantes Trautman,"; the client asked for the change.
+  check("the greeting uses the lead's first name, not all their names",
+    body.startsWith("Hey {{lead.first_name}},") && !body.includes("{{lead.name}}"),
+    body.split("\n")[0]);
       check("it signs off with the brokerage", body.trimEnd().endsWith(`Talent Acquisition | ${CONTACT.brokerage}`));
       check("the contact email is the template's Cc", (tpl.cc ?? "") === CONTACT.email, `cc=${tpl.cc ?? "(none)"}`);
     }
@@ -113,7 +206,7 @@ if (sampleThreadId) {
   check("it answers 200 with an available flag", r.status === 200 && typeof b.available === "boolean", `HTTP ${r.status}`);
   if (b.available) {
     check("an available answer carries a body and names the client",
-      typeof b.body === "string" && b.body.includes("{{lead.name}}") && !!b.clientName, b.clientName);
+      typeof b.body === "string" && b.body.includes("{{lead.first_name}}") && !!b.clientName, b.clientName);
   } else {
     check("an unavailable answer says why, in words a person can act on",
       typeof b.reason === "string" && b.reason.length > 10, b.reason);

@@ -24,7 +24,7 @@ const CLIENT = {
  * the same pieces the implementation uses.
  */
 const EXPECTED =
-  "Hey {{lead.name}},\n\n" +
+  "Hey {{lead.first_name}},\n\n" +
   "I'd like to introduce you to Nicole Collins, Team Leader at JPAR Iron Horse Real Estate\n\n" +
   "Nicole, I recently connected with {{lead.first_name}}, who can be reached directly at " +
   "{{lead.phone_number}} and is currently with {{lead.company}}.\n\n" +
@@ -39,7 +39,11 @@ test("the macro reads exactly as the stored templates do", () => {
 
 test("the lead's values stay as placeholders, the client's do not", () => {
   const out = renderIntroMacroTemplate(CLIENT);
-  for (const token of ["{{lead.name}}", "{{lead.first_name}}", "{{lead.phone_number}}", "{{lead.company}}", "{{sender.name}}"]) {
+  // `{{lead.name}}` is deliberately absent: the greeting opens with the first
+  // name, on the client's instruction, because the full name produced
+  // "Hey Gisele Abrantes Trautman,".
+  assert.equal(out.includes("{{lead.name}}"), false, "the greeting must not use the full name");
+  for (const token of ["{{lead.first_name}}", "{{lead.phone_number}}", "{{lead.company}}", "{{sender.name}}"]) {
     assert.ok(out.includes(token), `${token} must survive for insert-time substitution`);
   }
   assert.equal(/\{\{client/.test(out), false, "the client's values are already filled in");

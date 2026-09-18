@@ -1,5 +1,6 @@
 import "server-only";
 
+import { syncIntroTemplate } from "@/lib/clients/intro-template-sync";
 import { osTable } from "./os-db";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { withStandardFlags } from "./portal-features";
@@ -150,12 +151,21 @@ export async function runOnboarding(
    */
   if (input.introMacro) {
     const m = input.introMacro;
+    const extra = (m.extraContacts ?? []).slice(0, 2);
+    const nth = (i: number, key: "name" | "role" | "email") =>
+      (extra[i]?.[key] ?? "").trim() || null;
     try {
       await osTable("os_clients")
         .update({
           contact_name: m.clientFullName.trim() || null,
           contact_role: m.clientRole.trim() || null,
           contact_email: m.contactEmail?.trim() || null,
+          contact2_name: nth(0, "name"),
+          contact2_role: nth(0, "role"),
+          contact2_email: nth(0, "email"),
+          contact3_name: nth(1, "name"),
+          contact3_role: nth(1, "role"),
+          contact3_email: nth(1, "email"),
           brokerage: m.brokerage.trim() || null,
           updated_at: new Date().toISOString(),
         })
@@ -311,6 +321,41 @@ export async function runOnboarding(
     // Stop at the first failure: continuing would publish a portal for a
     // client the other tools never accepted.
     if (result.status === "failed") break;
+  }
+
+  /*
+   * A client with a second or third person needs the template rewritten.
+   *
+   * Master Inbox's onboarding endpoint created a one-person macro, because
+   * that is the only shape its deployed API takes and this app does not
+   * change it. Re-rendering here from all three leaves the stored template
+   * saying what the Introduce button will say. Only runs when there IS an
+   * extra person, so an ordinary onboarding writes nothing twice.
+   *
+   * Never fatal: the client is fully onboarded by this point, and the
+   * Introduce button reads the OS record rather than this template.
+   */
+  const extras = (input.introMacro?.extraContacts ?? []).filter(
+    (c) => (c?.name ?? "").trim() && (c?.role ?? "").trim(),
+  );
+  if (input.introMacro && extras.length > 0) {
+    try {
+      await syncIntroTemplate({
+        name: input.name,
+        contactName: input.introMacro.clientFullName,
+        contactRole: input.introMacro.clientRole,
+        contactFirstName: input.introMacro.clientFirstName,
+        contactEmail: input.introMacro.contactEmail ?? null,
+        brokerage: input.introMacro.brokerage,
+        extraContacts: extras.map((c) => ({
+          name: c.name ?? null,
+          role: c.role ?? null,
+          email: c.email ?? null,
+        })),
+      });
+    } catch (err) {
+      console.error("[onboard] could not re-render the introduction template", err);
+    }
   }
 
   return {

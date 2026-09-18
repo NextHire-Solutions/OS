@@ -29,7 +29,9 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    // `&#039;`, not `&#39;`: the composer writes the four-digit form, and the
+    // agent's send is byte-compared against the composer's output.
+    .replace(/'/g, "&#039;");
 }
 
 /**

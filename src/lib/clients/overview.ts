@@ -44,7 +44,10 @@ export interface ClientRow {
      * show at a glance which clients an agent can be introduced to. All null
      * for a client nobody has filled them in for.
      */
-    contact: { name: string | null; role: string | null; email: string | null; brokerage: string | null };
+    contact: {
+      name: string | null; role: string | null; email: string | null; brokerage: string | null;
+      extra: Array<{ name: string | null; role: string | null; email: string | null }>;
+    };
   };
   /** Client Health — the billed roster. */
   /** The client's live portal, or null when it has none. */
@@ -141,7 +144,14 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
         id: os?.id ?? null,
         status: os?.status ?? "active",
         inOnboarding: Boolean(os?.links.onboarding),
-        contact: os?.contact ?? { name: null, role: null, email: null, brokerage: null },
+        contact:
+          os?.contact ?? {
+            name: null, role: null, email: null, brokerage: null,
+            extra: [
+              { name: null, role: null, email: null },
+              { name: null, role: null, email: null },
+            ],
+          },
       },
       portalUrl: publicPortalUrl(portalToken),
       health: {

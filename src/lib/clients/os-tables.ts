@@ -10,7 +10,17 @@
  * any of its ~40 tables. This list is what stops it.
  */
 
-export const OS_TABLES = ["os_clients", "os_client_onboarding", "os_tool_grants", "os_users"] as const;
+export const OS_TABLES = [
+  "os_clients",
+  "os_client_onboarding",
+  "os_tool_grants",
+  "os_users",
+  // The reply agent's knowledge — see migrations/0006_os_reply_intelligence.sql.
+  "os_reply_examples",
+  "os_agent_knowledge",
+  "os_reply_feedback",
+  "os_knowledge_proposals",
+] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 
 export class NotAnOsTableError extends Error {

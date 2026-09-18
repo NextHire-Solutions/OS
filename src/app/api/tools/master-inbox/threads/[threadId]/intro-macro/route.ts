@@ -5,6 +5,7 @@ import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
   hasIntroDetails,
+  introContactEmails,
   missingIntroFields,
   renderIntroMacroTemplate,
 } from "@/lib/tools/master-inbox/inbox/intro-macro";
@@ -32,8 +33,20 @@ type Available = {
   clientName: string;
   /** The macro, client details filled in, `{{lead.*}}` still to resolve. */
   body: string;
-  /** The client contact's address, to merge into Cc. Null when not held. */
+  /**
+   * Every named contact's address, comma-separated, to merge into Cc. Null
+   * when none of them has one.
+   */
   cc: string | null;
+  /*
+   * The workspace's "Introduction" label, so the composer can apply it once
+   * the introduction has actually been sent. Null when the workspace has no
+   * such label, in which case the composer simply does not label — it never
+   * invents one, because creating a label here would start the introduction
+   * machinery (portal pipeline, Follow Up Boss) on a workspace that has
+   * deliberately not set it up.
+   */
+  introductionLabelId: string | null;
 };
 
 export async function GET(
@@ -80,7 +93,11 @@ export async function GET(
   let row: Record<string, unknown> | null = null;
   try {
     const { data, error } = await osTable("os_clients")
-      .select("name, contact_name, contact_role, contact_email, brokerage")
+      .select(
+        "name, contact_name, contact_role, contact_email, " +
+          "contact2_name, contact2_role, contact2_email, " +
+          "contact3_name, contact3_role, contact3_email, brokerage",
+      )
       .eq("mi_client_id", clientId)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -101,11 +118,20 @@ export async function GET(
     });
   }
 
+  const str = (k: string) => (row?.[k] as string | null) ?? null;
   const client = {
     name: (row.name as string | null) ?? clientName,
-    contactName: (row.contact_name as string | null) ?? null,
-    contactRole: (row.contact_role as string | null) ?? null,
-    brokerage: (row.brokerage as string | null) ?? null,
+    contactName: str("contact_name"),
+    contactRole: str("contact_role"),
+    contactEmail: str("contact_email"),
+    // The second and third people, when this client has them. Anyone without
+    // both a name and a role is ignored by the macro.
+    extraContacts: [2, 3].map((n) => ({
+      name: str(`contact${n}_name`),
+      role: str(`contact${n}_role`),
+      email: str(`contact${n}_email`),
+    })),
+    brokerage: str("brokerage"),
   };
 
   if (!hasIntroDetails(client)) {
@@ -117,10 +143,18 @@ export async function GET(
     });
   }
 
+  const { data: introLabel } = await admin
+    .from("labels")
+    .select("id")
+    .eq("workspace_id", session.activeWorkspace.id)
+    .ilike("name", "Introduction")
+    .maybeSingle();
+
   return NextResponse.json<Available>({
     available: true,
     clientName: client.name,
     body: renderIntroMacroTemplate(client),
-    cc: ((row.contact_email as string | null) ?? "").trim() || null,
+    cc: introContactEmails(client).join(", ") || null,
+    introductionLabelId: (introLabel?.id as string | undefined) ?? null,
   });
 }

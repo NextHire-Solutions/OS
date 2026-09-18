@@ -4,6 +4,7 @@ import { env } from "@/lib/tools/master-inbox/env";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import {
   hasIntroDetails,
+  introContactEmails,
   introTemplateName,
   renderIntroMacroTemplate,
   type IntroMacroClient,
@@ -43,10 +44,12 @@ export type IntroTemplateOutcome =
   | "no-workspace"
   | "unchanged";
 
-export interface IntroTemplateSyncInput extends IntroMacroClient {
-  /** Becomes the template's Cc, so the picker copies the client in too. */
-  contactEmail?: string | null;
-}
+/*
+ * Nothing beyond the macro's own shape. The contacts' addresses become the
+ * template's Cc, so the Templates picker copies the same people in that the
+ * Introduce button does.
+ */
+export type IntroTemplateSyncInput = IntroMacroClient;
 
 export async function syncIntroTemplate(
   client: IntroTemplateSyncInput,
@@ -61,7 +64,8 @@ export async function syncIntroTemplate(
   const db = getMasterInboxSupabase();
   const name = introTemplateName(client.name);
   const body = renderIntroMacroTemplate(client);
-  const cc = (client.contactEmail ?? "").trim() || null;
+  // Every contact who has an address, in the order they are named in the body.
+  const cc = introContactEmails(client).join(", ") || null;
 
   const { data: existing, error: readErr } = await db
     .from("reply_templates")

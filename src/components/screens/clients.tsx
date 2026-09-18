@@ -167,11 +167,49 @@ const note: React.CSSProperties = {
   maxWidth: "90ch",
 };
 
+/**
+ * "Introduction ready", with how many people it names.
+ *
+ * A person counts only when they have both a name and a role, which is the
+ * same rule the macro itself applies — so this chip says exactly what the
+ * introduction will do, not what has been typed into the form.
+ */
+function IntroChip({ contact }: { contact: ClientRow["os"]["contact"] }) {
+  const people = [
+    { name: contact.name, role: contact.role },
+    ...(contact.extra ?? []).map((p) => ({ name: p.name, role: p.role })),
+  ].filter((p) => (p.name ?? "").trim() && (p.role ?? "").trim());
+  if (people.length === 0) return null;
+
+  const named = people.map((p) => `${p.name} (${p.role})`).join(", ");
+  return (
+    <span
+      className="cintro"
+      title={`Introduces to ${named}${contact.brokerage ? ` at ${contact.brokerage}` : ""}`}
+    >
+      <span className="dot" />
+      Introduction ready
+      {people.length > 1 ? <span className="n">· {people.length} people</span> : null}
+    </span>
+  );
+}
+
 function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; onChanged: () => void }) {
   const { client, health, inbox, analytics, os, portalUrl } = row;
   return (
     <tr>
-      <td><div className="cname">{client.name}</div></td>
+      <td>
+        <div className="cname">{client.name}</div>
+        {/*
+          Who this client introduces agents to.
+          --------------------------------------------------------------
+          Until now the only way to know whether a client's Introduce
+          button would work was to open a conversation and look at it.
+          Drawn only when the details ARE there: most clients do not have
+          them yet, and a chip on every row would drown the table.
+        */}
+        <IntroChip contact={os.contact} />
+      </td>
 
       <td>
         {health.plan ? (

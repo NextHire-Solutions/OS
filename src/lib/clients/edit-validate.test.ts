@@ -15,8 +15,11 @@ test("a contact email has to be an address", () => {
 
 test("the lengths match what the introduction template can hold", () => {
   assert.deepEqual(validateEdit({ contactName: "N".repeat(160) }), []);
-  assert.match(validateEdit({ contactName: "N".repeat(161) })[0] ?? "", /Contact name is 161/);
-  assert.match(validateEdit({ contactRole: "R".repeat(121) })[0] ?? "", /Their role is 121/);
+  // The labels name WHICH person, now that a client can have three of them.
+  assert.match(validateEdit({ contactName: "N".repeat(161) })[0] ?? "", /First contact name is 161/);
+  assert.match(validateEdit({ contactRole: "R".repeat(121) })[0] ?? "", /First contact's role is 121/);
+  assert.match(validateEdit({ contact2Name: "N".repeat(161) })[0] ?? "", /Second contact name is 161/);
+  assert.match(validateEdit({ contact3Role: "R".repeat(121) })[0] ?? "", /Third contact's role is 121/);
   assert.match(validateEdit({ brokerage: "B".repeat(161) })[0] ?? "", /Brokerage is 161/);
 });
 

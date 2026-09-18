@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { introPeopleSentence } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 import { ModalDialog } from "@/components/ui/modal-dialog";
 import { CLIENT_STATUSES, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
@@ -41,6 +42,8 @@ export interface EditableClient {
     role: string | null;
     email: string | null;
     brokerage: string | null;
+    /** The second and third people. Always two entries, either may be empty. */
+    extra: Array<{ name: string | null; role: string | null; email: string | null }>;
   };
 }
 
@@ -83,10 +86,54 @@ function EditBody({
   const [plan, setPlan] = useState(client.plan ?? "production");
   const [weeklyTarget, setWeeklyTarget] = useState(String(client.weeklyTarget ?? 3));
   const [billingInterval, setBillingInterval] = useState("");
-  const [contactName, setContactName] = useState(client.contact.name ?? "");
-  const [contactRole, setContactRole] = useState(client.contact.role ?? "");
-  const [contactEmail, setContactEmail] = useState(client.contact.email ?? "");
+  /*
+   * The three people, as one array rather than nine useStates.
+   *
+   * Slot 0 is the contact this screen has always had; 1 and 2 are the second
+   * and third the client asked for. Keeping them in one shape is what lets the
+   * preview sentence, the save diff and the rendered fields all walk the same
+   * list instead of repeating themselves three times over.
+   */
+  const asPeople = useCallback(
+    () => [
+      { name: client.contact.name ?? "", role: client.contact.role ?? "", email: client.contact.email ?? "" },
+      ...[0, 1].map((i) => ({
+        name: client.contact.extra?.[i]?.name ?? "",
+        role: client.contact.extra?.[i]?.role ?? "",
+        email: client.contact.extra?.[i]?.email ?? "",
+      })),
+    ],
+    [client],
+  );
+  const [people, setPeople] = useState(asPeople);
   const [brokerage, setBrokerage] = useState(client.contact.brokerage ?? "");
+  const setPerson = (i: number, patch: Partial<(typeof people)[number]>) =>
+    setPeople((cur) => cur.map((p, n) => (n === i ? { ...p, ...patch } : p)));
+
+  /*
+   * The first line of the introduction as it will really read, from the same
+   * function that writes it, so the preview can never promise one thing and
+   * the email say another. Anyone half-filled in is left out, which is also
+   * what saving refuses.
+   */
+  const previewPeople =
+    introPeopleSentence({
+      name: client.name,
+      contactName: people[0].name,
+      contactRole: people[0].role,
+      brokerage: brokerage || null,
+      extraContacts: people.slice(1).map((p) => ({ name: p.name, role: p.role })),
+    }).replace(/^,\s*|,\s*$/g, "") || "\u2026";
+
+  /*
+   * How many contact slots are on screen. Someone who only ever introduces to
+   * one person should not have to look at six empty fields, so extra slots
+   * appear when they hold something, or when the operator asks for one.
+   */
+  const [slots, setSlots] = useState(() => {
+    const filled = asPeople().filter((p) => p.name.trim() || p.role.trim() || p.email.trim()).length;
+    return Math.max(1, filled);
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ updated: string[]; failed: { what: string; error: string }[]; untouched: string[] } | null>(null);
@@ -106,9 +153,19 @@ function EditBody({
       if (billingInterval) body.billingInterval = billingInterval;
       // Only what changed — an untouched field must not be re-asserted, and a
       // cleared one has to travel as "" so the server knows to null it.
-      if (contactName.trim() !== (client.contact.name ?? "")) body.contactName = contactName.trim();
-      if (contactRole.trim() !== (client.contact.role ?? "")) body.contactRole = contactRole.trim();
-      if (contactEmail.trim() !== (client.contact.email ?? "")) body.contactEmail = contactEmail.trim();
+      // Only what actually changed, slot by slot. The first slot keeps the
+      // original field names so nothing else has to know it is slot zero.
+      const KEYS = [
+        { name: "contactName", role: "contactRole", email: "contactEmail" },
+        { name: "contact2Name", role: "contact2Role", email: "contact2Email" },
+        { name: "contact3Name", role: "contact3Role", email: "contact3Email" },
+      ] as const;
+      const was = asPeople();
+      people.forEach((p, i) => {
+        for (const field of ["name", "role", "email"] as const) {
+          if (p[field].trim() !== was[i][field].trim()) body[KEYS[i][field]] = p[field].trim();
+        }
+      });
       if (brokerage.trim() !== (client.contact.brokerage ?? "")) body.brokerage = brokerage.trim();
 
       if (Object.keys(body).length === 1) { onClose(); return; }
@@ -197,36 +254,73 @@ function EditBody({
             <div style={{ fontSize: 12.5, fontWeight: 650 }}>Introduction details</div>
             <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.55 }}>
               Used by the <b>Introduce</b> button in a conversation: “I&rsquo;d like to introduce you
-              to <i>{contactName.trim() || "…"}</i>, <i>{contactRole.trim() || "…"}</i> at{" "}
-              <i>{brokerage.trim() || client.name}</i>”.
+              to <i>{previewPeople}</i> at <i>{brokerage.trim() || client.name}</i>”.
             </div>
           </div>
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-            <label style={FIELD}>
-              <span style={LABEL}>Contact full name</span>
-              <input className="inp" value={contactName} maxLength={160} placeholder="Nicole Collins"
-                onChange={(e) => setContactName(e.target.value)} />
-            </label>
-            <label style={FIELD}>
-              <span style={LABEL}>Their role</span>
-              <input className="inp" value={contactRole} maxLength={120} placeholder="Team Leader"
-                onChange={(e) => setContactRole(e.target.value)} />
-            </label>
-            <label style={FIELD}>
-              <span style={LABEL}>Brokerage</span>
-              <input className="inp" value={brokerage} maxLength={160} placeholder={client.name}
-                onChange={(e) => setBrokerage(e.target.value)} />
-            </label>
-            <label style={FIELD}>
-              <span style={LABEL}>Contact email</span>
-              <input className="inp" type="email" value={contactEmail} maxLength={200}
-                placeholder="nicole@brokerage.com"
-                onChange={(e) => setContactEmail(e.target.value)} />
-            </label>
-          </div>
+
+          <label style={{ ...FIELD, maxWidth: 260 }}>
+            <span style={LABEL}>Brokerage</span>
+            <input className="inp" value={brokerage} maxLength={160} placeholder={client.name}
+              onChange={(e) => setBrokerage(e.target.value)} />
+          </label>
+
+          {/*
+            One block per person. The client asked to introduce an agent to up
+            to three people at once — a team leader, a managing broker and an
+            owner, say — all named in the same sentence and all copied in.
+            Slots beyond the first appear only when they are wanted.
+          */}
+          {people.slice(0, slots).map((person, i) => (
+            <div key={i} style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 650, color: "var(--muted)" }}>
+                  {["First person", "Second person", "Third person"][i]}
+                </span>
+                {i > 0 && i === slots - 1 ? (
+                  <button type="button" className="btn-ghost" style={{ fontSize: 11.5, padding: "2px 8px" }}
+                    onClick={() => {
+                      setPerson(i, { name: "", role: "", email: "" });
+                      setSlots(i);
+                    }}>
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+                <label style={FIELD}>
+                  <span style={LABEL}>Full name</span>
+                  <input className="inp" value={person.name} maxLength={160}
+                    placeholder={["Nicole Collins", "Shaurs Patel", "Eddy Chen"][i]}
+                    onChange={(e) => setPerson(i, { name: e.target.value })} />
+                </label>
+                <label style={FIELD}>
+                  <span style={LABEL}>Their role</span>
+                  <input className="inp" value={person.role} maxLength={120}
+                    placeholder={["Team Leader", "Managing Broker", "Broker and Owner"][i]}
+                    onChange={(e) => setPerson(i, { role: e.target.value })} />
+                </label>
+                <label style={FIELD}>
+                  <span style={LABEL}>Their email</span>
+                  <input className="inp" type="email" value={person.email} maxLength={200}
+                    placeholder="nicole@brokerage.com"
+                    onChange={(e) => setPerson(i, { email: e.target.value })} />
+                </label>
+              </div>
+            </div>
+          ))}
+
+          {slots < 3 ? (
+            <button type="button" className="btn-ghost"
+              style={{ justifySelf: "start", fontSize: 11.5, padding: "3px 9px" }}
+              onClick={() => setSlots(slots + 1)}>
+              + Add another person
+            </button>
+          ) : null}
+
           <span style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 }}>
-            The contact email is copied into <b>Cc</b> when the introduction is inserted — added to
-            whoever is already there, never replacing them.
+            Everyone named here goes into the same introduction, and their emails are copied into{" "}
+            <b>Cc</b> — added to whoever is already there, never replacing them. A person needs
+            both a name and a role to be named.
           </span>
         </div>
 

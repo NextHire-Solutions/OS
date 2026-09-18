@@ -61,6 +61,16 @@ export interface IntroMacro {
    * the composer's Introduce button.
    */
   contactEmail?: string;
+  /*
+   * A second and third person to introduce to, when the client has them.
+   *
+   * These never travel to Master Inbox: its onboarding endpoint is deployed
+   * and understands one contact, so it still creates a one-person template
+   * exactly as it always has. They are stored on the OS record, and the
+   * template is re-rendered from all of them straight afterwards. That keeps
+   * the payload this app sends byte-identical to what it sent before.
+   */
+  extraContacts?: Array<{ name?: string; role?: string; email?: string }>;
 }
 
 export interface OnboardInput {
