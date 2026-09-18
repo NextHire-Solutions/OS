@@ -34,7 +34,24 @@ export async function GET(request: NextRequest) {
   const platforms = (params.get("platforms") ?? "")
     .split(",").map((p) => p.trim()).filter(Boolean);
   const search = (params.get("q") ?? "").trim();
-  const clientId = params.get("client_id");
+  /*
+   * THE CLIENT FILTER, UNDER THE NAME THE DASHBOARD ACTUALLY SENDS.
+   *
+   * This read `client_id`. Every other analytics screen serialises the filter
+   * as `client_ids` — see setList("client_ids", ...) in query-params.ts — so
+   * this route never saw one, applied no client filter at all, and answered a
+   * request for ONE client with all 522 campaigns belonging to every client.
+   * A client looking for their own campaigns could not find them, which is
+   * exactly what was reported.
+   *
+   * Both spellings are accepted: `client_ids` is what the screens send, and
+   * `client_id` keeps the hand-written links and any bookmark working. Only
+   * the first id is used — this page filters to one client, and the sentinel
+   * "excluded" below is a single value by nature.
+   */
+  const clientId =
+    (params.get("client_ids") ?? "").split(",").map((v) => v.trim()).filter(Boolean)[0] ??
+    params.get("client_id");
   const tag = params.get("tag");
   const limit = Math.min(Number(params.get("limit") ?? 200), 500);
   const offset = Math.max(Number(params.get("offset") ?? 0), 0);

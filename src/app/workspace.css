@@ -296,6 +296,16 @@ tbody tr:hover{background:var(--inset)}
   min-width:220px;max-width:280px}
 .cname{font-weight:600;font-size:14.5px;color:var(--ink);letter-spacing:-.01em}
 .csince{font-size:12px;color:var(--muted);margin-top:3px}
+
+/* Introduction readiness, under the client's name in the Clients table.
+   Only drawn for a client that HAS details — 39 of 59 do not, and a chip on
+   every one of those would be the loudest thing on the page. */
+.cintro{display:inline-flex;align-items:center;gap:5px;margin-top:5px;
+        padding:2px 8px;border-radius:7px;font-size:11px;font-weight:600;
+        background:var(--green-pale,var(--inset-2));color:var(--green,var(--muted));
+        letter-spacing:0;white-space:nowrap;cursor:default}
+.cintro .dot{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.75}
+.cintro .n{opacity:.75;font-weight:500}
 .cmeta{display:inline-flex;align-items:center;gap:7px;margin-top:9px;padding:5px 11px;
        background:var(--inset);border:0;border-radius:9px;
        font-size:12px;font-weight:500;color:var(--muted)}

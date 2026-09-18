@@ -170,64 +170,46 @@ function derive(
 const UPSTREAM_TTL_SECONDS = 300;
 
 async function fetchProspects(
+  sb: ReturnType<typeof getSupabase>,
+  filters: ResolvedFilters,
+  teamId: number,
   from: string,
   to: string,
-  campaignIds: number[],
 ): Promise<number | null> {
-
   /*
-   * NAMESPACED. The tool reads the bare names; the workspace cannot, because it
-   * talks to two EmailBison-shaped tools and four Supabase projects in a single
-   * process and an unprefixed name would collide with Master Inbox's. Same
-   * change, same reason, as supabase.ts. The VALUES are the tool's own — the
-   * August figures reconcile to the row: 224,708 sent in the analytics database
-   * against 224,709 reported by this workspace's stats endpoint.
+   * Leads contacted in the window, each counted once, from OUR send history.
+   *
+   * This used to ask EmailBison's workspace stats endpoint. EmailBison has no
+   * concept of a client — that mapping lives here, in campaign_clients, built
+   * by matching campaign names to client names — so the only question it could
+   * answer was "how many across the whole workspace". Prospects therefore
+   * ignored the client filter entirely and read the same number whether one
+   * client was selected or none. A client asked why their dashboard showed
+   * 94.3K prospects beside 0 sent; it was everybody's figure.
+   *
+   * `analytics_kpis.prospects` was not the answer either: it sums a DAILY
+   * distinct count, so a lead emailed on twenty days counts twenty times.
+   * Measured at 23,329 against 334 real leads for one client in one month.
+   *
+   * See supabase/migrations/091_analytics_prospects_distinct.sql.
+   *
+   * Null, never 0, when the function is missing or errors: the tile renders a
+   * dash. A dash is a question someone asks; a confident wrong number is not.
    */
-  const base = process.env.ANALYTICS_EMAILBISON_BASE_URL;
-  const key = process.env.ANALYTICS_EMAILBISON_API_KEY;
-  if (!base || !key) return null;
-
-  const headers = {
-    Authorization: `Bearer ${key}`,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-
-  try {
-    if (campaignIds.length === 0) {
-      const response = await fetch(
-        `${base}/api/workspaces/v1.1/stats?start_date=${from}&end_date=${to}`,
-        { headers, next: { revalidate: UPSTREAM_TTL_SECONDS } },
-      );
-      if (!response.ok) return null;
-      const body = await response.json();
-      return Number(body?.data?.total_leads_contacted ?? 0);
-    }
-
-    // Cap the fan-out: beyond this the latency is worse than the precision is
-    // worth, and the caller is better served by a narrower filter.
-    const targets = campaignIds.slice(0, 25);
-    const results = await Promise.all(
-      targets.map(async (id) => {
-        const response = await fetch(`${base}/api/campaigns/${id}/stats`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ start_date: from, end_date: to }),
-          // A POST is not cached by Next, so the fan-out branch still pays full
-          // latency. It is capped at 25 campaigns and only runs when the user
-          // has actually picked campaigns; the common unfiltered path above is
-          // the one that had to be fast.
-          cache: "no-store",
-        });
-        if (!response.ok) return 0;
-        const body = await response.json();
-        return Number(body?.data?.total_leads_contacted ?? 0);
-      }),
-    );
-    return results.reduce((total, n) => total + n, 0);
-  } catch {
+  const { data, error } = await sb.rpc("analytics_prospects", {
+    p_team_id: teamId,
+    p_from: from,
+    p_to: to,
+    p_campaign_ids: filters.emailbisonCampaignIds.length
+      ? filters.emailbisonCampaignIds
+      : null,
+    p_client_ids: filters.clientIds.length ? filters.clientIds : null,
+  });
+  if (error) {
+    console.warn("[analytics/prospects]", error.message);
     return null;
   }
+  return data == null ? null : Number(data);
 }
 
 /*
@@ -256,7 +238,7 @@ export async function loadKpis(
       sb.rpc("analytics_kpis", { ...args, p_compare: filters.compare }),
       sb.rpc("analytics_reply_timing", args),
       fetchFollowUpOverall(filters.from, filters.to),
-      fetchProspects(filters.from, filters.to, filters.emailbisonCampaignIds),
+      fetchProspects(sb, filters, teamId, filters.from, filters.to),
       filters.compare && filters.compareFrom && filters.compareTo
         ? sb.rpc("analytics_reply_timing", {
             ...args,
@@ -268,7 +250,7 @@ export async function loadKpis(
         ? fetchFollowUpOverall(filters.compareFrom, filters.compareTo)
         : Promise.resolve(null),
       filters.compare && filters.compareFrom && filters.compareTo
-        ? fetchProspects(filters.compareFrom, filters.compareTo, filters.emailbisonCampaignIds)
+        ? fetchProspects(sb, filters, teamId, filters.compareFrom, filters.compareTo)
         : Promise.resolve(null),
     ]);
 
@@ -345,6 +327,21 @@ export async function loadKpis(
   }
 
   let platformsCovered: string[] = wantsEmailBison ? ["emailbison"] : [];
+  /*
+   * Instantly's prospects, kept aside.
+   *
+   * `analytics_prospects` counts leads from EmailBison send history only —
+   * Instantly stores no per-send rows, so a distinct count over a window is
+   * not derivable for it. Its figure comes from analytics_instantly_kpis,
+   * which reads `new_leads_contacted` and is already one row per lead at first
+   * contact, so it does not have the daily double-count this whole change was
+   * about. The two are added below.
+   *
+   * Forgetting this read 0 prospects beside 2,063 sent for a client whose
+   * campaigns are all on Instantly — the same shape of wrongness, from the
+   * other direction.
+   */
+  let instantlyProspects: number | null = null;
 
   if (wantsInstantly) {
     const { data: inst, error: instError } = await sb.rpc("analytics_instantly_kpis", {
@@ -376,6 +373,7 @@ export async function loadKpis(
 
     if (i) {
       platformsCovered = [...platformsCovered, "instantly"];
+      instantlyProspects = i.prospects == null ? null : Number(i.prospects);
       const base = wantsEmailBison ? currentRow : undefined;
       currentRow = {
         period: "current",
@@ -410,9 +408,19 @@ export async function loadKpis(
   const medianReply = timing.data?.[0]?.median_reply_seconds ?? null;
   const replySamples = Number(timing.data?.[0]?.sample_size ?? 0);
 
+  /*
+   * One figure across both platforms. Null only when NEITHER side could
+   * answer — a dash then means "not available", not "none", which is the
+   * distinction the tile exists to keep.
+   */
+  const totalProspects =
+    prospects == null && instantlyProspects == null
+      ? null
+      : Number(prospects ?? 0) + Number(instantlyProspects ?? 0);
+
   const current = derive(
     currentRow,
-    prospects,
+    totalProspects,
     medianReply === null ? null : Number(medianReply),
     followUp.seconds,
   );

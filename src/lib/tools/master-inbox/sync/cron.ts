@@ -27,9 +27,17 @@ import {
 } from "../../analytics/sync/schedule.ts";
 
 export const SYNC_EXTERNAL_INTROS = "sync-external-intros";
+/*
+ * Releases replies a LIVE off-hours agent drafted inside business hours and
+ * held. Runs every five minutes; the sweep re-runs the whole safety gate on
+ * each held reply, and while live sending is gated off it finds nothing to
+ * send and reports so. Harmless to run early; essential once live is on.
+ */
+export const RELEASE_HELD_REPLIES = "release-held-replies";
 
 export const SCHEDULE: readonly ScheduleEntry[] = [
   { job: SYNC_EXTERNAL_INTROS, everyMinutes: 30 },
+  { job: RELEASE_HELD_REPLIES, everyMinutes: 5 },
 ];
 
 /** Every job the schedule names, in schedule order. */

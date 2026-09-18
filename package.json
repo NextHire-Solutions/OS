@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --import ./scripts/alias-hooks.mjs --test 'src/**/*.test.ts'",
+    "test": "node --experimental-test-module-mocks --import ./scripts/alias-hooks.mjs --test 'src/**/*.test.ts'",
     "hash": "node scripts/hash-password.mjs"
   },
   "dependencies": {

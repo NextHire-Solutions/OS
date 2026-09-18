@@ -2,7 +2,9 @@ import "server-only";
 
 import { env } from "@/lib/tools/master-inbox/env";
 import { syncExternalIntros } from "@/lib/tools/master-inbox/portals/external-intros";
+import { releaseHeldReplies } from "@/lib/tools/master-inbox/ai/release";
 import {
+  RELEASE_HELD_REPLIES,
   SYNC_EXTERNAL_INTROS,
   cronEnabled,
   dueMasterInboxJobs,
@@ -73,6 +75,8 @@ function state(): SchedulerState | undefined {
 
 const JOBS: Record<string, () => Promise<unknown>> = {
   [SYNC_EXTERNAL_INTROS]: () => syncExternalIntros(),
+  // The workspace is single-tenant; the same id the sync workers use.
+  [RELEASE_HELD_REPLIES]: () => releaseHeldReplies(env.WORKSPACE_ID ?? ""),
 };
 
 async function tick(s: SchedulerState, now = new Date()): Promise<void> {

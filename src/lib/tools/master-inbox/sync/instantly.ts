@@ -1,7 +1,7 @@
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createInstantlyClient } from "@/lib/tools/master-inbox/instantly/client";
 import { labelInboundMessage } from "@/lib/tools/master-inbox/ai/run";
-import { loadAgents, loadAgentWithKey, createDraftForAgent } from "@/lib/tools/master-inbox/ai/agent";
+import { runReplyAgentForThread } from "@/lib/tools/master-inbox/ai/runtime";
 import { deriveClientIdFromCampaign } from "@/lib/tools/master-inbox/clients/derive";
 import type { InstantlyEmail, InstantlyWebhookEnvelope } from "@/lib/tools/master-inbox/instantly/types";
 import {
@@ -447,43 +447,20 @@ export async function handleInstantlyEvent(envelope: InstantlyWebhookEnvelope): 
     } catch (err) {
       console.error("[ai] labelInboundMessage (instantly) failed", err);
     }
+      /*
+       * THE REPLY AGENT ENGINE, not "the first active agent, draft it".
+       *
+       * This used to pick the oldest active agent and ask it for a draft. The
+       * client-approved upgrade replaces that with `runReplyAgentForThread`:
+       * one active agent per client, a run mode that is acted on (pause stops,
+       * shadow drafts, live is gated off), the qualification script with
+       * per-thread state, and the safety gate. It resolves the lead, the
+       * sender and the conversation itself, which is why it takes only the
+       * thread. It never throws — every failure is an outcome, not an error.
+       */
     try {
-      const candidate = (await loadAgents(ctx.workspaceId))
-        .filter((a) => a.active)
-        .filter((a) => a.channel_filter === "both" || a.channel_filter === "email")
-        .filter((a) => {
-          if (a.channel_ids.length === 0) return true;
-          return ctx.channelId !== null && a.channel_ids.includes(ctx.channelId);
-        })
-        .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))[0];
-      if (candidate) {
-        const full = await loadAgentWithKey(candidate.id);
-        if (full && full.api_key) {
-          const { data: allMessages } = await createAdminSupabase()
-            .from("messages")
-            .select("direction, sent_at, body_text, body_html")
-            .eq("thread_id", threadId)
-            .order("sent_at", { ascending: true });
-          const conversation = (allMessages ?? []).map((m) => ({
-            direction: m.direction as "inbound" | "outbound",
-            sentAt: (m.sent_at as string | null) ?? null,
-            body:
-              (m.body_text as string | null) ??
-              stripHtml((m.body_html as string | null) ?? ""),
-          }));
-          await createDraftForAgent({
-            workspaceId: ctx.workspaceId,
-            threadId,
-            agent: full,
-            leadName: leadFullName(envelope),
-            leadEmail,
-            ourName: null,
-            ourEmail: envelope.email_account ?? null,
-            subject: envelope.reply_subject ?? null,
-            conversation,
-          });
-        }
-      }
+      const outcome = await runReplyAgentForThread(ctx.workspaceId, threadId);
+      console.log(`[agents] thread ${threadId}: ${outcome.status}${"mode" in outcome && outcome.mode ? ` / ${outcome.mode}` : ""}`);
     } catch (err) {
       console.error("[agents] instantly draft generation failed", err);
     }
