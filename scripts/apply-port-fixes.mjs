@@ -146,15 +146,23 @@ const note = (m) => { console.log(`  ${m}`); changed++; };
  * blind regex would mangle it. If a sync reverts this, it is flagged loudly.
  */
 {
-  const p = "src/app/api/tools/master-inbox/threads/[threadId]/labels/route.ts";
-  if (fs.existsSync(p)) {
-    const s = fs.readFileSync(p, "utf8");
-    if (!s.includes("enqueueIntroduction")) {
-      console.log("  ⚠ labels route lost the outbox wiring — re-apply by hand:");
-      console.log("     replace the three after(() => notify…/push…) calls with");
-      console.log("     after(() => enqueueIntroduction(threadId));");
-      console.log("     and import it from @/lib/tools/master-inbox/outbox");
-    }
+  // The route's core now lives in lib/.../inbox/apply-label.ts (shared with
+  // the reply agent's post-send hook); the route itself is a thin wrapper.
+  // A re-sync that restores the tool's fat route would bring back the bare
+  // after() calls AND bypass the shared function, so both are checked.
+  const route = "src/app/api/tools/master-inbox/threads/[threadId]/labels/route.ts";
+  const core = "src/lib/tools/master-inbox/inbox/apply-label.ts";
+  if (fs.existsSync(route) && !fs.readFileSync(route, "utf8").includes("applyLabelToThread")) {
+    console.log("  ⚠ labels route no longer calls applyLabelToThread — re-apply by hand:");
+    console.log("     the POST handler must resolve the session and call");
+    console.log("     applyLabelToThread({ ..., actor: { kind: 'user' }, defer: after })");
+    console.log("     from @/lib/tools/master-inbox/inbox/apply-label");
+  }
+  if (!fs.existsSync(core) || !fs.readFileSync(core, "utf8").includes("enqueueIntroduction")) {
+    console.log("  ⚠ apply-label.ts lost the outbox wiring — re-apply by hand:");
+    console.log("     replace the three notify…/push… calls with");
+    console.log("     defer(() => enqueueIntroduction(threadId));");
+    console.log("     and import it from @/lib/tools/master-inbox/outbox");
   }
 }
 

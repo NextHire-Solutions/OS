@@ -33,11 +33,15 @@ export async function resolve(specifier, context, next) {
     return await next(spec, context);
   } catch (err) {
     if (err?.code !== "ERR_MODULE_NOT_FOUND") throw err;
-    // Extensionless TypeScript import: try the extensions Next would.
+    // Extensionless TypeScript import: try the extensions Next would. A bare
+    // package path with no exports map (`next/server`) reports the file URL it
+    // tried on the error, so the same retry covers it.
     const base = spec.startsWith("file:") ? spec
       : spec.startsWith(".") && context.parentURL
         ? new URL(spec, context.parentURL).href
-        : null;
+        : typeof err?.url === "string" && err.url.startsWith("file:")
+          ? err.url
+          : null;
     if (!base) throw err;
     for (const ext of EXTS) {
       const candidate = base + ext;
