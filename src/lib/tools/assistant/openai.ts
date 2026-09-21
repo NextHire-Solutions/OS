@@ -31,6 +31,20 @@ export class NoAssistantKeyError extends Error {
 }
 
 export async function loadAssistantKey(workspaceId: string): Promise<{ apiKey: string; model: string }> {
+  /*
+   * A direct key, for development.
+   *
+   * The stored key is decrypted inside Postgres with APP_ENCRYPTION_KEY, which
+   * is set on the servers and deliberately not on a laptop — so without this
+   * escape hatch the assistant cannot be run locally at all, and the only way
+   * to try a change is to deploy it.
+   *
+   * Production leaves it unset and uses the workspace key, so there is still
+   * one key to rotate in the place people already rotate it.
+   */
+  const direct = process.env.ASSISTANT_OPENAI_API_KEY;
+  if (direct) return { apiKey: direct, model: process.env.ASSISTANT_MODEL ?? "gpt-4o" };
+
   const encryptionKey = env.APP_ENCRYPTION_KEY;
   if (!encryptionKey) throw new NoAssistantKeyError("APP_ENCRYPTION_KEY is not set on this server");
 
