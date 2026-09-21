@@ -6,6 +6,7 @@ import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/
 
 import { findClient } from "./identity.ts";
 import { readOnly } from "./read-only.ts";
+import { describeDbError } from "./describe-error.ts";
 
 /*
  * The detail tools: campaigns, scrapes, inbox activity, the reply agent.
@@ -139,7 +140,7 @@ export async function scrapeActivityTool(options: { client?: string; limit?: num
   if (orchId) query = query.eq("orch_client_id", orchId);
 
   const { data, error } = await query;
-  if (error) return { error: `Agent Search could not be read: ${String(error)}` };
+  if (error) return { error: `Agent Search could not be read: ${describeDbError(error)}` };
 
   const batches = ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
     campaign: String(r.campaign_name ?? ""),
@@ -201,7 +202,7 @@ export async function inboxActivityTool(options: { days?: number } = {}) {
       .gte("labelled_at", since)
       .order("labelled_at", { ascending: false })
       .range(from, from + PAGE - 1);
-    if (error) return { error: `Master Inbox could not be read: ${String(error)}` };
+    if (error) return { error: `Master Inbox could not be read: ${describeDbError(error)}` };
 
     const rows = (data ?? []) as Array<{ label_name: string | null }>;
     for (const row of rows) {
@@ -250,7 +251,7 @@ export async function replyAgentStatusTool() {
         "qualification_started, qualification_qualified, qualification_handed_over, qualification_stopped, sends_held, " +
         "reply_rate, tokens_total",
     );
-  if (error) return { error: `The reply agent stats could not be read: ${String(error)}` };
+  if (error) return { error: `The reply agent stats could not be read: ${describeDbError(error)}` };
 
   const agents = ((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => ({
     name: String(r.name ?? ""),

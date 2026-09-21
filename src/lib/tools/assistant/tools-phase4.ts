@@ -6,6 +6,7 @@ import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-healt
 
 import { findClient } from "./identity.ts";
 import { readOnly } from "./read-only.ts";
+import { describeDbError } from "./describe-error.ts";
 
 /*
  * The content tools: what we actually said, what came back, and what it costs.
@@ -201,7 +202,7 @@ export async function recentRepliesTool(options: { client?: string; label?: stri
   if (threadIds) query = query.in("thread_id", threadIds.slice(0, 200));
 
   const { data, error } = await query;
-  if (error) return { error: `Master Inbox could not be read: ${String(error)}` };
+  if (error) return { error: `Master Inbox could not be read: ${describeDbError(error)}` };
 
   return {
     client: clientName,
@@ -242,7 +243,7 @@ export async function inboxDeliverabilityTool(options: { minSent?: number; limit
     .gte("lifetime_sent", minSent)
     .order("lifetime_bounced", { ascending: false })
     .limit(limit * 4);
-  if (error) return { error: `Analytics could not be read: ${String(error)}` };
+  if (error) return { error: `Analytics could not be read: ${describeDbError(error)}` };
 
   const rows = ((data ?? []) as Array<Record<string, unknown>>)
     .map((r) => {

@@ -4,6 +4,7 @@ import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/supabase";
 
 import { readOnly } from "./read-only.ts";
+import { describeDbError } from "./describe-error.ts";
 
 /*
  * Onboarding, and the sending infrastructure.
@@ -51,7 +52,7 @@ export async function onboardingPipelineTool(options: { stalledDays?: number } =
     .from("orch_clients")
     .select("client_name, status, brand, office_name, mls, location, created_at")
     .limit(1000);
-  if (error) return { error: `Onboarding could not be read: ${String(error)}` };
+  if (error) return { error: `Onboarding could not be read: ${describeDbError(error)}` };
 
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   const now = Date.now();

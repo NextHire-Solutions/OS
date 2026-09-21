@@ -89,6 +89,9 @@ const TOOL_LABEL: Record<string, string> = {
   sending_volume: "Adding up sending volume",
   client_reply_rates: "Comparing reply rates",
   agent_database: "Sizing the agent database",
+  outcomes: "Reading the hiring funnel",
+  mls_coverage: "Checking MLS coverage",
+  reminders: "Checking reminders",
 };
 
 export function AssistantScreen() {

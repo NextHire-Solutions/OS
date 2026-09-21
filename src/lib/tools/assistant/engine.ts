@@ -15,6 +15,7 @@ import {
   recentRepliesTool,
 } from "./tools-phase4.ts";
 import { agentDatabaseTool, clientReplyRatesTool, sendingVolumeTool } from "./tools-phase5.ts";
+import { mlsCoverageTool, outcomesTool, remindersTool } from "./tools-phase6.ts";
 
 /*
  * The tool-calling loop.
@@ -170,6 +171,45 @@ export const TOOL_SCHEMA = [
       parameters: {
         type: "object",
         properties: { days: { type: "number", description: "Look back this many days. Default 30." } },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "outcomes",
+      description:
+        "What happened to the agents we introduced — the funnel from introduction through phone screen and interview to " +
+        "hired, plus keep_warm, no_show and rejected. For the whole business or one client. This is the real result of " +
+        "the work; replies and intros are upstream of it.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: { type: "number", description: "Look back this many days, 1-730. Default 90." },
+          client: { type: "string", description: "Optional. Omit for the whole business." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "mls_coverage",
+      description:
+        "Which MLS areas each monitored account is watching and how many agents each area holds — the MLS monitor and " +
+        "courted-accounts view from Agent Search, with the last refresh status of each account.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "reminders",
+      description:
+        "Follow-up reminders set on inbox threads, split into overdue and upcoming. Answers 'what have I missed'.",
+      parameters: {
+        type: "object",
+        properties: { includeDone: { type: "boolean", description: "Include completed reminders." } },
       },
     },
   },
@@ -340,8 +380,8 @@ about your tools, never a fact about the business. Asked about courted accounts 
 the system does not store them — it does; you simply cannot read it. Phrase such an answer as not
 having a way to look it up, in your own words, and point at the product that holds it.
 
-You have no way to look these up: courted accounts and the MLS monitor (Agent Search), reminders
-(Master Inbox), and marketing attribution (Campaign Analytics). They exist; you cannot read them.
+The one genuine absence is PRICE and REVENUE — no figure exists in any of these systems, and a plan
+name is not a number. Everything else the five products hold, a tool reaches.
 The one genuine absence is PRICE and REVENUE — no figure exists in any of these systems, and a plan
 name is not a number.`;
 
@@ -386,6 +426,13 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
       minEmails: typeof a.minEmails === "number" ? a.minEmails : undefined,
     }),
   agent_database: () => agentDatabaseTool(),
+  outcomes: (a) =>
+    outcomesTool({
+      days: typeof a.days === "number" ? a.days : undefined,
+      client: typeof a.client === "string" && a.client ? a.client : undefined,
+    }),
+  mls_coverage: () => mlsCoverageTool(),
+  reminders: (a) => remindersTool({ includeDone: a.includeDone === true }),
   client_rankings: (a) =>
     clientRankingsTool({
       signal: a.signal as "behind_target" | "gone_quiet" | "stagnant_intros" | undefined,
