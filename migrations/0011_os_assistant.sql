@@ -78,8 +78,8 @@ COMMENT ON TABLE public.os_client_aliases IS
 -- ---------------------------------------------------------------------------
 -- Stored chats.
 --
--- PER PERSON, not per workspace. The assistant answers across every client''s
--- numbers, so one shared pile would mean anyone''s question is everyone''s
+-- PER PERSON, not per workspace. The assistant answers across every client's
+-- numbers, so one shared pile would mean anyone's question is everyone's
 -- history. `user_email` is the identity the session already carries.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.os_assistant_chats (
