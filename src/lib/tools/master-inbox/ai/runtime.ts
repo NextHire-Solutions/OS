@@ -12,7 +12,7 @@ import { attemptLiveSend } from "./live.ts";
 import { gatherSafetyFacts } from "./safety-facts.ts";
 import { evaluate } from "./safety.ts";
 import { loadThreadState, upsertThreadState, type StoredThreadState } from "./thread-state.ts";
-import type { ConversationTurn } from "./reply.ts";
+import type { ConversationTurn, LeadFact } from "./reply.ts";
 import type { IntroMacroClient } from "../inbox/intro-macro.ts";
 
 /*
@@ -65,6 +65,8 @@ export interface RunAgentInput {
   leadPhone: string | null;
   leadCompany: string | null;
   leadTitle: string | null;
+  /** Everything else enrichment knows, minus the commercially sensitive. */
+  leadFacts: LeadFact[];
   ourName: string | null;
   ourEmail: string | null;
   /**
@@ -386,6 +388,23 @@ export async function runReplyAgentOnInbound(input: RunAgentInput): Promise<RunA
       agent: full,
       leadName: input.leadName,
       leadEmail: input.leadEmail,
+      /*
+       * WHAT WE ALREADY KNOW ABOUT THIS PERSON.
+       *
+       * These were resolved for the introduction macro and then dropped here,
+       * so the model drafted every reply knowing only a name and an address.
+       * The result reached a real lead: "Can you confirm that (your contact
+       * number) is the best number to reach you? Also, are you currently
+       * affiliated with Berkshire Hathaway HomeServices?" — while the lead row
+       * held the phone and the company all along.
+       *
+       * The placeholder was not a broken template. It was the model writing
+       * around a fact it had not been given.
+       */
+      leadPhone: input.leadPhone,
+      leadCompany: input.leadCompany,
+      leadTitle: input.leadTitle,
+      leadFacts: input.leadFacts,
       ourName: input.ourName,
       ourEmail: input.ourEmail,
       subject: input.subject,
@@ -616,6 +635,7 @@ export async function assembleRunInput(
   let leadPhone: string | null = null;
   let leadCompany: string | null = null;
   let leadTitle: string | null = null;
+  let leadFacts: LeadFact[] = [];
   if (thread.lead_id) {
     const { data: lead } = await admin
       .from("leads")
@@ -641,6 +661,29 @@ export async function assembleRunInput(
       str(cf?.phone_number) ??
       str(cf?.mobile) ??
       null;
+
+    /*
+     * The rest of what enrichment found, for the model to use rather than ask
+     * for — "office city", "buy-side", "list-side", licence, brokerage and
+     * whatever else a campaign attached.
+     *
+     * NOT the whole object. Two reasons it is filtered rather than dumped:
+     * the keys already surfaced above would appear twice under different
+     * names, and these payloads carry a lead's sales volume and commission
+     * estimates, which the model will happily quote back at the person whose
+     * figures they are. A reply that opens "I see you did $4.8m buy-side" is
+     * not warmer, it is alarming.
+     */
+    const SENSITIVE = /gci|commission|volume|buy.?side|list.?side|sales|income|revenue|price/i;
+    const ALREADY = /^(phone|company|title|email|name|first|last)/i;
+    leadFacts = Object.entries(cf ?? {})
+      .filter(([k, v]) => {
+        if (typeof v !== "string" || !v.trim()) return false;
+        if (SENSITIVE.test(k) || ALREADY.test(k)) return false;
+        return true;
+      })
+      .slice(0, 12)
+      .map(([k, v]) => ({ label: k.replace(/[_-]+/g, " ").trim(), value: String(v).slice(0, 120) }));
   }
 
   // `{{sender.name}}` — the channel's display name, as the composer has it.
@@ -671,6 +714,7 @@ export async function assembleRunInput(
     leadPhone,
     leadCompany,
     leadTitle,
+    leadFacts,
     ourName: null,
     ourEmail: (thread.outbound_sender_email as string | null) ?? null,
     senderName,

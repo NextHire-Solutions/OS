@@ -30,6 +30,20 @@ function clampMaxTokens(model: string, requested: number): number {
 // One turn in the email thread. Direction is from OUR perspective:
 //   - inbound  = sent by the lead
 //   - outbound = sent by us (BrokerStaffer)
+/**
+ * One thing we already know about this lead, ready to put in a prompt.
+ *
+ * A label/value pair rather than the raw custom_fields object: the enrichment
+ * payloads use keys like "phone number" and "office city" that read fine to a
+ * model, alongside "buy-side" and "approx gci" that must never reach one.
+ * Filtering happens where the row is read (runtime.ts); this is the shape that
+ * survives it.
+ */
+export interface LeadFact {
+  label: string;
+  value: string;
+}
+
 export interface ConversationTurn {
   direction: "inbound" | "outbound";
   sentAt: string | null;
@@ -48,6 +62,21 @@ export interface DraftInput {
   // Context the model needs to write a relevant reply.
   leadName: string | null;
   leadEmail: string | null;
+  /*
+   * WHAT WE ALREADY KNOW ABOUT THIS PERSON.
+   *
+   * Absent, the model asks for it. A real draft reached a real lead reading
+   * "Can you confirm that (your contact number) is the best number to reach
+   * you? Also, are you currently affiliated with Berkshire Hathaway
+   * HomeServices?" — while the lead row held both the phone and the company.
+   *
+   * The parenthetical was not a broken template variable. It was the model
+   * writing around a fact nobody had given it.
+   */
+  leadPhone?: string | null;
+  leadCompany?: string | null;
+  leadTitle?: string | null;
+  leadFacts?: LeadFact[];
   ourName: string | null;
   ourEmail: string | null;
   subject: string | null;
@@ -118,6 +147,15 @@ export function renderUserPrompt(input: DraftInput): string {
     `Your name (the sender): ${input.ourName ?? "You"}`,
     `Subject thread: ${input.subject ?? "(no subject)"}`,
     "",
+    /*
+     * The known facts go BEFORE the conversation, with the rule attached.
+     *
+     * Before the conversation because they are context for reading it, not a
+     * conclusion drawn from it. With the rule attached because a list of facts
+     * alone does not stop a model asking for them — it has to be told that
+     * having them means confirming rather than requesting.
+     */
+    ...renderKnownFacts(input),
     conversationBlock,
     "",
     /*
@@ -134,6 +172,45 @@ export function renderUserPrompt(input: DraftInput): string {
 // clarity over compactness: each turn is delimited by a header row that
 // names the speaker, the date, and the turn number, so the model can refer
 // back ("as you mentioned in [2]…") naturally.
+/**
+ * What we already know, and what the model must do with it.
+ *
+ * Returns nothing at all when we know nothing beyond a name — an empty
+ * "WHAT WE ALREADY KNOW" heading reads as though the record is blank, which
+ * is a different and more alarming statement than silence.
+ */
+function renderKnownFacts(input: DraftInput): string[] {
+  const known: string[] = [];
+  if (input.leadEmail) known.push(`Email: ${input.leadEmail}`);
+  if (input.leadPhone) known.push(`Phone: ${input.leadPhone}`);
+  if (input.leadCompany) known.push(`Company / brokerage: ${input.leadCompany}`);
+  if (input.leadTitle) known.push(`Title: ${input.leadTitle}`);
+  for (const fact of input.leadFacts ?? []) known.push(`${fact.label}: ${fact.value}`);
+
+  if (!known.length) return [];
+
+  return [
+    "WHAT WE ALREADY KNOW ABOUT THIS LEAD:",
+    ...known.map((k) => `  - ${k}`),
+    "",
+    /*
+     * NO EXAMPLE VALUE IN THIS INSTRUCTION, and that is the whole reason it is
+     * phrased so carefully. The first version illustrated the rule with a real
+     * lead's number — "state it back to confirm it (is +1 214 796 8485 still
+     * the best number?)" — and the model copied that number verbatim into a
+     * draft for a lead whose prompt did not contain it at all. Every lead
+     * would have been asked about one stranger's phone.
+     *
+     * An example in a prompt is not an illustration to a model. It is content.
+     */
+    "Do NOT ask for anything listed above — we already have it. Where such a detail matters to the " +
+      "reply, repeat the exact value from the list so the lead can confirm or correct it, rather than " +
+      "asking them to supply it. Never write a bracketed placeholder in place of a value: if a detail " +
+      "is not in the list above, ask for it in plain words instead.",
+    "",
+  ];
+}
+
 function formatConversation(
   turns: ConversationTurn[],
   leadName: string | null,

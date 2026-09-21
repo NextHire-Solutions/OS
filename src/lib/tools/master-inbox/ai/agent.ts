@@ -1,6 +1,6 @@
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
-import { generateReplyDraft, DEFAULT_REPLY_SYSTEM_PROMPT, type ConversationTurn } from "@/lib/tools/master-inbox/ai/reply";
+import { generateReplyDraft, DEFAULT_REPLY_SYSTEM_PROMPT, type ConversationTurn, type LeadFact } from "@/lib/tools/master-inbox/ai/reply";
 import type { AiProvider } from "@/lib/tools/master-inbox/ai/label";
 import { gatherGuidance, renderGuidance, EMPTY_GUIDANCE, type Guidance } from "@/lib/tools/master-inbox/ai/retrieval";
 import {
@@ -365,6 +365,11 @@ interface DraftContext {
   agent: ReplyAgent & { api_key: string | null };
   leadName: string | null;
   leadEmail: string | null;
+  /** What the lead record already holds — see DraftInput for why this exists. */
+  leadPhone?: string | null;
+  leadCompany?: string | null;
+  leadTitle?: string | null;
+  leadFacts?: LeadFact[];
   ourName: string | null;
   ourEmail: string | null;
   subject: string | null;
@@ -458,6 +463,10 @@ export async function createDraftForAgent(ctx: DraftContext): Promise<CreateDraf
       maxTokens: ctx.agent.max_tokens,
       leadName: ctx.leadName,
       leadEmail: ctx.leadEmail,
+      leadPhone: ctx.leadPhone,
+      leadCompany: ctx.leadCompany,
+      leadTitle: ctx.leadTitle,
+      leadFacts: ctx.leadFacts,
       ourName: ctx.ourName,
       ourEmail: ctx.ourEmail,
       subject: ctx.subject,
