@@ -20,6 +20,10 @@ export const OS_TABLES = [
   "os_agent_knowledge",
   "os_reply_feedback",
   "os_knowledge_proposals",
+  // The cross-product assistant — see migrations/0011_os_assistant.sql.
+  "os_client_aliases",
+  "os_assistant_chats",
+  "os_assistant_messages",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 
