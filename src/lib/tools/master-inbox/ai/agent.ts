@@ -14,6 +14,7 @@ import {
   type RunMode,
 } from "@/lib/tools/master-inbox/ai/agent-config";
 import { LIVE_DISABLED_MESSAGE, liveSendingEnabled } from "@/lib/tools/master-inbox/ai/live-gate";
+import { findLeadPhone } from "./lead-phone.ts";
 
 export type ChannelFilter = "email" | "both";
 
@@ -463,7 +464,14 @@ export async function createDraftForAgent(ctx: DraftContext): Promise<CreateDraf
       maxTokens: ctx.agent.max_tokens,
       leadName: ctx.leadName,
       leadEmail: ctx.leadEmail,
-      leadPhone: ctx.leadPhone,
+      /*
+       * The number the LEAD gave, when they gave one. Their signature or their
+       * own words beat the scraped record, which is often a years-old office
+       * line. findLeadPhone also discards any number appearing in our own
+       * outbound turns — inbound bodies quote our previous email, signature
+       * included, and picking that up would read a stranger's number back.
+       */
+      leadPhone: findLeadPhone(ctx.conversation, ctx.leadPhone)?.phone ?? null,
       leadCompany: ctx.leadCompany,
       leadTitle: ctx.leadTitle,
       leadFacts: ctx.leadFacts,
