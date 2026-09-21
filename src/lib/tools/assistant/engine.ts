@@ -8,6 +8,12 @@ import {
   scrapeActivityTool,
 } from "./tools-phase2.ts";
 import { infrastructureHealthTool, onboardingPipelineTool } from "./tools-phase3.ts";
+import {
+  campaignCopyTool,
+  clientCommercialsTool,
+  inboxDeliverabilityTool,
+  recentRepliesTool,
+} from "./tools-phase4.ts";
 
 /*
  * The tool-calling loop.
@@ -169,6 +175,67 @@ export const TOOL_SCHEMA = [
   {
     type: "function" as const,
     function: {
+      name: "campaign_copy",
+      description:
+        "What a client's emails actually say — the sequence steps with subject and body — and which offer the campaigns " +
+        "sell. A/B variants are omitted unless asked for. Bodies are truncated.",
+      parameters: {
+        type: "object",
+        properties: {
+          client: { type: "string" },
+          includeVariants: { type: "boolean", description: "Include A/B variants of each step." },
+        },
+        required: ["client"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "recent_replies",
+      description:
+        "The actual text of recent replies from leads. Filter by client, by label (Interested, Not Interested, " +
+        "Introduction, Unsubscribe and so on), or both. Bodies are truncated; ask for few.",
+      parameters: {
+        type: "object",
+        properties: {
+          client: { type: "string", description: "Optional." },
+          label: { type: "string", description: "Optional reply label, e.g. Interested." },
+          limit: { type: "number", description: "1-20. Default 5." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "inbox_deliverability",
+      description:
+        "Which sending mailboxes bounce most, worst first, among those with enough volume for a rate to mean anything. " +
+        "Answers 'which inboxes are hurting us'.",
+      parameters: {
+        type: "object",
+        properties: {
+          minSent: { type: "number", description: "Ignore inboxes below this lifetime send count. Default 200." },
+          limit: { type: "number", description: "1-50. Default 10." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "client_commercials",
+      description:
+        "A client's plan, campaign size, billing interval and anchor date, start date and targets. " +
+        "NO PRICE OR REVENUE IS STORED in any of these systems — if asked what a client is worth, say that plainly " +
+        "rather than inferring a figure from the plan name.",
+      parameters: { type: "object", properties: { client: { type: "string" } }, required: ["client"] },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "onboarding_pipeline",
       description:
         "Where clients are in onboarding — new, assigned, campaign_launched, paused — and which have been waiting in a " +
@@ -222,9 +289,9 @@ Asked for revenue, their intro target is not the answer.
 Asked which inboxes bounce most, a fleet-wide connected count is not the answer.
 You may add adjacent information after saying plainly that the question itself cannot be answered.
 
-Things no tool covers today, so say so rather than substituting: the text of individual replies or
-email sequences, which offer a campaign sells, per-inbox deliverability and bounce rates, revenue and
-billing, MLS data, and courted accounts.`;
+Things no tool covers today, so say so rather than substituting: MLS data, courted accounts, and
+any PRICE or REVENUE figure — none is stored anywhere in these systems, and a plan name is not a
+number.`;
 
 const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   find_client: (a) => findClientTool(String(a.query ?? "")),
@@ -241,6 +308,19 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   onboarding_pipeline: (a) =>
     onboardingPipelineTool({ stalledDays: typeof a.stalledDays === "number" ? a.stalledDays : undefined }),
   infrastructure_health: () => infrastructureHealthTool(),
+  campaign_copy: (a) => campaignCopyTool(String(a.client ?? ""), { includeVariants: a.includeVariants === true }),
+  recent_replies: (a) =>
+    recentRepliesTool({
+      client: typeof a.client === "string" && a.client ? a.client : undefined,
+      label: typeof a.label === "string" && a.label ? a.label : undefined,
+      limit: typeof a.limit === "number" ? a.limit : undefined,
+    }),
+  inbox_deliverability: (a) =>
+    inboxDeliverabilityTool({
+      minSent: typeof a.minSent === "number" ? a.minSent : undefined,
+      limit: typeof a.limit === "number" ? a.limit : undefined,
+    }),
+  client_commercials: (a) => clientCommercialsTool(String(a.client ?? "")),
   client_rankings: (a) =>
     clientRankingsTool({
       signal: a.signal as "behind_target" | "gone_quiet" | "stagnant_intros" | undefined,

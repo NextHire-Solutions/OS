@@ -82,6 +82,10 @@ const TOOL_LABEL: Record<string, string> = {
   reply_agent_status: "Checking the reply agent",
   onboarding_pipeline: "Reading the onboarding pipeline",
   infrastructure_health: "Checking the sending fleet",
+  campaign_copy: "Reading the campaign copy",
+  recent_replies: "Reading recent replies",
+  inbox_deliverability: "Checking inbox deliverability",
+  client_commercials: "Reading the client's plan",
 };
 
 export function AssistantScreen() {
