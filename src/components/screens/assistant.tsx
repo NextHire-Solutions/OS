@@ -80,6 +80,8 @@ const TOOL_LABEL: Record<string, string> = {
   scrape_activity: "Checking recent scrapes",
   inbox_activity: "Reading inbox replies",
   reply_agent_status: "Checking the reply agent",
+  onboarding_pipeline: "Reading the onboarding pipeline",
+  infrastructure_health: "Checking the sending fleet",
 };
 
 export function AssistantScreen() {

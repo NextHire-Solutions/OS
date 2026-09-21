@@ -7,6 +7,7 @@ import {
   replyAgentStatusTool,
   scrapeActivityTool,
 } from "./tools-phase2.ts";
+import { infrastructureHealthTool, onboardingPipelineTool } from "./tools-phase3.ts";
 
 /*
  * The tool-calling loop.
@@ -168,6 +169,29 @@ export const TOOL_SCHEMA = [
   {
     type: "function" as const,
     function: {
+      name: "onboarding_pipeline",
+      description:
+        "Where clients are in onboarding — new, assigned, campaign_launched, paused — and which have been waiting in a " +
+        "pre-launch status too long. Answers 'who is stuck in onboarding'.",
+      parameters: {
+        type: "object",
+        properties: { stalledDays: { type: "number", description: "Count as stalled after this many days. Default 14." } },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "infrastructure_health",
+      description:
+        "The sending fleet: how many inboxes exist on each platform, how many are connected or failed, and the total " +
+        "daily send capacity. Capacity is what the fleet COULD send in a day, not what it did.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "reply_agent_status",
       description:
         "What the AI reply agent is set to and what it has done: mode, which clients it covers, drafts written, replies " +
@@ -202,6 +226,9 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }),
   inbox_activity: (a) => inboxActivityTool({ days: typeof a.days === "number" ? a.days : undefined }),
   reply_agent_status: () => replyAgentStatusTool(),
+  onboarding_pipeline: (a) =>
+    onboardingPipelineTool({ stalledDays: typeof a.stalledDays === "number" ? a.stalledDays : undefined }),
+  infrastructure_health: () => infrastructureHealthTool(),
   client_rankings: (a) =>
     clientRankingsTool({
       signal: a.signal as "behind_target" | "gone_quiet" | "stagnant_intros" | undefined,
