@@ -1,6 +1,12 @@
 import "server-only";
 
 import { clientOverviewTool, clientRankingsTool, findClientTool } from "./tools.ts";
+import {
+  campaignsForClientTool,
+  inboxActivityTool,
+  replyAgentStatusTool,
+  scrapeActivityTool,
+} from "./tools-phase2.ts";
 
 /*
  * The tool-calling loop.
@@ -111,6 +117,65 @@ export const TOOL_SCHEMA = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "campaigns_for_client",
+      description:
+        "List a client's campaigns across both platforms, with status, leads, emails sent, replies and reply rate. " +
+        "Use activeOnly for what is running right now. If the client is not linked to Campaign Analytics the reply says " +
+        "so — that is not the same as having no campaigns.",
+      parameters: {
+        type: "object",
+        properties: {
+          client: { type: "string" },
+          activeOnly: { type: "boolean", description: "Only campaigns currently sending." },
+        },
+        required: ["client"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "scrape_activity",
+      description:
+        "Recent scraping runs — how many agents were found, how many had an email, how many were sent to a campaign. " +
+        "Omit `client` for the latest runs across the whole business, which answers 'what did we scrape recently'. " +
+        "24 of 59 clients are not linked to Agent Search; for those the reply says so rather than reporting none.",
+      parameters: {
+        type: "object",
+        properties: {
+          client: { type: "string", description: "Optional. Omit for the latest runs overall." },
+          limit: { type: "number", description: "How many runs, 1-50. Default 10." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "inbox_activity",
+      description:
+        "How lead replies were classified over a period — Interested, Not Interested, Meetings Booked, Introduction and " +
+        "the rest, with counts. Answers 'how is the inbox doing' and 'how many interested replies this month'.",
+      parameters: {
+        type: "object",
+        properties: { days: { type: "number", description: "Look back this many days. Default 30." } },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "reply_agent_status",
+      description:
+        "What the AI reply agent is set to and what it has done: mode, which clients it covers, drafts written, replies " +
+        "held by the safety gate, leads qualified and handed over. Note `sent` counts drafts that went out INCLUDING ones " +
+        "a person sent from the composer; an agent in shadow mode never sends by itself.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 export const SYSTEM_PROMPT = `You answer questions about a lead-generation business from its own data.
@@ -128,6 +193,15 @@ How to answer:
 const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   find_client: (a) => findClientTool(String(a.query ?? "")),
   client_overview: (a) => clientOverviewTool(String(a.client ?? "")),
+  campaigns_for_client: (a) =>
+    campaignsForClientTool(String(a.client ?? ""), { activeOnly: a.activeOnly === true }),
+  scrape_activity: (a) =>
+    scrapeActivityTool({
+      client: typeof a.client === "string" && a.client ? a.client : undefined,
+      limit: typeof a.limit === "number" ? a.limit : undefined,
+    }),
+  inbox_activity: (a) => inboxActivityTool({ days: typeof a.days === "number" ? a.days : undefined }),
+  reply_agent_status: () => replyAgentStatusTool(),
   client_rankings: (a) =>
     clientRankingsTool({
       signal: a.signal as "behind_target" | "gone_quiet" | "stagnant_intros" | undefined,

@@ -52,7 +52,8 @@ const SUGGESTIONS = [
   "Which clients are furthest behind their intro target?",
   "How is The Keyes Company doing?",
   "Which clients have gone quiet?",
-  "What did we scrape for 54 Realty?",
+  "What did we scrape recently?",
+  "How many interested replies did we get this month?",
 ];
 
 /** Today / Yesterday / Previous 7 days / Older — the grouping a sidebar needs. */
@@ -75,6 +76,10 @@ const TOOL_LABEL: Record<string, string> = {
   find_client: "Looking up the client",
   client_overview: "Reading all four products",
   client_rankings: "Ranking clients by performance",
+  campaigns_for_client: "Listing campaigns",
+  scrape_activity: "Checking recent scrapes",
+  inbox_activity: "Reading inbox replies",
+  reply_agent_status: "Checking the reply agent",
 };
 
 export function AssistantScreen() {
