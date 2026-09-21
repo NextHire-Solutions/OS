@@ -14,6 +14,8 @@ const CONFIRMED = [
   ["RE/MAX Pacific", "REMAX Pacific", "the slash becomes a space: 're max' vs 'remax'"],
   ["JPAR Iron Horse Real Estate", "JPAR Ironhorse Real Estate", "'Iron Horse' vs 'Ironhorse'"],
   ["The RE Home Group of Douglas Realty", "The RE Home Group of Douglas Re", "the Agent Search name is truncated"],
+  // Confirmed by the owner: one company, two spellings.
+  ["Momentum Realty", "Momentum Lux Realty", "confirmed by the owner as the same company"],
 ];
 
 const apply = process.env.APPLY === "1";
