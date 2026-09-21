@@ -172,6 +172,7 @@ export const NAV: NavSection[] = [
   {
     label: "Admin",
     items: [
+      { kind: "page", id: "assistant", label: "Assistant", route: "/assistant" },
       { kind: "page", id: "team-access", label: "Team access", route: "/admin/team" },
       { kind: "page", id: "reply-agent", label: "Reply agent", route: "/reply-agent" },
     ],
@@ -263,6 +264,7 @@ const PAGE_PATH: Record<string, string> = {
   roster: "/roster",
   "team-access": "/team",
   "reply-agent": "/reply-agent",
+  assistant: "/assistant",
   account: "/account",
 };
 

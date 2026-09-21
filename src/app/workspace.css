@@ -1277,3 +1277,232 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
    globally so the narrow screens keep the cap that suits them.
    ========================================================================== */
 .wrap.wrap-wide{max-width:none;padding:24px 32px 40px}
+
+/* ===========================================================================
+   Assistant — a chat over the whole estate.
+
+   Two columns that own their own scrolling: the sidebar is history, the main
+   pane is the conversation with the composer pinned to its foot. The page
+   itself never scrolls, so the composer cannot drift off-screen mid-answer.
+   =========================================================================== */
+
+.asst {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.asst-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--inset);
+}
+
+.asst-new {
+  margin: 14px 12px 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  text-align: left;
+}
+.asst-new:hover { border-color: var(--accent); color: var(--accent); }
+
+.asst-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 16px; }
+.asst-empty-list { padding: 18px 10px; font-size: 12.5px; color: var(--muted); }
+
+.asst-bucket {
+  padding: 14px 8px 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.asst-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 7px;
+  padding-right: 4px;
+}
+.asst-item:hover { background: var(--bg); }
+.asst-item.is-on { background: var(--accent-pale); }
+
+.asst-item-open {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  /* One line, clipped — a sidebar of wrapped titles loses its scannability. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asst-item.is-on .asst-item-open { color: var(--accent); font-weight: 550; }
+
+/* Row actions appear on hover, so 60 rows are not 120 competing buttons. */
+.asst-item-actions { display: none; gap: 2px; }
+.asst-item:hover .asst-item-actions { display: flex; }
+.asst-item-actions button {
+  border: 0; background: none; cursor: pointer;
+  padding: 4px 5px; border-radius: 5px;
+  font-size: 11.5px; color: var(--muted);
+}
+.asst-item-actions button:hover { background: var(--inset); color: var(--ink); }
+
+.asst-rename {
+  flex: 1; min-width: 0; margin: 4px;
+  padding: 6px 8px; font-size: 13px;
+  border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--bg); color: var(--ink);
+}
+
+.asst-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.asst-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 28px 0 8px; }
+
+.asst-welcome { max-width: 680px; margin: 8vh auto 0; padding: 0 24px; }
+.asst-welcome h1 { margin: 0 0 10px; font-size: 25px; font-weight: 650; letter-spacing: -.02em; }
+.asst-welcome p { margin: 0; font-size: 14px; line-height: 1.65; max-width: 62ch; }
+
+.asst-suggest { display: flex; flex-direction: column; gap: 8px; margin-top: 26px; }
+.asst-suggest button {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.asst-suggest button:hover { border-color: var(--accent); background: var(--accent-pale); }
+
+.asst-turn { max-width: 760px; margin: 0 auto 22px; padding: 0 24px; }
+
+/* The question sits in a tinted bubble on the right; the answer runs full
+   width as plain text, because an answer is read and a question is scanned. */
+.asst-turn.is-user .asst-body {
+  margin-left: auto;
+  max-width: 78%;
+  width: fit-content;
+  padding: 10px 14px;
+  border-radius: 14px 14px 3px 14px;
+  background: var(--accent-pale);
+  color: var(--ink);
+}
+.asst-body { font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+
+.asst-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+.asst-tool {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--inset);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.asst-tool em { font-style: normal; opacity: .7; font-variant-numeric: tabular-nums; }
+
+.asst-running { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--muted); }
+.asst-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  animation: asst-pulse 1.1s ease-in-out infinite;
+}
+@keyframes asst-pulse { 0%, 100% { opacity: .25 } 50% { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .asst-dot { animation: none; opacity: .7 } }
+
+.asst-error {
+  max-width: 760px; margin: 0 auto 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--amber); border-radius: 9px;
+  background: var(--amber-pale);
+  font-size: 13px; line-height: 1.6;
+}
+
+.asst-ask {
+  display: flex; gap: 10px; align-items: flex-end;
+  max-width: 760px; width: 100%;
+  margin: 0 auto;
+  padding: 14px 24px 22px;
+}
+.asst-input {
+  flex: 1; min-width: 0;
+  max-height: 180px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+}
+.asst-input:focus { outline: none; border-color: var(--accent); }
+
+@media (max-width: 860px) {
+  /* The history becomes a strip rather than disappearing: on a phone the
+     sidebar is still how you get back to yesterday's question. */
+  .asst { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .asst-side { flex-direction: row; align-items: center; gap: 8px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .asst-new { margin: 10px 0 10px 12px; white-space: nowrap; }
+  .asst-list { display: flex; gap: 6px; padding: 8px 12px 8px 0; overflow-x: auto; overflow-y: hidden; }
+  .asst-bucket { display: none; }
+  .asst-item { flex: 0 0 auto; max-width: 190px; }
+  .asst-turn, .asst-ask, .asst-error { padding-left: 16px; padding-right: 16px; }
+}
+
+/* The assistant owns its own scrolling, so the shell's scroller has to hand it
+   the full height instead of growing to fit it. Scoped with :has() so no other
+   screen is affected — the slot is a plain block everywhere else. */
+.scroll:has(.asst) { overflow: hidden; }
+.screen:has(> .asst) { height: 100%; min-height: 0; }
+
+/* Markdown inside an answer. Spacing is tight on purpose: an answer is one
+   thought, not an article, and generous block margins make three bullet points
+   look like three sections. */
+.asst-md > *:first-child { margin-top: 0; }
+.asst-md > *:last-child { margin-bottom: 0; }
+.asst-md p { margin: 0 0 10px; }
+.asst-md h3, .asst-md h4, .asst-md h5, .asst-md h6 {
+  margin: 16px 0 7px; font-size: 14px; font-weight: 650; letter-spacing: -.01em;
+}
+.asst-md ul, .asst-md ol { margin: 0 0 10px; padding-left: 22px; }
+.asst-md li { margin: 0 0 4px; }
+.asst-md strong { font-weight: 650; }
+.asst-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px; background: var(--inset);
+  border-radius: 4px; padding: 1px 5px;
+}
+
+.asst-table-wrap { overflow-x: auto; margin: 0 0 12px; }
+.asst-table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.asst-table th, .asst-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 14px 7px 0; text-align: left; white-space: nowrap;
+}
+.asst-table th {
+  font-size: 11px; font-weight: 650; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted);
+}
+/* Figures line up for comparison, which is the whole point of a ranking. */
+.asst-table td { font-variant-numeric: tabular-nums; }
+.asst-table tr:last-child td { border-bottom: 0; }

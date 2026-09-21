@@ -20,6 +20,7 @@ import { loadRailBadges } from "@/lib/workspace/badges";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
 import { ReplyAgentScreen } from "@/components/screens/reply-agent";
+import { AssistantScreen } from "@/components/screens/assistant";
 import { AccountScreen } from "@/components/screens/account";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
@@ -475,6 +476,7 @@ export default async function WorkspacePage({
         // Client-side only: it fetches its own four endpoints, so no loader
         // joins the Promise.all above and no other screen pays for it.
         "reply-agent": <ReplyAgentScreen />,
+        assistant: <AssistantScreen />,
         account: <AccountScreen email={email} />,
       })}
     />
