@@ -14,6 +14,7 @@ import {
   inboxDeliverabilityTool,
   recentRepliesTool,
 } from "./tools-phase4.ts";
+import { agentDatabaseTool, clientReplyRatesTool, sendingVolumeTool } from "./tools-phase5.ts";
 
 /*
  * The tool-calling loop.
@@ -175,6 +176,51 @@ export const TOOL_SCHEMA = [
   {
     type: "function" as const,
     function: {
+      name: "sending_volume",
+      description:
+        "How many emails went out and how many replies came back, BY WEEK — for the whole business or one client. " +
+        "Answers 'how much did we send last week'. The newest week is marked partial because it is still running; " +
+        "never compare it with a finished week without saying so.",
+      parameters: {
+        type: "object",
+        properties: {
+          weeks: { type: "number", description: "How many weeks back, 1-52. Default 6." },
+          client: { type: "string", description: "Optional. Omit for the whole business." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "client_reply_rates",
+      description:
+        "Clients ranked by reply rate over a period, plus the overall rate across the business. Set best:true for the " +
+        "strongest. Clients below a volume threshold are excluded because a rate on few sends is noise.",
+      parameters: {
+        type: "object",
+        properties: {
+          weeks: { type: "number", description: "1-52. Default 6." },
+          best: { type: "boolean", description: "True for best, false/absent for worst." },
+          limit: { type: "number", description: "1-50. Default 10." },
+          minEmails: { type: "number", description: "Minimum emails in the window to qualify. Default 1000." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "agent_database",
+      description:
+        "The scraped agent database: how many agents and offices we hold, how many MLS areas, and the largest areas by " +
+        "member count. This is every agent ever scraped, not a per-client figure.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "campaign_copy",
       description:
         "What a client's emails actually say — the sequence steps with subject and body — and which offer the campaigns " +
@@ -289,9 +335,15 @@ Asked for revenue, their intro target is not the answer.
 Asked which inboxes bounce most, a fleet-wide connected count is not the answer.
 You may add adjacent information after saying plainly that the question itself cannot be answered.
 
-Things no tool covers today, so say so rather than substituting: MLS data, courted accounts, and
-any PRICE or REVENUE figure — none is stored anywhere in these systems, and a plan name is not a
-number.`;
+Distinguish what you cannot see from what does not exist. Your inability to reach something is a fact
+about your tools, never a fact about the business. Asked about courted accounts you once replied that
+the system does not store them — it does; you simply cannot read it. Phrase such an answer as not
+having a way to look it up, in your own words, and point at the product that holds it.
+
+You have no way to look these up: courted accounts and the MLS monitor (Agent Search), reminders
+(Master Inbox), and marketing attribution (Campaign Analytics). They exist; you cannot read them.
+The one genuine absence is PRICE and REVENUE — no figure exists in any of these systems, and a plan
+name is not a number.`;
 
 const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   find_client: (a) => findClientTool(String(a.query ?? "")),
@@ -321,6 +373,19 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
       limit: typeof a.limit === "number" ? a.limit : undefined,
     }),
   client_commercials: (a) => clientCommercialsTool(String(a.client ?? "")),
+  sending_volume: (a) =>
+    sendingVolumeTool({
+      weeks: typeof a.weeks === "number" ? a.weeks : undefined,
+      client: typeof a.client === "string" && a.client ? a.client : undefined,
+    }),
+  client_reply_rates: (a) =>
+    clientReplyRatesTool({
+      weeks: typeof a.weeks === "number" ? a.weeks : undefined,
+      best: a.best === true,
+      limit: typeof a.limit === "number" ? a.limit : undefined,
+      minEmails: typeof a.minEmails === "number" ? a.minEmails : undefined,
+    }),
+  agent_database: () => agentDatabaseTool(),
   client_rankings: (a) =>
     clientRankingsTool({
       signal: a.signal as "behind_target" | "gone_quiet" | "stagnant_intros" | undefined,
