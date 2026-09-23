@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { CLIENT_STATUSES, setClientStatus, type ClientStatus } from "@/lib/clients/os-clients";
+import { pushPortalStatus } from "@/lib/portals/status-push";
 
 /*
  * Change a client's status. The only mutation the Clients screen performs.
@@ -10,9 +11,20 @@ import { CLIENT_STATUSES, setClientStatus, type ClientStatus } from "@/lib/clien
  * history have to survive, and "we removed the row" is not a recoverable
  * state. `status` is the only field that moves.
  *
- * Writes to `os_clients` only. No tool is contacted: this records what the
- * business says about a client, and does not pause billing, disable a portal
- * or stop a campaign. Those remain deliberate acts in the tools that own them.
+ * Writes to `os_clients`, then nudges MasterInbox to reconcile portals.
+ *
+ * That nudge reverses what this comment used to say ("no tool is contacted").
+ * The reason is the architecture spec's Layer 2: client information is
+ * mastered in the OS, and the tools follow it. A status that the tools do not
+ * act on is a note in a table, not a decision — and in practice it meant a
+ * churned client kept an open portal until somebody remembered.
+ *
+ * Billing and campaigns are NOT included in that reversal. They stay
+ * deliberate acts in the tools that own them, because both cost money to get
+ * wrong in a way a portal switch does not.
+ *
+ * The push is fire-and-forget and currently a no-op until its two env vars
+ * are set — see lib/portals/status-push.ts for why that is deliberate.
  */
 export const dynamic = "force-dynamic";
 
@@ -37,6 +49,9 @@ export async function POST(request: Request) {
 
   try {
     const client = await setClientStatus(id, status as ClientStatus);
+    // After the write, never before: a push that races the commit would make
+    // MasterInbox read the status this call just replaced.
+    pushPortalStatus(`${client.name} -> ${client.status}`);
     return NextResponse.json({ ok: true, client });
   } catch (error) {
     console.error("[api/workspace/clients/status]", error);
