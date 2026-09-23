@@ -60,11 +60,38 @@ interface StatusReport {
   error?: string;
 }
 
+interface CoverageCell {
+  tool: string;
+  label: string;
+  verdict: "present" | "explained" | "expected" | "gap";
+  reason?: string;
+}
+
+interface CoverageRow {
+  clientId: string;
+  name: string;
+  status: string;
+  cells: CoverageCell[];
+  gaps: string[];
+}
+
+interface CoverageReport {
+  rows: CoverageRow[];
+  withGaps: number;
+  gapsByTool: { tool: string; label: string; gaps: number }[];
+  explained: number;
+  expected: number;
+  unreadable: string[];
+  error?: string;
+}
+
 interface Payload {
   rosters: Roster[];
   comparisons: Comparison[];
   /** Where the tools hold the same client at different statuses. */
   statuses?: StatusReport;
+  /** Which tools hold each client, and whether an absence is intentional. */
+  coverage?: CoverageReport;
   unavailable: { tool: string; label: string; reason: string }[];
 }
 
@@ -134,6 +161,10 @@ export function DiscrepanciesScreen() {
           somebody is still being served, still being billed, or has had their
           portal shut while we think they are live. */}
       <StatusConflicts report={data.statuses} />
+
+      {/* Then coverage: which tools hold each client, and whether an absence
+          was decided or merely happened. */}
+      <Coverage report={data.coverage} />
 
       <div className="tbl-title" style={{ marginTop: 28 }}>
         Which clients each list contains
@@ -375,6 +406,97 @@ function ConflictRow({ conflict }: { conflict: StatusConflict }) {
       <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 5, lineHeight: 1.55 }}>
         {conflict.why}
       </div>
+    </div>
+  );
+}
+
+/*
+ * Tool coverage (§17).
+ *
+ * Only clients with an UNACCOUNTED-FOR absence are listed. Everything that a
+ * written reason or a standing rule covers is counted in the summary line and
+ * otherwise left out — a table of fifty clients by four tools is two hundred
+ * cells nobody reads, and the ten that matter would be lost in it.
+ */
+function Coverage({ report }: { report?: CoverageReport }) {
+  if (!report) return null;
+
+  if (report.error) {
+    return (
+      <div className="anno" style={{ marginTop: 18 }}>
+        <b>Tool coverage could not be checked.</b> {report.error}
+      </div>
+    );
+  }
+
+  const withGaps = report.rows.filter((r) => r.gaps.length > 0);
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="tbl-head" style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <div>
+          <div className="tbl-title">Tool coverage</div>
+          <div className="tbl-sub">
+            {report.rows.length} client{report.rows.length === 1 ? "" : "s"} checked
+            {report.explained > 0 ? ` · ${report.explained} absence${report.explained === 1 ? "" : "s"} explained` : ""}
+            {report.expected > 0 ? ` · ${report.expected} expected` : ""}
+            {withGaps.length > 0 ? ` · ${withGaps.length} unaccounted for` : ""}
+          </div>
+        </div>
+        <span className={`badge ${withGaps.length === 0 ? "s-done" : "s-ok"}`}>
+          <span className="dot" />
+          {withGaps.length === 0 ? "Accounted for" : "Gaps"}
+        </span>
+      </div>
+
+      {report.unreadable.length > 0 ? (
+        <div className="anno">
+          <b>Not every tool answered.</b> {report.unreadable.join(", ")} could not be read, so
+          no client is reported as missing from them.
+        </div>
+      ) : null}
+
+      {withGaps.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+          Every client is either in each tool, or its absence has a reason.
+        </div>
+      ) : (
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Status</th>
+                <th>Missing from</th>
+              </tr>
+            </thead>
+            <tbody>
+              {withGaps.map((row) => (
+                <tr key={row.clientId}>
+                  <td>{row.name}</td>
+                  <td style={{ color: "var(--muted)" }}>{row.status}</td>
+                  <td>
+                    {row.cells
+                      .filter((c) => c.verdict === "gap")
+                      .map((c) => c.label)
+                      .join(", ")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {report.gapsByTool.some((g) => g.gaps > 0) ? (
+        <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 8, lineHeight: 1.55 }}>
+          By tool:{" "}
+          {report.gapsByTool
+            .filter((g) => g.gaps > 0)
+            .map((g) => `${g.label} ${g.gaps}`)
+            .join(" · ")}
+        </div>
+      ) : null}
     </div>
   );
 }

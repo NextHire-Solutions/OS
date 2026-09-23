@@ -257,18 +257,39 @@ test("derive() is NOT pure — it reads the local clock, so rows cannot be re-de
   //
   // If this test ever fails because derive() became pure, the optional rows
   // can go and the payload halves again. Until then, do not "simplify" it.
+  /*
+   * SWEEP THE OFFSETS RATHER THAN PICK ONE.
+   *
+   * This used to test a single timestamp 36 hours old, and that made it a
+   * coin flip against the wall clock: whether three zones land on different
+   * local dates depends on where "now" sits between their midnights. Measured
+   * on 2026-09-24 it passed at 23:10 UTC minus 4h and minus 8h, and failed at
+   * 0h, 12h, 16h and 20h — the same code, green or red by the hour, which is
+   * worse than no test because it teaches people to re-run until it passes.
+   *
+   * Kiritimati (+14) and Midway (-11) are 25 hours apart, so SOME offset must
+   * put them on different local dates. Asserting that one exists proves the
+   * same thing — derive() reads the local clock — and proves it at every hour
+   * of the day. The failure message still says what it meant.
+   */
   const original = process.env.TZ;
-  const answers = new Set<number | null>();
+  let divergentAt: number | null = null;
   try {
-    for (const tz of ["UTC", "Pacific/Kiritimati", "Pacific/Midway"]) {
-      process.env.TZ = tz;
-      answers.add(daysSinceLastIntro(new Date(Date.now() - 36 * 3600 * 1000).toISOString()));
+    for (let hours = 0; hours <= 48 && divergentAt === null; hours += 1) {
+      const iso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+      const answers = new Set<number | null>();
+      for (const tz of ["UTC", "Pacific/Kiritimati", "Pacific/Midway"]) {
+        process.env.TZ = tz;
+        answers.add(daysSinceLastIntro(iso));
+      }
+      if (answers.size > 1) divergentAt = hours;
     }
   } finally {
     process.env.TZ = original;
   }
-  assert.ok(
-    answers.size > 1,
-    "derive() now looks timezone-independent — re-check the hydration workaround in weekly.ts",
+  assert.notEqual(
+    divergentAt,
+    null,
+    "derive() now looks timezone-independent at every offset — re-check the hydration workaround in weekly.ts",
   );
 });

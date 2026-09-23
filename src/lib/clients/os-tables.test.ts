@@ -21,6 +21,10 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_clients", "os_client_onboarding", "os_tool_grants", "os_users",
     "os_reply_examples", "os_agent_knowledge", "os_reply_feedback", "os_knowledge_proposals",
     "os_client_aliases", "os_assistant_chats", "os_assistant_messages",
+    // Added 2026-09-24: the dated lifecycle record (0012) and the standing
+    // exceptions that say a client is deliberately absent from a tool (0014).
+    // Both are the OS's own tables, read by nothing else.
+    "os_client_status_history", "os_client_tool_exceptions",
   ]);
 });
 

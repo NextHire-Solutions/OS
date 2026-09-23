@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { diffRosters } from "@/lib/reconcile/names";
 import { fetchRosters, type Roster } from "@/lib/reconcile/rosters";
-import { gatherStatusReport } from "@/lib/reconcile/status-readers";
+import { gatherCoverageReport, gatherStatusReport } from "@/lib/reconcile/status-readers";
 
 export const dynamic = "force-dynamic";
 
@@ -30,13 +30,22 @@ export async function GET() {
    * The status read fails alone: it is caught so a database being slow costs
    * that panel, never the membership comparison people already rely on.
    */
-  const [rosters, statusReport] = await Promise.all([
+  const [rosters, statusReport, coverageReport] = await Promise.all([
     fetchRosters(),
     gatherStatusReport().catch((error) => ({
       conflicts: [],
       agreed: 0,
       unreadable: [],
       error: error instanceof Error ? error.message : "status comparison failed",
+    })),
+    gatherCoverageReport().catch((error) => ({
+      rows: [],
+      withGaps: 0,
+      gapsByTool: [],
+      explained: 0,
+      expected: 0,
+      unreadable: [],
+      error: error instanceof Error ? error.message : "coverage check failed",
     })),
   ]);
   const available = rosters.filter((r) => !r.unavailable);
@@ -77,6 +86,8 @@ export async function GET() {
     generatedAt: new Date().toISOString(),
     // Where the tools hold the same client at different statuses.
     statuses: statusReport,
+    // Which tools hold each client, and whether an absence is intentional (§17).
+    coverage: coverageReport,
     rosters: rosters.map((r: Roster) => ({
       tool: r.tool,
       label: r.label,

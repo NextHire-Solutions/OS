@@ -3,12 +3,21 @@ import "server-only";
 import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-health/supabase";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
+import { getOnboardingDb } from "@/lib/tools/onboarding/db";
+import { osTable } from "@/lib/clients/os-db";
 import {
   findStatusConflicts,
   type ClientStatuses,
   type StatusReport,
   type StatusSource,
 } from "./status-conflicts";
+import {
+  buildCoverage,
+  type CoverageInput,
+  type CoverageReport,
+  type CoverageTool,
+  type ExceptionIndex,
+} from "./coverage";
 
 /*
  * Gathers each client's status from every source that holds one, so
@@ -131,4 +140,123 @@ export async function gatherStatusReport(): Promise<StatusReport> {
     clients,
     sources.filter(([, read]) => read.unreadable).map(([source]) => source),
   );
+}
+
+/*
+ * The standing exceptions (§17).
+ *
+ * Degrades to "no exceptions" when migration 0014 has not been run: the table
+ * being absent must not take the whole Consistency screen down, and "nothing
+ * is explained yet" is the correct reading of an empty store anyway. The gaps
+ * then simply show as gaps, which is what they were before this existed.
+ */
+async function readExceptions(): Promise<ExceptionIndex> {
+  const index: ExceptionIndex = new Map();
+  try {
+    const { data, error } = await osTable("os_client_tool_exceptions")
+      .select("os_client_id, tool, reason")
+      .limit(2000);
+    if (error) return index;
+    for (const row of (data ?? []) as { os_client_id: string; tool: string; reason: string }[]) {
+      if (!index.has(row.os_client_id)) index.set(row.os_client_id, new Map());
+      index.get(row.os_client_id)!.set(row.tool as CoverageTool, row.reason);
+    }
+  } catch {
+    /* table not created yet — see above */
+  }
+  return index;
+}
+
+/*
+ * Which tools hold each client, for §17.
+ *
+ * Presence is decided by whether the tool's roster actually contains the name,
+ * NOT by whether os_clients has an id stored for it. The stored id records
+ * what we believe; this screen exists to catch where the belief is wrong, and
+ * a stale id pointing at a deleted row would otherwise read as "present".
+ */
+export async function gatherCoverageReport(): Promise<CoverageReport> {
+  const [os, health, analytics, inbox, onboarding, exceptions] = await Promise.all([
+    readSource(async () => {
+      const { data, error } = await getMasterInboxSupabase()
+        .from("os_clients")
+        .select("id, name, status")
+        .limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
+    }),
+    readSource(async () => {
+      const { data, error } = await getClientHealthSupabase()
+        .from("clients")
+        .select("name, status")
+        .limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { name: unknown; status: unknown }[];
+    }),
+    readSource(async () => {
+      const { data, error } = await getAnalyticsSupabase()
+        .from("clients")
+        .select("name, status")
+        .limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { name: unknown; status: unknown }[];
+    }),
+    readSource(async () => {
+      const { data, error } = await getMasterInboxSupabase()
+        .from("clients")
+        .select("name, status")
+        .limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { name: unknown; status: unknown }[];
+    }),
+    readSource(async () => {
+      // The Onboarding tool names its column `client_name`, and its `status`
+      // is a PIPELINE stage, not a lifecycle — only membership is read here.
+      const { data, error } = await getOnboardingDb()
+        .from("orch_clients")
+        .select("client_name")
+        .limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []).map((r) => ({ name: (r as { client_name: unknown }).client_name, status: null }));
+    }),
+    readExceptions(),
+  ]);
+
+  // os_clients ids, needed to look an exception up. Read separately from the
+  // name index because readSource deliberately keeps only name and status.
+  const idByName = new Map<string, string>();
+  try {
+    const { data } = await getMasterInboxSupabase()
+      .from("os_clients")
+      .select("id, name")
+      .limit(1000);
+    for (const row of (data ?? []) as { id: string; name: string }[]) {
+      idByName.set(norm(row.name), row.id);
+    }
+  } catch {
+    /* the os column read below still works; exceptions simply will not match */
+  }
+
+  const unreadable: CoverageTool[] = [];
+  if (health.unreadable) unreadable.push("client_health");
+  if (analytics.unreadable) unreadable.push("analytics");
+  if (inbox.unreadable) unreadable.push("master_inbox");
+  if (onboarding.unreadable) unreadable.push("onboarding");
+
+  const clients: CoverageInput[] = [];
+  for (const [key, status] of os.byName) {
+    clients.push({
+      clientId: idByName.get(key) ?? key,
+      name: os.labels.get(key) ?? key,
+      status: (status ?? "").toLowerCase(),
+      present: {
+        master_inbox: inbox.byName.has(key),
+        client_health: health.byName.has(key),
+        analytics: analytics.byName.has(key),
+        onboarding: onboarding.byName.has(key),
+      },
+    });
+  }
+
+  return buildCoverage(clients, exceptions, unreadable);
 }

@@ -24,6 +24,11 @@ export const OS_TABLES = [
   "os_client_aliases",
   "os_assistant_chats",
   "os_assistant_messages",
+  // Every lifecycle change, dated — see migrations/0012_client_lifecycle.sql.
+  "os_client_status_history",
+  // Clients deliberately absent from a tool, and why —
+  // see migrations/0014_client_tool_exceptions.sql.
+  "os_client_tool_exceptions",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 
