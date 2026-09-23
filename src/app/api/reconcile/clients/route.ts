@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { diffRosters } from "@/lib/reconcile/names";
 import { fetchRosters, type Roster } from "@/lib/reconcile/rosters";
+import { gatherStatusReport } from "@/lib/reconcile/status-readers";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,28 @@ export const dynamic = "force-dynamic";
  * lists drift in the first place.
  */
 export async function GET() {
-  const rosters = await fetchRosters();
+  /*
+   * Two halves of the same question, gathered together:
+   *   rosters  — WHICH clients each tool knows about (membership)
+   *   statuses — what each tool thinks the SAME client's status is
+   *
+   * The second half is the spec's §16 example ("Active in Master, Paused in
+   * Database, Active in Health"). Membership drift was already visible here;
+   * status drift was not, and that is how a client stayed active in the master
+   * while Client Health had it churned and its portal shut.
+   *
+   * The status read fails alone: it is caught so a database being slow costs
+   * that panel, never the membership comparison people already rely on.
+   */
+  const [rosters, statusReport] = await Promise.all([
+    fetchRosters(),
+    gatherStatusReport().catch((error) => ({
+      conflicts: [],
+      agreed: 0,
+      unreadable: [],
+      error: error instanceof Error ? error.message : "status comparison failed",
+    })),
+  ]);
   const available = rosters.filter((r) => !r.unavailable);
 
   const comparisons: unknown[] = [];
@@ -53,6 +75,8 @@ export async function GET() {
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
+    // Where the tools hold the same client at different statuses.
+    statuses: statusReport,
     rosters: rosters.map((r: Roster) => ({
       tool: r.tool,
       label: r.label,

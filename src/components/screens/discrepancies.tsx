@@ -36,9 +36,35 @@ interface Comparison {
   onlyRight: { name: string; [k: string]: unknown }[];
 }
 
+interface StatusReading {
+  source: string;
+  label: string;
+  status: string | null;
+  unreadable?: boolean;
+}
+
+interface StatusConflict {
+  name: string;
+  master: string | null;
+  readings: StatusReading[];
+  disagreeing: string[];
+  severity: "act" | "expected";
+  why: string;
+  crossesActive: boolean;
+}
+
+interface StatusReport {
+  conflicts: StatusConflict[];
+  agreed: number;
+  unreadable: { source: string; label: string }[];
+  error?: string;
+}
+
 interface Payload {
   rosters: Roster[];
   comparisons: Comparison[];
+  /** Where the tools hold the same client at different statuses. */
+  statuses?: StatusReport;
   unavailable: { tool: string; label: string; reason: string }[];
 }
 
@@ -102,6 +128,16 @@ export function DiscrepanciesScreen() {
           <b>Not enough to compare.</b> At least two client lists must be readable.
         </div>
       ) : null}
+
+      {/* Status disagreements come FIRST. A client the tools disagree about is
+          actionable in a way a membership difference usually is not: it means
+          somebody is still being served, still being billed, or has had their
+          portal shut while we think they are live. */}
+      <StatusConflicts report={data.statuses} />
+
+      <div className="tbl-title" style={{ marginTop: 28 }}>
+        Which clients each list contains
+      </div>
 
       {data.comparisons.map((c) => {
         const key = `${c.left.tool}-${c.right.tool}`;
@@ -225,6 +261,120 @@ function Section({
         </div>
       ) : null}
       <div style={{ marginTop: 8 }}>{children}</div>
+    </div>
+  );
+}
+
+/*
+ * Status disagreements.
+ *
+ * Designed to be empty most days, and to say so plainly when it is — a panel
+ * that renders nothing is indistinguishable from one that failed to load, and
+ * "we checked and everything agrees" is itself the useful answer here.
+ */
+function StatusConflicts({ report }: { report?: StatusReport }) {
+  if (!report) return null;
+
+  if (report.error) {
+    return (
+      <div className="anno" style={{ marginTop: 18 }}>
+        <b>Statuses could not be compared.</b> {report.error} — the list comparison below is
+        unaffected.
+      </div>
+    );
+  }
+
+  const act = report.conflicts.filter((c) => c.severity === "act");
+  const expected = report.conflicts.filter((c) => c.severity === "expected");
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div className="tbl-head" style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <div>
+          <div className="tbl-title">Status disagreements</div>
+          <div className="tbl-sub">
+            {report.agreed} client{report.agreed === 1 ? "" : "s"} agree everywhere
+            {act.length > 0 ? ` · ${act.length} need a decision` : ""}
+            {expected.length > 0 ? ` · ${expected.length} expected` : ""}
+          </div>
+        </div>
+        <span className={`badge ${act.length === 0 ? "s-done" : "s-ok"}`}>
+          <span className="dot" />
+          {act.length === 0 ? "Agreed" : "Differs"}
+        </span>
+      </div>
+
+      {report.unreadable.length > 0 ? (
+        <div className="anno">
+          <b>Not every source answered.</b>{" "}
+          {report.unreadable.map((u) => u.label).join(", ")} could not be read, so these
+          results are partial. Nothing below counts a silent source as agreement.
+        </div>
+      ) : null}
+
+      {act.length === 0 && expected.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+          Every client the master knows about has the same status in every tool that holds
+          one.
+        </div>
+      ) : null}
+
+      {act.map((c) => (
+        <ConflictRow key={c.name} conflict={c} />
+      ))}
+
+      {expected.length > 0 ? (
+        <details style={{ marginTop: 10 }}>
+          <summary style={{ fontSize: 13, color: "var(--muted)", cursor: "pointer" }}>
+            {expected.length} expected difference{expected.length === 1 ? "" : "s"} — clients
+            still onboarding, which no tool has a word for
+          </summary>
+          <div style={{ marginTop: 8 }}>
+            {expected.map((c) => (
+              <ConflictRow key={c.name} conflict={c} />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function ConflictRow({ conflict }: { conflict: StatusConflict }) {
+  return (
+    <div
+      style={{
+        border: "1px solid var(--line, #E6E8EC)",
+        borderRadius: 8,
+        padding: "10px 12px",
+        marginTop: 8,
+        // The only visual weight on the page goes to the case that costs money
+        // or is visible to a customer.
+        borderLeftWidth: conflict.crossesActive ? 3 : 1,
+        borderLeftColor: conflict.crossesActive ? "#D9822B" : undefined,
+      }}
+    >
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600 }}>{conflict.name}</div>
+        {conflict.readings
+          .filter((r) => r.status !== null && !r.unreadable)
+          .map((r) => (
+            <span
+              key={r.source}
+              style={{
+                fontSize: 12,
+                color: "var(--muted)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {r.label}:{" "}
+              <b style={{ color: r.source === "os" ? "var(--ink)" : undefined }}>{r.status}</b>
+            </span>
+          ))}
+      </div>
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 5, lineHeight: 1.55 }}>
+        {conflict.why}
+      </div>
     </div>
   );
 }
