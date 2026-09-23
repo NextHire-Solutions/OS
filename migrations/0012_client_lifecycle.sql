@@ -1,13 +1,22 @@
 -- 0012 — the client lifecycle: the spec's four statuses, and a record of when
 -- each one changed.
 --
--- TWO CHANGES, both additive.
+-- TWO CHANGES, both additive. Nothing is dropped, nothing is renamed, and no
+-- row changes value.
 --
 -- 1. THE VOCABULARY. os_clients allowed 'prospect' where the architecture
 --    spec says 'onboarding'. Two words for one idea is the spec's own
---    complaint. Nothing is a prospect today — zero rows, checked before this
---    was written — so no row changes value and no reader sees a status it has
---    not seen before.
+--    complaint.
+--
+--    THE NEW CONSTRAINT DELIBERATELY STILL ACCEPTS 'prospect'. This is the
+--    expand half of expand/contract, and it exists to remove a window in
+--    which the live app would break. Today's deployed code writes 'prospect'
+--    in two places — the Adopt route and the status dropdown. If this
+--    migration accepted only the four new words, every Adopt would fail from
+--    the moment it ran until the next deploy. Accepting both means the
+--    running app keeps working, the new deploy also works, and 0013 removes
+--    the old word once that deploy is out. Order stops mattering, which is
+--    the point.
 --
 -- 2. A STATUS HISTORY. Today a churn is a flag with no date, so "9 churned"
 --    can be counted but "churned this month" cannot. The Performance screen
@@ -23,6 +32,8 @@
 -- client is, not whether they are active. The two share the word 'paused' and
 -- mean different things by it. OS maps the pipeline to a lifecycle; it must
 -- never overwrite it.
+--
+-- SAFE TO RE-RUN.
 
 BEGIN;
 
@@ -30,29 +41,44 @@ BEGIN;
 -- 1. The vocabulary
 -- ---------------------------------------------------------------------------
 
--- Found by what it constrains, not by a name Postgres generated for it.
+/*
+ * Drop every CHECK on os_clients that constrains status, found by what it
+ * constrains rather than by a name Postgres generated.
+ *
+ * A loop, not a single SELECT INTO: if more than one such constraint exists,
+ * taking only the first would leave the other one still refusing the new
+ * word, and the failure would arrive later as a puzzling rejected write
+ * rather than here where it can be seen.
+ */
 DO $$
 DECLARE con_name TEXT;
 BEGIN
-  SELECT conname INTO con_name
-  FROM pg_constraint
-  WHERE conrelid = 'public.os_clients'::regclass
-    AND contype = 'c'
-    AND pg_get_constraintdef(oid) ILIKE '%status%';
-  IF con_name IS NOT NULL THEN
+  FOR con_name IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'public.os_clients'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%status%'
+  LOOP
     EXECUTE format('ALTER TABLE public.os_clients DROP CONSTRAINT %I', con_name);
-  END IF;
+    RAISE NOTICE 'dropped status constraint: %', con_name;
+  END LOOP;
 END $$;
 
+-- Normalise the data to the spec's word. Zero rows today; here so a re-run
+-- after someone has set one is still correct.
 UPDATE public.os_clients SET status = 'onboarding' WHERE status = 'prospect';
 
+-- Accepts the legacy word as well — see the note at the top. 0013 removes it.
 ALTER TABLE public.os_clients
   ADD CONSTRAINT os_clients_status_check
-  CHECK (status IN ('onboarding', 'active', 'paused', 'churned'));
+  CHECK (status IN ('onboarding', 'active', 'paused', 'churned', 'prospect'));
 
 COMMENT ON COLUMN public.os_clients.status IS
   'onboarding | active | paused | churned — the platform-wide client '
-  'lifecycle. THIS is the master; every other tool mirrors it.';
+  'lifecycle. THIS is the master; every other tool mirrors it. '
+  '(''prospect'' is the retired spelling of ''onboarding'', still accepted '
+  'until migration 0013.)';
 
 -- ---------------------------------------------------------------------------
 -- 2. The history
@@ -87,6 +113,10 @@ COMMENT ON TABLE public.os_client_status_history IS
  * Record the change, not the intention. The trigger fires on the row that
  * actually changed, so a status set by a script, a backfill or the UI is
  * recorded the same way and none of them can forget.
+ *
+ * AFTER, and it only ever INSERTs into a different table, so it cannot alter
+ * or reject the write it is observing. A client save can never fail because
+ * of this trigger.
  */
 CREATE OR REPLACE FUNCTION public.os_clients_record_status()
 RETURNS TRIGGER LANGUAGE plpgsql AS $function$
@@ -117,6 +147,10 @@ CREATE TRIGGER os_clients_record_status
  * will be used for. from_status is NULL because we genuinely do not know what
  * came before — the flag carried no date, which is the whole reason this
  * table exists.
+ *
+ * This INSERT targets the history table, not os_clients, so the trigger above
+ * does not fire for it and no row is recorded twice. The NOT EXISTS makes a
+ * re-run a no-op.
  */
 INSERT INTO public.os_client_status_history (os_client_id, from_status, to_status, changed_at, note)
 SELECT c.id, NULL, c.status, COALESCE(c.created_at, now()),
