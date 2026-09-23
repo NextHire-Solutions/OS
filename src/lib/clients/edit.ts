@@ -19,7 +19,7 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
  *   weeklyTarget    Client Health            introductions promised per week
  *   startDate       Client Health            drives the movement table
  *   billing*        Client Health            anchor date and interval
- *   status          os_clients               active / paused / churned / prospect
+ *   status          os_clients               onboarding / active / paused / churned
  *   notes           os_clients               ours alone
  *
  * ---------------------------------------------------------------------------

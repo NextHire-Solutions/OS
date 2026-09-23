@@ -13,7 +13,7 @@ import { toSlug } from "@/lib/clients/slug";
  *
  * Writes only to `os_clients`. No tool is contacted — a record here means
  * "the OS knows about this client", not "this client exists anywhere".
- * `status` starts as `prospect` for exactly that reason.
+ * `status` starts as `onboarding` for exactly that reason.
  */
 export const dynamic = "force-dynamic";
 
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     }
 
     const { data, error } = await osTable("os_clients")
-      .insert({ name: clean, slug: toSlug(clean), aliases: list, status: "prospect", source: "os" })
+      .insert({ name: clean, slug: toSlug(clean), aliases: list, status: "onboarding", source: "os" })
       .select("id, name, status")
       .single();
     if (error) throw new Error(error.message);

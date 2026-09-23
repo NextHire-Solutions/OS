@@ -11,7 +11,16 @@
  * `active` again — every value here is reachable from every other one, which
  * is the whole business rule.
  */
-export const CLIENT_STATUSES = ["active", "paused", "churned", "prospect"] as const;
+/*
+ * In lifecycle order, because this array is what the status dropdown renders:
+ * a client is onboarded, becomes active, may pause, may churn — and can come
+ * back to active from either of the last two.
+ *
+ * 'prospect' was the old word for 'onboarding'. Migration 0012 normalised
+ * every row to the new word and 0013 removes the old one from the database's
+ * own constraint; it is gone from here so nothing can write it again.
+ */
+export const CLIENT_STATUSES = ["onboarding", "active", "paused", "churned"] as const;
 export type ClientStatus = (typeof CLIENT_STATUSES)[number];
 
 export function isClientStatus(value: unknown): value is ClientStatus {
