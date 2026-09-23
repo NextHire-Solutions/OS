@@ -250,6 +250,17 @@ tbody tr:hover{background:var(--inset)}
 .s-done{background:var(--green-bg);color:var(--green)}
 .s-pending{background:var(--yellow-bg);color:var(--yellow)}
 
+/* CLIENT LIFECYCLE — the four statuses, one treatment each (spec §11).
+   Paused orange and churned red are fixed by the spec, not chosen here.
+   Kept separate from the generic tones above so a status can never quietly
+   share a class with an unrelated meaning: `s-pending`/`s-done` describe work,
+   these describe a client. The map that picks them is one export in
+   lib/clients/client-status.ts, so a new screen cannot invent a fifth. */
+.s-onboarding{background:var(--blue-pale);color:var(--blue-ink)}
+.s-active{background:var(--green-bg);color:var(--green)}
+.s-paused{background:var(--yellow-bg);color:var(--yellow)}
+.s-churned{background:var(--red-bg);color:var(--red)}
+
 .plan{padding:4px 10px;border-radius:8px;font-size:11.5px;font-weight:600;letter-spacing:0;
       display:inline-block}
 .plan-min{background:var(--inset-2);border:0;color:var(--muted)}

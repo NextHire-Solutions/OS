@@ -3,7 +3,14 @@
 import { useState } from "react";
 
 import type { ClientsOverview, ClientRow } from "@/lib/clients/overview";
-import { CLIENT_STATUSES, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
+import {
+  CLIENT_STATUSES,
+  STATUS_COLOR_VAR,
+  STATUS_MEANING,
+  STATUS_TONE,
+  statusLabel,
+  type ClientStatus,
+} from "@/lib/clients/client-status";
 
 import { Lazy, PlaceholderScreen } from "./lazy";
 import { OnboardClient } from "./clients-onboard";
@@ -32,6 +39,20 @@ const PLAN_CLASS: Record<string, string> = {
 
 function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: () => void }) {
   const present = (fn: (r: ClientRow) => boolean) => data.rows.filter(fn).length;
+
+  /*
+   * Status filter (§11 asks for status filters as part of one status language).
+   *
+   * It earns its place now the roster is the COMPLETE client list rather than
+   * the active thirty-odd: churned clients are kept forever by design, so
+   * without this the people still being served are mixed in with the people
+   * who left. Counts are shown on the pills so the distribution is readable
+   * without clicking — which is the other half of what §11 asks for.
+   */
+  const [statusFilter, setStatusFilter] = useState<ClientStatus | "all">("all");
+  const countFor = (s: ClientStatus) => data.rows.filter((r) => r.os.status === s).length;
+  const rows =
+    statusFilter === "all" ? data.rows : data.rows.filter((r) => r.os.status === statusFilter);
 
   return (
     <>
@@ -86,6 +107,30 @@ function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: ()
                 The names the business uses. Each tool&rsquo;s own spelling is matched to these.
               </div>
             </div>
+            <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+              <button
+                className={`fp${statusFilter === "all" ? " on" : ""}`}
+                onClick={() => setStatusFilter("all")}
+              >
+                All <span className="mut">{data.rows.length}</span>
+              </button>
+              {CLIENT_STATUSES.map((s) => {
+                const n = countFor(s);
+                return (
+                  <button
+                    key={s}
+                    className={`fp${statusFilter === s ? " on" : ""}`}
+                    // Same colour as the badge, from the same map, so the
+                    // filter and the rows it produces cannot look unrelated.
+                    style={statusFilter === s ? { color: STATUS_COLOR_VAR[s] } : undefined}
+                    onClick={() => setStatusFilter(s)}
+                    title={STATUS_MEANING[s]}
+                  >
+                    {statusLabel(s)} <span className="mut">{n}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="tbl-scroll">
@@ -95,7 +140,12 @@ function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: ()
                   <th>Client</th>
                   <th>Plan</th>
                   <th>Status</th>
-                  <th>Onboarding</th>
+                  {/* "Onboarding tool", not "Onboarding": this column is
+                      presence in that TOOL's intake pipeline, while
+                      `onboarding` is now also a lifecycle status. One word for
+                      two meanings is what §13 warns against, and the two would
+                      sit inches apart on this screen. */}
+                  <th>Onboarding tool</th>
                   <th>Weekly target</th>
                   <th>Introductions</th>
                   <th>Last intro</th>
@@ -106,7 +156,7 @@ function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: ()
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((row) => (
+                {rows.map((row) => (
                   <Row
                     key={row.client.name}
                     row={row}
@@ -114,6 +164,13 @@ function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: ()
                     onChanged={onChanged}
                   />
                 ))}
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} style={{ color: "var(--muted)", fontSize: 13 }}>
+                      No clients with that status.
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -379,7 +436,7 @@ function StatusCell({
 
   if (!editable || !id) {
     return (
-      <span className={`badge ${value === "active" ? "s-done" : "s-pending"}`}>
+      <span className={`badge ${STATUS_TONE[value]}`} title={STATUS_MEANING[value]}>
         <span className="dot" />
         {statusLabel(value)}
       </span>
@@ -404,8 +461,15 @@ function StatusCell({
         style={{
           padding: "3px 6px", fontSize: 12.5, minWidth: 96,
           opacity: saving ? 0.6 : 1,
-          borderColor: value === "active" ? undefined : "var(--yellow)",
+          /*
+           * The control carries the same colour as the badge, from the same
+           * map — so the editable and read-only views of one status can never
+           * disagree about what it looks like (§11).
+           */
+          borderColor: value === "active" ? undefined : STATUS_COLOR_VAR[value],
+          color: STATUS_COLOR_VAR[value],
         }}
+        title={STATUS_MEANING[value]}
         onChange={(e) => void change(e.target.value as ClientStatus)}
       >
         {CLIENT_STATUSES.map((s) => (
