@@ -11,6 +11,12 @@ const TOKEN_ROUTES = new Set([
   "/api/tools/client-health/clients/status",
   "/api/tools/client-health/clients/onboard",
   "/api/tools/client-health/metrics/weekly",
+  // The OS's own client-status feed, read server-to-server by MasterInbox to
+  // decide which portals are open. It has no browser caller and never will,
+  // so without this entry the proxy 401s it before its own token check can
+  // run. The handler verifies OS_CLIENT_STATUS_TOKEN and fails closed when
+  // that is unset, exactly like the routes above.
+  "/api/workspace/clients/status-feed",
 ]);
 
 /*
