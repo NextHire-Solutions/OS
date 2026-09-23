@@ -159,6 +159,13 @@ export const updateSchema = z.object({
   bison_campaign_ids: campaignIds.optional(),
   hidden: z.boolean().optional(),
   client_paused: z.boolean().optional(),
+  /*
+   * The lifecycle status, added to this table by migration 0019. Preferred
+   * over the two booleans above: a trigger keeps all three in step, and only
+   * `status` can express `onboarding` — no combination of the booleans means
+   * it. The booleans stay accepted because the tool's own screens send them.
+   */
+  status: z.enum(["onboarding", "active", "paused", "churned"]).optional(),
   portal_active: z.boolean().optional(),
   billing_anchor_date: blankToNull.optional(),
   billing_interval: z.enum(BILLING_INTERVALS).optional(),

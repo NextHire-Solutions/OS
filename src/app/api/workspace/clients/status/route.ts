@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { CLIENT_STATUSES, setClientStatus, type ClientStatus } from "@/lib/clients/os-clients";
-import { pushPortalStatus } from "@/lib/portals/status-push";
+import { propagateStatus } from "@/lib/clients/status-propagate";
 
 /*
  * Change a client's status. The only mutation the Clients screen performs.
@@ -11,20 +11,24 @@ import { pushPortalStatus } from "@/lib/portals/status-push";
  * history have to survive, and "we removed the row" is not a recoverable
  * state. `status` is the only field that moves.
  *
- * Writes to `os_clients`, then nudges MasterInbox to reconcile portals.
+ * Writes to `os_clients`, then propagates: Client Health, Analytics, and a
+ * nudge that makes MasterInbox re-read the feed and reconcile the portal.
  *
- * That nudge reverses what this comment used to say ("no tool is contacted").
- * The reason is the architecture spec's Layer 2: client information is
- * mastered in the OS, and the tools follow it. A status that the tools do not
- * act on is a note in a table, not a decision — and in practice it meant a
- * churned client kept an open portal until somebody remembered.
+ * That reverses what this comment used to say ("no tool is contacted"). The
+ * reason is the spec's §10 and §21 — CHANGE ONCE, UPDATE EVERYWHERE. A status
+ * the tools never act on is a note in a table, not a decision, and in practice
+ * it meant a churned client kept an open portal until somebody remembered.
  *
- * Billing and campaigns are NOT included in that reversal. They stay
- * deliberate acts in the tools that own them, because both cost money to get
- * wrong in a way a portal switch does not.
+ * This does NOT replace the Client Health -> MasterInbox push. The standalone
+ * tools stay in use, so a status set directly in Client Health must keep
+ * propagating on its own. This is a second entry point, not a replacement.
  *
- * The push is fire-and-forget and currently a no-op until its two env vars
- * are set — see lib/portals/status-push.ts for why that is deliberate.
+ * Billing and campaigns are deliberately NOT propagated. They stay deliberate
+ * acts in the tools that own them, because both cost money to get wrong in a
+ * way a portal switch does not.
+ *
+ * Every leg's outcome is returned. A propagation that half-worked must say so
+ * rather than report a clean success — see lib/clients/status-propagate.ts.
  */
 export const dynamic = "force-dynamic";
 
@@ -49,10 +53,20 @@ export async function POST(request: Request) {
 
   try {
     const client = await setClientStatus(id, status as ClientStatus);
-    // After the write, never before: a push that races the commit would make
-    // MasterInbox read the status this call just replaced.
-    pushPortalStatus(`${client.name} -> ${client.status}`);
-    return NextResponse.json({ ok: true, client });
+
+    /*
+     * After the master write, never before. The propagation writes Client
+     * Health, then Analytics, then nudges Master Inbox to re-read the feed —
+     * and a nudge that raced the commit would make it read the status this
+     * call just replaced.
+     *
+     * It never throws: os_clients has already committed, and a tool being
+     * down must not undo that or fail the request. The per-leg outcomes come
+     * back so the screen can say exactly what did and did not travel, rather
+     * than claiming a propagation that never happened.
+     */
+    const propagation = await propagateStatus(client, client.status);
+    return NextResponse.json({ ok: true, client, propagation });
   } catch (error) {
     console.error("[api/workspace/clients/status]", error);
     return NextResponse.json(

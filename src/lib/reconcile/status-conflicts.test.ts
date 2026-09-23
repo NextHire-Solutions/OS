@@ -118,3 +118,27 @@ test("several sources disagreeing are all named, not just the first", () => {
   assert.deepEqual(r.conflicts[0].disagreeing, ["client_health", "analytics"]);
   assert.match(r.conflicts[0].why, /Client Health says churned.*Analytics says paused/);
 });
+
+test("only Master Inbox's mirror differing is explained, not actionable", () => {
+  const r = findStatusConflicts([
+    {
+      name: "Mirror Lag",
+      statuses: { os: "churned", client_health: "churned", analytics: "churned", master_inbox: "active" },
+    },
+  ]);
+  assert.equal(r.conflicts.length, 1);
+  assert.equal(r.conflicts[0].severity, "expected");
+  assert.equal(r.conflicts[0].crossesActive, false, "must not draw the eye");
+  assert.match(r.conflicts[0].why, /known lag/);
+});
+
+test("but Master Inbox differing ALONGSIDE a real tool is still actionable", () => {
+  const r = findStatusConflicts([
+    {
+      name: "Real Problem",
+      statuses: { os: "churned", client_health: "active", master_inbox: "active" },
+    },
+  ]);
+  assert.equal(r.conflicts[0].severity, "act");
+  assert.equal(r.conflicts[0].crossesActive, true);
+});

@@ -142,6 +142,23 @@ export function findStatusConflicts(
       master === "onboarding" && disagreeing.every((r) => r.status === "active");
 
     /*
+     * Rule 4: Master Inbox's `clients.status` is a MIRROR THAT NOTHING
+     * MAINTAINS YET. Migration 0001 added and backfilled it deliberately
+     * "recorded but not yet enforced", and nothing in that app reads it.
+     *
+     * It cannot be updated from here either: writing Master Inbox's `clients`
+     * table is forbidden by lib/clients/os-db.ts, because that table holds the
+     * live portal tokens. Keeping it current belongs to Master Inbox's own
+     * reconcile, which already reads the feed to set `portal_enabled`.
+     *
+     * So a disagreement only there is explained, not actionable — and saying
+     * so is better than either hiding the column or asking someone to fix
+     * something they have no button for.
+     */
+    const onlyStaleMirror =
+      disagreeing.length === 1 && disagreeing[0].source === "master_inbox";
+
+    /*
      * Crossing the active line is the difference that costs money or is
      * visible to a customer — but ONLY when the crossing is unexplained. The
      * onboarding case crosses it by the letter (onboarding is not active) and
@@ -152,6 +169,7 @@ export function findStatusConflicts(
      */
     const crossesActive =
       !onlyOnboardingVsActive &&
+      !onlyStaleMirror &&
       disagreeing.some((r) => (master === "active") !== (r.status === "active"));
 
     conflicts.push({
@@ -159,10 +177,12 @@ export function findStatusConflicts(
       master,
       readings,
       disagreeing: disagreeing.map((r) => r.source),
-      severity: onlyOnboardingVsActive ? "expected" : "act",
+      severity: onlyOnboardingVsActive || onlyStaleMirror ? "expected" : "act",
       why: onlyOnboardingVsActive
         ? "Master says onboarding; no tool has an onboarding state, so they read as active. Expected."
-        : crossesActive
+        : onlyStaleMirror
+          ? "Only Master Inbox's mirror column differs. Nothing reads it yet and it is maintained by Master Inbox's own reconcile, not from here — so this is a known lag, not a decision."
+          : crossesActive
           ? describeActiveCrossing(master, disagreeing)
           : `Master says ${master}; ${listSources(disagreeing)} disagree. Both are non-active, so nothing is being served or billed on it — worth tidying, not urgent.`,
       crossesActive,
