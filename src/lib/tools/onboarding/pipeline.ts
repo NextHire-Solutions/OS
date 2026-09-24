@@ -5,6 +5,7 @@ import { resolve } from "@/lib/clients/roster";
 
 import { progressFor, type Progress } from "./step-state";
 import { ttlCache } from "@/lib/cache/ttl";
+import { realPlansByOrchId, type RealPlan } from "./real-plan";
 
 /*
  * Onboarding — the pipeline, read from the orchestrator's own tables.
@@ -168,7 +169,7 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
      * the only thing the screen needs from a table with hundreds of rows per
      * client. Three small reads beat one wide join.
      */
-    const [stagesRes, clientsRes, introsRes, replies] = await Promise.all([
+    const [stagesRes, clientsRes, introsRes, replies, realPlans] = await Promise.all([
       sb.from("orch_stages").select("id,name,sort,color").order("sort"),
       sb
         .from("orch_clients")
@@ -183,6 +184,15 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
         .order("created_at", { ascending: false }),
       sb.from("orch_introductions").select("client_id,created_at"),
       getRecentReplies(8).catch((): RecentReply[] => []),
+      /*
+       * The REAL plan and weekly target. orch_clients carries the intake
+       * form's defaults — 'production' and 3 for every one of the 46 rows —
+       * so the badge on this screen was wrong for the 21 clients who are on
+       * minimum or partner. Client Health owns both fields and bills on them.
+       * Empty map on failure: the tool's own value is then shown, exactly as
+       * before.
+       */
+      realPlansByOrchId().catch((): Map<string, RealPlan> => new Map()),
     ]);
 
     if (stagesRes.error) throw new Error(stagesRes.error.message);
@@ -242,8 +252,10 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
         status: str(c.status),
         stageId: str(c.stage_id),
         stageName: c.stage_id ? (stageName.get(String(c.stage_id)) ?? null) : null,
-        plan: str(c.plan),
-        weeklyTarget: num(c.weekly_target),
+        // Client Health's value when the master record links the two; the
+        // tool's own only as a fallback.
+        plan: realPlans.get(String(c.id))?.plan ?? str(c.plan),
+        weeklyTarget: realPlans.get(String(c.id))?.weeklyTarget ?? num(c.weekly_target),
         mls: str(c.mls),
         location: str(c.location),
         paid: c.stripe_paid === true,

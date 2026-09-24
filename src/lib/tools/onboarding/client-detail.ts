@@ -8,6 +8,7 @@ import { getStages } from "./stages";
 import { getStepLabels } from "./settings";
 import { progressOf, stepStates, type Progress, type StepState } from "./step-state";
 import { stripeMode, type StripeMode } from "./stripe-mode";
+import { realPlansByOrchId, type RealPlan } from "./real-plan";
 import type { Person } from "./people-types";
 import type { Stage } from "./stage-types";
 
@@ -239,7 +240,7 @@ export function formatOnboardingCall(iso?: string | null, tz?: string | null): s
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-function toProfile(c: ClientRow): ClientProfile {
+function toProfile(c: ClientRow, real?: RealPlan): ClientProfile {
   const pc = c.primary_contact ?? {};
   const f = (c.filters ?? {}) as Record<string, number | undefined>;
   return {
@@ -261,8 +262,13 @@ function toProfile(c: ClientRow): ClientProfile {
     salesVolumeMax: num(f.sales_volume_max),
     closedMin: num(f.closed_transactions_min),
     closedMax: num(f.closed_transactions_max),
-    plan: c.plan,
-    weeklyTarget: c.weekly_target,
+    /*
+     * Client Health's plan and target, not orch_clients'. That table carries
+     * the intake form's defaults ('production' and 3 for every one of its 46
+     * rows) and Client Health carries the real ones. See real-plan.ts.
+     */
+    plan: real?.plan ?? c.plan,
+    weeklyTarget: real?.weeklyTarget ?? c.weekly_target,
     stageId: c.stage_id,
     photoUrl: c.photo_url,
     status: c.status,
@@ -290,6 +296,9 @@ function toProfile(c: ClientRow): ClientProfile {
 export async function getClientDetail(id: string): Promise<ClientDetail | null> {
   const client = await getClientRow(id);
   if (!client) return null;
+
+  // Client Health's plan and target for this client, via the master record.
+  const real = (await realPlansByOrchId().catch(() => new Map<string, RealPlan>())).get(id);
 
   const db = getOnboardingDb();
   try {
@@ -347,7 +356,7 @@ export async function getClientDetail(id: string): Promise<ClientDetail | null> 
     const allManagers = people.filter((p) => p.role === "account_manager");
 
     return {
-      client: toProfile(client),
+      client: toProfile(client, real),
       stages,
       salespeople: people.filter((p) => p.role !== "account_manager" && p.active),
       // Hidden managers stay out of the picker but the current holder is kept
@@ -385,7 +394,7 @@ export async function getClientDetail(id: string): Promise<ClientDetail | null> 
   } catch (error) {
     // A failure costs this screen, never the workspace.
     return {
-      client: toProfile(client),
+      client: toProfile(client, real),
       stages: [],
       salespeople: [],
       accountManagers: [],
