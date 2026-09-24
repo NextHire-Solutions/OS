@@ -32,8 +32,10 @@ interface Comparison {
   right: { tool: string; label: string; count: number };
   summary: { matched: number; likely: number; onlyLeft: number; onlyRight: number };
   likely: { left: string; right: string; score: number }[];
-  onlyLeft: { name: string; [k: string]: unknown }[];
-  onlyRight: { name: string; [k: string]: unknown }[];
+  onlyLeft: { name: string; why?: string | null; [k: string]: unknown }[];
+  onlyRight: { name: string; why?: string | null; [k: string]: unknown }[];
+  /** One-sided rows that nothing accounts for. The number worth a badge. */
+  unexplained?: number;
 }
 
 interface StatusReading {
@@ -218,7 +220,11 @@ export function DiscrepanciesScreen() {
 
       {data.comparisons.map((c) => {
         const key = `${c.left.tool}-${c.right.tool}`;
-        const clean = c.summary.onlyLeft === 0 && c.summary.onlyRight === 0 && c.summary.likely === 0;
+        const differs = c.summary.onlyLeft > 0 || c.summary.onlyRight > 0 || c.summary.likely > 0;
+        // "Explained" is not "Agreed": the lists still differ, and the screen
+        // says so — it just stops calling an expected difference a problem.
+        const unexplained = c.unexplained ?? (differs ? 1 : 0);
+        const clean = !differs;
 
         return (
           <div className="tbl-wrap" key={key}>
@@ -234,9 +240,9 @@ export function DiscrepanciesScreen() {
                   {c.summary.onlyRight > 0 ? ` · ${c.summary.onlyRight} only in ${c.right.label}` : ""}
                 </div>
               </div>
-              <span className={`badge ${clean ? "s-done" : "s-ok"}`}>
+              <span className={`badge ${clean ? "s-done" : unexplained === 0 ? "s-done" : "s-ok"}`}>
                 <span className="dot" />
-                {clean ? "Agreed" : "Differs"}
+                {clean ? "Agreed" : unexplained === 0 ? "All explained" : "Differs"}
               </span>
             </div>
 
@@ -260,10 +266,7 @@ export function DiscrepanciesScreen() {
                 {c.onlyLeft.length > 0 ? (
                   <Section title={`Only in ${c.left.label}`}>
                     {c.onlyLeft.map((e) => (
-                      <div key={e.name} style={rowStyle}>
-                        <span>{e.name}</span>
-                        <Meta entry={e} />
-                      </div>
+                      <OneSided key={e.name} entry={e} />
                     ))}
                   </Section>
                 ) : null}
@@ -271,10 +274,7 @@ export function DiscrepanciesScreen() {
                 {c.onlyRight.length > 0 ? (
                   <Section title={`Only in ${c.right.label}`}>
                     {c.onlyRight.map((e) => (
-                      <div key={e.name} style={rowStyle}>
-                        <span>{e.name}</span>
-                        <Meta entry={e} />
-                      </div>
+                      <OneSided key={e.name} entry={e} />
                     ))}
                   </Section>
                 ) : null}
@@ -305,6 +305,30 @@ const rowStyle: React.CSSProperties = {
   color: "var(--ink-2)",
   borderTop: "1px solid var(--line-soft)",
 };
+
+/*
+ * One client present in one tool and not the other, with the reason.
+ *
+ * The reason is the whole point. "Only in Master Inbox: EXR" invites someone
+ * to go and create EXR somewhere; "Churned — absence is what churn means
+ * here" closes the question. A row with no reason is the one worth acting on,
+ * and it is the only kind left in a normal-coloured list.
+ */
+function OneSided({ entry }: { entry: { name: string; why?: string | null; [k: string]: unknown } }) {
+  return (
+    <div style={{ ...rowStyle, alignItems: "flex-start" }}>
+      <span style={{ minWidth: 0 }}>
+        {entry.name}
+        {entry.why ? (
+          <span style={{ display: "block", fontSize: 12, color: "var(--muted)", lineHeight: 1.5, marginTop: 2 }}>
+            {entry.why}
+          </span>
+        ) : null}
+      </span>
+      <Meta entry={entry} />
+    </div>
+  );
+}
 
 function Meta({ entry }: { entry: { name: string; [k: string]: unknown } }) {
   const bits: string[] = [];

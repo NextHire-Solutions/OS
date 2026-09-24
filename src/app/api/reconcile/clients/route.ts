@@ -76,6 +76,32 @@ export async function GET() {
   const canonical = await canonicaliseRosters(rosters);
   const available = canonical.filter((r: Roster) => !r.unavailable);
 
+  /*
+   * Why a client is absent from a tool, in one sentence, or null when nothing
+   * accounts for it. Built from the master record's status plus the tool's own
+   * nature — the same two rules the coverage panel uses, so the two panels can
+   * never give different answers about the same client.
+   */
+  const statusByName = new Map(
+    (coverageReport.rows ?? []).map((r: { name: string; status: string }) => [
+      r.name.toLowerCase(),
+      r.status,
+    ]),
+  );
+  const explain = (name: string, missingFrom: string): string | null => {
+    if (missingFrom === "Onboarding") {
+      return "The Onboarding tool is a Typeform intake pipeline, not a roster — nothing ever creates a client in it.";
+    }
+    const status = statusByName.get(name.toLowerCase());
+    if (status === "churned") return "Churned — absence from a tool is what churn means here.";
+    if (status === "onboarding") {
+      return missingFrom === "Client Health"
+        ? "Still onboarding — not yet on the billed roster."
+        : "Still onboarding — not every tool has been set up yet.";
+    }
+    return null;
+  };
+
   const comparisons: unknown[] = [];
   for (let i = 0; i < available.length; i++) {
     for (let j = i + 1; j < available.length; j++) {
@@ -102,8 +128,21 @@ export async function GET() {
           right: l.right.name,
           score: Math.round(l.score * 100) / 100,
         })),
-        onlyLeft: diff.onlyLeft.map((e) => ({ name: e.name, ...e.meta })),
-        onlyRight: diff.onlyRight.map((e) => ({ name: e.name, ...e.meta })),
+        /*
+         * Each one-sided row carries WHY it is one-sided.
+         *
+         * A difference being real does not make it a problem: a churned client
+         * is correctly gone from Analytics, and a client still onboarding is
+         * correctly not yet on the billed roster. Listing them with no reason
+         * makes a panel that says "Differs" forever, which is the fastest way
+         * to have it ignored — so the same rules the coverage panel applies
+         * are applied here, and the badge counts only what is unexplained.
+         */
+        onlyLeft: diff.onlyLeft.map((e) => ({ name: e.name, ...e.meta, why: explain(e.name, right.label) })),
+        onlyRight: diff.onlyRight.map((e) => ({ name: e.name, ...e.meta, why: explain(e.name, left.label) })),
+        unexplained:
+          diff.onlyLeft.filter((e) => !explain(e.name, right.label)).length +
+          diff.onlyRight.filter((e) => !explain(e.name, left.label)).length,
       });
     }
   }
