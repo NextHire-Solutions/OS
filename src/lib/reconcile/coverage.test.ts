@@ -147,3 +147,40 @@ test("every tool asked for gets a cell, in the order given", () => {
   const r = buildCoverage([client()], new Map(), [], [...TOOLS]);
   assert.deepEqual(r.rows[0].cells.map((c) => c.tool), [...TOOLS]);
 });
+
+test("byStatus gives the like-for-like comparison, per status per tool", () => {
+  const r = buildCoverage([
+    client({ clientId: "a", name: "A", status: "active" }),
+    client({ clientId: "b", name: "B", status: "active",
+             present: { master_inbox: true, client_health: true, analytics: false, onboarding: true } }),
+    client({ clientId: "c", name: "C", status: "churned",
+             present: { master_inbox: true, client_health: true, analytics: false, onboarding: false } }),
+  ]);
+  const active = r.byStatus.find((s) => s.status === "active")!;
+  assert.equal(active.total, 2);
+  assert.equal(active.present.master_inbox, 2, "both active clients are in Master Inbox");
+  assert.equal(active.present.analytics, 1, "one active client is missing from Analytics");
+  const churned = r.byStatus.find((s) => s.status === "churned")!;
+  assert.equal(churned.total, 1);
+  assert.equal(churned.present.onboarding, 0);
+});
+
+test("an unreadable tool reports -1, never 0 — 0 would read as 'none of them'", () => {
+  const r = buildCoverage(
+    [client({ status: "active" })],
+    new Map(),
+    ["analytics"],
+  );
+  assert.equal(r.byStatus[0].present.analytics, -1);
+  assert.equal(r.byStatus[0].present.master_inbox, 1);
+});
+
+test("byStatus counts presence, not whether the absence was excused", () => {
+  // A churned client absent from Analytics is an EXPECTED verdict, but it is
+  // still absent — the table must say so.
+  const r = buildCoverage([
+    client({ status: "churned", present: { ...client().present, analytics: false } }),
+  ]);
+  assert.equal(r.withGaps, 0, "expected, so not a gap");
+  assert.equal(r.byStatus[0].present.analytics, 0, "but still not present");
+});

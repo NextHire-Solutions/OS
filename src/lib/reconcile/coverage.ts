@@ -75,8 +75,30 @@ export interface CoverageRow {
   gaps: CoverageTool[];
 }
 
+/*
+ * How many clients of each status each tool carries.
+ *
+ * This is the answer to "why don't the counts match", and it needs to be on
+ * screen rather than worked out by hand each time. Raw totals differ for
+ * reasons that are mostly legitimate — a churned client is removed from
+ * Analytics attribution, the Onboarding tool only ever held clients that came
+ * through intake — so comparing 54 against 46 says nothing.
+ *
+ * Comparing ACTIVE against ACTIVE says everything. That row should read
+ * n/n across every column, and if it does not, somebody is being served or
+ * billed somewhere they are not set up.
+ */
+export interface StatusCoverage {
+  status: string;
+  total: number;
+  /** tool -> how many clients of this status that tool holds */
+  present: Record<string, number>;
+}
+
 export interface CoverageReport {
   rows: CoverageRow[];
+  /** Per status, per tool — the like-for-like comparison. */
+  byStatus: StatusCoverage[];
   /** Clients with at least one unaccounted-for absence. The number to act on. */
   withGaps: number;
   /** Per tool: how many clients are missing from it without an explanation. */
@@ -174,8 +196,26 @@ export function buildCoverage(
   // Most gaps first, then by name, so the worst-covered clients lead.
   rows.sort((a, b) => b.gaps.length - a.gaps.length || a.name.localeCompare(b.name));
 
+  /*
+   * The like-for-like table. Built from `present` rather than from the
+   * verdicts, because an absence being EXPECTED does not make the client
+   * present — and this table is about where clients actually are.
+   */
+  const statuses = [...new Set(clients.map((c) => c.status).filter(Boolean))].sort();
+  const byStatus: StatusCoverage[] = statuses.map((status) => {
+    const group = clients.filter((c) => c.status === status);
+    const present: Record<string, number> = {};
+    for (const tool of tools) {
+      present[tool] = unreadableSet.has(tool)
+        ? -1 // unreadable: never reported as zero, which would read as "none"
+        : group.filter((c) => c.present[tool] === true).length;
+    }
+    return { status, total: group.length, present };
+  });
+
   return {
     rows,
+    byStatus,
     withGaps: rows.filter((r) => r.gaps.length > 0).length,
     gapsByTool: tools.map((tool) => ({
       tool,

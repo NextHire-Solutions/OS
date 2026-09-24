@@ -75,8 +75,15 @@ interface CoverageRow {
   gaps: string[];
 }
 
+interface StatusCoverage {
+  status: string;
+  total: number;
+  present: Record<string, number>;
+}
+
 interface CoverageReport {
   rows: CoverageRow[];
+  byStatus?: StatusCoverage[];
   withGaps: number;
   gapsByTool: { tool: string; label: string; gaps: number }[];
   explained: number;
@@ -371,6 +378,84 @@ function StatusConflicts({ report }: { report?: StatusReport }) {
   );
 }
 
+/*
+ * Why the raw client counts differ — the question that keeps being asked.
+ *
+ * Comparing 54 against 46 says nothing, because the lists are not meant to
+ * hold the same thing: a churned client is removed from Analytics
+ * attribution, and the Onboarding tool only ever held clients that came
+ * through intake. Comparing ACTIVE against ACTIVE is the comparison that
+ * means something, and that row should read n/n right across.
+ */
+function StatusMatrix({
+  byStatus,
+  gapsByTool,
+}: {
+  byStatus?: StatusCoverage[];
+  gapsByTool: { tool: string; label: string; gaps: number }[];
+}) {
+  if (!byStatus || byStatus.length === 0) return null;
+  const tools = gapsByTool.map((g) => ({ tool: g.tool, label: g.label }));
+
+  return (
+    <div className="tbl-wrap" style={{ marginTop: 10 }}>
+      <div className="tbl-head">
+        <div>
+          <div className="tbl-title">Clients per tool, by status</div>
+          <div className="tbl-sub">
+            Raw totals differ for good reasons. The row to read is <b>active</b> — it should be
+            complete in every column.
+          </div>
+        </div>
+      </div>
+      <div className="tbl-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>In the master list</th>
+              {tools.map((t) => <th key={t.tool}>{t.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {byStatus.map((s) => (
+              <tr key={s.status}>
+                <td style={{ textTransform: "capitalize", fontWeight: 600 }}>{s.status}</td>
+                <td className="tnum">{s.total}</td>
+                {tools.map((t) => {
+                  const n = s.present[t.tool];
+                  const unreadable = n === -1;
+                  const complete = n === s.total;
+                  return (
+                    <td
+                      key={t.tool}
+                      className="tnum"
+                      style={{
+                        // Only the active row is meant to be complete, so only
+                        // it is coloured. Colouring the rest would flag the
+                        // churned row as a permanent problem.
+                        color: unreadable
+                          ? "var(--muted)"
+                          : s.status === "active"
+                            ? complete ? "var(--green)" : "var(--red)"
+                            : undefined,
+                        fontWeight: s.status === "active" ? 600 : undefined,
+                      }}
+                      title={unreadable ? "This tool could not be read" : undefined}
+                    >
+                      {unreadable ? "—" : `${n}/${s.total}`}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ConflictRow({ conflict }: { conflict: StatusConflict }) {
   return (
     <div
@@ -455,6 +540,8 @@ function Coverage({ report }: { report?: CoverageReport }) {
           no client is reported as missing from them.
         </div>
       ) : null}
+
+      <StatusMatrix byStatus={report.byStatus} gapsByTool={report.gapsByTool} />
 
       {withGaps.length === 0 ? (
         <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
