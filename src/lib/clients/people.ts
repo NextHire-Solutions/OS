@@ -43,6 +43,18 @@ import { keyOf } from "./roster";
  * question asked when someone opens a client.
  */
 
+export interface PersonRow {
+  id: string;
+  name: string;
+  email: string | null;
+  /** Team only. */
+  title?: string | null;
+  /** DNC only: 'agent' blocks an address, 'company' blocks a domain. */
+  kind?: string | null;
+  /** Agents and DNC: whether the address actually reached the blocklists. */
+  pushed?: boolean;
+}
+
 export interface PortalPeople {
   portalId: string;
   portalName: string;
@@ -50,7 +62,17 @@ export interface PortalPeople {
   team: number;
   agents: number;
   dnc: number;
+  /*
+   * The most recent few of each, for editing on screen. NOT the whole list:
+   * one client has 2,158 do-not-contact entries and another has 746 agents, and
+   * a dialog that loads those is a dialog nobody opens twice. Bulk work stays
+   * in the portal, which is built for it.
+   */
+  recent: { team: PersonRow[]; agents: PersonRow[]; dnc: PersonRow[] };
 }
+
+/** How many of each list the dialog loads. The counts above are always exact. */
+export const RECENT_LIMIT = 25;
 
 export interface ClientPeople {
   /** One entry per portal, so a multi-market client can be told apart. */
@@ -147,19 +169,50 @@ export async function readClientPeople(client: {
   const portals: PortalPeople[] = [];
   for (const row of matched) {
     const counts: Record<string, number> = { team: 0, agents: 0, dnc: 0 };
+    const recent: PortalPeople["recent"] = { team: [], agents: [], dnc: [] };
+
     for (const [table, key] of TABLES) {
       const { count, error } = await db
         .from(table)
         .select("id", { count: "exact", head: true })
         .eq("client_id", row.id);
       if (error) {
-        return {
-          ...empty,
-          error: `could not count ${table}: ${error.message}`,
-        };
+        return { ...empty, error: `could not count ${table}: ${error.message}` };
       }
       counts[key] = count ?? 0;
+
+      if ((count ?? 0) === 0) continue;
+      const cols =
+        key === "team"
+          ? "id, name, email, title"
+          : key === "dnc"
+            ? "id, name, email, kind, pushed_to_instantly, pushed_to_emailbison"
+            : "id, name, email, pushed_to_instantly, pushed_to_emailbison";
+      const { data: rows, error: listError } = await db
+        .from(table)
+        .select(cols)
+        .eq("client_id", row.id)
+        .order("created_at", { ascending: false })
+        .limit(RECENT_LIMIT);
+      if (listError) {
+        return { ...empty, error: `could not read ${table}: ${listError.message}` };
+      }
+      recent[key] = ((rows ?? []) as unknown as Record<string, unknown>[]).map((r) => ({
+        id: String(r.id),
+        name: String(r.name ?? ""),
+        email: (r.email as string | null) ?? null,
+        ...(key === "team" ? { title: (r.title as string | null) ?? null } : {}),
+        ...(key === "dnc" ? { kind: (r.kind as string | null) ?? null } : {}),
+        ...(key === "team"
+          ? {}
+          : {
+              // Both providers must have accepted it, or the address is only
+              // blocked on one of them — worth seeing before trusting the row.
+              pushed: r.pushed_to_instantly === true && r.pushed_to_emailbison === true,
+            }),
+      }));
     }
+
     portals.push({
       portalId: row.id,
       portalName: row.name,
@@ -167,6 +220,7 @@ export async function readClientPeople(client: {
       team: counts.team,
       agents: counts.agents,
       dnc: counts.dnc,
+      recent,
     });
   }
 

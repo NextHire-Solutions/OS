@@ -30,9 +30,10 @@ test("a client with two portals resolves to BOTH", () => {
 });
 
 test("counting only the linked portal would lose a market — the total sums both", () => {
+  const none = { team: [], agents: [], dnc: [] };
   const total = totalOf([
-    { portalId: "pe-b", portalName: "Boston", portalEnabled: true, team: 2, agents: 40, dnc: 100 },
-    { portalId: "pe-f", portalName: "Florida", portalEnabled: true, team: 1, agents: 12, dnc: 30 },
+    { portalId: "pe-b", portalName: "Boston", portalEnabled: true, team: 2, agents: 40, dnc: 100, recent: none },
+    { portalId: "pe-f", portalName: "Florida", portalEnabled: true, team: 1, agents: 12, dnc: 30, recent: none },
   ]);
   assert.deepEqual(total, { team: 3, agents: 52, dnc: 130 });
 });

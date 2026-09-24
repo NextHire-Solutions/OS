@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { introPeopleSentence } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 import { ModalDialog } from "@/components/ui/modal-dialog";
+import { ClientPeople } from "@/components/screens/clients-people";
 import { CLIENT_STATUSES, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
 
 /*
@@ -101,42 +102,6 @@ function EditBody({
   );
   const [timezone, setTimezone] = useState(client.timezone ?? "");
 
-  /*
-   * Team, agents and DNC — §23's "open one system and know ... their assigned
-   * team, their agents". Read-only: Master Inbox owns these lists and the
-   * portal reads them directly, so the OS shows them rather than writing them.
-   *
-   * Fetched per client rather than carried on the roster: answering it for all
-   * 52 at once means counting across 11,305 agent rows and 14,484 DNC rows on
-   * every page load.
-   */
-  const [portalPeople, setPortalPeople] = useState<{
-    portals: { portalId: string; portalName: string; portalEnabled: boolean; team: number; agents: number; dnc: number }[];
-    total: { team: number; agents: number; dnc: number };
-    manyPortals: boolean;
-  } | null>(null);
-  const [portalPeopleError, setPortalPeopleError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setPortalPeople(null);
-    setPortalPeopleError(null);
-    fetch(`/api/workspace/clients/${client.id}/people`)
-      .then(async (r) => {
-        const body = await r.json();
-        if (cancelled) return;
-        if (!r.ok) setPortalPeopleError(body.error ?? "Could not read the team");
-        else setPortalPeople(body);
-      })
-      .catch(() => {
-        // A count that is silently zero because a fetch failed reads as a
-        // statement about the client. Say nothing rather than say zero.
-        if (!cancelled) setPortalPeopleError("Could not read the team");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client.id]);
   const [billingInterval, setBillingInterval] = useState("");
   /*
    * The three people, as one array rather than nine useStates.
@@ -328,46 +293,12 @@ function EditBody({
         </div>
 
         {/*
-          Team, agents and DNC. Master Inbox's to edit; shown here because §23
-          says you should be able to open ONE system and know them.
+          Team, agents and DNC. Master Inbox owns these rows and the portal
+          writes the same ones, so editing here needs no sync — see
+          lib/clients/portal-people-write.ts.
         */}
-        <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 13, display: "grid", gap: 8 }}>
-          <span style={LABEL}>Team, agents &amp; DNC <span className="mut">· Master Inbox · read-only</span></span>
-          {portalPeopleError ? (
-            <span style={{ fontSize: 12, color: "var(--warn, #b45309)" }}>{portalPeopleError}</span>
-          ) : portalPeople === null ? (
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Counting…</span>
-          ) : portalPeople.portals.length === 0 ? (
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>
-              No Master Inbox portal resolves to this client, so there is nothing to count.
-            </span>
-          ) : (
-            <>
-              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
-                {([["Team", portalPeople.total.team], ["Agents", portalPeople.total.agents], ["DNC", portalPeople.total.dnc]] as const).map(
-                  ([label, n]) => (
-                    <div key={label}>
-                      <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{label}</div>
-                      <div className="tnum" style={{ fontSize: 18, fontWeight: 600 }}>
-                        {n.toLocaleString("en-US")}
-                      </div>
-                    </div>
-                  ),
-                )}
-              </div>
-              {portalPeople.manyPortals ? (
-                <div style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 }}>
-                  Summed across {portalPeople.portals.length} portals — one client, several markets:
-                  {portalPeople.portals.map((p) => (
-                    <span key={p.portalId} style={{ display: "block" }}>
-                      · {p.portalName} — {p.team} team, {p.agents.toLocaleString("en-US")} agents,{" "}
-                      {p.dnc.toLocaleString("en-US")} DNC{p.portalEnabled ? "" : " (portal off)"}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </>
-          )}
+        <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 13 }}>
+          <ClientPeople clientId={client.id} />
         </div>
 
         {/*
