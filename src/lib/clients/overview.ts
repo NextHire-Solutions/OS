@@ -10,6 +10,7 @@ import { keyOf } from "./roster";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 import { listOsClients, type OsClient } from "./os-clients";
+import { latestStatusMoments, type StatusMoment } from "./status-history";
 import { type ClientStatus } from "./client-status";
 
 /*
@@ -37,6 +38,12 @@ export interface ClientRow {
   os: {
     id: string | null;
     status: ClientStatus;
+    /*
+     * When this status was set (spec §12). Null when the history has no row —
+     * `recorded: true` means it is 0012's seeded row, i.e. the status we
+     * found rather than a change that happened on that date.
+     */
+    statusSince: StatusMoment | null;
     /** Onboarding is read from the stored link, not by name-matching again. */
     inOnboarding: boolean;
     /*
@@ -86,15 +93,19 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 export async function getClientsOverview(): Promise<ClientsOverview> {
-  const [health, inbox, analytics, stored, portals] = await Promise.allSettled([
+  const [health, inbox, analytics, stored, portals, momentsResult] = await Promise.allSettled([
     readClientHealth(),
     readMasterInbox(),
     readAnalytics(),
     listOsClients(),
     readPortalTokens(),
+    latestStatusMoments(),
   ]);
   const portalByKey: Map<string, string> =
     portals.status === "fulfilled" ? portals.value : new Map();
+  // A missing date costs a line of subtext, never the page.
+  const moments: Map<string, StatusMoment> =
+    momentsResult.status === "fulfilled" ? momentsResult.value : new Map();
 
   const h = settled(health, "Client Health");
   const i = settled(inbox, "Master Inbox");
@@ -143,6 +154,7 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
       os: {
         id: os?.id ?? null,
         status: os?.status ?? "active",
+        statusSince: (os?.id && moments.get(os.id)) || null,
         inOnboarding: Boolean(os?.links.onboarding),
         contact:
           os?.contact ?? {

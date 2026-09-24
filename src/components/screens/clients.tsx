@@ -291,6 +291,19 @@ function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; 
           editable={editable}
           healthStatus={health.status}
         />
+        {/* §12: when this status was set. A seeded row is the status we
+            FOUND, not a change on that date — the wording distinguishes
+            them, because dating an old churn to the client's creation date
+            would be wrong in a way that looks precise. */}
+        {os.statusSince ? (
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
+            {os.statusSince.recorded ? "known since " : ""}
+            {dateStamp(os.statusSince.at)}
+            {os.statusSince.from ? (
+              <span title={`Changed from ${os.statusSince.from}`}> · from {os.statusSince.from}</span>
+            ) : null}
+          </div>
+        ) : null}
       </td>
 
       <td>
