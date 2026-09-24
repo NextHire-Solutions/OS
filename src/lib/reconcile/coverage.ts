@@ -122,6 +122,26 @@ export interface CoverageInput {
 /** os_client_id -> tool -> reason */
 export type ExceptionIndex = Map<string, Map<CoverageTool, string>>;
 
+/*
+ * Rules that depend on the TOOL rather than the client.
+ *
+ * The Onboarding tool is an intake pipeline, not a roster. Nothing ever
+ * creates a client in it — `onboard-plan.ts` says so in as many words ("the
+ * Onboarding tool is deliberately NOT written to... the flow runs the other
+ * way"), and there is no insert against `orch_clients` anywhere in this
+ * codebase. A client that did not arrive through Typeform was never in it and
+ * never will be.
+ *
+ * So its column can only ever report the past, and flagging that as a gap
+ * would put a permanent, unfixable row on the screen for every client
+ * onboarded any other way. That is precisely the "crying wolf" failure the
+ * rest of this module is built to avoid.
+ */
+const TOOL_RULE: Partial<Record<CoverageTool, string>> = {
+  onboarding:
+    "The Onboarding tool is a Typeform intake pipeline, not a roster — nothing ever creates a client in it, so a client who arrived another way was never there.",
+};
+
 function standingRule(status: string): string | null {
   if (status === "churned") {
     return "Churned. Absence from a tool is what churn means here, not a failure.";
@@ -172,11 +192,17 @@ export function buildCoverage(
         continue;
       }
 
-      // A written reason always wins over a standing rule: somebody looked.
+      // A written reason always wins over any rule: somebody actually looked.
       const written = forClient?.get(tool);
       if (written) {
         explained += 1;
         cells.push({ tool, label, verdict: "explained", reason: written });
+        continue;
+      }
+      const toolRule = TOOL_RULE[tool];
+      if (toolRule) {
+        expected += 1;
+        cells.push({ tool, label, verdict: "expected", reason: toolRule });
         continue;
       }
       if (rule) {

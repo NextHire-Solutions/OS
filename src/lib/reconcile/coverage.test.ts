@@ -92,12 +92,14 @@ test("a written reason beats a standing rule — somebody actually looked", () =
 });
 
 test("an exception for one tool does not excuse another", () => {
+  // Client Health rather than Onboarding: absence from Onboarding is covered
+  // by a tool-level rule, so it could never be the gap this asserts.
   const exceptions: ExceptionIndex = new Map([["c1", new Map([["analytics", "reason"]])]]);
   const r = buildCoverage(
-    [client({ present: { master_inbox: true, client_health: true, analytics: false, onboarding: false } })],
+    [client({ present: { master_inbox: true, client_health: false, analytics: false, onboarding: true } })],
     exceptions,
   );
-  assert.deepEqual(r.rows[0].gaps, ["onboarding"]);
+  assert.deepEqual(r.rows[0].gaps, ["client_health"]);
 });
 
 test("an unreadable tool invents no gaps", () => {
@@ -135,12 +137,14 @@ test("gaps are counted per tool, so the worst-covered TOOL is visible too", () =
   const r = buildCoverage([
     client({ clientId: "a", name: "A", present: { ...client().present, analytics: false } }),
     client({ clientId: "b", name: "B", present: { ...client().present, analytics: false } }),
-    client({ clientId: "c", name: "C", present: { ...client().present, onboarding: false } }),
+    client({ clientId: "c", name: "C", present: { ...client().present, client_health: false } }),
   ]);
   const byTool = Object.fromEntries(r.gapsByTool.map((g) => [g.tool, g.gaps]));
   assert.equal(byTool.analytics, 2);
-  assert.equal(byTool.onboarding, 1);
+  assert.equal(byTool.client_health, 1);
   assert.equal(byTool.master_inbox, 0);
+  // Onboarding can never accumulate gaps — nothing writes to that tool.
+  assert.equal(byTool.onboarding, 0);
 });
 
 test("every tool asked for gets a cell, in the order given", () => {
@@ -183,4 +187,35 @@ test("byStatus counts presence, not whether the absence was excused", () => {
   ]);
   assert.equal(r.withGaps, 0, "expected, so not a gap");
   assert.equal(r.byStatus[0].present.analytics, 0, "but still not present");
+});
+
+test("absence from the Onboarding tool is expected for ANY status — nothing writes to it", () => {
+  for (const status of ["active", "paused", "churned", "onboarding"]) {
+    const r = buildCoverage([
+      client({ status, present: { ...client().present, onboarding: false } }),
+    ]);
+    assert.equal(r.withGaps, 0, `${status}: Onboarding absence must not be a gap`);
+    assert.equal(verdictFor(r, "onboarding").verdict, "expected");
+    assert.match(verdictFor(r, "onboarding").reason!, /intake pipeline/);
+  }
+});
+
+test("the tool rule does not excuse the other tools", () => {
+  const r = buildCoverage([
+    client({ status: "active",
+             present: { master_inbox: true, client_health: true, analytics: false, onboarding: false } }),
+  ]);
+  assert.deepEqual(r.rows[0].gaps, ["analytics"], "Analytics is still a gap");
+});
+
+test("a written reason still beats the tool rule", () => {
+  const exceptions: ExceptionIndex = new Map([
+    ["c1", new Map([["onboarding", "Migrated from the old intake sheet in 2025."]])],
+  ]);
+  const r = buildCoverage(
+    [client({ present: { ...client().present, onboarding: false } })],
+    exceptions,
+  );
+  assert.equal(verdictFor(r, "onboarding").verdict, "explained");
+  assert.equal(r.explained, 1);
 });
