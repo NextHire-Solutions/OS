@@ -17,15 +17,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-/*
- * Mirrors the predicate in rosters.ts, which cannot be imported here — it is
- * `server-only` and pulls in the whole HTTP stack. The regex is the unit under
- * test and is duplicated deliberately; if it changes there and not here, these
- * tests keep passing while production changes behaviour, so the comment in
- * rosters.ts points back at this file.
- */
-const PLACEHOLDER = /^(unassigned|unknown|none|n\/?a|test|demo)$/i;
-const isPlaceholder = (name: string) => PLACEHOLDER.test(name.trim());
+// The REAL rule, not a copy — see placeholder.ts for why that matters.
+import { PLACEHOLDER, isPlaceholder } from "./placeholder.ts";
+
 
 test("drops the bucket rows the tools actually use", () => {
   for (const name of ["Unassigned", "unassigned", "UNKNOWN", "Unknown", "None", "N/A", "na"]) {

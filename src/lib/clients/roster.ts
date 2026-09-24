@@ -89,6 +89,7 @@ export const NOT_CLIENTS: { name: string; reason: string }[] = [
   { name: "Demo Portal", reason: "backs the live demo client portal — keep" },
   { name: "New client portal", reason: "portal scaffolding, not a client" },
   { name: "Test FUB", reason: "test entry" },
+  { name: "ZZ Portal Delete Test 1789414121641", reason: "Analytics row parked for deletion" },
   { name: "Unassigned", reason: "Analytics bucket for unmatched campaigns" },
   { name: "Unknown", reason: "Master Inbox bucket for unattributed replies" },
 ];

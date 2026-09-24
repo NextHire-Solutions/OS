@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { diffRosters } from "@/lib/reconcile/names";
 import { fetchRosters, type Roster } from "@/lib/reconcile/rosters";
+import { canonicaliseRosters } from "@/lib/reconcile/canonicalise";
 import {
   gatherCoverageReport,
   gatherLinkReport,
@@ -58,7 +59,22 @@ export async function GET() {
       error: error instanceof Error ? error.message : "link check failed",
     })),
   ]);
-  const available = rosters.filter((r) => !r.unavailable);
+  /*
+   * Resolve every tool row through the MASTER RECORD before comparing.
+   *
+   * Without this the screen compares tool to tool by name, so one client
+   * spelled differently in two tools reads as two one-sided differences —
+   * "Douglas Elliman Los Angeles" only in Master Inbox, "Douglas Elliman LA"
+   * only in Analytics. os_clients already records both as the same client,
+   * and Layer 1 of the spec is precisely that every tool should reference the
+   * master list rather than be compared against another tool's spelling.
+   *
+   * The tool's own wording is kept on the entry, so a row still shows how
+   * that tool writes it — the difference simply stops being reported as a
+   * missing client.
+   */
+  const canonical = await canonicaliseRosters(rosters);
+  const available = canonical.filter((r: Roster) => !r.unavailable);
 
   const comparisons: unknown[] = [];
   for (let i = 0; i < available.length; i++) {

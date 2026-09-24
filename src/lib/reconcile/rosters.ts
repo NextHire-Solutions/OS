@@ -5,6 +5,8 @@ import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { listClientRows } from "@/lib/tools/client-health/publish";
 import type { NamedEntry } from "./names";
+import { isPlaceholder } from "./placeholder";
+import { isKnownNonClient, nonClientReason } from "@/lib/clients/roster";
 
 /*
  * Each tool's client list, by name.
@@ -42,7 +44,6 @@ export interface Roster {
  * Matched loosely because these are display names and get retitled. Removed
  * rows are reported on the roster, so this can never quietly hide a real one.
  */
-const PLACEHOLDER = /^(unassigned|unknown|none|n\/?a|test|demo)$/i;
 
 function withoutPlaceholders(entries: NamedEntry[]): {
   entries: NamedEntry[];
@@ -50,8 +51,22 @@ function withoutPlaceholders(entries: NamedEntry[]): {
 } {
   const excluded: string[] = [];
   const kept = entries.filter((e) => {
-    if (PLACEHOLDER.test(e.name.trim())) {
-      excluded.push(e.name);
+    /*
+     * Two kinds of non-customer, both excluded and both reported.
+     *
+     * A PLACEHOLDER is a bucket row whose name is the bucket word —
+     * "Unassigned", "Unknown". A KNOWN NON-CLIENT is a named row that is
+     * real but is not a customer, and roster.ts carries the reason for each:
+     * "Demo Portal — backs the live demo client portal, keep".
+     *
+     * Before this, only the first was excluded, so "Test FUB", "Demo Portal",
+     * "New client portal" and "ZZ Portal Delete Test ..." were reported as
+     * genuine client differences on every comparison the screen drew — four
+     * rows of permanent noise in a panel whose value is being quiet.
+     */
+    if (isPlaceholder(e.name) || isKnownNonClient(e.name)) {
+      const why = nonClientReason(e.name);
+      excluded.push(why ? `${e.name} (${why})` : e.name);
       return false;
     }
     return true;
