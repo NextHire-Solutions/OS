@@ -65,6 +65,13 @@ export const NAV: NavSection[] = [
       { kind: "page", id: "home", label: "Home", route: "/" },
       { kind: "page", id: "performance", label: "Performance", route: "/performance" },
       { kind: "page", id: "roster", label: "Clients", route: "/roster" },
+      /*
+       * Consistency was routed here until a refactor on 2026-09-11 dropped the
+       * import, and the screen has been unreachable since — including the
+       * status-conflict, coverage and link-integrity checks added to it later.
+       * A screen nobody can open cannot report anything.
+       */
+      { kind: "page", id: "consistency", label: "Consistency", route: "/consistency" },
     ],
   },
   {
@@ -262,6 +269,7 @@ const PAGE_PATH: Record<string, string> = {
   home: "/",
   performance: "/performance",
   roster: "/roster",
+  consistency: "/consistency",
   "team-access": "/team",
   "reply-agent": "/reply-agent",
   assistant: "/assistant",

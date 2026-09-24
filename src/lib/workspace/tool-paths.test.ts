@@ -55,8 +55,11 @@ test("the workspace's own surfaces are not tool-gated", () => {
   // These aggregate across tools and belong to the workspace itself. They are
   // reachable by any signed-in user; see the note in proxy.ts.
   for (const path of [
-    "/", "/performance", "/roster", "/admin/team",
+    "/", "/performance", "/roster", "/consistency", "/admin/team",
     "/api/workspace/roster", "/api/workspace/home", "/api/health", "/login",
+    // Consistency reads every tool's client list to compare them, so it is a
+    // workspace surface like the roster rather than any one tool's page.
+    "/api/reconcile/clients",
   ]) {
     assert.equal(toolForPath(path), null, path);
   }
