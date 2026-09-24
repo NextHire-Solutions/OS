@@ -73,7 +73,7 @@ displays them**, which is the smallest remaining piece of §12.
 
 | Field | Definition | Source of truth | Who can edit | Tools that use it | Sync? |
 |---|---|---|---|---|---|
-| Plan | minimum / production / partner | ⚠️ `client_health.clients.plan` **and** `orch_clients.plan` | both | Client Health, Onboarding, OS | **No — can disagree** |
+| Plan | minimum / production / partner | ✅ **`client_health.clients.plan`** — settled by measurement, see below | Client Health, OS | Client Health, OS | No |
 | Billing anchor date | Cycle start | ✅ `client_health.clients.billing_anchor_date` | Client Health, OS | Client Health | No |
 | Billing interval | biweekly / 28-days / monthly / custom | ✅ `client_health.clients.billing_interval` | Client Health, OS | Client Health | No |
 | Interval days | Custom cycle length | ✅ `client_health.clients.billing_interval_days` | Client Health, OS | Client Health | No |
@@ -92,10 +92,10 @@ clients that came through Typeform intake.
 
 | Field | Definition | Source of truth | Who can edit | Tools that use it | Sync? |
 |---|---|---|---|---|---|
-| Market / location | The market worked | ✅ `orch_clients.location` | Onboarding | Onboarding | No |
-| MLS | MLS the leads come from | ✅ `orch_clients.mls` | Onboarding | Onboarding, Scraper | No |
+| Market / location | The market worked | ❌ **effectively unstored** — `orch_clients.location` is set on **2 of 46** | Onboarding | Onboarding | No |
+| MLS | MLS the leads come from | ❌ **effectively unstored** — `orch_clients.mls` is set on **2 of 46** | Onboarding | Onboarding, Scraper | No |
 | Area | Sub-area | ❌ not stored | — | — | — |
-| Timezone | Client's timezone | ⚠️ `client_health.clients.time_zone` **and** `orch_clients.timezone` | both | Client Health, Onboarding | **No — can disagree** |
+| Timezone | Client's timezone | ✅ **`client_health.clients.time_zone`** (47 of 50 set; `orch_clients.timezone` is set on **0** of 46) | Client Health | Client Health | No |
 
 `client_mls` exists in the Database project and holds **0 rows** — it is not
 the source of MLS despite its name.
@@ -139,7 +139,7 @@ what `portal_active` is for needs settling.
 |---|---|---|---|---|---|
 | Campaign ids (Instantly) | Linked campaigns | ✅ `client_health.clients.instantly_campaign_ids` | Client Health | Client Health, Analytics | No |
 | Campaign ids (Bison) | Linked campaigns | ⚠️ `client_health.clients.bison_campaign_ids` **and** `orch_clients.bison_campaign_id` | both | both | **No** |
-| Campaign aliases | Name patterns that match | ⚠️ `client_health.campaign_aliases` **and** `analytics.clients.aliases` | both | matchers | No |
+| Campaign aliases | Name patterns that match | ✅ **`analytics.clients.aliases`** (15 of 54 set; `client_health.campaign_aliases` is set on **1** of 50) | Analytics | matchers | No |
 | Campaign → client | Which client a campaign belongs to | ❌ **inferred from the campaign NAME** | — | Master Inbox, Analytics | — |
 
 **This is the one Eddy asked to be fixed.** `lib/clients/derive.ts` scores a
@@ -175,11 +175,41 @@ nobody adds them to the master record by mistake.
 
 ## What this dictionary establishes
 
-**Fields with a clear single owner:** 24
-**Fields duplicated with no agreed winner:** 6 — `plan`, `timezone`,
-`weekly_target`, Bison campaign ids, campaign aliases, client aliases
-**Fields not stored anywhere:** 4 — area, first billing date, next billing
-date, campaign→client mapping
+**Fields with a clear single owner:** 28
+**Fields genuinely contested:** 1 — Bison campaign ids
+**Fields not stored anywhere (or barely):** 6 — area, first billing date, next
+billing date, campaign→client mapping, **market/location**, **MLS**
+
+### The duplication was mostly an illusion — measured 2026-09-24
+
+The first version of this file listed six fields as "duplicated with no agreed
+winner". Comparing the actual values settled four of them, and the answer was
+not a judgement call:
+
+| Field | What the data says |
+|---|---|
+| **plan** | `orch_clients.plan` is `'production'` for **all 46 rows**. Client Health has real variation (29 production / 7 partner / 14 minimum). The Onboarding column is an intake default nobody ever updates — **Client Health owns it.** |
+| **weekly_target** | `orch_clients.weekly_target` is `3` for **all 46 rows**. Client Health ranges 1–4. Same story — **Client Health owns it.** |
+| **timezone** | `orch_clients.timezone` is set on **0 of 46**. Client Health has 47 of 50. Never contested — **Client Health owns it.** |
+| **campaign aliases** | `client_health.campaign_aliases` is set on **1 of 50**; Analytics has 15 of 54. **Analytics owns it.** |
+
+That is §15 doing exactly what it was written to do: the question "who owns
+this?" had an answer in the data, and four of the six needed no decision at
+all. What looked like six conflicting fields was two systems, one of which
+stopped writing four of them years ago.
+
+**But the measurement found something worse.** `plan` and `weekly_target`
+appear to disagree for 20 and 38 clients respectively — and anyone comparing
+those two tables without knowing the Onboarding side is a frozen default would
+conclude the business has 38 clients on the wrong target. The columns are not
+merely redundant; they are actively misleading, and the right fix is to stop
+writing them rather than to reconcile them.
+
+**And MLS and market are essentially not recorded.** §6 lists both as master
+client data and §8 puts MLS at the centre of the Database view, but
+`orch_clients` carries them for **2 of 46** clients. This is not a
+synchronisation problem to solve — it is data the business believes it has and
+does not.
 
 The spec's rule in §15 is that *"if we cannot answer who owns this, we should
 not have the same field independently editable in multiple systems."* Six
