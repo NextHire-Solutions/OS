@@ -54,6 +54,61 @@ interface SourceRead {
 
 const empty = (): SourceRead => ({ byName: new Map(), labels: new Map(), unreadable: true });
 
+/*
+ * The master list, with every spelling each client is known by.
+ *
+ * ALIASES ARE PART OF IDENTITY, not decoration. A tool that stores
+ * "The Discover Phx Team" holds the same client as "Discover Phx Team", and
+ * os_clients already records that. Matching on the name alone reported those
+ * clients as MISSING FROM THE TOOL — a gap that does not exist, in the panel
+ * whose whole job is telling a real gap from a false one.
+ *
+ * Found by hand-reconciling the five rosters: seven "missing" clients turned
+ * out to be present under a spelling the master already knew.
+ */
+interface OsClientKeys {
+  id: string;
+  name: string;
+  status: string;
+  /** Normalised name plus every normalised alias. */
+  keys: string[];
+}
+
+async function readOsClients(): Promise<{ rows: OsClientKeys[]; unreadable: boolean }> {
+  try {
+    const { data, error } = await getMasterInboxSupabase()
+      .from("os_clients")
+      .select("id, name, status, aliases")
+      .limit(1000);
+    if (error) throw new Error(error.message);
+    const rows: OsClientKeys[] = [];
+    for (const raw of (data ?? []) as {
+      id: string; name: string; status: string; aliases: string[] | null;
+    }[]) {
+      const name = (raw.name ?? "").trim();
+      if (!name || PLACEHOLDER.test(name)) continue;
+      const keys = [name, ...(raw.aliases ?? [])].map(norm).filter(Boolean);
+      rows.push({
+        id: raw.id,
+        name,
+        status: (raw.status ?? "").toLowerCase(),
+        keys: [...new Set(keys)],
+      });
+    }
+    return { rows, unreadable: false };
+  } catch {
+    return { rows: [], unreadable: true };
+  }
+}
+
+/** The tool's row for this client, under any spelling the master knows. */
+function findIn(read: SourceRead, client: OsClientKeys): string | null | undefined {
+  for (const k of client.keys) {
+    if (read.byName.has(k)) return read.byName.get(k) ?? null;
+  }
+  return undefined; // no row under any known spelling
+}
+
 async function readSource(
   fn: () => Promise<{ name: unknown; status: unknown }[]>,
 ): Promise<SourceRead> {
@@ -76,15 +131,8 @@ async function readSource(
 }
 
 export async function gatherStatusReport(): Promise<StatusReport> {
-  const [os, health, analytics, inbox] = await Promise.all([
-    readSource(async () => {
-      const { data, error } = await getMasterInboxSupabase()
-        .from("os_clients")
-        .select("name, status")
-        .limit(1000);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as { name: unknown; status: unknown }[];
-    }),
+  const [osRows, health, analytics, inbox] = await Promise.all([
+    readOsClients(),
     readSource(async () => {
       // Client Health still derives its status from two booleans for older
       // readers; `status` is the column migration 0019 added and the trigger
@@ -115,7 +163,6 @@ export async function gatherStatusReport(): Promise<StatusReport> {
   ]);
 
   const sources: [StatusSource, SourceRead][] = [
-    ["os", os],
     ["client_health", health],
     ["analytics", analytics],
     ["master_inbox", inbox],
@@ -127,19 +174,25 @@ export async function gatherStatusReport(): Promise<StatusReport> {
    * it is left out here rather than reported twice in two different shapes.
    */
   const clients: ClientStatuses[] = [];
-  for (const [key, status] of os.byName) {
-    const statuses: Partial<Record<StatusSource, string | null>> = { os: status };
+  for (const client of osRows.rows) {
+    const statuses: Partial<Record<StatusSource, string | null>> = { os: client.status };
     for (const [source, read] of sources) {
-      if (source === "os" || read.unreadable) continue;
-      if (read.byName.has(key)) statuses[source] = read.byName.get(key) ?? null;
+      if (read.unreadable) continue;
+      // Any spelling the master knows, not just the primary name.
+      const found = findIn(read, client);
+      if (found !== undefined) statuses[source] = found;
     }
-    clients.push({ name: os.labels.get(key) ?? key, statuses });
+    clients.push({ name: client.name, statuses });
   }
 
-  return findStatusConflicts(
-    clients,
-    sources.filter(([, read]) => read.unreadable).map(([source]) => source),
-  );
+  const unreadable = sources
+    .filter(([, read]) => read.unreadable)
+    .map(([source]) => source);
+  // The master itself failing is reported too — otherwise an empty comparison
+  // would look like perfect agreement.
+  if (osRows.unreadable) unreadable.push("os");
+
+  return findStatusConflicts(clients, unreadable);
 }
 
 /*
@@ -176,15 +229,8 @@ async function readExceptions(): Promise<ExceptionIndex> {
  * a stale id pointing at a deleted row would otherwise read as "present".
  */
 export async function gatherCoverageReport(): Promise<CoverageReport> {
-  const [os, health, analytics, inbox, onboarding, exceptions] = await Promise.all([
-    readSource(async () => {
-      const { data, error } = await getMasterInboxSupabase()
-        .from("os_clients")
-        .select("id, name, status")
-        .limit(1000);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
-    }),
+  const [osRows, health, analytics, inbox, onboarding, exceptions] = await Promise.all([
+    readOsClients(),
     readSource(async () => {
       const { data, error } = await getClientHealthSupabase()
         .from("clients")
@@ -222,21 +268,6 @@ export async function gatherCoverageReport(): Promise<CoverageReport> {
     readExceptions(),
   ]);
 
-  // os_clients ids, needed to look an exception up. Read separately from the
-  // name index because readSource deliberately keeps only name and status.
-  const idByName = new Map<string, string>();
-  try {
-    const { data } = await getMasterInboxSupabase()
-      .from("os_clients")
-      .select("id, name")
-      .limit(1000);
-    for (const row of (data ?? []) as { id: string; name: string }[]) {
-      idByName.set(norm(row.name), row.id);
-    }
-  } catch {
-    /* the os column read below still works; exceptions simply will not match */
-  }
-
   const unreadable: CoverageTool[] = [];
   if (health.unreadable) unreadable.push("client_health");
   if (analytics.unreadable) unreadable.push("analytics");
@@ -244,16 +275,16 @@ export async function gatherCoverageReport(): Promise<CoverageReport> {
   if (onboarding.unreadable) unreadable.push("onboarding");
 
   const clients: CoverageInput[] = [];
-  for (const [key, status] of os.byName) {
+  for (const client of osRows.rows) {
     clients.push({
-      clientId: idByName.get(key) ?? key,
-      name: os.labels.get(key) ?? key,
-      status: (status ?? "").toLowerCase(),
+      clientId: client.id,
+      name: client.name,
+      status: client.status,
       present: {
-        master_inbox: inbox.byName.has(key),
-        client_health: health.byName.has(key),
-        analytics: analytics.byName.has(key),
-        onboarding: onboarding.byName.has(key),
+        master_inbox: findIn(inbox, client) !== undefined,
+        client_health: findIn(health, client) !== undefined,
+        analytics: findIn(analytics, client) !== undefined,
+        onboarding: findIn(onboarding, client) !== undefined,
       },
     });
   }
