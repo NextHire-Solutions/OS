@@ -5,7 +5,7 @@ import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { listClientRows } from "@/lib/tools/client-health/publish";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { ROSTER, matchRoster, type CanonicalClient } from "./roster";
-import { indexByName, pickFor, keysForClient } from "./tool-index";
+import { indexById, indexByName, pickFor, keysForClient } from "./tool-index";
 import { keyOf } from "./roster";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
@@ -143,11 +143,16 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
       .map((k) => portalByKey.get(k))
       .find(Boolean);
 
-    const hr = pickFor(client, h.byClient);
-    const ir = pickFor(client, i.byClient);
-    const ar = pickFor(client, a.byClient);
-
     const os = osByName.get(client.name);
+
+    /*
+     * ID first, name second (see tool-index.ts). Additive: every client that
+     * resolved by name still does, and one whose name has drifted in a tool
+     * is now found through the link os_clients already recorded.
+     */
+    const hr = pickFor(client, h.byClient, h.byId, os?.links.clientHealth);
+    const ir = pickFor(client, i.byClient, i.byId, os?.links.masterInbox);
+    const ar = pickFor(client, a.byClient, a.byId, os?.links.analytics);
 
     return {
       client,
@@ -204,6 +209,8 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
 
 interface ToolRead {
   byClient: Map<string, Record<string, unknown>>;
+  /** The same rows keyed by the tool's own id — empty when rows carry none. */
+  byId: Map<string, Record<string, unknown>>;
   unknown: string[];
   exempt: { name: string; reason: string }[];
   unavailable: string | null;
@@ -213,6 +220,7 @@ function settled(outcome: PromiseSettledResult<ToolRead>, label: string): ToolRe
   if (outcome.status === "fulfilled") return outcome.value;
   return {
     byClient: new Map(),
+    byId: new Map(),
     unknown: [],
     exempt: [],
     unavailable:
@@ -246,7 +254,10 @@ function settled(outcome: PromiseSettledResult<ToolRead>, label: string): ToolRe
 function index(rows: Record<string, unknown>[], nameField: string): ToolRead {
   const byClient = indexByName(rows, nameField);
   const match = matchRoster(rows.flatMap((r) => (str(r[nameField]) ? [str(r[nameField])!] : [])));
-  return { byClient, unknown: match.unknown, exempt: match.exempt, unavailable: null };
+  // Indexed by id as well, so a client whose NAME has drifted in a tool is
+  // still found through the link os_clients recorded. Empty for a tool whose
+  // rows carry no id, which simply means the name stays the only route.
+  return { byClient, byId: indexById(rows), unknown: match.unknown, exempt: match.exempt, unavailable: null };
 }
 
 /*

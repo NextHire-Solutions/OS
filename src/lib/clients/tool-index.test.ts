@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { indexByName, pickFor } from "./tool-index.ts";
+import { indexById, indexByName, pickFor, pickWithSource } from "./tool-index.ts";
 
 const rows = (...names: string[]) => names.map((name) => ({ name, marker: name }));
 
@@ -43,4 +43,91 @@ test("the first row wins when a tool holds two for one client", () => {
 test("rows with a blank or missing name are skipped, not indexed under ''", () => {
   const idx = indexByName([{ name: "   " }, { other: "x" }, { name: "Oz Group" }], "name");
   assert.equal(idx.size, 1);
+});
+
+/* ---------------------------------------------------------------------------
+ * ID-first resolution.
+ *
+ * The property that matters is that this is ADDITIVE: every case that
+ * resolved by name before must still resolve, and the id must only ever add
+ * a way to find a row, never take one away.
+ * ------------------------------------------------------------------------ */
+
+test("the stored id wins, even when the name has drifted", () => {
+  const rows = [{ id: "AN-1", name: "Douglas Elliman LA" }];
+  const byName = indexByName(rows, "name");
+  const byId = indexById(rows);
+  const client = { name: "Douglas Elliman Los Angeles", aliases: [] } as never;
+  const r = pickWithSource(client, byName, byId, "AN-1");
+  assert.equal(r.via, "id");
+  assert.equal(r.row?.name, "Douglas Elliman LA");
+  assert.equal(r.staleLink, false);
+});
+
+test("with no stored id it still resolves by name — nothing regresses", () => {
+  const rows = [{ id: "AN-1", name: "Oz Group" }];
+  const r = pickWithSource(
+    { name: "Oz Group", aliases: [] } as never,
+    indexByName(rows, "name"),
+    indexById(rows),
+    null,
+  );
+  assert.equal(r.via, "name");
+  assert.equal(r.row?.id, "AN-1");
+});
+
+test("a STALE id falls back to the name and says so", () => {
+  const rows = [{ id: "AN-9", name: "Oz Group" }];
+  const r = pickWithSource(
+    { name: "Oz Group", aliases: [] } as never,
+    indexByName(rows, "name"),
+    indexById(rows),
+    "AN-DELETED",
+  );
+  assert.equal(r.via, "name", "the fallback must still find it");
+  assert.equal(r.staleLink, true, "and the stale link must be visible");
+});
+
+test("aliases still resolve when no id is stored", () => {
+  const rows = [{ id: "X", name: "The Discover Phx Team" }];
+  const r = pickWithSource(
+    { name: "Discover Phx Team", aliases: ["The Discover Phx Team"] } as never,
+    indexByName(rows, "name"),
+    indexById(rows),
+    null,
+  );
+  assert.equal(r.via, "name");
+  assert.equal(r.row?.id, "X");
+});
+
+test("a tool whose rows carry no id degrades to name matching", () => {
+  const rows = [{ client_name: "Oz Group", intros: 4 }];
+  const byId = indexById(rows);
+  assert.equal(byId.size, 0, "nothing to index");
+  const r = pickWithSource(
+    { name: "Oz Group", aliases: [] } as never,
+    indexByName(rows, "client_name"),
+    byId,
+    "some-id",
+  );
+  assert.equal(r.via, "name");
+  assert.equal(r.row?.intros, 4);
+});
+
+test("neither id nor name finds anything -> none, and no false stale flag", () => {
+  const rows = [{ id: "A", name: "Someone Else" }];
+  const r = pickWithSource(
+    { name: "Missing Co", aliases: [] } as never,
+    indexByName(rows, "name"),
+    indexById(rows),
+    "nope",
+  );
+  assert.equal(r.via, "none");
+  assert.equal(r.row, undefined);
+  assert.equal(r.staleLink, false);
+});
+
+test("pickFor keeps its old signature and behaviour", () => {
+  const rows = [{ id: "A", name: "Oz Group" }];
+  assert.equal(pickFor({ name: "Oz Group", aliases: [] } as never, indexByName(rows, "name"))?.id, "A");
 });
