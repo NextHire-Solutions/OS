@@ -45,6 +45,15 @@ export interface EditableClient {
     /** The second and third people. Always two entries, either may be empty. */
     extra: Array<{ name: string | null; role: string | null; email: string | null }>;
   };
+  /** The §6 master-record fields the OS owns outright (migration 0015). */
+  record: {
+    accountManager: string | null;
+    salesperson: string | null;
+    sender: string | null;
+    market: string | null;
+    mls: string | null;
+    area: string | null;
+  };
 }
 
 export function EditClient({ client, onSaved }: { client: EditableClient; onSaved: () => void }) {
@@ -107,6 +116,13 @@ function EditBody({
   );
   const [people, setPeople] = useState(asPeople);
   const [brokerage, setBrokerage] = useState(client.contact.brokerage ?? "");
+  // §6 master-record fields — the OS owns these; nothing is sent to any tool.
+  const [accountManager, setAccountManager] = useState(client.record.accountManager ?? "");
+  const [salesperson, setSalesperson] = useState(client.record.salesperson ?? "");
+  const [sender, setSender] = useState(client.record.sender ?? "");
+  const [market, setMarket] = useState(client.record.market ?? "");
+  const [mls, setMls] = useState(client.record.mls ?? "");
+  const [area, setArea] = useState(client.record.area ?? "");
   const setPerson = (i: number, patch: Partial<(typeof people)[number]>) =>
     setPeople((cur) => cur.map((p, n) => (n === i ? { ...p, ...patch } : p)));
 
@@ -167,6 +183,19 @@ function EditBody({
         }
       });
       if (brokerage.trim() !== (client.contact.brokerage ?? "")) body.brokerage = brokerage.trim();
+      // Same rule as every other field here: a key is sent only when its value
+      // actually changed, so a blank one is a deliberate clear.
+      const RECORD_FIELDS = [
+        ["accountManager", accountManager, client.record.accountManager],
+        ["salesperson", salesperson, client.record.salesperson],
+        ["sender", sender, client.record.sender],
+        ["market", market, client.record.market],
+        ["mls", mls, client.record.mls],
+        ["area", area, client.record.area],
+      ] as const;
+      for (const [key, next, was] of RECORD_FIELDS) {
+        if (next.trim() !== (was ?? "")) body[key] = next.trim();
+      }
 
       if (Object.keys(body).length === 1) { onClose(); return; }
 
@@ -238,6 +267,59 @@ function EditBody({
               {BILLING.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </label>
+        </div>
+
+        {/*
+          The §6 master-record fields.
+
+          These are the OS's own — no tool is written when they change, because
+          no tool has anywhere to put them. That is precisely why they are
+          here: measured 2026-09-24, Account Manager was recorded for 0 clients
+          of 46, Sender for 1, MLS and Market for 2 each, Salesperson for 4,
+          and Area for none at all. The spec lists all six as master client
+          data, and until this dialog there was nowhere to type them.
+        */}
+        <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 13, display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 650 }}>Client record</div>
+            <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.55 }}>
+              Held by the OS and by nothing else. Filling these in is what makes them
+              answerable anywhere &mdash; today most are blank for every client.
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+            <label style={FIELD}>
+              <span style={LABEL}>Account manager</span>
+              <input className="inp" value={accountManager} maxLength={120}
+                onChange={(e) => setAccountManager(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>Salesperson</span>
+              <input className="inp" value={salesperson} maxLength={120}
+                onChange={(e) => setSalesperson(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>Sender</span>
+              <input className="inp" value={sender} maxLength={120}
+                onChange={(e) => setSender(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>Market</span>
+              <input className="inp" value={market} maxLength={120} placeholder="Phoenix, AZ"
+                onChange={(e) => setMarket(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>MLS</span>
+              <input className="inp" value={mls} maxLength={120} placeholder="ARMLS"
+                onChange={(e) => setMls(e.target.value)} />
+            </label>
+            <label style={FIELD}>
+              <span style={LABEL}>Area</span>
+              <input className="inp" value={area} maxLength={120}
+                onChange={(e) => setArea(e.target.value)} />
+            </label>
+          </div>
         </div>
 
         {/*

@@ -376,6 +376,7 @@ function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; 
                 plan: health.plan,
                 weeklyTarget: health.weeklyTarget,
                 contact: os.contact,
+                record: os.record,
               }}
               onSaved={onChanged}
             />

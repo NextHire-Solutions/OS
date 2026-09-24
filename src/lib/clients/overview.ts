@@ -44,6 +44,15 @@ export interface ClientRow {
      * found rather than a change that happened on that date.
      */
     statusSince: StatusMoment | null;
+    /** The §6 master-record fields the OS owns outright (migration 0015). */
+    record: {
+      accountManager: string | null;
+      salesperson: string | null;
+      sender: string | null;
+      market: string | null;
+      mls: string | null;
+      area: string | null;
+    };
     /** Onboarding is read from the stored link, not by name-matching again. */
     inOnboarding: boolean;
     /*
@@ -160,6 +169,12 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
         id: os?.id ?? null,
         status: os?.status ?? "active",
         statusSince: (os?.id && moments.get(os.id)) || null,
+        // §6 master-record fields. Empty for a client with no stored row —
+        // the roster fallback has no such data.
+        record: os?.record ?? {
+          accountManager: null, salesperson: null, sender: null,
+          market: null, mls: null, area: null,
+        },
         inOnboarding: Boolean(os?.links.onboarding),
         contact:
           os?.contact ?? {

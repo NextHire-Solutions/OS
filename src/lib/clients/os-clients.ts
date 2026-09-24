@@ -46,6 +46,23 @@ export interface OsClient {
      */
     extra: Array<{ name: string | null; role: string | null; email: string | null }>;
   };
+  /*
+   * The §6 master-record fields that had no home anywhere.
+   *
+   * Measured 2026-09-24: Account Manager was set for 0 of 46 clients, Sender
+   * for 1, MLS and Market for 2 each, Salesperson for 4, and Area was stored
+   * in no table at all. They are recorded here because the OS is the master
+   * record, and because until there was somewhere to put them the answer to
+   * "who is the account manager" was nowhere. See migration 0015.
+   */
+  record: {
+    accountManager: string | null;
+    salesperson: string | null;
+    sender: string | null;
+    market: string | null;
+    mls: string | null;
+    area: string | null;
+  };
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -59,12 +76,44 @@ const LINK_COLUMN: Record<ToolKey, string> = {
   onboarding: "orch_client_id",
 };
 
-const SELECT =
+const BASE_SELECT =
   "id, name, slug, aliases, status, source, notes, created_at, updated_at, " +
   "mi_client_id, ch_client_id, an_client_id, orch_client_id, " +
   "contact_name, contact_role, contact_email, " +
   "contact2_name, contact2_role, contact2_email, " +
   "contact3_name, contact3_role, contact3_email, brokerage";
+
+/** The §6 master-record fields — migration 0015. */
+const RECORD_COLUMNS = "account_manager, salesperson, sender_name, market, mls, area";
+
+/*
+ * WORKS BEFORE AND AFTER MIGRATION 0015.
+ *
+ * Asking for a column that does not exist makes PostgREST fail the WHOLE
+ * query (error 42703), so shipping this code before the migration ran would
+ * have taken the Clients screen down to its roster fallback — every status
+ * change silently unsaveable — until somebody noticed.
+ *
+ * So the column list is decided once, at first use, by trying the full one
+ * and dropping back if the database has not been migrated yet. The result is
+ * remembered for the process: this costs one extra failed query on the first
+ * read after a cold start, and only while the migration is outstanding.
+ *
+ * Deliberately not a config flag. A flag is a second thing to remember to
+ * change, and the failure mode of forgetting is exactly the outage above.
+ */
+let hasRecordColumns: boolean | null = null;
+
+function selectList(): string {
+  return hasRecordColumns === false ? BASE_SELECT : `${BASE_SELECT}, ${RECORD_COLUMNS}`;
+}
+
+/** True when the failure is "that column is not there", not something real. */
+function isMissingColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === "42703") return true;
+  return /column .* does not exist/i.test(error.message ?? "");
+}
 
 type Row = Record<string, unknown>;
 
@@ -93,6 +142,14 @@ function toClient(row: Row): OsClient {
         email: (row[`contact${n}_email`] as string | null) ?? null,
       })),
     },
+    record: {
+      accountManager: (row.account_manager as string | null) ?? null,
+      salesperson: (row.salesperson as string | null) ?? null,
+      sender: (row.sender_name as string | null) ?? null,
+      market: (row.market as string | null) ?? null,
+      mls: (row.mls as string | null) ?? null,
+      area: (row.area as string | null) ?? null,
+    },
     notes: (row.notes as string | null) ?? null,
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? ""),
@@ -108,8 +165,14 @@ function toClient(row: Row): OsClient {
  * more than once.
  */
 export async function listOsClients(): Promise<OsClient[]> {
-  const { data, error } = await osTable("os_clients").select(SELECT).order("name");
+  let { data, error } = await osTable("os_clients").select(selectList()).order("name");
+  if (error && isMissingColumn(error) && hasRecordColumns !== false) {
+    // Migration 0015 has not been run here. Remember, and serve the rest.
+    hasRecordColumns = false;
+    ({ data, error } = await osTable("os_clients").select(BASE_SELECT).order("name"));
+  }
   if (error) throw new Error(`os_clients unavailable: ${error.message}`);
+  if (hasRecordColumns === null) hasRecordColumns = true;
   return (data ?? []).map((r) => toClient(r as unknown as Row));
 }
 
@@ -132,7 +195,7 @@ export async function setClientStatus(id: string, status: ClientStatus): Promise
   const { data, error } = await osTable("os_clients")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("id", id)
-    .select(SELECT)
+    .select(selectList())
     .single();
   if (error) throw new Error(`Could not update status: ${error.message}`);
   return toClient(data as unknown as Row);

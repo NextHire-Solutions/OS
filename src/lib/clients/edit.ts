@@ -21,6 +21,10 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
  *   billing*        Client Health            anchor date and interval
  *   status          os_clients               onboarding / active / paused / churned
  *   notes           os_clients               ours alone
+ *   accountManager  os_clients               §6 field, recorded nowhere before
+ *   salesperson     os_clients               §6 field
+ *   sender          os_clients               §6 field
+ *   market/mls/area os_clients               §6 fields
  *
  * ---------------------------------------------------------------------------
  * HOW THE CLIENT HEALTH LEG WRITES
@@ -78,6 +82,19 @@ export interface ClientEdit {
   contact3Name?: string | null;
   contact3Role?: string | null;
   contact3Email?: string | null;
+  /*
+   * The §6 master-record fields (migration 0015). Recorded here because the
+   * OS is the master record and because, before this, there was nowhere in
+   * any tool to record them: Account Manager was set for 0 clients of 46.
+   *
+   * A blank string clears the field, exactly like the contact slots above.
+   */
+  accountManager?: string | null;
+  salesperson?: string | null;
+  sender?: string | null;
+  market?: string | null;
+  mls?: string | null;
+  area?: string | null;
   brokerage?: string | null;
   plan?: (typeof PLANS)[number];
   weeklyTarget?: number;
@@ -276,6 +293,14 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     if (edit[slot.email] !== undefined) local[slot.col.email] = blankToNull(edit[slot.email]);
   }
   if (edit.brokerage !== undefined) local.brokerage = blankToNull(edit.brokerage);
+  // §6 master-record fields. OS owns these outright — nothing is sent onward
+  // to any tool, because no tool has anywhere to put them.
+  if (edit.accountManager !== undefined) local.account_manager = blankToNull(edit.accountManager);
+  if (edit.salesperson !== undefined) local.salesperson = blankToNull(edit.salesperson);
+  if (edit.sender !== undefined) local.sender_name = blankToNull(edit.sender);
+  if (edit.market !== undefined) local.market = blankToNull(edit.market);
+  if (edit.mls !== undefined) local.mls = blankToNull(edit.mls);
+  if (edit.area !== undefined) local.area = blankToNull(edit.area);
   if (Object.keys(local).length > 1) {
     const { error: e } = await osTable("os_clients").update(local).eq("id", id);
     if (e) failed.push({ what: "the OS record", error: e.message });
