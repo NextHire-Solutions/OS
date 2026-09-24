@@ -266,3 +266,95 @@ fields fail that test today, and every one of them is editable in two places.
 
 These are proposals, not decisions. §15 exists to force the decision, and the
 decision is the business's.
+
+---
+
+# §7's fourth question: what happens when it changes
+
+§7 asks four questions of every field:
+
+1. *Where does this information originate?* — the **Source of truth** column
+2. *Where can it be edited?* — the **Who can edit** column
+3. *Which tools consume it?* — the **Tools that use it** column
+4. *What happens when it changes?* — **this section**
+
+The tables above answered the first three and gave the fourth only as a yes/no
+`Sync?` flag, which says *whether* something happens and not *what*. Written out
+per field it would repeat "nothing" forty times, so the fields are grouped by
+what actually happens instead. Every field in the dictionary is in exactly one
+group below.
+
+Measured and verified 2026-09-25.
+
+## A. Propagates automatically, live
+
+One edit, and other systems change without anyone touching them.
+
+| Field | What happens, in order |
+|---|---|
+| **Status** | `os_clients.status` → Client Health (a trigger keeps `status` and its two legacy booleans in step both ways) → Analytics (a trigger derives `active`) → **every portal the client has** opens or closes. Onboarding is deliberately omitted from the feed, which leaves portals exactly as a person set them. The portal **token is never changed**, so churning and reactivating restores the same URL. |
+| **Client name** | Rewrites `os_clients.name`. Because every tool still joins clients by normalised name, a rename silently re-points those joins — which is why Master Inbox is told about a rename and why the Consistency screen watches for it. Master Inbox's own row is **not** renamed (its update endpoint needs a browser session), and the response says so rather than failing quietly. |
+| **Aliases** | Written to `os_clients.aliases` and to Analytics. Each alias also becomes an entry in the client-status feed, so a client with several markets has **every** portal follow its status. |
+
+## B. Written straight to the owning tool when you save
+
+The OS is the edit surface; the value lands in the tool that owns the column.
+Nothing further propagates, because nothing else consumes it.
+
+| Field | Lands in |
+|---|---|
+| Plan | `client_health.clients.plan` |
+| Weekly introduction target | `client_health.clients.weekly_target` |
+| Monthly introduction target | `client_health.clients.monthly_target` |
+| Start date | `client_health.clients.start_date` |
+| Billing anchor date, billing interval | `client_health.clients.billing_anchor_date`, `billing_interval` |
+| Timezone | `client_health.clients.time_zone` — drives scheduling and every "this week" figure |
+
+An absent key is left alone, so saving one field cannot overwrite another that
+the sync worker owns.
+
+## C. Nothing propagates — the field is read where it lives
+
+These are already single-owner, and copying them would create the very problem
+this document exists to end. "Nothing happens" is the correct answer.
+
+| Field | Owner | Who reads it |
+|---|---|---|
+| Team, Agents, DNC list | Master Inbox | the client portal reads them directly |
+| Leads, Replies, Bounces, In review, Exported, Sequencers | Database | Database, Analytics |
+| Campaign ID, name, status | the campaign platforms | Analytics, Database |
+| Portal token, portal flags | Master Inbox | the portal |
+
+## D. Recalculated by a job, never propagated
+
+Written **to** the master record's neighbours by a scheduled worker. Editing
+them by hand is meaningless — the next run overwrites it.
+
+Introductions delivered · intros this month · Corofy totals · interested count ·
+emails today · DNC count · agents count · last lead activity · stagnant intros ·
+intros since last billing.
+
+Client Health's `sync-worker` owns these, every 15 minutes, in three legs
+(instantly, bison, corofy) recorded in `sync_runs`.
+
+## E. Nothing happens, and that IS the gap
+
+The field is recorded and **no system reads it yet**. Worth stating plainly, so
+nobody assumes an edit here reaches anything.
+
+| Field | Why nothing happens |
+|---|---|
+| Account Manager, Salesperson, Sender, Market, MLS, Area | Added by migration 0015 because they had no home anywhere. The OS stores and displays them; no tool consumes them yet. §5's worked example — *"change the Account Manager once and every tool updates"* — cannot be demonstrated until one does. |
+| Stripe Customer ID, Stripe Subscription ID | Still on the onboarding tool's table and only for Typeform intake clients. Not connected to the master record, so a status change reaches neither. §22's one failing billing requirement. |
+| `master_inbox.clients.status` | Recorded and read by nothing. Migration 0001 added it "recorded but not yet enforced"; portals are driven by the status feed instead, so a difference here changes no behaviour. |
+| Client ID | Exists and is unique on all 52 clients, and **no tool references it** — they all still join by name. §14.2's "one unique Client ID" is met in the record and not yet in the plumbing. |
+
+## The shape of the answer
+
+Groups A and B are the spec working as intended: change it once, in one place,
+and the systems that care find out. Group C is the spec working as intended too
+— §5 is explicit that centralised does not mean copied everywhere. Group D is
+generated data, correctly flowing the other way.
+
+**Group E is the remaining work**, and all of it is one of two things: a field
+with no consumer yet, or Stripe.
