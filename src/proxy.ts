@@ -17,6 +17,13 @@ const TOKEN_ROUTES = new Set([
   // run. The handler verifies OS_CLIENT_STATUS_TOKEN and fails closed when
   // that is unset, exactly like the routes above.
   "/api/workspace/clients/status-feed",
+  /*
+   * The scheduled consistency check (§16). Called by a scheduler with a bearer
+   * token and no browser session, so without this entry the proxy 307s it to
+   * the login page before its own gate can run. The handler verifies
+   * OS_CRON_SECRET and answers 503 while that is unset — closed, not open.
+   */
+  "/api/cron/reconcile-alert",
 ]);
 
 /*
