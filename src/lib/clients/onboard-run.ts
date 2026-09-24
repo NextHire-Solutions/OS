@@ -6,6 +6,7 @@ import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { withStandardFlags } from "./portal-features";
 import { planOnboarding, LEGS, type Leg, type OnboardInput, type PlannedCall } from "./onboard-plan";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
+import { createDatabaseRecord } from "./database-record";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { onboardClient } from "@/lib/tools/client-health/onboard";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
@@ -60,6 +61,7 @@ export interface RunResult {
 const LINK_COLUMN: Record<Leg, string> = {
   analytics: "an_client_id",
   client_health: "ch_client_id",
+  database: "orch_client_id",
   master_inbox: "mi_client_id",
 };
 
@@ -93,6 +95,17 @@ async function send(call: PlannedCall): Promise<{ status: number; body: unknown 
     // The 60-second read cache predates this row; drop it, as every write does.
     getWeekly.invalidate();
     return { status: 201, body: result.value };
+  }
+
+  /*
+   * The Database record is a single orch_clients row and the workspace can write
+   * orch_* tables directly, so there is no HTTP leg to call. In-process for the
+   * same reason as Client Health: a loopback request to our own route would
+   * need a session a server process does not have.
+   */
+  if (call.leg === "database") {
+    const body = asRecord(call.body);
+    return createDatabaseRecord(String(body?.client_name ?? ""));
   }
 
   const { url, headers } = await endpoint(call.leg, call.path);
@@ -218,7 +231,9 @@ export async function runOnboarding(
         results.filter((r) => r.status === "done" || r.status === "skipped").map((r) => r.leg),
       );
       for (const [l, row] of already) if (row.status === "done") done.add(l as Leg);
-      const missing = (["analytics", "client_health"] as Leg[]).filter((l) => !done.has(l));
+      const missing = (["analytics", "client_health", "database"] as Leg[]).filter(
+        (l) => !done.has(l),
+      );
       if (missing.length) {
         results.push({
           leg, status: "skipped", request: call.body,

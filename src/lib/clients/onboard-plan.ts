@@ -46,7 +46,7 @@ export type BillingInterval = (typeof BILLING_INTERVALS)[number];
 export type MatchMode = (typeof MATCH_MODES)[number];
 
 /** The legs, in the order they must run. */
-export const LEGS = ["analytics", "client_health", "master_inbox"] as const;
+export const LEGS = ["analytics", "client_health", "database", "master_inbox"] as const;
 export type Leg = (typeof LEGS)[number];
 
 export interface IntroMacro {
@@ -236,6 +236,30 @@ export function planOnboarding(input: OnboardInput): OnboardPlan {
     ],
   };
 
+  /*
+   * The Database record: one row in orch_clients. §2 lists it among the things
+   * creating a client should do automatically, and it was the gap in §21 step 3.
+   *
+   * Runs BEFORE Master Inbox because Master Inbox is the irreversible leg, and
+   * the same rule applies to this one as to the others: nothing customer-facing
+   * is created until every reversible leg has succeeded.
+   */
+  const database: PlannedCall = {
+    leg: "database",
+    tool: "Database",
+    method: "POST",
+    path: "(in-process) orch_clients insert",
+    auth: "in-process (AGENT_SEARCH_SUPABASE_SERVICE_ROLE_KEY, orch_* write guard)",
+    body: { client_name: name, status: "new" },
+    sideEffects: [
+      "Inserts one orch_clients row — that is the entire Database record.",
+      "The client then appears in the Database app's Client filter, Clients page and pickers.",
+      "Links to an existing row instead of inserting when the normalised name already exists: " +
+        "two rows sharing a key make the campaign matcher abandon both clients.",
+      "Leads and campaigns are NOT attached here — the six-hourly campaign sync does that.",
+    ],
+  };
+
   const masterInboxBody: Record<string, unknown> = { name, aliases };
   if (macro) {
     masterInboxBody.intro_macro = {
@@ -274,6 +298,6 @@ export function planOnboarding(input: OnboardInput): OnboardPlan {
     slug,
     // LEGS order is the run order. Not sorted here — the array literal IS the
     // contract, and a caller must not have to know to sort it.
-    calls: [analytics, clientHealth, masterInbox],
+    calls: [analytics, clientHealth, database, masterInbox],
   };
 }
