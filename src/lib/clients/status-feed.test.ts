@@ -78,6 +78,147 @@ test("an empty roster produces an empty feed, not a crash", () => {
     total: 0,
     counts: { active: 0, paused: 0, churned: 0 },
     clients: [],
+    entries: 0,
     omitted: [],
   });
+});
+
+/* =========================================================================
+ * ONE CLIENT, MANY PORTALS
+ *
+ * MasterInbox holds one row per PORTAL and matches on the name. These are the
+ * two real shapes in production, and the bug they exposed: the master name
+ * matched no portal at all, so those portals ignored the client's status.
+ * ========================================================================= */
+
+test("every alias is emitted too, so each portal can be matched", () => {
+  const feed = buildStatusFeed([
+    {
+      id: "pe",
+      name: "Properties & Estates",
+      status: "active",
+      aliases: ["Properties & Estates Florida", "Properties & Estates Boston"],
+    },
+  ]);
+  assert.deepEqual(feed.clients.map((c) => c.name), [
+    "Properties & Estates",
+    "Properties & Estates Florida",
+    "Properties & Estates Boston",
+  ]);
+  // Every entry is the SAME client: same id, same status.
+  assert.ok(feed.clients.every((c) => c.id === "pe" && c.status === "active"));
+  assert.deepEqual(feed.clients.map((c) => c.via), ["name", "alias", "alias"]);
+});
+
+test("a client with several portals still counts as ONE client", () => {
+  const feed = buildStatusFeed([
+    { id: "pe", name: "Properties & Estates", status: "active", aliases: ["P&E Florida", "P&E Boston"] },
+    { id: "s", name: "SERHANT. PA", status: "active", aliases: ["SERHANT. PA 15M+"] },
+  ]);
+  // This is the requirement: two clients, five portal names.
+  assert.equal(feed.total, 2, "total counts CLIENTS");
+  assert.equal(feed.entries, 5, "entries counts the names a consumer can match");
+  assert.deepEqual(feed.counts, { active: 2, paused: 0, churned: 0 });
+});
+
+test("pausing a client turns off EVERY portal it has", () => {
+  const feed = buildStatusFeed([
+    {
+      id: "pe",
+      name: "Properties & Estates",
+      status: "paused",
+      aliases: ["Properties & Estates Florida", "Properties & Estates Boston"],
+    },
+  ]);
+  // MasterInbox reads anything that is not "active" as portal OFF. All three
+  // names must carry the paused status or a portal stays open after a pause.
+  assert.equal(feed.clients.length, 3);
+  assert.ok(feed.clients.every((c) => c.status === "paused"));
+});
+
+test("churning a client reaches every portal too", () => {
+  const feed = buildStatusFeed([
+    { id: "s", name: "SERHANT. PA", status: "churned", aliases: ["SERHANT. PA 15M+"] },
+  ]);
+  assert.deepEqual(
+    feed.clients.map((c) => [c.name, c.status]),
+    [
+      ["SERHANT. PA", "churned"],
+      ["SERHANT. PA 15M+", "churned"],
+    ],
+  );
+});
+
+test("an alias that is the primary name once normalised is not emitted twice", () => {
+  const feed = buildStatusFeed([
+    { id: "1", name: "RE/MAX Pacific", status: "active", aliases: ["REMAX Pacific"] },
+  ]);
+  // Both normalise to "remaxpacific" — one entry is enough to match the portal,
+  // and two would just be noise.
+  assert.equal(feed.clients.length, 1);
+  assert.equal(feed.entries, 1);
+  assert.equal(feed.total, 1);
+});
+
+test("an onboarding client's aliases are omitted along with it", () => {
+  const feed = buildStatusFeed([
+    { id: "1", name: "New Co", status: "onboarding", aliases: ["New Co West", "New Co East"] },
+  ]);
+  // Onboarding means "leave every portal exactly as it is" — that has to apply
+  // to the client's other portals as well, not just the primary one.
+  assert.equal(feed.clients.length, 0);
+  assert.equal(feed.entries, 0);
+});
+
+/* ---- ambiguity is dropped, never guessed ---- */
+
+test("an alias colliding with a real client's name loses — the real name wins", () => {
+  const feed = buildStatusFeed([
+    { id: "real", name: "Spotlight", status: "active" },
+    { id: "other", name: "Spotlight - A Compass Team", status: "churned", aliases: ["Spotlight"] },
+  ]);
+  const spotlight = feed.clients.filter((c) => c.name === "Spotlight");
+  assert.equal(spotlight.length, 1);
+  assert.equal(spotlight[0].id, "real", "the client actually named Spotlight keeps the name");
+  assert.equal(spotlight[0].status, "active");
+  // And the loss is explained rather than silent — otherwise a live portal
+  // would flip to churned with no trace of why.
+  assert.match(feed.omitted[0].reason, /the real name wins/);
+});
+
+test("two clients sharing a normalised name are both dropped, not guessed", () => {
+  const feed = buildStatusFeed([
+    { id: "1", name: "Acme Realty", status: "active" },
+    { id: "2", name: "acme-realty", status: "churned" },
+  ]);
+  assert.equal(feed.clients.length, 1, "the first wins the name");
+  assert.equal(feed.total, 1);
+  assert.match(feed.omitted[0].reason, /collides/);
+});
+
+test("two clients whose aliases collide keep their own names and lose the alias", () => {
+  const feed = buildStatusFeed([
+    { id: "1", name: "North Group", status: "active", aliases: ["NG Team"] },
+    { id: "2", name: "South Group", status: "churned", aliases: ["N.G. Team"] },
+  ]);
+  assert.deepEqual(feed.clients.map((c) => c.name), ["North Group", "South Group", "NG Team"]);
+  assert.equal(feed.total, 2);
+  assert.match(feed.omitted[0].reason, /alias of another client/);
+});
+
+test("a blank or punctuation-only alias is skipped quietly", () => {
+  const feed = buildStatusFeed([
+    { id: "1", name: "A Co", status: "active", aliases: ["", "   ", "---"] },
+  ]);
+  assert.equal(feed.clients.length, 1);
+  assert.equal(feed.omitted.length, 0);
+});
+
+test("aliases absent or null behave exactly as before", () => {
+  for (const aliases of [undefined, null, []]) {
+    const feed = buildStatusFeed([{ id: "1", name: "A", status: "active", aliases }]);
+    assert.equal(feed.clients.length, 1);
+    assert.equal(feed.total, 1);
+    assert.equal(feed.entries, 1);
+  }
 });
