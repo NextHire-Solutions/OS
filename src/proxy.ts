@@ -17,12 +17,23 @@ const TOKEN_ROUTES = new Set([
   // run. The handler verifies OS_CLIENT_STATUS_TOKEN and fails closed when
   // that is unset, exactly like the routes above.
   "/api/workspace/clients/status-feed",
-  /*
-   * The scheduled consistency check (§16). Called by a scheduler with a bearer
-   * token and no browser session, so without this entry the proxy 307s it to
-   * the login page before its own gate can run. The handler verifies
-   * OS_CRON_SECRET and answers 503 while that is unset — closed, not open.
-   */
+]);
+
+/*
+ * Cron routes that authenticate with `Authorization: Bearer <secret>` rather
+ * than x-admin-token. Kept apart from TOKEN_ROUTES because the proxy checks for
+ * the HEADER, not just the path: listing a bearer route there means the check
+ * never matches and the caller gets a 401 from the proxy before its own gate
+ * runs — which is exactly what happened to the consistency check in
+ * production, while every local test passed.
+ *
+ * Each handler still verifies its own secret in constant time and fails CLOSED
+ * (503) when that secret is unset. The proxy only stops bouncing the request
+ * for lacking a browser session.
+ */
+const CRON_BEARER_ROUTES = new Set([
+  "/api/tools/analytics/sync/run",
+  // The scheduled consistency check (§16), verified against OS_CRON_SECRET.
   "/api/cron/reconcile-alert",
 ]);
 
@@ -118,7 +129,7 @@ export async function proxy(request: NextRequest) {
    * for lacking a browser session. The in-process scheduler and the UI's
    * Sync buttons never take this path.
    */
-  if (pathname === "/api/tools/analytics/sync/run" && request.headers.get("authorization")?.startsWith("Bearer ")) {
+  if (CRON_BEARER_ROUTES.has(pathname) && request.headers.get("authorization")?.startsWith("Bearer ")) {
     return NextResponse.next();
   }
 
