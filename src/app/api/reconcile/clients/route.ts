@@ -4,6 +4,7 @@ import { fetchRosters, type Roster } from "@/lib/reconcile/rosters";
 import { canonicaliseRosters } from "@/lib/reconcile/canonicalise";
 import {
   gatherCoverageReport,
+  gatherDuplicateReport,
   gatherLinkReport,
   gatherStatusReport,
 } from "@/lib/reconcile/status-readers";
@@ -35,7 +36,7 @@ export async function GET() {
    * The status read fails alone: it is caught so a database being slow costs
    * that panel, never the membership comparison people already rely on.
    */
-  const [rosters, statusReport, coverageReport, linkReport] = await Promise.all([
+  const [rosters, statusReport, coverageReport, linkReport, duplicateReport] = await Promise.all([
     fetchRosters(),
     gatherStatusReport().catch((error) => ({
       conflicts: [],
@@ -57,6 +58,11 @@ export async function GET() {
       sound: 0,
       unchecked: [],
       error: error instanceof Error ? error.message : "link check failed",
+    })),
+    gatherDuplicateReport().catch((error) => ({
+      findings: [],
+      checked: 0,
+      error: error instanceof Error ? error.message : "duplicate check failed",
     })),
   ]);
   /*
@@ -155,6 +161,8 @@ export async function GET() {
     coverage: coverageReport,
     // Whether the links os_clients records still point where they should.
     links: linkReport,
+    // Two master rows for one real client, or two claiming one tool row (§16).
+    duplicates: duplicateReport,
     rosters: rosters.map((r: Roster) => ({
       tool: r.tool,
       label: r.label,

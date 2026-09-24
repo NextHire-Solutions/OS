@@ -109,6 +109,20 @@ interface LinkReport {
   error?: string;
 }
 
+interface DuplicateFinding {
+  kind: "name" | "link";
+  key: string;
+  tool?: string;
+  clients: { id: string; name: string; via: string }[];
+  detail: string;
+}
+
+interface DuplicateReport {
+  findings: DuplicateFinding[];
+  checked: number;
+  error?: string;
+}
+
 interface Payload {
   generatedAt?: string;
   /** Whether the links os_clients records still point where they should. */
@@ -119,6 +133,8 @@ interface Payload {
   statuses?: StatusReport;
   /** Which tools hold each client, and whether an absence is intentional. */
   coverage?: CoverageReport;
+  /** Two master rows for one real client, or two claiming one tool row (§16). */
+  duplicates?: DuplicateReport;
   unavailable: { tool: string; label: string; reason: string }[];
 }
 
@@ -213,6 +229,10 @@ export function DiscrepanciesScreen() {
       {/* Then the links themselves. These now decide which tool row a client
           resolves to, so a wrong one is no longer harmless. */}
       <Links report={data.links} />
+
+      {/* And duplicates — the contradiction inside the master list itself.
+          Last because it is the rarest, and normally shows nothing at all. */}
+      <Duplicates report={data.duplicates} />
 
       <div className="tbl-title" style={{ marginTop: 28 }}>
         Which clients each list contains
@@ -750,5 +770,77 @@ function Frame({ children }: { children: React.ReactNode }) {
       </div>
       <div className="wrap">{children}</div>
     </>
+  );
+}
+
+
+/*
+ * Duplicate clients (§16 "duplicate record", §22 "Duplicate clients are
+ * detectable").
+ *
+ * Normally empty, and that is the point: it shipped into a platform with zero
+ * duplicates, so the first thing it ever shows is a real one. The empty state
+ * still says what was checked — a panel that renders nothing is
+ * indistinguishable from a panel that failed.
+ */
+function Duplicates({ report }: { report?: DuplicateReport }) {
+  if (!report) return null;
+  if (report.error) {
+    return (
+      <div className="anno" style={{ marginTop: 18 }}>
+        <b>Duplicates could not be checked.</b> {report.error}
+      </div>
+    );
+  }
+
+  const names = report.findings.filter((f) => f.kind === "name");
+  const links = report.findings.filter((f) => f.kind === "link");
+  const clean = report.findings.length === 0;
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="tbl-head" style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <div>
+          <div className="tbl-title">Duplicate clients</div>
+          <div className="tbl-sub">
+            {report.checked} master client{report.checked === 1 ? "" : "s"} checked
+            {names.length > 0 ? ` · ${names.length} sharing a name` : ""}
+            {links.length > 0 ? ` · ${links.length} sharing a tool row` : ""}
+          </div>
+        </div>
+        <span className={`badge ${clean ? "s-done" : "s-warn"}`}>
+          <span className="dot" />
+          {clean ? "None" : "Found"}
+        </span>
+      </div>
+
+      {clean ? (
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+          No two master clients resolve to the same name, and no two point at the same row in
+          any tool.
+        </div>
+      ) : (
+        <div className="tbl">
+          {report.findings.map((f) => (
+            <div className="tr" key={`${f.kind}-${f.tool ?? ""}-${f.key}`}>
+              <div className="td" style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>
+                  {f.clients.map((c) => c.name).join("  ·  ")}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3, lineHeight: 1.5 }}>
+                  {f.detail}
+                </div>
+              </div>
+              <div className="td" style={{ width: 130, textAlign: "right" }}>
+                <span className="badge s-warn">
+                  <span className="dot" />
+                  {f.kind === "name" ? "Same name" : "Same row"}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

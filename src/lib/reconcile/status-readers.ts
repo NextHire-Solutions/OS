@@ -12,6 +12,7 @@ import {
   type StatusSource,
 } from "./status-conflicts";
 import { checkLinks, type LinkReport, type LinkTool, type ToolRows } from "./link-integrity";
+import { findDuplicates, type DuplicateReport } from "./duplicates";
 import {
   buildCoverage,
   type CoverageInput,
@@ -371,5 +372,44 @@ export async function gatherLinkReport(): Promise<LinkReport> {
       analytics: asRows(analytics),
       onboarding: asRows(onboarding),
     },
+  );
+}
+
+
+/*
+ * Duplicate clients (§16 "duplicate record", §22 "Duplicate clients are
+ * detectable") — the one provision on §16's list that had no implementation.
+ *
+ * Reads the master list ONLY. A duplicate here is a contradiction inside
+ * os_clients itself — two rows for one real client, or two rows claiming one
+ * tool row — so no tool needs to be reachable to answer it, and this panel
+ * cannot be taken down by a slow upstream the way the others can.
+ *
+ * Deliberately NOT filtered by `isPlaceholder`: a placeholder name appearing
+ * twice in the master list is exactly the kind of thing worth seeing here.
+ */
+export async function gatherDuplicateReport(): Promise<DuplicateReport> {
+  const { data, error } = await getMasterInboxSupabase()
+    .from("os_clients")
+    .select("id, name, aliases, mi_client_id, ch_client_id, an_client_id, orch_client_id")
+    .limit(1000);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as {
+    id: string; name: string; aliases: string[] | null;
+    mi_client_id: string | null; ch_client_id: string | null;
+    an_client_id: string | null; orch_client_id: string | null;
+  }[];
+  return findDuplicates(
+    rows.map((r) => ({
+      id: r.id,
+      name: r.name ?? "",
+      aliases: r.aliases,
+      links: {
+        master_inbox: r.mi_client_id,
+        client_health: r.ch_client_id,
+        analytics: r.an_client_id,
+        onboarding: r.orch_client_id,
+      },
+    })),
   );
 }
