@@ -5,6 +5,7 @@ import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-s
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { pushPortalStatus } from "@/lib/portals/status-push";
+import { pauseCampaignsForClient } from "./pause-campaigns";
 import type { ClientStatus } from "./client-status";
 import type { OsClient } from "./os-clients";
 
@@ -47,7 +48,7 @@ import type { OsClient } from "./os-clients";
  * Every leg returns its own outcome and the caller shows them.
  */
 
-export type PropagationTool = "client_health" | "analytics" | "portal";
+export type PropagationTool = "client_health" | "analytics" | "portal" | "campaigns";
 
 export interface PropagationLeg {
   tool: PropagationTool;
@@ -68,6 +69,7 @@ const LABELS: Record<PropagationTool, string> = {
   client_health: "Client Health",
   analytics: "Analytics",
   portal: "Client portal",
+  campaigns: "Campaigns",
 };
 
 const leg = (
@@ -76,7 +78,7 @@ const leg = (
 ): PropagationLeg => ({ tool, label: LABELS[tool], ok: true, ...over });
 
 export async function propagateStatus(
-  client: Pick<OsClient, "id" | "name" | "links">,
+  client: Pick<OsClient, "id" | "name" | "links" | "aliases">,
   status: ClientStatus,
 ): Promise<PropagationResult> {
   const legs: PropagationLeg[] = [];
@@ -171,6 +173,66 @@ export async function propagateStatus(
           "The portal follows the Client Health status feed, which was not updated — so there is nothing new for it to read.",
       }),
     );
+  }
+
+  /* ------------------------------------------------ 4. Campaigns -------- */
+  /*
+   * Pause the client's campaigns when they pause or churn -- §21 steps 8 and 9,
+   * decided: a paused or churned client's campaigns are PAUSED, never deleted.
+   *
+   * Runs LAST, and its failure does not undo anything before it. The status
+   * change has already committed and the portal is already shut; a campaign
+   * platform being unreachable must not make the client look active again. It
+   * is reported, not swallowed.
+   *
+   * Only ever pauses. Reactivation does not resume: on EmailBison resume does
+   * not restore a previous state, it QUEUES the campaign to send, so a client
+   * coming back would start emailing everyone still attached to their
+   * campaigns without anyone choosing to. That stays a human decision.
+   */
+  if (status !== "paused" && status !== "churned") {
+    legs.push(
+      leg("campaigns", {
+        skipped: `Campaigns are only paused when a client pauses or churns; this client is ${status}.`,
+      }),
+    );
+  } else {
+    try {
+      const result = await pauseCampaignsForClient(
+        { name: client.name, aliases: client.aliases },
+        { apply: true },
+      );
+      if (result.error) {
+        legs.push(leg("campaigns", { ok: false, error: result.error }));
+      } else if (result.plan.pausable.length === 0) {
+        legs.push(
+          leg("campaigns", {
+            skipped:
+              result.plan.skipped.length === 0
+                ? "This client has no campaigns."
+                : `Nothing to pause — all ${result.plan.skipped.length} campaigns are already stopped.`,
+          }),
+        );
+      } else {
+        const failed = result.results.filter((r) => !r.ok);
+        legs.push(
+          leg("campaigns", {
+            ok: failed.length === 0,
+            error: failed.length
+              ? `${failed.length} of ${result.results.length} could not be paused: ` +
+                failed.map((f) => `${f.campaign.name} (${f.error ?? "refused"})`).join("; ")
+              : undefined,
+          }),
+        );
+      }
+    } catch (error) {
+      legs.push(
+        leg("campaigns", {
+          ok: false,
+          error: error instanceof Error ? error.message : "Campaign pause failed",
+        }),
+      );
+    }
   }
 
   return { legs, ok: legs.every((l) => l.ok) };
