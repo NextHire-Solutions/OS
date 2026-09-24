@@ -18,6 +18,8 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
  *   plan            Client Health            billing tier
  *   weeklyTarget    Client Health            introductions promised per week
  *   startDate       Client Health            drives the movement table
+ *   monthlyTarget   Client Health            introductions promised per month
+ *   timezone        Client Health            IANA zone; drives scheduling
  *   billing*        Client Health            anchor date and interval
  *   status          os_clients               onboarding / active / paused / churned
  *   notes           os_clients               ours alone
@@ -101,6 +103,16 @@ export interface ClientEdit {
   startDate?: string | null;
   billingInterval?: (typeof BILLING_INTERVALS)[number];
   billingAnchorDate?: string | null;
+  /** Introductions promised per month. §6 field; Client Health owns the column. */
+  monthlyTarget?: number;
+  /**
+   * The client's IANA time zone, e.g. "America/New_York". Blank clears it.
+   *
+   * §6 lists it and §7 makes it a master-record field. Client Health holds the
+   * column (`time_zone`) and it was editable only there, which is exactly the
+   * "you have to know which tool owns it" problem §4 describes.
+   */
+  timezone?: string | null;
 }
 
 export interface EditResult {
@@ -172,6 +184,25 @@ export function validateEdit(edit: ClientEdit): string[] {
   }
   if (edit.billingInterval !== undefined && !BILLING_INTERVALS.includes(edit.billingInterval)) {
     errors.push(`Billing interval must be one of ${BILLING_INTERVALS.join(", ")}.`);
+  }
+  if (edit.monthlyTarget !== undefined &&
+      (!Number.isInteger(edit.monthlyTarget) || edit.monthlyTarget < 0)) {
+    errors.push("Monthly target must be a whole number of 0 or more.");
+  }
+  /*
+   * A wrong time zone never fails loudly — it quietly shifts every scheduled
+   * send and every "this week" figure by a few hours. So it is checked against
+   * the platform's own zone database rather than a regex, which would happily
+   * accept "America/New_Yrok".
+   */
+  if (edit.timezone) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: edit.timezone });
+    } catch {
+      errors.push(
+        `"${edit.timezone}" is not a recognised time zone. Use an IANA name such as America/New_York.`,
+      );
+    }
   }
   const lengths: Array<readonly [string, unknown, number]> = [["Brokerage", edit.brokerage, 160]];
   for (const slot of CONTACT_SLOTS) {
@@ -371,7 +402,8 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   const touchesHealth =
     edit.plan !== undefined || edit.weeklyTarget !== undefined ||
     edit.startDate !== undefined || edit.billingInterval !== undefined ||
-    edit.billingAnchorDate !== undefined;
+    edit.billingAnchorDate !== undefined || edit.monthlyTarget !== undefined ||
+    edit.timezone !== undefined;
 
   if (touchesHealth && row.ch_client_id) {
     try {
@@ -383,10 +415,14 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
       if (edit.startDate !== undefined) body.start_date = edit.startDate;
       if (edit.billingInterval !== undefined) body.billing_interval = edit.billingInterval;
       if (edit.billingAnchorDate !== undefined) body.billing_anchor_date = edit.billingAnchorDate;
+      if (edit.monthlyTarget !== undefined) body.monthly_target = edit.monthlyTarget;
+      // The column is `time_zone`, not `timezone`. Spelling it the other way
+      // silently writes nothing, because updateValues is an allow-list.
+      if (edit.timezone !== undefined) body.time_zone = edit.timezone;
 
       const result = await updateClientRow(getClientHealthDb(), body);
       if (!result.ok) throw new Error(result.error);
-      updated.push("Client Health plan and targets");
+      updated.push("Client Health plan, targets, billing and time zone");
     } catch (e) {
       failed.push({ what: "Client Health", error: e instanceof Error ? e.message : String(e) });
     }

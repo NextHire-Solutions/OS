@@ -68,7 +68,15 @@ export interface ClientRow {
   /** Client Health — the billed roster. */
   /** The client's live portal, or null when it has none. */
   portalUrl: string | null;
-  health: { present: boolean; plan: string | null; status: string | null; weeklyTarget: number | null };
+  health: {
+    present: boolean;
+    plan: string | null;
+    status: string | null;
+    weeklyTarget: number | null;
+    monthlyTarget: number | null;
+    /** Client Health spells the column `time_zone`. */
+    timezone: string | null;
+  };
   /** Master Inbox — introductions all time. */
   inbox: { present: boolean; intros: number | null; lastIntro: string | null };
   /** Campaign Analytics — attribution. */
@@ -196,6 +204,8 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
             : "active"
           : null,
         weeklyTarget: num(hr?.weekly_target),
+        monthlyTarget: num(hr?.monthly_target),
+        timezone: str(hr?.time_zone),
       },
       inbox: {
         present: !!ir,

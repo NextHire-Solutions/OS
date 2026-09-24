@@ -36,6 +36,8 @@ export interface EditableClient {
   status: ClientStatus;
   plan: string | null;
   weeklyTarget: number | null;
+  monthlyTarget: number | null;
+  timezone: string | null;
   /** The introduction macro's details. Null fields simply render empty. */
   contact: {
     name: string | null;
@@ -94,6 +96,10 @@ function EditBody({
   const [status, setStatus] = useState<ClientStatus>(client.status);
   const [plan, setPlan] = useState(client.plan ?? "production");
   const [weeklyTarget, setWeeklyTarget] = useState(String(client.weeklyTarget ?? 3));
+  const [monthlyTarget, setMonthlyTarget] = useState(
+    client.monthlyTarget === null ? "" : String(client.monthlyTarget),
+  );
+  const [timezone, setTimezone] = useState(client.timezone ?? "");
   const [billingInterval, setBillingInterval] = useState("");
   /*
    * The three people, as one array rather than nine useStates.
@@ -166,6 +172,15 @@ function EditBody({
       if (status !== client.status) body.status = status;
       if (plan !== (client.plan ?? "production")) body.plan = plan;
       if (Number(weeklyTarget) !== (client.weeklyTarget ?? 3)) body.weeklyTarget = Number(weeklyTarget);
+      /*
+       * Blank is left ALONE rather than sent as 0. A monthly target of zero is
+       * a real promise of nothing; an empty box is someone who did not fill it
+       * in, and conflating the two would silently zero a live target.
+       */
+      if (monthlyTarget.trim() !== "" && Number(monthlyTarget) !== client.monthlyTarget) {
+        body.monthlyTarget = Number(monthlyTarget);
+      }
+      if (timezone.trim() !== (client.timezone ?? "")) body.timezone = timezone.trim();
       if (billingInterval) body.billingInterval = billingInterval;
       // Only what changed — an untouched field must not be re-asserted, and a
       // cleared one has to travel as "" so the server knows to null it.
@@ -261,6 +276,12 @@ function EditBody({
               onChange={(e) => setWeeklyTarget(e.target.value)} />
           </label>
           <label style={FIELD}>
+            <span style={LABEL}>Monthly target <span className="mut">· Client Health</span></span>
+            <input className="inp tnum" type="number" min={0} value={monthlyTarget}
+              placeholder="—"
+              onChange={(e) => setMonthlyTarget(e.target.value)} />
+          </label>
+          <label style={FIELD}>
             <span style={LABEL}>Billing interval <span className="mut">· Client Health</span></span>
             <select className="inp" value={billingInterval} onChange={(e) => setBillingInterval(e.target.value)}>
               <option value="">leave unchanged</option>
@@ -268,6 +289,34 @@ function EditBody({
             </select>
           </label>
         </div>
+
+        {/*
+          Time zone gets its own row: an IANA name is long, and the 150px grid
+          above would squeeze it. Free text with suggestions rather than a
+          closed list — the server validates it against the real zone database,
+          so any valid zone works and a typo is refused with the reason.
+        */}
+        <label style={FIELD}>
+          <span style={LABEL}>Time zone <span className="mut">· Client Health</span></span>
+          <input
+            className="inp"
+            list="tz-suggestions"
+            value={timezone}
+            placeholder="America/New_York"
+            onChange={(e) => setTimezone(e.target.value)}
+          />
+          <datalist id="tz-suggestions">
+            {[
+              "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix",
+              "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu",
+              "Europe/London", "Asia/Kolkata", "UTC",
+            ].map((z) => <option key={z} value={z} />)}
+          </datalist>
+          <span style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 }}>
+            Drives scheduling and every “this week” figure. A wrong zone never errors — it just
+            shifts the numbers — so it is checked against the real zone list when you save.
+          </span>
+        </label>
 
         {/*
           The §6 master-record fields.

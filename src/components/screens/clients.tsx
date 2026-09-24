@@ -426,6 +426,8 @@ function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; 
                 status: os.status,
                 plan: health.plan,
                 weeklyTarget: health.weeklyTarget,
+                monthlyTarget: health.monthlyTarget,
+                timezone: health.timezone,
                 contact: os.contact,
                 record: os.record,
               }}
