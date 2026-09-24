@@ -65,6 +65,8 @@ function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: ()
       </div>
 
       <div className="wrap">
+        <RecordCoverage rows={data.rows} />
+
         <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <Card label="Clients" value={data.rows.length} sub="on the roster" />
           <Card
@@ -213,6 +215,55 @@ function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: ()
         ) : null}
       </div>
     </>
+  );
+}
+
+/*
+ * How much of the master record actually exists (§6).
+ *
+ * The spec lists these six as master client data. Before migration 0015 there
+ * was nowhere to record any of them, and the measured coverage was: Account
+ * Manager 0 of 46, Sender 1, MLS 2, Market 2, Salesperson 4, Area 0.
+ *
+ * Showing the count rather than a tick makes filling them in a finishing task
+ * rather than an open-ended one, and it is the honest answer to "do we have
+ * this data" — which, for most of these, is still no.
+ *
+ * Hidden entirely once every field is complete. A panel that says "all done"
+ * forever is a panel people stop seeing.
+ */
+function RecordCoverage({ rows }: { rows: ClientRow[] }) {
+  const FIELDS = [
+    ["Account manager", (r: ClientRow) => r.os.record.accountManager],
+    ["Salesperson", (r: ClientRow) => r.os.record.salesperson],
+    ["Sender", (r: ClientRow) => r.os.record.sender],
+    ["Market", (r: ClientRow) => r.os.record.market],
+    ["MLS", (r: ClientRow) => r.os.record.mls],
+    ["Area", (r: ClientRow) => r.os.record.area],
+  ] as const;
+
+  const total = rows.length;
+  const counts = FIELDS.map(([label, get]) => ({
+    label,
+    n: rows.filter((r) => (get(r) ?? "").trim()).length,
+  }));
+  if (total === 0 || counts.every((c) => c.n === total)) return null;
+
+  return (
+    <div style={{ ...note, marginTop: 0, marginBottom: 14, maxWidth: "none" }}>
+      <b>Client record</b> — the fields the architecture spec asks the master record to
+      hold. Recorded on the Edit dialog; held by the OS and by no other tool.
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 7 }}>
+        {counts.map((c) => (
+          <span key={c.label} className="tnum">
+            {c.label}{" "}
+            <b style={{ color: c.n === 0 ? "var(--red)" : c.n === total ? "var(--green)" : "var(--yellow)" }}>
+              {c.n}/{total}
+            </b>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
