@@ -93,6 +93,7 @@ interface CoverageReport {
 }
 
 interface Payload {
+  generatedAt?: string;
   rosters: Roster[];
   comparisons: Comparison[];
   /** Where the tools hold the same client at different statuses. */
@@ -161,6 +162,23 @@ export function DiscrepanciesScreen() {
         <div className="anno">
           <b>Not enough to compare.</b> At least two client lists must be readable.
         </div>
+      ) : null}
+
+      {/* §16 asks for a last-synchronised time. Every list here is read live
+          when the page loads, so this IS that time — and saying so matters:
+          without it a stale tab looks exactly like a fresh one, and someone
+          acts on a comparison from an hour ago. */}
+      {data.generatedAt ? (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 14 }}>
+          Every list read live at{" "}
+          <b>
+            {new Date(data.generatedAt).toLocaleString(undefined, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+          </b>
+          . Reload to compare again.
+        </p>
       ) : null}
 
       {/* Status disagreements come FIRST. A client the tools disagree about is
