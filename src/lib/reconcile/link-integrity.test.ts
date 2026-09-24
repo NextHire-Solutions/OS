@@ -114,3 +114,74 @@ test("each tool is judged on its own", () => {
   assert.equal(r.findings.length, 1);
   assert.equal(r.findings[0].tool, "client_health");
 });
+
+/* =========================================================================
+ * ONE CLIENT, MANY ROWS
+ *
+ * Master Inbox keeps one row per PORTAL. A client working several markets owns
+ * several rows, the stored link picks one, and the name route finds whichever
+ * comes first. Those differing is normal for such a client — reporting it was
+ * the consistency alerter's first live finding and it was a false alarm.
+ * ========================================================================= */
+
+test("a client owning two portals is SOUND, not disagreeing", () => {
+  const report = checkLinks(
+    [
+      {
+        name: "Properties & Estates",
+        keys: ["propertiesestates", "propertiesestatesflorida", "propertiesestatesboston"],
+        links: { master_inbox: "boston" },
+      },
+    ],
+    {
+      master_inbox: {
+        byId: new Map([
+          ["boston", "Properties & Estates Boston"],
+          ["florida", "Properties & Estates Florida"],
+        ]),
+        idByName: new Map([
+          ["propertiesestatesboston", "boston"],
+          ["propertiesestatesflorida", "florida"],
+        ]),
+      },
+    },
+  );
+  assert.deepEqual(report.findings, [], "both rows belong to this client");
+  assert.equal(report.sound, 1);
+});
+
+test("a link pointing at a row the client does NOT own still disagrees", () => {
+  // The case the check exists for: the link is genuinely on the wrong client.
+  const report = checkLinks(
+    [{ name: "Alpha", keys: ["alpha"], links: { master_inbox: "beta-row" } }],
+    {
+      master_inbox: {
+        byId: new Map([["alpha-row", "Alpha"], ["beta-row", "Beta"]]),
+        idByName: new Map([["alpha", "alpha-row"], ["beta", "beta-row"]]),
+      },
+    },
+  );
+  assert.equal(report.findings.length, 1);
+  assert.equal(report.findings[0].kind, "disagrees");
+  assert.match(report.findings[0].detail, /does not own/);
+});
+
+test("a stale link is still stale even for a multi-portal client", () => {
+  const report = checkLinks(
+    [
+      {
+        name: "Properties & Estates",
+        keys: ["propertiesestates", "propertiesestatesboston"],
+        links: { master_inbox: "deleted-row" },
+      },
+    ],
+    {
+      master_inbox: {
+        byId: new Map([["boston", "Properties & Estates Boston"]]),
+        idByName: new Map([["propertiesestatesboston", "boston"]]),
+      },
+    },
+  );
+  assert.equal(report.findings.length, 1);
+  assert.equal(report.findings[0].kind, "stale");
+});

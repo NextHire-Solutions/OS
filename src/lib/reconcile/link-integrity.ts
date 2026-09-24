@@ -126,10 +126,29 @@ export function checkLinks(
         continue;
       }
 
-      if (nameId && nameId !== linked) {
+      /*
+       * ONE CLIENT, MANY ROWS — not a disagreement.
+       *
+       * Master Inbox keeps one row per PORTAL, so a client working several
+       * markets owns several rows and `keys` names them all. The stored link
+       * picks one; the name route finds whichever comes first. Those being
+       * different ids is the NORMAL state for such a client, not drift.
+       *
+       * Properties & Estates is the live case: the link points at its Boston
+       * portal and the name resolves to Florida. Reported as a disagreement it
+       * was the consistency alerter's first-ever finding, and it was a false
+       * alarm — exactly the kind that teaches people to ignore the alert.
+       *
+       * So a link is only wrong when it points at a row this client does NOT
+       * own. Ownership is read from the tool's own index: if any of the
+       * client's keys resolves to the linked id, that row is one of theirs.
+       */
+      const ownsLinkedRow = client.keys.some((k) => rows.idByName.get(k) === linked);
+
+      if (nameId && nameId !== linked && !ownsLinkedRow) {
         findings.push({
           client: client.name, tool, label, kind: "disagrees",
-          detail: `The link points at "${rows.byId.get(linked)}" and the name resolves to "${rows.byId.get(nameId)}". One of the two is wrong about which row belongs to this client.`,
+          detail: `The link points at "${rows.byId.get(linked)}" and the name resolves to "${rows.byId.get(nameId)}", which this client does not own. One of the two is wrong about which row belongs to this client.`,
         });
         continue;
       }
