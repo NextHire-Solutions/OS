@@ -11,6 +11,7 @@ import {
   type StatusReport,
   type StatusSource,
 } from "./status-conflicts";
+import { checkLinks, type LinkReport, type LinkTool, type ToolRows } from "./link-integrity";
 import {
   buildCoverage,
   type CoverageInput,
@@ -49,10 +50,16 @@ interface SourceRead {
   byName: Map<string, string | null>;
   /** display name, kept so the report shows the name a person would recognise */
   labels: Map<string, string>;
+  /** the tool's own row id -> display name. Empty when rows carry no id. */
+  byId: Map<string, string>;
+  /** normalised name -> the tool's own row id */
+  idByName: Map<string, string>;
   unreadable: boolean;
 }
 
-const empty = (): SourceRead => ({ byName: new Map(), labels: new Map(), unreadable: true });
+const empty = (): SourceRead => ({
+  byName: new Map(), labels: new Map(), byId: new Map(), idByName: new Map(), unreadable: true,
+});
 
 /*
  * The master list, with every spelling each client is known by.
@@ -72,18 +79,22 @@ interface OsClientKeys {
   status: string;
   /** Normalised name plus every normalised alias. */
   keys: string[];
+  /** The row id this client has in each tool, as os_clients records it. */
+  links: Partial<Record<LinkTool, string | null>>;
 }
 
 async function readOsClients(): Promise<{ rows: OsClientKeys[]; unreadable: boolean }> {
   try {
     const { data, error } = await getMasterInboxSupabase()
       .from("os_clients")
-      .select("id, name, status, aliases")
+      .select("id, name, status, aliases, mi_client_id, ch_client_id, an_client_id, orch_client_id")
       .limit(1000);
     if (error) throw new Error(error.message);
     const rows: OsClientKeys[] = [];
     for (const raw of (data ?? []) as {
       id: string; name: string; status: string; aliases: string[] | null;
+      mi_client_id: string | null; ch_client_id: string | null;
+      an_client_id: string | null; orch_client_id: string | null;
     }[]) {
       const name = (raw.name ?? "").trim();
       if (!name || PLACEHOLDER.test(name)) continue;
@@ -93,6 +104,12 @@ async function readOsClients(): Promise<{ rows: OsClientKeys[]; unreadable: bool
         name,
         status: (raw.status ?? "").toLowerCase(),
         keys: [...new Set(keys)],
+        links: {
+          master_inbox: raw.mi_client_id,
+          client_health: raw.ch_client_id,
+          analytics: raw.an_client_id,
+          onboarding: raw.orch_client_id,
+        },
       });
     }
     return { rows, unreadable: false };
@@ -110,12 +127,14 @@ function findIn(read: SourceRead, client: OsClientKeys): string | null | undefin
 }
 
 async function readSource(
-  fn: () => Promise<{ name: unknown; status: unknown }[]>,
+  fn: () => Promise<{ name: unknown; status: unknown; id?: unknown }[]>,
 ): Promise<SourceRead> {
   try {
     const rows = await fn();
     const byName = new Map<string, string | null>();
     const labels = new Map<string, string>();
+    const byId = new Map<string, string>();
+    const idByName = new Map<string, string>();
     for (const row of rows) {
       const display = typeof row.name === "string" ? row.name.trim() : "";
       if (!display || PLACEHOLDER.test(display)) continue;
@@ -123,8 +142,13 @@ async function readSource(
       if (!key) continue;
       byName.set(key, typeof row.status === "string" ? row.status : null);
       if (!labels.has(key)) labels.set(key, display);
+      const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : null;
+      if (id) {
+        if (!byId.has(id)) byId.set(id, display);
+        if (!idByName.has(key)) idByName.set(key, id);
+      }
     }
-    return { byName, labels, unreadable: false };
+    return { byName, labels, byId, idByName, unreadable: false };
   } catch {
     return empty();
   }
@@ -234,36 +258,39 @@ export async function gatherCoverageReport(): Promise<CoverageReport> {
     readSource(async () => {
       const { data, error } = await getClientHealthSupabase()
         .from("clients")
-        .select("name, status")
+        .select("id, name, status")
         .limit(1000);
       if (error) throw new Error(error.message);
-      return (data ?? []) as { name: unknown; status: unknown }[];
+      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
     }),
     readSource(async () => {
       const { data, error } = await getAnalyticsSupabase()
         .from("clients")
-        .select("name, status")
+        .select("id, name, status")
         .limit(1000);
       if (error) throw new Error(error.message);
-      return (data ?? []) as { name: unknown; status: unknown }[];
+      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
     }),
     readSource(async () => {
       const { data, error } = await getMasterInboxSupabase()
         .from("clients")
-        .select("name, status")
+        .select("id, name, status")
         .limit(1000);
       if (error) throw new Error(error.message);
-      return (data ?? []) as { name: unknown; status: unknown }[];
+      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
     }),
     readSource(async () => {
       // The Onboarding tool names its column `client_name`, and its `status`
       // is a PIPELINE stage, not a lifecycle — only membership is read here.
       const { data, error } = await getOnboardingDb()
         .from("orch_clients")
-        .select("client_name")
+        .select("id, client_name")
         .limit(1000);
       if (error) throw new Error(error.message);
-      return (data ?? []).map((r) => ({ name: (r as { client_name: unknown }).client_name, status: null }));
+      return (data ?? []).map((r) => {
+        const row = r as { id: unknown; client_name: unknown };
+        return { name: row.client_name, status: null, id: row.id };
+      });
     }),
     readExceptions(),
   ]);
@@ -290,4 +317,59 @@ export async function gatherCoverageReport(): Promise<CoverageReport> {
   }
 
   return buildCoverage(clients, exceptions, unreadable);
+}
+
+/*
+ * Whether the stored links still point where they should.
+ *
+ * Read separately from coverage on purpose. Coverage matches on NAME because
+ * it exists to catch cases where our belief about a client is wrong; this
+ * checks the belief itself, and using one to check the other would be
+ * circular.
+ */
+export async function gatherLinkReport(): Promise<LinkReport> {
+  const [osRows, health, analytics, inbox, onboarding] = await Promise.all([
+    readOsClients(),
+    readSource(async () => {
+      const { data, error } = await getClientHealthSupabase()
+        .from("clients").select("id, name, status").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
+    }),
+    readSource(async () => {
+      const { data, error } = await getAnalyticsSupabase()
+        .from("clients").select("id, name, status").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
+    }),
+    readSource(async () => {
+      const { data, error } = await getMasterInboxSupabase()
+        .from("clients").select("id, name, status").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { name: unknown; status: unknown; id?: unknown }[];
+    }),
+    readSource(async () => {
+      const { data, error } = await getOnboardingDb()
+        .from("orch_clients").select("id, client_name").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []).map((r) => {
+        const row = r as { id: unknown; client_name: unknown };
+        return { name: row.client_name, status: null, id: row.id };
+      });
+    }),
+  ]);
+
+  const asRows = (r: SourceRead): ToolRows => ({
+    byId: r.byId, idByName: r.idByName, unreadable: r.unreadable,
+  });
+
+  return checkLinks(
+    osRows.rows.map((c) => ({ name: c.name, keys: c.keys, links: c.links })),
+    {
+      master_inbox: asRows(inbox),
+      client_health: asRows(health),
+      analytics: asRows(analytics),
+      onboarding: asRows(onboarding),
+    },
+  );
 }

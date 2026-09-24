@@ -92,8 +92,25 @@ interface CoverageReport {
   error?: string;
 }
 
+interface LinkFinding {
+  client: string;
+  tool: string;
+  label: string;
+  kind: "stale" | "disagrees" | "unlinked";
+  detail: string;
+}
+
+interface LinkReport {
+  findings: LinkFinding[];
+  sound: number;
+  unchecked: string[];
+  error?: string;
+}
+
 interface Payload {
   generatedAt?: string;
+  /** Whether the links os_clients records still point where they should. */
+  links?: LinkReport;
   rosters: Roster[];
   comparisons: Comparison[];
   /** Where the tools hold the same client at different statuses. */
@@ -190,6 +207,10 @@ export function DiscrepanciesScreen() {
       {/* Then coverage: which tools hold each client, and whether an absence
           was decided or merely happened. */}
       <Coverage report={data.coverage} />
+
+      {/* Then the links themselves. These now decide which tool row a client
+          resolves to, so a wrong one is no longer harmless. */}
+      <Links report={data.links} />
 
       <div className="tbl-title" style={{ marginTop: 28 }}>
         Which clients each list contains
@@ -405,6 +426,96 @@ function StatusConflicts({ report }: { report?: StatusReport }) {
  * through intake. Comparing ACTIVE against ACTIVE is the comparison that
  * means something, and that row should read n/n right across.
  */
+/*
+ * Link integrity.
+ *
+ * `unlinked` is folded away by default. It is the normal state for most of a
+ * migration — nothing is broken, there is simply a link not yet recorded — and
+ * showing forty of them would bury the two kinds that matter.
+ */
+function Links({ report }: { report?: LinkReport }) {
+  if (!report) return null;
+  if (report.error) {
+    return (
+      <div className="anno" style={{ marginTop: 18 }}>
+        <b>Links could not be checked.</b> {report.error}
+      </div>
+    );
+  }
+
+  const acute = report.findings.filter((f) => f.kind !== "unlinked");
+  const unlinked = report.findings.filter((f) => f.kind === "unlinked");
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="tbl-head" style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <div>
+          <div className="tbl-title">Tool links</div>
+          <div className="tbl-sub">
+            {report.sound} link{report.sound === 1 ? "" : "s"} resolve and agree with the name
+            {acute.length > 0 ? ` · ${acute.length} need attention` : ""}
+            {unlinked.length > 0 ? ` · ${unlinked.length} not yet recorded` : ""}
+          </div>
+        </div>
+        <span className={`badge ${acute.length === 0 ? "s-done" : "s-ok"}`}>
+          <span className="dot" />
+          {acute.length === 0 ? "Sound" : "Check"}
+        </span>
+      </div>
+
+      {report.unchecked.length > 0 ? (
+        <div className="anno">
+          <b>Not every tool could be checked.</b> {report.unchecked.join(", ")} — either
+          unreadable, or its rows carry no id to check against.
+        </div>
+      ) : null}
+
+      {acute.length === 0 && unlinked.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+          Every recorded link resolves, and every one agrees with the name.
+        </div>
+      ) : null}
+
+      {acute.map((f) => (
+        <div
+          key={`${f.client}-${f.tool}`}
+          style={{
+            border: "1px solid var(--line, #E6E8EC)",
+            borderLeftWidth: 3,
+            borderLeftColor: f.kind === "disagrees" ? "var(--red)" : "var(--yellow)",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginTop: 8,
+          }}
+        >
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+            {f.client} <span className="mut" style={{ fontWeight: 400 }}>· {f.label}</span>
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 4, lineHeight: 1.55 }}>
+            {f.detail}
+          </div>
+        </div>
+      ))}
+
+      {unlinked.length > 0 ? (
+        <details style={{ marginTop: 10 }}>
+          <summary style={{ fontSize: 13, color: "var(--muted)", cursor: "pointer" }}>
+            {unlinked.length} link{unlinked.length === 1 ? "" : "s"} not yet recorded — found by
+            name, nothing broken
+          </summary>
+          <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--muted)", lineHeight: 1.7 }}>
+            {unlinked.map((f) => (
+              <div key={`${f.client}-${f.tool}`}>
+                {f.client} · {f.label}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function StatusMatrix({
   byStatus,
   gapsByTool,
