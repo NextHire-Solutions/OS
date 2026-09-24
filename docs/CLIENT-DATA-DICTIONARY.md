@@ -106,17 +106,35 @@ the source of MLS despite its name.
 
 | Field | Definition | Source of truth | Who can edit | Tools that use it | Sync? |
 |---|---|---|---|---|---|
-| Salesperson | Who sold it | ✅ `orch_clients.salesperson_id` → `orch_salespeople` | Onboarding | Onboarding | No |
-| Account Manager | Who runs it | ✅ `orch_clients.account_manager_id` | Onboarding | Onboarding | No |
-| Sender | Sending identity | ✅ `orch_clients.sender_name` | Onboarding | Onboarding, campaigns | No |
-| Team / Agents | The client's people | ✅ `orch_client_team` (11 rows) | Onboarding | Portal, Onboarding | No |
-| **DNC list** | Who must not be contacted | ✅ `orch_client_team.is_dnc` | Onboarding | Portal, Database, campaigns | No |
+| Team | The client's people | ✅ **`master_inbox.client_team_members`** — 97 rows across **48 clients** | Master Inbox | Portal | No |
+| Agents | The client's agents | ✅ **`master_inbox.client_agents`** — 11,324 rows across **47 clients** | Master Inbox | Portal | No |
+| **DNC list** | Who must not be contacted | ✅ **`master_inbox.client_dnc_entries`** — 14,994 rows across **36 clients**, and it pushes to EmailBison and Instantly | Master Inbox | Portal, campaigns | Yes — pushed to both senders |
+| Salesperson | Who sold it | ⚠️ `orch_clients.salesperson_id` — set on **4 of 46** | Onboarding | Onboarding | No |
+| Account Manager | Who runs it | ❌ **`orch_clients.account_manager_id` is set on 0 of 46** | — | — | — |
+| Sender | Sending identity | ⚠️ `orch_clients.sender_name` — set on **1 of 46** | Onboarding | Onboarding, campaigns | No |
 | Introduction contacts | Who intros are addressed to (up to 3) | ✅ `os_clients.contact*` | OS | Master Inbox composer | No |
 | Brokerage | Brokerage named in the intro | ✅ `os_clients.brokerage` | OS | Master Inbox composer | No |
 
-**§5's worked example — *"change the Account Manager once → every tool
-updates"* — is not possible today.** The Account Manager lives only in
-`orch_clients`, and no other tool reads it.
+### Corrected 2026-09-24 — Team, Agents and DNC are Master Inbox's
+
+The first version of this file put all three in `orch_client_team`, on the
+strength of that table existing and having the right column names. Counting
+the rows settles it: `orch_client_team` holds **11 rows across 1 client**,
+while Master Inbox holds **14,994 DNC entries, 11,324 agents and 97 team
+members across 36–48 clients each**.
+
+That is the right home, not an accident of history: the Client Portal is
+served by Master Inbox and §8 says the portal should focus on "Client/team,
+Agents, DNC list". The data sits where the screen that shows it lives. The DNC
+table also pushes each entry to EmailBison and Instantly, so it is operational
+rather than a record.
+
+**§5's worked example cannot be built, and not for the reason assumed.**
+*"Change the Account Manager once → every tool updates"* is not blocked by
+architecture — **no client has an Account Manager at all** (0 of 46).
+Salesperson is set for 4 of 46 and Sender for 1 of 46. There is nothing to
+centralise until somebody records it, and a master column for an empty field
+would be a pipe with no water.
 
 ---
 
@@ -175,10 +193,30 @@ nobody adds them to the master record by mistake.
 
 ## What this dictionary establishes
 
-**Fields with a clear single owner:** 28
+**Fields with a clear single owner:** 30
 **Fields genuinely contested:** 1 — Bison campaign ids
-**Fields not stored anywhere (or barely):** 6 — area, first billing date, next
-billing date, campaign→client mapping, **market/location**, **MLS**
+**Fields not stored anywhere, or barely:** 9 — area, first billing date, next
+billing date, campaign→client mapping, **market/location** (2 of 46), **MLS**
+(2 of 46), **Account Manager** (0 of 46), **Salesperson** (4 of 46), **Sender**
+(1 of 46)
+
+### The pattern this exercise kept finding
+
+Three times, a field the spec treats as "duplicated across tools and needing a
+single owner" turned out not to be contested at all. Each time the answer came
+from counting rows rather than from deciding:
+
+| Assumed | Actually |
+|---|---|
+| plan, weekly_target, timezone duplicated | the Onboarding copies are frozen intake defaults — `production`, `3`, and empty — never updated |
+| campaign aliases duplicated | Client Health has 1 of 50, Analytics 15 of 54 |
+| Team / Agents / DNC live in Onboarding | Master Inbox holds 26,000+ rows of them; Onboarding holds 11 across 1 client |
+
+The general lesson for the rest of this work: **a column existing is not
+evidence that it is used.** Before centralising any field, count how many
+clients actually have a value. Twice now the answer has been "almost none",
+and building a master record around an empty column would have moved nothing
+while looking like progress.
 
 ### The duplication was mostly an illusion — measured 2026-09-24
 
