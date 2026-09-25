@@ -46,6 +46,15 @@ export interface ClientFormState {
   billingIntervalDays: string;
   /** An IANA string from TIME_ZONES, or "" for none. */
   timeZone: string;
+  /**
+   * The other spellings this client is known by. READ ONLY here.
+   *
+   * Shown because §8 lists Aliases as a field of this view, and NOT editable
+   * because §7 wants one place to edit each field — that place is the client
+   * record in the OS, which writes all three alias stores together. `toPayload`
+   * maps fields one by one, so this can never be written back from here.
+   */
+  aliases: string[];
 }
 
 /**
@@ -59,6 +68,7 @@ export interface ClientFormState {
 export function blankForm(today: string): ClientFormState {
   return {
     editingId: null,
+    aliases: [],
     name: "",
     plan: "production",
     startDate: today,
@@ -83,6 +93,7 @@ export function todayLocalISO(now: Date = new Date()): string {
 export function formForClient(c: DashboardClient): ClientFormState {
   return {
     editingId: c.id,
+    aliases: c.campaign_aliases ?? [],
     name: c.name,
     plan: c.plan,
     startDate: c.start_date ?? "",

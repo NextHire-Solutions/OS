@@ -41,6 +41,8 @@ interface ClientRow {
   monthly_target: number | null;
   intros_this_month: number | null;
   portal_url: string | null;
+  /** Other spellings this client's campaigns are named by (migration on the tool). */
+  campaign_aliases: string[] | null;
 }
 
 export async function loadDashboardClients(): Promise<{
@@ -154,6 +156,10 @@ export async function loadDashboardClients(): Promise<{
       portal_active: c.portal_active ?? false,
       billing_anchor_date: c.billing_anchor_date ?? null,
       billing_interval: c.billing_interval ?? 'biweekly',
+      // Other spellings this client's campaigns are named by. This tool matches
+      // campaigns by NAME, so the list is shown in the client modal; the OS is
+      // the single editor and writes it alongside Analytics and os_clients.
+      campaign_aliases: c.campaign_aliases ?? [],
       billing_interval_days: c.billing_interval_days ?? null,
       emails_today: c.emails_today ?? 0,
       emails_today_date: c.emails_today_date ?? null,

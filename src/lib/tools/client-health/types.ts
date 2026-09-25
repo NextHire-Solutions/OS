@@ -80,6 +80,15 @@ export interface Client {
   // tick; NOT clipped to the 26-week weekly_metrics backfill window.
   total_intros_corofy: number;
   total_interested_corofy: number;
+  /*
+   * Other spellings this client's campaigns are named by.
+   *
+   * Identity, not decoration: this tool attributes campaigns by NAME, so a
+   * spelling missing here means those campaigns are counted for nobody. The OS
+   * is the single editor and writes all three alias stores at once; this column
+   * is the copy Client Health matches on.
+   */
+  campaign_aliases?: string[];
 }
 
 export interface WeeklyMetric {

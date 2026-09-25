@@ -131,12 +131,28 @@ test("the payload trims the name and nulls every empty date", () => {
   assert.equal(p.time_zone, null);
 });
 
+test("aliases are NEVER written back from this tool — one editor only", () => {
+  const p = toPayload(
+    { ...blankForm(TODAY), name: "Acme", aliases: ["Acme Group", "ACME"] },
+    [],
+    [],
+  ) as unknown as Record<string, unknown>;
+  // §7 wants one place to edit a field. Aliases are shown here because §8 lists
+  // them in this view, but the client record in the OS writes all three stores
+  // together; a second writer is how the three copies drifted apart.
+  assert.equal("aliases" in p, false);
+  assert.equal("campaign_aliases" in p, false);
+});
+
 test("the payload carries every field the tool's API accepts", () => {
   const p = toPayload(
     {
       editingId: "x", name: "Acme", plan: "partner", startDate: "2026-01-05",
       weeklyTarget: 6, monthlyTarget: 24, billingAnchorDate: "2026-01-12",
       billingInterval: "custom", billingIntervalDays: "21", timeZone: "America/Denver",
+      // Read-only in the form and deliberately NOT in the payload — the OS is
+      // the single editor of aliases. The assertion below pins that.
+      aliases: ["Acme Group"],
     },
     [],
     [],

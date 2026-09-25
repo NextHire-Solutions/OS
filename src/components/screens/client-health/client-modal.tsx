@@ -229,6 +229,36 @@ export function ClientModal({
             ))}
           </select>
         </Field>
+
+        {/*
+          §8 lists Aliases as a field of the Client Health view. Read-only on
+          purpose: this tool matches campaigns by name, so the aliases matter
+          here, but §7 wants ONE place to edit a field — the client record in
+          the OS, which writes this column, Analytics and os_clients together.
+          A second editor here is how the three copies drifted apart before.
+        */}
+        <Field
+          label="Also known as"
+          help="Edited on the client record in Clients — saving there updates this tool, Analytics and the master together."
+        >
+          {form.aliases.length === 0 ? (
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              No other spellings recorded. Campaigns are matched on the name above.
+            </span>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {form.aliases.map((a) => (
+                <span
+                  key={a}
+                  className="badge"
+                  style={{ fontSize: 11.5, background: "var(--chip, rgba(127,127,127,.12))" }}
+                >
+                  {a}
+                </span>
+              ))}
+            </div>
+          )}
+        </Field>
       </DialogBody>
 
       <DialogFoot>
