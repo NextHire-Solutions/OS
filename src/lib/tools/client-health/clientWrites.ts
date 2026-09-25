@@ -172,6 +172,16 @@ export const updateSchema = z.object({
   billing_interval_days: z.number().int().positive().nullable().optional(),
   time_zone: blankToNull.optional(),
   monthly_target: z.number().int().min(0).optional(),
+  /*
+   * The other spellings this client's campaigns are named by.
+   *
+   * Client Health matches campaigns by name, so this column is identity, not
+   * decoration — and it was the THIRD alias store, written by nothing. Measured
+   * 2026-09-25: 1 of 50 rows had any value, while the master record held
+   * aliases for 19 of them. That is how "Douglas Elliman Los Angeles" stopped
+   * resolving to "Douglas Elliman LA".
+   */
+  campaign_aliases: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
 });
 
 /**

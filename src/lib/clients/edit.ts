@@ -14,7 +14,8 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
  * ---------------------------------------------------------------------------
  * WHAT CAN BE EDITED, AND WHERE IT LANDS
  *
- *   aliases         os_clients + Analytics   the spellings the matchers use
+ *   aliases         os_clients + Analytics + Client Health   the spellings the
+ *                   matchers use; all three match campaigns by name
  *   plan            Client Health            billing tier
  *   weeklyTarget    Client Health            introductions promised per week
  *   startDate       Client Health            drives the movement table
@@ -403,7 +404,7 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     edit.plan !== undefined || edit.weeklyTarget !== undefined ||
     edit.startDate !== undefined || edit.billingInterval !== undefined ||
     edit.billingAnchorDate !== undefined || edit.monthlyTarget !== undefined ||
-    edit.timezone !== undefined;
+    edit.timezone !== undefined || edit.aliases !== undefined;
 
   if (touchesHealth && row.ch_client_id) {
     try {
@@ -419,6 +420,12 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
       // The column is `time_zone`, not `timezone`. Spelling it the other way
       // silently writes nothing, because updateValues is an allow-list.
       if (edit.timezone !== undefined) body.time_zone = edit.timezone;
+      /*
+       * The THIRD alias store. Client Health matches campaigns by name too, so
+       * an alias recorded only in the master and in Analytics left this tool
+       * looking at a different set of campaigns for the same client.
+       */
+      if (edit.aliases !== undefined) body.campaign_aliases = edit.aliases;
 
       const result = await updateClientRow(getClientHealthDb(), body);
       if (!result.ok) throw new Error(result.error);
