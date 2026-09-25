@@ -12,6 +12,8 @@ import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 import { listOsClients, type OsClient } from "./os-clients";
 import { latestStatusMoments, type StatusMoment } from "./status-history";
 import { type ClientStatus } from "./client-status";
+import { nextBillingDate } from "@/lib/tools/client-health/derive";
+import type { BillingInterval } from "@/lib/tools/client-health/types";
 
 /*
  * One row per client, gathered from every tool.
@@ -76,6 +78,17 @@ export interface ClientRow {
     monthlyTarget: number | null;
     /** Client Health spells the column `time_zone`. */
     timezone: string | null;
+    /*
+     * §23 says we should open ONE system and know a client's billing
+     * information. Client Health owns these columns, so they are read here and
+     * shown rather than copied -- §5 is explicit that centralised does not mean
+     * duplicated.
+     */
+    startDate: string | null;
+    billingAnchorDate: string | null;
+    billingInterval: string | null;
+    /** Derived from the anchor and interval, not stored. Null when no anchor. */
+    nextBillingDate: string | null;
   };
   /** Master Inbox — introductions all time. */
   inbox: { present: boolean; intros: number | null; lastIntro: string | null };
@@ -206,6 +219,26 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
         weeklyTarget: num(hr?.weekly_target),
         monthlyTarget: num(hr?.monthly_target),
         timezone: str(hr?.time_zone),
+        startDate: str(hr?.start_date),
+        billingAnchorDate: str(hr?.billing_anchor_date),
+        billingInterval: str(hr?.billing_interval),
+        /*
+         * Computed with Client Health's OWN helper rather than re-derived here.
+         * Billing dates that disagree between two screens are exactly what §13
+         * lists as a thing not to want, and the anchor-plus-interval maths has
+         * four branches (14-day, 28-day, monthly, custom-N).
+         */
+        nextBillingDate: (() => {
+          const anchor = str(hr?.billing_anchor_date);
+          if (!anchor) return null;
+          const next = nextBillingDate(
+            anchor,
+            (str(hr?.billing_interval) ?? "biweekly") as BillingInterval,
+            new Date(),
+            num(hr?.billing_interval_days),
+          );
+          return next ? next.toISOString().slice(0, 10) : null;
+        })(),
       },
       inbox: {
         present: !!ir,

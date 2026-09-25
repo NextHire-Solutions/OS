@@ -37,6 +37,14 @@ const PLAN_CLASS: Record<string, string> = {
   partner: "plan-partner",
 };
 
+/** The tool's own wording for an interval, so both screens read the same. */
+const BILLING_LABEL: Record<string, string> = {
+  biweekly: "14-day",
+  "28-days": "28-day",
+  monthly: "monthly",
+  custom: "custom",
+};
+
 function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: () => void }) {
   const present = (fn: (r: ClientRow) => boolean) => data.rows.filter(fn).length;
 
@@ -327,6 +335,30 @@ function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; 
         ) : (
           <Gap tool="Client Health" />
         )}
+        {/*
+          §23: "open one system and know ... their billing information". Client
+          Health owns these columns and this READS them — §5 is explicit that
+          centralised does not mean copied. The next date is computed with
+          Client Health's own helper so the two screens cannot disagree, which
+          §13 lists as a thing not to want.
+
+          Under the plan rather than a new column: the table is already wide,
+          and billing only means anything next to the plan it bills for.
+        */}
+        {health.billingInterval || health.nextBillingDate ? (
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
+            {health.billingInterval ? BILLING_LABEL[health.billingInterval] ?? health.billingInterval : null}
+            {health.nextBillingDate ? (
+              <span title={`Anchor ${health.billingAnchorDate ?? "not set"}`}>
+                {health.billingInterval ? " · " : ""}next {dateStamp(health.nextBillingDate)}
+              </span>
+            ) : health.billingAnchorDate ? null : (
+              <span title="Without an anchor date the next billing date cannot be worked out">
+                {health.billingInterval ? " · " : ""}no anchor
+              </span>
+            )}
+          </div>
+        ) : null}
       </td>
 
       {/*
