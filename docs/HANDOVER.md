@@ -137,45 +137,85 @@ blocked on engineering — see §6 of this document.
 
 ## 1. The estate
 
-### 1.1 Repositories
+### 1.1 Repositories — every link your team needs
 
-| Repo | GitHub | What it is |
+**Everything now lives in the `NextHire-Solutions` GitHub org.** The old
+`brokerstaffer` org no longer lists these repos; git still pushes through the
+redirect and prints *"This repository moved"*, which is harmless.
+
+| Repo | Link | Runs as | Cloned on this machine |
+|---|---|---|---|
+| **OS** | https://github.com/NextHire-Solutions/OS | `os.brokerstaffer.com` | `~/Desktop/Code/brokerstaffer-os` |
+| **Masterinbox** | https://github.com/NextHire-Solutions/Masterinbox | `inbox.` + `portal.brokerstaffer.com` | `~/Desktop/Code/Corofy/Master Inbox` |
+| **Campaign-tool** | https://github.com/NextHire-Solutions/Campaign-tool | `analytics.brokerstaffer.com` | `~/Desktop/Code/Corofy/Analytics Dashboard` |
+| **Databaseproject** | https://github.com/NextHire-Solutions/Databaseproject | Database `web` service | `~/Desktop/Code/Corofy/Database` |
+| **Scrapper** | https://github.com/NextHire-Solutions/Scrapper | `search.brokerstaffer.com` (agent-search) | not cloned |
+| **Shaurs** | https://github.com/NextHire-Solutions/Shaurs | — | `~/Desktop/Code/Corofy/shaurs` |
+
+> **Two repos are not accounted for above: Client Health and the Onboarding
+> orchestrator.** Both are deployed and running, neither is cloned on this
+> machine, and because no Railway service is GitHub-linked (see §2) the platform
+> cannot tell you where their source lives either. **Ask the current owner for
+> those two repository URLs before the handover completes** — without them, two
+> live services have no reachable source.
+
+> **All six repos are PUBLIC.** Verified 25 Sep. Nothing secret is committed in
+> any of them — no `.env` file has ever been added to any repo's history, and
+> the only matches for key-shaped strings are prefix checks
+> (`key.startsWith("sk_live_")`) and test fixtures. So this is an intellectual
+> property question, not a credential leak. It is still very likely unintended
+> for a client operations platform: consider switching them to private.
+> **Changing visibility does not require rotating any token.**
+
+### 1.2 Live URLs
+
+| Tool | URL |
+|---|---|
+| **BrokerStaffer OS** | https://os.brokerstaffer.com |
+| Master Inbox | https://inbox.brokerstaffer.com |
+| Client portals (customer-facing) | `https://portal.brokerstaffer.com/<token>` |
+| Client Health | https://clients.brokerstaffer.com |
+| Campaign Analytics | https://analytics.brokerstaffer.com |
+| Onboarding | https://onboarding.brokerstaffer.com |
+| Agent Search | https://search.brokerstaffer.com |
+| Database app | https://web-production-34f4a.up.railway.app |
+| Reply agent sandbox | https://sandbox-production-774c.up.railway.app |
+
+### 1.3 Railway projects — dashboard links
+
+Open any of these at `https://railway.app/project/<id>`.
+
+| Project | Services | Project ID |
 |---|---|---|
-| `brokerstaffer-os` | `NextHire-Solutions/OS` | **This repo.** The OS. |
-| `Corofy/Master Inbox` | `brokerstaffer/Masterinbox` | Master Inbox + all client portals |
-| `Corofy/Analytics Dashboard` | `brokerstaffer/Campaign-tool` | Campaign Analytics |
-| `Corofy/Database` | `brokerstaffer/Databaseproject` | The agent Database / lead pipeline |
-| Client Health | not cloned here | Client Health Dashboard |
-| Onboarding | not cloned here | The onboarding orchestrator |
+| **OS** | `os`, `mockup`, `graceful-purpose` | `dc38dde7-1233-4f24-a77a-44252e5199bd` |
+| **Masterinbox + Client Portals** | `alluring-ambition`, `loopmessage-notifier` | `d9b691c5-6ade-47fa-a29e-af2f973b2558` |
+| **Analytics Dashboard** | `analytics-web`, `analytics-cron` | `57444d94-d18f-4813-ba4a-f20451d6edb0` |
+| **Health Dashboard** | `web`, `sync-worker` | `fb1fcda3-0fcf-4df4-8e93-15cbed90ed31` |
+| **adorable-truth** (Onboarding) | `orchestrator`, `appealing-reprieve` | `fa436326-2dec-4404-aed4-cd606597c1c8` |
+| **peaceful-purpose** (Agent Search) | `agent-search` | `0e42a605-7beb-4aef-98e9-1e3d0926c678` |
+| **Database** | `web`, `enrich-worker`, `bison-cron`, `feisty-imagination` | `91332c4a-aa85-4709-84f2-8225e2e97c5b` |
+| **Corofy Reply Agent Testing** | `sandbox` | `4d027a6c-ce87-4ef6-ba4c-83cf84f516d6` |
 
-Two repos have moved GitHub organisation (`brokerstaffer/*` →
-`NextHire-Solutions/*`). Git still pushes through the redirect and prints
-"This repository moved" — but **Railway's GitHub integration did not follow**.
-See §2.
+Note the Master Inbox service is called **`alluring-ambition`**, not anything
+recognisable — Railway's generated name was never changed.
 
-### 1.2 Railway projects and services
+### 1.4 What to give a new team member
 
-There are **eight** Railway projects. A Railway *project token* can only see its
-own project, so nothing can enumerate the others — this is why "there is no
-deployment" is never provable from the token you happen to hold.
+1. **GitHub** — membership of the `NextHire-Solutions` org (all six repos).
+2. **Railway** — access to the eight projects above. Project *tokens* are
+   per-project and cannot see each other, so give dashboard access rather than
+   handing tokens around.
+3. **Supabase** — four databases: Master Inbox's (which also holds every
+   `os_*` table), Client Health's, Analytics', and the Database app's Postgres.
+4. **BrokerStaffer OS login** — created in the OS itself at **Admin → Team
+   access**. It shows a one-time password; it is never emailed, and the person
+   changes it at `/account`. Grant the tools they need — the Owner always has
+   all five.
+5. **The `.env.local` files.** These are not in git (correctly). Copy them from
+   the current machine, or pull each value from the Railway dashboard. `.env.example`
+   in the OS repo lists and explains every variable.
 
-| Project | Services | Host |
-|---|---|---|
-| OS | `os`, `mockup`, `graceful-purpose` | os.brokerstaffer.com |
-| Masterinbox + Client Portals | master-inbox, `loopmessage-notifier` | inbox. / portal.brokerstaffer.com |
-| Analytics Dashboard | `analytics-web`, `analytics-cron` | analytics.brokerstaffer.com |
-| Health Dashboard | `web`, `sync-worker` | clients.brokerstaffer.com |
-| adorable-truth (Onboarding) | `orchestrator` | onboarding.brokerstaffer.com |
-| peaceful-purpose (Agent Search) | `agent-search` | search.brokerstaffer.com |
-| **Database** | `web`, `enrich-worker`, `bison-cron`, `feisty-imagination` | web-production-34f4a.up.railway.app |
-| Corofy Reply Agent Testing | `sandbox` | sandbox-production-774c.up.railway.app |
-
-**`search.brokerstaffer.com` is NOT the Database app.** It is `agent-search` in
-`peaceful-purpose`, a static SPA with its own API routes (`/api/status`,
-`/api/columns`). The `Corofy/Database` Next.js app is the `web` service of the
-**Database** project. Confusing the two has already caused two wrong deploys.
-
-### 1.3 Deployment state, 25 September 2026
+### 1.5 Deployment state, 25 September 2026
 
 | Service | Newest deployment | Note |
 |---|---|---|
@@ -188,7 +228,27 @@ deployment" is never provable from the token you happen to hold.
 | **Database / `web`** | `ea215c62` · 22 Sep 23:36 | **two commits behind — see §6.1** |
 | Database / `bison-cron` | `0f336b46` · 17 Sep 21:13 | `0 */6 * * *` |
 
-### 1.4 Credentials
+#### Source state — everything is committed and pushed
+
+Checked 25 Sep. Every repository on this machine is clean and level with
+`origin/main`: nothing uncommitted, nothing unpushed.
+
+| Repo | vs origin/main | Working tree | Newest commit |
+|---|---|---|---|
+| OS | level | clean | `4e74225` the handover document |
+| Master Inbox | level | clean | `46ad797` |
+| Analytics Dashboard | level | clean | `68ed3cb` the campaigns cache-key fix |
+| Database | level | clean* | `ad78784` the Client status column |
+
+\* one untracked file, `supabase/migrations/0089_location_exclude_antijoin.sql`,
+which is **deliberately** untracked — see §2.4.
+
+> **Pushed is not deployed.** Because nothing is GitHub-linked, the work above
+> reaches GitHub but not the running services. The OS and Analytics were
+> deployed by hand after their commits; **the Database app's last two commits
+> are pushed and NOT live** — that is the one outstanding deploy, §6.1.
+
+### 1.6 Credentials
 
 Railway project tokens live in **two** stores and **neither is complete**:
 
@@ -220,17 +280,20 @@ RAILWAY_TOKEN=$RAILWAY_TOKEN_<PROJECT> railway up --service <service> --ci
 
 ### 2.2 Three traps, all of which have bitten
 
-**Trap 1 — pushing to `main` does not deploy several services.**
+**Trap 1 — pushing to `main` deploys NOTHING, anywhere in this estate.**
 
-* `Corofy/Analytics Dashboard` and the agent-search repo moved org; Railway's
-  GitHub link did not follow.
-* **No service in the Database project is GitHub-linked at all.** Every single
-  deployment of `Database / web` is a `railway up` CLI upload. That means the
-  running image came off *somebody's laptop* and may contain work that was never
-  pushed. **Ask the other developer before deploying over it.**
+Checked service by service on 25 Sep across all eight projects: **not one
+service is GitHub-linked.** Every deployment of every service — the OS, Master
+Inbox, Analytics, Client Health, Onboarding, Agent Search, the Database app —
+is a `railway up` CLI upload.
 
-Always run `railway deployment list --service <s>` after a push rather than
-assuming.
+Two consequences, and the second is the dangerous one:
+
+* A green push means nothing. The service keeps serving whatever was last
+  uploaded. Always run `railway deployment list --service <s>` after a push.
+* **The running image came off somebody's laptop**, so it may contain work that
+  was never committed. Before you deploy over a service you did not deploy
+  yourself, ask whoever last shipped it whether everything is pushed.
 
 **Trap 2 — `railway up` uploads the WORKING DIRECTORY, not the commit.**
 Check `git status` is clean and
