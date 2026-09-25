@@ -3,6 +3,7 @@ import { diffRosters } from "@/lib/reconcile/names";
 import { fetchRosters, type Roster } from "@/lib/reconcile/rosters";
 import { canonicaliseRosters } from "@/lib/reconcile/canonicalise";
 import {
+  gatherAliasDriftReport,
   gatherCoverageReport,
   gatherDuplicateReport,
   gatherLinkReport,
@@ -36,7 +37,8 @@ export async function GET() {
    * The status read fails alone: it is caught so a database being slow costs
    * that panel, never the membership comparison people already rely on.
    */
-  const [rosters, statusReport, coverageReport, linkReport, duplicateReport] = await Promise.all([
+  const [rosters, statusReport, coverageReport, linkReport, duplicateReport, aliasReport] =
+    await Promise.all([
     fetchRosters(),
     gatherStatusReport().catch((error) => ({
       conflicts: [],
@@ -63,6 +65,12 @@ export async function GET() {
       findings: [],
       checked: 0,
       error: error instanceof Error ? error.message : "duplicate check failed",
+    })),
+    gatherAliasDriftReport().catch((error) => ({
+      findings: [],
+      sound: 0,
+      unchecked: [],
+      error: error instanceof Error ? error.message : "alias check failed",
     })),
   ]);
   /*
@@ -163,6 +171,8 @@ export async function GET() {
     links: linkReport,
     // Two master rows for one real client, or two claiming one tool row (§16).
     duplicates: duplicateReport,
+    // Spellings a tool does not know, so campaigns named that way count for nobody.
+    aliases: aliasReport,
     rosters: rosters.map((r: Roster) => ({
       tool: r.tool,
       label: r.label,

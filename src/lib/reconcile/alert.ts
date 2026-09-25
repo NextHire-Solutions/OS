@@ -34,6 +34,8 @@
  *   - an UNEXPLAINED one-sided client
  *   - a duplicate (two masters for one client, or two claiming one tool row)
  *   - a stale or disagreeing stored link
+ *   - a tool not knowing a spelling the master knows, which silently drops a
+ *     campaign's attribution
  *   - a source that could not be read — §22's "sync failures are detectable".
  *     Silence here would be the worst failure of all: three of four tools
  *     unreadable looks identical to "everything agrees".
@@ -50,6 +52,8 @@ export interface ReconcileAlertInput {
   duplicates: number;
   /** Stored links that are stale or disagree. `unlinked` must NOT be counted. */
   brokenLinks: number;
+  /** Client/tool pairs where a tool does not know a spelling the master knows. */
+  aliasDrift: number;
   /** Sources that could not be read at all, by label. */
   unreadable: string[];
   /** Checks that threw, by label — a failure of the checker itself. */
@@ -108,6 +112,13 @@ export function buildReconcileAlert(input: ReconcileAlertInput): ReconcileAlert 
     lines.push(
       `:warning: ${plural(input.duplicates, "duplicate")} in the master list. Two rows for one ` +
         "client make every tool's name join arbitrary, and the campaign matcher abandons both.",
+    );
+  }
+  if (input.aliasDrift > 0) {
+    lines.push(
+      `:warning: ${plural(input.aliasDrift, "client")} whose name a tool does not recognise. ` +
+        "Campaigns named that way are attributed to nobody — this is how three " +
+        '"Douglas Elliman Los Angeles" campaigns counted for no one.',
     );
   }
   if (input.brokenLinks > 0) {

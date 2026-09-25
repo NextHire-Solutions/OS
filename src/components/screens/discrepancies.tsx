@@ -117,6 +117,21 @@ interface DuplicateFinding {
   detail: string;
 }
 
+interface AliasFinding {
+  client: string;
+  tool: string;
+  label: string;
+  missing: string[];
+  detail: string;
+}
+
+interface AliasReport {
+  findings: AliasFinding[];
+  sound: number;
+  unchecked: string[];
+  error?: string;
+}
+
 interface DuplicateReport {
   findings: DuplicateFinding[];
   checked: number;
@@ -135,6 +150,8 @@ interface Payload {
   coverage?: CoverageReport;
   /** Two master rows for one real client, or two claiming one tool row (§16). */
   duplicates?: DuplicateReport;
+  /** Spellings a tool does not know, so campaigns named that way count for nobody. */
+  aliases?: AliasReport;
   unavailable: { tool: string; label: string; reason: string }[];
 }
 
@@ -233,6 +250,10 @@ export function DiscrepanciesScreen() {
       {/* And duplicates — the contradiction inside the master list itself.
           Last because it is the rarest, and normally shows nothing at all. */}
       <Duplicates report={data.duplicates} />
+
+      {/* And identity: a tool that does not know one of a client's spellings
+          attributes every campaign named that way to nobody. */}
+      <AliasDrift report={data.aliases} />
 
       <div className="tbl-title" style={{ marginTop: 28 }}>
         Which clients each list contains
@@ -835,6 +856,81 @@ function Duplicates({ report }: { report?: DuplicateReport }) {
                 <span className="badge s-warn">
                   <span className="dot" />
                   {f.kind === "name" ? "Same name" : "Same row"}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/*
+ * Spellings a tool does not know.
+ *
+ * Separate from the duplicate panel because it fails differently: a duplicate
+ * makes a join ambiguous, this makes it MISS. Campaigns named with a spelling
+ * Analytics or Client Health has never heard of are attributed to nobody, and
+ * nothing looks broken — the client simply appears to have fewer campaigns.
+ *
+ * Only MISSING spellings are shown. A tool holding an extra alias is not drift,
+ * and a master alias that is already the tool's own name is matched anyway.
+ */
+function AliasDrift({ report }: { report?: AliasReport }) {
+  if (!report) return null;
+  if (report.error) {
+    return (
+      <div className="anno" style={{ marginTop: 18 }}>
+        <b>Client names could not be compared.</b> {report.error}
+      </div>
+    );
+  }
+  const clean = report.findings.length === 0;
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="tbl-head" style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <div>
+          <div className="tbl-title">Names each tool knows</div>
+          <div className="tbl-sub">
+            {report.sound} client{report.sound === 1 ? "" : "s"} whose every spelling is recognised
+            {report.findings.length > 0 ? ` · ${report.findings.length} not` : ""}
+          </div>
+        </div>
+        <span className={`badge ${clean ? "s-done" : "s-warn"}`}>
+          <span className="dot" />
+          {clean ? "All known" : "Missing"}
+        </span>
+      </div>
+
+      {report.unchecked.length > 0 ? (
+        <div className="anno">
+          <b>Not every tool could be checked.</b> {report.unchecked.join(", ")} — unreadable, so
+          its names were not compared.
+        </div>
+      ) : null}
+
+      {clean ? (
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+          Every tool recognises every spelling the master record knows, so no campaign is being
+          attributed to nobody because of a name.
+        </div>
+      ) : (
+        <div className="tbl">
+          {report.findings.map((f) => (
+            <div className="tr" key={`${f.client}-${f.tool}`}>
+              <div className="td" style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>{f.client}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3, lineHeight: 1.5 }}>
+                  {f.detail}
+                </div>
+              </div>
+              <div className="td" style={{ width: 130, textAlign: "right" }}>
+                <span className="badge s-warn">
+                  <span className="dot" />
+                  {f.label}
                 </span>
               </div>
             </div>

@@ -8,6 +8,7 @@ const clean: ReconcileAlertInput = {
   unexplainedOneSided: 0,
   duplicates: 0,
   brokenLinks: 0,
+  aliasDrift: 0,
   unreadable: [],
   failedChecks: [],
   clientsChecked: 52,
@@ -105,12 +106,21 @@ test("everything at once is reported in full, not truncated to the first problem
     unexplainedOneSided: 2,
     duplicates: 1,
     brokenLinks: 1,
+    aliasDrift: 1,
     unreadable: ["Analytics"],
     failedChecks: [{ check: "links", error: "x" }],
     clientsChecked: 52,
   });
-  assert.equal(a.lines.length, 6);
+  assert.equal(a.lines.length, 7);
   assert.equal(a.severity, "urgent");
+});
+
+test("a tool not knowing a client's name is worth an alert", () => {
+  const a = buildReconcileAlert({ ...clean, aliasDrift: 2 });
+  assert.equal(a.actionable, true);
+  assert.match(a.lines[0], /2 clients/);
+  // It has to say what it costs, or it is just another count.
+  assert.match(a.lines[0], /attributed to nobody/);
 });
 
 test("singular and plural both read correctly", () => {

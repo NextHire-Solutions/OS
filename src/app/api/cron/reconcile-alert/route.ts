@@ -4,6 +4,7 @@ import { optionalEnv } from "@/lib/env";
 import { bearerAccepted } from "@/lib/tools/onboarding/webhook-auth";
 import { alertText, buildReconcileAlert, type ReconcileAlertInput } from "@/lib/reconcile/alert";
 import {
+  gatherAliasDriftReport,
   gatherCoverageReport,
   gatherDuplicateReport,
   gatherLinkReport,
@@ -100,11 +101,12 @@ async function run(request: Request) {
     return null;
   };
 
-  const [statuses, coverage, links, duplicates] = await Promise.all([
+  const [statuses, coverage, links, duplicates, aliases] = await Promise.all([
     gatherStatusReport().catch(fail("status")),
     gatherCoverageReport().catch(fail("coverage")),
     gatherLinkReport().catch(fail("coverage gaps")),
     gatherDuplicateReport().catch(fail("duplicate")),
+    gatherAliasDriftReport().catch(fail("alias")),
   ]);
 
   /*
@@ -126,6 +128,7 @@ async function run(request: Request) {
     unexplainedOneSided: coverage?.withGaps ?? 0,
     duplicates: duplicates?.findings.length ?? 0,
     brokenLinks,
+    aliasDrift: aliases?.findings.length ?? 0,
     unreadable: [...new Set(unreadable)],
     failedChecks,
     clientsChecked: duplicates?.checked ?? coverage?.rows.length ?? 0,

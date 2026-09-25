@@ -13,6 +13,7 @@ import {
 } from "./status-conflicts";
 import { checkLinks, type LinkReport, type LinkTool, type ToolRows } from "./link-integrity";
 import { findDuplicates, type DuplicateReport } from "./duplicates";
+import { findAliasDrift, type AliasDriftReport, type AliasToolRow } from "./alias-drift";
 import {
   buildCoverage,
   type CoverageInput,
@@ -411,5 +412,66 @@ export async function gatherDuplicateReport(): Promise<DuplicateReport> {
         onboarding: r.orch_client_id,
       },
     })),
+  );
+}
+
+
+/*
+ * Spellings a tool does not know (§16 "conflicting data", applied to identity).
+ *
+ * Reads the two tools that attribute campaigns by name and hold their own alias
+ * column — Analytics `aliases` and Client Health `campaign_aliases`. Master
+ * Inbox is not checked: it keeps its own name and aliases and the OS is
+ * deliberately not its writer, which the dictionary records.
+ */
+export async function gatherAliasDriftReport(): Promise<AliasDriftReport> {
+  const [osRows, analytics, health] = await Promise.all([
+    (async () => {
+      const { data, error } = await getMasterInboxSupabase()
+        .from("os_clients")
+        .select("name, aliases, an_client_id, ch_client_id")
+        .limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as {
+        name: string; aliases: string[] | null;
+        an_client_id: string | null; ch_client_id: string | null;
+      }[];
+    })(),
+    (async () => {
+      try {
+        const { data, error } = await getAnalyticsSupabase()
+          .from("clients").select("id, name, aliases").limit(1000);
+        if (error) throw new Error(error.message);
+        return new Map(
+          ((data ?? []) as { id: string; name: string; aliases: string[] | null }[]).map((r) => [
+            r.id, { id: r.id, name: r.name ?? "", aliases: r.aliases ?? [] } as AliasToolRow,
+          ]),
+        );
+      } catch { return null; }
+    })(),
+    (async () => {
+      try {
+        const { data, error } = await getClientHealthSupabase()
+          .from("clients").select("id, name, campaign_aliases").limit(1000);
+        if (error) throw new Error(error.message);
+        return new Map(
+          ((data ?? []) as { id: string; name: string; campaign_aliases: string[] | null }[]).map((r) => [
+            r.id, { id: r.id, name: r.name ?? "", aliases: r.campaign_aliases ?? [] } as AliasToolRow,
+          ]),
+        );
+      } catch { return null; }
+    })(),
+  ]);
+
+  return findAliasDrift(
+    osRows.map((r) => ({
+      name: r.name ?? "",
+      aliases: r.aliases ?? [],
+      links: { analytics: r.an_client_id, client_health: r.ch_client_id },
+    })),
+    {
+      analytics: analytics ? { rows: analytics } : { rows: new Map(), unreadable: true },
+      client_health: health ? { rows: health } : { rows: new Map(), unreadable: true },
+    },
   );
 }
