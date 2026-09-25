@@ -33,6 +33,14 @@ export async function register() {
   ensureOnboardingScheduler();
 
   /*
+   * §16's drift check. Unlike the four above it belongs to no single tool — it
+   * reads all of them and reports where they disagree. Daily, and off unless
+   * OS_RECONCILE_ALERT_ENABLED=1; see lib/reconcile/schedule.ts.
+   */
+  const { ensureReconcileScheduler } = await import("./lib/reconcile/scheduler");
+  ensureReconcileScheduler();
+
+  /*
    * Warm the one cache whose first miss is unbearable.
    *
    * Open Responses walks every open thread's labels and last message: 12–13
