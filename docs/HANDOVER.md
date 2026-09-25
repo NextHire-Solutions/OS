@@ -1,7 +1,7 @@
 # BrokerStaffer OS — Developer Handover
 
-**Written 25 September 2026.** Every number in this document was measured live
-against the four production databases on that date, not remembered. Where a
+**Written 25 September 2026. Re-verified 26 September.** Every number here was
+measured live against the four production databases, not remembered. Where a
 figure will age, the query that produced it is given so you can re-run it.
 
 ---
@@ -225,8 +225,17 @@ recognisable — Railway's generated name was never changed.
 | Client Health / `web` | `cd6153df` · 24 Sep 04:07 | current |
 | Client Health / `sync-worker` | `5175db98` · 24 Sep 23:50 | current |
 | Onboarding / `orchestrator` | `1d1eb000` · 3 Sep 23:25 | untouched since Sept 3 |
-| **Database / `web`** | `ea215c62` · 22 Sep 23:36 | **two commits behind — see §6.1** |
+| **Database / `web`** | `05ebc358` · 25 Sep 22:13 | **redeployed by someone else — see §6.1** |
 | Database / `bison-cron` | `0f336b46` · 17 Sep 21:13 | `0 */6 * * *` |
+| Database / `enrich-worker` | `fd0b5550` · 9 Sep 20:11 | |
+| Agent Search / `agent-search` | `baf448b4` · 25 Sep 02:02 | serving; two FAILED builds sit above it in the list — see below |
+
+> **Agent Search shows two FAILED deployments (25 Sep, 03:13 and 11:05).**
+> They are harmless and they are mine: I deployed the wrong repository to that
+> service while tracing which app served `search.brokerstaffer.com`. A failed
+> build never replaces a running one, so `baf448b4` kept serving throughout and
+> the site has been up the whole time (verified again 26 Sep: `/` and
+> `/api/status` both 200). Leave them; they are history, not a fault.
 
 #### Source state — everything is committed and pushed
 
@@ -1205,33 +1214,48 @@ CHURN ONCE → CHURN EVERYWHERE ✅ (except billing)
 Grouped by **who can unblock it**, because that is the only grouping that
 decides what you can pick up on day one.
 
-### 6.1 Ready to ship — needs one confirmation, then 10 minutes
+### 6.1 The Database app — one unanswered question
 
-**Deploy `Corofy/Database` → `web`.** Two commits are pushed and not deployed:
+Two commits are pushed to `main` and it is **not known whether they are live**:
 
-* `adada98` — churn guard at the only writer of `orch_client_leads`; duplicate
-  guard on client creation now uses the matcher's own `normClientName`
+* `adada98` — churn guard at the only writer of `orch_client_leads`; the
+  duplicate guard on client creation now uses the matcher's own `normClientName`
 * `ad78784` — the §8 **Client status** column on the Clients page
 
-Verified safe: typecheck clean; the churn guard returns at `lifecycle.ts:64`
-with **no network call** when unconfigured, so behaviour is identical to today
-until the variables are set; the duplicate guard rejects nothing that exists
-(44 clients, 0 colliding names under `normClientName`).
+Both are verified safe: typecheck clean; the churn guard returns at
+`lifecycle.ts:64` with **no network call** when unconfigured, so behaviour is
+identical to today until the variables are set; the duplicate guard rejects
+nothing that exists (44 clients, 0 colliding names under `normClientName`).
 
-**Why it has not shipped:** no service in that project is GitHub-linked, so the
-running image came off the other developer's laptop and may contain unpushed
-work. Ask them *"is everything you've deployed to the Database web service
-pushed to main?"* before deploying over it.
+**What changed on 25 Sep, 21:09 and 22:13:** somebody other than me deployed
+this service twice. Because no service here is GitHub-linked, a deploy uploads
+whoever's *working directory* — so whether those two commits went up depends
+entirely on whether that person had pulled `main` first. Nothing observable from
+outside settles it: the Clients page is behind auth, and the build exposes no
+commit id.
 
-Then, and only after the code is live, set on that service:
+**Two ways to settle it, both quick:**
+
+1. **Look.** Sign in to the Database app and open the Clients page. If it shows
+   **two** status columns — "Client status" beside "Onboarding status" — the
+   code is live. One column means it is not.
+2. **Ask** whoever deployed at 22:13 whether they had pulled `main`.
+
+If it is not live, deploying `origin/main` puts it there — but ask them first,
+because the same uncertainty runs the other way: their 22:13 upload may contain
+work they never pushed, and deploying over it would remove it.
+
+**Either way, nothing of this is ACTIVE yet.** Re-checked 26 Sep: the service
+still has 24 variables and **`CLIENT_STATUS_URL` and `CLIENT_STATUS_TOKEN` are
+both unset**, so the churn guard reads no feed and the Client status column
+renders "—" for every client. Once the code is confirmed live, set:
 
 ```
 CLIENT_STATUS_URL   = https://os.brokerstaffer.com/api/workspace/clients/status-feed
 CLIENT_STATUS_TOKEN = <the OS's OS_CLIENT_STATUS_TOKEN>
 ```
 
-Both are currently unset, which is why the guard is inert. Order matters: the
-variables do nothing until the code is live.
+Order matters: the variables do nothing until the code is live.
 
 ### 6.2 Needs a decision from the client, then minutes of work
 
@@ -1355,6 +1379,30 @@ visible rather than silent.
 `/roster` → Add. This runs `lib/clients/onboard-run.ts`, which creates the
 master record and then each tool's record. `POST /api/workspace/clients/onboard/execute`
 is the same thing over HTTP; it supports `stopBefore` for dry runs.
+
+---
+
+### 7.5 Verification record
+
+Re-run §7.1 and compare. Nothing here should change without somebody changing it.
+
+| Checked | 25 Sep | 26 Sep |
+|---|---|---|
+| Clients in `os_clients` | 52 | 52 |
+| active / paused / churned / onboarding | 32 / 8 / 10 / 2 | 32 / 8 / 10 / 2 |
+| Client Health rows | 50 | 50 |
+| Analytics rows | 53 | 53 |
+| Portals open / closed | 38 / 19 | 38 / 19 |
+| Database app client rows | 44 | 44 |
+| Linked to the Database app | 43 | 43 |
+| Account Manager / Sender / Area / MLS recorded | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Drift check — all six | clean | clean |
+| New commits by anyone | — | none, all four repos level |
+
+On 26 Sep every host answered: OS, Master Inbox, Client Health, Analytics and
+Agent Search healthy; Onboarding returns 401 at its root, which is its own auth,
+not an outage. The only thing that moved overnight was the Database app being
+redeployed by someone else — §6.1.
 
 ---
 
