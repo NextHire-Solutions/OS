@@ -102,7 +102,7 @@ first question everybody asks, so here it is in full — measured 26 Sep:
   **do not delete it.**
 * **"Second rows"** — one client, two markets. Properties & Estates (Boston +
   Florida) and SERHANT. PA (base + "15M+"). Legitimate, and the subject of the
-  open question in §6.4. The one that was an accident — the Database app's
+  open question in §6.5. The one that was an accident — the Database app's
   `Camelot Realty` beside `Camelot Realty Group` — was deleted on 26 September,
   which is why that tool now reads 43 = 43 exactly.
 * **"Absent"** — every one is a churned, paused or still-onboarding client.
@@ -751,7 +751,7 @@ automatically…":
 | Create the Client Portal | ✅ minted immediately with its own token | `lib/portals/` |
 | Make available in Analytics | ✅ | connector leg |
 | **Create the Database record** | ✅ | `lib/clients/database-record.ts` |
-| Create the appropriate saved view | ✗ | lives in the Database app — see §6.5 |
+| Create the appropriate saved view | ✗ | lives in the Database app — see §6.6 |
 | Connect the client's leads | ◐ matched by name | Database app |
 | Connect their campaigns | ◐ matched by name, not linked by ID | `lib/tools/analytics/` |
 | Connect their Stripe subscription | ✗ | paused by the client |
@@ -875,7 +875,7 @@ replies, bounces, leads in review, leads exported ✅ all generated and fed back
 
 > The emptiness is the single biggest gap in the whole project, and it is data
 > entry, not engineering. The edit dialog offers names already in use, so
-> filling these in is mostly clicking. See §6.6 of this document.
+> filling these in is mostly clicking. See §6.7 of this document.
 
 ---
 
@@ -1120,7 +1120,7 @@ Now: `lib/reconcile/schedule.ts` + `scheduler.ts`, registered in
 `instrumentation.ts`, running daily. The gather-and-decide logic moved into
 `lib/reconcile/run.ts` so the route and the clock cannot drift apart. 20 tests.
 
-**It ships switched off, and needs one decision from the client** — see §6.4.
+**It ships switched off, and needs one decision from the client** — see §6.5.
 
 ---
 
@@ -1374,7 +1374,83 @@ literally called **Kelly + Co** and the campaign convention splits on " + " —
 so the prefix reads as "Kelly". It carries no leads today, so nothing is lost,
 but a client whose name contains the separator will always defeat the parser.
 
-### 6.4 Needs a decision from the client, then minutes of work
+### 6.4 Stripe — connected, and what it found
+
+**Migration 0016 applied 27 September**, and 30 of 52 clients now carry their
+Stripe customer and subscription on the master record. The mapping came from
+the client's own sheet; the remaining 22 are set out below.
+
+The design decision is vindicated by the data: **Discover Flag Team and
+Discover Phx Team share one Stripe customer** (`cus_UlUNr2ybmnecR2`) and are
+told apart only by their subscription. Storing the customer alone would have
+made them indistinguishable.
+
+**The rule, as given:** a paused or churned client has its subscription
+**paused, never cancelled**, so it can be reversed. Built and tested in
+`lib/clients/stripe-billing.ts` — there is no code path in that file that can
+cancel anything, and a test asserts it as a property rather than trusting it.
+
+#### What the dry run found — two things worth acting on
+
+Running the rule against all 52 clients would act on only **two**, and both
+are resumes, not pauses. **No churned or paused client is currently being
+billed**, which is better hygiene than expected.
+
+But:
+
+**1. Two ACTIVE clients are not being billed.**
+
+| Client | Subscription | Amount |
+|---|---|---|
+| BHGRE Base Camp | `sub_1SmhS8…` | **$1,500** |
+| Discover Phx Team | `sub_1Tsb2d…` | $500 |
+
+Both are `active` in the OS with collection paused in Stripe. **Deliberately
+not auto-resumed** — somebody may have paused them for a reason (a credit
+period, a dispute), and starting to charge a customer is not a side effect a
+status field should have.
+
+**2. Five paused subscriptions are accruing invoices they will be billed for.**
+
+Stripe offers three pause behaviours and this account uses all three, with no
+consistent practice: `keep_as_draft` ×5, `void` ×2, `mark_uncollectible` ×1.
+
+`keep_as_draft` **accrues a draft invoice for every period of the pause and
+bills them all on resume.** So these clients return to a bill covering the
+entire time they were paused:
+
+| Client | Status | Paused since | Behaviour |
+|---|---|---|---|
+| Front Range Collective | paused | started Apr 2026 | `keep_as_draft` |
+| Hunter Dehn Realty | paused | started Jun 2026 | `mark_uncollectible` |
+| **JM Properties** | **churned** | started Jun 2026 | `keep_as_draft` |
+| Simien Properties | paused | started Aug 2026 | `keep_as_draft` |
+| Discover Flag Team | paused | started Jul 2026 | `keep_as_draft` |
+
+JM Properties is the one to look at first: a **churned** client still accruing
+draft invoices. New pauses this system makes use `void`, which issues nothing
+for the paused period — but it does not retro-fix these.
+
+#### The 22 clients with no subscription recorded
+
+* **3 need your call** — more than one active subscription, so the sheet cannot
+  decide: `54 Realty` (two active, two different customers), `Douglas Elliman
+  Las Vegas` (the sheet lists both Elliman subscriptions as Las Vegas, and
+  Douglas Elliman Los Angeles appears nowhere), `Raintown Realty` (two active,
+  one labelled "(JPAR)" — and `JPAR Iron Horse Real Estate` is an active client
+  with no subscription, so these may be two clients on one customer).
+* **6 have only cancelled subscriptions** — Kelly + Co, Maltos Realty Group,
+  Rise Real Estate Antelope, Spotlight - A Compass Team, The Karp Group,
+  The RE Home Group of Douglas Realty.
+* **13 are not in the sheet**, of which five are active: Cain Realty Group,
+  Douglas Elliman Los Angeles, JPAR Iron Horse Real Estate, The Toll Group,
+  The Wurst Team. Stripe customers exist by name for three of them, so the
+  sheet is probably incomplete rather than those being unbilled.
+
+One row in the sheet, **"A Better Way"**, has an active subscription and is not
+a client on the roster at all.
+
+### 6.5 Needs a decision from the client, then minutes of work
 
 | Decision | What is already built | What to do on a yes |
 |---|---|---|
@@ -1398,7 +1474,7 @@ but a client whose name contains the separator will always defeat the parser.
 In both cases the second portal's introductions are invisible to targets and
 billing.
 
-### 6.5 Needs the Database developer
+### 6.6 Needs the Database developer
 
 * **The MLS relation.** Agreed design: a new table keyed on `orch_clients.id`,
   distinguishing `declared` from `derived`, with a 10% floor and a coverage
@@ -1414,7 +1490,7 @@ billing.
   matcher is reliable, but a campaign named unlike its client is silently
   unmatched.
 
-### 6.6 Needs data entry, not engineering — the single biggest gap
+### 6.7 Needs data entry, not engineering — the single biggest gap
 
 | Field | Recorded |
 |---|---|
@@ -1434,12 +1510,12 @@ finished; nothing is flowing through it.
 `/roster` → open a client → **Edit**. The dialog offers names already in use,
 so this is mostly clicking.
 
-### 6.7 Blocked on tools that do not exist
+### 6.8 Blocked on tools that do not exist
 
 Commission Tracker (§1, §2, §8, §18) and future CRM / CSM. The architecture is
 ready for them; §18's connection path is enforced in code.
 
-### 6.8 Deliberately not done
+### 6.9 Deliberately not done
 
 * **Add Client buttons in the standalone tools** (§13, §22). They stay because
   the tools stay live.
