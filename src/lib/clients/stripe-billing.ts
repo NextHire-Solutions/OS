@@ -79,18 +79,21 @@ export function planBillingAction(
     };
   }
 
-  if (lifecycle === "active") {
-    if (!sub.paused) return { action: "none", reason: "Already collecting." };
-    return { action: "resume", reason: "Client is active again — collection resumed." };
-  }
-
   /*
-   * Onboarding deliberately does nothing, for the same reason it leaves the
-   * portal alone (§9): a client being set up is neither running nor stopped,
-   * and their first invoice is a billing decision, not a side effect of a
-   * status field.
+   * Active AND onboarding both mean "should be collecting", per the rule as
+   * given: "active/onboarding or added a new client -> active subscription".
+   *
+   * Onboarding does not behave like the portal leg here, which deliberately
+   * leaves a portal untouched during setup. The difference is that an
+   * onboarding client almost never HAS a subscription yet, so this is a no-op
+   * in the ordinary case; where it is not — a client moved back into
+   * onboarding whose collection was paused — resuming is what was asked for.
    */
-  return { action: "none", reason: "Onboarding — billing is not touched while a client is being set up." };
+  if (!sub.paused) return { action: "none", reason: "Already collecting." };
+  return {
+    action: "resume",
+    reason: `Client is ${lifecycle} — collection resumed.`,
+  };
 }
 
 export interface StripeCaller {

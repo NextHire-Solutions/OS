@@ -36,9 +36,13 @@ test("nothing happens when the subscription is already in the right state", () =
   assert.equal(planBillingAction("active", active).action, "none");
 });
 
-test("onboarding never touches billing", () => {
+test("onboarding counts as 'should be collecting', same as active", () => {
+  // The rule as given: "active/onboarding or added a new client -> active
+  // subscription". In practice an onboarding client has no subscription yet,
+  // so this is usually a no-op — but where one exists and is paused, it resumes.
   assert.equal(planBillingAction("onboarding", active).action, "none");
-  assert.equal(planBillingAction("onboarding", paused).action, "none");
+  assert.equal(planBillingAction("onboarding", paused).action, "resume");
+  assert.equal(planBillingAction("onboarding", null).action, "none");
 });
 
 test("a client with no recorded subscription is a no-op, not an error", () => {

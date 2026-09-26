@@ -62,6 +62,13 @@ export interface OsClient {
     market: string | null;
     mls: string | null;
     area: string | null;
+    /*
+     * Stripe (migration 0016). The SUBSCRIPTION is the identifying one: a
+     * customer can pay for two clients — "Discover Team" covers Flag and
+     * Phx — so the customer alone cannot say which client is being billed.
+     */
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
   };
   notes: string | null;
   createdAt: string;
@@ -83,8 +90,17 @@ const BASE_SELECT =
   "contact2_name, contact2_role, contact2_email, " +
   "contact3_name, contact3_role, contact3_email, brokerage";
 
-/** The §6 master-record fields — migration 0015. */
-const RECORD_COLUMNS = "account_manager, salesperson, sender_name, market, mls, area";
+/**
+ * The §6 master-record fields (migration 0015), and Stripe (0016).
+ *
+ * Grouped together because they share one property that matters: both arrived
+ * after this code shipped, so both go behind the same "works before and after
+ * the migration" fallback below. A second group would double that logic to say
+ * the same thing twice.
+ */
+const RECORD_COLUMNS =
+  "account_manager, salesperson, sender_name, market, mls, area, " +
+  "stripe_customer_id, stripe_subscription_id";
 
 /*
  * WORKS BEFORE AND AFTER MIGRATION 0015.
@@ -143,6 +159,8 @@ function toClient(row: Row): OsClient {
       })),
     },
     record: {
+      stripeCustomerId: (row.stripe_customer_id as string | null) ?? null,
+      stripeSubscriptionId: (row.stripe_subscription_id as string | null) ?? null,
       accountManager: (row.account_manager as string | null) ?? null,
       salesperson: (row.salesperson as string | null) ?? null,
       sender: (row.sender_name as string | null) ?? null,

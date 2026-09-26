@@ -6,6 +6,7 @@ import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { pushPortalStatus } from "@/lib/portals/status-push";
 import { pauseCampaignsForClient } from "./pause-campaigns";
+import { billingEnabled, syncBillingForClient } from "./stripe-billing-live";
 import type { ClientStatus } from "./client-status";
 import type { OsClient } from "./os-clients";
 
@@ -48,7 +49,7 @@ import type { OsClient } from "./os-clients";
  * Every leg returns its own outcome and the caller shows them.
  */
 
-export type PropagationTool = "client_health" | "analytics" | "portal" | "campaigns";
+export type PropagationTool = "client_health" | "analytics" | "portal" | "campaigns" | "billing";
 
 export interface PropagationLeg {
   tool: PropagationTool;
@@ -70,6 +71,7 @@ const LABELS: Record<PropagationTool, string> = {
   analytics: "Analytics",
   portal: "Client portal",
   campaigns: "Campaigns",
+  billing: "Billing",
 };
 
 const leg = (
@@ -78,7 +80,9 @@ const leg = (
 ): PropagationLeg => ({ tool, label: LABELS[tool], ok: true, ...over });
 
 export async function propagateStatus(
-  client: Pick<OsClient, "id" | "name" | "links" | "aliases">,
+  client: Pick<OsClient, "id" | "name" | "links" | "aliases"> & {
+    record?: Pick<OsClient["record"], "stripeSubscriptionId">;
+  },
   status: ClientStatus,
 ): Promise<PropagationResult> {
   const legs: PropagationLeg[] = [];
@@ -230,6 +234,51 @@ export async function propagateStatus(
         leg("campaigns", {
           ok: false,
           error: error instanceof Error ? error.message : "Campaign pause failed",
+        }),
+      );
+    }
+  }
+
+  /*
+   * 5. BILLING — pause on paused and churned, resume on active and onboarding.
+   *
+   * Last, and deliberately so: it is the only leg that touches money, and
+   * every other system should already reflect the new status by the time it
+   * runs. A Stripe outage then costs the billing change alone rather than
+   * stranding the propagation half-done.
+   *
+   * NEVER CANCELS. The decision, as given: "it should not be canceled or
+   * deleted. just a simple subscription pause so that we can resume or reverse
+   * this action later." That reversibility is the whole reason billing can
+   * join the other legs at all — see stripe-billing.ts, where a test asserts
+   * no code path can send a cancellation.
+   *
+   * There is no backfill anywhere: this fires on a status CHANGE and nothing
+   * sweeps existing clients. A subscription somebody paused by hand stays
+   * paused until that client's status actually moves.
+   */
+  if (!billingEnabled()) {
+    legs.push(
+      leg("billing", {
+        skipped: "Billing sync is off (OS_STRIPE_BILLING_ENABLED is not 1).",
+      }),
+    );
+  } else {
+    const subscriptionId = client.record?.stripeSubscriptionId ?? null;
+    try {
+      const out = await syncBillingForClient(subscriptionId, status);
+      if (!out.ok) {
+        legs.push(leg("billing", { ok: false, error: out.error ?? out.decision.reason }));
+      } else if (!out.changed) {
+        legs.push(leg("billing", { skipped: out.decision.reason }));
+      } else {
+        legs.push(leg("billing"));
+      }
+    } catch (error) {
+      legs.push(
+        leg("billing", {
+          ok: false,
+          error: error instanceof Error ? error.message : "Billing sync failed",
         }),
       );
     }
