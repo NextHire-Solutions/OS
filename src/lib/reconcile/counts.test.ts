@@ -41,7 +41,7 @@ test("a row belonging to no client is an extra, and is named", () => {
                     { name: "Demo Portal", clientId: null },
                     { name: "Test FUB", clientId: null }),
   }, reason);
-  assert.deepEqual(r.extras, ["Demo Portal", "Test FUB"]);
+  assert.deepEqual(r.extras.map((e) => e.name), ["Demo Portal", "Test FUB"]);
   assert.equal(r.present, 1);
   assert.equal(r.toolRows, 3);
   assert.equal(r.balances, true, "1 client + 2 extras = 3 rows");
@@ -85,7 +85,7 @@ test("a row pointing at a client id that does not exist counts as an extra", () 
   const [r] = reconcileCounts(master, {
     analytics: rows({ name: "Ghost Co", clientId: "999" }),
   }, reason);
-  assert.deepEqual(r.extras, ["Ghost Co"]);
+  assert.deepEqual(r.extras.map((e) => e.name), ["Ghost Co"]);
   assert.equal(r.balances, true);
 });
 
@@ -121,4 +121,21 @@ test("when the arithmetic cannot balance, it says so rather than pretending", ()
   const out = reconcileCounts(master, { analytics: rows({ name: "A", clientId: "1" }) }, reason);
   const r = { ...out[0], toolRows: 99 };
   assert.equal(r.present + r.secondRows.length + r.extras.length === r.toolRows, false);
+});
+
+test("a known non-client carries its reason; an unknown one carries none", () => {
+  // The reason is what stops "Demo Portal" reading as a fault. It backs the
+  // live demo portal and must never be touched, so the screen has to say so.
+  const why = (n: string) =>
+    n === "Demo Portal" ? "backs the live demo client portal — keep" : null;
+  const [r] = reconcileCounts(master, {
+    analytics: [
+      { name: "Demo Portal", clientId: null },
+      { name: "Mystery Row", clientId: null },
+    ],
+  }, () => null, why);
+  assert.deepEqual(r.extras, [
+    { name: "Demo Portal", reason: "backs the live demo client portal — keep" },
+    { name: "Mystery Row", reason: "" },
+  ]);
 });

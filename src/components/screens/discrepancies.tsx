@@ -978,7 +978,7 @@ interface CountRow {
   present: number;
   absent: AbsentClient[];
   gaps: number;
-  extras: string[];
+  extras: { name: string; reason: string }[];
   secondRows: SecondRow[];
   balances: boolean;
 }
@@ -1077,9 +1077,14 @@ function Counts({ report }: { report?: CountReport }) {
             </div>
           )}
           {t.extras.length > 0 && (
-            <div className="anno">
-              <b>Rows that are not a client:</b> {t.extras.join(", ")}.
-            </div>
+            <ul className="plain">
+              {t.extras.map((e) => (
+                <li key={e.name}>
+                  <b>{e.name}</b> — not a client ·{" "}
+                  {e.reason || <b>no reason recorded</b>}
+                </li>
+              ))}
+            </ul>
           )}
           {t.absent.length > 0 && (
             <ul className="plain">

@@ -70,6 +70,16 @@ export interface AbsentClient {
   reason: string;
 }
 
+export interface ExtraRow {
+  name: string;
+  /**
+   * Why this row is not a client. Empty when nothing accounts for it — which
+   * is the case worth looking at, because an unexplained row in a client table
+   * is either a client nobody linked or a mistake nobody noticed.
+   */
+  reason: string;
+}
+
 export interface SecondRow {
   /** The row that comes after the first one for this client. */
   name: string;
@@ -90,8 +100,8 @@ export interface CountReconciliation {
   absent: AbsentClient[];
   /** Absences with no reason at all. The only number worth acting on. */
   gaps: number;
-  /** Rows belonging to no master client, by name. */
-  extras: string[];
+  /** Rows belonging to no master client, each with the reason it is exempt. */
+  extras: ExtraRow[];
   /**
    * Second and later rows for a client that already had one. Legitimate for a
    * client with several markets; an accident otherwise. Named, never judged.
@@ -111,6 +121,12 @@ export function reconcileCounts(
   master: MasterClient[],
   rowsByTool: Partial<Record<CoverageTool, ToolRow[]>>,
   absenceReason: (clientId: string, tool: CoverageTool) => string | null,
+  /**
+   * Why a row is a known non-client — "Demo Portal: backs the live demo client
+   * portal — keep". Injected for the same reason as `absenceReason`: the list
+   * already exists in `lib/clients/roster.ts` and must not be respelled here.
+   */
+  nonClientReason: (name: string) => string | null = () => null,
 ): CountReconciliation[] {
   const byId = new Map(master.map((c) => [c.id, c]));
   const out: CountReconciliation[] = [];
@@ -120,12 +136,12 @@ export function reconcileCounts(
     const tool = toolKey as CoverageTool;
 
     const seen = new Set<string>();
-    const extras: string[] = [];
+    const extras: ExtraRow[] = [];
     const secondRows: SecondRow[] = [];
 
     for (const row of rows) {
       if (!row.clientId || !byId.has(row.clientId)) {
-        extras.push(row.name);
+        extras.push({ name: row.name, reason: nonClientReason(row.name) ?? "" });
         continue;
       }
       if (seen.has(row.clientId)) {

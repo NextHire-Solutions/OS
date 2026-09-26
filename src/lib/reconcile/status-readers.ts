@@ -22,6 +22,7 @@ import {
   type ExceptionIndex,
 } from "./coverage";
 import { reconcileCounts, type CountReconciliation, type ToolRow } from "./counts";
+import { nonClientReason } from "@/lib/clients/roster";
 
 /*
  * Gathers each client's status from every source that holds one, so
@@ -596,7 +597,7 @@ export async function gatherCountReport(): Promise<CountReport> {
   };
 
   return {
-    tools: reconcileCounts(master, rowsByTool, absenceReason),
+    tools: reconcileCounts(master, rowsByTool, absenceReason, nonClientReason),
     unreadable,
     masterTotal: master.length,
   };
