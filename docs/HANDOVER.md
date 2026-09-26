@@ -1385,10 +1385,38 @@ Discover Phx Team share one Stripe customer** (`cus_UlUNr2ybmnecR2`) and are
 told apart only by their subscription. Storing the customer alone would have
 made them indistinguishable.
 
-**The rule, as given:** a paused or churned client has its subscription
-**paused, never cancelled**, so it can be reversed. Built and tested in
-`lib/clients/stripe-billing.ts` — there is no code path in that file that can
-cancel anything, and a test asserts it as a property rather than trusting it.
+**The rule, as given, and now LIVE** (27 Sep, deployment `5bb94e8c`,
+`OS_STRIPE_BILLING_ENABLED=1`):
+
+| Status set on the Clients screen | What happens to the subscription |
+|---|---|
+| paused · churned | **paused** — never cancelled, never deleted |
+| active · onboarding · a new client | **resumed** |
+
+It is the fifth leg of status propagation, and it runs **last** — the only one
+that touches money, so every other system already reflects the new status by
+the time it runs, and a Stripe outage costs the billing change alone rather
+than stranding the propagation half-done.
+
+`lib/clients/stripe-billing.ts` holds the rule and is pure; there is no code
+path in it that can cancel anything, and a test asserts that as a property
+rather than trusting it — every lifecycle against every subscription state,
+checking that the only fields ever sent are `pause_collection` and
+`pause_collection[behavior]`.
+
+**NO BACKFILL, by instruction.** It fires on a status CHANGE and nothing sweeps
+existing clients. Verified after enabling: zero subscriptions changed state.
+The eight already-paused subscriptions — including the two on active clients —
+are untouched and stay that way until someone moves that client's status.
+
+It reads the subscription from Stripe before acting rather than trusting a
+stored flag: it may have been paused or resumed in the dashboard since, and
+acting on a stale idea of its state is how you resume something a person
+deliberately stopped.
+
+**To switch it off instantly:** set `OS_STRIPE_BILLING_ENABLED` to anything but
+`1` on the `os` service. The leg then reports itself skipped and touches
+nothing.
 
 #### What the dry run found — two things worth acting on
 
