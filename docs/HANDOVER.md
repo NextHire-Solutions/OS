@@ -87,12 +87,29 @@ Read this bit slowly; everything else follows from it.
                       └──────────────────────────────┘
 ```
 
-**The row counts differ on purpose.** Client Health has 50 rows against 52
-clients because two onboarding clients have not been provisioned there yet.
-Analytics has 53 because it also holds a few named non-clients (a demo portal, a
-test row). Master Inbox has 57 because **it keeps one row per *portal*, not per
-client** — a client selling in two markets owns two rows. None of these are
-errors, and the Consistency screen explains each one.
+**The row counts differ on purpose, and the arithmetic balances.** This is the
+first question everybody asks, so here it is in full — measured 26 Sep:
+
+| Tool | Rows | = clients | + second rows | + not a client | clients absent |
+|---|---|---|---|---|---|
+| Master Inbox | **57** | 51 | 2 | 4 | 1 |
+| Client Health | **50** | 50 | — | — | 2 |
+| Analytics | **53** | 48 | 2 | 3 | 4 |
+| Database app | **44** | 43 | 1 | — | 9 |
+
+* **"Not a client"** — `Demo Portal`, `New client portal`, `Test FUB`,
+  `Unknown`, `ZZ Portal Delete Test`. ⚠️ Demo Portal backs the live demo portal:
+  **do not delete it.**
+* **"Second rows"** — one client, two markets. Properties & Estates (Boston +
+  Florida) and SERHANT. PA (base + "15M+"). Legitimate, and the subject of the
+  open question in §6.2. **Except one**: the Database app's `Camelot Realty`
+  beside `Camelot Realty Group` is an accident — §6.1.
+* **"Absent"** — every one is a churned, paused or still-onboarding client.
+  **Not one active client is missing from any tool**; all 32 are in all four.
+
+§2 sets the test as "never 40 in one system, 38 in another". What it actually
+asks is that every tool can *identify the same clients* — which holds. The
+Consistency screen now proves it row by row rather than asking you to trust it.
 
 **Two jobs in one app.** The OS is simultaneously:
 
@@ -531,7 +548,7 @@ the architecture document made visible.
 | **Home** | `/` | Tool cards with live numbers, read from the same status store the API serves — useful before any JavaScript runs. Headline card summarises the estate. | `home.tsx`, `overview-card.tsx` |
 | **Performance** | `/performance` | Client base, plans and movement. Greys out clients who are not contributing, by design. | `performance.tsx` |
 | **Clients** (the roster) | `/roster` | **The spine of the whole project.** One row per client; the columns are what each tool knows about them. Status, plan, billing interval and next billing date, links to each tool's row. Add / Edit / Delete / Onboard / People all hang off it. | `clients.tsx` |
-| **Consistency** | `/consistency` | §16 made visible. Where the tools disagree — status conflicts, coverage gaps with written reasons, duplicates, broken links, alias drift. **Designed to be boring**: it should say "all explained" almost always. | `discrepancies.tsx` |
+| **Consistency** | `/consistency` | §16 made visible. Opens with **Client counts** — why each tool's total is not 52, as arithmetic that must balance — then status conflicts, coverage gaps with written reasons, duplicates, broken links, alias drift. **Designed to be boring**: it should say "all explained" almost always. | `discrepancies.tsx` |
 
 Sub-screens of the roster:
 
@@ -743,12 +760,21 @@ rather than creating a second one. Links today: **43 of 52** overall, **33 of
 the 34 active/onboarding clients** — the remainder are churned clients that
 never had a Database row.
 
-**The critical requirement — one master list — holds.** The spec's test was
-"40 in one system, 38 in another, 42 in another" must never happen. Measured
-today, every client row in every tool resolves to a master client, by ID link or
-by recorded alias. The only unresolved rows are five named non-clients:
-`Demo Portal`, `New client portal`, `Test FUB`, `Unknown`, and a parked
-Analytics deletion test.
+**The critical requirement — one master list — holds, and the Consistency
+screen now proves it.** The spec's test was that "40 in one system, 38 in
+another, 42 in another" must never happen. The four tools *do* report different
+totals (57 / 50 / 53 / 44 against 52), so the screen opens with **Client
+counts**, which states the arithmetic per tool and requires it to balance:
+
+> rows in the tool = rows belonging to a client + a second row for a client that
+> already had one + rows that are not a client at all, each named.
+
+All four balance today. Every absence is a churned, paused or still-onboarding
+client; not one active client is missing anywhere. The only rows belonging to no
+client are five named non-clients: `Demo Portal`, `New client portal`,
+`Test FUB`, `Unknown`, and a parked Analytics deletion test.
+
+Code: `lib/reconcile/counts.ts` (pure, 10 tests) and `gatherCountReport()`.
 
 > **Demo Portal must not be deleted** — it backs the live demo client portal.
 
@@ -1080,6 +1106,7 @@ Six checks, all green today across 52 clients:
 | **Duplicate record** | ✅ 0 | `lib/reconcile/duplicates.ts` |
 | Conflicting data | ✅ 0 | `lib/reconcile/status-conflicts.ts` |
 | Alias drift | ✅ 0 | `lib/reconcile/alias-drift.ts` |
+| **Client counts reconcile** | ✅ all four balance | `lib/reconcile/counts.ts` |
 
 **The second line — not discovering manually — was unmet in practice until 25
 Sep.** `/api/cron/reconcile-alert` existed and worked, but appeared in exactly
@@ -1214,9 +1241,14 @@ CHURN ONCE → CHURN EVERYWHERE ✅ (except billing)
 Grouped by **who can unblock it**, because that is the only grouping that
 decides what you can pick up on day one.
 
-### 6.1 The Database app — one unanswered question
+### 6.1 The Database app — two commits to deploy, one duplicate to delete
 
-Two commits are pushed to `main` and it is **not known whether they are live**:
+**Confirmed 26 Sep: the two commits are NOT live.** The Clients page shows a
+single `Status` column; the deployed build has one status column where the new
+code has two. So last night's deploy (25 Sep 22:13, by somebody else) did not
+include them.
+
+Pushed and waiting:
 
 * `adada98` — churn guard at the only writer of `orch_client_leads`; the
   duplicate guard on client creation now uses the matcher's own `normClientName`
@@ -1225,37 +1257,34 @@ Two commits are pushed to `main` and it is **not known whether they are live**:
 Both are verified safe: typecheck clean; the churn guard returns at
 `lifecycle.ts:64` with **no network call** when unconfigured, so behaviour is
 identical to today until the variables are set; the duplicate guard rejects
-nothing that exists (44 clients, 0 colliding names under `normClientName`).
+nothing that exists.
 
-**What changed on 25 Sep, 21:09 and 22:13:** somebody other than me deployed
-this service twice. Because no service here is GitHub-linked, a deploy uploads
-whoever's *working directory* — so whether those two commits went up depends
-entirely on whether that person had pulled `main` first. Nothing observable from
-outside settles it: the Clients page is behind auth, and the build exposes no
-commit id.
+**Before deploying, ask whoever deployed at 22:13 whether their work is
+pushed.** No service here is GitHub-linked, so a deploy uploads a working
+directory — theirs may hold something that never reached `main`, and shipping
+`origin/main` would remove it. That is the only thing standing in the way.
 
-**Two ways to settle it, both quick:**
-
-1. **Look.** Sign in to the Database app and open the Clients page. If it shows
-   **two** status columns — "Client status" beside "Onboarding status" — the
-   code is live. One column means it is not.
-2. **Ask** whoever deployed at 22:13 whether they had pulled `main`.
-
-If it is not live, deploying `origin/main` puts it there — but ask them first,
-because the same uncertainty runs the other way: their 22:13 upload may contain
-work they never pushed, and deploying over it would remove it.
-
-**Either way, nothing of this is ACTIVE yet.** Re-checked 26 Sep: the service
-still has 24 variables and **`CLIENT_STATUS_URL` and `CLIENT_STATUS_TOKEN` are
-both unset**, so the churn guard reads no feed and the Client status column
-renders "—" for every client. Once the code is confirmed live, set:
+Then, and only after the code is live, set:
 
 ```
 CLIENT_STATUS_URL   = https://os.brokerstaffer.com/api/workspace/clients/status-feed
 CLIENT_STATUS_TOKEN = <the OS's OS_CLIENT_STATUS_TOKEN>
 ```
 
+Both are still unset (re-checked 26 Sep — the service has 24 variables), so the
+churn guard reads no feed and the new column would render "—" for every client.
 Order matters: the variables do nothing until the code is live.
+
+#### The duplicate client row
+
+`orch_clients` holds **`Camelot Realty` and `Camelot Realty Group` as separate
+rows for one client** — created the same day, both `new`, both with zero leads,
+and only `Camelot Realty Group` linked to the master record. That is why the
+Database app reports 44 rows for 43 clients.
+
+It is safe to delete `Camelot Realty`: it owns no leads and nothing links to it.
+Doing so makes the Database app read 43 = 43. The `adada98` duplicate guard
+prevents the next one but cannot undo this one.
 
 ### 6.2 Needs a decision from the client, then minutes of work
 
