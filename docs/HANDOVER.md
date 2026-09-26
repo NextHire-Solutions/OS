@@ -102,7 +102,7 @@ first question everybody asks, so here it is in full — measured 26 Sep:
   **do not delete it.**
 * **"Second rows"** — one client, two markets. Properties & Estates (Boston +
   Florida) and SERHANT. PA (base + "15M+"). Legitimate, and the subject of the
-  open question in §6.2. **Except one**: the Database app's `Camelot Realty`
+  open question in §6.3. **Except one**: the Database app's `Camelot Realty`
   beside `Camelot Realty Group` is an accident — §6.1.
 * **"Absent"** — every one is a churned, paused or still-onboarding client.
   **Not one active client is missing from any tool**; all 32 are in all four.
@@ -242,7 +242,7 @@ recognisable — Railway's generated name was never changed.
 | Client Health / `web` | `cd6153df` · 24 Sep 04:07 | current |
 | Client Health / `sync-worker` | `5175db98` · 24 Sep 23:50 | current |
 | Onboarding / `orchestrator` | `1d1eb000` · 3 Sep 23:25 | untouched since Sept 3 |
-| **Database / `web`** | `05ebc358` · 25 Sep 22:13 | **redeployed by someone else — see §6.1** |
+| **Database / `web`** | `85a45464` · 26 Sep 22:40 | current — the two commits are live and switched on |
 | Database / `bison-cron` | `0f336b46` · 17 Sep 21:13 | `0 */6 * * *` |
 | Database / `enrich-worker` | `fd0b5550` · 9 Sep 20:11 | |
 | Agent Search / `agent-search` | `baf448b4` · 25 Sep 02:02 | serving; two FAILED builds sit above it in the list — see below |
@@ -270,9 +270,10 @@ Checked 25 Sep. Every repository on this machine is clean and level with
 which is **deliberately** untracked — see §2.4.
 
 > **Pushed is not deployed.** Because nothing is GitHub-linked, the work above
-> reaches GitHub but not the running services. The OS and Analytics were
-> deployed by hand after their commits; **the Database app's last two commits
-> are pushed and NOT live** — that is the one outstanding deploy, §6.1.
+> reaches GitHub but not the running services — every deploy is a deliberate
+> `railway up`. As of 26 September everything committed is also deployed: the
+> OS, Analytics, and the Database app (§6.1). Keep checking after a push, not
+> assuming.
 
 ### 1.6 Credentials
 
@@ -749,7 +750,7 @@ automatically…":
 | Create the Client Portal | ✅ minted immediately with its own token | `lib/portals/` |
 | Make available in Analytics | ✅ | connector leg |
 | **Create the Database record** | ✅ | `lib/clients/database-record.ts` |
-| Create the appropriate saved view | ✗ | lives in the Database app — see §6.3 |
+| Create the appropriate saved view | ✗ | lives in the Database app — see §6.4 |
 | Connect the client's leads | ◐ matched by name | Database app |
 | Connect their campaigns | ◐ matched by name, not linked by ID | `lib/tools/analytics/` |
 | Connect their Stripe subscription | ✗ | paused by the client |
@@ -873,7 +874,7 @@ replies, bounces, leads in review, leads exported ✅ all generated and fed back
 
 > The emptiness is the single biggest gap in the whole project, and it is data
 > entry, not engineering. The edit dialog offers names already in use, so
-> filling these in is mostly clicking. See §6.4 of this document.
+> filling these in is mostly clicking. See §6.5 of this document.
 
 ---
 
@@ -918,7 +919,7 @@ the word "paused".
 Built in `Corofy/Database` (commits `adada98`, `ad78784`): the old column is
 renamed **Onboarding status**, and the client's lifecycle sits beside it as
 **Client status** in the document's colours (§11). Unknown renders as "—",
-never "active". **Pushed but not yet deployed — §6.1.**
+never "active". **Live since 26 September — §6.1.**
 
 ---
 
@@ -1118,7 +1119,7 @@ Now: `lib/reconcile/schedule.ts` + `scheduler.ts`, registered in
 `instrumentation.ts`, running daily. The gather-and-decide logic moved into
 `lib/reconcile/run.ts` so the route and the clock cannot drift apart. 20 tests.
 
-**It ships switched off, and needs one decision from the client** — see §6.2.
+**It ships switched off, and needs one decision from the client** — see §6.3.
 
 ---
 
@@ -1241,52 +1242,89 @@ CHURN ONCE → CHURN EVERYWHERE ✅ (except billing)
 Grouped by **who can unblock it**, because that is the only grouping that
 decides what you can pick up on day one.
 
-### 6.1 The Database app — two commits to deploy, one duplicate to delete
+### 6.1 The Database app — DONE, 26 September
 
-**Confirmed 26 Sep: the two commits are NOT live.** The Clients page shows a
-single `Status` column; the deployed build has one status column where the new
-code has two. So last night's deploy (25 Sep 22:13, by somebody else) did not
-include them.
+Deployed and switched on. Nothing here is outstanding.
 
-Pushed and waiting:
+| | |
+|---|---|
+| Deployment | `26178c54`, then `85a45464` when the variables were set |
+| Rollback point | `05ebc358` (25 Sep 22:13) — still in Railway's history |
+| Health after | `/login` 200, `/webhooks` `/search` `/import` all 307 |
+| Other services | `enrich-worker`, `bison-cron` untouched |
+| Data | 44 rows before and after |
+
+What went live:
 
 * `adada98` — churn guard at the only writer of `orch_client_leads`; the
   duplicate guard on client creation now uses the matcher's own `normClientName`
-* `ad78784` — the §8 **Client status** column on the Clients page
+* `ad78784` — the §8 **Client status** column, beside the renamed
+  "Onboarding status"
 
-Both are verified safe: typecheck clean; the churn guard returns at
-`lifecycle.ts:64` with **no network call** when unconfigured, so behaviour is
-identical to today until the variables are set; the duplicate guard rejects
-nothing that exists.
-
-**Before deploying, ask whoever deployed at 22:13 whether their work is
-pushed.** No service here is GitHub-linked, so a deploy uploads a working
-directory — theirs may hold something that never reached `main`, and shipping
-`origin/main` would remove it. That is the only thing standing in the way.
-
-Then, and only after the code is live, set:
+And the two variables are now set, so the guard actually reads the feed:
 
 ```
 CLIENT_STATUS_URL   = https://os.brokerstaffer.com/api/workspace/clients/status-feed
 CLIENT_STATUS_TOKEN = <the OS's OS_CLIENT_STATUS_TOKEN>
 ```
 
-Both are still unset (re-checked 26 Sep — the service has 24 variables), so the
-churn guard reads no feed and the new column would render "—" for every client.
-Order matters: the variables do nothing until the code is live.
+The feed was verified before switching it on: 200 with the token, **401
+without**, 65 entries covering 50 distinct clients. Fifty rather than 52 is
+correct — a client still onboarding is deliberately absent from the feed, so
+the Database never blocks a client who has not started.
 
-#### The duplicate client row
+#### Still to do here: one duplicate row
 
 `orch_clients` holds **`Camelot Realty` and `Camelot Realty Group` as separate
 rows for one client** — created the same day, both `new`, both with zero leads,
 and only `Camelot Realty Group` linked to the master record. That is why the
 Database app reports 44 rows for 43 clients.
 
-It is safe to delete `Camelot Realty`: it owns no leads and nothing links to it.
-Doing so makes the Database app read 43 = 43. The `adada98` duplicate guard
-prevents the next one but cannot undo this one.
+Safe to delete `Camelot Realty`: no leads, nothing links to it. Deleting it
+makes the Database read 43 = 43. The `adada98` guard now prevents the next one
+but cannot undo this one.
 
-### 6.2 Needs a decision from the client, then minutes of work
+### 6.2 "Can we just add the missing clients so the numbers match?"
+
+It is the obvious fix and it is worth writing down why the answer differs for
+each group, because they are not the same question.
+
+**The 2 onboarding clients — yes, but through the OS, not by hand.**
+Brokerage Realty and Cardinal Realty Group are current clients mid-setup; they
+belong everywhere once provisioned. Do NOT insert rows directly: `runOnboarding`
+creates them in every tool *and records the link back on the master record*.
+A hand-made row leaves `ch_client_id` / `an_client_id` empty, so the OS falls
+back to matching by name — the exact fragility this project exists to remove.
+First settle the open question on Cardinal, which may in fact have churned.
+
+**The churned and paused ones — no.** Five churned and three paused clients are
+absent from the Database app, two churned from Analytics. Adding them back:
+
+* **reverses the lifecycle behaviour you approved** — §9 defines churned as
+  removed from the delivery tools, and that is what propagation does; and
+* **is actively risky in the Database app.** A new `orch_clients` row defaults
+  `weekly_target` to 3, and `bison-cron` matches campaigns **by name** every six
+  hours — so a churned client's old campaigns can re-attach and start counting
+  again, against a target that a connector uses to pause campaigns.
+
+**And equal totals are not what §2 asks for.** The sentence is that every
+connected system should be able to *identify the same clients*; §17 then says
+in as many words that a client not existing in a tool is fine **when it is an
+intentional exception with a clear reason**. So the target is not 52 rows
+everywhere — it is that every difference is named, which the Client counts panel
+now does.
+
+**Non-client rows stay exactly as they are.** `Demo Portal` backs the live demo
+client portal and is never counted as a client and never written to — it sits in
+`NOT_CLIENTS` in `lib/clients/roster.ts` with that reason, alongside
+`New client portal`, `Test FUB`, `ZZ Portal Delete Test`, `Unassigned` and
+`Unknown`. The counts panel prints the reason beside each.
+
+**The one thing that genuinely should be fixed** is the `Camelot Realty`
+duplicate (§6.1). That is the only row in any tool that is neither a client, a
+known non-client, nor a deliberate second market.
+
+### 6.3 Needs a decision from the client, then minutes of work
 
 | Decision | What is already built | What to do on a yes |
 |---|---|---|
@@ -1310,7 +1348,7 @@ prevents the next one but cannot undo this one.
 In both cases the second portal's introductions are invisible to targets and
 billing.
 
-### 6.3 Needs the Database developer
+### 6.4 Needs the Database developer
 
 * **The MLS relation.** Agreed design: a new table keyed on `orch_clients.id`,
   distinguishing `declared` from `derived`, with a 10% floor and a coverage
@@ -1326,7 +1364,7 @@ billing.
   matcher is reliable, but a campaign named unlike its client is silently
   unmatched.
 
-### 6.4 Needs data entry, not engineering — the single biggest gap
+### 6.5 Needs data entry, not engineering — the single biggest gap
 
 | Field | Recorded |
 |---|---|
@@ -1346,12 +1384,12 @@ finished; nothing is flowing through it.
 `/roster` → open a client → **Edit**. The dialog offers names already in use,
 so this is mostly clicking.
 
-### 6.5 Blocked on tools that do not exist
+### 6.6 Blocked on tools that do not exist
 
 Commission Tracker (§1, §2, §8, §18) and future CRM / CSM. The architecture is
 ready for them; §18's connection path is enforced in code.
 
-### 6.6 Deliberately not done
+### 6.7 Deliberately not done
 
 * **Add Client buttons in the standalone tools** (§13, §22). They stay because
   the tools stay live.
@@ -1430,8 +1468,9 @@ Re-run §7.1 and compare. Nothing here should change without somebody changing i
 
 On 26 Sep every host answered: OS, Master Inbox, Client Health, Analytics and
 Agent Search healthy; Onboarding returns 401 at its root, which is its own auth,
-not an outage. The only thing that moved overnight was the Database app being
-redeployed by someone else — §6.1.
+not an outage. Two things changed that day: somebody else redeployed the
+Database app overnight without the pushed commits, and it was then deployed
+properly and switched on — §6.1.
 
 ---
 
