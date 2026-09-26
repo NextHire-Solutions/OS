@@ -95,15 +95,16 @@ first question everybody asks, so here it is in full — measured 26 Sep:
 | Master Inbox | **57** | 51 | 2 | 4 | 1 |
 | Client Health | **50** | 50 | — | — | 2 |
 | Analytics | **53** | 48 | 2 | 3 | 4 |
-| Database app | **44** | 43 | 1 | — | 9 |
+| Database app | **43** | 43 | — | — | 9 |
 
 * **"Not a client"** — `Demo Portal`, `New client portal`, `Test FUB`,
   `Unknown`, `ZZ Portal Delete Test`. ⚠️ Demo Portal backs the live demo portal:
   **do not delete it.**
 * **"Second rows"** — one client, two markets. Properties & Estates (Boston +
   Florida) and SERHANT. PA (base + "15M+"). Legitimate, and the subject of the
-  open question in §6.3. **Except one**: the Database app's `Camelot Realty`
-  beside `Camelot Realty Group` is an accident — §6.1.
+  open question in §6.4. The one that was an accident — the Database app's
+  `Camelot Realty` beside `Camelot Realty Group` — was deleted on 26 September,
+  which is why that tool now reads 43 = 43 exactly.
 * **"Absent"** — every one is a churned, paused or still-onboarding client.
   **Not one active client is missing from any tool**; all 32 are in all four.
 
@@ -750,7 +751,7 @@ automatically…":
 | Create the Client Portal | ✅ minted immediately with its own token | `lib/portals/` |
 | Make available in Analytics | ✅ | connector leg |
 | **Create the Database record** | ✅ | `lib/clients/database-record.ts` |
-| Create the appropriate saved view | ✗ | lives in the Database app — see §6.4 |
+| Create the appropriate saved view | ✗ | lives in the Database app — see §6.5 |
 | Connect the client's leads | ◐ matched by name | Database app |
 | Connect their campaigns | ◐ matched by name, not linked by ID | `lib/tools/analytics/` |
 | Connect their Stripe subscription | ✗ | paused by the client |
@@ -874,7 +875,7 @@ replies, bounces, leads in review, leads exported ✅ all generated and fed back
 
 > The emptiness is the single biggest gap in the whole project, and it is data
 > entry, not engineering. The edit dialog offers names already in use, so
-> filling these in is mostly clicking. See §6.5 of this document.
+> filling these in is mostly clicking. See §6.6 of this document.
 
 ---
 
@@ -1119,7 +1120,7 @@ Now: `lib/reconcile/schedule.ts` + `scheduler.ts`, registered in
 `instrumentation.ts`, running daily. The gather-and-decide logic moved into
 `lib/reconcile/run.ts` so the route and the clock cannot drift apart. 20 tests.
 
-**It ships switched off, and needs one decision from the client** — see §6.3.
+**It ships switched off, and needs one decision from the client** — see §6.4.
 
 ---
 
@@ -1154,7 +1155,7 @@ Unproven only in the sense that no new tool has connected yet.
 | **Client Identity** — name, ID, status, plan, dates | ✅ |
 | **People & Relationships** — salesperson, AM, team, agents, DNC | ◐ Team/Agents/DNC resolve through the record; Salesperson and Account Manager have a home and almost no data |
 | **Billing** — Stripe, anchor, interval, next date | ✗ Stripe attached elsewhere |
-| **Campaigns** — ID, name, aliases, MLS, sender | ◐ resolve, but by name more than by ID |
+| **Campaigns** — ID, name, aliases, MLS, sender | ◐ the link is now RECORDED as an id (26 Sep, migration 0122) — 217 of 256 campaigns stamped; the matcher still *derives* it from the name, and 17 client-shaped campaigns resolve to nobody |
 | **Operational Data** — leads, replies, bounces, sequencers, exports | ✅ |
 | **Performance** — targets, introductions, analytics, health | ✅ |
 
@@ -1273,16 +1274,20 @@ without**, 65 entries covering 50 distinct clients. Fifty rather than 52 is
 correct — a client still onboarding is deliberately absent from the feed, so
 the Database never blocks a client who has not started.
 
-#### Still to do here: one duplicate row
+#### The duplicate row — deleted 26 September
 
-`orch_clients` holds **`Camelot Realty` and `Camelot Realty Group` as separate
-rows for one client** — created the same day, both `new`, both with zero leads,
-and only `Camelot Realty Group` linked to the master record. That is why the
-Database app reports 44 rows for 43 clients.
+`orch_clients` held `Camelot Realty` and `Camelot Realty Group` as separate rows
+for one client, created three minutes apart on 10 August, both pointing at the
+same Client Health row. Checked against all fourteen tables that reference
+`orch_clients`: the first had **zero** references anywhere, the second held
+5,579 bison leads, 10 introductions, 3 deliveries and 2,246 agent campaigns.
 
-Safe to delete `Camelot Realty`: no leads, nothing links to it. Deleting it
-makes the Database read 43 = 43. The `adada98` guard now prevents the next one
-but cannot undo this one.
+Deleted inside a transaction that re-asserted both facts — the name, and zero
+references — before removing anything, and rolled back otherwise. Both rows were
+backed up first to `~/camelot-duplicate-backup-20260926.json`.
+
+**The Database app now reads 43 rows = 43 clients**, with no second rows and no
+non-client rows. The `adada98` guard prevents the next one.
 
 ### 6.2 "Can we just add the missing clients so the numbers match?"
 
@@ -1320,11 +1325,52 @@ client portal and is never counted as a client and never written to — it sits 
 `New client portal`, `Test FUB`, `ZZ Portal Delete Test`, `Unassigned` and
 `Unknown`. The counts panel prints the reason beside each.
 
-**The one thing that genuinely should be fixed** is the `Camelot Realty`
-duplicate (§6.1). That is the only row in any tool that is neither a client, a
-known non-client, nor a deliberate second market.
+**The one row that was genuinely wrong** — the `Camelot Realty` duplicate — was
+deleted on 26 September (§6.1). Every remaining row in every tool is now either
+a client, a named non-client, or a deliberate second market.
 
-### 6.3 Needs a decision from the client, then minutes of work
+### 6.3 Three client names, and 7,036 leads attributed to nobody
+
+Recording campaign links as ids (migration 0122) made a problem visible that
+name-matching had been hiding. Of 256 campaigns, 217 now carry their client and
+39 do not. Most of those 39 are templates and internal campaigns — *Template
+Zillow Flex*, *Not Interested - All Clients*, the *OpsLabs Test* rows — and are
+correctly unattached.
+
+**But 17 are client-shaped, and four of them carry 7,036 leads that belong to a
+client and are credited to nobody:**
+
+| Campaign | Leads | The client it belongs to |
+|---|---|---|
+| `Douglas Elliman Los Angeles + Nicole + SOCAL` | 3,348 | Douglas Elliman **LA** |
+| `Indy Realty 4 + Nicole + MIBOR` | 1,931 | **LIV** Indy Realty |
+| `Douglas Elliman Los Angeles + Nicole + Beverly Hills` | 928 | Douglas Elliman **LA** |
+| `Douglas Elliman Los Angeles 2 + Nicole + Beverly Hills` | 829 | Douglas Elliman **LA** |
+
+Plus six `Momentum Realty …` campaigns against a client row named **Momentum
+Lux Realty** — no leads yet, but the same fault waiting to happen.
+
+Every one is a single spelling. Three fixes, and they are not equally safe:
+
+1. **`Douglas Elliman LA` → `Douglas Elliman Los Angeles`.** The OS master
+   record already calls it Douglas Elliman Los Angeles, and so do the campaigns;
+   the Database row is the odd one out. Renaming it aligns all three and fixes
+   5,105 leads. **Safest of the three**, because it moves toward the master.
+2. **`Momentum Lux Realty` → `Momentum Realty`.** Same shape — the master says
+   Momentum Realty. Fixes six campaigns before they carry leads.
+3. **`Indy Realty 4` is a campaign-naming problem, not a client one.** The
+   client is correctly `LIV Indy Realty`; the campaign simply omits "LIV".
+   Renaming the client would break its other matches. This one needs either the
+   campaign renamed in EmailBison, or the link recorded by hand.
+
+Recording a link by hand is now safe and permanent: the matcher only overwrites
+a link when it positively identifies a *different* client, so a hand-set id
+survives every sync. That property exists specifically for this case.
+
+**None of these renames have been made** — they change client identity, which
+is a decision rather than a fix.
+
+### 6.4 Needs a decision from the client, then minutes of work
 
 | Decision | What is already built | What to do on a yes |
 |---|---|---|
@@ -1348,7 +1394,7 @@ known non-client, nor a deliberate second market.
 In both cases the second portal's introductions are invisible to targets and
 billing.
 
-### 6.4 Needs the Database developer
+### 6.5 Needs the Database developer
 
 * **The MLS relation.** Agreed design: a new table keyed on `orch_clients.id`,
   distinguishing `declared` from `derived`, with a 10% floor and a coverage
@@ -1364,7 +1410,7 @@ billing.
   matcher is reliable, but a campaign named unlike its client is silently
   unmatched.
 
-### 6.5 Needs data entry, not engineering — the single biggest gap
+### 6.6 Needs data entry, not engineering — the single biggest gap
 
 | Field | Recorded |
 |---|---|
@@ -1384,12 +1430,12 @@ finished; nothing is flowing through it.
 `/roster` → open a client → **Edit**. The dialog offers names already in use,
 so this is mostly clicking.
 
-### 6.6 Blocked on tools that do not exist
+### 6.7 Blocked on tools that do not exist
 
 Commission Tracker (§1, §2, §8, §18) and future CRM / CSM. The architecture is
 ready for them; §18's connection path is enforced in code.
 
-### 6.7 Deliberately not done
+### 6.8 Deliberately not done
 
 * **Add Client buttons in the standalone tools** (§13, §22). They stay because
   the tools stay live.
