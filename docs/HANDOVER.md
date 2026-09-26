@@ -1155,7 +1155,7 @@ Unproven only in the sense that no new tool has connected yet.
 | **Client Identity** — name, ID, status, plan, dates | ✅ |
 | **People & Relationships** — salesperson, AM, team, agents, DNC | ◐ Team/Agents/DNC resolve through the record; Salesperson and Account Manager have a home and almost no data |
 | **Billing** — Stripe, anchor, interval, next date | ✗ Stripe attached elsewhere |
-| **Campaigns** — ID, name, aliases, MLS, sender | ◐ the link is now RECORDED as an id (26 Sep, migration 0122) — 217 of 256 campaigns stamped; the matcher still *derives* it from the name, and 17 client-shaped campaigns resolve to nobody |
+| **Campaigns** — ID, name, aliases, MLS, sender | ◐ the link is now RECORDED as an id (26 Sep, migration 0122) — 227 of 256 campaigns carry their client and no client-shaped campaign has unattributed leads; the matcher still *derives* the link from the name, which is the remaining half |
 | **Operational Data** — leads, replies, bounces, sequencers, exports | ✅ |
 | **Performance** — targets, introductions, analytics, health | ✅ |
 
@@ -1329,46 +1329,50 @@ client portal and is never counted as a client and never written to — it sits 
 deleted on 26 September (§6.1). Every remaining row in every tool is now either
 a client, a named non-client, or a deliberate second market.
 
-### 6.3 Three client names, and 7,036 leads attributed to nobody
+### 6.3 Three client names — fixed, 7,036 leads recovered
 
-Recording campaign links as ids (migration 0122) made a problem visible that
-name-matching had been hiding. Of 256 campaigns, 217 now carry their client and
-39 do not. Most of those 39 are templates and internal campaigns — *Template
-Zillow Flex*, *Not Interested - All Clients*, the *OpsLabs Test* rows — and are
-correctly unattached.
+Recording campaign links as ids (migration 0122) made visible a problem that
+name-matching had been hiding: four campaigns carrying **7,036 leads** were
+credited to no client, purely because the same client was typed differently in
+different tools. Confirmed as the same clients, and fixed on 26 September.
 
-**But 17 are client-shaped, and four of them carry 7,036 leads that belong to a
-client and are credited to nobody:**
-
-| Campaign | Leads | The client it belongs to |
+| Was | Now | Effect |
 |---|---|---|
-| `Douglas Elliman Los Angeles + Nicole + SOCAL` | 3,348 | Douglas Elliman **LA** |
-| `Indy Realty 4 + Nicole + MIBOR` | 1,931 | **LIV** Indy Realty |
-| `Douglas Elliman Los Angeles + Nicole + Beverly Hills` | 928 | Douglas Elliman **LA** |
-| `Douglas Elliman Los Angeles 2 + Nicole + Beverly Hills` | 829 | Douglas Elliman **LA** |
+| Database row `Douglas Elliman LA` | `Douglas Elliman Los Angeles` | 3 campaigns, **5,105 leads** attributed |
+| Database row `Momentum Lux Realty` | `Momentum Realty` | 6 campaigns attributed before they carried leads |
+| Campaign `Indy Realty 4 + Nicole + MIBOR` | linked by hand to `LIV Indy Realty` | **1,931 leads** attributed |
 
-Plus six `Momentum Realty …` campaigns against a client row named **Momentum
-Lux Realty** — no leads yet, but the same fault waiting to happen.
+The two renames move the Database **toward** the master record, which already
+held both old spellings as aliases and links both rows by id — so nothing could
+be orphaned, and `client_name` is only ever selected in that codebase, never
+joined on. Both were done in a transaction that refused to run if the new name
+already existed or if more than one row matched.
 
-Every one is a single spelling. Three fixes, and they are not equally safe:
+The third is different in kind and was NOT fixed by renaming: the client is
+correctly `LIV Indy Realty`; the *campaign* omits "LIV". Renaming the client
+would have broken its other eight campaigns. Its link is recorded by hand
+instead, which is durable because the matcher only overwrites a link when it
+positively identifies a different client — a name it cannot parse is not
+evidence the existing link is wrong. The sync now reports it as
+"1 kept despite no name match".
 
-1. **`Douglas Elliman LA` → `Douglas Elliman Los Angeles`.** The OS master
-   record already calls it Douglas Elliman Los Angeles, and so do the campaigns;
-   the Database row is the odd one out. Renaming it aligns all three and fixes
-   5,105 leads. **Safest of the three**, because it moves toward the master.
-2. **`Momentum Lux Realty` → `Momentum Realty`.** Same shape — the master says
-   Momentum Realty. Fixes six campaigns before they carry leads.
-3. **`Indy Realty 4` is a campaign-naming problem, not a client one.** The
-   client is correctly `LIV Indy Realty`; the campaign simply omits "LIV".
-   Renaming the client would break its other matches. This one needs either the
-   campaign renamed in EmailBison, or the link recorded by hand.
+**Result: 227 of 256 campaigns carry their client, and no client-shaped
+campaign has unattributed leads.** The 29 still unlinked are templates and
+internal campaigns (`Template Zillow Flex`, `Not Interested - All Clients`, the
+`OpsLabs Test` rows) plus two test clients and a campaign for a client that was
+deleted — all correctly unattached, all with zero leads.
 
-Recording a link by hand is now safe and permanent: the matcher only overwrites
-a link when it positively identifies a *different* client, so a hand-set id
-survives every sync. That property exists specifically for this case.
+One knock-on, caught by the drift check and fixed: Client Health held
+`Douglas Elliman Los Angeles` with only its own name as a campaign alias, so it
+did not recognise "Douglas Elliman LA". The missing spelling was added,
+union-only. All six checks are green again.
 
-**None of these renames have been made** — they change client identity, which
-is a decision rather than a fix.
+#### The one campaign-naming edge case worth knowing
+
+`Kelly + Co + Nicole + BRIGHT` resolves to nobody because the client is
+literally called **Kelly + Co** and the campaign convention splits on " + " —
+so the prefix reads as "Kelly". It carries no leads today, so nothing is lost,
+but a client whose name contains the separator will always defeat the parser.
 
 ### 6.4 Needs a decision from the client, then minutes of work
 
