@@ -4,6 +4,7 @@ import { fetchRosters, type Roster } from "@/lib/reconcile/rosters";
 import { canonicaliseRosters } from "@/lib/reconcile/canonicalise";
 import {
   gatherAliasDriftReport,
+  gatherCountReport,
   gatherCoverageReport,
   gatherDuplicateReport,
   gatherLinkReport,
@@ -37,7 +38,7 @@ export async function GET() {
    * The status read fails alone: it is caught so a database being slow costs
    * that panel, never the membership comparison people already rely on.
    */
-  const [rosters, statusReport, coverageReport, linkReport, duplicateReport, aliasReport] =
+  const [rosters, statusReport, coverageReport, linkReport, duplicateReport, aliasReport, countReport] =
     await Promise.all([
     fetchRosters(),
     gatherStatusReport().catch((error) => ({
@@ -71,6 +72,12 @@ export async function GET() {
       sound: 0,
       unchecked: [],
       error: error instanceof Error ? error.message : "alias check failed",
+    })),
+    gatherCountReport().catch((error) => ({
+      tools: [],
+      unreadable: [],
+      masterTotal: 0,
+      error: error instanceof Error ? error.message : "count reconciliation failed",
     })),
   ]);
   /*
@@ -173,6 +180,12 @@ export async function GET() {
     duplicates: duplicateReport,
     // Spellings a tool does not know, so campaigns named that way count for nobody.
     aliases: aliasReport,
+    /*
+     * Why each tool's total is not the master total (§2). The other checks
+     * answer "is anything wrong"; this one answers the question people
+     * actually ask when they open four tools and see four numbers.
+     */
+    counts: countReport,
     rosters: rosters.map((r: Roster) => ({
       tool: r.tool,
       label: r.label,

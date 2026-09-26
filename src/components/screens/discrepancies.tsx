@@ -148,6 +148,7 @@ interface Payload {
   statuses?: StatusReport;
   /** Which tools hold each client, and whether an absence is intentional. */
   coverage?: CoverageReport;
+  counts?: CountReport;
   /** Two master rows for one real client, or two claiming one tool row (§16). */
   duplicates?: DuplicateReport;
   /** Spellings a tool does not know, so campaigns named that way count for nobody. */
@@ -237,6 +238,11 @@ export function DiscrepanciesScreen() {
           actionable in a way a membership difference usually is not: it means
           somebody is still being served, still being billed, or has had their
           portal shut while we think they are live. */}
+      {/* The count question comes first: it is what somebody sees when they
+          open four tools, and every other panel here assumes they already
+          believe the lists describe the same 52 clients. */}
+      <Counts report={data.counts} />
+
       <StatusConflicts report={data.statuses} />
 
       {/* Then coverage: which tools hold each client, and whether an absence
@@ -937,6 +943,159 @@ function AliasDrift({ report }: { report?: AliasReport }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+
+/* ===========================================================================
+   CLIENT COUNTS
+   ---------------------------------------------------------------------------
+   §2: "We should never have 40 clients in one system, 38 in another, 42 in
+   another, 39 in another." Open the tools today and you see 57, 50, 53 and 44
+   against a master list of 52, which looks exactly like that failure.
+
+   It is not — but the burden is on this screen to prove it, row by row, rather
+   than ask anyone to take it on trust.
+   =========================================================================== */
+
+interface SecondRow {
+  name: string;
+  of: string;
+}
+
+interface AbsentClient {
+  name: string;
+  status: string;
+  reason: string;
+}
+
+interface CountRow {
+  tool: string;
+  label: string;
+  masterTotal: number;
+  toolRows: number;
+  present: number;
+  absent: AbsentClient[];
+  gaps: number;
+  extras: string[];
+  secondRows: SecondRow[];
+  balances: boolean;
+}
+
+interface CountReport {
+  tools: CountRow[];
+  unreadable: string[];
+  masterTotal: number;
+  error?: string;
+}
+
+function Counts({ report }: { report?: CountReport }) {
+  if (!report) return null;
+  if (report.error) {
+    return (
+      <div className="anno" style={{ marginTop: 18 }}>
+        <b>Counts could not be reconciled.</b> {report.error}
+      </div>
+    );
+  }
+
+  const unexplained = report.tools.reduce((n, t) => n + t.gaps, 0);
+  const unbalanced = report.tools.filter((t) => !t.balances);
+  const clean = unexplained === 0 && unbalanced.length === 0;
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="tbl-head" style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <div>
+          <div className="tbl-title">Client counts</div>
+          <div className="tbl-sub">
+            {report.masterTotal} in the master list · every difference named
+            {unexplained > 0 ? ` · ${unexplained} unexplained` : ""}
+          </div>
+        </div>
+        <span className={`badge ${clean ? "s-done" : "s-warn"}`}>
+          <span className="dot" />
+          {clean ? "All accounted for" : "Check"}
+        </span>
+      </div>
+
+      <div className="anno">
+        Each tool holds a different number of rows, and that is not by itself a fault:
+        a tool legitimately drops a client who has left, keeps a demo record, or holds a
+        second row for a client selling in two markets. A tool is right when its rows add
+        up and nothing is absent without a reason.
+      </div>
+
+      {unbalanced.length > 0 && (
+        <div className="anno">
+          <b>{unbalanced.map((t) => t.label).join(", ")} does not add up.</b> Rows exist
+          that are neither a client, a second row, nor an extra — a bug in this check or a
+          change in that tool. Worth looking at directly.
+        </div>
+      )}
+
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th className="tnum">Rows</th>
+              <th className="tnum">Clients</th>
+              <th className="tnum">Second rows</th>
+              <th className="tnum">Not a client</th>
+              <th className="tnum">Absent</th>
+              <th className="tnum">Unexplained</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.tools.map((t) => (
+              <tr key={t.tool}>
+                <td>{t.label}</td>
+                <td className="tnum">{t.toolRows}</td>
+                <td className="tnum">{t.present}</td>
+                <td className="tnum">{t.secondRows.length || "—"}</td>
+                <td className="tnum">{t.extras.length || "—"}</td>
+                <td className="tnum">{t.absent.length || "—"}</td>
+                <td className="tnum">{t.gaps || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {report.tools.map((t) => (
+        <details key={t.tool} className="det">
+          <summary>
+            {t.label} — {t.toolRows} rows, {t.present} of {t.masterTotal} clients
+          </summary>
+          {t.secondRows.length > 0 && (
+            <div className="anno">
+              <b>A second row for one client.</b> Expected when a client sells in more than
+              one market; an accident otherwise.{" "}
+              {t.secondRows.map((d) => `"${d.name}" alongside "${d.of}"`).join("; ")}.
+            </div>
+          )}
+          {t.extras.length > 0 && (
+            <div className="anno">
+              <b>Rows that are not a client:</b> {t.extras.join(", ")}.
+            </div>
+          )}
+          {t.absent.length > 0 && (
+            <ul className="plain">
+              {t.absent.map((a) => (
+                <li key={a.name}>
+                  <b>{a.name}</b> <span className="muted">({a.status})</span> —{" "}
+                  {a.reason || <b>no reason recorded</b>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {t.secondRows.length === 0 && t.extras.length === 0 && t.absent.length === 0 && (
+            <div className="anno">Holds every client, and nothing else.</div>
+          )}
+        </details>
+      ))}
     </div>
   );
 }

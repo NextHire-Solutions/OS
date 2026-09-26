@@ -21,6 +21,7 @@ import {
   type CoverageTool,
   type ExceptionIndex,
 } from "./coverage";
+import { reconcileCounts, type CountReconciliation, type ToolRow } from "./counts";
 
 /*
  * Gathers each client's status from every source that holds one, so
@@ -474,4 +475,129 @@ export async function gatherAliasDriftReport(): Promise<AliasDriftReport> {
       client_health: health ? { rows: health } : { rows: new Map(), unreadable: true },
     },
   );
+}
+
+/* ===========================================================================
+   CLIENT COUNTS — why each tool's total is not the master total
+   ---------------------------------------------------------------------------
+   Deliberately does NOT reuse `readSource`. That helper drops placeholder rows
+   and collapses rows that share a normalised name, which is correct when the
+   question is "does this client exist here" — and fatal when the question is
+   "why does this tool say 44". The rows it discards are precisely the ones a
+   person needs named: Demo Portal, a test record, a second row for one client.
+
+   So this reads raw, keeps everything, and resolves each row to a client by
+   the recorded LINK first and the client's own spellings second — the same
+   order the rest of this file uses.
+   =========================================================================== */
+
+async function rawRows(
+  fn: () => Promise<{ id: unknown; name: unknown }[]>,
+): Promise<{ rows: { id: string; name: string }[]; unreadable: boolean }> {
+  try {
+    const rows = (await fn())
+      .map((r) => ({
+        id: typeof r.id === "string" ? r.id : String(r.id ?? ""),
+        name: typeof r.name === "string" ? r.name.trim() : "",
+      }))
+      .filter((r) => r.name);
+    return { rows, unreadable: false };
+  } catch {
+    return { rows: [], unreadable: true };
+  }
+}
+
+export interface CountReport {
+  tools: CountReconciliation[];
+  unreadable: CoverageTool[];
+  masterTotal: number;
+}
+
+export async function gatherCountReport(): Promise<CountReport> {
+  const [osRows, inbox, health, analytics, onboarding, exceptions] = await Promise.all([
+    readOsClients(),
+    rawRows(async () => {
+      const { data, error } = await getMasterInboxSupabase().from("clients").select("id, name").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { id: unknown; name: unknown }[];
+    }),
+    rawRows(async () => {
+      const { data, error } = await getClientHealthSupabase().from("clients").select("id, name").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { id: unknown; name: unknown }[];
+    }),
+    rawRows(async () => {
+      const { data, error } = await getAnalyticsSupabase().from("clients").select("id, name").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as { id: unknown; name: unknown }[];
+    }),
+    rawRows(async () => {
+      const { data, error } = await getOnboardingDb().from("orch_clients").select("id, client_name").limit(1000);
+      if (error) throw new Error(error.message);
+      return (data ?? []).map((r) => {
+        const row = r as { id: unknown; client_name: unknown };
+        return { id: row.id, name: row.client_name };
+      });
+    }),
+    readExceptions(),
+  ]);
+
+  /** normalised spelling -> master client id, covering the name and every alias. */
+  const byKey = new Map<string, string>();
+  for (const c of osRows.rows) for (const k of c.keys) if (!byKey.has(k)) byKey.set(k, c.id);
+
+  // Only these four carry a recorded link column; `CoverageTool` also names
+  // `database`, which does not. `LinkTool` already says exactly this, so it is
+  // reused rather than respelled here.
+  const linkIndex = (tool: LinkTool): Map<string, string> => {
+    const m = new Map<string, string>();
+    for (const c of osRows.rows) {
+      const id = c.links[tool];
+      if (id) m.set(String(id), c.id);
+    }
+    return m;
+  };
+
+  const toRows = (tool: LinkTool, read: { rows: { id: string; name: string }[] }): ToolRow[] => {
+    const links = linkIndex(tool);
+    return read.rows.map((r) => ({
+      name: r.name,
+      clientId: links.get(r.id) ?? byKey.get(norm(r.name)) ?? null,
+    }));
+  };
+
+  const unreadable: CoverageTool[] = [];
+  if (inbox.unreadable) unreadable.push("master_inbox");
+  if (health.unreadable) unreadable.push("client_health");
+  if (analytics.unreadable) unreadable.push("analytics");
+  if (onboarding.unreadable) unreadable.push("onboarding");
+
+  const rowsByTool: Partial<Record<CoverageTool, ToolRow[]>> = {};
+  if (!inbox.unreadable) rowsByTool.master_inbox = toRows("master_inbox", inbox);
+  if (!health.unreadable) rowsByTool.client_health = toRows("client_health", health);
+  if (!analytics.unreadable) rowsByTool.analytics = toRows("analytics", analytics);
+  if (!onboarding.unreadable) rowsByTool.onboarding = toRows("onboarding", onboarding);
+
+  /*
+   * A reason for an absence, from the same two places the coverage screen uses:
+   * a person's written exception first, then the standing rule that a client
+   * who has left is not expected in a delivery tool.
+   */
+  const master = osRows.rows.map((c) => ({ id: c.id, name: c.name, status: c.status }));
+  const statusOf = new Map(master.map((c) => [c.id, c.status]));
+  const absenceReason = (clientId: string, tool: CoverageTool): string | null => {
+    const written = exceptions.get(clientId)?.get(tool);
+    if (written) return written;
+    const status = statusOf.get(clientId) ?? "";
+    if (status === "churned") return "Churned — no longer carried by this tool.";
+    if (status === "paused") return "Paused — kept out of this tool while stopped.";
+    if (status === "onboarding") return "Still onboarding — not provisioned here yet.";
+    return null;
+  };
+
+  return {
+    tools: reconcileCounts(master, rowsByTool, absenceReason),
+    unreadable,
+    masterTotal: master.length,
+  };
 }
