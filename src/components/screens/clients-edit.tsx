@@ -59,6 +59,44 @@ export interface EditableClient {
   };
 }
 
+/*
+ * Every time zone the browser knows, not a hand-picked ten.
+ *
+ * The field is a datalist, so the browser narrows it as you type — but it can
+ * only narrow what it was given. With ten hard-coded zones, typing
+ * "America/Toronto" or "Asia/Dubai" showed nothing and read as a broken
+ * filter, while SAVING those same values worked fine: the server validates
+ * against the real IANA list through Intl. The suggestions now come from that
+ * same source, so what is offered and what is accepted are one list.
+ *
+ * `Intl.supportedValuesOf` is absent in older runtimes, hence the fallback.
+ *
+ * COMMON_ZONES is pinned to the top and is not arbitrary: it is exactly the
+ * seven zones Client Health's own dropdown offers, plus UTC. Client Health
+ * stores this value and renders it with a short label (ET, CT, MT…), and its
+ * timezone FILTER is built from the same seven — so a zone outside them saves
+ * correctly here but has no short label and no filter bucket there. All 50
+ * Client Health rows currently use one of the seven, so that is theory rather
+ * than a live problem; pinning them keeps it that way without hiding the rest.
+ */
+const COMMON_ZONES = [
+  "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix",
+  "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu", "UTC",
+];
+
+const TIME_ZONES: string[] = (() => {
+  let all: string[] = [];
+  try {
+    const supported = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })
+      .supportedValuesOf;
+    if (typeof supported === "function") all = supported("timeZone");
+  } catch {
+    all = [];
+  }
+  if (!all.length) return [...COMMON_ZONES, "Europe/London", "Asia/Kolkata"];
+  return [...COMMON_ZONES, ...all.filter((z) => !COMMON_ZONES.includes(z))];
+})();
+
 export function EditClient({ client, onSaved }: { client: EditableClient; onSaved: () => void }) {
   const trigger = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -317,11 +355,7 @@ function EditBody({
             onChange={(e) => setTimezone(e.target.value)}
           />
           <datalist id="tz-suggestions">
-            {[
-              "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix",
-              "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu",
-              "Europe/London", "Asia/Kolkata", "UTC",
-            ].map((z) => <option key={z} value={z} />)}
+            {TIME_ZONES.map((z) => <option key={z} value={z} />)}
           </datalist>
           <span style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 }}>
             Drives scheduling and every “this week” figure. A wrong zone never errors — it just

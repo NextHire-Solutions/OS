@@ -1,5 +1,7 @@
 "use client";
 
+import { ClientDetail } from "./client-detail";
+
 import { useState } from "react";
 
 import type { ClientsOverview, ClientRow } from "@/lib/clients/overview";
@@ -311,11 +313,28 @@ function IntroChip({ contact }: { contact: ClientRow["os"]["contact"] }) {
 }
 
 function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; onChanged: () => void }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const { client, health, inbox, analytics, os, portalUrl } = row;
   return (
     <tr>
+      {detailOpen ? <ClientDetail row={row} onClose={() => setDetailOpen(false)} /> : null}
       <td>
-        <div className="cname">{client.name}</div>
+        {/*
+          The name opens the full record.
+          --------------------------------------------------------------
+          §23 asks that opening ONE system tells you everything about a
+          client. The row can only ever show ten columns; the record has
+          forty-odd fields across §6's four categories. Rather than widen
+          the table until it is unreadable, the name opens all of it.
+        */}
+        <button
+          type="button"
+          className="cname cname-open"
+          onClick={() => setDetailOpen(true)}
+          title="Open the full client record"
+        >
+          {client.name}
+        </button>
         {/*
           Who this client introduces agents to.
           --------------------------------------------------------------
