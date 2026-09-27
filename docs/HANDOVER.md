@@ -1641,6 +1641,49 @@ properly and switched on — §6.1.
 
 ---
 
+### 7.6 Platform audit — 27 September
+
+A full pass over the OS looking for gaps, dead ends and the class of bug a user
+actually hits. Re-run these when something feels wrong.
+
+| Check | Result |
+|---|---|
+| Nav destinations resolving to a real screen | **33 of 33** |
+| Screens that exist but nothing imports | **none** |
+| `fetch("/api/…")` calls resolving to a real route | **74 of 74** |
+| §6 fields actually saved by the Edit dialog | **all six** |
+| Dropdowns driven by a constant rather than a literal | all but one — see below |
+| Env names referenced in code but unset in production | 8, **all deliberate or defaulted** |
+| API routes | correct auth behaviour throughout |
+| Typecheck · tests | clean · **1154 passing** |
+
+**The one real bug, and its class.** The time zone field offered ten hard-coded
+zones through a `<datalist>`, so typing "America/Toronto" showed nothing and
+read as a broken filter — while SAVING that value worked, because the server
+validates against the full IANA list. **UI offering less than the backend
+accepts** is the class; it is worth grepping for `<datalist>` and `<option
+value="` whenever a field "does not work". Every other dropdown in the client
+dialogs maps over its exported constant (`PLANS`, `BILLING_INTERVALS`,
+`CLIENT_STATUSES`) and therefore cannot drift.
+
+**Two findings that are not bugs but are worth knowing:**
+
+* **Two different `CanonicalClient` types** exist — `lib/clients/roster.ts` and
+  `lib/clients/canonical.ts` — with different shapes. `overview.ts`, `links.ts`
+  and `tool-index.ts` use the roster one. This is the duplicate-definition
+  pattern that has caused real bugs here; worth collapsing.
+* **`browserEnv` in `lib/tools/master-inbox/env.ts` is exported and consumed
+  nowhere.** Its two non-null assertions are on variables that are unset in
+  production, so it would throw if anything ever imported it. Dead today.
+
+**Two lists that legitimately disagree.** The OS time zone field now offers
+every IANA zone; Client Health's offers seven US zones with short labels (ET,
+CT, MT…) because its timezone FILTER is bucketed by them. All 50 Client Health
+rows use one of the seven, so the OS pins those seven to the top rather than
+widening Client Health.
+
+---
+
 ## 8. Traps that have already cost time
 
 1. **`TOKEN_ROUTES` matches on the `x-admin-token` header, not the path.** A
