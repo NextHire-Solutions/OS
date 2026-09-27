@@ -54,6 +54,14 @@ export interface ClientRow {
       market: string | null;
       mls: string | null;
       area: string | null;
+      /*
+       * Stripe (migration 0016). §23 asks that opening ONE system tells you a
+       * client's billing information; the interval and next date came from
+       * Client Health, and this is the half that says the money is actually
+       * attached to this client rather than guessed by name.
+       */
+      stripeCustomerId: string | null;
+      stripeSubscriptionId: string | null;
     };
     /** Onboarding is read from the stored link, not by name-matching again. */
     inOnboarding: boolean;
@@ -195,6 +203,7 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
         record: os?.record ?? {
           accountManager: null, salesperson: null, sender: null,
           market: null, mls: null, area: null,
+          stripeCustomerId: null, stripeSubscriptionId: null,
         },
         inOnboarding: Boolean(os?.links.onboarding),
         contact:

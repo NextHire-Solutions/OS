@@ -357,6 +357,24 @@ function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; 
                 {health.billingInterval ? " · " : ""}no anchor
               </span>
             )}
+            {/*
+              §23: "open one system and know ... their billing information".
+              The interval and date say WHEN; this says the money is actually
+              attached to this client rather than matched by name. A status
+              change pauses or resumes exactly this subscription.
+            */}
+            {os.record.stripeSubscriptionId ? (
+              <span
+                className="mut"
+                title={`Stripe subscription ${os.record.stripeSubscriptionId}`}
+              >
+                {" · "}Stripe linked
+              </span>
+            ) : (
+              <span className="mut" title="No Stripe subscription recorded — a status change will not touch billing">
+                {" · "}no Stripe
+              </span>
+            )}
           </div>
         ) : null}
       </td>
