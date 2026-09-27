@@ -147,9 +147,10 @@ of the design decisions you will find odd otherwise.
 
 ### Where the project stands in one line
 
-Scored against §22, the client's own Definition of Done: **18 of 25
-requirements met**, 5 partly met, 2 not met. Neither unmet requirement is
-blocked on engineering — see §6 of this document.
+Scored against §22, the client's own Definition of Done: **19 of 25
+requirements met**, 5 partly met, 1 not met — and the one unmet requirement is
+deliberate, not outstanding: the standalone tools keep their own Add Client
+buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
@@ -753,8 +754,8 @@ automatically…":
 | **Create the Database record** | ✅ | `lib/clients/database-record.ts` |
 | Create the appropriate saved view | ✗ | lives in the Database app — see §6.6 |
 | Connect the client's leads | ◐ matched by name | Database app |
-| Connect their campaigns | ◐ matched by name, not linked by ID | `lib/tools/analytics/` |
-| Connect their Stripe subscription | ✗ | paused by the client |
+| Connect their campaigns | ◐ | the Database app now records the link as an id (227 of 256); Analytics still matches by name |
+| Connect their Stripe subscription | ✅ | `os_clients.stripe_subscription_id` — 30 of 52 mapped, 27 Sep |
 | Commission Tracker record | ✗ | tool does not exist |
 
 `database-record.ts` **reads before it writes** and links to an existing row
@@ -864,7 +865,7 @@ the document exists to solve.
 
 **Billing** — first billing date, anchor, interval, next billing date all owned
 by Client Health ✅ (14- and 28-day both supported, plus monthly and custom).
-**Stripe Customer ID and Subscription ID ✗ still on the onboarding table.**
+**Stripe Customer ID and Subscription ID ✅ now on the master record** (migration 0016) — 30 of 52 mapped. The onboarding table's seven Stripe columns were empty on all 43 rows and always had been.
 
 **Campaign** — name ✅, aliases ✅ (owned by Client Health and treated as
 identity), status ✅ live from the platforms, ID ◐ matched by name,
@@ -938,7 +939,7 @@ defined for every connected system"* — is answered system by system in
 | Analytics | ✅ a trigger derives its active flag from status; **campaign history is never deleted**, which is what makes reactivation possible |
 | Master Inbox | ✅ status drives whether the portal is open, and every client list shows 🟢 🟡 🔴 from the same feed |
 | **Campaigns** | ✅ **decided and built — pause, never delete** |
-| **Billing** | ✗ undecided, deliberately left manual |
+| **Billing** | ✅ **decided and live** — paused/churned pauses the subscription, active/onboarding resumes it, nothing is ever cancelled |
 | **Database / scraper** | ◐ now defined for lead *building*; scraping and enrichment still undefined |
 
 **Campaigns** was the costliest open question and is now settled: a client going
@@ -1013,15 +1014,20 @@ covering all 52 clients** — and shows on the client record. Date added ✅.
 First billing date, anchor, interval and next billing date ✅ — one owner
 (Client Health), documented, not duplicated; 14- and 28-day both supported.
 
-**Stripe → master client record: ✗ not connected.** Stripe still hangs off the
-onboarding tool's own table, and only for clients who came through Typeform
-intake. The chain the section asks for — Client → Billing → Subscription →
-Billing Dates — is not yet one chain. This is the main remaining gap in Layer
-Four and the one §22 billing requirement that fails.
+**Stripe → master client record: ✅ connected, 27 September.** `os_clients`
+now carries `stripe_customer_id` and `stripe_subscription_id` (migration 0016),
+mapped for 30 of 52 clients from the client's own subscription sheet. The chain
+§12 asks for — Client → Billing → Subscription → Billing Dates — is now one
+chain.
 
-Billing's *reaction* to a status change is deliberately not automated: a wrong
-churn flag that cancels a subscription cannot be undone by flipping the flag
-back.
+The subscription, not just the customer, because a Stripe customer is not a
+client: "Discover Team" is one customer paying for both Discover Flag and
+Discover Phx, and only the subscription says which.
+
+Billing's reaction to a status change **is** now automated, and safely: it
+**pauses**, never cancels. Pausing is reversible in exactly the way the rest of
+the system is, which is what made it safe to automate at all — a wrong churn
+flag pauses collection and flipping the flag back resumes it.
 
 ---
 
@@ -1057,9 +1063,9 @@ synchronization ✅.
 | 7 | Automatic sync when client info changes | ◐ status yes, other fields not yet |
 | 8 | Automatic status synchronization | ✅ verified |
 | 9 | Consistent status colours and visuals | ✅ in the OS |
-| 10 | Centralized billing information | ◐ one owner, Stripe unlinked |
+| 10 | Centralized billing information | ✅ one owner, and Stripe now linked to the master record |
 | 11 | Centralized client/team/agent/DNC | ✅ Master Inbox owns it |
-| 12 | Centralized campaign relationships | ◐ matched, not linked by ID |
+| 12 | Centralized campaign relationships | ◐ recorded as an id in the Database app; Analytics still matches by name |
 | 13 | Tool-specific views | ✅ |
 | 14 | Master vs tool-specific data distinction | ✅ the dictionary draws it |
 | 15 | A way to detect synchronization errors | ✅ Consistency screen + daily check |
@@ -1148,13 +1154,13 @@ Unproven only in the sense that no new tool has connected yet.
 
 ---
 
-### §19 The Core Architecture — 5 of 6 bands
+### §19 The Core Architecture — 4 of 6 bands complete, 2 partly
 
 | Band | State |
 |---|---|
 | **Client Identity** — name, ID, status, plan, dates | ✅ |
 | **People & Relationships** — salesperson, AM, team, agents, DNC | ◐ Team/Agents/DNC resolve through the record; Salesperson and Account Manager have a home and almost no data |
-| **Billing** — Stripe, anchor, interval, next date | ✗ Stripe attached elsewhere |
+| **Billing** — Stripe, anchor, interval, next date | ✅ Stripe on the master record; a status change pauses or resumes collection |
 | **Campaigns** — ID, name, aliases, MLS, sender | ◐ the link is now RECORDED as an id (26 Sep, migration 0122) — 227 of 256 campaigns carry their client and no client-shaped campaign has unattributed leads; the matcher still *derives* the link from the name, which is the remaining half |
 | **Operational Data** — leads, replies, bounces, sequencers, exports | ✅ |
 | **Performance** — targets, introductions, analytics, health | ✅ |
@@ -1169,48 +1175,55 @@ interfaces into the same client ecosystem.
 
 ---
 
-### §21 The Ideal Workflow — 7 of 10 steps
+### §21 The Ideal Workflow — 7 of 10 complete, 3 partly
 
 | Step | State |
 |---|---|
 | 1 Create Client, once, from the master system | ✅ |
 | 2 Master Record Created — unique Client ID | ✅ 52 / 52 |
-| 3 Automatic Connections | ◐ Master Inbox, Portal, Client Health, Analytics and the Database record are automatic; **Stripe is not**, and campaigns are matched by name rather than connected |
+| 3 Automatic Connections | ◐ Master Inbox, Portal, Client Health, Analytics and the Database record are automatic, and Stripe is now linked to the record; the **Commission Tracker** does not exist, and campaigns are matched by name |
 | 4 Client Data Added | ✅ |
 | 5 Tools Populate Automatically | ✅ |
 | 6 Client Changes — the change is made once | ◐ status yes; other fields still tool-by-tool |
 | 7 Automatic Propagation | ◐ status propagates; other centralized fields do not yet |
-| 8 Client Pauses — every relevant system reflects it | ◐ portal, Client Health, Analytics and campaigns do; **billing does not** |
-| 9 Client Churns — every relevant system reflects it | ◐ the same four do; **billing does not** |
+| 8 Client Pauses — every relevant system reflects it | ✅ portal, Client Health, Analytics, campaigns **and billing** all do |
+| 9 Client Churns — every relevant system reflects it | ✅ the same five do, billing included |
 | 10 Reactivation — the same record is reactivated | ✅ and the portal URL still works |
 
 Steps 8 and 9 are now held back **only** by the billing decision.
 
 ---
 
-### §22 Definition of Done — 18 of 25 (72%)
+### §22 Definition of Done — 19 of 25 (76%)
 
 | Group | Met |
 |---|---|
 | Client Creation | 2 of 4 |
 | Client Data | 2 of 3 |
 | Client Status | 2 of 3 |
-| Billing | 2 of 3 |
+| **Billing** | **3 of 3** |
 | Tool Synchronization | **5 of 5** |
 | User Experience | 3 of 4 |
 | Future Tools | 2 of 3 |
 
-**The two unmet:**
+Billing completed on 27 September: *Stripe is connected to the correct client
+record* moved from unmet to met when migration 0016 put the customer and
+subscription on `os_clients` and 30 clients were mapped from the client's own
+subscription sheet.
 
-1. *We no longer need independent Add Client buttons across tools* — deliberate.
-2. *Stripe is connected to the correct client record* — paused by the client.
+**The one unmet requirement:**
 
-**The five partly met:** creating a client connects 5 of 7 systems; changes to
-centralized fields propagate (status does, the rest wait on data); status
-colours are consistent in the OS but standalone UIs were left alone on
-instruction; team members do not re-enter the same information (true for status,
-some fields still entered twice); the architecture scales without manual sync
-work (enforced in code, unproven until a new tool connects).
+1. *We no longer need independent Add Client buttons across tools* — and it is
+   deliberate. Those tools stay live and clients use them daily; removing the
+   buttons is a decision about switching tools off, not missing engineering.
+
+**The five partly met:** creating a client connects 5 of 7 systems (Stripe now
+among them; the Commission Tracker does not exist); changes to centralized
+fields propagate (status does, the rest wait on the fields being populated);
+status colours are consistent in the OS but the standalone UIs were left alone
+on instruction; team members do not re-enter the same information (true for
+status, some fields still entered twice); the architecture scales without manual
+sync work (enforced in code, unproven until a new tool connects).
 
 ---
 
@@ -1228,7 +1241,7 @@ Open one system (`/roster`) and know:
 | Their campaigns | ✅ |
 | Their relevant operational information | ✅ |
 | Their plan | ✅ shown on the record, read through from Client Health |
-| Their billing information | ◐ interval and next date shown; **Stripe unlinked** |
+| Their billing information | ✅ interval and next date on the record, and Stripe linked to it |
 | **Their account manager** | ✗ **nobody has one — 0 of 52** |
 
 CREATE ONCE → CONNECT EVERYWHERE ✅ (5 of 7 systems) ·
@@ -1667,13 +1680,12 @@ properly and switched on — §6.1.
 
 ## 9. Open questions for the client
 
-Four decisions, three of them unchanged from the original report and one now
-answered:
+Four decisions. **Two are now answered and built**; two remain:
 
 1. ~~What should pause and churn do to campaigns?~~ **Answered: pause, never
    delete.** Built.
-2. **What should pause and churn do to billing?** Costs money; not reversible by
-   flipping the flag back.
+2. ~~What should pause and churn do to billing?~~ **Answered and live**
+   (27 Sep): pause the subscription, never cancel, so it can be reversed.
 3. **Should a churned client's leads stop being scraped and enriched?** Lead
    building already stops; scraping and enrichment cost money per row.
 4. **One client with two portals — how should it count?** Affects Properties &
