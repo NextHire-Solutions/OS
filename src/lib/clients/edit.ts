@@ -6,6 +6,8 @@ import { CLIENT_STATUSES, type ClientStatus } from "./client-status";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { planInboxAliases, type InboxRow } from "./inbox-aliases";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 
 /*
@@ -14,8 +16,8 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
  * ---------------------------------------------------------------------------
  * WHAT CAN BE EDITED, AND WHERE IT LANDS
  *
- *   aliases         os_clients + Analytics + Client Health   the spellings the
- *                   matchers use; all three match campaigns by name
+ *   aliases         os_clients + Analytics + Client Health + Master Inbox
+ *                   the spellings the matchers use; ALL FOUR match by name
  *   plan            Client Health            billing tier
  *   weeklyTarget    Client Health            introductions promised per week
  *   startDate       Client Health            drives the movement table
@@ -436,12 +438,67 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   }
 
   /* ------------------------------------------------------- Master Inbox */
-  if ((edit.name !== undefined || edit.aliases !== undefined) && row.mi_client_id) {
+  /*
+   * ALIASES DO travel here; the NAME still does not.
+   *
+   * The two were refused together for years under one reason — "its update
+   * endpoint needs a signed-in browser session" — and that reason only ever
+   * applied to the name. Renaming rewrites `slug`, which prefixes the live
+   * portal URL, so it stays a Master Inbox decision. An alias rewrites
+   * nothing a customer can see.
+   *
+   * And the aliases matter most HERE. Master Inbox's
+   * `deriveClientIdFromCampaign` decides who an inbound reply belongs to — it
+   * runs in the EmailBison sync, the Instantly sync and external
+   * introductions. A spelling it does not know sends that reply to the
+   * "Unknown" bucket rather than to the client whose portal it should appear
+   * in. Measured 28 Sep, before this: nine clients had a spelling the master
+   * record held and Master Inbox did not.
+   *
+   * See `inbox-aliases.ts` for the two rules that make the write safe — union
+   * rather than replace, and never adopt a spelling that is another row's
+   * NAME, because one client can own several portals there.
+   */
+  if (edit.name !== undefined && row.mi_client_id) {
     untouched.push(
-      "Master Inbox keeps its own name and aliases — its update endpoint needs a " +
-        "signed-in browser session, and renaming there rewrites the slug that prefixes " +
-        "the live portal URL. Change it in Master Inbox if it needs to match.",
+      "Master Inbox keeps its own name — renaming there rewrites the slug that " +
+        "prefixes the live portal URL. Change it in Master Inbox if it needs to match.",
     );
+  }
+
+  if (edit.aliases !== undefined && row.mi_client_id) {
+    try {
+      const admin = createAdminSupabase();
+      const { data: rows, error: readError } = await admin
+        .from("clients")
+        .select("id, name, aliases")
+        .limit(1000);
+      if (readError) throw new Error(readError.message);
+
+      const all = (rows ?? []) as InboxRow[];
+      const target = all.find((r) => String(r.id) === String(row.mi_client_id));
+      if (!target) {
+        failed.push({ what: "Master Inbox aliases", error: "linked row not found" });
+      } else {
+        const plan = planInboxAliases(edit.aliases, target, all);
+        if (!plan.noop) {
+          const { error } = await admin
+            .from("clients")
+            .update({ aliases: plan.next })
+            .eq("id", target.id);
+          if (error) throw new Error(error.message);
+          updated.push(`Master Inbox aliases (+${plan.added.length})`);
+        }
+        for (const s of plan.skipped) {
+          untouched.push(`"${s.alias}" was not added to Master Inbox — ${s.because}.`);
+        }
+      }
+    } catch (e) {
+      failed.push({
+        what: "Master Inbox aliases",
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   return { updated, failed, untouched };
