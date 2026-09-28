@@ -204,6 +204,21 @@ surfaces, and every page header carries its mark.
   real data changed;
 - Client Health still 0 differences against the standalone app.
 
+**Second pass, same day (`fff8fa8`):**
+- **Tool views open only their part.** A client opened from any tool's Client
+  view shows only the fields §8 lists for that tool, under that tool's names.
+  "Full record" opens the whole thing.
+- **The record navigates.** ↑ / ↓ move through the list.
+- **One platform.** `src/app/os.css` is loaded last and restyles every tool
+  through the classes it already renders:
+  - a mono kicker above each page title;
+  - stat tiles as one hairline strip;
+  - hairline panels and mono table headings;
+  - tabs underlined in ink;
+  - flat buttons and inputs;
+  - colour only where it means status.
+- **Verified on production:** 35/35 browser checks (writes intercepted), 34/34 pages.
+
 **Data gaps the page now makes visible.** These are data entry, not code:
 Sender 0/50, Account Manager 0/50, Markets 0/50, Salesperson 2/50,
 Onboarding date 0/50.
