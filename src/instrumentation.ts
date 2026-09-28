@@ -81,4 +81,24 @@ export async function register() {
   };
   setTimeout(warmClients, 8_000).unref?.();
   setInterval(warmClients, 240_000).unref?.();
+
+  /*
+   * What EVERY page waits on: the rail's status dots (a probe of each tool),
+   * the rail's unread and reminder counts, and Home's numbers. Each is served
+   * stale-while-refresh for ten minutes, so keeping them no older than four
+   * means no click ever waits on them — measured, the first click after an
+   * idle spell waited ~2s on the counts and ~2.4s on the probes.
+   */
+  const warmShell = async () => {
+    if (!process.env.MASTER_INBOX_SUPABASE_URL) return;
+    const [{ getAllSnapshots }, { loadRailBadges }, { getOverview }] = await Promise.all([
+      import("./lib/status/store"),
+      import("./lib/workspace/badges"),
+      import("./lib/workspace/overview"),
+    ]);
+    await Promise.allSettled([getAllSnapshots(), loadRailBadges(), getOverview()]);
+  };
+  const warmShellSafely = () => { warmShell().catch(() => { /* best effort */ }); };
+  setTimeout(warmShellSafely, 6_000).unref?.();
+  setInterval(warmShellSafely, 240_000).unref?.();
 }

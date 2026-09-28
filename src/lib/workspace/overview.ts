@@ -3,6 +3,7 @@ import "server-only";
 import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv } from "@/lib/env";
+import { ttlCache } from "@/lib/cache/ttl";
 
 /*
  * The headline band on Home.
@@ -86,7 +87,7 @@ function change(current: number | null, previous: number | null): number | null 
   return (current - previous) / previous;
 }
 
-export async function getOverview(): Promise<Overview> {
+async function loadOverview(): Promise<Overview> {
   const empty: Overview = {
     metrics: [],
     series: [],
@@ -212,4 +213,22 @@ async function masterInboxMedian(): Promise<number | null> {
   );
   if (!res.ok) return null;
   return num(asRecord(asRecord(res.json)?.overall)?.median_seconds);
+}
+
+/*
+ * Home's numbers, from a short cache.
+ *
+ * Four reads — two KPI windows, the 30-day series and our reply time — took
+ * ~1.2s on every visit to Home, with nothing cached. They describe the last
+ * seven days, so a minute-old answer is the same answer: fresh for a minute,
+ * then served stale for up to ten while it refreshes behind. An answer that
+ * says Analytics was unavailable is not kept, so the next visit tries again.
+ * instrumentation.ts keeps it warm.
+ */
+const overviewCache = ttlCache(loadOverview, { ttlMs: 60_000, staleMs: 10 * 60_000 });
+
+export async function getOverview(): Promise<Overview> {
+  const result = await overviewCache();
+  if (result.unavailable) overviewCache.invalidate();
+  return result;
 }

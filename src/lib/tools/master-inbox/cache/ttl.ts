@@ -33,6 +33,13 @@ export interface TtlCachedFn<TArgs extends unknown[], TResult> {
   (...args: TArgs): Promise<TResult>;
   /** Drop the cache entry for these args. Pass no args to drop ALL. */
   invalidate(...args: Partial<TArgs>): void;
+  /**
+   * Mark every entry out of date WITHOUT dropping it: the next read still
+   * answers at once from the stale value (within `staleMs`) and refreshes
+   * behind it. For "the data moved" signals that should not make the next
+   * reader wait.
+   */
+  expire(): void;
 }
 
 export function ttlCache<TArgs extends unknown[], TResult>(
@@ -124,6 +131,10 @@ export function ttlCache<TArgs extends unknown[], TResult>(
       return;
     }
     store.delete(key(...(args as TArgs)));
+  };
+
+  (cached as TtlCachedFn<TArgs, TResult>).expire = () => {
+    for (const entry of store.values()) if (!entry.promise) entry.expiresAt = 0;
   };
 
   return cached as TtlCachedFn<TArgs, TResult>;

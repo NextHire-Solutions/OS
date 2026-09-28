@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getWeekly } from "@/lib/tools/client-health/weekly";
 
 import { editClient, InvalidEditError, validateEdit, type ClientEdit } from "@/lib/clients/edit";
 
@@ -34,6 +35,8 @@ export async function POST(request: Request) {
 
   try {
     const result = await editClient(id, edit as ClientEdit);
+    // Client Health's views read this client from a cache; start it over.
+    getWeekly.invalidate();
     return NextResponse.json(result);
   } catch (error) {
     /*

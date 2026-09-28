@@ -7,6 +7,18 @@ import type { NextConfig } from "next";
  *
  * No `output: "standalone"`: the family convention is a plain `next start`.
  */
-const nextConfig: NextConfig = {};
+const nextConfig: NextConfig = {
+  experimental: {
+    /*
+     * How long a screen fetched by a hover prefetch may be shown on click.
+     * The rail prefetches the FULL screen on hover (workspace.tsx) so the
+     * click paints at once; Next's default would keep that for five minutes,
+     * which is too long for an inbox or a pipeline. 30s is the minimum Next
+     * allows. `dynamic` stays at its default of 0: a screen visited by a
+     * click is always asked for again, never replayed.
+     */
+    staleTimes: { static: 30 },
+  },
+};
 
 export default nextConfig;

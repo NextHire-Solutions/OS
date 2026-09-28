@@ -62,3 +62,22 @@ test("invalidate drops the stale value too", async () => {
   f.invalidate();
   assert.equal(await f(), 2);
 });
+
+test("expire(): the next read still answers at once from the stale value, and refreshes behind it", async () => {
+  let n = 0;
+  const f = ttlCache(async () => ++n, { ttlMs: 60_000, staleMs: 60_000 });
+  assert.equal(await f(), 1);
+  assert.equal(await f(), 1, "fresh: served from memory");
+  f.expire();
+  assert.equal(await f(), 1, "expired but within the stale window: answered at once with the old value");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(await f(), 2, "the refresh it started behind that answer has landed");
+});
+
+test("expire() with no stale window behaves like a miss: the next read waits for a fresh value", async () => {
+  let n = 0;
+  const f = ttlCache(async () => ++n, { ttlMs: 60_000 });
+  assert.equal(await f(), 1);
+  f.expire();
+  assert.equal(await f(), 2);
+});

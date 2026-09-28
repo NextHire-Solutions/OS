@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import type { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 
 import { SessionKeeper } from "./session-keeper";
@@ -176,7 +177,16 @@ export function Workspace({
     if (!(id in screens)) return;
     const path = pathForId(id);
     if (path && typeof window !== "undefined" && window.location.pathname !== path) {
-      router.prefetch(path);
+      /*
+       * FULL, not the default. Every screen is dynamic and there is no
+       * loading.tsx, so the default prefetch stops at the layout and fetched
+       * nothing the click needed — the click still waited the whole round
+       * trip. A full prefetch renders the screen itself, so the click paints
+       * from what hover already fetched. It is kept for 30 seconds
+       * (staleTimes.static in next.config.ts), never longer, so a screen is
+       * not shown from an old hover.
+       */
+      router.prefetch(path, { kind: "full" as PrefetchKind });
     }
   }, [screens, router]);
 

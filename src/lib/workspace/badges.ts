@@ -94,4 +94,11 @@ async function fetchBadges(): Promise<RailBadges> {
   }
 }
 
-export const loadRailBadges = cache(ttlCache(fetchBadges, { ttlMs: 60_000 }));
+/*
+ * Fresh for a minute, then served stale for up to ten while a new count is
+ * fetched behind it. Without the stale window, the first click after each
+ * minute waited ~2s on these counts before ANY screen could render — the
+ * rail is on every page, so every page paid it. instrumentation.ts keeps it
+ * warm, so a count is never older than a few minutes.
+ */
+export const loadRailBadges = cache(ttlCache(fetchBadges, { ttlMs: 60_000, staleMs: 10 * 60_000 }));

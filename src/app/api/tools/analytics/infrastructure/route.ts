@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
+import { cachedGet } from "@/lib/tools/analytics/cached-get";
 
 /*
  * The sending estate (spec §8).
@@ -24,7 +25,7 @@ const TEAM_ID = () => analyticsTeamId();
  */
 const DEFAULT_MIN_SENT = 50;
 
-export async function GET(request: NextRequest) {
+async function load(request: NextRequest) {
   const sb = getSupabase();
   const teamId = TEAM_ID();
   const params = request.nextUrl.searchParams;
@@ -331,3 +332,6 @@ export async function GET(request: NextRequest) {
     ...(degraded.length ? { degraded } : {}),
   });
 }
+
+// Identical questions inside a minute are answered from memory — see cached-get.ts.
+export const GET = cachedGet(load);

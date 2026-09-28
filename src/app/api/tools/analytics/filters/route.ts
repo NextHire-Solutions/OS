@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
+import { cachedGet } from "@/lib/tools/analytics/cached-get";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
  * load, and the underlying entity list changes on a 30-minute sync cadence at
  * most. Private, because it names the client roster.
  */
-export async function GET() {
+async function load() {
   const teamId = analyticsTeamId();
   const sb = getSupabase();
 
@@ -83,3 +84,6 @@ export async function GET() {
     { headers: { "Cache-Control": "private, max-age=300" } },
   );
 }
+
+// Identical questions inside a minute are answered from memory — see cached-get.ts.
+export const GET = cachedGet(load);

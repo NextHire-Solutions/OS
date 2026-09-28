@@ -163,5 +163,9 @@ export function withoutDerived(data: ClientHealthWeeklyData): ClientHealthWeekly
 
 export const getWeekly = ttlCache(loadWeekly, {
   ttlMs: 60_000,
+  // Served stale for up to five minutes while it refreshes, so opening Client
+  // Health never waits the ~1.2s cold read. Every write that changes a client
+  // (the CH routes, a Clients edit or status change, the sync) invalidates it.
+  staleMs: 5 * 60_000,
   key: (weekOffset = 0) => String(weekOffset),
 });

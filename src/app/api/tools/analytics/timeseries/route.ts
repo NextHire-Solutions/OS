@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
 import { resolvePlatformScope } from "@/lib/tools/analytics/platform-scope.ts";
+import { cachedGet } from "@/lib/tools/analytics/cached-get";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ interface Row {
   bounces: number;
 }
 
-export async function GET(request: NextRequest) {
+async function load(request: NextRequest) {
   const teamId = analyticsTeamId();
 
   let filters;
@@ -197,3 +198,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to load chart data" }, { status: 500 });
   }
 }
+
+// Identical questions inside a minute are answered from memory — see cached-get.ts.
+export const GET = cachedGet(load);

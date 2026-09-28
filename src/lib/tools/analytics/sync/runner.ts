@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
+import { analyticsDataChanged } from "@/lib/tools/analytics/read-cache-bus";
 
 /*
  * PORTED FROM THE TOOL'S src/lib/sync/runner.ts.
@@ -183,6 +184,8 @@ export async function runJob(
         : Promise.resolve(),
     ]);
 
+    // New rows are in: the cached reads (cached-get.ts) start over.
+    analyticsDataChanged();
     return { job: jobName, status: "ok", durationMs, ...result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -2,11 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { loadKpis } from "@/lib/tools/analytics/kpis";
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
 import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
+import { cachedGet } from "@/lib/tools/analytics/cached-get";
 
-// Analytics reads are never cached: a filter change must always hit the RPC.
+// A filter change always hits the RPC: the cache (cached-get.ts) is keyed by
+// every query parameter, so only an identical question is answered from memory.
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
+async function load(request: NextRequest) {
   const teamId = analyticsTeamId();
 
   let filters;
@@ -35,3 +37,6 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+// Identical questions inside a minute are answered from memory — see cached-get.ts.
+export const GET = cachedGet(load);

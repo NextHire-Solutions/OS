@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getWeekly } from "@/lib/tools/client-health/weekly";
 
 import { CLIENT_STATUSES, setClientStatus, type ClientStatus } from "@/lib/clients/os-clients";
 import { propagateStatus } from "@/lib/clients/status-propagate";
@@ -66,6 +67,8 @@ export async function POST(request: Request) {
      * than claiming a propagation that never happened.
      */
     const propagation = await propagateStatus(client, client.status);
+    // Client Health's views read this client from a cache; start it over.
+    getWeekly.invalidate();
     return NextResponse.json({ ok: true, client, propagation });
   } catch (error) {
     console.error("[api/workspace/clients/status]", error);
