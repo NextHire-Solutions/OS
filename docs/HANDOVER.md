@@ -11,6 +11,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
+| **0.5** | [What changed on 28 September](#05-what-changed-on-28-september) — the latest work, how it was verified, what is open |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -151,6 +152,34 @@ Scored against §22, the client's own Definition of Done: **19 of 25
 requirements met**, 5 partly met, 1 not met — and the one unmet requirement is
 deliberate, not outstanding: the standalone tools keep their own Add Client
 buttons because they stay live and clients use them. See §6 for what remains.
+
+---
+
+## 0.5 What changed on 28 September
+
+All deployed to `os`, verified on production, pushed (`1e66caa` … `b8cce7c`).
+
+- **§8 views** — all five tool views carry the document's fields; new
+  Database view; see §8.
+- **One editor per field** — people, MLS, aliases, status, delete; see §13.
+- **Stripe at onboarding** — optional field in the Onboard dialog, verified.
+- **Analytics campaign owners** — the Database's answer offered in the
+  unassigned queue; disagreements listed.
+- **MLS boards** — the Markets MLS field offers the Database's 54 boards by code.
+- **Daily check on Home** — see §16.
+
+**Verification:** 1,306 unit tests; workflow tests on production with throwaway
+clients, each deleted everywhere and swept (people 21/21, MLS 13/13, one-editor
+16/16); 19 UI control checks; the five views; 34/34 pages; 77 read APIs with 0
+server errors; 37/37 open customer portals serving their page.
+
+**Found, not changed (needs a person):**
+- Discover PHX — paused in Client Health since today, active in the OS and every
+  other tool. Same client as the open billing question.
+- `/inbox` (All Email) — an intermittent hydration error (~1 load in 3 on
+  production, 0 in 12 locally); React recovers by re-rendering. In untouched
+  Master Inbox code; not yet located.
+- Master Inbox and Analytics Add Client buttons inside the OS — see §2.
 
 ---
 
@@ -752,10 +781,10 @@ automatically…":
 | Create the Client Portal | ✅ minted immediately with its own token | `lib/portals/` |
 | Make available in Analytics | ✅ | connector leg |
 | **Create the Database record** | ✅ | `lib/clients/database-record.ts` |
-| Create the appropriate saved view | ✗ | lives in the Database app — see §6.6 |
+| Create the appropriate saved view | ✗ by choice | the Database developer's analysis (28 Sep): only 4 boilerplate filters are generatable; everything that makes a view a client's is hand-entered and nothing links a client to a brokerage yet. Manual until that relation exists |
 | Connect the client's leads | ◐ matched by name | Database app |
-| Connect their campaigns | ◐ | the Database app now records the link as an id (227 of 256); Analytics still matches by name |
-| Connect their Stripe subscription | ✅ | `os_clients.stripe_subscription_id` — 30 of 52 mapped, 27 Sep |
+| Connect their campaigns | ◐ | the Database records the link as an id (228 of 257). Analytics still matches by name, but since 28 Sep its unassigned queue shows **which client the Database files each campaign under**, one click to pin, and lists disagreements (`lib/tools/analytics/ownership/`) |
+| Connect their Stripe subscription | ✅ | `os_clients.stripe_subscription_id` — 30 of 50 mapped. Since 28 Sep it can be entered **in the Onboard dialog** (optional), verified with Stripe through the same save as Edit |
 | Commission Tracker record | ✗ | tool does not exist |
 
 `database-record.ts` **reads before it writes** and links to an existing row
@@ -783,6 +812,12 @@ Code: `lib/reconcile/counts.ts` (pure, 10 tests) and `gatherCountReport()`.
 
 One deliberate exception to "one place to create a client": the standalone tools
 keep their own Add Client buttons, because they stay live and clients use them.
+
+**Inside the OS (28 Sep):** Client Health's Add Client now links to the Clients
+page (onboarding already creates its row). Two OS buttons remain **pending a
+decision**: Master Inbox → Settings → Clients (it is how a *second portal* for an
+existing client, and demo portals, are made — there is no other path yet) and
+Analytics → Clients (may be needed for the same second-portal case).
 
 ---
 
@@ -900,28 +935,27 @@ further step, not a missing answer.
 
 ---
 
-### §8 Tool-Specific Views — ◐
+### §8 Tool-Specific Views — ✅ (28 Sep)
 
-| Tool | State |
-|---|---|
-| **Database** | ◐ client, status, campaign, leads, sequencers, replies, bounces, in review, exported, onboarding status all present. **Client status** was missing and is now built (below). **MLS/location still 1 of 44** — so it cannot be filtered the way this section intends |
-| Client Health | ✅ plan, status, targets, start date, billing anchor, interval, timezone, campaign, aliases, performance, health indicators |
-| Client Portal | ✅ client/team, agents, DNC, client-facing introductions |
-| Onboarding | ✅ client, team, agents, DNC, date added, progress, plus real plan and weekly target |
-| Analytics | ✅ campaigns, introductions, replies, leads, campaign-level performance across eight views |
-| Commission Tracker | ✗ does not exist |
-| Future CRM / CSM | ✅ will connect to the master record and cannot do otherwise — §18 |
+Every view reads the shared fields — status, markets, salesperson, account
+manager, sender — **from the master record** (`lib/clients/master-lookup.ts`),
+not each tool's own copy, so a field set once shows everywhere. Before 28 Sep
+each view read its own table, which is why so much looked "missing".
 
-§8 lists **"Client status"** and **"Onboarding status"** as two separate fields
-of the Database view, and only the second existed: `orch_clients.status` is the
-*pipeline stage* (new → … → live → paused), which says how far through
-onboarding a client is, not whether they are still a client. The two even share
-the word "paused".
+| Tool | Where in the OS | §8 fields |
+|---|---|---|
+| **Database** | Agent Search → **Clients (Database)** (`/search/clients`) | Client · Client status · MLS/location · Campaign · Campaign ID · Leads · Sequencers · Replies · Bounces · In Review · Exported · Onboarding status — all 12. Counts come from `os_client_campaign_stats()` (Database migration **0123**, applied 28 Sep): the same SQL as the Database app's Clients page, verified equal on raw rows. A campaign whose leads never synced is marked **not synced** (16 of 283) so a short count is not read as zero |
+| Client Health | Weekly | Client · Plan · Status (lifecycle tag) · Weekly/Monthly target · Start date · Billing (interval + anchor) · Timezone · Campaign · Aliases · Performance · Health |
+| Client Portal | Inbox → Portals | Client/team · Status · Team · Agents · DNC counts per portal |
+| Onboarding | Onboarding → Pipeline | Client · Salesperson · Account Manager · Team · Agents · DNC · Sender · Date added · Status · Stage · progress · leads built |
+| Analytics | Campaign → Clients | Campaigns · Introductions (all time) · Replies · Leads · Performance · Status |
 
-Built in `Corofy/Database` (commits `adada98`, `ad78784`): the old column is
-renamed **Onboarding status**, and the client's lifecycle sits beside it as
-**Client status** in the document's colours (§11). Unknown renders as "—",
-never "active". **Live since 26 September — §6.1.**
+EmailBison gives a campaign two ids — a UUID (`bison_campaigns.bison_campaign_id`)
+and a number (`raw->>'id'`) that the leads carry. Always key by
+`coalesce(raw->>'id', bison_campaign_id)` (`lib/tools/database/campaigns.ts`).
+
+Empty columns are **data**, not missing views: MLS/location, Account Manager and
+Sender 0 of 50; stage 15 of 50.
 
 ---
 
@@ -1033,6 +1067,18 @@ flag pauses collection and flipping the flag back resumes it.
 
 ### §13 What We Do NOT Want — 13 of 14 addressed
 
+**28 Sep — second editors removed inside the OS.** Four places could change a
+shared field in one tool only, which is exactly "different client information
+between platforms":
+
+| Field | Second editor | Now |
+|---|---|---|
+| Status, delete | Client Health Weekly row buttons (Pause/Resume/Churn/Restore/Delete) | link to the Clients page, which does each everywhere |
+| Aliases | Analytics → Clients form | saved through the client record → master + Analytics + Client Health |
+| Salesperson, Account Manager, Sender | Onboarding page vs Edit | each writes the other (`lib/clients/people-link.ts`, `people-sync.ts`) |
+| MLS | Onboarding page's MLS picker vs Markets | Markets are the one editor; `orch_clients.mls` (the lead builder's codes) is derived (`lib/clients/markets-mls.ts`) |
+
+
 The only one still true is **"an Add Client button in every tool"**, and it is
 true deliberately — the standalone tools stay live and clients use them.
 Removing those buttons is a decision about switching tools off, not missing
@@ -1126,7 +1172,12 @@ Now: `lib/reconcile/schedule.ts` + `scheduler.ts`, registered in
 `instrumentation.ts`, running daily. The gather-and-decide logic moved into
 `lib/reconcile/run.ts` so the route and the clock cannot drift apart. 20 tests.
 
-**It ships switched off, and needs one decision from the client** — see §6.5.
+**28 Sep: on, reporting inside the OS.** `OS_RECONCILE_ALERT_ENABLED=1` is set;
+the latest result is kept (`lib/reconcile/last-result.ts`) and shown on **Home**
+(`daily-check-notice.tsx`). It also runs report-only ~90 s after every start
+(`bootCheck`), which never sends. **Slack stays off** (`OS_RECONCILE_ALERT_SEND`
+unset, no channel) until one is chosen. Its first run found a real conflict:
+Discover PHX paused in Client Health, active everywhere else.
 
 ---
 
