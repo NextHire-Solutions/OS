@@ -10,7 +10,24 @@
  *                          instantly_campaigns table
  *   orch_clients.bison_campaign_id   the single id onboarding stored before
  *                          campaigns were synced
+ *
+ * ---------------------------------------------------------------------------
+ * EMAILBISON GIVES EVERY CAMPAIGN TWO IDS
+ *
+ * bison_campaigns.bison_campaign_id holds its UUID; the leads (and EmailBison's
+ * own screens) use its NUMBER, which the campaigns table keeps only in
+ * raw->>'id'. Keying one source by UUID and the other by number listed every
+ * campaign twice and marked all 228 "not synced" — caught in the live view on
+ * 28 Sep. bisonCampaignKey() is the Database app's own rule
+ * (stamp-campaign-clients.ts: coalesce(raw->>'id', bison_campaign_id)).
  */
+
+/** The id a campaign's leads carry: EmailBison's number, else the stored column. */
+export function bisonCampaignKey(rawId: unknown, column: unknown): string {
+  const n = rawId === null || rawId === undefined ? "" : String(rawId).trim();
+  if (n) return n;
+  return column === null || column === undefined ? "" : String(column).trim();
+}
 
 export interface DbCampaign {
   id: string;
@@ -27,7 +44,8 @@ export interface DbCampaign {
 
 /** Pure: one client's campaign list, EmailBison's own records first, no duplicates. */
 export function mergeCampaigns(
-  bison: { id: string; name: string; status: string | null }[],
+  /** `id` is bisonCampaignKey(); `uuid` the stored column, used only to recognise the legacy id. */
+  bison: { id: string; uuid?: string | null; name: string; status: string | null }[],
   fromLeads: { id: string; name: string; provider: string }[],
   legacyBisonId: string | null,
   statsKnown: boolean,
@@ -46,7 +64,9 @@ export function mergeCampaigns(
   for (const c of fromLeads) {
     add({ id: c.id, name: c.name, provider: c.provider === "Instantly" ? "Instantly" : "EmailBison", status: null });
   }
-  // The single id the onboarding flow stored before campaigns were synced.
+  // The single id the onboarding flow stored before campaigns were synced —
+  // in whichever of the two forms, so it never duplicates a listed campaign.
+  if (legacyBisonId && bison.some((b) => b.uuid === legacyBisonId)) legacyBisonId = null;
   if (legacyBisonId) add({ id: legacyBisonId, name: "", provider: "EmailBison", status: null });
   return out;
 }

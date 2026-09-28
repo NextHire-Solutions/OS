@@ -6,7 +6,7 @@ import { ttlCache } from "@/lib/cache/ttl";
 
 import { getCorofySupabase } from "../corofy/supabase";
 import { progressFor, type Progress } from "../onboarding/step-state";
-import { mergeCampaigns, type DbCampaign } from "./campaigns";
+import { bisonCampaignKey, mergeCampaigns, type DbCampaign } from "./campaigns";
 
 export type { DbCampaign };
 
@@ -128,7 +128,7 @@ async function load(): Promise<DatabaseClientsView> {
       )
       .order("client_name"),
     sb.from("orch_stages").select("id,name"),
-    paged("bison_campaigns", "bison_campaign_id,name,status,orch_client_id"),
+    paged("bison_campaigns", "bison_campaign_id,bison_number:raw->>id,name,status,orch_client_id"),
     loadStats(),
     masterByToolId("database").catch(() => new Map<string, MasterFacts>()),
     sb.from("bison_campaigns").select("fetched_at").order("fetched_at", { ascending: false }).limit(1),
@@ -137,12 +137,17 @@ async function load(): Promise<DatabaseClientsView> {
   if (stagesRes.error) throw new Error(`orch_stages: ${stagesRes.error.message}`);
 
   const stageName = new Map(rows(stagesRes.data).map((s) => [String(s.id), String(s.name)]));
-  const bisonByClient = new Map<string, { id: string; name: string; status: string | null }[]>();
+  const bisonByClient = new Map<string, { id: string; uuid: string | null; name: string; status: string | null }[]>();
   for (const b of bisonRes) {
     const cid = str(b.orch_client_id);
     if (!cid) continue;
     const list = bisonByClient.get(cid) ?? [];
-    list.push({ id: String(b.bison_campaign_id ?? ""), name: String(b.name ?? ""), status: str(b.status) });
+    list.push({
+      id: bisonCampaignKey(b.bison_number, b.bison_campaign_id),
+      uuid: str(b.bison_campaign_id),
+      name: String(b.name ?? ""),
+      status: str(b.status),
+    });
     bisonByClient.set(cid, list);
   }
 
