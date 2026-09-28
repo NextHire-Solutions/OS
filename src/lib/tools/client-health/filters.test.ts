@@ -254,9 +254,12 @@ test("the tool's nine filter tabs are all present, in its order", () => {
     FILTER_TABS.map((f) => f.id),
     ["all", "risk", "ok", "done", "active", "paused", "inactive", "client-paused", "hidden"],
   );
-  // The rename pass: these two labels are the distinction the tool draws.
-  assert.equal(FILTER_TABS.find((f) => f.id === "paused")?.label, "Campaign Paused");
-  assert.equal(FILTER_TABS.find((f) => f.id === "hidden")?.label, "Clients Churned");
+  // §9/§13: the lifecycle filters use the document's status words, and the
+  // campaign filters never borrow them ("Active" meant running campaigns).
+  assert.equal(FILTER_TABS.find((f) => f.id === "client-paused")?.label, "Paused");
+  assert.equal(FILTER_TABS.find((f) => f.id === "hidden")?.label, "Churned");
+  assert.equal(FILTER_TABS.find((f) => f.id === "active")?.label, "Campaigns running");
+  assert.equal(FILTER_TABS.find((f) => f.id === "paused")?.label, "Campaigns paused");
 });
 
 test("every select offers an all-clearing option first", () => {

@@ -34,7 +34,7 @@ export function SummaryCards({
         <Stat label="At Risk" value={s.risk} sub="behind 28-day pace" tone="red" />
         <Stat label="On Track" value={s.ok} sub="on pace for 28-day target" tone="amber" />
         <Stat label="Done" value={s.done} sub="28-day target met" tone="green" />
-        <Stat label="Client Paused" value={s.clientPaused} sub="manually paused" />
+        <Stat label="Paused" value={s.clientPaused} sub="clients on hold" />
         <Stat label="By Plan" value={`${s.plans.minimum} · ${s.plans.production} · ${s.plans.partner}`} sub="min · prod · partner" />
       </Band>
 

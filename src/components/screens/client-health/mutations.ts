@@ -92,7 +92,7 @@ export async function setPaused(c: DashboardClient, paused: boolean): Promise<vo
     await updateClient({ id: c.id, client_paused: paused } as Parameters<typeof updateClient>[0]);
     toast(
       paused
-        ? "Client paused · use the Client Paused tab to recover"
+        ? "Client paused · use the Paused filter to find it"
         : "Client resumed",
     );
   } catch (error) {
@@ -107,7 +107,7 @@ export async function setHidden(c: DashboardClient, hidden: boolean): Promise<vo
     await updateClient({ id: c.id, hidden } as Parameters<typeof updateClient>[0]);
     toast(
       hidden
-        ? "Client churned · use the Clients Churned tab to recover"
+        ? "Client churned · use the Churned filter to find it"
         : "Client restored",
     );
   } catch (error) {

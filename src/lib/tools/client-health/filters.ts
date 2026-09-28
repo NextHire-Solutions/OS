@@ -45,11 +45,11 @@ export const FILTER_TABS: { id: Filter; label: string; cls?: string; title: stri
   { id: "risk", label: "At Risk", cls: "f-risk", title: "Behind the pace for their 28-day intro target" },
   { id: "ok", label: "On Track", cls: "f-ok", title: "On pace for their 28-day intro target" },
   { id: "done", label: "Done", cls: "f-ok", title: "Clients who reached their 28-day intro target" },
-  { id: "active", label: "Active", title: "Clients with at least one running campaign" },
-  { id: "paused", label: "Campaign Paused", title: "Clients whose campaigns are paused or finished (no running)" },
-  { id: "inactive", label: "Inactive", title: "Clients with no campaign launched yet" },
-  { id: "client-paused", label: "Client Paused", title: "Clients you have manually paused" },
-  { id: "hidden", label: "Clients Churned", title: "Only churned clients" },
+  { id: "active", label: "Campaigns running", title: "Clients with at least one running campaign" },
+  { id: "paused", label: "Campaigns paused", title: "Clients whose campaigns are paused or finished (no running)" },
+  { id: "inactive", label: "No campaign yet", title: "Clients with no campaign launched yet" },
+  { id: "client-paused", label: "Paused", title: "Paused clients — temporarily paused, still a client (§9)" },
+  { id: "hidden", label: "Churned", title: "Churned clients — no longer an active client (§9)" },
 ];
 
 /** The plan select, in the tool's order. */

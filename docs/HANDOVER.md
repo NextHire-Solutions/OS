@@ -11,6 +11,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
+| **0.3** | [What changed on 30 September](#03-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
 | **0.4** | [What changed on 29 September](#04-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
 | **0.5** | [What changed on 28 September](#05-what-changed-on-28-september) — the latest work, how it was verified, what is open |
 | **0.6** | [Switching off Analytics, Client Health and Onboarding](#06-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
@@ -154,6 +155,58 @@ Scored against §22, the client's own Definition of Done: **19 of 25
 requirements met**, 5 partly met, 1 not met — and the one unmet requirement is
 deliberate, not outstanding: the standalone tools keep their own Add Client
 buttons because they stay live and clients use them. See §6 for what remains.
+
+---
+
+## 0.3 What changed on 30 September
+
+Deployed to `os` and verified on production (`69288cf` and after).
+
+**Clients is the master client system (§23).** It is built from the document
+line by line:
+- `src/lib/clients/field-registry.ts` is the document as code:
+  - every §6 field plus the §12 lifecycle dates, in the document's words and order;
+  - for each field, the §7/§15 answers: definition, source of truth, who can
+    edit, tools that use it, and sync;
+  - the §8 tool views, as column lists in each tool's own order.
+
+  The table, the record panel, the tool views and the data dictionary all
+  render from it.
+- `src/lib/clients/master-list.ts` reads every field for every client from the
+  tool that owns it. Two values are derived here: the first billing date, and
+  the pause / churn / reactivation dates. The list is cached, warmed at boot
+  and every 4 minutes (`instrumentation.ts`), and served at
+  `/api/workspace/clients/master`.
+- The Clients page has:
+  - a status overview;
+  - **Master record** — all 40 fields, banded by §6 category;
+  - **§8 views** for Client Health, Database, Client Portal, Onboarding and
+    Analytics, plus a Commission Tracker placeholder;
+  - the **§15 data dictionary**, with how many clients have each field filled;
+  - CSV export.
+- The record panel shows every field with the system that holds it, and edits
+  in place through the existing edit route. Status asks before it changes.
+- Each tool has a **Client view** in its own sidebar group: `/<tool>/client-view`.
+
+**Status visuals (§10–§11).** There is one `StatusPill`: Onboarding blue,
+Active green, **Paused orange**, Churned red. Every older status class is
+restyled to the same four colours. Client Health's filters now use the
+document's words: "Paused" and "Churned". Campaign filters no longer borrow
+status words ("Campaigns running", "Campaigns paused").
+
+**Look.** Geist is actually loaded now; the old `'Inter'` family never was, so
+screens rendered in the system font. There is a grey canvas under white
+surfaces, and every page header carries its mark.
+
+**Verified on production:**
+- 34/34 pages, plus the 5 Client views;
+- 23/23 record-edit checks. Every save was intercepted in the browser, so no
+  real data changed;
+- Client Health still 0 differences against the standalone app.
+
+**Data gaps the page now makes visible.** These are data entry, not code:
+Sender 0/50, Account Manager 0/50, Markets 0/50, Salesperson 2/50,
+Onboarding date 0/50.
 
 ---
 
