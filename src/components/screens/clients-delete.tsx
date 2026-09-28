@@ -26,6 +26,8 @@ interface Plan {
   scope: "os" | "tools" | "everything";
   willDelete: string[];
   willKeep: string[];
+  /** Paused BEFORE anything is removed: running campaigns, Stripe collection. */
+  willPause?: string[];
   blocked: string | null;
   warnings: string[];
   destructive?: boolean;
@@ -170,6 +172,14 @@ function DeleteBody({
 
         {plan && !plan.blocked ? (
           <>
+            {plan.willPause?.length ? (
+              <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+                <b>Will pause first</b>
+                <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                  {plan.willPause.map((d) => <li key={d}>{d}</li>)}
+                </ul>
+              </div>
+            ) : null}
             <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
               <b>Will remove</b>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>

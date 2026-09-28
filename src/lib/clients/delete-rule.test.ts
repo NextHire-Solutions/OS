@@ -107,3 +107,28 @@ describe("the acknowledgement gate", () => {
     assert.equal(needsAcknowledgement(false, false), false);
   });
 });
+
+import { nameKeyShared, subscriptionShared } from "./delete-rule.ts";
+
+describe("pausing on delete — never another client's campaigns or billing", () => {
+  test("a subscription nobody else has is safe to pause", () => {
+    assert.equal(subscriptionShared("sub_A", [{ stripeSubscriptionId: "sub_B" }, { stripeSubscriptionId: null }]), false);
+  });
+  test("a subscription another remaining client has is NOT paused", () => {
+    // Deleting a duplicate record must not stop the real client's billing.
+    assert.equal(subscriptionShared("sub_A", [{ stripeSubscriptionId: "sub_A" }]), true);
+  });
+  test("no subscription is never 'shared'", () => {
+    assert.equal(subscriptionShared(null, [{ stripeSubscriptionId: null }]), false);
+  });
+  test("a unique name is safe for campaign pausing", () => {
+    assert.equal(nameKeyShared(["keyescompany"], [["c21resultselite"], ["brooklyngroup"]]), false);
+  });
+  test("a name another client answers to — as name OR alias — blocks campaign pausing", () => {
+    assert.equal(nameKeyShared(["keyescompany"], [["thekeyescompany", "keyescompany"]]), true);
+    assert.equal(nameKeyShared(["dealias", "douglasellimanla"], [["douglasellimanla"]]), true);
+  });
+  test("empty keys never match each other", () => {
+    assert.equal(nameKeyShared([""], [[""]]), false);
+  });
+});

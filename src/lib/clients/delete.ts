@@ -8,7 +8,10 @@ import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { deleteClientRow } from "@/lib/tools/client-health/clientWrites";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
-import { dropsPortal, dropsToolRows, isDestructive, needsAcknowledgement, portalHasContent } from "./delete-rule";
+import { dropsPortal, dropsToolRows, isDestructive, nameKeyShared, needsAcknowledgement, portalHasContent, subscriptionShared } from "./delete-rule";
+import { pauseCampaignsForClient } from "./pause-campaigns";
+import { billingEnabled, previewBillingForClient, syncBillingForClient } from "./stripe-billing-live";
+import { keyOf } from "./roster";
 
 /*
  * Removing a client, and the limits on doing so.
@@ -100,6 +103,8 @@ export interface DeletePlan {
    * from EITHER the portal's contents or the Database's leads.
    */
   destructive: boolean;
+  /** What is paused BEFORE anything is removed — campaigns and billing. */
+  willPause: string[];
 }
 
 const CASCADE_TABLES = [
@@ -140,6 +145,8 @@ interface Row {
   ch_client_id: string | null;
   mi_client_id: string | null;
   orch_client_id: string | null;
+  aliases: string[] | null;
+  stripe_subscription_id: string | null;
 }
 
 /**
@@ -168,12 +175,81 @@ async function countOrchLeads(orchClientId: string): Promise<number | null> {
 
 async function load(id: string): Promise<Row> {
   const { data, error } = await osTable("os_clients")
-    .select("id, name, status, an_client_id, ch_client_id, mi_client_id, orch_client_id")
+    .select("id, name, status, an_client_id, ch_client_id, mi_client_id, orch_client_id, aliases, stripe_subscription_id")
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(`Could not read the client: ${error.message}`);
   if (!data) throw new Error("No such client");
   return data as unknown as Row;
+}
+
+/*
+ * PAUSE BEFORE DELETE.
+ *
+ * Deleting a live client used to leave its campaigns sending and its
+ * subscription billing — and removed the OS record, the only place either could
+ * be paused from. So every delete, at every scope, first does what churn does
+ * to them: campaigns paused, collection paused. Never cancelled or deleted, so
+ * it can be undone in EmailBison, Instantly or Stripe.
+ *
+ * Skipped, and said so, only when another remaining client shares the name (the
+ * campaign lookup is by name) or the subscription — see delete-rule.ts.
+ */
+interface PausePlan {
+  campaigns: { count: number; skipped: string | null; error: string | null };
+  billing: { pause: boolean; skipped: string | null; error: string | null };
+}
+
+async function planPauses(row: Row): Promise<PausePlan> {
+  const { data: othersRaw } = await osTable("os_clients")
+    .select("id, name, aliases, stripe_subscription_id")
+    .neq("id", row.id);
+  const others = (othersRaw ?? []) as unknown as { name: string; aliases: string[] | null; stripe_subscription_id: string | null }[];
+
+  const mine = [row.name, ...(row.aliases ?? [])].map((n) => keyOf((n ?? "").trim()));
+  const theirs = others.map((o) => [o.name, ...(o.aliases ?? [])].map((n) => keyOf((n ?? "").trim())));
+  const campaigns: PausePlan["campaigns"] = { count: 0, skipped: null, error: null };
+  if (nameKeyShared(mine, theirs)) {
+    campaigns.skipped = "another client answers to the same name, so its campaigns could be caught too";
+  } else {
+    const dry = await pauseCampaignsForClient({ name: row.name, aliases: row.aliases }, { apply: false });
+    if (dry.error) campaigns.error = dry.error;
+    else campaigns.count = dry.plan.pausable.length;
+  }
+
+  const billing: PausePlan["billing"] = { pause: false, skipped: null, error: null };
+  const sub = row.stripe_subscription_id;
+  if (!sub) billing.skipped = "no Stripe subscription is recorded";
+  else if (!billingEnabled()) billing.skipped = "billing automation is switched off (OS_STRIPE_BILLING_ENABLED)";
+  else if (subscriptionShared(sub, others.map((o) => ({ stripeSubscriptionId: o.stripe_subscription_id })))) {
+    billing.skipped = "another client has the same subscription recorded";
+  } else {
+    const pre = await previewBillingForClient(sub, "churned");
+    if (!pre.ok) billing.error = pre.error ?? pre.decision.reason;
+    else if (pre.decision.action === "pause") billing.pause = true;
+    else billing.skipped = pre.decision.reason; // e.g. "Already paused."
+  }
+  return { campaigns, billing };
+}
+
+function describePauses(p: PausePlan): { willPause: string[]; warnings: string[] } {
+  const willPause: string[] = [];
+  const warnings: string[] = [];
+  if (p.campaigns.error) {
+    warnings.push(`Its campaigns could not be listed (${p.campaigns.error}). The delete will stop rather than leave them running — try again.`);
+  } else if (p.campaigns.skipped) {
+    warnings.push(`Campaigns will NOT be paused: ${p.campaigns.skipped}. Pause them yourself in EmailBison or Instantly.`);
+  } else if (p.campaigns.count > 0) {
+    willPause.push(`${p.campaigns.count} running campaign${p.campaigns.count === 1 ? "" : "s"} — paused, not deleted`);
+  }
+  if (p.billing.error) {
+    warnings.push(`Its Stripe subscription could not be read (${p.billing.error}). The delete will stop rather than leave it billing — try again.`);
+  } else if (p.billing.pause) {
+    willPause.push("its Stripe subscription — collection paused, not cancelled");
+  } else if (p.billing.skipped && !/no Stripe subscription/.test(p.billing.skipped)) {
+    warnings.push(`Billing will not be changed: ${p.billing.skipped}`);
+  }
+  return { willPause, warnings };
 }
 
 /** What a delete would do. Computed before anything is removed, and shown. */
@@ -313,17 +389,13 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
    * leaves their campaigns sending and their subscription billing — with no OS
    * record left to change that from. Said plainly on every non-churned client.
    */
-  if (row.status !== "churned") {
-    warnings.push(
-      "Deleting does not pause this client's campaigns or Stripe billing. To stop them, " +
-        "set the client to Churned first — that pauses both, and can be undone.",
-    );
-  }
+  const pauses = describePauses(await planPauses(row));
+  warnings.push(...pauses.warnings);
 
   const destructive = isDestructive(scope, cascade, leadsUnknown ? 1 : orchLeads);
   return {
     name: row.name, scope, willDelete, willKeep, blocked, warnings,
-    cascade, orchLeads, destructive,
+    cascade, orchLeads, destructive, willPause: pauses.willPause,
   };
 }
 
@@ -388,6 +460,34 @@ export async function deleteClient(
 
   const removed: string[] = [];
   const failed: { what: string; error: string }[] = [];
+
+  /*
+   * PAUSE FIRST. Before anything is removed — the campaign lookup needs the
+   * Analytics row, and the subscription id lives on the OS record. If either
+   * pause fails, STOP: deleting now would leave campaigns sending or a card
+   * being charged with no record left to stop them from.
+   */
+  const pp = await planPauses(row);
+  if (pp.campaigns.error) failed.push({ what: "Pausing campaigns", error: pp.campaigns.error });
+  if (pp.billing.error) failed.push({ what: "Pausing billing", error: pp.billing.error });
+  if (!failed.length && !pp.campaigns.skipped && pp.campaigns.count > 0) {
+    const r = await pauseCampaignsForClient({ name: row.name, aliases: row.aliases }, { apply: true });
+    const bad = r.results.filter((x) => !x.ok);
+    if (r.error || bad.length) {
+      failed.push({ what: "Pausing campaigns", error: r.error ?? `${bad.length} could not be paused: ${bad.map((b) => b.campaign.name).join(", ")}` });
+    } else {
+      removed.push(`paused ${r.results.length} campaign${r.results.length === 1 ? "" : "s"}`);
+    }
+  }
+  if (!failed.length && pp.billing.pause && row.stripe_subscription_id) {
+    const b = await syncBillingForClient(row.stripe_subscription_id, "churned");
+    if (!b.ok) failed.push({ what: "Pausing billing", error: b.error ?? b.decision.reason });
+    else if (b.changed) removed.push("paused its Stripe billing");
+  }
+  if (failed.length) {
+    failed.push({ what: "the delete", error: "stopped before removing anything, so nothing is left running unmanaged" });
+    return { name: row.name, scope, removed, failed };
+  }
 
   // Same superset rule as planDelete — the plan and the executor must agree,
   // or the dialog describes one thing and the button does another.

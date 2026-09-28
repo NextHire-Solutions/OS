@@ -76,3 +76,41 @@ export function isDestructive(
 export function needsAcknowledgement(destructive: boolean, acceptDataLoss: boolean): boolean {
   return destructive && !acceptDataLoss;
 }
+
+/* ---------------------------------------------------------------------------
+ * PAUSING ON DELETE — whose campaigns and billing it is safe to touch.
+ *
+ * Deleting pauses the client's campaigns and Stripe billing first (28 Sep, the
+ * user's rule: "delete should also pause the campaigns if any there and pause
+ * the billing if there is any"). After any delete the OS record is gone, and
+ * with it the only link to the subscription and the only place to pause from.
+ *
+ * But both are found indirectly, which makes a duplicate record dangerous:
+ *
+ *   campaigns  are found through Analytics client rows MATCHED BY NAME. Delete
+ *              a duplicate sharing a name with a real client and a naive pause
+ *              stops the real client's campaigns.
+ *   billing    is the subscription on the record. A duplicate carrying the
+ *              same subscription id would pause the real client's billing.
+ *
+ * So each is skipped — and said so — when another REMAINING client shares it.
+ * ------------------------------------------------------------------------- */
+
+/** Another remaining client has this exact subscription. */
+export function subscriptionShared(
+  subscriptionId: string | null,
+  others: Array<{ stripeSubscriptionId: string | null }>,
+): boolean {
+  if (!subscriptionId) return false;
+  return others.some((o) => o.stripeSubscriptionId === subscriptionId);
+}
+
+/**
+ * Another remaining client answers to one of this client's names.
+ * Keys are pre-normalised by the caller (roster keyOf), so this stays pure.
+ */
+export function nameKeyShared(mine: string[], others: string[][]): boolean {
+  const m = new Set(mine.filter(Boolean));
+  if (m.size === 0) return false;
+  return others.some((keys) => keys.some((k) => k && m.has(k)));
+}
