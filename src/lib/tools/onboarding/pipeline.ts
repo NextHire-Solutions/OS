@@ -1,4 +1,5 @@
 import "server-only";
+import { masterByToolId, marketsLine, portalPeopleByMiId, type MasterFacts, type PortalPeopleCounts } from "@/lib/clients/master-lookup";
 
 import { getCorofySupabase } from "../corofy/supabase";
 import { resolve } from "@/lib/clients/roster";
@@ -77,6 +78,22 @@ export interface OnboardingClient {
    * ticks, so it moves only when a step actually runs.
    */
   progress: Progress;
+  /*
+   * FROM THE MASTER RECORD (§5, §7): the fields §8 lists for this view that the
+   * OS owns. Null when this Database row is not linked to a master client.
+   */
+  masterStatus: string | null;
+  accountManager: string | null;
+  sender: string | null;
+  /** Portal team / agents / DNC — §8 lists all three for Onboarding. */
+  team: number | null;
+  agents: number | null;
+  dnc: number | null;
+  /** Agents built for this client in the Database (orch_client_leads). */
+  leadsBuilt: number;
+  /** Leads flagged in review / exported — yes/no flags on the client, not counts. */
+  inReview: boolean;
+  exported: boolean;
 }
 
 /** One row of the "Recent client replies" feed — the latest across ALL clients. */
@@ -121,6 +138,19 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
 type Row = Record<string, unknown>;
 const rows = (data: unknown): Row[] => (Array.isArray(data) ? (data as Row[]) : []);
 const obj = (v: unknown): Row => (v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {});
+
+/** Every row of a table, paged — PostgREST silently caps a read at 1,000. */
+async function pagedRows(sb: ReturnType<typeof getCorofySupabase>, table: string, cols: string): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from(table).select(cols).range(from, from + 999);
+    if (error) throw new Error(`${table}: ${error.message}`);
+    const page = rows(data);
+    out.push(...page);
+    if (page.length < 1000) break;
+  }
+  return out;
+}
 
 /**
  * Latest replies across ALL clients — the tool's `getRecentReplies`.
@@ -182,7 +212,9 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
             "salespeople:orch_salespeople!orch_clients_salesperson_id_fkey(id,name,photo_url)",
         )
         .order("created_at", { ascending: false }),
-      sb.from("orch_introductions").select("client_id,created_at"),
+      // PAGED: PostgREST stops at 1,000 rows without saying so, and there are
+      // more introductions than that — the counts were quietly short.
+      pagedRows(sb, "orch_introductions", "client_id,created_at"),
       getRecentReplies(8).catch((): RecentReply[] => []),
       /*
        * The REAL plan and weekly target. orch_clients carries the intake
@@ -193,6 +225,15 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
        * before.
        */
       realPlansByOrchId().catch((): Map<string, RealPlan> => new Map()),
+    ]);
+    // The master record and portal people — never fatal: a failure leaves the
+    // tool's own values on screen, exactly as before.
+    const [master, people, leadsBuilt] = await Promise.all([
+      masterByToolId("database").catch(() => new Map<string, MasterFacts>()),
+      portalPeopleByMiId().catch(() => new Map<string, PortalPeopleCounts>()),
+      pagedRows(sb, "orch_client_leads", "client_id")
+        .then((r) => { const m = new Map<string, number>(); for (const x of rows(r)) m.set(String(x.client_id), (m.get(String(x.client_id)) ?? 0) + 1); return m; })
+        .catch(() => new Map<string, number>()),
     ]);
 
     if (stagesRes.error) throw new Error(stagesRes.error.message);
@@ -209,7 +250,7 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
     // An introduction whose client row is gone is dropped rather than counted
     // against nobody — a total that no row explains is worse than a smaller one.
     const introCount = new Map<string, { n: number; last: string | null }>();
-    for (const row of rows(introsRes.data)) {
+    for (const row of rows(introsRes)) {
       const id = str(row.client_id);
       if (!id) continue;
       const at = str(row.created_at);
@@ -237,17 +278,20 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
       const counts = introCount.get(id);
       const contact = obj(c.primary_contact);
       const salesperson = obj(c.salespeople);
+      const m = master.get(id);
+      const p = m?.links.masterInbox ? (people.get(m.links.masterInbox) ?? { team: 0, agents: 0, dnc: 0 }) : null;
       return {
         id,
         name,
         brand: str(c.brand),
         officeName: str(c.office_name),
         primaryContact: str(c.primary_contact),
-        contactName: str(contact.name),
-        contactEmail: str(contact.email),
+        // Master record first (§7), the Typeform's copy as the fallback.
+        contactName: m?.contactName ?? str(contact.name),
+        contactEmail: m?.contactEmail ?? str(contact.email),
         photoUrl: str(c.photo_url),
         salespersonId: str(c.salesperson_id),
-        salespersonName: str(salesperson.name),
+        salespersonName: m?.salesperson ?? str(salesperson.name),
         salespersonPhoto: str(salesperson.photo_url),
         status: str(c.status),
         stageId: str(c.stage_id),
@@ -256,18 +300,23 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
         // tool's own only as a fallback.
         plan: realPlans.get(String(c.id))?.plan ?? str(c.plan),
         weeklyTarget: realPlans.get(String(c.id))?.weeklyTarget ?? num(c.weekly_target),
-        mls: str(c.mls),
-        location: str(c.location),
+        // The client's markets (many per client, migration 0017) first.
+        mls: (m && marketsLine(m.markets)) ?? str(c.mls),
+        location: m?.markets.length ? null : str(c.location),
         paid: c.stripe_paid === true,
         paidAt: str(c.stripe_paid_at),
         amount: num(c.stripe_amount),
         campaignStatus: str(c.bison_campaign_status),
-        leadsExported: num(c.bison_leads_exported),
-        leadsInReview: num(c.leads_inreview),
+        // These two are yes/no flags. num() on a boolean is always null, so the
+        // Leads column could never show anything; the flags are now read as
+        // flags (inReview / exported below) and the lead COUNT is leadsBuilt.
+        leadsExported: null,
+        leadsInReview: null,
         copyStatus: str(c.copy_status),
         portalUrl: str(c.portal_url),
         onboardingDate: str(c.onboarding_date),
-        createdAt: str(c.created_at),
+        // Date added: when the client joined the master record, else this row.
+        createdAt: m?.createdAt ?? str(c.created_at),
         updatedAt: str(c.updated_at),
         healthStatus: str(c.health_status),
         // Matched against the canonical roster so this screen counts clients
@@ -276,6 +325,15 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
         intros: counts?.n ?? 0,
         lastIntroAt: counts?.last ?? null,
         progress: progress[id] ?? { done: 0, total: 0, pct: 0 },
+        masterStatus: m?.status ?? null,
+        accountManager: m?.accountManager ?? null,
+        sender: m?.sender ?? null,
+        team: p?.team ?? null,
+        agents: p?.agents ?? null,
+        dnc: p?.dnc ?? null,
+        leadsBuilt: leadsBuilt.get(id) ?? 0,
+        inReview: c.leads_inreview === true,
+        exported: c.bison_leads_exported === true,
       };
     });
 

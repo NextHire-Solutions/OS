@@ -46,6 +46,8 @@ export const BIWEEKLY_TARGET: Record<Plan, number> = {
 };
 
 export interface Client {
+  /** Lifecycle status (migration 0019). Unlike the two booleans, it can say "onboarding". */
+  status?: 'onboarding' | 'active' | 'paused' | 'churned' | null;
   id: string;
   name: string;
   plan: Plan;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/clients/client-status";
 import { toneOf } from "@/lib/tools/onboarding/stage-types";
 
 import type { OnboardingClient, OnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
@@ -69,9 +70,19 @@ const COLS: Col[] = [
   { key: "contact", label: "Contact", value: (c) => `${c.contactName ?? ""} ${c.contactEmail ?? ""}`.trim() },
   { key: "mls_location", label: "MLS / Location", value: (c) => `${c.mls ?? ""} ${c.location ?? ""}`.trim() },
   { key: "salesperson", label: "Salesperson", value: (c) => c.salespersonName ?? "" },
-  { key: "health", label: "Health", value: (c) => c.healthStatus ?? "" },
+  // §8 Onboarding fields, read from the master record.
+  { key: "account_manager", label: "Account Manager", value: (c) => c.accountManager ?? "" },
+  { key: "sender", label: "Sender", value: (c) => c.sender ?? "" },
+  // The client's lifecycle status from the master record (§11) — not the
+  // Health Dashboard's copy, which a daily sync fills and which is blank for
+  // every onboarding client.
+  { key: "status", label: "Status", value: (c) => c.masterStatus ?? c.healthStatus ?? "" },
+  { key: "team", label: "Team", value: (c) => pad(c.team), text: (c) => (c.team === null ? "" : String(c.team)) },
+  { key: "agents", label: "Agents", value: (c) => pad(c.agents), text: (c) => (c.agents === null ? "" : String(c.agents)) },
+  { key: "dnc", label: "DNC", value: (c) => pad(c.dnc), text: (c) => (c.dnc === null ? "" : String(c.dnc)) },
   { key: "stage", label: "Stage", value: (c) => c.stageName ?? "—" },
   { key: "progress", label: "Profile", value: (c) => String(c.progress.pct).padStart(3, "0"), text: (c) => `${c.progress.pct}%` },
+  { key: "date_added", label: "Date added", value: (c) => c.createdAt ?? "" },
   // Ours.
   {
     key: "waiting",
@@ -90,8 +101,8 @@ const COLS: Col[] = [
   {
     key: "leads",
     label: "Leads",
-    value: (c) => pad(c.leadsExported ?? c.leadsInReview, 8),
-    text: (c) => (c.leadsExported !== null ? String(c.leadsExported) : c.leadsInReview !== null ? `${c.leadsInReview} in review` : ""),
+    value: (c) => pad(c.leadsBuilt, 8),
+    text: (c) => [c.leadsBuilt ? String(c.leadsBuilt) : "", c.inReview ? "in review" : "", c.exported ? "exported" : ""].filter(Boolean).join(" · "),
   },
   { key: "intros", label: "Intros", value: (c) => pad(c.intros), text: (c) => (c.intros > 0 ? String(c.intros) : "") },
   { key: "portal", label: "Portal", value: (c) => (c.portalUrl ? "open" : "") },
@@ -421,19 +432,29 @@ function Row({
         )}
       </td>
 
+      <td>{c.accountManager ?? <span className="api-none" title="Not set on the client record">—</span>}</td>
+      <td>{c.sender ?? <span className="api-none" title="Not set on the client record">—</span>}</td>
+
       <td>
-        {/* Read from the Health Dashboard by the orchestrator's daily sync; never written back. */}
-        {c.healthStatus ? (
-          <span className={`badge ${HEALTH_CLASS[c.healthStatus] ?? "s-neutral"}`}>
+        {/* The master record's status (§11) — the same badge every screen uses. */}
+        {c.masterStatus && isClientStatus(c.masterStatus) ? (
+          <span className={`badge ${STATUS_TONE[c.masterStatus]}`} title={STATUS_MEANING[c.masterStatus]}>
+            <span className="dot" />
+            {statusLabel(c.masterStatus)}
+          </span>
+        ) : c.healthStatus ? (
+          <span className={`badge ${HEALTH_CLASS[c.healthStatus] ?? "s-neutral"}`} title="From the Health Dashboard — not linked to a master client">
             <span className="dot" />
             {c.healthStatus}
           </span>
         ) : (
-          <span className="mut" title="No matching client on the Health Dashboard">
-            —
-          </span>
+          <span className="mut" title="Not linked to a master client">—</span>
         )}
       </td>
+
+      <td className="tnum">{c.team === null ? <span className="api-none">—</span> : c.team}</td>
+      <td className="tnum">{c.agents === null ? <span className="api-none">—</span> : c.agents.toLocaleString("en-US")}</td>
+      <td className="tnum">{c.dnc === null ? <span className="api-none">—</span> : c.dnc.toLocaleString("en-US")}</td>
 
       <td>
         {/*
@@ -472,6 +493,14 @@ function Row({
 
       <td>
         <ProgressCell progress={c.progress} />
+      </td>
+
+      {/* A fixed locale and zone: this cell is server-rendered, and the browser's
+          own locale (14/09/2026 vs 9/14/2026) failed hydration. */}
+      <td className="tnum mut">
+        {c.createdAt
+          ? new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+          : <span className="api-none">—</span>}
       </td>
 
       <td>
@@ -521,15 +550,12 @@ function Row({
       </td>
 
       <td>
-        {c.leadsExported !== null ? (
-          <span className="api-num tnum">{c.leadsExported.toLocaleString("en-US")}</span>
-        ) : c.leadsInReview !== null ? (
-          <span className="tnum mut" title="In review, not yet exported">
-            {c.leadsInReview.toLocaleString("en-US")} in review
-          </span>
-        ) : (
-          <span className="api-none">—</span>
-        )}
+        {/* The agents built for this client, and the two yes/no flags. The old
+            cell read those flags as numbers and so could never show anything. */}
+        {c.leadsBuilt > 0 ? <span className="api-num tnum">{c.leadsBuilt.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}
+        {c.inReview || c.exported ? (
+          <div className="cell-sub">{[c.inReview ? "in review" : null, c.exported ? "exported" : null].filter(Boolean).join(" · ")}</div>
+        ) : null}
       </td>
 
       <td>{c.intros > 0 ? <span className="api-num tnum">{c.intros}</span> : <span className="api-none">—</span>}</td>

@@ -16,6 +16,7 @@
  */
 
 import { requireSession } from "@/lib/auth/workspace";
+import { masterAll, masterByToolId, portalPeopleByMiId, resolveByIdOrName, type MasterFacts, type PortalPeopleCounts } from "@/lib/clients/master-lookup";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { loadCombinedIntroSummaryByClient } from "@/lib/tools/master-inbox/portals/intro-leads";
 import { PortalsAdmin } from "@/components/master-inbox/portals-ui/portals-admin";
@@ -34,6 +35,12 @@ export interface PortalClientRow {
   portal_enabled: boolean;
   intro_count: number;
   last_intro_at: string | null;
+  /** The client's lifecycle status from the master record (§11). */
+  status: string | null;
+  /** §8 Portal view: team, agents, DNC. */
+  team: number;
+  agents: number;
+  dnc: number;
 }
 
 export async function PortalsAdminScreen() {
@@ -44,13 +51,17 @@ export async function PortalsAdminScreen() {
   if (!CLIENT_PORTALS_ENABLED) return <PortalsComingSoon />;
 
   const admin = createAdminSupabase();
-  const [{ data: clients }, summary] = await Promise.all([
+  const [{ data: clients }, summary, masterByMi, masterList, people] = await Promise.all([
     admin
       .from("clients")
       .select("id, name, slug, portal_token, portal_enabled")
       .neq("slug", "unknown")
       .order("name", { ascending: true }),
     loadCombinedIntroSummaryByClient(),
+    // Never fatal: a failure leaves these columns blank, not the page.
+    masterByToolId("masterInbox").catch(() => new Map<string, MasterFacts>()),
+    masterAll().catch((): MasterFacts[] => []),
+    portalPeopleByMiId().catch(() => new Map<string, PortalPeopleCounts>()),
   ]);
 
   const rows: PortalClientRow[] = (clients ?? []).map((c) => {
@@ -63,6 +74,10 @@ export async function PortalsAdminScreen() {
       portal_enabled: (c.portal_enabled as boolean | null) ?? true,
       intro_count: s?.count ?? 0,
       last_intro_at: s?.lastAt ?? null,
+      status: resolveByIdOrName(masterByMi, masterList, c.id as string, c.name as string)?.status ?? null,
+      team: people.get(c.id as string)?.team ?? 0,
+      agents: people.get(c.id as string)?.agents ?? 0,
+      dnc: people.get(c.id as string)?.dnc ?? 0,
     };
   });
 

@@ -47,6 +47,9 @@ test("API segments map to their tool, and they are NOT the screen names", () => 
     ["/api/tools/analytics/campaigns/12/sequence", "analytics"],
     ["/api/tools/onboarding/stages", "onboarding"],
     ["/api/tools/agent-search/status", "search"],
+    // The Database view's data: gated with its screen, /search/clients.
+    ["/api/tools/agent-search/clients", "search"],
+    ["/search/clients", "search"],
   ];
   for (const [path, tool] of cases) assert.equal(toolForPath(path), tool, path);
 });

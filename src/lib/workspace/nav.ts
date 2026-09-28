@@ -172,6 +172,8 @@ export const NAV: NavSection[] = [
           { id: "accounts", label: "Courted accounts", path: "/", verified: true },
           { id: "mls", label: "MLS monitor", path: "/", verified: true },
           { id: "import", label: "Import Profile URLs", path: "/", verified: true },
+          // §8's Database view — the standalone Database app's Clients page.
+          { id: "clients", label: "Clients (Database)", path: "/", verified: true },
         ],
       },
     ],

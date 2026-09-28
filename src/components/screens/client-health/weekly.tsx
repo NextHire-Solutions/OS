@@ -193,6 +193,10 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
                 <SortableTh col="converted" sort={sort} onClick={toggleSort} title="All-time Interested → Introduction count">Converted</SortableTh>
                 <SortableTh col="convRate" sort={sort} onClick={toggleSort} title="Interested → Introduction conversion rate">Int → Intro</SortableTh>
                 <th>Plan</th>
+                {/* §8 Client Health fields that were held but never shown. */}
+                <th title="Introductions promised per week">Weekly Target</th>
+                <th>Billing</th>
+                <th title="Other names this client's campaigns go by">Aliases</th>
                 <th>Portal</th>
                 <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
@@ -200,7 +204,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={19} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                  <td colSpan={22} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
                     {rows.length === 0 ? (
                       <>
                         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 6 }}>
@@ -349,6 +353,9 @@ function Row({
           ) : null}
           {c.hidden ? <Tag text="Churned" tone="red" /> : null}
           {!c.hidden && c.client_paused ? <Tag text="Client Paused" tone="amber" /> : null}
+          {/* The booleans cannot say "onboarding" — without this an onboarding
+              client looked like any active client here. */}
+          {c.status === "onboarding" ? <Tag text="Onboarding" tone="blue" /> : null}
         </div>
 
         {c.start_date ? <div className="csince">Since {formatDate(c.start_date)}</div> : null}
@@ -572,6 +579,23 @@ function Row({
         </span>
       </td>
 
+      {/* §8: weekly target, billing interval + anchor, aliases — held on every
+          row all along, shown nowhere in the table. */}
+      <td className="tnum">{c.weekly_target}</td>
+      <td style={{ whiteSpace: "nowrap" }}>
+        {c.billing_interval === "custom" && c.billing_interval_days
+          ? `every ${c.billing_interval_days}d`
+          : (c.billing_interval ?? "—")}
+        <div className="cell-sub mut">
+          {c.billing_anchor_date ? `anchor ${formatDate(c.billing_anchor_date)}` : "no anchor set"}
+        </div>
+      </td>
+      <td style={{ maxWidth: 220 }}>
+        {(c.campaign_aliases ?? []).length
+          ? <span title={(c.campaign_aliases ?? []).join(", ")}>{(c.campaign_aliases ?? []).join(", ")}</span>
+          : <span className="api-none">—</span>}
+      </td>
+
       <td
         className={c.portal_active ? "" : "mut"}
         style={c.portal_active ? { color: "var(--green)", fontWeight: 700 } : undefined}
@@ -658,7 +682,7 @@ function SetLink({ onClick, children }: { onClick: () => void; children: React.R
   );
 }
 
-function Tag({ text, tone }: { text: string; tone: "red" | "amber" }) {
+function Tag({ text, tone }: { text: string; tone: "red" | "amber" | "blue" }) {
   return (
     <span
       style={{
@@ -667,8 +691,8 @@ function Tag({ text, tone }: { text: string; tone: "red" | "amber" }) {
         fontSize: 10.5,
         fontWeight: 700,
         letterSpacing: ".02em",
-        color: tone === "red" ? "var(--red)" : "var(--yellow)",
-        background: tone === "red" ? "var(--red-bg)" : "var(--yellow-bg)",
+        color: tone === "red" ? "var(--red)" : tone === "blue" ? "var(--blue-ink, var(--blue))" : "var(--yellow)",
+        background: tone === "red" ? "var(--red-bg)" : tone === "blue" ? "var(--blue-bg, #eaf2ff)" : "var(--yellow-bg)",
       }}
     >
       {text}

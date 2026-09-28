@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/clients/client-status";
 
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 
@@ -278,6 +279,9 @@ interface ClientRow {
   leadToEmail: number | null;
   bounceRate: number | null;
   medianReplySeconds: number | null;
+  /** §8: the client's lifecycle status (master record) and all-time introductions. */
+  status?: string | null;
+  intros?: number | null;
 }
 
 function ClientsView({ qs }: { qs: string }) {
@@ -342,6 +346,8 @@ function ClientsView({ qs }: { qs: string }) {
           <thead>
             <tr>
               <SortHeader label="Client" sortKey="name" sort={sort} onToggle={toggle} width={250} />
+              <SortHeader label="Status" sortKey="status" sort={sort} onToggle={toggle} />
+              <SortHeader label="Intros · all time" sortKey="intros" sort={sort} onToggle={toggle} align="right" />
               <SortHeader label="Sent" sortKey="sent" sort={sort} onToggle={toggle} align="right" />
               <SortHeader label="Prospects" sortKey="prospects" sort={sort} onToggle={toggle} align="right" />
               <SortHeader label="Replies" sortKey="replies" sort={sort} onToggle={toggle} align="right" />
@@ -357,7 +363,7 @@ function ClientsView({ qs }: { qs: string }) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <EmptyRow colSpan={10}>
+              <EmptyRow colSpan={12}>
                 {data ? "No client sent anything in this window." : "Loading…"}
               </EmptyRow>
             ) : (
@@ -386,6 +392,15 @@ function ClientsView({ qs }: { qs: string }) {
                       ) : null}
                     </div>
                   </td>
+                  <td>
+                    {r.status && isClientStatus(r.status) ? (
+                      <span className={`badge ${STATUS_TONE[r.status]}`} title={STATUS_MEANING[r.status]}>
+                        <span className="dot" />
+                        {statusLabel(r.status)}
+                      </span>
+                    ) : DASH}
+                  </td>
+                  <td className="tnum" style={{ textAlign: "right" }}>{r.intros == null ? DASH : fullNumber(r.intros)}</td>
                   <td className="tnum" style={{ textAlign: "right" }}>{fullNumber(r.sent)}</td>
                   <td className="tnum" style={{ textAlign: "right" }}>{fullNumber(r.prospects)}</td>
                   <td className="tnum" style={{ textAlign: "right" }}>{fullNumber(r.replies)}</td>

@@ -1,4 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { masterAll, masterByToolId, resolveByIdOrName } from "@/lib/clients/master-lookup";
+import { loadCombinedIntroSummaryByClient } from "@/lib/tools/master-inbox/portals/intro-leads";
+import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
 import { resolvePlatformScope } from "@/lib/tools/analytics/platform-scope.ts";
@@ -181,6 +184,33 @@ export async function GET(request: NextRequest) {
           bounceRate: bounceRate(r.bounces, r.sent),
         }))
         .sort((a, b) => b.sent - a.sent);
+    }
+
+    /*
+     * §8 ANALYTICS FIELDS THE TABLE LACKED: the client's status and its
+     * introductions. Introductions are Master Inbox's (the intro label), so each
+     * row takes the count of the Master Inbox portal OF THE SAME NAME — a
+     * client's second market has its own portal and its own introductions, and
+     * crediting them to the first would misstate both. All-time, and labelled
+     * so on screen, because they are not windowed like the columns beside them.
+     * Never fatal: on failure the two columns are blank, the table is not.
+     */
+    try {
+      const [byAn, all, intros, miRows] = await Promise.all([
+        masterByToolId("analytics"),
+        masterAll(),
+        loadCombinedIntroSummaryByClient(),
+        getMasterInboxSupabase().from("clients").select("id, name"),
+      ]);
+      const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const miByName = new Map(((miRows.data ?? []) as { id: string; name: string }[]).map((r) => [norm(r.name), r.id]));
+      merged = merged.map((r) => {
+        const m = r.clientId ? resolveByIdOrName(byAn, all, r.clientId, r.name) : null;
+        const miId = miByName.get(norm(r.name)) ?? m?.links.masterInbox ?? null;
+        return { ...r, status: m?.status ?? null, intros: miId ? (intros.get(miId)?.count ?? 0) : null };
+      });
+    } catch (e) {
+      console.error("[api/analytics/client-rows] status/intros", e);
     }
 
     // Totals are summed from the SAME rows the table renders, not queried

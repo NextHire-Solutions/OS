@@ -2,6 +2,7 @@
 // query so the dashboard can switch weeks client-side without re-fetching.
 
 import { getSupabase } from './supabase';
+import { lifecycleOf } from "./publish";
 import { generateSeed } from './seed';
 import {
   HISTORICAL_WEEKS,
@@ -151,6 +152,8 @@ export async function loadDashboardClients(): Promise<{
       instantly_campaign_ids: c.instantly_campaign_ids ?? [],
       bison_campaign_ids: c.bison_campaign_ids ?? [],
       campaign_size: c.campaign_size ?? 0,
+      // The status column, so an onboarding client is not shown as active.
+      status: lifecycleOf(c),
       hidden: c.hidden ?? false,
       client_paused: c.client_paused ?? false,
       portal_active: c.portal_active ?? false,

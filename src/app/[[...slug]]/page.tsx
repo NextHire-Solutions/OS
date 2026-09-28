@@ -35,6 +35,7 @@ import { AgentSearchMasterScreen } from "@/components/screens/agent-search/maste
 import { AgentSearchAccountsScreen } from "@/components/screens/agent-search/accounts";
 import { AgentSearchMlsScreen } from "@/components/screens/agent-search/mls";
 import { AgentSearchImportScreen } from "@/components/screens/agent-search/import";
+import { AgentSearchClientsScreen } from "@/components/screens/agent-search/clients";
 import { FullInbox } from "@/components/screens/master-inbox/full-inbox";
 import { ThreadDetail } from "@/components/screens/master-inbox/thread-detail";
 import { FolderEmpty } from "@/components/master-inbox/folder-empty";
@@ -362,6 +363,7 @@ export default async function WorkspacePage({
         "search:accounts": <AgentSearchAccountsScreen />,
         "search:mls": <AgentSearchMlsScreen />,
         "search:import": <AgentSearchImportScreen />,
+        "search:clients": <AgentSearchClientsScreen />,
         /*
          * Master Inbox, read-only for now. Its own loadThreads is used
          * verbatim — that query carries corrections (a 50-row page, id sets

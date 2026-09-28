@@ -34,6 +34,7 @@ import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
  * screen through one catch-all.
  */
 import type { PortalClientRow } from "@/components/screens/master-inbox/portals";
+import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/clients/client-status";
 
 // Absolute date for the "last intro" column — client asked for an
 // explicit date instead of "Xh ago / 1mo ago" so it's easier to spot
@@ -169,8 +170,12 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
                 <thead>
                   <tr>
                     <th>Client</th>
+                    <th>Status</th>
                     <th className="text-center">Intros</th>
                     <th>Last intro</th>
+                    <th className="text-center">Team</th>
+                    <th className="text-center">Agents</th>
+                    <th className="text-center">DNC</th>
                     <th className="text-center">Live</th>
                     <th className="text-right">Actions</th>
                   </tr>
@@ -308,6 +313,19 @@ function PortalRow({
         </div>
       </td>
 
+      {/* Status — §11 names client-portal lists as the place status was
+          missing. The master record's status, in the shared badge. */}
+      <td>
+        {row.status && isClientStatus(row.status) ? (
+          <span className={`badge ${STATUS_TONE[row.status]}`} title={STATUS_MEANING[row.status]}>
+            <span className="dot" />
+            {statusLabel(row.status)}
+          </span>
+        ) : (
+          <span className="text-[#9aa0ab]" title="Not linked to a master client (a demo or test portal)">—</span>
+        )}
+      </td>
+
       {/* Intros */}
       <td className="text-center">
         <span
@@ -327,6 +345,11 @@ function PortalRow({
       <td className="text-[13px] text-[#5b6472] whitespace-nowrap">
         {formatLastIntro(row.last_intro_at)}
       </td>
+
+      {/* §8 Portal view: team, agents, do-not-contact list. */}
+      <td className="text-center tabular-nums">{row.team}</td>
+      <td className="text-center tabular-nums">{row.agents.toLocaleString("en-US")}</td>
+      <td className="text-center tabular-nums">{row.dnc.toLocaleString("en-US")}</td>
 
       {/* Portal toggle */}
       <td>
