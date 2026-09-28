@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
-import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-health/supabase";
-import {
-  normalizeClientName,
-  type ClientStatus,
-} from "@/lib/tools/master-inbox/inbox/lists-shared";
+import { masterAll, masterByToolId, resolveByIdOrName } from "@/lib/clients/master-lookup";
+import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
+import { statusByListName } from "@/lib/tools/master-inbox/inbox/list-status";
+import { type ClientStatus } from "@/lib/tools/master-inbox/inbox/lists-shared";
 
 export const dynamic = "force-dynamic";
 
@@ -61,39 +60,36 @@ const EMPTY: StatusResponse = { ok: false, counts: null, byName: {} };
  * Five minutes. Health changes when somebody pauses or churns a client — a
  * deliberate, rare act — and every staff page load asks for this.
  */
+/*
+ * From the master record (list-status.ts says why this no longer reads Client
+ * Health's booleans). A minute's cache: a status changed on the Clients page
+ * shows here within a minute rather than five.
+ */
 const loadStatus = ttlCache(
   async (): Promise<StatusResponse> => {
     try {
-      const { data, error } = await getClientHealthSupabase()
-        .from("clients")
-        .select("name, hidden, client_paused");
-
-      if (error || !data) return EMPTY;
-
-      const byName: Record<string, ClientStatus> = {};
-      const counts: Record<ClientStatus, number> = { active: 0, paused: 0, churned: 0 };
-
-      for (const row of data as Array<{ name: string | null; hidden: boolean | null; client_paused: boolean | null }>) {
-        if (!row?.name) continue;
-        const status: ClientStatus = row.hidden
-          ? "churned"
-          : row.client_paused
-            ? "paused"
-            : "active";
-        byName[normalizeClientName(row.name)] = status;
-        counts[status] += 1;
+      const [all, byMiId, inbox] = await Promise.all([
+        masterAll(),
+        masterByToolId("masterInbox"),
+        getMasterInboxSupabase().from("clients").select("id, name"),
+      ]);
+      if (inbox.error) throw new Error(inbox.error.message);
+      const inboxNames = new Map<string, string[]>();
+      for (const r of (inbox.data ?? []) as { id: string; name: string | null }[]) {
+        if (!r.name) continue;
+        const m = resolveByIdOrName(byMiId, all, r.id, r.name);
+        if (!m) continue;
+        inboxNames.set(m.id, [...(inboxNames.get(m.id) ?? []), r.name]);
       }
-
+      const { byName, counts } = statusByListName(
+        all.map((m) => ({ name: m.name, aliases: m.aliases, status: m.status, inboxNames: inboxNames.get(m.id) ?? [] })),
+      );
       return { ok: true, counts, byName };
     } catch {
-      /*
-       * Fail open, deliberately. This decorates the rail; it must never be able
-       * to break it. The caller gets ok:false and renders without dots.
-       */
       return EMPTY;
     }
   },
-  { ttlMs: 5 * 60_000 },
+  { ttlMs: 60_000 },
 );
 
 export async function GET() {
