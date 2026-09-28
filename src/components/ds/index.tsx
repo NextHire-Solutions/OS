@@ -3,6 +3,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { ToolGlyph } from "@/components/shell/tool-glyph";
+
 /*
  * The design system's React side. Every screen builds from these, so the OS
  * reads as one product rather than five tools sharing a sidebar. The styles are
@@ -17,19 +19,25 @@ export function PageHeader({
   description,
   actions,
   children,
+  icon,
 }: {
   title: string;
   description?: React.ReactNode;
   actions?: React.ReactNode;
   /** Tabs or a sub-navigation, drawn under the title row. */
   children?: React.ReactNode;
+  /** A rail glyph id (home, roster, clients, analytics, inbox, onboarding, search…) — the page's mark. */
+  icon?: string;
 }) {
   return (
     <header style={{ display: "grid", gap: 14 }}>
       <div className="ds-head">
-        <div style={{ minWidth: 0 }}>
-          <h1>{title}</h1>
-          {description ? <p>{description}</p> : null}
+        <div className="ds-head-t">
+          {icon ? <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id={icon} /></span> : null}
+          <div style={{ minWidth: 0 }}>
+            <h1>{title}</h1>
+            {description ? <p>{description}</p> : null}
+          </div>
         </div>
         {actions ? <div className="ds-head-actions">{actions}</div> : null}
       </div>
@@ -255,10 +263,13 @@ export function Field({
   display,
   editor,
   onSave,
+  source,
 }: {
   label: string;
   /** Small text under the label — usually which system owns the value. */
   hint?: string;
+  /** Where the value is held (§7), shown as a chip beside the label. */
+  source?: string;
   /** The raw value the editor starts from. */
   value: string | number | null;
   /** How the value reads; defaults to the raw value. */
@@ -314,6 +325,7 @@ export function Field({
       <div className="ds-field-l">
         <span>{label}</span>
         {hint ? <small>{hint}</small> : null}
+        {source ? <em className="ds-field-src">{source}</em> : null}
       </div>
       <div className="ds-field-v">
         {editing && editor ? (
@@ -360,4 +372,39 @@ export function Field({
       </div>
     </div>
   );
+}
+
+/* ------------------------------------------------------------ status pill --- */
+/**
+ * THE status indicator (spec §10–§11): same name, colour, dot and meaning in
+ * every tool. Onboarding blue, Active green, Paused orange, Churned red.
+ * Anything that shows a client's status renders this — never its own badge.
+ */
+export type LifecycleStatus = "onboarding" | "active" | "paused" | "churned";
+
+const STATUS_WORD: Record<LifecycleStatus, string> = {
+  onboarding: "Onboarding", active: "Active", paused: "Paused", churned: "Churned",
+};
+const STATUS_MEANING_TEXT: Record<LifecycleStatus, string> = {
+  onboarding: "Created and going through the onboarding process.",
+  active: "Currently active and receiving the service.",
+  paused: "Temporarily paused, but still a client.",
+  churned: "No longer an active client.",
+};
+
+export function isLifecycleStatus(v: unknown): v is LifecycleStatus {
+  return v === "onboarding" || v === "active" || v === "paused" || v === "churned";
+}
+
+export function StatusPill({ status, size, title }: { status: LifecycleStatus; size?: "sm"; title?: string }) {
+  return (
+    <span className={`st-pill st-${status}${size ? ` ${size}` : ""}`} title={title ?? STATUS_MEANING_TEXT[status]}>
+      <span className="st-dot" aria-hidden="true" />
+      {STATUS_WORD[status]}
+    </span>
+  );
+}
+
+export function StatusDot({ status }: { status: LifecycleStatus }) {
+  return <span className={`st-dot-only st-${status}`} title={`${STATUS_WORD[status]} — ${STATUS_MEANING_TEXT[status]}`} aria-label={STATUS_WORD[status]} />;
 }

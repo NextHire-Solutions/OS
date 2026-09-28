@@ -94,7 +94,7 @@ function StagesView({ board, reload }: { board: StagesBoard; reload: () => Promi
   return (
     <div className="wrap">
       <div style={{ marginBottom: 18 }}>
-        <PageHeader title="Stages" description="The steps a client moves through, in order" />
+        <PageHeader icon="onboarding" title="Stages" description="The steps a client moves through, in order" />
       </div>
       <div className="cards" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <div className="card">

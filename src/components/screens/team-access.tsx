@@ -1,5 +1,6 @@
 "use client";
 
+import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModalDialog } from "@/components/ui/modal-dialog";
 
@@ -207,6 +208,7 @@ export function TeamAccessScreen() {
   return (
     <div className="wrap" style={{ maxWidth: 1000 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+        <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="team-access" /></span>
         <div>
           <h1 className="ds-title">Team access</h1>
           <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>

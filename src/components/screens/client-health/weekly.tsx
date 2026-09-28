@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { Badge, Panel } from "@/components/ds";
+import { Badge, Panel, StatusPill, isLifecycleStatus, type LifecycleStatus } from "@/components/ds";
 import {
   activeCampaigns, campaignProgress, campaignsLabel, clientFunnel,
 } from "@/lib/tools/client-health/campaigns";
@@ -332,6 +332,8 @@ function Row({
 
   /* Markets covered, from the OS's own client record. null = could not be read. */
   const markets = c.markets;
+  const lifecycle: LifecycleStatus = isLifecycleStatus(c.status) ? c.status
+    : c.hidden ? "churned" : c.client_paused ? "paused" : "active";
 
   return (
     <tr className={isBehind(snap) ? "has-carry" : undefined} style={c.hidden || c.client_paused ? { opacity: 0.62 } : undefined}>
@@ -352,9 +354,9 @@ function Row({
             ) : null}
             {campToggle}
           </span>
-          {c.hidden ? <Badge tone="red">Churned</Badge> : null}
-          {!c.hidden && c.client_paused ? <Badge tone="amber">Client Paused</Badge> : null}
-          {c.status === "onboarding" ? <Badge tone="brand">Onboarding</Badge> : null}
+          {/* §11: the lifecycle status in the one pill every tool uses — shown
+              when it is not Active, so a row only speaks up when it differs. */}
+          {lifecycle !== "active" ? <StatusPill status={lifecycle} size="sm" /> : null}
         </div>
 
         {/* Since … · N markets — one line. Markets are the OS's own record; null = could not be read. */}

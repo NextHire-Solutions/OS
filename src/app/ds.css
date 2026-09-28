@@ -30,25 +30,47 @@
   --ds-gutter: 28px;
   --ds-radius: 12px;
   --ds-radius-sm: 8px;
-  --ds-border: #E4E7EC;
-  --ds-border-strong: #D5DAE1;
-  --ds-canvas: #F6F7F9;
+  --ds-border: #E6E8EC;
+  --ds-border-strong: #D6DAE0;
+  --ds-canvas: #F7F8FA;
   --ds-surface: #FFFFFF;
-  --ds-sunken: #F2F4F7;
-  --ds-ink: #0D1526;
-  --ds-ink-2: #3D4657;
-  --ds-muted: #6B7485;
-  --ds-faint: #98A1B0;
+  --ds-sunken: #F3F4F6;
+  --ds-hover: #F8F9FB;
+  --ds-ink: #0B1220;
+  --ds-ink-2: #344054;
+  --ds-muted: #5F6B7C;
+  --ds-faint: #98A2B3;
   --ds-brand: #0165FE;
-  --ds-brand-ink: #0B4FC4;
-  --ds-brand-soft: #EAF1FF;
-  --ds-green: #0E8A5F;  --ds-green-soft: #E3F6EC;
-  --ds-amber: #B45309;  --ds-amber-soft: #FFF3E3;
-  --ds-red: #C93A31;    --ds-red-soft: #FDE8E6;
-  --ds-violet: #5B3FD4; --ds-violet-soft: #F0ECFF;
-  --ds-shadow: 0 1px 2px rgba(13, 21, 38, .04);
-  --ds-shadow-pop: 0 12px 32px -8px rgba(13, 21, 38, .18), 0 2px 6px rgba(13, 21, 38, .06);
+  --ds-brand-ink: #0A4FC2;
+  --ds-brand-soft: #EDF3FF;
+  --ds-green: #0F8A5F;  --ds-green-soft: #E7F6EE;
+  --ds-amber: #B45309;  --ds-amber-soft: #FFF4E5;
+  --ds-red: #D92D20;    --ds-red-soft: #FEEFEE;
+  --ds-violet: #5B3FD4; --ds-violet-soft: #F2EEFF;
+  --ds-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 1px rgba(16, 24, 40, .02);
+  --ds-shadow-md: 0 1px 3px rgba(16, 24, 40, .06), 0 4px 12px -2px rgba(16, 24, 40, .05);
+  --ds-shadow-pop: 0 16px 40px -12px rgba(16, 24, 40, .22), 0 3px 8px rgba(16, 24, 40, .06);
+
+  /*
+   * THE FOUR STATUSES (spec §10–§11): one colour each, everywhere.
+   * Paused is ORANGE and Churned is RED because the document says so; Active
+   * is green and Onboarding blue — the "standardized indicators" it leaves to
+   * design. Every status pill, dot, filter and bar reads these four.
+   */
+  --st-onboarding: #2563EB; --st-onboarding-soft: #EEF4FF;
+  --st-active: #12805C;     --st-active-soft: #E8F6EF;
+  --st-paused: #EA6A0C;     --st-paused-soft: #FFF2E8;
+  --st-churned: #D92D20;    --st-churned-soft: #FEEEEC;
+
+  /* The OS typeface: Geist, loaded by layout.tsx. Overrides workspace.css,
+     whose 'Inter' was never actually loaded. */
+  --sans: var(--font-geist), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ds-mono: var(--mono);
 }
+
+body { font-family: var(--sans); -webkit-font-smoothing: antialiased; font-feature-settings: "ss01" on, "cv11" on; }
+
 
 /* ---------------------------------------------------------------- width --- */
 /*
@@ -445,3 +467,26 @@ tr.has-carry > td:first-child { box-shadow: inset 3px 0 0 var(--ds-red); }
 .tool-m div b { font-size: 20px; font-weight: 650; }
 /* Onboarding: a client's name on one line, not three. */
 .onb-pipeline tbody td:first-child { white-space: nowrap; }
+
+/* ----------------------------------------------------------- status (§11) --- */
+.st-pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px 0 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; letter-spacing: .005em; white-space: nowrap; line-height: 1; }
+.st-pill .st-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.st-pill.st-onboarding { color: var(--st-onboarding); background: var(--st-onboarding-soft); }
+.st-pill.st-active { color: var(--st-active); background: var(--st-active-soft); }
+.st-pill.st-paused { color: var(--st-paused); background: var(--st-paused-soft); }
+.st-pill.st-churned { color: var(--st-churned); background: var(--st-churned-soft); }
+.st-pill.sm { height: 19px; font-size: 11px; padding: 0 7px 0 6px; gap: 5px; }
+.st-dot-only { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.st-dot-only.st-onboarding { background: var(--st-onboarding); }
+.st-dot-only.st-active { background: var(--st-active); }
+.st-dot-only.st-paused { background: var(--st-paused); }
+.st-dot-only.st-churned { background: var(--st-churned); }
+/* The older class names every tool already renders, mapped onto the same four. */
+.s-onboarding { background: var(--st-onboarding-soft) !important; color: var(--st-onboarding) !important; }
+.s-active { background: var(--st-active-soft) !important; color: var(--st-active) !important; }
+.s-paused { background: var(--st-paused-soft) !important; color: var(--st-paused) !important; }
+.s-churned { background: var(--st-churned-soft) !important; color: var(--st-churned) !important; }
+.mi-list-dot.s-active { background: var(--st-active) !important; }
+.mi-list-dot.s-paused { background: var(--st-paused) !important; }
+.mi-list-dot.s-churned { background: var(--st-churned) !important; }

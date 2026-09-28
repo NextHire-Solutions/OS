@@ -1,5 +1,6 @@
 "use client";
 
+import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { MIN_PASSWORD_LENGTH } from "@/lib/identity/password";
@@ -67,9 +68,12 @@ export function AccountScreen({ email }: { email: string }) {
 
   return (
     <div className="wrap" style={{ maxWidth: 640 }}>
-      <div style={{ marginBottom: 18 }}>
+      <div style={{ marginBottom: 18, display: "flex", alignItems: "center", gap: 14 }}>
+        <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="roster" /></span>
+        <div>
         <h1 className="ds-title">Account</h1>
         <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>{me?.email ?? email}</p>
+        </div>
       </div>
 
       {first && me?.mustChangePassword && !done ? (

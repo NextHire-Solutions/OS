@@ -135,8 +135,8 @@
   --shadow-card-hover: var(--shadow-card-hover);
   --shadow-elevated: var(--shadow-elevated);
 
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: var(--font-geist), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -238,3 +238,4 @@
 
 /* The design system — last and unlayered, so it wins while screens move across. */
 @import "./ds.css";
+@import "./ds-clients.css";

@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/ds";
 import { useEffect, useState } from "react";
 
 /*
@@ -791,10 +792,7 @@ function Coverage({ report }: { report?: CoverageReport }) {
 function Frame({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <div className="hero">
-        <h1>Consistency</h1>
-        <p>Where the tools disagree about clients, and whether it matters</p>
-      </div>
+      <div className="hero"><PageHeader icon="consistency" title="Consistency" description="Where the tools disagree about clients, and whether it matters" /></div>
       <div className="wrap">{children}</div>
     </>
   );

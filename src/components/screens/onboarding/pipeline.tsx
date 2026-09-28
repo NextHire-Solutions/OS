@@ -205,7 +205,7 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
   return (
     <div className="wrap onb-pipeline">
       <div style={{ marginBottom: 18 }}>
-        <PageHeader title="Onboarding" description="Every client from signed to live — stage, owner, payment and launch" />
+        <PageHeader icon="onboarding" title="Onboarding" description="Every client from signed to live — stage, owner, payment and launch" />
       </div>
       {/*
          * Six cards in a five-column grid left "Off Roster" stranded alone on a

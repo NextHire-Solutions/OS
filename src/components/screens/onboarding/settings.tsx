@@ -126,7 +126,7 @@ function SettingsView({ s, reload }: { s: OnboardingSettings; reload: () => Prom
   return (
     <div className="wrap">
       <div style={{ marginBottom: 18 }}>
-        <PageHeader title="Onboarding settings" description="Who does what, and where onboarding reads and writes" />
+        <PageHeader icon="onboarding" title="Onboarding settings" description="Who does what, and where onboarding reads and writes" />
       </div>
       <AutomationPanel on={s.automationEnabled} busy={busy} run={run} />
       <StepLabelsPanel labels={s.stepLabels} busy={busy} run={run} />

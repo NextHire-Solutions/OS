@@ -65,10 +65,10 @@ export const STATUS_TONE: Record<ClientStatus, string> = {
 
 /** The CSS custom property holding this status's foreground colour. */
 export const STATUS_COLOR_VAR: Record<ClientStatus, string> = {
-  onboarding: "var(--blue-ink)",
-  active: "var(--green)",
-  paused: "var(--yellow)",
-  churned: "var(--red)",
+  onboarding: "var(--st-onboarding)",
+  active: "var(--st-active)",
+  paused: "var(--st-paused)",
+  churned: "var(--st-churned)",
 };
 
 /**

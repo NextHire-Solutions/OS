@@ -104,6 +104,7 @@ export function AnalyticsTabs({ active }: { active: AnalyticsTab }) {
       <StalenessStrip />
       <div className="an-header">
         <PageHeader
+          icon="analytics"
           title="Campaign Analytics"
           description="EmailBison and Instantly performance — one report, read five ways"
         >

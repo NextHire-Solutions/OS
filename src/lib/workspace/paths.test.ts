@@ -85,3 +85,11 @@ test("the tool's own hostname never appears in an address", () => {
     assert.equal(/^https?:/.test(path), false, `${d.id} produced an absolute URL`);
   }
 });
+
+test("every tool has its §8 Client view, addressed inside the tool", () => {
+  for (const tool of ["inbox", "clients", "analytics", "onboarding", "search"]) {
+    const id = `${tool}:client-view`;
+    assert.equal(pathForId(id), `/${tool}/client-view`);
+    assert.equal(idForPath(`/${tool}/client-view`), id);
+  }
+});

@@ -1,5 +1,6 @@
 "use client";
 
+import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useEffect, useState } from "react";
 
 import { ALL_COLUMNS, KEY_COLUMNS, type SourceId } from "@/lib/tools/agent-search/columns";
@@ -33,7 +34,7 @@ export function AgentSearchHeader(
 ) {
   return (
     <div className="as-hd">
-      <div className="as-logo" aria-hidden><i /></div>
+      <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="search" /></span>
       <div>
         <h1>{title}</h1>
         <p>{sub}</p>

@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/ds";
 import type { Performance } from "@/lib/workspace/performance";
 
 import { Lazy, PlaceholderScreen } from "./lazy";
@@ -25,10 +26,7 @@ function PerformanceView({ performance }: { performance: Performance }) {
   if (unavailable) {
     return (
       <>
-        <div className="hero">
-          <h1>Performance</h1>
-          <p>Client base, plans and movement</p>
-        </div>
+        <div className="hero"><PageHeader icon="performance" title="Performance" description="Client base, plans and movement" /></div>
         <div className="wrap">
           <div className="card">
             <div className="card-l">Unavailable</div>
@@ -41,10 +39,7 @@ function PerformanceView({ performance }: { performance: Performance }) {
 
   return (
     <>
-      <div className="hero">
-        <h1>Performance</h1>
-        <p>Client base, plans and movement · last 90 days</p>
-      </div>
+      <div className="hero"><PageHeader icon="performance" title="Performance" description="Client base, plans and movement · last 90 days" /></div>
 
       <div className="wrap">
         <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>

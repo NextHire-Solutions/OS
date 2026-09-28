@@ -1,5 +1,6 @@
 "use client";
 
+import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useCallback, useEffect, useState } from "react";
 import { ModalDialog } from "@/components/ui/modal-dialog";
 import { ReplyAgentConfigPanel } from "@/components/screens/reply-agent-config";
@@ -168,6 +169,7 @@ export function ReplyAgentScreen() {
   return (
     <div className="wrap" style={{ maxWidth: 1040 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+        <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="reply-agent" /></span>
         <div>
           <h1 className="ds-title">Reply agent</h1>
           <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>

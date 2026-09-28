@@ -62,6 +62,7 @@ export function ClientHealthToolbar({
   return (
     <>
       <PageHeader
+        icon="clients"
         title={title}
         description={<>{isCurrent ? "This week" : `Week of ${weekLabel(key)}`} · {description}</>}
         actions={

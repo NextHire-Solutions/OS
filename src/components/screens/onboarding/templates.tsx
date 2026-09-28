@@ -83,7 +83,7 @@ function TemplatesView({ list, reload }: { list: TemplateList; reload: () => Pro
   return (
     <div className="wrap">
       <div style={{ marginBottom: 18 }}>
-        <PageHeader title="Templates" description="The emails onboarding sends at each step" />
+        <PageHeader icon="onboarding" title="Templates" description="The emails onboarding sends at each step" />
       </div>
       <div className="cards" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <div className="card">

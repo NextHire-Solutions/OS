@@ -102,6 +102,7 @@ export const NAV: NavSection[] = [
           // portal.brokerstaffer.com and are deliberately outside the
           // workspace; this page is in scope, they are not.
           { id: "portals", label: "Client Portals", path: "/portals", verified: true },
+          { id: "client-view", label: "Client view", verified: true },
           // Master Inbox's settings are eight pages behind a second sidebar.
           // One entry here; the tool keeps its own sub-navigation inside, which
           // is the right trade — hoisting eight rarely-used pages into the rail
@@ -127,6 +128,7 @@ export const NAV: NavSection[] = [
           { id: "weekly", label: "Weekly", path: "/", verified: true },
           { id: "biweekly", label: "Bi-Weekly", path: "/?view=biweekly", verified: true },
           { id: "success", label: "Client Success", path: "/?view=success", verified: true },
+          { id: "client-view", label: "Client view", verified: true },
         ],
       },
       {
@@ -144,6 +146,7 @@ export const NAV: NavSection[] = [
           { id: "campaigns", label: "Campaigns", path: "/analytics/campaigns", verified: true },
           { id: "schedule", label: "Schedule", path: "/analytics/schedule", verified: true },
           { id: "clients", label: "Clients", path: "/analytics/clients", verified: true },
+          { id: "client-view", label: "Client view", verified: true },
         ],
       },
       {
@@ -156,6 +159,7 @@ export const NAV: NavSection[] = [
           { id: "stages", label: "Stages", path: "/stages", verified: true },
           { id: "templates", label: "Templates", path: "/templates", verified: true },
           { id: "settings", label: "Settings", path: "/settings", verified: true },
+          { id: "client-view", label: "Client view", verified: true },
         ],
       },
       {
@@ -174,6 +178,7 @@ export const NAV: NavSection[] = [
           { id: "import", label: "Import Profile URLs", path: "/", verified: true },
           // §8's Database view — the standalone Database app's Clients page.
           { id: "clients", label: "Clients (Database)", path: "/", verified: true },
+          { id: "client-view", label: "Client view", verified: true },
         ],
       },
     ],

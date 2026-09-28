@@ -57,14 +57,13 @@ export function DeleteClient({
       <button
         ref={trigger}
         type="button"
-        className="ib"
-        aria-label={`Remove ${name}`}
-        title={`Remove ${name} from the workspace`}
+        className="ds-btn sm danger"
+        aria-label={`Delete ${name}`}
+        title={`Delete ${name} — asks first, and pauses campaigns and billing`}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        style={{ width: 26, height: 26, color: "var(--muted)" }}
       >
-        ×
+        Delete
       </button>
       <ModalDialog
         open={open}

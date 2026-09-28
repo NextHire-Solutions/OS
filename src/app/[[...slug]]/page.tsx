@@ -13,7 +13,7 @@ import { getInbox } from "@/lib/tools/master-inbox/inbox-view";
 import { getReminders } from "@/lib/tools/master-inbox/reminders";
 import { getSettings } from "@/lib/tools/master-inbox/settings";
 import { getPortals } from "@/lib/tools/master-inbox/portals";
-import { getClientsOverview } from "@/lib/clients/overview";
+import { getMasterClientList } from "@/lib/clients/master-list";
 import { optionalEnv } from "@/lib/env";
 import { Workspace } from "@/components/shell/workspace";
 import { loadRailBadges } from "@/lib/workspace/badges";
@@ -43,7 +43,7 @@ import { PortalDetail } from "@/components/screens/master-inbox/portal-detail";
 import { RemindersScreen } from "@/components/screens/master-inbox/reminders";
 import { MasterInboxSettingsScreen } from "@/components/screens/master-inbox/settings";
 import { PortalsAdminScreen } from "@/components/screens/master-inbox/portals";
-import { ClientsScreen } from "@/components/screens/clients";
+import { ClientsScreen, ToolClientView } from "@/components/screens/clients";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { AnalyticsCampaignScreen } from "@/components/screens/analytics/campaign";
@@ -207,7 +207,9 @@ export default async function WorkspacePage({
     only("home") ? getOverview() : Promise.resolve(null),
     only("performance") ? getPerformance() : Promise.resolve(null),
     initialId.startsWith("clients:") ? getWeekly() : Promise.resolve(null),
-    only("roster") ? getClientsOverview() : Promise.resolve(null),
+    // The master list is warmed at boot (instrumentation.ts); a failure here
+    // falls back to the client fetching it, never to a blank page.
+    only("roster") ? getMasterClientList().catch(() => null) : Promise.resolve(null),
     only("onboarding:pipeline") && !onboardingClientFrom(slug)
       ? getOnboardingPipeline()
       : Promise.resolve(null),
@@ -327,6 +329,15 @@ export default async function WorkspacePage({
         "clients:weekly": <ClientHealthWeekly initial={initialId === "clients:weekly" ? clientHealth : null} />,
         "clients:biweekly": <ClientHealthBiWeekly initial={initialId === "clients:biweekly" ? clientHealth : null} />,
         "clients:success": <ClientHealthSuccess initial={initialId === "clients:success" ? clientHealth : null} />,
+        /*
+         * §8 — each tool's own view of the master client record: the fields
+         * the document lists for that tool, read from the one record.
+         */
+        "clients:client-view": <ToolClientView view="health" />,
+        "inbox:client-view": <ToolClientView view="portal" />,
+        "analytics:client-view": <ToolClientView view="analytics" />,
+        "onboarding:client-view": <ToolClientView view="onboarding" />,
+        "search:client-view": <ToolClientView view="database" />,
         /*
          * Onboarding, read from the orchestrator's own database. That service
          * keeps running untouched — it holds the hub tokens and receives the

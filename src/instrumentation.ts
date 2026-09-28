@@ -64,4 +64,21 @@ export async function register() {
       /* warm-up is best effort */
     }
   }, 5_000).unref?.();
+
+  /*
+   * The master client list (Clients page) spans six databases — ~15s cold.
+   * Warm it after boot, then every four minutes so its stale-while-refresh
+   * window never lapses; the first person to open Clients never waits.
+   */
+  const warmClients = async () => {
+    try {
+      if (!process.env.MASTER_INBOX_SUPABASE_URL) return;
+      const { getMasterClientList } = await import("./lib/clients/master-list");
+      await getMasterClientList();
+    } catch {
+      /* warm-up is best effort */
+    }
+  };
+  setTimeout(warmClients, 8_000).unref?.();
+  setInterval(warmClients, 240_000).unref?.();
 }
