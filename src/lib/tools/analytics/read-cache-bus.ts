@@ -6,7 +6,11 @@
  * up to a minute later. Deliberately import-free, so the runner and its tests
  * do not pull in the server-only cache.
  */
-const listeners = new Set<() => void>();
+// On globalThis: the sync runs in instrumentation.ts's copy of this module and
+// the cached reads in the route handlers' copy (see `shared` in ttl.ts).
+const slot = Symbol.for("os.analyticsDataChanged");
+const g = globalThis as unknown as Record<symbol, Set<() => void> | undefined>;
+const listeners = (g[slot] ??= new Set<() => void>());
 
 export function onAnalyticsDataChanged(fn: () => void): void {
   listeners.add(fn);

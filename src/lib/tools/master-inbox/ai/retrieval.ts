@@ -152,7 +152,7 @@ async function readPool(workspaceId: string): Promise<PoolRow[]> {
  * so the TTL is a backstop for other processes, not the primary freshness
  * mechanism.
  */
-const cachedPool = ttlCache(readPool, { ttlMs: 600_000, staleMs: 600_000, inflightTimeoutMs: 30_000 });
+const cachedPool = ttlCache(readPool, { ttlMs: 600_000, staleMs: 600_000, inflightTimeoutMs: 30_000, shared: "mi-ai-pool" });
 
 /** Drop the cached pool — called after a rebuild so the next draft sees it. */
 export function invalidatePool(workspaceId?: string): void {

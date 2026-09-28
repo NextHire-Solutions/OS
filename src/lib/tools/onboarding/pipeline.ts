@@ -188,6 +188,9 @@ export const getOnboardingPipeline = ttlCache(computeOnboardingPipeline, {
   ttlMs: 10_000,
   staleMs: 5 * 60_000,
   key: () => "pipeline",
+  // The writers that invalidate this are route handlers; the page reads it.
+  // Without one shared store they cleared their own copy, not the page's.
+  shared: "onboarding-pipeline",
 });
 
 async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {

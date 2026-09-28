@@ -40,6 +40,8 @@ export function cachedGet(
   handler: (request: NextRequest) => Promise<Response>,
   { ttlMs = 60_000, staleMs = 5 * 60_000 }: { ttlMs?: number; staleMs?: number } = {},
 ) {
+  // The key carries the path, so every cachedGet can share one process-wide
+  // store: Home's in-process read and the browser's fetch meet in it.
   const read = ttlCache(
     async (_key: string, url: string): Promise<Answer> => {
       const res = await handler(new NextRequest(url));
@@ -54,7 +56,7 @@ export function cachedGet(
       if (!res.ok) throw new NotCached(answer);
       return answer;
     },
-    { ttlMs, staleMs, key: (key) => key },
+    { ttlMs, staleMs, key: (key) => key, shared: "analytics-get" },
   );
   // A sync that lands new rows marks every answer out of date (read-cache-bus.ts):
   // the next reader still gets one at once, and a fresh one is fetched behind it.

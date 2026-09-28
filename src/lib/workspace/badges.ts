@@ -101,4 +101,4 @@ async function fetchBadges(): Promise<RailBadges> {
  * rail is on every page, so every page paid it. instrumentation.ts keeps it
  * warm, so a count is never older than a few minutes.
  */
-export const loadRailBadges = cache(ttlCache(fetchBadges, { ttlMs: 60_000, staleMs: 10 * 60_000 }));
+export const loadRailBadges = cache(ttlCache(fetchBadges, { ttlMs: 60_000, staleMs: 10 * 60_000, shared: "rail-badges" }));

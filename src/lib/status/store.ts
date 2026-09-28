@@ -28,8 +28,15 @@ interface Entry {
   consecutiveFailures: number;
 }
 
-const entries = new Map<ToolId, Entry>();
-const inflight = new Map<ToolId, Promise<ToolSnapshot>>();
+/*
+ * On globalThis, not module scope: Next builds this module once for the page
+ * render, once for the route handlers and once for instrumentation.ts, and a
+ * module-level Map gave each its own snapshots — so the boot warm-up probed
+ * tools into a cache no page ever read. One store per process.
+ */
+const g = globalThis as unknown as Record<symbol, unknown>;
+const entries = (g[Symbol.for("os.status.entries")] ??= new Map<ToolId, Entry>()) as Map<ToolId, Entry>;
+const inflight = (g[Symbol.for("os.status.inflight")] ??= new Map<ToolId, Promise<ToolSnapshot>>()) as Map<ToolId, Promise<ToolSnapshot>>;
 
 /** A tool must fail twice in a row before we promote it to `down`. */
 const FAILURES_BEFORE_DOWN = 2;

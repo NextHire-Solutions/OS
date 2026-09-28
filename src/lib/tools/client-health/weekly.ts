@@ -168,4 +168,6 @@ export const getWeekly = ttlCache(loadWeekly, {
   // (the CH routes, a Clients edit or status change, the sync) invalidates it.
   staleMs: 5 * 60_000,
   key: (weekOffset = 0) => String(weekOffset),
+  // One cache for the page and the routes that invalidate it — see ttl.ts.
+  shared: "client-health-weekly",
 });

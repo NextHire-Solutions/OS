@@ -225,7 +225,7 @@ async function masterInboxMedian(): Promise<number | null> {
  * says Analytics was unavailable is not kept, so the next visit tries again.
  * instrumentation.ts keeps it warm.
  */
-const overviewCache = ttlCache(loadOverview, { ttlMs: 60_000, staleMs: 10 * 60_000 });
+const overviewCache = ttlCache(loadOverview, { ttlMs: 60_000, staleMs: 10 * 60_000, shared: "home-overview" });
 
 export async function getOverview(): Promise<Overview> {
   const result = await overviewCache();

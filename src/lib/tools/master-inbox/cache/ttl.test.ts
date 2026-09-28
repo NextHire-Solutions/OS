@@ -81,3 +81,17 @@ test("expire() with no stale window behaves like a miss: the next read waits for
   f.expire();
   assert.equal(await f(), 2);
 });
+
+test("shared: two copies of a cache under one name are one cache — a warm, a read and an invalidate all meet", async () => {
+  let a = 0, b = 0;
+  const name = `test-${Math.random()}`;
+  const warm = ttlCache(async () => `a${++a}`, { ttlMs: 60_000, shared: name });
+  const page = ttlCache(async () => `b${++b}`, { ttlMs: 60_000, shared: name });
+  assert.equal(await warm(), "a1");
+  assert.equal(await page(), "a1", "the page reads what the warm-up fetched");
+  assert.equal(b, 0);
+  warm.invalidate();
+  assert.equal(await page(), "b1", "an invalidate in one copy clears the other");
+  const alone = ttlCache(async () => "own", { ttlMs: 60_000 });
+  assert.equal(await alone(), "own", "without a name nothing is shared");
+});

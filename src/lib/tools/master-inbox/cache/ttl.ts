@@ -42,6 +42,12 @@ export interface TtlCachedFn<TArgs extends unknown[], TResult> {
   expire(): void;
 }
 
+function sharedStore<T>(name: string): Map<string, Entry<T>> {
+  const slot = Symbol.for(`os.ttlCache:${name}`);
+  const g = globalThis as unknown as Record<symbol, Map<string, Entry<T>> | undefined>;
+  return (g[slot] ??= new Map<string, Entry<T>>());
+}
+
 export function ttlCache<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => Promise<TResult>,
   options: {
@@ -61,6 +67,18 @@ export function ttlCache<TArgs extends unknown[], TResult>(
      * a served value is never older than ttlMs + staleMs.
      */
     staleMs?: number;
+    /**
+     * One store for the whole process, under this name.
+     *
+     * Next builds the same module more than once — the page render, the route
+     * handlers and instrumentation.ts each get their own copy, and a plain
+     * module-level Map gives each its own cache. Measured on the OS: the boot
+     * warm-up filled instrumentation's copy of the master client list and
+     * Clients still waited 12s on a cold one; an edit's `invalidate()` in a
+     * route handler left the page's copy stale. A named store lives on
+     * globalThis, so every copy reads, warms and invalidates the same one.
+     */
+    shared?: string;
   } = {},
 ): TtlCachedFn<TArgs, TResult> {
   const {
@@ -68,8 +86,9 @@ export function ttlCache<TArgs extends unknown[], TResult>(
     inflightTimeoutMs = DEFAULT_INFLIGHT_TIMEOUT_MS,
     key = (...args) => JSON.stringify(args),
     staleMs = 0,
+    shared,
   } = options;
-  const store = new Map<string, Entry<TResult>>();
+  const store: Map<string, Entry<TResult>> = shared ? sharedStore(shared) : new Map();
 
   const refresh = (k: string, args: TArgs, previous: TResult | undefined, staleUntil: number | undefined): Promise<TResult> => {
     const promise = fn(...args).then(

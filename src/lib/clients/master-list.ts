@@ -401,4 +401,4 @@ async function load(): Promise<MasterClientList> {
  * spans six databases, and the numbers it shows move on a sync cadence, not by
  * the second. Edits invalidate it (see the clients edit route).
  */
-export const getMasterClientList = ttlCache(load, { ttlMs: 60_000, staleMs: 300_000, key: () => "master-client-list" });
+export const getMasterClientList = ttlCache(load, { ttlMs: 60_000, staleMs: 300_000, key: () => "master-client-list", shared: "master-client-list" });

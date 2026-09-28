@@ -218,4 +218,7 @@ export const openResponsesThreadIds = ttlCache(computeOpenResponsesThreadIds, {
   // Keyed by workspace only. The Supabase client is an argument but not an
   // identity — including it in the key would make every request a cache miss.
   key: (_supabase, workspaceId) => workspaceId,
+  // The boot warm-up (instrumentation.ts) runs in its own copy of this module;
+  // a shared store is what lets the inbox read what it computed. See ttl.ts.
+  shared: "mi-open-responses",
 });
