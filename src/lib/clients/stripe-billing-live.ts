@@ -5,6 +5,7 @@ import { stripeKey } from "@/lib/tools/onboarding/stripe";
 import {
   applyBillingAction,
   planBillingAction,
+  stripeUrl,
   type BillingDecision,
   type Lifecycle,
   type SubscriptionState,
@@ -108,7 +109,9 @@ export async function syncBillingForClient(
   const decision = planBillingAction(lifecycle, state);
   const res = await applyBillingAction(subscriptionId, decision, async (path, body) => {
     try {
-      const r = await fetch(`${STRIPE}${path}`, {
+      // stripeUrl, not `${STRIPE}${path}`: the path already carries /v1, and
+      // prefixing the versioned base sent every real call to /v1/v1/.
+      const r = await fetch(stripeUrl(path), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${key}`,
@@ -126,4 +129,33 @@ export async function syncBillingForClient(
   });
 
   return { ok: res.ok, changed: res.changed, decision, error: res.error };
+}
+
+/**
+ * What syncBillingForClient WOULD do, without doing it. A read only.
+ *
+ * For the delete dialog, which must say whether this client's subscription
+ * will be paused before anyone confirms. Same read, same pure decision as the
+ * real call, so the preview cannot disagree with what then happens.
+ */
+export async function previewBillingForClient(
+  subscriptionId: string | null,
+  lifecycle: Lifecycle,
+): Promise<{ ok: boolean; decision: BillingDecision; state: SubscriptionState | null; error?: string }> {
+  if (!subscriptionId) return { ok: true, decision: planBillingAction(lifecycle, null), state: null };
+  let key: string;
+  try {
+    key = stripeKey();
+  } catch (e) {
+    return { ok: false, state: null, decision: { action: "none", reason: "Stripe is not configured." }, error: e instanceof Error ? e.message : "no Stripe key" };
+  }
+  try {
+    const state = await readSubscription(subscriptionId, key);
+    if (!state) {
+      return { ok: false, state: null, decision: { action: "none", reason: "Stripe does not recognise this subscription." }, error: `subscription ${subscriptionId} not found` };
+    }
+    return { ok: true, state, decision: planBillingAction(lifecycle, state) };
+  } catch (e) {
+    return { ok: false, state: null, decision: { action: "none", reason: "Could not read the subscription." }, error: e instanceof Error ? e.message : "Stripe read failed" };
+  }
 }

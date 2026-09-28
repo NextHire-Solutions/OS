@@ -119,3 +119,39 @@ test("a Stripe failure is reported, not swallowed", async () => {
   assert.equal(r.ok, false);
   assert.equal(r.error, "No such subscription");
 });
+
+/* ---------------------------------------------------------------------------
+ * The URL a real call goes to — the seam that was never tested.
+ *
+ * applyBillingAction yields "/v1/..." paths; the live module used to prefix
+ * "https://api.stripe.com/v1", sending every real pause/resume to /v1/v1/ —
+ * refused by Stripe. Each half passed its own tests. These drive the real
+ * applier through stripeUrl, which is what the live module now calls.
+ * ------------------------------------------------------------------------- */
+import { stripeUrl, STRIPE_ORIGIN } from "./stripe-billing";
+
+test("a pause for sub_x goes to exactly https://api.stripe.com/v1/subscriptions/sub_x", async () => {
+  const urls: string[] = [];
+  await applyBillingAction("sub_x", { action: "pause", reason: "t" }, async (path) => {
+    urls.push(stripeUrl(path));
+    return { ok: true };
+  });
+  assert.equal(urls[0], "https://api.stripe.com/v1/subscriptions/sub_x");
+});
+
+test("no pause or resume URL ever carries the version twice", async () => {
+  const urls: string[] = [];
+  for (const action of ["pause", "resume"] as const) {
+    await applyBillingAction("sub_y", { action, reason: "t" }, async (path) => {
+      urls.push(stripeUrl(path));
+      return { ok: true };
+    });
+  }
+  assert.equal(urls.length, 2);
+  for (const u of urls) assert.doesNotMatch(u, /\/v1\/v1\//);
+});
+
+test("a path without its version is refused rather than guessed", () => {
+  assert.throws(() => stripeUrl("/subscriptions/sub_z"));
+  assert.equal(STRIPE_ORIGIN, "https://api.stripe.com");
+});

@@ -104,6 +104,26 @@ export interface StripeCaller {
  * Carry out a decision. Two calls exist in this file and neither can cancel:
  * one sets `pause_collection`, one clears it.
  */
+/*
+ * THE ONE PLACE A STRIPE URL IS BUILT FROM A PATH.
+ *
+ * applyBillingAction produces API paths that already carry the version
+ * ("/v1/subscriptions/..."). The live module prefixed them with
+ * "https://api.stripe.com/v1", so every real pause or resume went to
+ * /v1/v1/subscriptions/... and Stripe refused it. Each half was unit-tested and
+ * correct on its own; the join between them was not tested at all, so the
+ * billing leg of status propagation never once worked from 27 Sep until this
+ * was found on 28 Sep by pausing a Stripe TEST-mode subscription end to end.
+ *
+ * Paths here are absolute API paths, version included. The test pins the
+ * exact URL a pause produces.
+ */
+export const STRIPE_ORIGIN = "https://api.stripe.com";
+export function stripeUrl(path: string): string {
+  if (!path.startsWith("/v1/")) throw new Error(`Stripe path must start with /v1/: ${path}`);
+  return `${STRIPE_ORIGIN}${path}`;
+}
+
 export async function applyBillingAction(
   subscriptionId: string,
   decision: BillingDecision,
