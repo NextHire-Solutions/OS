@@ -93,9 +93,6 @@ export function ClientHealthToolbar({
               §2 — a client is created once, on the Clients page, which creates
               this tool's row with every other tool's.
             */}
-            <a className="ds-btn" href="/roster" title="Clients are added once, on the Clients page (Onboard a client), and appear here automatically">
-              + Add on Clients page
-            </a>
             <SyncButton />
           </>
         }

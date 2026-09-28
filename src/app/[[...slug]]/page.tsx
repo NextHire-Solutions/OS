@@ -44,6 +44,7 @@ import { RemindersScreen } from "@/components/screens/master-inbox/reminders";
 import { MasterInboxSettingsScreen } from "@/components/screens/master-inbox/settings";
 import { PortalsAdminScreen } from "@/components/screens/master-inbox/portals";
 import { ClientsScreen, ToolClientView } from "@/components/screens/clients";
+import { CommissionsScreen } from "@/components/screens/commissions";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
 import { PerformanceScreen } from "@/components/screens/performance";
 import { AnalyticsCampaignScreen } from "@/components/screens/analytics/campaign";
@@ -318,6 +319,8 @@ export default async function WorkspacePage({
         roster: <ClientsScreen initial={clientsOverview} />,
         // Reads everything itself on open; nothing to pass from the server.
         consistency: <DiscrepanciesScreen />,
+        // Loads itself — the payouts it shows depend on who is signed in.
+        commissions: <CommissionsScreen />,
         /*
          * Client Health, built here rather than embedded — the live tool is
          * untouched and keeps running as a background worker.

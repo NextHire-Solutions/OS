@@ -32,6 +32,10 @@ export const OS_TABLES = [
   // The markets a client covers, many per client —
   // see migrations/0017_client_markets.sql.
   "os_client_markets",
+  // Commissions (migration 0019): each account manager's rates, and a monthly
+  // gross for clients with no Stripe subscription linked.
+  "os_commission_reps",
+  "os_client_commission",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

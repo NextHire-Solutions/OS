@@ -64,7 +64,7 @@ async function saveEdit(id: string, patch: Record<string, unknown>): Promise<voi
 }
 
 /** Which fields edit in place, how, and which route key they save to. */
-function editorFor(key: string, team: { salespeople: string[]; accountManagers: string[] }):
+function editorFor(key: string, team: { salespeople: string[]; accountManagers: string[] }, members: string[]):
   { editor: FieldEditor; save: string; transform?: (v: string) => unknown } | null {
   switch (key) {
     case "name": return { editor: { kind: "text", maxLength: 80 }, save: "name", transform: (v) => v };
@@ -73,7 +73,10 @@ function editorFor(key: string, team: { salespeople: string[]; accountManagers: 
     case "timezone": return { editor: { kind: "select", options: TZ_OPTIONS }, save: "timezone" };
     case "sender": case "campaignSender": return { editor: { kind: "text" }, save: "sender" };
     case "salesperson": return { editor: { kind: "text", list: team.salespeople }, save: "salesperson" };
-    case "accountManager": return { editor: { kind: "text", list: [...new Set([...team.accountManagers, ...team.salespeople])] }, save: "accountManager" };
+    case "accountManager": return {
+      editor: { kind: "select", options: [{ value: "", label: "— No account manager —" }, ...members.map((n) => ({ value: n, label: n }))] },
+      save: "accountManager",
+    };
     case "billingAnchorDate": return { editor: { kind: "date" }, save: "billingAnchorDate" };
     case "billingInterval": return { editor: { kind: "select", options: INTERVAL_OPTIONS }, save: "billingInterval", transform: (v) => v };
     case "stripeSubscriptionId": return { editor: { kind: "text", placeholder: "sub_…" }, save: "stripeSubscriptionId" };
@@ -131,6 +134,8 @@ export function ClientRecord({
 }) {
   const [tab, setTab] = useState<Tab>("record");
   const [team, setTeam] = useState<{ salespeople: string[]; accountManagers: string[] }>({ salespeople: [], accountManagers: [] });
+  // Account Manager = a Team access member (30 Sep): the dropdown offers exactly that list.
+  const [members, setMembers] = useState<string[]>([]);
   const tool = view ? TOOL_VIEWS.find((t) => t.id === view) ?? null : null;
 
   useEffect(() => {
@@ -138,6 +143,10 @@ export function ClientRecord({
     fetch("/api/workspace/clients/team", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
       .then((t) => { if (live && t) setTeam({ salespeople: t.salespeople ?? [], accountManagers: t.accountManagers ?? [] }); })
+      .catch(() => {});
+    fetch("/api/workspace/team-members", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((t) => { if (live && t?.members) setMembers((t.members as { name: string }[]).map((m) => m.name)); })
       .catch(() => {});
     return () => { live = false; };
   }, []);
@@ -164,7 +173,7 @@ export function ClientRecord({
 
   /** One field row: an in-place editor where the master record owns it, the value otherwise. */
   const row = (key: string, label: string, def?: FieldDef) => {
-    const ed = editorFor(key, team);
+    const ed = editorFor(key, team, members);
     const source = def?.source;
     if (ed) {
       return (

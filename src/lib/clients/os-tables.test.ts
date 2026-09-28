@@ -29,6 +29,9 @@ test("the allowlist contains exactly the OS tables", () => {
     // client, replacing the single market/mls/area columns 0015 put on
     // os_clients — a client works several markets, not one.
     "os_client_markets",
+    // Added 2026-09-30: Commissions (0019) — rep rates and manual gross.
+    "os_commission_reps",
+    "os_client_commission",
   ]);
 });
 

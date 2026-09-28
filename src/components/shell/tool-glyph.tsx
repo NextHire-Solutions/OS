@@ -80,6 +80,13 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M8.5 11.5H13a3 3 0 0 1 3 3" />
     </>
   ),
+  commissions: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M15 9.2c-.6-1-1.7-1.5-3-1.5-1.8 0-3 .9-3 2.2 0 3 6 1.6 6 4.4 0 1.3-1.3 2.2-3 2.2-1.4 0-2.5-.6-3.1-1.6" />
+      <path d="M12 6v1.7M12 16.5V18" />
+    </>
+  ),
   "team-access": (
     <>
       <path d="M16 21v-1.8a4 4 0 0 0-4-4H6.5a4 4 0 0 0-4 4V21" />

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, X, Pencil, Trash2 } from "lucide-react";
+import { X, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/mi-ui/button";
 import {
   Dialog,
@@ -103,10 +103,9 @@ function ClientsBody({ initial }: { initial: ClientRow[] }) {
           {configured} client{configured === 1 ? "" : "s"} configured
         </span>
         <span className="mis-gap" />
-        <Btn primary onClick={() => setAddOpen(true)} data-mis="add-client">
-          <Plus aria-hidden />
-          Add client
-        </Btn>
+        {/* §2/§13: a client is created once, on the Clients page — which
+            creates this inbox client and its portal with every other tool. */}
+        <a className="ds-btn" href="/roster" data-mis="add-client-moved">Clients are added on Clients →</a>
       </div>
 
       <div className="anno new mis-sec" style={{ margin: 0 }}>
@@ -132,7 +131,7 @@ function ClientsBody({ initial }: { initial: ClientRow[] }) {
           {rows.length === 0 ? (
             <div className="mis-empty">
               <b>No clients yet</b>
-              <p>Add one so inbound replies can be tagged against it.</p>
+              <p>Clients are created on the Clients page and appear here automatically.</p>
             </div>
           ) : null}
         </div>

@@ -147,7 +147,8 @@ export function AnalyticsClientsScreen() {
               : "Loading…"}
           </div>
         </div>
-        <Btn primary disabled={busy} onClick={() => setAdding(true)}>Add client</Btn>
+        {/* §2/§13: clients are created once, on the Clients page — never here. */}
+        <a className="ds-btn" href="/roster">Clients are added on Clients →</a>
       </div>
 
       {queue.length ? (

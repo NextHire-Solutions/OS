@@ -1,0 +1,73 @@
+/* COMMISSIONS — the client's mockup, in the OS's hairline language (os.css). */
+.cm-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+  padding-bottom: 18px; border-bottom: 1px solid var(--x-line); }
+.cm-head h1 { margin: 0; font-size: 30px; line-height: 1.1; font-weight: 600; letter-spacing: -.035em; color: var(--x-ink); }
+.cm-head p { margin: 0; font-size: 14px; color: var(--x-mute); }
+.cm-run { display: grid; justify-items: end; gap: 6px; }
+.cm-run-nav { display: flex; align-items: center; gap: 10px; }
+.cm-run-nav b { font-family: var(--mono); font-size: 18px; font-weight: 500; color: var(--x-ink); letter-spacing: -.01em; min-width: 118px; text-align: center; }
+.cm-run small { font-family: var(--mono); font-size: 11px; color: var(--x-faint); }
+
+.cm-viewing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--x-mute); }
+.cm-viewing b { color: var(--x-ink); font-weight: 550; }
+.cm-note { font-size: 12.5px; color: var(--x-faint); }
+.cm-select, .cm-input { height: 34px; border-radius: 8px; border: 1px solid var(--x-line); background: var(--x-surface); font: inherit;
+  font-size: 13px; color: var(--x-ink); padding: 0 10px; }
+.cm-select:focus, .cm-input:focus { outline: none; border-color: var(--x-accent); box-shadow: 0 0 0 3px rgba(1, 101, 254, .10); }
+
+.cm-reps { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.cm-rep { background: var(--x-surface); border: 1px solid var(--x-line); border-radius: 14px; padding: 18px 20px; display: grid; gap: 14px; }
+.cm-rep-top { display: grid; gap: 4px; }
+.cm-rep-name { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--x-ink); }
+.cm-rep-name.link { appearance: none; border: 0; background: none; padding: 0; font: inherit; font-size: 17px; font-weight: 600; text-align: left; cursor: pointer; }
+.cm-rep-name.link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.cm-rate { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; color: var(--x-mute); display: inline-flex; align-items: center; gap: 4px; }
+.cm-rate-sel { font-family: var(--mono); font-size: 11px; border: 1px solid var(--x-line); border-radius: 5px; padding: 1px 3px; background: var(--x-surface); color: var(--x-ink); }
+.cm-due { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; padding-top: 14px; border-top: 1px solid var(--x-line); }
+.cm-due .k { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--x-mute); }
+.cm-due small { display: block; font-size: 12px; color: var(--x-faint); margin-top: 3px; }
+.cm-due b { font-family: var(--mono); font-size: 26px; font-weight: 500; letter-spacing: -.03em; color: var(--x-ink); }
+.cm-empty { font-size: 13px; color: var(--x-mute); margin: 0; }
+
+.cm-title { font-size: 14px; font-weight: 600; color: var(--x-ink); letter-spacing: -.01em; }
+.cm-total { font-family: var(--mono); font-size: 12px; color: var(--x-mute); }
+.cm-total b { color: var(--x-ink); font-weight: 500; font-size: 14px; margin-left: 6px; }
+.cm-table th.num, .cm-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cm-table th.num .cx-thl { justify-content: flex-end; width: 100%; }
+.cm-table td.num { font-family: var(--mono); font-size: 13px; }
+.cm-src { margin-left: 8px; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  border: 1px solid var(--x-line); border-radius: 5px; padding: 1px 5px; color: var(--x-mute); }
+.cm-src.stripe { color: #635BFF; border-color: #DCDAFF; }
+.cm-src.manual { color: var(--st-paused); border-color: #F8D9C2; }
+.cm-src.none { color: var(--x-faint); }
+.cm-status { font-family: var(--mono); font-size: 11.5px; display: inline-flex; align-items: center; gap: 6px; }
+.cm-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.cm-status.active { color: var(--st-active); }
+.cm-status.month1 { color: var(--x-accent); }
+.cm-status.paused { color: var(--st-paused); }
+.cm-status.cancelled { color: var(--x-faint); }
+.cm-lines td { background: var(--x-bg) !important; padding: 12px 16px 14px !important; height: auto !important; white-space: normal !important; }
+.cm-lines table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 8px; }
+.cm-lines th { position: static; background: none; font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--x-faint); font-weight: 500; text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--x-line); }
+.cm-lines th.num, .cm-lines td.num { text-align: right; }
+.cm-lines td td, .cm-lines tbody td { padding: 6px 8px !important; background: none !important; border-bottom: 1px solid var(--x-line-2); font-family: var(--mono); color: var(--x-ink-2); }
+
+.cm-h2 { font-size: 14px; font-weight: 600; color: var(--x-ink); padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--x-line);
+  display: flex; align-items: center; gap: 10px; }
+.cm-admin { font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--x-mute);
+  border: 1px solid var(--x-line); border-radius: 5px; padding: 2px 6px; }
+.cm-assign { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 14px; border: 1px dashed #D4D4D8; border-radius: 12px; background: var(--x-surface); }
+.cm-assign .cm-select:first-child { min-width: 260px; }
+.cm-assign .cm-input { width: 220px; }
+.cm-ok { color: var(--st-active); }
+.cm-bad { color: var(--st-churned); }
+
+.cm-rules { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--x-line); border-radius: 14px; background: var(--x-surface); overflow: hidden; }
+.cm-rules > div { padding: 16px 18px; border-left: 1px solid var(--x-line); }
+.cm-rules > div:first-child { border-left: 0; }
+.cm-rules .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--x-mute); }
+.cm-rules p { margin: 8px 0 0; font-size: 13px; line-height: 1.55; color: var(--x-ink-2); }
+.cm-rules b { font-family: var(--mono); font-weight: 500; color: var(--x-ink); }
+.cm-foot { font-size: 11.5px; color: var(--x-faint); padding-top: 14px; border-top: 1px solid var(--x-line); line-height: 1.6; }
+@media (max-width: 900px) { .cm-rules { grid-template-columns: 1fr; } .cm-rules > div { border-left: 0; border-top: 1px solid var(--x-line); } }

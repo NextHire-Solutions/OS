@@ -91,6 +91,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const p = parsed.data;
 
   /*
+   * Account Manager is a Team access member, edited once, on the client's
+   * record in Clients (30 Sep). This page used to set it from Onboarding's own
+   * people list — a second editor that could name someone who is not on the
+   * team. The master record still mirrors its choice into Onboarding's row.
+   */
+  if (p.accountManagerId !== undefined) {
+    return NextResponse.json(
+      { error: "Account Manager is set on the client's record in Clients — account managers are Team access members." },
+      { status: 400 },
+    );
+  }
+
+  /*
    * Applied one at a time, stopping at the first failure. The screen sends one
    * field per press, so this is a sequence of one in practice — and saying "the
    * MLS saved, the TAC did not" is more useful than one ok/not-ok over a batch.

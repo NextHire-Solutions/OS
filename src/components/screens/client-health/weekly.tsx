@@ -186,8 +186,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
                     {rows.length === 0 ? (
                       <>
                         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ds-ink)", marginBottom: 6 }}>No clients yet</div>
-                        <div style={{ marginBottom: 14 }}>Add your first client to start tracking.</div>
-                        <a className="ds-btn primary" href="/roster">Add a client on the Clients page</a>
+                        <div>Clients are created on the <a href="/roster">Clients</a> page and appear here automatically.</div>
                       </>
                     ) : (
                       <>No clients match {filters.search.trim() ? `“${filters.search.trim()}”` : "this filter"}.</>

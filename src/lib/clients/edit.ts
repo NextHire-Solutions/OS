@@ -12,6 +12,7 @@ import { decideStripeLink, stripeIdErrors, type StripeLookup } from "./stripe-li
 import { planDatabasePeople, writeDatabasePeople } from "./people-sync";
 import type { Resolution } from "./people-link";
 import { stripeKey } from "@/lib/tools/onboarding/stripe";
+import { resolveAccountManager } from "@/lib/identity/team-directory";
 
 /**
  * Ask Stripe who owns a subscription. A read — this never changes anything.
@@ -341,6 +342,23 @@ export function settledContacts(
 export async function editClient(id: string, edit: ClientEdit): Promise<EditResult> {
   const errors = validateEdit(edit);
   if (errors.length) throw new Error(errors.join(" "));
+
+  /*
+   * Account Manager is a team member (30 Sep): only an active person on Team
+   * access can hold it, saved under their exact name so the Onboarding sync
+   * and Commissions both find them. Blank still clears it. Refused here —
+   * before anything is written — so a rejected edit changes nothing.
+   */
+  if (typeof edit.accountManager === "string" && edit.accountManager.trim()) {
+    const r = await resolveAccountManager(edit.accountManager);
+    if (r.kind === "none") {
+      throw new InvalidEditError(`“${edit.accountManager.trim()}” is not an active member on Team access. Account managers are team members — invite them on Team access first.`);
+    }
+    if (r.kind === "ambiguous") {
+      throw new InvalidEditError(`Two team members are called “${r.name}”. Give one a distinct name on Team access first.`);
+    }
+    edit = { ...edit, accountManager: r.member.name };
+  }
 
   const { data, error } = await osTable("os_clients")
     .select(

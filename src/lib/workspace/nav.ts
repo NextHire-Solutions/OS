@@ -72,6 +72,8 @@ export const NAV: NavSection[] = [
        * A screen nobody can open cannot report anything.
        */
       { kind: "page", id: "consistency", label: "Consistency", route: "/consistency" },
+      // Sales payouts by account manager — each person sees only their own.
+      { kind: "page", id: "commissions", label: "Commissions", route: "/commissions" },
     ],
   },
   {
@@ -277,6 +279,7 @@ const PAGE_PATH: Record<string, string> = {
   performance: "/performance",
   roster: "/roster",
   consistency: "/consistency",
+  commissions: "/commissions",
   "team-access": "/team",
   "reply-agent": "/reply-agent",
   assistant: "/assistant",

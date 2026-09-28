@@ -666,26 +666,19 @@ function SalespersonPicker({
 
 function ManagerPicker({
   data,
-  notify,
-  reload,
 }: {
   data: ClientDetail;
   notify: (text: string, bad?: boolean) => void;
   reload: () => Promise<void>;
 }) {
-  const c = data.client;
-  const [busy, setBusy] = useState(false);
-  const current = data.accountManager;
   /*
-   * Someone hidden from the pickers can still be the current holder — a person
-   * is hidden rather than deleted when clients are still assigned to them. Keep
-   * them selectable, or opening this client would silently blank their manager.
+   * Read-only here (30 Sep). Account Manager is a Team access member, set once
+   * on the client's record in Clients; that save mirrors the person into this
+   * row, which is what is shown. A second picker here could name someone who
+   * is not on the team — §7: one place to edit each field.
    */
-  const options =
-    current && !data.accountManagers.some((p) => p.id === current.id)
-      ? [current, ...data.accountManagers]
-      : data.accountManagers;
-
+  const current = data.accountManager;
+  const masterId = data.client.masterId;
   return (
     <div>
       <div className="tbl-sub" style={{ fontWeight: 600, color: "var(--ink-2)", marginBottom: 8 }}>
@@ -693,45 +686,15 @@ function ManagerPicker({
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <Avatar src={current?.photo_url ?? null} name={current?.name} size={36} />
-        <select
-          className="sel"
-          value={current?.id ?? ""}
-          disabled={busy}
-          aria-label="Account manager"
-          style={{ flex: 1, minWidth: 180, opacity: busy ? 0.4 : 1 }}
-          onChange={async (e) => {
-            const id = e.target.value;
-            setBusy(true);
-            try {
-              await patchClient(c.id, { accountManagerId: id || null });
-              await reload();
-              notify(id ? `Account manager set to ${options.find((p) => p.id === id)?.name ?? "them"}` : "Account manager cleared");
-            } catch (err) {
-              notify(err instanceof Error ? err.message : "Could not set the account manager", true);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <option value="">— none —</option>
-          {options.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-              {p.active ? "" : " (hidden)"}
-            </option>
-          ))}
-        </select>
+        <span style={{ flex: 1, minWidth: 180, fontSize: 14, color: current ? "var(--ink)" : "var(--muted)" }}>
+          {current?.name ?? "Not assigned"}
+        </span>
+        <a className="ds-btn sm" href={masterId ? `/roster?client=${masterId}` : "/roster"}>
+          {current ? "Change on the client record →" : "Assign on the client record →"}
+        </a>
       </div>
       <div className="tbl-sub" style={{ marginTop: 6 }}>
-        {data.accountManagers.length === 0 ? (
-          <>
-            No account managers on the roster yet — <a href="/onboarding/settings">add them in Settings</a>.
-          </>
-        ) : (
-          <>
-            Add or edit account managers in <a href="/onboarding/settings">Settings</a>.
-          </>
-        )}
+        Account managers are Team access members, chosen on the client&rsquo;s record in Clients.
       </div>
     </div>
   );

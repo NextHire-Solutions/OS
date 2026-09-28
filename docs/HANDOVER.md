@@ -219,6 +219,33 @@ surfaces, and every page header carries its mark.
   - colour only where it means status.
 - **Verified on production:** 35/35 browser checks (writes intercepted), 34/34 pages.
 
+**Third pass, same day:**
+- **One Add Client button.** The one that creates a client is Onboard a
+  client, on Clients. Campaign Analytics → Clients and Master Inbox →
+  Settings → Clients lost their Add Client buttons; Client Health lost its
+  link. Each points to Clients.
+- **Account Manager = a Team access member.**
+  - The client record offers a dropdown of the active Team access members.
+  - `editClient` refuses any other name, and saves the member's exact name.
+  - Onboarding's client page shows it read-only, with a link to the record.
+    Its API refuses the field.
+  - The Onboarding sync still mirrors the person into Onboarding's own row.
+- **Commissions** (`/commissions`, Workspace). Built from the client's mockup:
+  - The rep is the client's Account Manager.
+  - Money is paid Stripe invoices on the linked subscription. A client with
+    no Stripe link uses an admin-entered gross, estimated on its billing
+    schedule and labelled Estimate.
+  - Month 1 is the first 28 days of payments, at 70%. Later payments earn the
+    rep's residual rate (15% or 25%). Nothing accrues from the cancellation
+    date.
+  - Each payment is paid out on the first run (the 1st or 15th) after it.
+  - Scope is enforced server-side. Account managers see only their own
+    clients; admins see everyone, can switch between people, assign clients
+    and set rates.
+  - **Migration `0019_commissions.sql` must be run in Supabase** before rates
+    and manual grosses can be saved. Until then everyone is on 70% / 15% and
+    only Stripe-linked clients count.
+
 **Data gaps the page now makes visible.** These are data entry, not code:
 Sender 0/50, Account Manager 0/50, Markets 0/50, Salesperson 2/50,
 Onboarding date 0/50.
