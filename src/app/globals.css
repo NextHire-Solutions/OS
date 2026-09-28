@@ -235,3 +235,6 @@
    animate-out, which come from tw-animate-css — installed, and never imported,
    so every one of them appeared with no transition at all. */
 @import "tw-animate-css";
+
+/* The design system — last and unlayered, so it wins while screens move across. */
+@import "./ds.css";

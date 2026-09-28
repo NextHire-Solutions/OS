@@ -84,7 +84,7 @@ const COMMON_ZONES = [
   "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu", "UTC",
 ];
 
-const TIME_ZONES: string[] = (() => {
+export const TIME_ZONES: string[] = (() => {
   let all: string[] = [];
   try {
     const supported = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })

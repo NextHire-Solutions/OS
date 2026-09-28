@@ -1,0 +1,263 @@
+/*
+ * BrokerStaffer OS — design system (v2, 29 Sep 2026).
+ *
+ * WHY THIS FILE EXISTS
+ *
+ * The client's verdict on the OS: "every page has its own UI; it does not look
+ * like one centralised platform", with empty space left and right. Both were
+ * true. Each tool arrived with its own page structure — a hero on Clients, a
+ * floating toolbar on Client Health, a grey KPI band on Analytics, cards of
+ * three different sizes and radii — and every page sat in a 1,500px column
+ * centred on the screen.
+ *
+ * This file is the one vocabulary every screen uses from now on:
+ *
+ *   .ds-page     full-width page body, one gutter everywhere
+ *   .ds-head     page header: title, description, actions, then tabs
+ *   .ds-stats    stat tiles (one size, one type scale)
+ *   .ds-panel    a bordered section with its own header and toolbar
+ *   .ds-table    the table style
+ *   .ds-badge    status and label pills, by tone
+ *   .ds-btn      buttons
+ *   .ds-drawer   the right-hand record panel
+ *   .ds-field    a label / value row that edits in place
+ *
+ * It is imported LAST and unlayered, so it wins over the older per-tool
+ * sheets while screens move across. The React side is src/components/ds.
+ */
+
+:root {
+  --ds-gutter: 28px;
+  --ds-radius: 12px;
+  --ds-radius-sm: 8px;
+  --ds-border: #E4E7EC;
+  --ds-border-strong: #D5DAE1;
+  --ds-canvas: #F6F7F9;
+  --ds-surface: #FFFFFF;
+  --ds-sunken: #F2F4F7;
+  --ds-ink: #0D1526;
+  --ds-ink-2: #3D4657;
+  --ds-muted: #6B7485;
+  --ds-faint: #98A1B0;
+  --ds-brand: #0165FE;
+  --ds-brand-ink: #0B4FC4;
+  --ds-brand-soft: #EAF1FF;
+  --ds-green: #0E8A5F;  --ds-green-soft: #E3F6EC;
+  --ds-amber: #B45309;  --ds-amber-soft: #FFF3E3;
+  --ds-red: #C93A31;    --ds-red-soft: #FDE8E6;
+  --ds-violet: #5B3FD4; --ds-violet-soft: #F0ECFF;
+  --ds-shadow: 0 1px 2px rgba(13, 21, 38, .04);
+  --ds-shadow-pop: 0 12px 32px -8px rgba(13, 21, 38, .18), 0 2px 6px rgba(13, 21, 38, .06);
+}
+
+/* ---------------------------------------------------------------- width --- */
+/*
+ * Full width. The old 1,500px cap left a wide empty band either side on any
+ * monitor bigger than a laptop — the first thing the client pointed at. One
+ * gutter, the same on every page.
+ */
+.wrap, .hero { max-width: none !important; }
+.wrap { padding: 20px var(--ds-gutter) 48px; }
+.hero { padding: 24px var(--ds-gutter) 0; }
+
+.ds-page { padding: 22px var(--ds-gutter) 56px; display: grid; gap: 18px; min-width: 0; }
+
+/* --------------------------------------------------------------- header --- */
+.ds-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.ds-head h1 { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 650; letter-spacing: -.015em; color: var(--ds-ink); }
+.ds-head p { margin: 4px 0 0; font-size: 13.5px; color: var(--ds-muted); max-width: 72ch; }
+.ds-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.ds-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--ds-border); margin-top: -4px; overflow-x: auto; }
+.ds-tab { appearance: none; border: 0; background: none; padding: 9px 12px 10px; font: inherit; font-size: 13.5px;
+  font-weight: 550; color: var(--ds-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.ds-tab:hover { color: var(--ds-ink); }
+.ds-tab[aria-selected="true"], .ds-tab.on { color: var(--ds-ink); border-bottom-color: var(--ds-brand); }
+.ds-tab .n { font-size: 11.5px; color: var(--ds-faint); font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- stats --- */
+.ds-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; }
+.ds-stat { background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--ds-radius);
+  padding: 14px 16px 13px; display: grid; gap: 3px; min-width: 0; box-shadow: var(--ds-shadow); text-align: left;
+  font: inherit; color: inherit; }
+button.ds-stat { cursor: pointer; }
+button.ds-stat:hover { border-color: var(--ds-border-strong); }
+.ds-stat[aria-pressed="true"] { border-color: var(--ds-brand); box-shadow: 0 0 0 1px var(--ds-brand) inset; }
+.ds-stat-l { font-size: 12px; font-weight: 550; color: var(--ds-muted); letter-spacing: .01em; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.ds-stat-v { font-size: 26px; line-height: 1.15; font-weight: 650; letter-spacing: -.02em; color: var(--ds-ink);
+  font-variant-numeric: tabular-nums; }
+.ds-stat-s { font-size: 12px; color: var(--ds-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-stat.t-green .ds-stat-v { color: var(--ds-green); }
+.ds-stat.t-amber .ds-stat-v { color: var(--ds-amber); }
+.ds-stat.t-red .ds-stat-v { color: var(--ds-red); }
+.ds-stat.t-brand .ds-stat-v { color: var(--ds-brand); }
+.ds-stat.t-muted .ds-stat-v { color: var(--ds-faint); }
+
+/* ---------------------------------------------------------------- panel --- */
+.ds-panel { background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--ds-radius);
+  box-shadow: var(--ds-shadow); min-width: 0; overflow: hidden; }
+.ds-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid var(--ds-border); }
+.ds-panel-head h2 { margin: 0; font-size: 15px; font-weight: 650; color: var(--ds-ink); letter-spacing: -.005em; }
+.ds-panel-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--ds-muted); }
+.ds-panel-body { padding: 16px 18px; }
+.ds-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ds-count { font-size: 12.5px; color: var(--ds-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- table --- */
+.ds-table-scroll { overflow-x: auto; }
+.ds-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+.ds-table th { position: sticky; top: 0; z-index: 1; background: #FAFBFC; text-align: left; font-size: 12px;
+  font-weight: 600; color: var(--ds-muted); padding: 9px 12px; border-bottom: 1px solid var(--ds-border);
+  white-space: nowrap; letter-spacing: .01em; }
+.ds-table th.num, .ds-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ds-table td { padding: 10px 12px; border-bottom: 1px solid #EEF0F3; vertical-align: middle; color: var(--ds-ink-2); white-space: nowrap; }
+.ds-table td.wrap { white-space: normal; }
+.ds-table tbody tr:last-child td { border-bottom: 0; }
+.ds-table tbody tr { transition: background .08s; }
+.ds-table tbody tr:hover td { background: #FAFBFD; }
+.ds-table tbody tr.clickable { cursor: pointer; }
+.ds-table .ds-primary { font-weight: 600; color: var(--ds-ink); }
+.ds-table .ds-sub { display: block; margin-top: 2px; font-size: 12px; color: var(--ds-muted); font-weight: 400; white-space: nowrap; }
+.ds-table .ds-none { color: var(--ds-faint); }
+.ds-table th.sortable { cursor: pointer; user-select: none; }
+.ds-table th.sortable:hover { color: var(--ds-ink); }
+
+/* -------------------------------------------------------------- badges --- */
+.ds-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 550; line-height: 20px; white-space: nowrap; background: var(--ds-sunken);
+  color: var(--ds-ink-2); }
+.ds-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.ds-badge.t-green { background: var(--ds-green-soft); color: var(--ds-green); }
+.ds-badge.t-amber { background: var(--ds-amber-soft); color: var(--ds-amber); }
+.ds-badge.t-red { background: var(--ds-red-soft); color: var(--ds-red); }
+.ds-badge.t-brand { background: var(--ds-brand-soft); color: var(--ds-brand-ink); }
+.ds-badge.t-violet { background: var(--ds-violet-soft); color: var(--ds-violet); }
+.ds-badge.t-outline { background: none; box-shadow: inset 0 0 0 1px var(--ds-border-strong); color: var(--ds-muted); }
+
+/* ------------------------------------------------------------- buttons --- */
+.ds-btn { appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px; padding: 0 13px; border-radius: var(--ds-radius-sm); border: 1px solid var(--ds-border-strong);
+  background: var(--ds-surface); color: var(--ds-ink); font: inherit; font-size: 13.5px; font-weight: 550;
+  cursor: pointer; white-space: nowrap; text-decoration: none; transition: background .1s, border-color .1s; }
+.ds-btn:hover { background: var(--ds-sunken); }
+.ds-btn:focus-visible, .ds-input:focus-visible, .ds-tab:focus-visible, .ds-stat:focus-visible {
+  outline: 2px solid var(--ds-brand); outline-offset: 2px; }
+.ds-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ds-btn.primary { background: var(--ds-brand); border-color: var(--ds-brand); color: #fff; }
+.ds-btn.primary:hover { background: var(--ds-brand-ink); border-color: var(--ds-brand-ink); }
+.ds-btn.ghost { border-color: transparent; background: none; color: var(--ds-ink-2); }
+.ds-btn.ghost:hover { background: var(--ds-sunken); }
+.ds-btn.danger { color: var(--ds-red); }
+.ds-btn.sm { height: 28px; padding: 0 9px; font-size: 12.5px; }
+.ds-btn.icon { width: 34px; padding: 0; }
+.ds-btn.icon.sm { width: 28px; }
+
+/* -------------------------------------------------------------- inputs --- */
+.ds-input { appearance: none; height: 34px; padding: 0 11px; border: 1px solid var(--ds-border-strong);
+  border-radius: var(--ds-radius-sm); background: var(--ds-surface); color: var(--ds-ink); font: inherit;
+  font-size: 13.5px; min-width: 0; width: 100%; }
+select.ds-input { padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--ds-muted) 50%),
+  linear-gradient(135deg, var(--ds-muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px; background-size: 5px 5px; background-repeat: no-repeat; }
+.ds-search { position: relative; min-width: 220px; }
+.ds-search .ds-input { padding-left: 32px; }
+.ds-search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px;
+  stroke: var(--ds-faint); fill: none; stroke-width: 2; }
+
+.ds-seg { display: inline-flex; padding: 3px; background: var(--ds-sunken); border-radius: 9px; gap: 2px; flex-wrap: wrap; }
+.ds-seg button { appearance: none; border: 0; background: none; font: inherit; font-size: 13px; font-weight: 550;
+  color: var(--ds-muted); padding: 5px 10px; border-radius: 7px; cursor: pointer; display: inline-flex; gap: 6px;
+  align-items: center; white-space: nowrap; }
+.ds-seg button[aria-pressed="true"] { background: var(--ds-surface); color: var(--ds-ink); box-shadow: var(--ds-shadow); }
+.ds-seg .n { font-size: 11.5px; color: var(--ds-faint); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------- notices --- */
+.ds-note { font-size: 13px; color: var(--ds-ink-2); background: var(--ds-amber-soft); border-radius: var(--ds-radius-sm);
+  padding: 10px 14px; }
+.ds-note.info { background: var(--ds-brand-soft); }
+.ds-note b { font-weight: 650; }
+
+/* -------------------------------------------------------------- drawer --- */
+.ds-scrim { position: fixed; inset: 0; background: rgba(13, 21, 38, .32); z-index: 38; animation: ds-fade .14s ease-out; }
+.ds-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100vw); background: var(--ds-surface);
+  z-index: 39; /* just under ModalDialog (40), so Edit/Delete open above the panel */ display: flex; flex-direction: column; box-shadow: var(--ds-shadow-pop);
+  animation: ds-slide .18s cubic-bezier(.2, .8, .2, 1); }
+.ds-drawer-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--ds-border); display: grid; gap: 10px; }
+.ds-drawer-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ds-drawer-title h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -.015em; color: var(--ds-ink); }
+.ds-drawer-title p { margin: 3px 0 0; font-size: 12.5px; color: var(--ds-muted); }
+.ds-drawer-body { overflow-y: auto; flex: 1; padding: 6px 24px 32px; }
+.ds-section { padding: 18px 0 6px; border-bottom: 1px solid #EEF0F3; }
+.ds-section:last-child { border-bottom: 0; }
+.ds-section h3 { margin: 0 0 8px; font-size: 12px; font-weight: 650; color: var(--ds-muted); letter-spacing: .06em;
+  text-transform: uppercase; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.ds-section h3 span { text-transform: none; letter-spacing: 0; font-weight: 450; color: var(--ds-faint); font-size: 12px; }
+@keyframes ds-slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ds-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ds-drawer, .ds-scrim { animation: none; } }
+
+/* --------------------------------------------------------------- field --- */
+.ds-field { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: center; min-height: 40px;
+  padding: 4px 0; }
+.ds-field-l { font-size: 13px; color: var(--ds-muted); display: grid; gap: 1px; }
+.ds-field-l small { font-size: 11px; color: var(--ds-faint); }
+.ds-field-v { min-width: 0; font-size: 13.5px; color: var(--ds-ink); }
+.ds-field-v .ds-value { appearance: none; border: 1px solid transparent; background: none; font: inherit; color: inherit;
+  text-align: left; width: 100%; padding: 6px 9px; margin-left: -10px; border-radius: 7px; cursor: text;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
+.ds-field-v .ds-value:hover { background: var(--ds-sunken); }
+.ds-field-v .ds-value .pen { opacity: 0; color: var(--ds-faint); font-size: 12px; flex: none; }
+.ds-field-v .ds-value:hover .pen, .ds-field-v .ds-value:focus-visible .pen { opacity: 1; }
+.ds-field-v .ds-value.readonly { cursor: default; }
+.ds-field-v .ds-value.readonly:hover { background: none; }
+.ds-field-v .empty { color: var(--ds-faint); }
+.ds-field-edit { display: flex; gap: 6px; align-items: center; margin-left: -1px; }
+.ds-field-err { font-size: 12px; color: var(--ds-red); margin-top: 4px; }
+.ds-field-ok { font-size: 12px; color: var(--ds-green); }
+@media (max-width: 560px) { .ds-field { grid-template-columns: 1fr; gap: 2px; } }
+
+.ds-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; }
+.ds-kv > div { background: var(--ds-sunken); border-radius: var(--ds-radius-sm); padding: 10px 12px; display: grid; gap: 2px; }
+.ds-kv dt { font-size: 11.5px; color: var(--ds-muted); }
+.ds-kv dd { margin: 0; font-size: 16px; font-weight: 650; color: var(--ds-ink); font-variant-numeric: tabular-nums; }
+
+/* ======================================================================
+ * LEGACY ALIGNMENT
+ *
+ * The classes every older screen already uses, restyled to the system, so
+ * the whole OS moves to one look at once while screens are rebuilt on the
+ * ds-* components one by one. Scoped (never bare `td`), so the Master
+ * Inbox's own Tailwind-built tables are not disturbed.
+ * ==================================================================== */
+.cards { gap: 12px !important; margin-bottom: 18px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)) !important; }
+.card { border-radius: var(--ds-radius); border-color: var(--ds-border); padding: 14px 16px 13px; box-shadow: var(--ds-shadow); }
+.card-l { font-size: 12px; font-weight: 550; color: var(--ds-muted); margin-bottom: 4px; letter-spacing: .01em; }
+.card-n { font-size: 26px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; margin-bottom: 3px; }
+.card-s { font-size: 12px; color: var(--ds-faint); }
+
+.tbl-wrap { border-radius: var(--ds-radius); border-color: var(--ds-border); box-shadow: var(--ds-shadow); margin-bottom: 18px; }
+.tbl-head { padding: 14px 18px; border-bottom-color: var(--ds-border); }
+.tbl-title { font-size: 15px; font-weight: 650; }
+.tbl-sub { font-size: 12.5px; margin-top: 2px; }
+.tbl-wrap thead th, .atbl thead th { background: #FAFBFC; font-size: 12px; font-weight: 600; color: var(--ds-muted);
+  padding: 9px 14px; border-bottom: 1px solid var(--ds-border); letter-spacing: .01em; }
+.tbl-wrap td, .atbl td { padding: 11px 14px; border-bottom: 1px solid #EEF0F3; }
+.tbl-wrap tbody tr, .atbl tbody tr { border-bottom: 0; }
+.tbl-wrap tbody tr:hover, .atbl tbody tr:hover { background: #FAFBFD; }
+
+.badge { border-radius: 999px; padding: 2px 9px; line-height: 20px; font-weight: 550; }
+.plan { border-radius: 999px; padding: 2px 9px; line-height: 20px; font-size: 12px; font-weight: 550; }
+
+.btn { border-radius: var(--ds-radius-sm); border-color: var(--ds-border-strong); padding: 0 13px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 550; box-shadow: none; }
+.btn-pri { background: var(--ds-brand); border-color: var(--ds-brand); color: #fff; box-shadow: none; }
+.btn-pri:hover { background: var(--ds-brand-ink); border-color: var(--ds-brand-ink); }
+.ib { width: 30px; height: 30px; border-radius: 7px; }
+.inp, .sel { border-radius: var(--ds-radius-sm); border-color: var(--ds-border-strong); padding: 7px 11px; }
+.pills { border-radius: 9px; padding: 3px; background: var(--ds-sunken); }
+.fp { border-radius: 7px; padding: 5px 10px; font-size: 13px; font-weight: 550; }
+.fp.on { box-shadow: var(--ds-shadow); }
+.anno { border-radius: var(--ds-radius-sm); margin-left: 0; margin-right: 0; }

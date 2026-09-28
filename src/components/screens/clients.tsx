@@ -1,313 +1,183 @@
 "use client";
 
-import { ClientDetail } from "./client-detail";
-
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { ClientsOverview, ClientRow } from "@/lib/clients/overview";
-import {
-  CLIENT_STATUSES,
-  STATUS_COLOR_VAR,
-  STATUS_MEANING,
-  STATUS_TONE,
-  statusLabel,
-  type ClientStatus,
-} from "@/lib/clients/client-status";
+import { CLIENT_STATUSES, STATUS_MEANING, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
+import { dayStamp } from "@/lib/workspace/dates";
 
-import { Lazy, PlaceholderScreen } from "./lazy";
+import { Badge, PageHeader, Panel, SearchInput, Stat, Stats } from "@/components/ds";
+import { invalidate, loadOnce, PlaceholderScreen } from "./lazy";
 import { OnboardClient } from "./clients-onboard";
-import { DeleteClient } from "./clients-delete";
-import { EditClient } from "./clients-edit";
-import { dateStamp } from "@/lib/workspace/dates";
+import { ClientRecord, STATUS_BADGE, intervalLabel, planLabel } from "./client-record";
 
 /*
  * Clients — one row per client, and what each tool knows about them.
  *
- * The roster is the spine. Every row is a client the business has; the columns
- * show what each tool holds for it. A blank cell is a gap in that tool, not a
- * disagreement about who the clients are — which is the entire reason for
- * having a canonical list.
- *
- * The page is deliberately quiet. A client present everywhere draws no
- * attention at all; only genuine gaps are marked, because a screen that
- * highlights everything gets read once.
+ * Rebuilt on the design system (29 Sep) after the client's review: full width,
+ * one header, status tiles that double as the filter, a table you can sort, and
+ * a record panel that edits in place. The roster is still the spine — every row
+ * is a client the business has, and a blank cell is a gap in a tool, not a
+ * disagreement about who the clients are.
  */
 
-const PLAN_CLASS: Record<string, string> = {
-  minimum: "plan-min",
-  production: "plan-prod",
-  partner: "plan-partner",
-};
+const URL = "/api/workspace/roster";
 
-/** The tool's own wording for an interval, so both screens read the same. */
-const BILLING_LABEL: Record<string, string> = {
-  biweekly: "14-day",
-  "28-days": "28-day",
-  monthly: "monthly",
-  custom: "custom",
+type SortKey = "name" | "status" | "plan" | "monthly" | "billing" | "intros" | "last" | "campaigns" | "sent" | "markets";
+
+const compact = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 10_000 ? `${Math.round(n / 1000)}K` : n.toLocaleString("en-US");
+
+const STATUS_ORDER: Record<ClientStatus, number> = { onboarding: 0, active: 1, paused: 2, churned: 3 };
+
+const SORTS: Record<SortKey, (r: ClientRow) => string | number> = {
+  name: (r) => r.client.name.toLowerCase(),
+  status: (r) => STATUS_ORDER[r.os.status],
+  plan: (r) => r.health.plan ?? "",
+  monthly: (r) => r.health.monthlyTarget ?? -1,
+  billing: (r) => r.health.nextBillingDate ?? "9999",
+  intros: (r) => r.inbox.intros ?? -1,
+  last: (r) => r.inbox.lastIntro ?? "",
+  campaigns: (r) => r.analytics.campaigns ?? -1,
+  sent: (r) => r.analytics.sent ?? -1,
+  markets: (r) => r.os.markets?.count ?? -1,
 };
 
 function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: () => void }) {
-  const present = (fn: (r: ClientRow) => boolean) => data.rows.filter(fn).length;
-
-  /*
-   * Status filter (§11 asks for status filters as part of one status language).
-   *
-   * It earns its place now the roster is the COMPLETE client list rather than
-   * the active thirty-odd: churned clients are kept forever by design, so
-   * without this the people still being served are mixed in with the people
-   * who left. Counts are shown on the pills so the distribution is readable
-   * without clicking — which is the other half of what §11 asks for.
-   */
   const [statusFilter, setStatusFilter] = useState<ClientStatus | "all">("all");
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
+  const [openName, setOpenName] = useState<string | null>(null);
+
   const countFor = (s: ClientStatus) => data.rows.filter((r) => r.os.status === s).length;
-  const rows =
-    statusFilter === "all" ? data.rows : data.rows.filter((r) => r.os.status === statusFilter);
+  const everywhere = data.rows.filter((r) => r.health.present && r.inbox.present && r.analytics.present).length;
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const out = data.rows.filter((r) =>
+      (statusFilter === "all" || r.os.status === statusFilter) &&
+      (!needle || [r.client.name, ...(r.client.aliases ?? [])].some((n) => n.toLowerCase().includes(needle))),
+    );
+    const get = SORTS[sort.key];
+    return out.sort((a, b) => {
+      const x = get(a), y = get(b);
+      return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y))) * sort.dir;
+    });
+  }, [data.rows, statusFilter, q, sort]);
+
+  const open = openName ? data.rows.find((r) => r.client.name === openName) ?? null : null;
+  const editable = data.source === "os_clients";
+
+  const Th = ({ k, children, num }: { k: SortKey; children: React.ReactNode; num?: boolean }) => {
+    const on = sort.key === k;
+    return (
+      <th className={`sortable${num ? " num" : ""}`} aria-sort={on ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+        onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? (s.dir === 1 ? -1 : 1) : num ? -1 : 1 }))}>
+        {children}{on ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
+      </th>
+    );
+  };
 
   return (
-    <>
-      <div className="hero" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <h1>Clients</h1>
-          <p>{data.rows.length} clients · what each tool knows about them</p>
-        </div>
-        <OnboardClient />
-      </div>
+    <div className="ds-page">
+      <PageHeader
+        title="Clients"
+        description={`${data.rows.length} clients — the one list every tool reads from. Open a client to see and edit everything about them.`}
+        actions={<OnboardClient />}
+      />
 
-      <div className="wrap">
-        <RecordCoverage rows={data.rows} />
-
-        <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-          <Card label="Clients" value={data.rows.length} sub="on the roster" />
-          <Card
-            label="In Client Health"
-            value={present((r) => r.health.present)}
-            sub="the billed roster"
-            tone={present((r) => r.health.present) === data.rows.length ? "n-green" : undefined}
-          />
-          <Card
-            label="In Master Inbox"
-            value={present((r) => r.inbox.present)}
-            sub="replies attributed"
-            tone={present((r) => r.inbox.present) === data.rows.length ? "n-green" : undefined}
-          />
-          <Card
-            label="In Analytics"
-            value={present((r) => r.analytics.present)}
-            sub="campaign attribution"
-            tone={present((r) => r.analytics.present) === data.rows.length ? "n-green" : "n-risk"}
-          />
-        </div>
-
-        {/*
-          Says which list is on screen. The roster fallback renders an identical
-          table, so without this a database outage would look like a normal day
-          — and every status change would silently fail to save.
-        */}
-        {data.sourceNote ? (
-          <p style={note}>
-            <b>Showing the code roster.</b> {data.sourceNote}. Status changes cannot be
-            saved until the stored list is available.
-          </p>
-        ) : null}
-
-        <div className="tbl-wrap">
-          <div className="tbl-head">
-            <div>
-              <div className="tbl-title">Client roster</div>
-              <div className="tbl-sub">
-                The names the business uses. Each tool&rsquo;s own spelling is matched to these.
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-              <button
-                className={`fp${statusFilter === "all" ? " on" : ""}`}
-                onClick={() => setStatusFilter("all")}
-              >
-                All <span className="mut">{data.rows.length}</span>
-              </button>
-              {CLIENT_STATUSES.map((s) => {
-                const n = countFor(s);
-                return (
-                  <button
-                    key={s}
-                    className={`fp${statusFilter === s ? " on" : ""}`}
-                    // Same colour as the badge, from the same map, so the
-                    // filter and the rows it produces cannot look unrelated.
-                    style={statusFilter === s ? { color: STATUS_COLOR_VAR[s] } : undefined}
-                    onClick={() => setStatusFilter(s)}
-                    title={STATUS_MEANING[s]}
-                  >
-                    {statusLabel(s)} <span className="mut">{n}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="tbl-scroll">
-            <table style={{ minWidth: 1080 }}>
-              <thead>
-                <tr>
-                  <th>Client</th>
-                  <th>Plan</th>
-                  <th>Status</th>
-                  {/* "Onboarding tool", not "Onboarding": this column is
-                      presence in that TOOL's intake pipeline, while
-                      `onboarding` is now also a lifecycle status. One word for
-                      two meanings is what §13 warns against, and the two would
-                      sit inches apart on this screen. */}
-                  <th>Onboarding tool</th>
-                  <th>Weekly target</th>
-                  <th>Introductions</th>
-                  <th>Last intro</th>
-                  <th>Campaigns</th>
-                  <th>Sent</th>
-                  <th>Portal</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <Row
-                    key={row.client.name}
-                    row={row}
-                    editable={data.source === "os_clients"}
-                    onChanged={onChanged}
-                  />
-                ))}
-                {rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={11} style={{ color: "var(--muted)", fontSize: 13 }}>
-                      No clients with that status.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Rows a tool holds that are not on the roster. Reported, because one
-            is either a client nobody mentioned or a spelling needing an alias —
-            and silently dropping either is how a live client disappears. */}
-        {(["health", "inbox", "analytics"] as const).map((k) => {
-          const tool = data.tools[k];
-          if (tool.unavailable) {
-            return (
-              <p key={k} style={note}>
-                <b>{tool.label}</b> could not be read — {tool.unavailable}
-              </p>
-            );
-          }
-          if (tool.unknown.length === 0) return null;
-          return (
-            <p key={k} style={note}>
-              <b>{tool.label}</b> holds {tool.unknown.length} entr
-              {tool.unknown.length === 1 ? "y" : "ies"} not on the roster:{" "}
-              {tool.unknown.join(", ")}. Either a client to add here, or a spelling to
-              record as an alias.
-            </p>
-          );
-        })}
-
-        {/* Deliberate non-clients, so nobody mistakes them for clutter. */}
-        {Object.values(data.tools).some((t) => t.exempt.length > 0) ? (
-          <p style={note}>
-            <b>Kept on purpose:</b>{" "}
-            {[...new Map(
-              Object.values(data.tools).flatMap((t) => t.exempt.map((e) => [e.name, e] as const)),
-            ).values()]
-              .map((e) => `${e.name} (${e.reason})`)
-              .join(", ")}
-            .
-          </p>
-        ) : null}
-      </div>
-    </>
-  );
-}
-
-/*
- * How much of the master record actually exists (§6).
- *
- * The spec lists these six as master client data. Before migration 0015 there
- * was nowhere to record any of them, and the measured coverage was: Account
- * Manager 0 of 46, Sender 1, MLS 2, Market 2, Salesperson 4, Area 0.
- *
- * Showing the count rather than a tick makes filling them in a finishing task
- * rather than an open-ended one, and it is the honest answer to "do we have
- * this data" — which, for most of these, is still no.
- *
- * Hidden entirely once every field is complete. A panel that says "all done"
- * forever is a panel people stop seeing.
- */
-function RecordCoverage({ rows }: { rows: ClientRow[] }) {
-  /*
-   * Market, MLS and Area count from `os.markets` (migration 0017), NOT from
-   * `os.record.market/mls/area`.
-   *
-   * Those three record columns are 0015's single-value fields. A client covers
-   * several markets, so they moved to their own table and are no longer
-   * written. Counting them here would report 0/50 forever while the Markets
-   * panel filled up — the counter meant to show progress would be the one
-   * thing guaranteed never to move.
-   *
-   * A client counts toward MLS if ANY of its markets has one, and likewise Area:
-   * the question is "do we know this client's MLS", not "is every row complete".
-   */
-  const hasText = (get: (r: ClientRow) => string | null) => (r: ClientRow) => Boolean((get(r) ?? "").trim());
-  const FIELDS: ReadonlyArray<readonly [string, (r: ClientRow) => boolean]> = [
-    ["Account manager", hasText((r) => r.os.record.accountManager)],
-    ["Salesperson", hasText((r) => r.os.record.salesperson)],
-    ["Sender", hasText((r) => r.os.record.sender)],
-    ["Market", (r) => (r.os.markets?.count ?? 0) > 0],
-    ["MLS", (r) => (r.os.markets?.withMls ?? 0) > 0],
-    ["Area", (r) => (r.os.markets?.withArea ?? 0) > 0],
-  ];
-  // If the markets table could not be read for anyone, those three counts are
-  // unknown rather than zero, and are labelled so instead of shown in red.
-  const marketsUnreadable = rows.length > 0 && rows.every((r) => r.os.markets === null);
-  const MARKET_FIELDS = new Set(["Market", "MLS", "Area"]);
-
-  const total = rows.length;
-  const counts = FIELDS.map(([label, has]) => ({
-    label,
-    n: rows.filter(has).length,
-    unknown: marketsUnreadable && MARKET_FIELDS.has(label),
-  }));
-  if (total === 0 || counts.every((c) => c.n === total)) return null;
-
-  return (
-    <div style={{ ...note, marginTop: 0, marginBottom: 14, maxWidth: "none" }}>
-      <b>Client record</b> — the fields the architecture spec asks the master record to
-      hold, held by the OS and by no other tool. People fields are set on the Edit
-      dialog; markets, MLS and areas in the Markets section when you open a client.
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 7 }}>
-        {counts.map((c) => (
-          <span key={c.label} className="tnum">
-            {c.label}{" "}
-            {c.unknown ? (
-              <b style={{ color: "var(--muted)" }} title="The markets table could not be read">—</b>
-            ) : (
-              <b style={{ color: c.n === 0 ? "var(--red)" : c.n === total ? "var(--green)" : "var(--yellow)" }}>
-                {c.n}/{total}
-              </b>
-            )}
-          </span>
+      <Stats>
+        <Stat label="All clients" value={data.rows.length} sub={`${everywhere} in every tool`}
+          onClick={() => setStatusFilter("all")} active={statusFilter === "all"} />
+        {CLIENT_STATUSES.map((s) => (
+          <Stat key={s} label={statusLabel(s)} value={countFor(s)} title={STATUS_MEANING[s]}
+            tone={s === "active" ? "green" : s === "paused" ? "amber" : s === "churned" ? "red" : "brand"}
+            sub={s === "onboarding" ? "being set up" : s === "active" ? "being served" : s === "paused" ? "on hold" : "left"}
+            onClick={() => setStatusFilter(statusFilter === s ? "all" : s)} active={statusFilter === s} />
         ))}
-      </div>
+      </Stats>
+
+      <MissingData rows={data.rows} />
+
+      {data.sourceNote ? (
+        <p className="ds-note">
+          <b>Showing the code roster.</b> {data.sourceNote}. Changes cannot be saved until the stored list is available.
+        </p>
+      ) : null}
+
+      <Panel
+        flush
+        title={statusFilter === "all" ? "All clients" : `${statusLabel(statusFilter)} clients`}
+        actions={
+          <>
+            <SearchInput value={q} onChange={setQ} placeholder="Search clients or aliases" label="Search clients" />
+            <span className="ds-count">{rows.length} of {data.rows.length}</span>
+          </>
+        }
+      >
+        <div className="ds-table-scroll">
+          <table className="ds-table" style={{ minWidth: 980 }}>
+            <thead>
+              <tr>
+                <Th k="name">Client</Th>
+                <Th k="status">Status</Th>
+                <Th k="plan">Plan</Th>
+                <Th k="monthly" num>Monthly target</Th>
+                <Th k="billing">Next billing</Th>
+                <Th k="intros" num>Introductions</Th>
+                <Th k="campaigns" num>Campaigns</Th>
+                <Th k="markets" num>Markets</Th>
+                <th>Portal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <Row key={row.client.name} row={row} onOpen={() => setOpenName(row.client.name)} />
+              ))}
+              {rows.length === 0 ? (
+                <tr><td colSpan={9} className="ds-none" style={{ padding: 28, textAlign: "center" }}>No client matches.</td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <ToolNotes data={data} />
+
+      {open ? (
+        <ClientRecord row={open} open editable={editable} onClose={() => setOpenName(null)} onChanged={onChanged}
+          onDeleted={() => { setOpenName(null); onChanged(); }} />
+      ) : null}
     </div>
   );
 }
 
-const note: React.CSSProperties = {
-  fontSize: 12.5,
-  color: "var(--muted)",
-  marginTop: 12,
-  lineHeight: 1.7,
-  maxWidth: "90ch",
-};
+/*
+ * What the master record is still missing, in one quiet line. Hidden once
+ * complete — a panel that says "all done" forever is a panel people stop seeing.
+ * Markets count from os.markets (migration 0017), not the retired single fields.
+ */
+function MissingData({ rows }: { rows: ClientRow[] }) {
+  const total = rows.length;
+  const has = (s: string | null) => Boolean((s ?? "").trim());
+  const gaps = [
+    ["account manager", rows.filter((r) => !has(r.os.record.accountManager)).length],
+    ["sender", rows.filter((r) => !has(r.os.record.sender)).length],
+    ["markets", rows.filter((r) => (r.os.markets?.count ?? 0) === 0).length],
+    ["salesperson", rows.filter((r) => !has(r.os.record.salesperson)).length],
+    ["Stripe subscription", rows.filter((r) => !has(r.os.record.stripeSubscriptionId) && r.os.status === "active").length],
+  ].filter(([, n]) => (n as number) > 0) as [string, number][];
+  if (!total || !gaps.length) return null;
+  return (
+    <p className="ds-note info" style={{ margin: 0 }}>
+      <b>Still to fill in:</b>{" "}
+      {gaps.map(([label, n], i) => (
+        <span key={label}>{i ? " · " : ""}{label} for {n} client{n === 1 ? "" : "s"}</span>
+      ))}
+      . Open a client to add them.
+    </p>
+  );
+}
 
 /**
  * "Introduction ready", with how many people it names.
@@ -325,376 +195,110 @@ function IntroChip({ contact }: { contact: ClientRow["os"]["contact"] }) {
 
   const named = people.map((p) => `${p.name} (${p.role})`).join(", ");
   return (
-    <span
-      className="cintro"
-      title={`Introduces to ${named}${contact.brokerage ? ` at ${contact.brokerage}` : ""}`}
-    >
-      <span className="dot" />
-      Introduction ready
-      {people.length > 1 ? <span className="n">· {people.length} people</span> : null}
-    </span>
+    <Badge tone="green" dot title={`Introduces to ${named}${contact.brokerage ? ` at ${contact.brokerage}` : ""}`}>
+      Introduction ready{people.length > 1 ? ` · ${people.length} people` : ""}
+    </Badge>
   );
 }
 
-function Row({ row, editable, onChanged }: { row: ClientRow; editable: boolean; onChanged: () => void }) {
-  const [detailOpen, setDetailOpen] = useState(false);
+
+function Row({ row, onOpen }: { row: ClientRow; onOpen: () => void }) {
   const { client, health, inbox, analytics, os, portalUrl } = row;
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  const missing = (tool: string) => <Badge tone="red" title={`Not set up in ${tool}`}>missing</Badge>;
   return (
-    <tr>
-      {detailOpen ? <ClientDetail row={row} onClose={() => setDetailOpen(false)} /> : null}
-      <td>
-        {/*
-          The name opens the full record.
-          --------------------------------------------------------------
-          §23 asks that opening ONE system tells you everything about a
-          client. The row can only ever show ten columns; the record has
-          forty-odd fields across §6's four categories. Rather than widen
-          the table until it is unreadable, the name opens all of it.
-        */}
-        <button
-          type="button"
-          className="cname cname-open"
-          onClick={() => setDetailOpen(true)}
-          title="Open the full client record"
-        >
+    <tr className="clickable" onClick={onOpen}>
+      <td className="wrap" style={{ minWidth: 200 }}>
+        <button type="button" className="ds-primary" onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          style={{ all: "unset", cursor: "pointer", fontWeight: 600, color: "var(--ds-ink)" }}
+          title="Open the client record">
           {client.name}
         </button>
-        {/*
-          Who this client introduces agents to.
-          --------------------------------------------------------------
-          Until now the only way to know whether a client's Introduce
-          button would work was to open a conversation and look at it.
-          Drawn only when the details ARE there: most clients do not have
-          them yet, and a chip on every row would drown the table.
-        */}
-        <IntroChip contact={os.contact} />
+        <span className="ds-sub" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <IntroChip contact={os.contact} />
+          {(client.aliases ?? []).length ? <span title={(client.aliases ?? []).join(", ")}>{(client.aliases ?? []).length} alias{(client.aliases ?? []).length === 1 ? "" : "es"}</span> : null}
+        </span>
       </td>
-
       <td>
-        {health.plan ? (
-          <span className={`plan ${PLAN_CLASS[health.plan] ?? "plan-min"}`}>
-            {health.plan.charAt(0).toUpperCase() + health.plan.slice(1)}
-          </span>
-        ) : (
-          <Gap tool="Client Health" />
-        )}
-        {/*
-          §23: "open one system and know ... their billing information". Client
-          Health owns these columns and this READS them — §5 is explicit that
-          centralised does not mean copied. The next date is computed with
-          Client Health's own helper so the two screens cannot disagree, which
-          §13 lists as a thing not to want.
-
-          Under the plan rather than a new column: the table is already wide,
-          and billing only means anything next to the plan it bills for.
-        */}
-        {health.billingInterval || health.nextBillingDate ? (
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
-            {health.billingInterval ? BILLING_LABEL[health.billingInterval] ?? health.billingInterval : null}
-            {health.nextBillingDate ? (
-              <span title={`Anchor ${health.billingAnchorDate ?? "not set"}`}>
-                {health.billingInterval ? " · " : ""}next {dateStamp(health.nextBillingDate)}
-              </span>
-            ) : health.billingAnchorDate ? null : (
-              <span title="Without an anchor date the next billing date cannot be worked out">
-                {health.billingInterval ? " · " : ""}no anchor
-              </span>
-            )}
-            {/*
-              §23: "open one system and know ... their billing information".
-              The interval and date say WHEN; this says the money is actually
-              attached to this client rather than matched by name. A status
-              change pauses or resumes exactly this subscription.
-            */}
-            {os.record.stripeSubscriptionId ? (
-              <span
-                className="mut"
-                title={`Stripe subscription ${os.record.stripeSubscriptionId}`}
-              >
-                {" · "}Stripe linked
-              </span>
-            ) : (
-              <span className="mut" title="No Stripe subscription recorded — a status change will not touch billing">
-                {" · "}no Stripe
-              </span>
-            )}
-          </div>
-        ) : null}
+        <Badge tone={STATUS_BADGE[os.status]} dot title={STATUS_MEANING[os.status]}>{statusLabel(os.status)}</Badge>
       </td>
-
-      {/*
-        The status the BUSINESS set, not the one Client Health derives. They can
-        disagree — a client paused in the OS may still be active there — and the
-        disagreement is worth seeing, so it is marked rather than hidden or
-        silently overwritten.
-      */}
+      <td>{health.plan ? <Badge tone="violet">{planLabel(health.plan)}</Badge> : missing("Client Health")}</td>
+      <td className="num">{health.monthlyTarget ?? <span className="ds-none">—</span>}</td>
       <td>
-        <StatusCell
-          id={os.id}
-          status={os.status}
-          editable={editable}
-          healthStatus={health.status}
-        />
-        {/* §12: when this status was set. A seeded row is the status we
-            FOUND, not a change on that date — the wording distinguishes
-            them, because dating an old churn to the client's creation date
-            would be wrong in a way that looks precise. */}
-        {os.statusSince ? (
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
-            {os.statusSince.recorded ? "known since " : ""}
-            {dateStamp(os.statusSince.at)}
-            {os.statusSince.from ? (
-              <span title={`Changed from ${os.statusSince.from}`}> · from {os.statusSince.from}</span>
-            ) : null}
-          </div>
-        ) : null}
+        {health.nextBillingDate ? dayStamp(health.nextBillingDate) : <span className="ds-none">{health.billingAnchorDate ? "—" : "No anchor date"}</span>}
+        <span className="ds-sub" title={os.record.stripeSubscriptionId ? `Stripe ${os.record.stripeSubscriptionId}` : "No Stripe subscription linked — a status change will not touch billing"}>
+          {intervalLabel(health.billingInterval) ?? "—"}
+          {os.record.stripeSubscriptionId ? " · Stripe" : " · no Stripe"}
+        </span>
       </td>
-
-      <td>
-        {os.inOnboarding ? (
-          <span className="badge s-done"><span className="dot" />In pipeline</span>
-        ) : (
-          <span className="api-none" title="No row in the Onboarding tool. Not a problem — only clients that came through intake have one.">—</span>
-        )}
+      <td className="num">
+        {inbox.present ? <span className="ds-primary">{(inbox.intros ?? 0).toLocaleString("en-US")}</span> : missing("Master Inbox")}
+        {inbox.lastIntro ? <span className="ds-sub">last {dayStamp(inbox.lastIntro)}</span> : null}
       </td>
-
-      <td>{health.weeklyTarget === null ? <span className="api-none">—</span> : <span className="tnum">{health.weeklyTarget}</span>}</td>
-
-      <td>
-        {inbox.present ? (
-          <span className="api-num tnum">{(inbox.intros ?? 0).toLocaleString("en-US")}</span>
-        ) : (
-          <Gap tool="Master Inbox" />
-        )}
+      <td className="num">
+        {analytics.present ? analytics.campaigns ?? 0 : missing("Analytics")}
+        {analytics.sent ? <span className="ds-sub" title={`${analytics.sent.toLocaleString("en-US")} emails sent, all time`}>{compact(analytics.sent)} sent</span> : null}
       </td>
-
-      <td className="mut">{inbox.lastIntro ? dateStamp(inbox.lastIntro) : "—"}</td>
-
-      <td>
-        {analytics.present ? (
-          <span className="tnum">{analytics.campaigns ?? 0}</span>
-        ) : (
-          <Gap tool="Analytics" />
-        )}
-      </td>
-
-      <td>{analytics.sent === null ? <span className="api-none">—</span> : <span className="tnum">{analytics.sent.toLocaleString("en-US")}</span>}</td>
-
-      {/*
-        The portal link. Opens in a new tab because it is a DIFFERENT product —
-        a login-free client-facing page on another host — and losing the roster
-        to navigate there is not what anyone means by clicking it.
-      */}
-      <td>
+      <td className="num">{os.markets === null ? <span className="ds-none">—</span> : os.markets.count || <span className="ds-none">0</span>}</td>
+      <td onClick={stop}>
         {portalUrl ? (
-          <a
-            href={portalUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mut"
-            style={{ fontSize: 12, color: "var(--blue)", whiteSpace: "nowrap" }}
-            title={portalUrl}
-          >
-            Open ↗
-          </a>
-        ) : (
-          <span className="api-none" title="This client has no portal. Onboarding creates one; a client adopted from another tool may not have.">—</span>
-        )}
-      </td>
-
-      {/*
-        The row action. Deliberately last, unlabelled and quiet: it is the one
-        irreversible control on the screen, and it must not sit where a cursor
-        lands by accident. Only available once the client has a stored record —
-        there is nothing to remove otherwise.
-      */}
-      <td style={{ textAlign: "right" }}>
-        {editable && os.id ? (
-          <span style={{ display: "inline-flex", gap: 2, alignItems: "center" }}>
-            <EditClient
-              client={{
-                id: os.id,
-                name: client.name,
-                aliases: client.aliases ?? [],
-                status: os.status,
-                plan: health.plan,
-                weeklyTarget: health.weeklyTarget,
-                monthlyTarget: health.monthlyTarget,
-                timezone: health.timezone,
-                contact: os.contact,
-                record: os.record,
-              }}
-              onSaved={onChanged}
-            />
-            <DeleteClient id={os.id} name={client.name} onDeleted={onChanged} />
-          </span>
-        ) : null}
+          <a href={portalUrl} target="_blank" rel="noreferrer" className="ds-btn sm" title={portalUrl}>Open ↗</a>
+        ) : <span className="ds-none" title="No portal yet">—</span>}
       </td>
     </tr>
   );
 }
 
-/*
- * The status cell, editable in place.
- *
- * ---------------------------------------------------------------------------
- * WHY A SELECT AND NOT A MENU OF ACTIONS
- *
- * Because every value is reachable from every other one. A client marked
- * churned in error must be as easy to set back to active as it was to change —
- * there is no delete anywhere in this feature, and status is the only thing
- * that moves, so it is a field rather than a decision.
- *
- * Saving is optimistic: the new value paints immediately and reverts if the
- * write fails. A cell that sat on "saving…" would invite a second click, and
- * the second click is how someone changes a status twice by accident.
- *
- * Changing this does NOT pause billing, disable a portal or stop a campaign.
- * It records what the business says. Those remain deliberate acts in the tools
- * that own them, which is why nothing here contacts a tool.
- */
-function StatusCell({
-  id,
-  status,
-  editable,
-  healthStatus,
-}: {
-  id: string | null;
-  status: ClientStatus;
-  editable: boolean;
-  healthStatus: string | null;
-}) {
-  const [value, setValue] = useState<ClientStatus>(status);
-  const [saving, setSaving] = useState(false);
-  const [failed, setFailed] = useState("");
-
-  async function change(next: ClientStatus) {
-    if (!id || next === value) return;
-    const previous = value;
-    setValue(next);
-    setSaving(true);
-    setFailed("");
-    try {
-      const res = await fetch("/api/workspace/clients/status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status: next }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
-    } catch (e) {
-      // Put it back. Showing the new value after a failed write would be a
-      // lie that survives until the next reload.
-      setValue(previous);
-      setFailed(e instanceof Error ? e.message : "Could not save");
-    } finally {
-      setSaving(false);
+/* Rows a tool holds that are not on the roster, and deliberate non-clients. */
+function ToolNotes({ data }: { data: ClientsOverview }) {
+  const notes: React.ReactNode[] = [];
+  for (const k of ["health", "inbox", "analytics"] as const) {
+    const tool = data.tools[k];
+    if (tool.unavailable) notes.push(<span key={k}><b>{tool.label}</b> could not be read — {tool.unavailable}. </span>);
+    else if (tool.unknown.length) {
+      notes.push(
+        <span key={k}>
+          <b>{tool.label}</b> holds {tool.unknown.length} entr{tool.unknown.length === 1 ? "y" : "ies"} not on the roster:{" "}
+          {tool.unknown.join(", ")} — a client to add, or a spelling to record as an alias.{" "}
+        </span>,
+      );
     }
   }
-
-  if (!editable || !id) {
-    return (
-      <span className={`badge ${STATUS_TONE[value]}`} title={STATUS_MEANING[value]}>
-        <span className="dot" />
-        {statusLabel(value)}
-      </span>
-    );
-  }
-
-  /*
-   * Client Health derives its own status from its own flags. When the two
-   * disagree that is worth seeing — it usually means someone paused a client
-   * in one place and not the other — so it is noted beside the field rather
-   * than resolved by guessing which is right.
-   */
-  const disagrees = healthStatus && healthStatus !== value;
-
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-      <select
-        className="inp"
-        value={value}
-        disabled={saving}
-        aria-label="Client status"
-        style={{
-          padding: "3px 6px", fontSize: 12.5, minWidth: 96,
-          opacity: saving ? 0.6 : 1,
-          /*
-           * The control carries the same colour as the badge, from the same
-           * map — so the editable and read-only views of one status can never
-           * disagree about what it looks like (§11).
-           */
-          borderColor: value === "active" ? undefined : STATUS_COLOR_VAR[value],
-          color: STATUS_COLOR_VAR[value],
-        }}
-        title={STATUS_MEANING[value]}
-        onChange={(e) => void change(e.target.value as ClientStatus)}
-      >
-        {CLIENT_STATUSES.map((s) => (
-          <option key={s} value={s}>{statusLabel(s)}</option>
-        ))}
-      </select>
-      {disagrees ? (
-        <span
-          className="mut"
-          style={{ fontSize: 11 }}
-          title={`Client Health has this client as "${healthStatus}". Neither is changed by the other.`}
-        >
-          CH: {healthStatus}
-        </span>
-      ) : null}
-      {failed ? <span style={{ fontSize: 11, color: "var(--red)" }} title={failed}>not saved</span> : null}
-    </span>
-  );
-}
-
-/** A client a tool does not have. Named, so the reader knows what to fix. */
-function Gap({ tool }: { tool: string }) {
-  return (
-    <span
-      className="tg"
-      style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}
-      title={`Not set up in ${tool}`}
-    >
-      missing
-    </span>
-  );
-}
-
-function Card({
-  label, value, sub, tone,
-}: { label: string; value: number; sub: string; tone?: string }) {
-  return (
-    <div className="card">
-      <div className="card-l">{label}</div>
-      <div className={`card-n tnum${tone ? ` ${tone}` : ""}`}>{value}</div>
-      <div className="card-s">{sub}</div>
-    </div>
-  );
+  const exempt = [...new Map(Object.values(data.tools).flatMap((t) => t.exempt.map((e) => [e.name, e] as const))).values()];
+  return notes.length || exempt.length ? (
+    <p style={{ fontSize: 12.5, color: "var(--ds-muted)", margin: 0, lineHeight: 1.7 }}>
+      {notes}
+      {exempt.length ? <span><b>Kept on purpose, not clients:</b> {exempt.map((e) => `${e.name} (${e.reason})`).join(", ")}.</span> : null}
+    </p>
+  ) : null;
 }
 
 /*
- * The public screen. `initial` is set only when the page was opened here —
- * then it server-renders with no loading state and no second round trip.
- * Otherwise it fetches on first visit and stays mounted, so returning to it is
- * instant. See `Lazy` for why every route no longer pays for this data.
+ * The screen. `initial` is set only when the page was opened here — it then
+ * server-renders with no loading state. Saves refresh the list in place
+ * (the record panel stays open on the same client) instead of reloading the
+ * whole page, which is what this used to do.
  */
 export function ClientsScreen({ initial }: { initial: ClientsOverview | null }) {
-  return (
-    <Lazy<ClientsOverview>
-      initial={initial}
-      url="/api/workspace/roster"
-      label="The client roster"
-      skeleton={<PlaceholderScreen cards={4} />}
-    >
-      {/*
-        A delete or an onboard changes the list, so the screen re-reads rather
-        than patching its own copy — the table shows what each TOOL holds, and
-        only a refetch can know that.
-      */}
-      {(d) => <ClientsView data={d} onChanged={() => window.location.reload()} />}
-    </Lazy>
-  );
+  const [data, setData] = useState<ClientsOverview | null>(initial);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    invalidate(URL);
+    try {
+      setData(await loadOnce<ClientsOverview>(URL));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load the client roster");
+    }
+  }, []);
+
+  useEffect(() => { if (!initial) void refresh(); }, [initial, refresh]);
+
+  if (!data) {
+    return error ? (
+      <div className="ds-page"><p className="ds-note"><b>The client roster could not be loaded.</b> {error}</p></div>
+    ) : <PlaceholderScreen cards={5} />;
+  }
+  return <ClientsView data={data} onChanged={() => void refresh()} />;
 }

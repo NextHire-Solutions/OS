@@ -18,7 +18,7 @@ export async function GET() {
   const sb = getSupabase();
   const teamId = TEAM_ID();
 
-  const [clients, mappings, campaigns, instantlyMappings, instantlyCampaigns, owners] = await Promise.all([
+  const [clients, mappings, campaigns, instantlyMappings, instantlyCampaigns, owners, allEb, allInst] = await Promise.all([
     sb.from("clients").select("id, name, slug, aliases, match_mode, active").eq("team_id", teamId).order("name"),
     sb.from("campaign_clients").select("campaign_id, client_id, match_method, matched_on, ambiguous, excluded"),
     /*
@@ -40,6 +40,14 @@ export async function GET() {
     // Which client the Database files each campaign under — offered beside the
     // queue, never written automatically (ownership/suggest.ts says why).
     databaseOwnersForAnalytics(),
+    /*
+     * Lifetime emails sent, for each client's `sent`. Deleted and archived
+     * campaigns INCLUDED: their emails were really sent. The Clients page has
+     * always read `sent` from this response and it was never here, so the
+     * column showed "—" for every client.
+     */
+    sb.from("campaigns").select("id, lifetime_emails_sent").eq("team_id", teamId),
+    sb.from("instantly_campaigns").select("id, emails_sent").eq("team_id", teamId),
   ]);
   // Which Analytics rows ARE clients (linked to a master record): their aliases
   // are edited through the master, and they are deleted from the Clients page.
@@ -72,6 +80,20 @@ export async function GET() {
   };
   tally((mappings.data ?? []) as never[], "emailbison");
   tally((instantlyMappings.data ?? []) as never[], "instantly");
+
+  const sentByCampaign = new Map<string, number>([
+    ...((allEb.data ?? []) as { id: number; lifetime_emails_sent: number | null }[]).map((c) => [`emailbison:${c.id}`, Number(c.lifetime_emails_sent ?? 0)] as [string, number]),
+    ...((allInst.data ?? []) as { id: string; emails_sent: number | null }[]).map((c) => [`instantly:${c.id}`, Number(c.emails_sent ?? 0)] as [string, number]),
+  ]);
+  const sentByClient = new Map<string, number>();
+  const addSent = (rows: Array<{ campaign_id: string | number; client_id: string | null; excluded: boolean }>, platform: string) => {
+    for (const m of rows) {
+      if (!m.client_id || m.excluded) continue;
+      sentByClient.set(m.client_id, (sentByClient.get(m.client_id) ?? 0) + (sentByCampaign.get(`${platform}:${m.campaign_id}`) ?? 0));
+    }
+  };
+  addSent((mappings.data ?? []) as never[], "emailbison");
+  addSent((instantlyMappings.data ?? []) as never[], "instantly");
 
   // The unassigned queue: campaigns needing a human. Excluded ones are left out
   // deliberately -- they're a settled decision, not an outstanding task, and
@@ -144,6 +166,8 @@ export async function GET() {
       manualCount: counts.get(c.id)?.manual ?? 0,
       /* Of those, how many are Instantly's — so the split is visible. */
       instantlyCount: counts.get(c.id)?.instantly ?? 0,
+      /** Lifetime emails sent across its assigned campaigns, both platforms. */
+      sent: sentByClient.get(c.id) ?? 0,
       masterId: masterOf.get(c.id)?.id ?? null,
     })),
     unassigned,

@@ -65,6 +65,21 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M8 3.5h6" />
     </>
   ),
+  // A four-point spark: the Assistant answers questions about the workspace.
+  assistant: (
+    <>
+      <path d="M12 3.5 13.9 9.1 19.5 11 13.9 12.9 12 18.5 10.1 12.9 4.5 11 10.1 9.1Z" />
+      <path d="M19 3.5v3M17.5 5h3" />
+    </>
+  ),
+  // A speech bubble with a reply arrow: the agent that drafts replies.
+  "reply-agent": (
+    <>
+      <path d="M21 11.5a8.4 8.4 0 0 1-12.2 7.5L3 21l1.9-5.4A8.5 8.5 0 1 1 21 11.5Z" />
+      <path d="M11.5 8.5 8.5 11.5l3 3" />
+      <path d="M8.5 11.5H13a3 3 0 0 1 3 3" />
+    </>
+  ),
   "team-access": (
     <>
       <path d="M16 21v-1.8a4 4 0 0 0-4-4H6.5a4 4 0 0 0-4 4V21" />
