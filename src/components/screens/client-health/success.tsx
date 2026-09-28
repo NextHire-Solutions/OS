@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 
+import { Badge, Panel, Stat, Stats } from "@/components/ds";
+
 import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
 } from "@/lib/tools/client-health/clientForm";
@@ -39,11 +41,7 @@ import { setFilters, useClientHealthView } from "./view-state";
  *   and a zero is left quiet.
  */
 
-const PLAN_CLASS: Record<string, string> = {
-  minimum: "plan-min",
-  production: "plan-prod",
-  partner: "plan-partner",
-};
+const PLAN_TONE = { minimum: "outline", production: "brand", partner: "violet" } as const;
 
 const COLUMNS: { col: CsSortCol; label: string; title: string; num?: boolean }[] = [
   { col: "name", label: "Client", title: "Sort by client name" },
@@ -59,7 +57,7 @@ const COLUMNS: { col: CsSortCol; label: string; title: string; num?: boolean }[]
   { col: "agents", label: "Agents", title: "Agents in the client portal", num: true },
 ];
 
-const SCORE_COLOR = { good: "var(--green)", mid: "var(--yellow)", low: "var(--red)" } as const;
+const SCORE_TONE = { good: "green", mid: "amber", low: "red" } as const;
 
 function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
   /*
@@ -128,58 +126,49 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
   }).length;
 
   return (
-    <div className="wrap wrap-wide">
+    <div className="ds-page">
       {data.source === "seed" ? (
-        <div className="anno">
+        <p className="ds-note">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
           {data.error ? ` — ${data.error}` : ""}.
-        </div>
+        </p>
       ) : null}
 
-      <ClientHealthToolbar week={week} onAdd={openAdd} sync={data.sync} now={now} />
+      <ClientHealthToolbar title="Client Success" description="score, stagnant intros and portal activity" week={week} onAdd={openAdd} sync={data.sync} now={now} />
 
-      {/*
-         * Six cards, so a fixed five-column grid stranded "Hired" alone on a
-         * second row — it read as a separate section rather than the last of a
-         * set. `auto-fit` keeps them on one row where there is space and falls
-         * to a balanced 3 + 3 where there is not.
-         */}
       <SummaryCards s={summary} lifetime={lifetimeRates} week={weekRates} isCurrent={isCurrent} weekKey={key} />
-      <div className="cards" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))" }}>
-        <Card label="Clients" value={rows.length} sub="in this view" />
-        <Card
-          label="Avg Score"
-          value={avgScore === null ? null : avgScore.toFixed(1)}
-          sub={scored.length === rows.length ? "eight-week delivery" : `across ${scored.length} scored`}
-          tone={avgScore === null ? undefined : avgScore >= 8 ? "n-green" : avgScore >= 5 ? "n-ok" : "n-risk"}
-        />
-        <Card label="Scoring Below 5" value={lowScoring} sub="need attention" tone={lowScoring > 0 ? "n-risk" : "n-green"} />
-        <Card label="Stagnant Intros" value={stagnant} sub="never touched since arriving" tone={stagnant > 0 ? "n-risk" : "n-green"} />
-        <Card label="Portals Quiet 14d+" value={stale} sub="no lead activity" tone={stale > 0 ? "n-risk" : "n-green"} />
-        <Card label="Hired" value={hires} sub="all time, across clients" tone="n-green" />
-      </div>
 
-      <div className="tbl-wrap">
-        <div className="tbl-head">
-          <div>
-            <div className="tbl-title">Client Success</div>
-            <div className="tbl-sub">
-              Account health — portal activity, stagnant introductions, hires
-              {isCurrent ? "" : ` · status filters as of week of ${weekLabel(key)}`}
-              {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
-            </div>
-          </div>
-          {/* The Plan select is hidden here: this table already has a Plan
-              column you can sort by, so the select would be a second way to
-              say the same thing in less space. */}
-          {/* The tool's filter row is identical on every view, plan select included.
-              It was hidden here on the reasoning that the Plan column is sortable;
-              the tool does not hide it, so neither does the workspace. */}
-          <FilterBar value={filters} onChange={setFilters} now={now} />
-        </div>
+      <section className="ds-band" aria-label="Client Success">
+        <div className="ds-band-l">Client Success</div>
+        <Stats min={150}>
+          <Stat label="Clients" value={rows.length} sub="in this view" />
+          <Stat
+            label="Avg Score"
+            value={avgScore === null ? <span style={{ color: "var(--ds-faint)" }}>—</span> : avgScore.toFixed(1)}
+            sub={scored.length === rows.length ? "eight-week delivery" : `across ${scored.length} scored`}
+            tone={avgScore === null ? undefined : avgScore >= 8 ? "green" : avgScore >= 5 ? "amber" : "red"}
+          />
+          <Stat label="Scoring Below 5" value={lowScoring} sub="need attention" tone={lowScoring > 0 ? "red" : "green"} />
+          <Stat label="Stagnant Intros" value={stagnant} sub="never touched since arriving" tone={stagnant > 0 ? "red" : "green"} />
+          <Stat label="Portals Quiet 14d+" value={stale} sub="no lead activity" tone={stale > 0 ? "red" : "green"} />
+          <Stat label="Hired" value={hires} sub="all time, across clients" tone="green" />
+        </Stats>
+      </section>
 
-        <div className="tbl-scroll">
-          <table style={{ minWidth: 1420 }}>
+      <Panel
+        title="Client Success"
+        description={
+          <>
+            Account health — portal activity, stagnant introductions, hires
+            {isCurrent ? "" : ` · status filters as of week of ${weekLabel(key)}`}
+            {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
+          </>
+        }
+        actions={<FilterBar value={filters} onChange={setFilters} now={now} />}
+        flush
+      >
+        <div className="ds-table-scroll">
+          <table className="ds-table" style={{ minWidth: 1180 }}>
             <thead>
               <tr>
                 {COLUMNS.map((c) => {
@@ -204,7 +193,7 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                  <td colSpan={COLUMNS.length} className="ds-none" style={{ padding: "34px 16px", textAlign: "center" }}>
                     No clients match {filters.search.trim() ? `“${filters.search.trim()}”` : "this filter"}.
                   </td>
                 </tr>
@@ -216,7 +205,7 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
             </tbody>
           </table>
         </div>
-      </div>
+      </Panel>
 
       {modal ? (
         <ClientModal
@@ -234,92 +223,46 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
 
 function Row({ row, now, onEdit }: { row: SuccessRow; now: number; onEdit: () => void }) {
   const { client: c, hiredTotal, lastHireAt, score, tzShort } = row;
+  const none = <span className="ds-none">—</span>;
 
   return (
     <tr>
-      <td><div className="cname">{c.name}</div></td>
+      <td><span className="ds-primary">{c.name}</span></td>
 
       <td>
-        <span className={`plan ${PLAN_CLASS[c.plan] ?? "plan-min"}`}>
+        <Badge tone={PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
           {c.plan.charAt(0).toUpperCase() + c.plan.slice(1)}
-        </span>
+        </Badge>
       </td>
 
-      <td>
+      <td className="num">
         {score === null ? (
-          <span className="api-none" title="Too few weeks of history to score yet">—</span>
+          <span className="ds-none" title="Too few weeks of history to score yet">—</span>
         ) : (
-          <span className="tnum" style={{ fontWeight: 700, color: SCORE_COLOR[scoreTone(score)] }}>
-            {score.toFixed(1)}
-          </span>
+          <b className={`tone-${SCORE_TONE[scoreTone(score)]}`}>{score.toFixed(1)}</b>
         )}
       </td>
 
-      <td>{tzShort ? <span className="tg">{tzShort}</span> : <SetLink onClick={onEdit}>Set</SetLink>}</td>
+      <td>{tzShort ? <Badge tone="outline">{tzShort}</Badge> : <button type="button" className="ds-link" onClick={onEdit}>Set</button>}</td>
 
-      <td className="tnum mut">{c.start_date ? fmtDateShort(c.start_date) : <SetLink onClick={onEdit}>Set date</SetLink>}</td>
+      <td className="num">{c.start_date ? fmtDateShort(c.start_date) : <button type="button" className="ds-link" onClick={onEdit}>Set date</button>}</td>
 
-      <td className="mut">
-        {c.last_lead_activity_at ? humanizeAgo(c.last_lead_activity_at, now) : <span className="api-none">—</span>}
-      </td>
+      <td>{c.last_lead_activity_at ? humanizeAgo(c.last_lead_activity_at, now) : none}</td>
 
       <td>
-        {c.stagnant_intros_count > 0 ? (
-          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
-            {c.stagnant_intros_count}
-          </span>
-        ) : (
-          <span className="tnum" style={{ color: "var(--muted)" }}>0</span>
-        )}
+        {c.stagnant_intros_count > 0
+          ? <Badge tone="red">{c.stagnant_intros_count}</Badge>
+          : <span className="num ds-none">0</span>}
       </td>
 
-      <td>{hiredTotal > 0 ? <span className="api-num tnum">{hiredTotal}</span> : <span className="api-none">—</span>}</td>
+      <td className="num">{hiredTotal > 0 ? hiredTotal : none}</td>
 
-      <td className="mut">{lastHireAt ? humanizeAgo(lastHireAt, now) : <span className="api-none">—</span>}</td>
+      <td>{lastHireAt ? humanizeAgo(lastHireAt, now) : none}</td>
 
-      <td>{c.dnc_count > 0 ? <span className="tnum">{c.dnc_count.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}</td>
+      <td className="num">{c.dnc_count > 0 ? c.dnc_count.toLocaleString("en-US") : none}</td>
 
-      <td>{c.agents_count > 0 ? <span className="tnum">{c.agents_count.toLocaleString("en-US")}</span> : <span className="api-none">—</span>}</td>
+      <td className="num">{c.agents_count > 0 ? c.agents_count.toLocaleString("en-US") : none}</td>
     </tr>
-  );
-}
-
-/*
- * The "Set" affordance on an empty cell.
- *
- * A missing time zone or launch date is not a gap to report — it is a gap to
- * fill, and the person reading the row is the one who can fill it. So the cell
- * offers the edit modal rather than an em dash.
- */
-function SetLink({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        border: 0, background: "none", padding: 0, font: "inherit", fontSize: 12.5,
-        color: "var(--blue)", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Card({
-  label, value, sub, tone,
-}: { label: string; value: number | string | null; sub: string; tone?: string }) {
-  const missing = value === null;
-  return (
-    <div className="card">
-      <div className="card-l">{label}</div>
-      <div
-        className={`card-n tnum${tone && !missing ? ` ${tone}` : ""}`}
-        style={missing ? { color: "#B9C0CB" } : undefined}
-      >
-        {missing ? "—" : typeof value === "number" ? value.toLocaleString("en-US") : value}
-      </div>
-      <div className="card-s">{sub}</div>
-    </div>
   );
 }
 

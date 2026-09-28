@@ -66,7 +66,7 @@ export function AnalyticsScheduleScreen() {
     <div className="wrap">
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="tbl-title" style={{ fontSize: 19 }}>Schedule</div>
+          <h1 className="ds-title">Schedule</h1>
           <div className="tbl-sub">
             {active.data
               ? `${fullNumber(active.data.total)} emails · ${active.data.campaignCount} campaigns · ${active.data.groups.length} clients`

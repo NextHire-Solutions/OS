@@ -208,7 +208,7 @@ export function TeamAccessScreen() {
     <div className="wrap" style={{ maxWidth: 1000 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-.01em" }}>Team access</h1>
+          <h1 className="ds-title">Team access</h1>
           <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>
             Switch a tool on to give that person access.
           </p>

@@ -254,7 +254,7 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
           </>
         ) : null}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="tbl-title" style={{ fontSize: 19 }}>{c.name}</div>
+          <h1 className="ds-title">{c.name}</h1>
           <div className="tbl-sub">
             <span className="badge s-done" style={{ marginRight: 8 }}>{c.status}</span>
             {c.max_emails_per_day ? `${fullNumber(c.max_emails_per_day)}/day · ` : ""}

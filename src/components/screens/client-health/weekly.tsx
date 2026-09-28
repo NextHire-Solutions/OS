@@ -140,7 +140,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </p>
       ) : null}
 
-      <ClientHealthToolbar week={selected} onAdd={openAdd} sync={data.sync} now={now} />
+      <ClientHealthToolbar title="Weekly" description="intros, billing cycles and campaigns for every client" week={selected} onAdd={openAdd} sync={data.sync} now={now} />
 
       <SummaryCards s={s} lifetime={lifetime} week={week} isCurrent={isCurrent} weekKey={key} />
 

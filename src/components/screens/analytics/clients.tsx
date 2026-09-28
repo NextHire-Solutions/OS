@@ -139,7 +139,7 @@ export function AnalyticsClientsScreen() {
     <div className="wrap" style={{ opacity: loading && !data ? 0.6 : 1, transition: "opacity .14s" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="tbl-title" style={{ fontSize: 19 }}>Clients</div>
+          <h1 className="ds-title">Clients</h1>
           <div className="tbl-sub">
             {data
               ? `${data.clients.length} clients · ${data.excludedCount} campaigns excluded from analytics`

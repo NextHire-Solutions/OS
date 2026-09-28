@@ -55,31 +55,27 @@ export function ClientHealthFrame({
 
 function Skeleton() {
   return (
-    <div className="wrap" aria-busy="true" aria-label="Loading Client Health">
-      <div className="cards" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
+    <div className="ds-page" aria-busy="true" aria-label="Loading Client Health">
+      <div className="ds-head"><div><Bar w={160} h={22} /><div style={{ marginTop: 8 }}><Bar w={320} /></div></div></div>
+      <div className="ds-stats" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
         {Array.from({ length: 6 }, (_, i) => (
-          <div className="card" key={i}>
-            <div className="card-l"><Bar w={62} /></div>
-            <div className="card-n"><Bar w={48} h={26} /></div>
-            <div className="card-s"><Bar w={86} /></div>
+          <div className="ds-stat" key={i}>
+            <Bar w={62} />
+            <Bar w={48} h={26} />
+            <Bar w={86} />
           </div>
         ))}
       </div>
-      <div className="tbl-wrap">
-        <div className="tbl-head">
-          <div>
-            <div className="tbl-title"><Bar w={128} h={16} /></div>
-            <div className="tbl-sub" style={{ marginTop: 6 }}><Bar w={240} /></div>
-          </div>
-        </div>
-        <div style={{ padding: "8px 22px 22px" }}>
+      <section className="ds-panel">
+        <div className="ds-panel-head"><div><Bar w={128} h={16} /><div style={{ marginTop: 6 }}><Bar w={240} /></div></div></div>
+        <div style={{ padding: "8px 18px 18px" }}>
           {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} style={{ padding: "13px 0", borderTop: i ? "1px solid var(--line-soft)" : undefined }}>
+            <div key={i} style={{ padding: "13px 0", borderTop: i ? "1px solid var(--ds-border)" : undefined }}>
               <Bar w={`${52 + ((i * 7) % 28)}%`} h={13} />
             </div>
           ))}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -96,7 +92,7 @@ function Bar({ w, h = 11 }: { w: number | string; h?: number }) {
         width: typeof w === "number" ? w : w,
         height: h,
         borderRadius: 5,
-        background: "var(--inset-2)",
+        background: "var(--ds-sunken)",
       }}
     />
   );

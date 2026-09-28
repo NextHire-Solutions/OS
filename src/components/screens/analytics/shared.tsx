@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/ds";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -92,21 +93,34 @@ const AN_TABS: ReadonlyArray<{ id: AnalyticsTab; label: string }> = [
 export type AnalyticsTab = "campaign" | "volume" | "infrastructure" | "attribution" | "copy";
 
 export function AnalyticsTabs({ active }: { active: AnalyticsTab }) {
+  /*
+   * The OS page header — title, one line of context, then the view tabs as
+   * underline tabs — the same header every other screen now has. The strip
+   * itself is kept, for the reason above; only its look changed (29 Sep: "every
+   * page has its own UI").
+   */
   return (
     <>
       <StalenessStrip />
-      <nav className="an-tabs" aria-label="Analytics views">
-        {AN_TABS.map((t) => (
-          <Link
-            key={t.id}
-            href={pathForId(`analytics:${t.id}`)}
-            className={`an-tab${t.id === active ? " on" : ""}`}
-            aria-current={t.id === active ? "page" : undefined}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </nav>
+      <div className="an-header">
+        <PageHeader
+          title="Campaign Analytics"
+          description="EmailBison and Instantly performance — one report, read five ways"
+        >
+          <nav className="ds-tabs" aria-label="Analytics views">
+            {AN_TABS.map((t) => (
+              <Link
+                key={t.id}
+                href={pathForId(`analytics:${t.id}`)}
+                className={`ds-tab${t.id === active ? " on" : ""}`}
+                aria-current={t.id === active ? "page" : undefined}
+              >
+                {t.label}
+              </Link>
+            ))}
+          </nav>
+        </PageHeader>
+      </div>
     </>
   );
 }

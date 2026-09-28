@@ -231,7 +231,7 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
     <div className="wrap" style={{ opacity: loading && !data ? 0.6 : 1, transition: "opacity .14s" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="tbl-title" style={{ fontSize: 19 }}>Campaigns</div>
+          <h1 className="ds-title">Campaigns</h1>
           <div className="tbl-sub">
             {data ? `${fullNumber(data.total)} matching · ${fullNumber(data.all)} in the workspace` : "Loading…"}
           </div>

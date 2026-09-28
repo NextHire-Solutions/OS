@@ -6,6 +6,8 @@ import { humanizeAgo } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 import { shiftWeekKey } from "@/lib/tools/client-health/weeks";
 
+import { PageHeader } from "@/components/ds";
+
 import { SyncButton } from "./sync-button";
 import { setWeekOffset, useClientHealthView } from "./view-state";
 
@@ -42,8 +44,12 @@ export function weekLabel(key: string): string {
 }
 
 export function ClientHealthToolbar({
-  week, onAdd, sync, now,
+  title, description, week, sync, now,
 }: {
+  /** The view's name — the page title, as on every other OS screen. */
+  title: string;
+  /** One line under the title: what this view answers. */
+  description: string;
   week: SelectedWeek;
   /** Unused since clients are added on the Clients page; kept so callers compile unchanged. */
   onAdd?: () => void;
@@ -55,63 +61,54 @@ export function ClientHealthToolbar({
   const { isCurrent, key } = week;
   return (
     <>
+      <PageHeader
+        title={title}
+        description={<>{isCurrent ? "This week" : `Week of ${weekLabel(key)}`} · {description}</>}
+        actions={
+          <>
+            {sync ? <SyncStatus sync={sync} now={now} /> : null}
+            <div className="ds-seg" role="group" aria-label="Week">
+              <button type="button" onClick={() => setWeekOffset((o) => o - 1)} aria-label="Previous week" title="Previous week">←</button>
+              <button
+                type="button"
+                aria-pressed={isCurrent}
+                style={{ minWidth: 150 }}
+                onClick={() => setWeekOffset(0)}
+                aria-label="Selected week"
+                title={isCurrent ? "Showing this week" : "Back to this week"}
+              >
+                {isCurrent ? "This Week" : weekLabel(key)}
+              </button>
+              <button
+                type="button"
+                onClick={() => setWeekOffset((o) => o + 1)}
+                disabled={isCurrent}
+                aria-label="Next week"
+                title={isCurrent ? "This is the current week" : "Next week"}
+                style={isCurrent ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+              >→</button>
+            </div>
+            {/*
+              §2 — a client is created once, on the Clients page, which creates
+              this tool's row with every other tool's.
+            */}
+            <a className="ds-btn" href="/roster" title="Clients are added once, on the Clients page (Onboard a client), and appear here automatically">
+              + Add on Clients page
+            </a>
+            <SyncButton />
+          </>
+        }
+      />
+
       {/* A past week is a record, not a dashboard. Said plainly, because the
           rest of the screen looks exactly the same and the numbers do not. */}
       {!isCurrent ? (
-        <div className="anno">
+        <p className="ds-note" style={{ margin: 0 }}>
           <b>Viewing a past week.</b> These figures are a record of that week — the row
-          actions and the sync still act on today.
-        </div>
+          actions and the sync still act on today.{" "}
+          <button type="button" className="ds-link" onClick={() => setWeekOffset(0)}>Back to this week</button>
+        </p>
       ) : null}
-
-      <div
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "flex-end",
-          gap: 10, marginBottom: 18, flexWrap: "wrap",
-        }}
-      >
-        <span className="pills" style={{ padding: 0 }}>
-          <button className="fp" onClick={() => setWeekOffset((o) => o - 1)} aria-label="Previous week" title="Previous week">←</button>
-          <button
-            className={`fp${isCurrent ? " on" : ""}`}
-            style={{ minWidth: 150 }}
-            onClick={() => setWeekOffset(0)}
-            // Highlighted only on the current week, so the rail reads as "you
-            // are looking at something else" the moment you step back.
-            aria-label="Selected week"
-            title={isCurrent ? "Showing this week" : "Back to this week"}
-          >
-            {isCurrent ? "This Week" : weekLabel(key)}
-          </button>
-          <button
-            className="fp"
-            onClick={() => setWeekOffset((o) => o + 1)}
-            disabled={isCurrent}
-            aria-label="Next week"
-            title={isCurrent ? "This is the current week" : "Next week"}
-            style={isCurrent ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
-          >
-            →
-          </button>
-        </span>
-
-        {!isCurrent ? (
-          <button className="btn" onClick={() => setWeekOffset(0)} title="Back to the current week">
-            Today
-          </button>
-        ) : null}
-
-        {/*
-          §2 — a client is created once, on the Clients page, which creates this
-          tool's row with every other tool's. This button used to create a
-          Client Health row on its own, which no other tool knew about.
-        */}
-        <a className="btn" href="/roster" title="Clients are added once, on the Clients page (Onboard a client), and appear here automatically">
-          + Add on Clients page
-        </a>
-        {sync ? <SyncStatus sync={sync} now={now} /> : null}
-        <SyncButton />
-      </div>
     </>
   );
 }
@@ -149,13 +146,12 @@ function SyncStatus({ sync, now }: { sync: SyncHealth; now?: Date }) {
   ].join("\n");
   return (
     <span
-      className="tbl-sub"
       title={title}
       aria-live="polite"
       style={{
         fontSize: 12.5,
         whiteSpace: "nowrap",
-        color: attention ? "var(--amber, #b7791f)" : undefined,
+        color: attention ? "var(--ds-amber)" : "var(--ds-muted)",
       }}
     >
       {text}

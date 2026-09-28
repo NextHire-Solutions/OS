@@ -68,7 +68,7 @@ export function AccountScreen({ email }: { email: string }) {
   return (
     <div className="wrap" style={{ maxWidth: 640 }}>
       <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-.01em" }}>Account</h1>
+        <h1 className="ds-title">Account</h1>
         <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>{me?.email ?? email}</p>
       </div>
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/ds";
 import { useEffect, useState } from "react";
 
 import type { OnboardingSettings } from "@/lib/tools/onboarding/settings-view";
@@ -124,6 +125,9 @@ function SettingsView({ s, reload }: { s: OnboardingSettings; reload: () => Prom
 
   return (
     <div className="wrap">
+      <div style={{ marginBottom: 18 }}>
+        <PageHeader title="Onboarding settings" description="Who does what, and where onboarding reads and writes" />
+      </div>
       <AutomationPanel on={s.automationEnabled} busy={busy} run={run} />
       <StepLabelsPanel labels={s.stepLabels} busy={busy} run={run} />
 

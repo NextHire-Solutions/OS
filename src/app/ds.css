@@ -68,7 +68,7 @@
 .ds-head p { margin: 4px 0 0; font-size: 13.5px; color: var(--ds-muted); max-width: 72ch; }
 .ds-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-.ds-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--ds-border); margin-top: -4px; overflow-x: auto; }
+.ds-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--ds-border); margin-top: -4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .ds-tab { appearance: none; border: 0; background: none; padding: 9px 12px 10px; font: inherit; font-size: 13.5px;
   font-weight: 550; color: var(--ds-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
   white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
@@ -79,7 +79,7 @@
 /* ---------------------------------------------------------------- stats --- */
 .ds-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; }
 .ds-stat { background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--ds-radius);
-  padding: 14px 16px 13px; display: grid; gap: 3px; min-width: 0; box-shadow: var(--ds-shadow); text-align: left;
+  padding: 14px 16px 13px; display: grid; gap: 3px; align-content: start; min-width: 0; box-shadow: var(--ds-shadow); text-align: left;
   font: inherit; color: inherit; }
 button.ds-stat { cursor: pointer; }
 button.ds-stat:hover { border-color: var(--ds-border-strong); }
@@ -88,7 +88,7 @@ button.ds-stat:hover { border-color: var(--ds-border-strong); }
   overflow: hidden; text-overflow: ellipsis; }
 .ds-stat-v { font-size: 26px; line-height: 1.15; font-weight: 650; letter-spacing: -.02em; color: var(--ds-ink);
   font-variant-numeric: tabular-nums; }
-.ds-stat-s { font-size: 12px; color: var(--ds-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-stat-s { font-size: 12px; line-height: 1.35; color: var(--ds-faint); }
 .ds-stat.t-green .ds-stat-v { color: var(--ds-green); }
 .ds-stat.t-amber .ds-stat-v { color: var(--ds-amber); }
 .ds-stat.t-red .ds-stat-v { color: var(--ds-red); }
@@ -170,7 +170,7 @@ select.ds-input { padding-right: 28px; background-image: linear-gradient(45deg, 
 .ds-seg { display: inline-flex; padding: 3px; background: var(--ds-sunken); border-radius: 9px; gap: 2px; flex-wrap: wrap; }
 .ds-seg button { appearance: none; border: 0; background: none; font: inherit; font-size: 13px; font-weight: 550;
   color: var(--ds-muted); padding: 5px 10px; border-radius: 7px; cursor: pointer; display: inline-flex; gap: 6px;
-  align-items: center; white-space: nowrap; }
+  align-items: center; justify-content: center; white-space: nowrap; }
 .ds-seg button[aria-pressed="true"] { background: var(--ds-surface); color: var(--ds-ink); box-shadow: var(--ds-shadow); }
 .ds-seg .n { font-size: 11.5px; color: var(--ds-faint); font-variant-numeric: tabular-nums; }
 
@@ -232,7 +232,7 @@ select.ds-input { padding-right: 28px; background-image: linear-gradient(45deg, 
  * ds-* components one by one. Scoped (never bare `td`), so the Master
  * Inbox's own Tailwind-built tables are not disturbed.
  * ==================================================================== */
-.cards { gap: 12px !important; margin-bottom: 18px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)) !important; }
+.cards { gap: 12px !important; margin-bottom: 18px; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)) !important; }
 .card { border-radius: var(--ds-radius); border-color: var(--ds-border); padding: 14px 16px 13px; box-shadow: var(--ds-shadow); }
 .card-l { font-size: 12px; font-weight: 550; color: var(--ds-muted); margin-bottom: 4px; letter-spacing: .01em; }
 .card-n { font-size: 26px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; margin-bottom: 3px; }
@@ -337,3 +337,111 @@ tr.has-carry > td:first-child { box-shadow: inset 3px 0 0 var(--ds-red); }
 .ds-band { display: grid; gap: 8px; }
 .ds-band-l { font-size: 11.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--ds-muted); }
 .ds-bands { display: grid; gap: 16px; }
+
+/* =======================================================================
+ * MOCKUP ALIGNMENT (29 Sep)
+ *
+ * Campaign Analytics and Agent Search were built on workspace.css's own
+ * vocabulary — 16–20px corners, 22–26px padding, recessed grey bands, big
+ * blue shadowed buttons — so they read as different products from Client
+ * Health and Clients. These rules restyle that vocabulary to the system's
+ * tokens and metrics. Markup and behaviour are untouched.
+ * ==================================================================== */
+
+/* Analytics: page header + view tabs, then the filter bar. */
+.an-header { padding: 22px var(--ds-gutter) 0; }
+.an-header .ds-tabs { margin-top: 2px; }
+.an-filter { padding: 12px var(--ds-gutter); gap: 10px; background: none; border-bottom: 1px solid var(--ds-border); }
+.qr { background: var(--ds-sunken); padding: 3px; border-radius: 9px; gap: 2px; }
+.qr button { border-radius: 7px; padding: 5px 10px; font-size: 13px; font-weight: 550; }
+.qr button.on { box-shadow: var(--ds-shadow); font-weight: 600; }
+.gh { border-color: var(--ds-border-strong); border-radius: var(--ds-radius-sm); padding: 0 12px; height: 34px; font-weight: 550; }
+.gh:hover { background: var(--ds-sunken); }
+.sep { background: var(--ds-border); }
+
+/* The KPI band becomes the same stat tiles every other screen has. */
+.kpi { grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)) !important; gap: 12px; background: none;
+  padding: 0; border-radius: 0; margin: 18px var(--ds-gutter) 0; }
+.kpi > div { background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--ds-radius);
+  box-shadow: var(--ds-shadow); padding: 14px 16px 13px; }
+.kpi .k { font-size: 12px; font-weight: 550; color: var(--ds-muted); letter-spacing: .01em; }
+.kpi .v { font-size: 26px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; margin-top: 4px; }
+.kpi .n { font-size: 12px; color: var(--ds-faint); margin-top: 3px; }
+.kpi .d { border-radius: 999px; font-size: 11.5px; font-weight: 600; padding: 1px 7px; }
+
+/* Sub-view switch (Charts / Clients / Campaigns / Replies): underline tabs. */
+.segfull { background: none; padding: 0; gap: 4px; margin: 18px var(--ds-gutter) 0; border-radius: 0;
+  border-bottom: 1px solid var(--ds-border); }
+.segfull button { flex: none; height: auto; padding: 9px 12px 10px; border-radius: 0; background: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 13.5px; font-weight: 550; color: var(--ds-muted); }
+.segfull button:hover { color: var(--ds-ink); }
+.segfull button.on { color: var(--ds-ink); background: none; box-shadow: none; border-bottom-color: var(--ds-brand); font-weight: 600; }
+.seg { background: var(--ds-sunken); padding: 3px; border-radius: 9px; gap: 2px; }
+.seg button { border-radius: 7px; padding: 5px 10px; font-weight: 550; }
+.seg button.on { box-shadow: var(--ds-shadow); }
+
+/* Panels and tables. */
+.abox { border-radius: var(--ds-radius); border-color: var(--ds-border); box-shadow: var(--ds-shadow); }
+.abox-h { padding: 14px 18px; border-bottom-color: var(--ds-border); }
+.abox-h h2 { font-size: 15px; font-weight: 650; letter-spacing: -.005em; }
+.abox-h .note { font-size: 12.5px; color: var(--ds-muted); }
+.atbl th { background: #FAFBFC; font-size: 12px; font-weight: 600; color: var(--ds-muted); padding: 9px 14px;
+  border-bottom: 1px solid var(--ds-border); }
+.atbl td { padding: 11px 14px; font-size: 13.5px; }
+.schip { border-radius: 999px; border-color: var(--ds-border); padding: 4px 10px; font-size: 12.5px; }
+
+/* Agent Search. */
+.as { max-width: none; padding: 22px var(--ds-gutter) 56px; background: none; }
+.as-hd { margin-bottom: 18px; }
+.as-logo { display: none; }
+.as-hd h1 { font-size: 22px; font-weight: 650; letter-spacing: -.015em; }
+.as-hd p { font-size: 13.5px; margin-top: 4px; }
+.as-stat span { border-radius: 999px; padding: 3px 10px; font-weight: 550; font-size: 12px; }
+.as-card { border-radius: var(--ds-radius); border-color: var(--ds-border); box-shadow: var(--ds-shadow); padding: 18px; margin-bottom: 18px; }
+.as-card h2 { font-size: 15px; font-weight: 650; }
+.as-card p.sub { font-size: 12.5px; margin-bottom: 14px; }
+.as-i, .as-ta { border-radius: var(--ds-radius-sm); border-color: var(--ds-border-strong); padding: 8px 11px; }
+.as-btn { border-radius: var(--ds-radius-sm); padding: 0 16px; height: 36px; box-shadow: none; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.as-btn:hover { background: var(--ds-brand-ink); }
+.as-btn.ghost { border-color: var(--ds-border-strong); }
+.as-btn.ghost:hover { background: var(--ds-sunken); }
+.as-tog { border-radius: var(--ds-radius-sm); padding: 0 12px; height: 34px; font-weight: 550; border-color: var(--ds-border-strong); }
+.as-res { border-radius: var(--ds-radius); border-color: var(--ds-border); box-shadow: var(--ds-shadow); }
+.as-res-h { padding: 14px 18px; border-bottom-color: var(--ds-border); }
+.as-res-h h3 { font-size: 15px; font-weight: 650; }
+.as-idle { border-radius: 999px; padding: 2px 9px; }
+.as-cnt { border-radius: 999px; padding: 2px 10px; }
+.as-body { padding: 32px 18px; }
+
+/* A page title inside an older layout (Analytics' Campaigns, Schedule, Clients). */
+.ds-title { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 650; letter-spacing: -.015em; color: var(--ds-ink); }
+.ds-title + .tbl-sub { font-size: 13.5px; margin-top: 4px; color: var(--ds-muted); }
+
+/* The older page header (Home, Performance, Consistency): same type as PageHeader. */
+.hero { padding: 22px var(--ds-gutter) 0; }
+.hero h1 { font-size: 22px; line-height: 1.25; font-weight: 650; letter-spacing: -.015em; color: var(--ds-ink); }
+.hero p { font-size: 13.5px; color: var(--ds-muted); margin-top: 4px; }
+.hero + .wrap { padding-top: 18px; }
+
+/* Home: the overview card and the product cards, on the system's metrics.
+   The overview's tiles stay a metric picker — click one to chart it. */
+.ov-card { border-radius: var(--ds-radius); border-color: var(--ds-border); box-shadow: var(--ds-shadow); }
+.ov-top { padding: 14px 18px 12px; }
+.ov-title { font-size: 15px; font-weight: 650; }
+.ovkpis { border-radius: 10px; background: var(--ds-sunken); }
+.ovk { padding: 14px 16px 15px; border-radius: 8px; }
+.ovk.on { box-shadow: var(--ds-shadow), 0 0 0 1px var(--ds-border); }
+.ovk-l { font-size: 12.5px; font-weight: 550; }
+.ovk-n { font-size: 28px; font-weight: 650; letter-spacing: -.02em; }
+.ovk-f { font-size: 12.5px; }
+.tools { gap: 12px; }
+.tool { border-radius: var(--ds-radius); border-color: var(--ds-border); box-shadow: var(--ds-shadow); padding: 18px; }
+.tool:hover { transform: none; box-shadow: var(--ds-shadow); border-color: var(--ds-border-strong); }
+.tool-i { width: 34px; height: 34px; border-radius: 9px; }
+.tool b { font-size: 15px; font-weight: 650; }
+.tool small { font-size: 12.5px; }
+.tool-m { gap: 22px; padding-top: 12px; border-top-color: var(--ds-border); }
+.tool-m div b { font-size: 20px; font-weight: 650; }
+/* Onboarding: a client's name on one line, not three. */
+.onb-pipeline tbody td:first-child { white-space: nowrap; }

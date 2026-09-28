@@ -107,7 +107,7 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </p>
       ) : null}
 
-      <ClientHealthToolbar week={week} onAdd={openAdd} sync={data.sync} now={now} />
+      <ClientHealthToolbar title="Bi-Weekly" description="who bills next, and what they are still owed" week={week} onAdd={openAdd} sync={data.sync} now={now} />
       <SummaryCards s={summary} lifetime={lifetimeRates} week={weekRates} isCurrent={isCurrent} weekKey={key} />
 
       <Stats>

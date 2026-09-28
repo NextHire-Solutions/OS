@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/ds";
 import { useMemo, useState } from "react";
 import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/clients/client-status";
 import { toneOf } from "@/lib/tools/onboarding/stage-types";
@@ -203,6 +204,9 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
 
   return (
     <div className="wrap onb-pipeline">
+      <div style={{ marginBottom: 18 }}>
+        <PageHeader title="Onboarding" description="Every client from signed to live — stage, owner, payment and launch" />
+      </div>
       {/*
          * Six cards in a five-column grid left "Off Roster" stranded alone on a
          * second row, which reads as a separate section rather than the last of
