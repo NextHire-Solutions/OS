@@ -2,6 +2,7 @@ import "server-only";
 
 import { getOnboardingDb } from "./db";
 import { isRole, validatePhoto, type Person, type PersonRole } from "./people-types";
+import { mirrorPeopleToMaster } from "@/lib/clients/people-sync";
 
 export * from "./people-types";
 
@@ -128,5 +129,7 @@ export async function setClientAccountManager(
     .update({ account_manager_id: personId || null, updated_at: new Date().toISOString() })
     .eq("id", clientId);
   if (error) return { ok: false, error: error.message };
+  // The master record follows, so Edit and this page name the same person.
+  await mirrorPeopleToMaster(clientId, { accountManagerId: personId || null });
   return { ok: true };
 }

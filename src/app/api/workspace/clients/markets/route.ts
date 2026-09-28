@@ -9,6 +9,22 @@ import {
   type MarketsResult,
 } from "@/lib/clients/markets-db";
 import { suggestionsFrom } from "@/lib/clients/markets";
+import { deriveCodes } from "@/lib/clients/markets-mls";
+import { syncDatabaseMls } from "@/lib/clients/markets-mls-sync";
+import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
+
+/** Every MLS board in the Database, for the MLS field. Empty on failure — the form still works. */
+async function mlsBoards(): Promise<{ code: string; label: string }[]> {
+  try {
+    const { data, error } = await getCorofySupabase().from("mls").select("code, name, state").order("code").limit(500);
+    if (error) return [];
+    return ((data ?? []) as { code: string | null; name: string | null; state: string | null }[])
+      .filter((b) => b.code?.trim())
+      .map((b) => ({ code: b.code!.trim(), label: [b.name, b.state].filter(Boolean).join(" · ") }));
+  } catch {
+    return [];
+  }
+}
 
 /*
  * A client's markets: the (market, MLS, area) combinations they cover.
@@ -31,7 +47,26 @@ import { suggestionsFrom } from "@/lib/clients/markets";
  */
 export const dynamic = "force-dynamic";
 
+/*
+ * After every change, the Database row's MLS codes are rewritten from the
+ * Markets (markets-mls.ts). Never fatal — the market is saved either way — but
+ * reported, so a code the lead builder cannot use is visible where it was typed.
+ */
+async function leadBuilding(clientId: string) {
+  try {
+    const r = await syncDatabaseMls(clientId);
+    return { codes: r.codes, unknown: r.unknown, linked: r.linked };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** One place that turns a MarketsResult into a response, so codes stay consistent. */
+async function respondAndSync<T>(result: MarketsResult<T>, key: string, clientId: string) {
+  if (result.ok) return NextResponse.json({ [key]: result.value, leadBuilding: await leadBuilding(clientId) });
+  return respond(result, key);
+}
+
 function respond<T>(result: MarketsResult<T>, key: string) {
   if (result.ok) return NextResponse.json({ [key]: result.value });
   return NextResponse.json(
@@ -72,12 +107,24 @@ export async function GET(request: Request) {
    *
    * A failure here is not fatal: the form still works, it just has no datalist.
    */
-  const all = await listAllMarkets();
+  const [all, boards] = await Promise.all([listAllMarkets(), mlsBoards()]);
   return NextResponse.json({
     markets: mine.value,
     suggestions: all.ok
       ? suggestionsFrom(all.value)
       : { markets: [], mlses: [], areas: [] },
+    /*
+     * The MLS boards the Database knows, offered by CODE with the full name
+     * and state as the label. A board typed freely is how "HAR" came to mean
+     * a California board in one place and Houston in another (the Database
+     * developer's finding, 28 Sep) — picking the code keeps one spelling per
+     * board. Still free text: an area with no board listed can be entered.
+     */
+    boards,
+    // What the lead builder will use, derived from these markets — shown under the list.
+    leadBuilding: all.ok
+      ? (() => { const d = deriveCodes(mine.value, boards.map((b) => ({ code: b.code, name: null, state: null }))); return { codes: d.codes, unknown: d.unknown }; })()
+      : null,
   });
 }
 
@@ -90,7 +137,7 @@ export async function POST(request: Request) {
   }
   const { clientId, input } = readBody(body);
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
-  return respond(await addMarket(clientId, input), "market");
+  return respondAndSync(await addMarket(clientId, input), "market", clientId);
 }
 
 export async function PATCH(request: Request) {
@@ -103,7 +150,7 @@ export async function PATCH(request: Request) {
   const { clientId, id, input } = readBody(body);
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
-  return respond(await updateMarket(clientId, id, input), "market");
+  return respondAndSync(await updateMarket(clientId, id, input), "market", clientId);
 }
 
 export async function DELETE(request: Request) {
@@ -112,5 +159,5 @@ export async function DELETE(request: Request) {
   const id = url.searchParams.get("id");
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
-  return respond(await removeMarket(clientId, id), "removed");
+  return respondAndSync(await removeMarket(clientId, id), "removed", clientId);
 }

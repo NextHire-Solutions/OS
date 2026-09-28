@@ -13,6 +13,7 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
 import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { listOsClients } from "./os-clients";
 import { propagateStatus } from "./status-propagate";
+import { seedMarketsFromDatabase } from "./markets-mls-sync";
 
 /*
  * Actually onboarding a client: three writes, three databases, no transaction.
@@ -62,6 +63,8 @@ export interface RunResult {
    * (a leg failed or was held back).
    */
   statusAlignment?: string | null;
+  /** Markets created from MLS boards the intake form named. */
+  marketsSeeded?: number;
   ok: boolean;
 }
 
@@ -428,12 +431,27 @@ export async function runOnboarding(
     }
   }
 
+  /*
+   * A Database row that arrived from the intake form may already name MLS
+   * boards. Once linked, those become the client's Markets — the one MLS
+   * editor from here on (markets-mls.ts). Never touches a client that already
+   * has Markets, and never fatal.
+   */
+  let marketsSeeded = 0;
+  if (results.find((r) => r.leg === "database")?.status === "done") {
+    marketsSeeded = await seedMarketsFromDatabase(osClientId).catch((err) => {
+      console.error("[onboard] seeding markets from the Database row failed", err);
+      return 0;
+    });
+  }
+
   return {
     osClientId,
     legs: results,
     portalUrl,
     portalFeatures: featureFlagNote,
     statusAlignment,
+    marketsSeeded,
     ok: results.every((r) => r.status !== "failed"),
   };
 }

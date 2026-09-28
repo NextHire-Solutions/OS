@@ -1,4 +1,6 @@
 import "server-only";
+import { mirrorPeopleToMaster } from "@/lib/clients/people-sync";
+import { masterByToolId } from "@/lib/clients/master-lookup";
 
 import { getOnboardingDb } from "./db";
 import { validatePhoto } from "./people-types";
@@ -67,6 +69,8 @@ export async function assignSalespersonByName(clientId: string, rawName: string)
     .update({ salesperson_id: salespersonId, updated_at: new Date().toISOString() })
     .eq("id", clientId);
   if (error) return { ok: false, error: error.message };
+  // The master record follows, so Edit and this page name the same person.
+  await mirrorPeopleToMaster(clientId, { salespersonId });
   return { ok: true };
 }
 
@@ -98,6 +102,11 @@ export async function setTacName(clientId: string, tacName: string): Promise<Res
  * same as always — the "Build lead list" button on the client page.
  */
 export async function setClientMls(clientId: string, codes: string[]): Promise<Result> {
+  // One editor per client (lib/clients/markets-mls.ts): once a master record
+  // exists, its Markets own the MLS and these codes are derived from them. A
+  // write here would be overwritten by the next Markets change, silently.
+  const master = (await masterByToolId("database").catch(() => new Map())).get(clientId);
+  if (master) return { ok: false, error: "this client's MLS is set from its Markets — edit them on this page or the Clients page" };
   const clean = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
   if (clean.some((c) => c.length > 40)) return { ok: false, error: "that does not look like an MLS code" };
   if (clean.length > 40) return { ok: false, error: "too many MLS codes" };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { introPeopleSentence } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 import { ModalDialog } from "@/components/ui/modal-dialog";
@@ -166,6 +166,17 @@ function EditBody({
   const [accountManager, setAccountManager] = useState(client.record.accountManager ?? "");
   const [salesperson, setSalesperson] = useState(client.record.salesperson ?? "");
   const [sender, setSender] = useState(client.record.sender ?? "");
+  // The Onboarding team list, so a person is picked rather than re-spelled:
+  // these names are also written to the Database's client row (people-link.ts).
+  const [team, setTeam] = useState<{ salespeople: string[]; accountManagers: string[] }>({ salespeople: [], accountManagers: [] });
+  useEffect(() => {
+    let live = true;
+    fetch("/api/workspace/clients/team", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((t) => { if (live && t) setTeam({ salespeople: t.salespeople ?? [], accountManagers: t.accountManagers ?? [] }); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
   // Market, MLS and Area are not edited here — see the Markets note in the form.
   const [stripeCustomer, setStripeCustomer] = useState(client.record.stripeCustomerId ?? "");
   const [stripeSubscription, setStripeSubscription] = useState(client.record.stripeSubscriptionId ?? "");
@@ -384,13 +395,19 @@ function EditBody({
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
             <label style={FIELD}>
               <span style={LABEL}>Account manager</span>
-              <input className="inp" value={accountManager} maxLength={120}
+              <input className="inp" value={accountManager} maxLength={120} list="team-am"
                 onChange={(e) => setAccountManager(e.target.value)} />
+              <datalist id="team-am">
+                {[...new Set([...team.accountManagers, ...team.salespeople])].map((n) => <option key={n} value={n} />)}
+              </datalist>
             </label>
             <label style={FIELD}>
               <span style={LABEL}>Salesperson</span>
-              <input className="inp" value={salesperson} maxLength={120}
+              <input className="inp" value={salesperson} maxLength={120} list="team-sp"
                 onChange={(e) => setSalesperson(e.target.value)} />
+              <datalist id="team-sp">
+                {team.salespeople.map((n) => <option key={n} value={n} />)}
+              </datalist>
             </label>
             <label style={FIELD}>
               <span style={LABEL}>Sender</span>

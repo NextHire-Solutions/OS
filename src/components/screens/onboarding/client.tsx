@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { MarketsPanel } from "../markets-panel";
 
 import type { ClientDetail } from "@/lib/tools/onboarding/client-detail";
 import { toneOf } from "@/lib/tools/onboarding/stage-types";
@@ -328,8 +329,19 @@ function Profile({
                 )}
               </Kv>
               <Kv label="Phone">{dash(c.contactPhone)}</Kv>
-              <Kv label="MLS">
-                <MlsPicker clientId={c.id} current={c.mls} notify={notify} onSaved={reload} />
+              {/*
+                One MLS editor per client (§15). With a master record, it is the
+                client's Markets — the same list as the Clients page — and the
+                codes the lead builder uses are derived from it. Without one (an
+                intake row not yet onboarded in the OS) this page's own picker
+                stays; onboarding then seeds the Markets from what it holds.
+              */}
+              <Kv label={c.masterId ? "Markets & MLS" : "MLS"}>
+                {c.masterId ? (
+                  <MarketsPanel clientId={c.masterId} />
+                ) : (
+                  <MlsPicker clientId={c.id} current={c.mls} notify={notify} onSaved={reload} />
+                )}
                 <div className="tbl-sub" style={{ marginTop: 6 }}>
                   Clients often name another MLS once the team talks it through — add as many as
                   they recruit in. Nothing re-runs when you change it.

@@ -1,4 +1,5 @@
 import "server-only";
+import { mirrorPeopleToMaster } from "@/lib/clients/people-sync";
 
 import { getOnboardingDb } from "./db";
 import { nowIso } from "./orch-client";
@@ -38,6 +39,7 @@ export async function assignSalespersonFromIntake(clientId: string, rawName: str
   await db.from("orch_clients")
     .update({ salesperson_id: salespersonId, updated_at: nowIso() })
     .eq("id", clientId);
+  await mirrorPeopleToMaster(clientId, { salespersonId });
 }
 
 export async function handleTypeformIntake(payload: TfPayload): Promise<{ clientId: string; isNew: boolean }> {

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getOnboardingDb } from "./db";
+import { masterByToolId, type MasterFacts } from "@/lib/clients/master-lookup";
 import { getClientFields, getKnownFieldLabels } from "./client-fields";
 import { mlsCodes, type ClientField } from "./client-field-types";
 import { getPeople } from "./people";
@@ -105,6 +106,13 @@ export interface ClientProfile {
   contactPhone: string | null;
   contactRole: string | null;
   mls: string[];
+  /**
+   * The master record this Database row belongs to, when there is one. Its
+   * Markets are then the one MLS editor, and `mls` above is derived from them
+   * (lib/clients/markets-mls.ts). Null for an intake row not yet onboarded in
+   * the OS — the page keeps its own MLS picker for those.
+   */
+  masterId: string | null;
   location: string | null;
   timezone: string | null;
   /** Pre-formatted on the server — see `onboardingCall` below. */
@@ -240,7 +248,7 @@ export function formatOnboardingCall(iso?: string | null, tz?: string | null): s
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-function toProfile(c: ClientRow, real?: RealPlan): ClientProfile {
+function toProfile(c: ClientRow, real?: RealPlan, masterId: string | null = null): ClientProfile {
   const pc = c.primary_contact ?? {};
   const f = (c.filters ?? {}) as Record<string, number | undefined>;
   return {
@@ -253,6 +261,7 @@ function toProfile(c: ClientRow, real?: RealPlan): ClientProfile {
     contactPhone: pc.phone ?? null,
     contactRole: pc.role ?? null,
     mls: mlsCodes(c.mls),
+    masterId,
     location: c.location,
     timezone: c.timezone,
     onboardingCall: formatOnboardingCall(c.onboarding_date, c.timezone),
@@ -299,6 +308,7 @@ export async function getClientDetail(id: string): Promise<ClientDetail | null> 
 
   // Client Health's plan and target for this client, via the master record.
   const real = (await realPlansByOrchId().catch(() => new Map<string, RealPlan>())).get(id);
+  const masterId = (await masterByToolId("database").catch(() => new Map<string, MasterFacts>())).get(id)?.id ?? null;
 
   const db = getOnboardingDb();
   try {
@@ -356,7 +366,7 @@ export async function getClientDetail(id: string): Promise<ClientDetail | null> 
     const allManagers = people.filter((p) => p.role === "account_manager");
 
     return {
-      client: toProfile(client, real),
+      client: toProfile(client, real, masterId),
       stages,
       salespeople: people.filter((p) => p.role !== "account_manager" && p.active),
       // Hidden managers stay out of the picker but the current holder is kept
@@ -394,7 +404,7 @@ export async function getClientDetail(id: string): Promise<ClientDetail | null> 
   } catch (error) {
     // A failure costs this screen, never the workspace.
     return {
-      client: toProfile(client, real),
+      client: toProfile(client, real, masterId),
       stages: [],
       salespeople: [],
       accountManagers: [],

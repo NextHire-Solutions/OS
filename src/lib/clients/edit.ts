@@ -10,6 +10,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { planInboxAliases, type InboxRow } from "./inbox-aliases";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { decideStripeLink, stripeIdErrors, type StripeLookup } from "./stripe-link";
+import { planDatabasePeople, writeDatabasePeople } from "./people-sync";
+import type { Resolution } from "./people-link";
 import { stripeKey } from "@/lib/tools/onboarding/stripe";
 
 /**
@@ -179,6 +181,7 @@ interface Row {
   an_client_id: string | null;
   ch_client_id: string | null;
   mi_client_id: string | null;
+  orch_client_id: string | null;
   contact_name: string | null;
   contact_role: string | null;
   contact_email: string | null;
@@ -342,7 +345,7 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
 
   const { data, error } = await osTable("os_clients")
     .select(
-      "id, name, an_client_id, ch_client_id, mi_client_id, " +
+      "id, name, an_client_id, ch_client_id, mi_client_id, orch_client_id, " +
         "contact_name, contact_role, contact_email, " +
         "contact2_name, contact2_role, contact2_email, " +
         "contact3_name, contact3_role, contact3_email, brokerage, " +
@@ -357,6 +360,13 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   // Refused before anything is written, so a rejected edit changes nothing.
   const settledNow = settledContacts(edit, row);
   if (settledNow.errors.length) throw new InvalidEditError(settledNow.errors.join(" "));
+  // Salesperson / Account Manager / Sender are also on the Database's client
+  // row (people-link.ts). Names resolved now, so an ambiguous one refuses the
+  // whole edit before anything is written.
+  const peoplePlan = row.orch_client_id
+    ? await planDatabasePeople({ salesperson: edit.salesperson, accountManager: edit.accountManager, sender: edit.sender })
+    : null;
+  if (peoplePlan?.errors.length) throw new InvalidEditError(peoplePlan.errors.join(" "));
 
   const updated: string[] = [];
   const failed: EditResult["failed"] = [];
@@ -377,10 +387,14 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     if (edit[slot.email] !== undefined) local[slot.col.email] = blankToNull(edit[slot.email]);
   }
   if (edit.brokerage !== undefined) local.brokerage = blankToNull(edit.brokerage);
-  // §6 master-record fields. OS owns these outright — nothing is sent onward
-  // to any tool, because no tool has anywhere to put them.
-  if (edit.accountManager !== undefined) local.account_manager = blankToNull(edit.accountManager);
-  if (edit.salesperson !== undefined) local.salesperson = blankToNull(edit.salesperson);
+  // §6 master-record fields. The master owns them; the Database's client row
+  // keeps a copy for the Onboarding page, written below.
+  // A name matched to the team list is stored in the list's own spelling, so
+  // "eddy" and "Eddy" never become two people on two screens.
+  const canonical = (r: Resolution | undefined, typed: string | null | undefined) =>
+    r?.kind === "found" ? r.name : blankToNull(typed);
+  if (edit.accountManager !== undefined) local.account_manager = canonical(peoplePlan?.accountManager, edit.accountManager);
+  if (edit.salesperson !== undefined) local.salesperson = canonical(peoplePlan?.salesperson, edit.salesperson);
   if (edit.sender !== undefined) local.sender_name = blankToNull(edit.sender);
   /*
    * Stripe. Resolved against what is SAVED, because the dialog sends only the
@@ -441,6 +455,18 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
         what: "the stored introduction template",
         error: e instanceof Error ? e.message : String(e),
       });
+    }
+  }
+
+  /* ------------------------------------------------ the Database's client row */
+  if (peoplePlan && row.orch_client_id &&
+      (peoplePlan.salesperson || peoplePlan.accountManager || peoplePlan.sender !== undefined)) {
+    try {
+      const added = await writeDatabasePeople(row.orch_client_id, peoplePlan);
+      updated.push("the Database / Onboarding record (salesperson, account manager, sender)");
+      for (const n of added) updated.push(`${n} added to the Onboarding team list`);
+    } catch (e) {
+      failed.push({ what: "the Database / Onboarding record", error: e instanceof Error ? e.message : String(e) });
     }
   }
 

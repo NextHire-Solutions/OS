@@ -54,6 +54,8 @@ const NO_SUGGESTIONS: Suggestions = { markets: [], mlses: [], areas: [] };
 export function MarketsPanel({ clientId }: { clientId: string }) {
   const [rows, setRows] = useState<MarketRow[] | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestions>(NO_SUGGESTIONS);
+  const [boards, setBoards] = useState<{ code: string; label: string }[]>([]);
+  const [leadBuilding, setLeadBuilding] = useState<{ codes: string[]; unknown: string[] } | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   /** The row being edited, or null when the form is adding a new one. */
   const [editing, setEditing] = useState<string | null>(null);
@@ -70,6 +72,8 @@ export function MarketsPanel({ clientId }: { clientId: string }) {
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       setRows(body.markets ?? []);
       setSuggestions(body.suggestions ?? NO_SUGGESTIONS);
+      setBoards(Array.isArray(body.boards) ? body.boards : []);
+      setLeadBuilding(body.leadBuilding ?? null);
       setLoadError(null);
     } catch (e) {
       // Distinct from a validation error: this one means we cannot show the
@@ -165,9 +169,31 @@ export function MarketsPanel({ clientId }: { clientId: string }) {
         </ul>
       )}
 
+      {/*
+        What the lead builder will pull agents from. These codes are written to
+        the Database row on every change (markets-mls.ts), so this is also what
+        the Onboarding page and "Build lead list" use.
+      */}
+      {rows.length && leadBuilding ? (
+        <p className="mk-lead">
+          Lead building uses: {leadBuilding.codes.length ? <b>{leadBuilding.codes.join(", ")}</b> : <em>no known MLS board yet</em>}
+          {leadBuilding.unknown.length ? (
+            <span className="mk-warn">
+              {" "}· not an MLS board the Database knows, so skipped: {leadBuilding.unknown.join(", ")}. Pick the code from the list.
+            </span>
+          ) : null}
+        </p>
+      ) : null}
+
       <div className="mk-form">
         <datalist id="mk-markets">{suggestions.markets.map((v) => <option key={v} value={v} />)}</datalist>
-        <datalist id="mk-mlses">{suggestions.mlses.map((v) => <option key={v} value={v} />)}</datalist>
+        <datalist id="mk-mlses">
+          {/* The Database's boards first, by code with name · state; then any other spelling already in use. */}
+          {boards.map((b) => <option key={`b-${b.code}`} value={b.code}>{b.label}</option>)}
+          {suggestions.mlses
+            .filter((v) => !boards.some((b) => b.code.toLowerCase() === v.toLowerCase()))
+            .map((v) => <option key={v} value={v} />)}
+        </datalist>
         <datalist id="mk-areas">{suggestions.areas.map((v) => <option key={v} value={v} />)}</datalist>
 
         <input

@@ -61,11 +61,22 @@ interface Unassigned {
   status: string;
   lifetimeSent: number;
   ambiguous: boolean;
+  /** The Analytics client the Database files this campaign under, if any. */
+  databaseClientId: string | null;
+}
+
+interface Conflict {
+  campaignId: string;
+  platform: "emailbison" | "instantly";
+  name: string;
+  currentClientId: string;
+  databaseClientId: string;
 }
 
 interface ClientsResponse {
   clients: Client[];
   unassigned: Unassigned[];
+  conflicts?: Conflict[];
   excludedCount: number;
 }
 
@@ -117,6 +128,8 @@ export function AnalyticsClientsScreen() {
   if (error) return <LoadError what="The client roster" error={error} />;
 
   const queue = data?.unassigned ?? [];
+  const conflicts = data?.conflicts ?? [];
+  const clientName = (id: string) => data?.clients.find((c) => c.id === id)?.name ?? null;
 
   return (
     <div className="an-screen">
@@ -175,6 +188,29 @@ export function AnalyticsClientsScreen() {
                       <td className="mut">{u.status}</td>
                       <td className="tnum" style={{ textAlign: "right" }}>{fullNumber(u.lifetimeSent)}</td>
                       <td>
+                        {/*
+                          The Database's answer, one click away. Accepting it is
+                          a manual pin — the same write as the dropdown — so
+                          neither name matcher can undo it.
+                        */}
+                        {u.databaseClientId && clientName(u.databaseClientId) ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                            <span className="mut" style={{ fontSize: 12.5 }}>
+                              Database: <b>{clientName(u.databaseClientId)}</b>
+                            </span>
+                            <Btn
+                              disabled={busy}
+                              aria-label={`Assign ${u.name} to ${clientName(u.databaseClientId)}`}
+                              onClick={() =>
+                                void run(`“${u.name}” assigned to ${clientName(u.databaseClientId!)}`, () =>
+                                  assignCampaign(u.campaignId, u.databaseClientId),
+                                )
+                              }
+                            >
+                              Assign
+                            </Btn>
+                          </div>
+                        ) : null}
                         <select
                           className="sel"
                           disabled={busy}
@@ -207,6 +243,53 @@ export function AnalyticsClientsScreen() {
         <div className="anno new" style={{ margin: "0 0 20px" }}>
           <b>Every campaign has a client.</b> Nothing is falling out of the client totals.
         </div>
+      ) : null}
+
+      {/*
+        Where the Database and Analytics' name matching disagree about a
+        campaign's client. Neither is assumed right, so both are offered.
+      */}
+      {conflicts.length ? (
+        <Box
+          title={`${conflicts.length} campaign${conflicts.length === 1 ? "" : "s"} the Database files under a different client`}
+          note="Matched here by name, but the Database's own record names another client. Pin whichever is right; a pin is never recomputed."
+          style={{ borderColor: "#F6DFC0" }}
+        >
+          <div className="tbl-scroll">
+            <table className="atbl" style={{ minWidth: 760 }}>
+              <thead>
+                <tr>
+                  <th>Campaign</th>
+                  <th style={{ width: 230 }}>Matched by name</th>
+                  <th style={{ width: 230 }}>Database says</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conflicts.map((c) => (
+                  <tr key={`${c.platform}-${c.campaignId}`}>
+                    <td><div className="cname" style={{ fontSize: 13.5 }}>{c.name}</div></td>
+                    {[c.currentClientId, c.databaseClientId].map((id) => (
+                      <td key={id}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span>{clientName(id) ?? "—"}</span>
+                          <Btn
+                            disabled={busy || !clientName(id)}
+                            aria-label={`Pin ${c.name} to ${clientName(id)}`}
+                            onClick={() =>
+                              void run(`“${c.name}” pinned to ${clientName(id)}`, () => assignCampaign(c.campaignId, id))
+                            }
+                          >
+                            Pin
+                          </Btn>
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Box>
       ) : null}
 
       <Box

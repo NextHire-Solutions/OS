@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
+import { databaseOwnersForAnalytics } from "@/lib/tools/analytics/ownership/load";
+import { disagreements, keyOf } from "@/lib/tools/analytics/ownership/suggest";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +17,7 @@ export async function GET() {
   const sb = getSupabase();
   const teamId = TEAM_ID();
 
-  const [clients, mappings, campaigns, instantlyMappings, instantlyCampaigns] = await Promise.all([
+  const [clients, mappings, campaigns, instantlyMappings, instantlyCampaigns, owners] = await Promise.all([
     sb.from("clients").select("id, name, slug, aliases, match_mode, active").eq("team_id", teamId).order("name"),
     sb.from("campaign_clients").select("campaign_id, client_id, match_method, matched_on, ambiguous, excluded"),
     sb.from("campaigns").select("id, name, status, lifetime_emails_sent").eq("team_id", teamId),
@@ -27,6 +29,9 @@ export async function GET() {
      */
     sb.from("instantly_campaign_clients").select("campaign_id, client_id, match_method, ambiguous, excluded"),
     sb.from("instantly_campaigns").select("id, name, status, emails_sent").eq("team_id", teamId).is("archived_at", null),
+    // Which client the Database files each campaign under — offered beside the
+    // queue, never written automatically (ownership/suggest.ts says why).
+    databaseOwnersForAnalytics(),
   ]);
 
   if (clients.error) {
@@ -88,8 +93,33 @@ export async function GET() {
     })),
   ]
     .filter(({ mapping }) => mapping && !mapping.excluded && (!mapping.client_id || mapping.ambiguous))
-    .map(({ mapping: _mapping, ...rest }) => ({ ...rest, ambiguous: Boolean(_mapping!.ambiguous) }))
+    .map(({ mapping: _mapping, ...rest }) => ({
+      ...rest,
+      ambiguous: Boolean(_mapping!.ambiguous),
+      databaseClientId: owners.get(keyOf(rest.platform, rest.campaignId)) ?? null,
+    }))
     .sort((a, b) => b.lifetimeSent - a.lifetimeSent);
+
+  /*
+   * Automatic matches the Database contradicts. Shown so a person can decide;
+   * neither side is assumed right — the Database's links come from its own
+   * matcher and hand-links, and a client split in two here (SERHANT. PA and
+   * SERHANT. PA 15M+) can be correct in Analytics and not in the Database.
+   */
+  const campaignName = new Map<string, string>([
+    ...(campaigns.data ?? []).map((c) => [`emailbison:${c.id}`, c.name] as [string, string]),
+    ...((instantlyCampaigns.data ?? []) as Array<{ id: string; name: string }>).map((c) => [`instantly:${c.id}`, c.name] as [string, string]),
+  ]);
+  type M = { campaign_id: string | number; client_id: string | null; match_method: string | null; excluded: boolean };
+  const conflicts = disagreements(
+    [
+      ...((mappings.data ?? []) as M[]).map((m) => ({ campaignId: String(m.campaign_id), platform: "emailbison" as const, clientId: m.client_id, matchMethod: m.match_method, excluded: m.excluded })),
+      ...((instantlyMappings.data ?? []) as M[]).map((m) => ({ campaignId: String(m.campaign_id), platform: "instantly" as const, clientId: m.client_id, matchMethod: m.match_method, excluded: m.excluded })),
+    ],
+    owners,
+  )
+    .filter((d) => campaignName.has(keyOf(d.platform, d.campaignId)))
+    .map((d) => ({ ...d, name: campaignName.get(keyOf(d.platform, d.campaignId))! }));
 
   return NextResponse.json({
     clients: (clients.data ?? []).map((c) => ({
@@ -105,6 +135,7 @@ export async function GET() {
       instantlyCount: counts.get(c.id)?.instantly ?? 0,
     })),
     unassigned,
+    conflicts,
     excludedCount: (mappings.data ?? []).filter((m) => m.excluded).length,
   });
 }

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+
+import { SUBSCRIPTION_ID } from "@/lib/clients/stripe-link";
 import { useRouter } from "next/navigation";
 
 import {
@@ -65,6 +67,8 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [billingInterval, setBillingInterval] = useState<BillingInterval>(DEFAULTS.billingInterval);
   const [billingIntervalDays, setBillingIntervalDays] = useState("");
+  // Optional: link billing at creation (§2 "connect their Stripe subscription").
+  const [stripeSub, setStripeSub] = useState("");
   const [macroOn, setMacroOn] = useState(false);
   const [brokerage, setBrokerage] = useState("");
   const [fullName, setFullName] = useState("");
@@ -108,6 +112,8 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
     portalUrl?: string | null;
     portalFeatures?: string | null;
     statusAlignment?: string | null;
+    /** The outcome of linking the Stripe subscription, when one was entered. */
+    stripe?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   } | null>(null);
 
@@ -127,7 +133,8 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
   const canOnboard =
     name.trim().length > 0 &&
     Number(weeklyTarget) > 0 &&
-    (!macroOn || (fullName.trim().length > 0 && role.trim().length > 0));
+    (!macroOn || (fullName.trim().length > 0 && role.trim().length > 0)) &&
+    (!stripeSub.trim() || SUBSCRIPTION_ID.test(stripeSub.trim()));
 
   async function runForReal() {
     setRunning(true);
@@ -174,7 +181,32 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
       });
       const body = await res.json();
       if (!res.ok && !body?.legs) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      setRunResult(body);
+
+      /*
+       * Stripe, last — through the same checked save as the Edit dialog, which
+       * asks Stripe who owns the subscription, fills in the customer from it,
+       * and refuses anything it cannot confirm. After the run rather than
+       * before, so a Stripe refusal never stops a client being created; the
+       * outcome is shown with the other results, and a refusal says to link
+       * it from Edit.
+       */
+      let stripe: { ok: boolean; text: string } | null = null;
+      if (stripeSub.trim()) {
+        try {
+          const linked = await fetch("/api/workspace/clients/edit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: madeBody.id, stripeSubscriptionId: stripeSub.trim() }),
+          });
+          const lb = await linked.json().catch(() => null);
+          stripe = linked.ok && !(lb?.failed?.length)
+            ? { ok: true, text: `Stripe subscription ${stripeSub.trim()} linked and verified with Stripe.` }
+            : { ok: false, text: `Stripe NOT linked: ${lb?.error ?? lb?.failed?.[0]?.error ?? `HTTP ${linked.status}`} Link it from Edit once corrected.` };
+        } catch (e) {
+          stripe = { ok: false, text: `Stripe NOT linked: ${e instanceof Error ? e.message : String(e)} Link it from Edit.` };
+        }
+      }
+      setRunResult({ ...body, stripe });
     } catch (e) {
       setFailed(e instanceof Error ? e.message : String(e));
     } finally {
@@ -239,6 +271,19 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
             </label>
           ) : null}
         </div>
+
+        <label style={FIELD}>
+          <span style={LABEL}>Stripe subscription — optional</span>
+          <input className="inp" value={stripeSub} onChange={(e) => setStripeSub(e.target.value)}
+            placeholder="sub_… — leave empty if billing is not set up yet" aria-label="Stripe subscription ID" />
+          {stripeSub.trim() && !SUBSCRIPTION_ID.test(stripeSub.trim()) ? (
+            <span style={{ fontSize: 12, color: "var(--red)" }}>A subscription ID starts with sub_</span>
+          ) : (
+            <span className="mut" style={{ fontSize: 12 }}>
+              Checked with Stripe after the client is created; the customer is filled in from it.
+            </span>
+          )}
+        </label>
 
         <label style={FIELD}>
           <span style={LABEL}>Aliases — one per line</span>
@@ -384,6 +429,7 @@ function RunView({
     portalUrl?: string | null;
     portalFeatures?: string | null;
     statusAlignment?: string | null;
+    stripe?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   };
 }) {
@@ -423,6 +469,11 @@ function RunView({
             margin: 0,
           }}>
             {result.statusAlignment}
+          </p>
+        ) : null}
+        {result.stripe ? (
+          <p style={{ fontSize: 12, color: result.stripe.ok ? "var(--muted)" : "var(--red)", margin: 0 }}>
+            {result.stripe.text}
           </p>
         ) : null}
         {result.portalUrl ? (

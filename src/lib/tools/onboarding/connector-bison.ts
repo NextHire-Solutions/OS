@@ -1,4 +1,5 @@
 import "server-only";
+import { mirrorPeopleToMaster } from "@/lib/clients/people-sync";
 
 import { getOnboardingDb } from "./db";
 import { onboardingEnv } from "./env";
@@ -78,6 +79,8 @@ export async function buildBisonCampaign(c: OrchClient): Promise<{ ok: boolean; 
       bison_campaign_id: String(campaignId), bison_campaign_status: (campaign.status as string | undefined) ?? "draft",
       sender_name: c.sender_name ?? senderName, updated_at: nowIso(),
     }).eq("id", c.id);
+    // Fills the master's Sender only when it is empty — never over a chosen one.
+    await mirrorPeopleToMaster(c.id, { sender: c.sender_name ?? senderName }, { onlyIfEmpty: true });
     await log(c.id, "build_campaign", "ok", { name, scheduleId, senders: poolIds.length }, { campaignId }, null);
     return { ok: true, campaignId };
   } catch (e) {

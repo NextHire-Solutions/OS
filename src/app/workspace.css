@@ -1628,3 +1628,6 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
 .db-clients .cell-inline { display: inline; margin-left: 6px; }
 .db-clients .nowrap { white-space: nowrap; }
 .db-clients td { vertical-align: top; }
+.mk-lead { font-size: 12.5px; color: var(--muted); margin: 6px 0 10px; }
+.mk-lead b { color: var(--ink); font-weight: 600; }
+.mk-warn { color: var(--red); }
