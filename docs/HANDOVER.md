@@ -250,6 +250,50 @@ surfaces, and every page header carries its mark.
 Sender 0/50, Account Manager 0/50, Markets 0/50, Salesperson 2/50,
 Onboarding date 0/50.
 
+**Speed (`e06c255`, `a1bec34`).** Measured on production
+before and after, from India (network floor ~255ms a request):
+
+| | before | after |
+|---|---|---|
+| Home, time to first byte | 0.9–2.0s | 0.27s |
+| Clients (`/roster`) after a quiet spell | 12.6s | 0.27s |
+| Rail click whose hover preload has landed | full round trip | ~30ms |
+| Analytics KPI / series, asked again | 1.1–1.5s | ~2ms |
+
+What changed, and why:
+- **One cache per process, not one per bundle.** Next builds a module
+  separately for the page render, the route handlers and
+  `instrumentation.ts`. Each copy had its own module-level cache, so the boot
+  warm-up filled a master client list that no page read. It also meant a
+  route's `invalidate()` cleared only its own copy: an Onboarding stage move
+  or a Client Health edit could show stale on reload.
+
+  `ttlCache` now takes `shared: "<name>"`, which keeps the store on
+  `globalThis`. The caches that are warmed or invalidated across bundles use
+  it, as do the tool status snapshots (`status/store.ts`). **Any new cache
+  that is warmed in `instrumentation.ts` or invalidated from a route must be
+  `shared`.**
+- **Nothing on the rail blocks a click.** The badge counts took ~2s, and the
+  first click after each quiet minute waited on them. They and Home's overview
+  are now served stale-while-refresh, and are kept warm every four minutes
+  together with the tool probes.
+- **Analytics repeat reads** (`kpis`, `timeseries`, `filters`,
+  `infrastructure`) go through `lib/tools/analytics/cached-get.ts`. The cache
+  lasts 60s and is keyed by every query parameter, so a filter change still
+  reaches the database. Errors are never cached. A finished sync marks the
+  answers out of date (`ttlCache.expire()`), so the next reader still gets an
+  immediate answer.
+- **Hovering a rail item preloads the whole screen** (`kind: "full"`). The
+  preload is kept for 30s (`staleTimes.static` in `next.config.ts`); a clicked
+  screen is never replayed.
+- **Left as they are, on purpose:**
+  - The inbox's thread query (~0.85s). It is the tool's own, ported verbatim
+    with its corrections.
+  - The Consistency audit (~4.8s). It is a live check.
+  - The single 1.5 MB client script (376 KB gzipped). Every screen is imported
+    by the catch-all page. Pages still paint in ~0.35s because they are
+    server-rendered. Splitting it per screen is the next speed step.
+
 ---
 
 ## 0.4 What changed on 29 September
