@@ -29,6 +29,8 @@ interface Plan {
   blocked: string | null;
   warnings: string[];
   destructive?: boolean;
+  /** Leads on the Database record (they cascade with it). 0 at the "os" scope. */
+  orchLeads?: number;
   cascade?: {
     pipelineEntries: number; agents: number; dncEntries: number;
     teamMembers: number; threads: number;
@@ -124,8 +126,11 @@ function DeleteBody({
   const ready =
     confirm.trim() === name.trim() &&
     !plan?.blocked &&
-    // The acknowledgement gates the button too, not just the server.
-    (scope !== "everything" || !plan?.destructive || acceptLoss);
+    // The acknowledgement gates the button too, not just the server — at ANY
+    // scope that destroys something. It used to be "everything" only, so a
+    // "tools" delete of a client with Database leads had no box to tick and
+    // was refused by the server with nothing on screen to satisfy it.
+    (!plan?.destructive || acceptLoss);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
@@ -185,7 +190,7 @@ function DeleteBody({
           </>
         ) : null}
 
-        {scope === "everything" && plan?.destructive ? (
+        {plan?.destructive ? (
           <label style={{
             display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5,
             cursor: "pointer", lineHeight: 1.55, border: "1px solid var(--red)",
@@ -198,15 +203,15 @@ function DeleteBody({
               style={{ accentColor: "var(--red)", cursor: "pointer", marginTop: 2 }}
             />
             <span>
-              I understand this portal has real content
-              {plan.cascade ? (
-                <>
-                  {" "}— {plan.cascade.pipelineEntries} pipeline entries,{" "}
-                  {plan.cascade.agents} agents, {plan.cascade.dncEntries} DNC entries,{" "}
-                  {plan.cascade.teamMembers} team members
-                </>
-              ) : null}
-              {" "}and that all of it will be destroyed.
+              {/* Name exactly what THIS option destroys: the portal only goes at
+                  "everything"; the Database leads go at "tools" and above. */}
+              I understand this will permanently destroy{" "}
+              {[
+                scope === "everything" && plan.cascade && (plan.cascade.pipelineEntries || plan.cascade.agents || plan.cascade.dncEntries || plan.cascade.teamMembers)
+                  ? `the portal's ${plan.cascade.pipelineEntries} pipeline entries, ${plan.cascade.agents} agents, ${plan.cascade.dncEntries} DNC entries and ${plan.cascade.teamMembers} team members`
+                  : null,
+                plan.orchLeads ? `${plan.orchLeads} Database leads` : null,
+              ].filter(Boolean).join(", and ") || "data whose extent could not be read"}.
             </span>
           </label>
         ) : null}

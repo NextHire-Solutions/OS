@@ -8,6 +8,7 @@ import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { deleteClientRow } from "@/lib/tools/client-health/clientWrites";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
+import { dropsPortal, dropsToolRows, isDestructive, needsAcknowledgement, portalHasContent } from "./delete-rule";
 
 /*
  * Removing a client, and the limits on doing so.
@@ -183,13 +184,13 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
   const warnings: string[] = [];
   let blocked: string | null = null;
   /*
-   * Declared up here because BOTH cascades feed them: the Database's leads and
-   * the portal's contents. `destructive` gates the extra acknowledgement, and it
-   * must be true if EITHER would destroy real data — an empty portal does not
-   * make deleting 7,000 leads a cleanup.
+   * What this scope would destroy is decided by delete-rule.ts at the end, from
+   * the counts gathered below — one tested rule, not logic spread through here.
+   * `leadsUnknown` makes an unreadable lead count count as a possible loss: the
+   * gate fails CLOSED when it cannot see what it would destroy.
    */
-  let destructive = false;
   let orchLeads = 0;
+  let leadsUnknown = false;
 
   /*
    * The demo portal backs a live demonstration client. Deleting it would break
@@ -214,9 +215,7 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
    * both delete the OS record, so after either one the client is off the list
    * with its stored ids gone and no way to clean up the rest from the UI.
    */
-  const dropsToolRows = scope === "tools" || scope === "everything";
-
-  if (dropsToolRows) {
+  if (dropsToolRows(scope)) {
     if (row.an_client_id) {
       willDelete.push("its Analytics client row");
       warnings.push(
@@ -231,6 +230,7 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
     if (row.orch_client_id) {
       const leads = await countOrchLeads(row.orch_client_id);
       if (leads === null) {
+        leadsUnknown = true;
         willDelete.push("its Database record");
         warnings.push(
           "Its Database lead count could not be read, so how much this destroys is unknown. " +
@@ -238,7 +238,6 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
         );
       } else if (leads > 0) {
         orchLeads = leads;
-        destructive = true;
         willDelete.push(`its Database record — and the ${leads} leads built for it`);
         warnings.push(
           `Its Database record has ${leads} leads attached, which are deleted with it ` +
@@ -272,14 +271,6 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
 
   if (row.mi_client_id) {
     cascade = await countCascade(row.mi_client_id);
-    // OR, never assign: the Database leg above may already have set this, and an
-    // empty portal must not clear a pending loss of leads.
-    destructive =
-      destructive ||
-      cascade.pipelineEntries > 0 ||
-      cascade.agents > 0 ||
-      cascade.dncEntries > 0 ||
-      cascade.teamMembers > 0;
 
     const parts = [
       cascade.pipelineEntries ? `${cascade.pipelineEntries} pipeline entries` : null,
@@ -288,7 +279,7 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
       cascade.teamMembers ? `${cascade.teamMembers} team members` : null,
     ].filter(Boolean);
 
-    if (scope === "everything") {
+    if (dropsPortal(scope)) {
       willDelete.push("its Master Inbox row — and with it the portal URL, permanently");
       willDelete.push("its Intro Macro reply template, if it has one");
       for (const p of parts) willDelete.push(`${p} inside its portal`);
@@ -298,8 +289,10 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
       warnings.push(
         "The portal token is random and cannot be recovered. Anyone holding that link gets a 404.",
       );
+      // The PORTAL's contents, not the combined flag: a client with leads and an
+      // empty portal used to read "Its portal holds ." here.
       warnings.push(
-        destructive
+        portalHasContent(cascade)
           ? `Its portal holds ${parts.join(", ")}. Deleting is not a cleanup here — it is the ` +
             "loss of everything that portal shows. Mark it churned instead unless you are certain."
           : "Its portal is empty, so nothing inside it is lost.",
@@ -314,6 +307,20 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
     }
   }
 
+  /*
+   * Deleting never pauses anything. Status propagation pauses campaigns and
+   * Stripe on pause/churn; delete runs none of it, so deleting a live client
+   * leaves their campaigns sending and their subscription billing — with no OS
+   * record left to change that from. Said plainly on every non-churned client.
+   */
+  if (row.status !== "churned") {
+    warnings.push(
+      "Deleting does not pause this client's campaigns or Stripe billing. To stop them, " +
+        "set the client to Churned first — that pauses both, and can be undone.",
+    );
+  }
+
+  const destructive = isDestructive(scope, cascade, leadsUnknown ? 1 : orchLeads);
   return {
     name: row.name, scope, willDelete, willKeep, blocked, warnings,
     cascade, orchLeads, destructive,
@@ -361,8 +368,10 @@ export async function deleteClient(
    * that row — so a "tools" delete could destroy thousands of researched leads
    * while this gate looked the other way because no portal was involved.
    */
-  if (plan.destructive && !acceptDataLoss) {
-    const c = plan.cascade;
+  if (needsAcknowledgement(plan.destructive, acceptDataLoss)) {
+    // Only what THIS scope removes: at "tools" the portal survives, so its
+    // agents must not be listed as a loss.
+    const c = dropsPortal(scope) ? plan.cascade : null;
     const parts = [
       c?.pipelineEntries ? `${c.pipelineEntries} pipeline entries` : null,
       c?.agents ? `${c.agents} agents` : null,
@@ -370,6 +379,7 @@ export async function deleteClient(
       c?.teamMembers ? `${c.teamMembers} team members` : null,
       plan.orchLeads ? `${plan.orchLeads} Database leads` : null,
     ].filter(Boolean);
+    if (!parts.length) parts.push("data whose extent could not be read");
     throw new Error(
       `This would destroy ${parts.join(", ")}. Acknowledge that explicitly to proceed, ` +
         "or mark the client churned instead.",
