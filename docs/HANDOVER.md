@@ -11,6 +11,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
+| **0.4** | [What changed on 29 September](#04-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
 | **0.5** | [What changed on 28 September](#05-what-changed-on-28-september) — the latest work, how it was verified, what is open |
 | **0.6** | [Switching off Analytics, Client Health and Onboarding](#06-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
@@ -153,6 +154,72 @@ Scored against §22, the client's own Definition of Done: **19 of 25
 requirements met**, 5 partly met, 1 not met — and the one unmet requirement is
 deliberate, not outstanding: the standalone tools keep their own Add Client
 buttons because they stay live and clients use them. See §6 for what remains.
+
+---
+
+## 0.4 What changed on 29 September
+
+All deployed to `os`, verified on production, pushed (`25c453c`, `a005c4e`).
+
+**Client Health — billing cycles replace the weekly target** (the standalone
+app's "Health Dash Major Changes", ported per `shaurs/docs/HEALTH-DASH-MAJOR-CHANGES-OS-PORT.md`):
+
+- `billing.ts` is copied byte-for-byte from the standalone app (`lib/billing.ts`),
+  with its 16 tests. Keep it identical — `diff -q` the two after any edit.
+- One billing snapshot per client drives Monthly, Intros / Billing, Last / Next
+  Billing, Days Until, Status, the cards, the filters and the sorts. It is taken
+  as of now for the current week, and as of Sunday 12:00 UTC for a past week.
+- New on Weekly: Weekly Emails Sent, the "+N carried" badge (its popover shows
+  target, delivered, carry and total required), a red row edge while carried
+  intros are owed, a markets line, and Play/Pause next to the portal arrow.
+  Left This Week and the weekly target are gone everywhere, including the
+  Onboard and Edit dialogs; a new client stores its plan's default in the NOT
+  NULL `weekly_target` column.
+- **Play/Pause** — `/api/tools/client-health/clients/campaigns`:
+  - who can use it: signed-in people only; a machine token gets 403;
+  - how it decides: previews from live Instantly and Bison statuses, then
+    re-plans when applied;
+  - what it records: `toggle_paused_campaigns`, shared with the standalone app,
+    and one `campaign_toggle_log` row per attempt;
+  - what it never touches: client status, portal or billing.
+- The OS sync now writes `clients.intro_dates`, as its own update. It is still
+  off (`CLIENT_HEALTH_SYNC_ENABLED=0`); without this write, every billing figure
+  would freeze on switch-over day.
+- Fixed: in browsers east of UTC, "previous week" skipped a week, because the
+  week key was parsed as local midnight.
+
+**Verified:** in a real Chrome with an IST timezone against the UTC production
+server, every non-GET request was blocked. The OS matched clients.brokerstaffer.com
+with **0 differences** across 32 clients × 11 columns plus all 11 Status and
+Performance cards, for this week and last week:
+
+- Keyes: 7/16 and 7 / 8 due.
+- Discover PHX: 3 / 2 due.
+- Wagner: 0 / 2 due, At Risk.
+- The Keyes toggle preview is identical in both apps: 2 to pause, 7 left alone.
+  Nothing was paused: the held list is empty, the log is empty, and both
+  campaigns are still running.
+- The carry badge was checked locally with `CARRY_FORWARD_START` moved back,
+  then reverted: 36 badges, 15 red edges, and the popover stays on screen.
+- There were no hydration errors.
+
+**One look across the OS** (the client's review: "every page has its own UI"):
+
+- Every screen opens with the same header: a title, one line of context, and
+  actions on the right.
+- Every screen uses the same stat tiles, panels, tables and tabs
+  (`src/app/ds.css`, `src/components/ds`).
+- Client Health and Client Success were rebuilt on these components.
+- Analytics, Agent Search and Home keep their markup; their older classes are
+  restyled to the same tokens (the "MOCKUP ALIGNMENT" block in `ds.css`).
+- Analytics keeps its view tabs, now drawn as underline tabs under a page header.
+
+**Checks:** 1,380 unit tests pass and 34/34 pages pass on production.
+
+**Traps learned:**
+- `position: fixed` inside an OS screen is relative to the screen container,
+  which has a transform — not to the viewport. Portal popovers to `<body>`.
+- Never build a date from `` `${key}T00:00:00` `` — that is local midnight.
 
 ---
 
@@ -689,12 +756,14 @@ Bi-Weekly and the back button work.
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
-| **Weekly** | `/` | Did we deliver this week? The design's own cards, table and class names; 24 summary cards (Status, Performance, Funnel Lifetime, Funnel Week) | `client-health/weekly.tsx` |
+| **Weekly** | `/` | Are clients on pace for their billing cycle? One billing snapshot per client (`billing.ts`): Monthly (28-day period), Intros / Billing (delivered / due, carry included), carry badge, Play/Pause; 24 summary cards | `client-health/weekly.tsx` |
 | **Bi-Weekly** | `/?view=biweekly` | **Who bills next, and are they owed introductions when it happens?** | `client-health/biweekly.tsx` |
 | **Client Success** | `/?view=success` | The relationship lens, independent of throughput | `client-health/success.tsx` |
 
 Shared: `filter-bar.tsx` (one `visible` list feeds all three, because the tool
-shares it), `toolbar.tsx` (← / This Week / → / Today / + Add Client / Sync now),
+shares it), `toolbar.tsx` (the page header: ← / This Week / →, + Add on Clients page, Sync now),
+`billing-cells.tsx` (carry badge, Intros / Billing, Monthly — shared by Weekly and Bi-Weekly),
+`campaign-toggle-dialog.tsx` (Play/Pause preview → confirm → per-campaign results),
 `summary-cards.tsx`, `client-modal.tsx` (every field the tool's modal has, plus
 a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 (every campaign linked to a client — the Weekly row only shows what is
