@@ -11,6 +11,8 @@ import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { onboardClient } from "@/lib/tools/client-health/onboard";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
+import { listOsClients } from "./os-clients";
+import { propagateStatus } from "./status-propagate";
 
 /*
  * Actually onboarding a client: three writes, three databases, no transaction.
@@ -54,6 +56,12 @@ export interface RunResult {
    * quietly lacks the tour and the newer pipeline options.
    */
   portalFeatures?: string | null;
+  /**
+   * Whether the new client's status was brought into line across the tools
+   * after the legs ran. See the end of runOnboarding. Null when it did not run
+   * (a leg failed or was held back).
+   */
+  statusAlignment?: string | null;
   ok: boolean;
 }
 
@@ -244,13 +252,20 @@ export async function runOnboarding(
     }
 
     // Record the attempt BEFORE making it.
-    await osTable("os_client_onboarding").upsert(
+    const { error: startErr } = await osTable("os_client_onboarding").upsert(
       {
         os_client_id: osClientId, leg, status: "running",
         request: call.body, updated_at: new Date().toISOString(),
       },
       { onConflict: "os_client_id,leg" },
     );
+    /*
+     * Logged, not thrown. The history row is bookkeeping; the leg itself must
+     * still run. But it is no longer SILENT: until migration 0018 the table's
+     * CHECK refused 'database', every onboarding lost that row, and nothing
+     * said so because this error was never read.
+     */
+    if (startErr) console.error(`[onboard] could not record the ${leg} leg starting`, startErr.message);
 
     let result: LegResult;
     try {
@@ -319,7 +334,7 @@ export async function runOnboarding(
       };
     }
 
-    await osTable("os_client_onboarding").upsert(
+    const { error: endErr } = await osTable("os_client_onboarding").upsert(
       {
         os_client_id: osClientId, leg,
         status: result.status === "done" ? "done" : "failed",
@@ -331,6 +346,7 @@ export async function runOnboarding(
       },
       { onConflict: "os_client_id,leg" },
     );
+    if (endErr) console.error(`[onboard] could not record the ${leg} leg's outcome`, endErr.message);
 
     results.push(result);
     // Stop at the first failure: continuing would publish a portal for a
@@ -373,11 +389,51 @@ export async function runOnboarding(
     }
   }
 
+  /*
+   * BRING THE NEW CLIENT'S STATUS INTO LINE ACROSS THE TOOLS.
+   *
+   * The master record starts a client as `onboarding` (adopt route). The tools
+   * do not: Client Health's and Analytics' create paths take no status, and
+   * Analytics' column DEFAULTS TO 'active' (its migration 092). So every client
+   * onboarded here was born in a status conflict — onboarding in the OS, active
+   * in Analytics — the exact thing §10 says must never happen. Cardinal Realty
+   * Group and Brokerage Realty both showed it, and it was put down to them
+   * being unprovisioned.
+   *
+   * The fix reuses status propagation rather than a second, onboarding-only way
+   * of writing status: the same five legs a status change runs, so there is one
+   * tested path. For `onboarding` it is safe by construction — the portal is left
+   * exactly as it is (onboarding is omitted from the status feed), campaigns are
+   * only ever paused on pause/churn, and billing skips a client with no
+   * subscription.
+   *
+   * Only after every leg succeeded, and never fatal: the client IS onboarded at
+   * this point, and a failure here is reported rather than turning a successful
+   * onboarding into a failed one.
+   */
+  let statusAlignment: string | null = null;
+  const allDone = results.length === LEGS.length && results.every((r) => r.status === "done");
+  if (allDone) {
+    try {
+      const client = (await listOsClients()).find((c) => c.id === osClientId);
+      if (!client) throw new Error("the new client could not be re-read");
+      const prop = await propagateStatus(client, client.status);
+      const bad = prop.legs.filter((l) => !l.ok);
+      statusAlignment = bad.length
+        ? `status "${client.status}" could not be set in: ${bad.map((l) => `${l.label} (${l.error})`).join("; ")}`
+        : `status "${client.status}" set in every tool`;
+    } catch (err) {
+      statusAlignment = `status could not be aligned: ${err instanceof Error ? err.message : String(err)}`;
+      console.error("[onboard] status alignment failed", err);
+    }
+  }
+
   return {
     osClientId,
     legs: results,
     portalUrl,
     portalFeatures: featureFlagNote,
+    statusAlignment,
     ok: results.every((r) => r.status !== "failed"),
   };
 }

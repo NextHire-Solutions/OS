@@ -107,6 +107,7 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
     ok: boolean;
     portalUrl?: string | null;
     portalFeatures?: string | null;
+    statusAlignment?: string | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   } | null>(null);
 
@@ -119,7 +120,7 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
   }
 
   /*
-   * Everything the three legs need. Checked here so the single button is
+   * Everything the four legs need. Checked here so the single button is
    * disabled rather than failing halfway through — a run that creates the
    * Analytics row and then stops is the messy outcome worth avoiding.
    */
@@ -188,7 +189,7 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
         <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
           {runResult
             ? "Done. Here is what each tool was told."
-            : "Creates the client in Analytics, Client Health and Master Inbox, and publishes its portal."}
+            : "Creates the client in Analytics, Client Health, the Database and Master Inbox, publishes its portal, and sets it to Onboarding everywhere."}
         </div>
       </div>
 
@@ -382,6 +383,7 @@ function RunView({
     ok: boolean;
     portalUrl?: string | null;
     portalFeatures?: string | null;
+    statusAlignment?: string | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   };
 }) {
@@ -412,6 +414,15 @@ function RunView({
             margin: "6px 0 0",
           }}>
             {result.portalFeatures}
+          </p>
+        ) : null}
+        {result.statusAlignment ? (
+          <p style={{
+            fontSize: 12,
+            color: /could not/i.test(result.statusAlignment) ? "var(--red)" : "var(--muted)",
+            margin: 0,
+          }}>
+            {result.statusAlignment}
           </p>
         ) : null}
         {result.portalUrl ? (
