@@ -48,6 +48,35 @@ export function statusOf(row: { hidden?: unknown; client_paused?: unknown }): Cl
   return "active";
 }
 
+/*
+ * THE CLIENT'S LIFECYCLE AS CLIENT HEALTH RECORDS IT — read this, not statusOf.
+ *
+ * statusOf() derives status from the two older booleans, and no combination of
+ * them means "onboarding" (both false reads as "active"). Migration 0019 added
+ * a real `status` column, kept in step with the booleans by a trigger, and it
+ * CAN say onboarding. Three places kept deriving from the booleans anyway, so
+ * every onboarding client was misreported as active:
+ *
+ *   - the Clients page showed "CH active" under an Onboarding client;
+ *   - the Consistency screen would have flagged a status conflict that does
+ *     not exist;
+ *   - this file's status feed told the onboarding orchestrator "active", which
+ *     its daily sync then wrote into the Database's Client status.
+ *
+ * Found 28 Sep on the first client onboarded after the fix that sets the status
+ * everywhere ("OpsLabs New"). The booleans remain the fallback for any row
+ * written before 0019.
+ */
+const LIFECYCLE = ["onboarding", "active", "paused", "churned"] as const;
+export type LifecycleStatus = (typeof LIFECYCLE)[number];
+
+export function lifecycleOf(row: { status?: unknown; hidden?: unknown; client_paused?: unknown }): LifecycleStatus {
+  if (typeof row.status === "string" && (LIFECYCLE as readonly string[]).includes(row.status)) {
+    return row.status as LifecycleStatus;
+  }
+  return statusOf(row);
+}
+
 /** GET /api/clients — `{ clients }`. Every column, ordered by name. */
 export async function listClientRows(): Promise<Record<string, unknown>[]> {
   const { data, error } = await getSupabase().from("clients").select("*").order("name");
@@ -65,12 +94,21 @@ export interface ClientStatusListing {
 export async function clientStatuses(): Promise<ClientStatusListing> {
   const { data, error } = await getSupabase()
     .from("clients")
-    .select("id, name, hidden, client_paused")
+    .select("id, name, status, hidden, client_paused")
     .order("name");
   if (error) throw new Error(error.message);
 
-  const clients = ((data ?? []) as { id: string; name: string; hidden: boolean; client_paused: boolean }[])
-    .map((c) => ({ id: c.id, name: c.name, status: statusOf(c) }));
+  /*
+   * A client still being onboarded is OMITTED, not reported — the same rule as
+   * the OS's own feed (lib/clients/status-feed.ts). This feed's shape is
+   * active | paused | churned, and its consumers act on it: reporting an
+   * onboarding client as "active" (the boolean derivation) made the daily sync
+   * write Active into the Database. Absent, they leave it as it is.
+   */
+  const clients = ((data ?? []) as { id: string; name: string; status: string | null; hidden: boolean; client_paused: boolean }[])
+    .map((c) => ({ id: c.id, name: c.name, lifecycle: lifecycleOf(c) }))
+    .filter((c): c is { id: string; name: string; lifecycle: ClientStatus } => c.lifecycle !== "onboarding")
+    .map((c) => ({ id: c.id, name: c.name, status: c.lifecycle }));
 
   const counts: Record<ClientStatus, number> = { active: 0, paused: 0, churned: 0 };
   for (const c of clients) counts[c.status]++;

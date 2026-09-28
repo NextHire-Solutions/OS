@@ -3,7 +3,7 @@ import "server-only";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
-import { listClientRows } from "@/lib/tools/client-health/publish";
+import { lifecycleOf, listClientRows } from "@/lib/tools/client-health/publish";
 import type { NamedEntry } from "./names";
 import { isPlaceholder } from "./placeholder";
 import { isKnownNonClient, nonClientReason } from "@/lib/clients/roster";
@@ -199,7 +199,9 @@ async function clientHealth(): Promise<Roster> {
         name,
         meta: {
           plan: str(row?.plan),
-          status: row?.hidden ? "churned" : row?.client_paused ? "paused" : "active",
+          // The status column, not the booleans: they cannot say "onboarding",
+          // so every onboarding client showed as a conflict (active vs onboarding).
+          status: lifecycleOf(row ?? {}),
         },
       }];
     })),

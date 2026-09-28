@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import { createPortal } from "react-dom";
+
 import type { ClientRow } from "@/lib/clients/overview";
 
 import { MarketsPanel } from "./markets-panel";
@@ -57,11 +60,39 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   );
 }
 
+/*
+ * RENDERED INTO document.body, NOT WHERE IT IS CALLED FROM.
+ *
+ * The roster opens this from inside a table row (<tr>). A <div> there is
+ * invalid HTML, and two visible bugs followed from it (reported 28 Sep):
+ *
+ *   - the browser treated the dialog's box as an extra first cell, so the row
+ *     that had been opened shifted every column one place to the right;
+ *   - `position: fixed` pins to the nearest transformed/clipped ancestor rather
+ *     than the viewport, so the dialog opened at the TOP of the page and anyone
+ *     who had scrolled down to a client had to scroll back up to see it.
+ *
+ * A portal takes it out of the table entirely, so it is always centred on the
+ * screen the person is looking at, wherever it is opened from.
+ */
 export function ClientDetail({ row, onClose }: { row: ClientRow; onClose: () => void }) {
   const { client, os, health, inbox, analytics, portalUrl } = row;
   const date = (d: string | null) => (d ? new Date(d).toLocaleDateString() : null);
 
-  return (
+  // Escape closes, and the page behind does not scroll while it is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div className="cd-backdrop" role="dialog" aria-modal="true" aria-label={`${client.name} — full record`} onClick={onClose}>
       <div className="cd-panel" onClick={(e) => e.stopPropagation()}>
         <header className="cd-top">
@@ -171,6 +202,7 @@ export function ClientDetail({ row, onClose }: { row: ClientRow; onClose: () => 
           </Section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
-import { listClientRows } from "@/lib/tools/client-health/publish";
+import { lifecycleOf, listClientRows } from "@/lib/tools/client-health/publish";
 import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { ROSTER, matchRoster, type CanonicalClient } from "./roster";
 import { indexById, indexByName, pickFor, keysForClient } from "./tool-index";
@@ -265,12 +265,10 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
       health: {
         present: !!hr,
         plan: str(hr?.plan),
-        // Derived the way the tool derives it: hidden wins over paused.
-        status: hr
-          ? hr.hidden === true ? "churned"
-            : hr.client_paused === true ? "paused"
-            : "active"
-          : null,
+        // Client Health's own status column (migration 0019), which can say
+        // "onboarding"; the booleans only as a fallback. Deriving from the
+        // booleans showed "CH active" under every Onboarding client.
+        status: hr ? lifecycleOf(hr) : null,
         weeklyTarget: num(hr?.weekly_target),
         monthlyTarget: num(hr?.monthly_target),
         timezone: str(hr?.time_zone),
