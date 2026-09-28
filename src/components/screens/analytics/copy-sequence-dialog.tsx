@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
 import {
   CAMPAIGNS_URL,
   applyCopySequence,
@@ -29,26 +30,38 @@ import { Btn } from "./toast";
  */
 
 export interface CampaignOption {
-  id: number;
+  /** A number for EmailBison (its bigint id), the uuid string for Instantly. */
+  id: number | string;
   name: string;
   status: string;
 }
 
 /**
- * The EmailBison campaigns, as copy sources and push targets.
+ * One platform's campaigns, as copy sources and push targets.
  *
- * EmailBison only: the copy-sequence route addresses both ends by integer id
- * and its reads/writes are EmailBison's step endpoints, so an Instantly uuid
- * would be refused at the door. Filtered here rather than offered and failed.
+ * Sources must be on the SAME platform as the target. A sequence is copied
+ * verbatim and the two platforms do not write copy the same way — EmailBison
+ * merges {FIRST_NAME} and spins {Hi|Hello}, Instantly merges {{firstName}} and
+ * spins {{RANDOM |Hi|Hello}} — so a cross-platform copy would arrive broken.
+ * The route refuses one; this stops it being offered. (Ported with the
+ * tool's Instantly copy, Campaign-tool 80eb359 / e71e71c.)
+ *
+ * All of the platform's campaigns, not the default top 200 by sends: a new
+ * campaign has sent nothing, sorts last, and would fall off the list.
  */
-export function useCampaignOptions(open: boolean, exclude?: number) {
+export function useCampaignOptions(
+  open: boolean,
+  exclude?: number | string,
+  platform: "emailbison" | "instantly" = "emailbison",
+) {
   const list = useAnalyticsData<{
     items: Array<{ id: string; platform: string; name: string; status: string }>;
-  }>(CAMPAIGNS_URL("status=all&limit=500"), { skip: !open });
+  }>(CAMPAIGNS_URL(`status=all&limit=500&platforms=${platform}`), { skip: !open });
   const options: CampaignOption[] = (list.data?.items ?? [])
-    .filter((c) => c.platform === "emailbison")
-    .map((c) => ({ id: Number(c.id), name: c.name, status: c.status }))
-    .filter((c) => c.id !== exclude);
+    .filter((c) => (c.platform ?? "emailbison") === platform)
+    // EmailBison keys by a bigint (sent as "297"); Instantly by a uuid.
+    .map((c) => ({ id: platform === "emailbison" ? Number(c.id) : String(c.id), name: c.name, status: c.status }))
+    .filter((c) => String(c.id) !== String(exclude));
   return { options, loading: list.loading, error: list.error };
 }
 
@@ -59,7 +72,7 @@ export function CopySequenceDialog({
   onOpenChange,
   onApplied,
 }: {
-  targetId: number;
+  targetId: number | string;
   targetName: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -68,7 +81,9 @@ export function CopySequenceDialog({
 }) {
   const [stage, setStage] = useState<"pick" | "options" | "review">("pick");
   const [search, setSearch] = useState("");
-  const [sourceId, setSourceId] = useState<number | null>(null);
+  const [sourceId, setSourceId] = useState<number | string | null>(null);
+  // The target's platform, from its id's own shape: a uuid is Instantly.
+  const targetPlatform = platformOfId(String(targetId)) ?? "emailbison";
   const [mode, setMode] = useState<CopyMode>("append");
   const [includeVariants, setIncludeVariants] = useState(true);
   const [includeAttachments, setIncludeAttachments] = useState(true);
@@ -86,10 +101,10 @@ export function CopySequenceDialog({
   const [commitError, setCommitError] = useState<string | null>(null);
 
   // A campaign cannot be its own source; excluded here so it can't be picked.
-  const { options: all, loading } = useCampaignOptions(open, targetId);
+  const { options: all, loading } = useCampaignOptions(open, targetId, targetPlatform);
   const q = search.trim().toLowerCase();
   const options = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all;
-  const source = all.find((c) => c.id === sourceId);
+  const source = all.find((c) => String(c.id) === String(sourceId));
 
   const opts = { includeVariants, includeAttachments, includeCopyTags };
 

@@ -21,7 +21,14 @@ export async function GET() {
   const [clients, mappings, campaigns, instantlyMappings, instantlyCampaigns, owners] = await Promise.all([
     sb.from("clients").select("id, name, slug, aliases, match_mode, active").eq("team_id", teamId).order("name"),
     sb.from("campaign_clients").select("campaign_id, client_id, match_method, matched_on, ambiguous, excluded"),
-    sb.from("campaigns").select("id, name, status, lifetime_emails_sent").eq("team_id", teamId),
+    /*
+     * DELETED CAMPAIGNS ARE NOT OUTSTANDING WORK. The Instantly query below
+     * has always filtered its archived rows; this one did not, so campaigns
+     * deleted in EmailBison stayed in the "not assigned to a client" queue
+     * forever. Ported from Campaign-tool @ 68ed3cb (commit 870a278).
+     */
+    sb.from("campaigns").select("id, name, status, lifetime_emails_sent")
+      .eq("team_id", teamId).is("deleted_at", null),
     /*
      * INSTANTLY'S MAPPINGS TOO. This counted EmailBison campaigns only, so
      * Bastion Realty South read 10 against a real 26 and The Keyes Company 9

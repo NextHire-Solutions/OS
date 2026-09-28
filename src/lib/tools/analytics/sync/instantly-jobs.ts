@@ -22,6 +22,8 @@ import type { JobFn, JobResult } from "./runner";
  *    incrementally off a watermark and why the deep sweep is a separate job.
  */
 
+import { confirmGone, type GoneVerdict } from "./confirm-gone.ts";
+
 const TEAM_ID = () => analyticsTeamId();
 
 function domainOf(email: string | null | undefined): string | null {
@@ -93,7 +95,22 @@ export const syncInstantlyCampaigns: JobFn = async (): Promise<JobResult> => {
     .map((r) => r.id)
     .filter((id) => !seen.has(id));
 
-  const suspicious = rows.length < (live?.length ?? 0) * 0.5;
+  /*
+   * A shortfall is no longer decided by arithmetic alone. When the walk comes
+   * back far smaller than what we hold, the missing ids are probed one by one:
+   * all 404 means they are really gone, anything else means the walk was bad.
+   * See confirm-gone.ts — written after a client deleted all 318 campaigns and
+   * the old guard declined, hourly, for seventeen hours.
+   *
+   * Ported from Campaign-tool @ 68ed3cb (commit fe06027): the OS runs this job
+   * against the same database as the tool's cron, so it must decide the same way.
+   */
+  const shortfall = rows.length < (live?.length ?? 0) * 0.5;
+  let verdict: GoneVerdict = { archive: true, reason: "walk looks complete" };
+  if (stale.length && shortfall) {
+    verdict = await confirmGone(stale, { fetchOne: (id) => client.getCampaign(id) });
+  }
+  const suspicious = shortfall && !verdict.archive;
   let archived = 0;
   if (stale.length && !suspicious) {
     const { error } = await sb
@@ -105,7 +122,7 @@ export const syncInstantlyCampaigns: JobFn = async (): Promise<JobResult> => {
     archived = stale.length;
   } else if (suspicious) {
     console.warn(
-      `[sync-instantly-campaigns] declined to archive ${stale.length}: walk returned ` +
+      `[sync-instantly-campaigns] ${verdict.reason} — declined to archive ${stale.length}: walk returned ` +
         `${rows.length} against ${live?.length ?? 0} live — looks truncated`,
     );
   }
@@ -654,10 +671,35 @@ export const syncInstantlySequences: JobFn = async (): Promise<JobResult> => {
   const rows: Record<string, unknown>[] = [];
   let calls = 0;
   let withSequence = 0;
+  let missing = 0;
 
   for (const id of ids) {
-    const campaign = await client.getCampaign(id);
-    calls++;
+    /*
+     * A campaign deleted in Instantly is an expected state, not a job failure.
+     * This fetch was unguarded, so ONE deleted campaign threw out of the loop
+     * and failed the whole sweep — and after five of those the circuit breaker
+     * opened and the job stopped running altogether. It stayed down for a day
+     * over a single campaign (PRG Real Estate at EXP (5) - Bay Area) that had
+     * simply been removed upstream.
+     *
+     * So a 404 skips that campaign and the sweep carries on; the count is
+     * reported so a rising number is still visible. Any other error still
+     * fails the job, because that is a fault rather than a deletion.
+     *
+     * Ported from Campaign-tool @ 68ed3cb (commit 1e6c02c).
+     */
+    let campaign: Record<string, unknown>;
+    try {
+      campaign = await client.getCampaign(id);
+      calls++;
+    } catch (error) {
+      const status = (error as { statusCode?: number } | null)?.statusCode;
+      if (status === 404) {
+        missing++;
+        continue;
+      }
+      throw error;
+    }
     const sequences = (campaign?.sequences ?? []) as Array<{
       steps?: Array<{
         delay?: number;
@@ -712,7 +754,7 @@ export const syncInstantlySequences: JobFn = async (): Promise<JobResult> => {
   return {
     rowsWritten: rows.length,
     apiCalls: calls,
-    detail: { campaigns: ids.length, withSequence, steps: rows.length },
+    detail: { campaigns: ids.length, withSequence, steps: rows.length, deletedUpstream: missing },
   };
 };
 

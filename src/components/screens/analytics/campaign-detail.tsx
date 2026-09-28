@@ -467,7 +467,8 @@ function Sequence({
   const tools = (
     <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
       <Btn onClick={() => setEditing(true)}>Edit sequence</Btn>
-      <Btn disabled={ebOnly} title={ebTitle} onClick={() => setCopying(true)}>Copy sequence from…</Btn>
+      {/* Both platforms since the Instantly copy was ported; the rest stay EmailBison-only. */}
+      <Btn onClick={() => setCopying(true)}>Copy sequence from…</Btn>
       {/* The other direction. This campaign's sequence is often the proven one,
           and rolling it out was previously only possible from an offer card —
           which meant creating an offer just to reuse a sequence. */}
@@ -497,7 +498,7 @@ function Sequence({
         onCreated={onChanged}
       />
       <CopySequenceDialog
-        targetId={numericId}
+        targetId={ebOnly ? campaignId : numericId}
         targetName={campaignName}
         open={copying}
         onOpenChange={setCopying}

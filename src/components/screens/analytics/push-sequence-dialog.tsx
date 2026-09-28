@@ -194,7 +194,7 @@ export function CampaignMultiPicker({
 
   const q = search.trim().toLowerCase();
   const shown = q ? options.filter((c) => c.name.toLowerCase().includes(q)) : options;
-  const chosen = options.filter((c) => value.includes(c.id));
+  const chosen = options.filter((c) => value.includes(Number(c.id)));
 
   function toggle(id: number) {
     onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
@@ -237,7 +237,7 @@ export function CampaignMultiPicker({
                 key={c.id}
                 style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: "pointer", fontSize: 12.5 }}
               >
-                <input type="checkbox" checked={value.includes(c.id)} onChange={() => toggle(c.id)} style={{ accentColor: "var(--blue)" }} />
+                <input type="checkbox" checked={value.includes(Number(c.id))} onChange={() => toggle(Number(c.id))} style={{ accentColor: "var(--blue)" }} />
                 <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
                 <span className="mut" style={{ flex: "none", fontSize: 12 }}>{c.status}</span>
               </label>
@@ -253,7 +253,7 @@ export function CampaignMultiPicker({
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
               <button
                 type="button"
-                onClick={() => toggle(c.id)}
+                onClick={() => toggle(Number(c.id))}
                 aria-label={`Remove ${c.name}`}
                 style={{ border: 0, background: "none", cursor: "pointer", color: "var(--muted)", padding: 0, font: "inherit" }}
               >

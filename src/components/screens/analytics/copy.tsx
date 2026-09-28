@@ -679,7 +679,7 @@ function CampaignPicker({
             <div className="mut" style={{ padding: 20, textAlign: "center", fontSize: 12.5 }}>No campaigns match</div>
           ) : (
             shown.map((c) => (
-              <button key={c.id} type="button" onClick={() => choose(c.id)} style={rowStyle}>
+              <button key={c.id} type="button" onClick={() => choose(Number(c.id))} style={rowStyle}>
                 <span aria-hidden style={{ width: 14, flex: "none" }}>{value === c.id ? "✓" : ""}</span>
                 <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
                 <span className="mut" style={{ flex: "none", fontSize: 12 }}>{c.status}</span>

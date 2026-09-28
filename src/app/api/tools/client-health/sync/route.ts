@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { authorizeSync } from "@/lib/tools/client-health/sync/auth";
 import { syncHealth, triggerSync } from "@/lib/tools/client-health/sync";
+import { syncScheduleEnabled } from "@/lib/tools/client-health/sync/schedule";
 
 /*
  * "Sync now" — Client Health's sync worker, run IN THIS PROCESS.
@@ -41,6 +42,26 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   if (!(await authorizeSync(request))) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  /*
+   * The same switch as the schedule. While CLIENT_HEALTH_SYNC_ENABLED is off,
+   * the standalone Client Health app's worker refreshes these numbers every 15
+   * minutes, and this copy of the sync is older than its (it predates the
+   * per-source email columns of 22 Sep). A manual run here would write weekly
+   * totals the old way and interleave with the worker — the pattern behind
+   * the 17 Sep outage. So it refuses, and says why.
+   */
+  if (!syncScheduleEnabled()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Client Health's numbers are refreshed by the Client Health app every 15 minutes. " +
+          "The OS's own sync is switched off until that app is retired, so there is nothing to run here.",
+      },
+      { status: 409 },
+    );
   }
 
   const outcome = triggerSync("manual");

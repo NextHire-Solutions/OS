@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { z } from "zod";
+import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { AUTH_COOKIE, verifySessionToken } from "@/lib/tools/analytics/session";
 import { applyCopy, planCopy } from "@/lib/tools/analytics/campaigns/copy-sequence.ts";
-import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
+import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
+import { instantlyCopy } from "@/lib/tools/analytics/campaigns/copy-sequence-instantly-run.ts";
 
 /*
  * Copy a sequence into this campaign (spec §9.4).
@@ -23,7 +25,14 @@ export const maxDuration = 120;
 const TEAM_ID = () => analyticsTeamId();
 
 const Body = z.object({
-  sourceCampaignId: z.number().int().positive(),
+  /*
+   * Coerced, because the campaign list this id comes from is the
+   * `campaigns_unified` view, whose id column is text — so a perfectly good
+   * EmailBison id arrives as "297". Requiring a number here rejected every
+   * copy the UI attempted. Coercion accepts "297" and still rejects an
+   * Instantly uuid, which is the case that genuinely cannot be a source.
+   */
+  sourceCampaignId: z.union([z.string().min(1), z.number().int().positive()]),
   mode: z.enum(["replace", "append"]),
   includeVariants: z.boolean().default(true),
   // §9.4 lists copy tags alongside variants and attachments. Defaults on: a
@@ -48,15 +57,31 @@ export async function POST(
   }
 
   const { id } = await params;
-  const targetId = Number(id);
-  if (!Number.isInteger(targetId) || targetId <= 0) {
+  const targetPlatform = platformOfId(id);
+  if (!targetPlatform) {
     return NextResponse.json({ error: "Invalid campaign id" }, { status: 400 });
   }
 
-  const parsed = Body.safeParse(await request.json().catch(() => null));
+  const raw = await request.json().catch(() => null);
+  const parsed = Body.safeParse(raw);
   if (!parsed.success) {
+    /*
+     * Name the field. "Invalid request" was reported from the product as
+     * "Copy a sequence from doesn't work", and the screenshot could not say
+     * why: the route knew which field it had rejected and put it in `detail`,
+     * which the dialog throws away. A 400 a user can read is the difference
+     * between a bug report and a fix.
+     */
+    const issue = parsed.error.issues[0];
+    const field = issue?.path.join(".") || "body";
+    const received = raw === null
+      ? "the request body was not valid JSON"
+      : `received ${JSON.stringify((raw as Record<string, unknown>)?.[String(issue?.path[0])])}`;
     return NextResponse.json(
-      { error: "Invalid request", detail: parsed.error.flatten() },
+      {
+        error: `Invalid request: ${field} — ${issue?.message ?? "failed validation"} (${received})`,
+        detail: parsed.error.flatten(),
+      },
       { status: 400 },
     );
   }
@@ -64,12 +89,58 @@ export async function POST(
   const { sourceCampaignId, mode, includeVariants, includeAttachments, includeCopyTags, apply } =
     parsed.data;
 
-  if (sourceCampaignId === targetId) {
+  const sourcePlatform = platformOfId(String(sourceCampaignId));
+  if (!sourcePlatform) {
+    return NextResponse.json(
+      { error: `Invalid request: sourceCampaignId — not a campaign id (received ${JSON.stringify(sourceCampaignId)})` },
+      { status: 400 },
+    );
+  }
+
+  /*
+   * A sequence is copied verbatim, and the two platforms do not write copy the
+   * same way — EmailBison merges {FIRST_NAME} and spins {Hi|Hello}, Instantly
+   * merges {{firstName}} and spins {{RANDOM |Hi|Hello}}. Carrying a body
+   * across unchanged would send a real prospect the literal text. So a
+   * cross-platform copy is refused, and says why.
+   */
+  if (sourcePlatform !== targetPlatform) {
+    return NextResponse.json(
+      {
+        error:
+          `Cannot copy a sequence from ${sourcePlatform} into ${targetPlatform}: ` +
+          "the two platforms use different merge tags and spintax, so the copy would " +
+          "arrive broken. Pick a source on the same platform.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (String(sourceCampaignId) === String(id)) {
     return NextResponse.json(
       { error: "A campaign cannot copy its sequence into itself." },
       { status: 400 },
     );
   }
+
+  if (targetPlatform === "instantly") {
+    return instantlyCopy({
+      sourceId: String(sourceCampaignId),
+      targetId: id,
+      mode,
+      apply,
+      actor: session.email,
+    });
+  }
+
+  /*
+   * Past the platform guard above, both ids are EmailBison's, so they are
+   * bigints. Narrowed here rather than at the schema, because the schema has
+   * to accept an Instantly uuid too.
+   */
+  const targetId = Number(id);
+  const sourceId = Number(sourceCampaignId);
+
 
   const teamId = TEAM_ID();
   const options = { includeVariants, includeAttachments, includeCopyTags };
@@ -78,12 +149,12 @@ export async function POST(
     if (!apply) {
       return NextResponse.json({
         preview: true,
-        plan: await planCopy(sourceCampaignId, targetId, mode, options, teamId),
+        plan: await planCopy(sourceId, targetId, mode, options, teamId),
       });
     }
 
     const outcome = await applyCopy(
-      sourceCampaignId,
+      sourceId,
       targetId,
       mode,
       options,

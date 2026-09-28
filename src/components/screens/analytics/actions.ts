@@ -388,8 +388,8 @@ export interface CopyOptions {
  * `apply:false` is the route's default and is sent explicitly anyway.
  */
 export async function planCopySequence(
-  targetId: number,
-  sourceCampaignId: number,
+  targetId: number | string,
+  sourceCampaignId: number | string,
   mode: CopyMode,
   options: CopyOptions,
 ): Promise<CopyPlan> {
@@ -417,8 +417,8 @@ export interface CopyOutcome {
  * line a person must read.
  */
 export async function applyCopySequence(
-  targetId: number,
-  sourceCampaignId: number,
+  targetId: number | string,
+  sourceCampaignId: number | string,
   mode: CopyMode,
   options: CopyOptions,
 ): Promise<{ ok: boolean; status: number; body: Partial<CopyOutcome> & { error?: string } }> {
