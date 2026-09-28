@@ -1,3 +1,4 @@
+import { recordLastCheck } from "./last-result";
 import { optionalEnv } from "@/lib/env";
 import { alertText, buildReconcileAlert, type ReconcileAlertInput } from "./alert";
 import {
@@ -128,6 +129,16 @@ export async function runReconcileCheck(
     : always
       ? `*${alert.title}*\n${alert.lines.map((l) => `• ${l}`).join("\n")}`
       : null;
+
+  // Kept for Home whatever the Slack settings (last-result.ts).
+  recordLastCheck({
+    generatedAt: new Date().toISOString(),
+    actionable: alert.actionable,
+    severity: alert.severity,
+    title: alert.title,
+    lines: alert.lines,
+    clientsChecked: input.clientsChecked,
+  });
 
   let slack: { sent: boolean; error?: string } = { sent: false, error: "not sent" };
   if (send && text) slack = await postToSlack(text);

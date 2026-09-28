@@ -1631,3 +1631,10 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
 .mk-lead { font-size: 12.5px; color: var(--muted); margin: 6px 0 10px; }
 .mk-lead b { color: var(--ink); font-weight: 600; }
 .mk-warn { color: var(--red); }
+
+/* Home: the daily consistency check (daily-check-notice.tsx). */
+.dc-ok { font-size: 12.5px; color: var(--muted); margin: 0 0 16px; }
+.dc-alert { margin: 0 0 18px; }
+.dc-alert ul { margin: 6px 0 8px 18px; padding: 0; }
+.dc-alert a { color: var(--blue); font-weight: 600; }
+.dc-urgent { border-color: var(--red); }

@@ -52,6 +52,8 @@ interface Client {
   campaignCount: number;
   manualCount: number;
   instantlyCount: number;
+  /** Set when this row is a client in the master record. */
+  masterId?: string | null;
 }
 
 interface Unassigned {
@@ -337,12 +339,39 @@ export function AnalyticsClientsScreen() {
                           clientId={c.id}
                           onCancel={() => setEditing(null)}
                           onSave={async (name, aliases, matchMode) => {
-                            await run(`Saved “${name}”`, () =>
-                              updateClient(c.id, { name, aliases, matchMode }),
-                            );
+                            await run(`Saved “${name}”`, async () => {
+                              /*
+                               * §15 — a client's aliases live in three stores
+                               * (master, Analytics, Client Health) and must
+                               * agree. For a real client, save them through
+                               * the client record, which writes all three;
+                               * this used to write Analytics alone, which the
+                               * daily check reports as alias drift. Refused as
+                               * a whole if that fails, so nothing drifts.
+                               */
+                              const changed = aliases.join("\n") !== c.aliases.join("\n");
+                              if (c.masterId && changed) {
+                                const res = await fetch("/api/workspace/clients/edit", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ id: c.masterId, aliases }),
+                                });
+                                const b = await res.json().catch(() => null);
+                                if (!res.ok || b?.failed?.length) {
+                                  throw new Error(b?.error ?? b?.failed?.[0]?.error ?? `HTTP ${res.status}`);
+                                }
+                              }
+                              return updateClient(c.id, { name, aliases, matchMode });
+                            });
                             setEditing(null);
                           }}
-                          onDelete={async () => {
+                          /*
+                           * A real client is deleted from the Clients page,
+                           * which removes it from every tool (and pauses its
+                           * campaigns and billing first). Deleting only this
+                           * row left a client in four tools and missing here.
+                           */
+                          onDelete={c.masterId ? undefined : async () => {
                             await run(`Deleted “${c.name}”`, () => removeClient(c.id));
                             setEditing(null);
                           }}

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ToolSnapshot } from "@/lib/connectors/types";
+import { DailyCheckNotice } from "./daily-check-notice";
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { toGrantId } from "@/lib/workspace/tool-ids";
 import { greeting } from "@/lib/workspace/greeting";
@@ -53,6 +54,9 @@ export function HomeScreen({
       </div>
 
       <div className="wrap">
+        {/* §16 — the daily consistency check's latest answer. */}
+        <DailyCheckNotice />
+
         {/* The one expensive part of this screen: five upstream calls. It is
             loaded here rather than on every route in the workspace. */}
         <Lazy<Overview>

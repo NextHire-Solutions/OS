@@ -44,7 +44,8 @@ export function ClientHealthToolbar({
   week, onAdd, sync, now,
 }: {
   week: SelectedWeek;
-  onAdd: () => void;
+  /** Unused since clients are added on the Clients page; kept so callers compile unchanged. */
+  onAdd?: () => void;
   /** From the data payload; null when sync_runs could not be read. */
   sync?: SyncHealth | null;
   /** The server's clock, so the "ago" text hydrates identically. */
@@ -99,7 +100,14 @@ export function ClientHealthToolbar({
           </button>
         ) : null}
 
-        <button className="btn" onClick={onAdd}>+ Add Client</button>
+        {/*
+          §2 — a client is created once, on the Clients page, which creates this
+          tool's row with every other tool's. This button used to create a
+          Client Health row on its own, which no other tool knew about.
+        */}
+        <a className="btn" href="/roster" title="Clients are added once, on the Clients page (Onboard a client), and appear here automatically">
+          + Add on Clients page
+        </a>
         {sync ? <SyncStatus sync={sync} now={now} /> : null}
         <SyncButton />
       </div>

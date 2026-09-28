@@ -25,7 +25,6 @@ import { CampaignsPopup } from "./campaigns-popup";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
-import { removeClient, setHidden, setPaused } from "./mutations";
 import { ToastHost } from "./toast";
 import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
 import { SummaryCards } from "./summary-cards";
@@ -211,7 +210,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
                           No clients yet
                         </div>
                         <div style={{ marginBottom: 14 }}>Add your first client to start tracking.</div>
-                        <button className="btn btn-pri" onClick={openAdd}>+ Add Client</button>
+                        <a className="btn btn-pri" href="/roster">Add a client on the Clients page</a>
                       </>
                     ) : (
                       <>No clients match {filters.search.trim() ? `“${filters.search.trim()}”` : "this filter"}.</>
@@ -607,21 +606,22 @@ function Row({
       <td>
         <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
           <IconButton label={`Edit ${c.name}`} onClick={onEdit}>Edit</IconButton>
-          <IconButton
-            label={c.client_paused ? `Resume ${c.name}` : `Pause ${c.name}`}
-            onClick={() => void setPaused(c, !c.client_paused)}
+          {/*
+            §10 — status is changed once and reaches every tool. Pause, Churn,
+            Restore and Delete lived here and wrote to Client Health ONLY: the
+            portal, campaigns, billing and the other tools never heard, and a
+            client ended up "paused" in one tool and active in four (Discover
+            PHX, 28 Sep). The Clients page does each of these everywhere.
+          */}
+          <a
+            className="btn"
+            href="/roster"
+            aria-label={`Change ${c.name}'s status on the Clients page`}
+            title="Pause, churn, reactivate or delete on the Clients page — it updates every tool, the portal, campaigns and billing together"
+            style={{ fontSize: 12, padding: "4px 9px", whiteSpace: "nowrap" }}
           >
-            {c.client_paused ? "Resume" : "Pause"}
-          </IconButton>
-          <IconButton
-            label={c.hidden ? `Restore ${c.name}` : `Mark ${c.name} churned`}
-            onClick={() => void setHidden(c, !c.hidden)}
-          >
-            {c.hidden ? "Restore" : "Churn"}
-          </IconButton>
-          <IconButton label={`Delete ${c.name}`} danger onClick={() => void removeClient(c)}>
-            Delete
-          </IconButton>
+            Status…
+          </a>
         </div>
       </td>
     </tr>

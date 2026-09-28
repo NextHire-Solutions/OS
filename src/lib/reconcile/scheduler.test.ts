@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { tickOnce, type ReconcileTickDeps } from "./scheduler";
+import { bootCheck, tickOnce, type ReconcileTickDeps } from "./scheduler";
 
 /*
  * The decision table for the drift check's clock.
@@ -108,4 +108,27 @@ test("the configured hour is respected, not the default", async () => {
   assert.equal(await tickOnce(at("2026-09-25T05:59:00Z"), deps, state), "not-due");
   assert.equal(await tickOnce(at("2026-09-25T06:00:00Z"), deps, state), "ran");
   assert.equal(calls.length, 1);
+});
+
+test("bootCheck: report only — never sends, whatever the send switch says", async () => {
+  const calls: { send: boolean; always: boolean }[] = [];
+  const state = { running: false };
+  const r = await bootCheck({ run: async (o) => { calls.push(o); } }, state);
+  assert.equal(r, "ran");
+  assert.deepEqual(calls, [{ send: false, always: false }]);
+  assert.equal(state.running, false);
+});
+
+test("bootCheck: skipped while the daily run is in flight", async () => {
+  let ran = false;
+  const r = await bootCheck({ run: async () => { ran = true; } }, { running: true });
+  assert.equal(r, "running");
+  assert.equal(ran, false);
+});
+
+test("bootCheck: a failing check is reported, not thrown, and frees the slot", async () => {
+  const state = { running: false };
+  const r = await bootCheck({ run: async () => { throw new Error("db down"); } }, state);
+  assert.equal(r, "error");
+  assert.equal(state.running, false);
 });

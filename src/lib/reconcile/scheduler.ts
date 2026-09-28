@@ -78,6 +78,26 @@ export async function tickOnce(
 }
 
 /** Start the ticker if this process has not already. Idempotent. */
+/** Delay before the start-up check: long enough for the server to finish booting. */
+export const BOOT_DELAY_MS = 90 * 1000;
+
+/** The start-up check. Report only, and skipped if a run is already in flight. */
+export async function bootCheck(
+  deps: Pick<ReconcileTickDeps, "run">,
+  state: { running: boolean },
+): Promise<"ran" | "running" | "error"> {
+  if (state.running) return "running";
+  state.running = true;
+  try {
+    await deps.run({ send: false, always: false });
+    return "ran";
+  } catch {
+    return "error";
+  } finally {
+    state.running = false;
+  }
+}
+
 export function ensureReconcileScheduler(): "started" | "already-running" | "disabled" {
   if (!reconcileScheduleEnabled()) return "disabled";
   if (slots[KEY]) return "already-running";
@@ -92,6 +112,17 @@ export function ensureReconcileScheduler(): "started" | "already-running" | "dis
   // Never keep the process alive just to tick.
   slot.timer.unref?.();
   slots[KEY] = slot;
+
+  /*
+   * One report-only run shortly after start, so Home has a result without
+   * waiting for tomorrow's hour. NEVER sends: a deploy must not post a second
+   * Slack message the same day. Not counted as the day's run either — the
+   * scheduled one still happens at its hour.
+   */
+  const boot = setTimeout(() => {
+    void bootCheck(liveDeps, slot).catch(() => {});
+  }, BOOT_DELAY_MS);
+  boot.unref?.();
   return "started";
 }
 

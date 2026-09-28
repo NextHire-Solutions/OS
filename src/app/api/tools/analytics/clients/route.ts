@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { databaseOwnersForAnalytics } from "@/lib/tools/analytics/ownership/load";
+import { masterByToolId } from "@/lib/clients/master-lookup";
 import { disagreements, keyOf } from "@/lib/tools/analytics/ownership/suggest";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,9 @@ export async function GET() {
     // queue, never written automatically (ownership/suggest.ts says why).
     databaseOwnersForAnalytics(),
   ]);
+  // Which Analytics rows ARE clients (linked to a master record): their aliases
+  // are edited through the master, and they are deleted from the Clients page.
+  const masterOf = await masterByToolId("analytics").catch(() => new Map<string, { id: string }>());
 
   if (clients.error) {
     return NextResponse.json({ error: clients.error.message }, { status: 500 });
@@ -133,6 +137,7 @@ export async function GET() {
       manualCount: counts.get(c.id)?.manual ?? 0,
       /* Of those, how many are Instantly's — so the split is visible. */
       instantlyCount: counts.get(c.id)?.instantly ?? 0,
+      masterId: masterOf.get(c.id)?.id ?? null,
     })),
     unassigned,
     conflicts,
