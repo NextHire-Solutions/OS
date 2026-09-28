@@ -71,6 +71,7 @@ export function AccountScreen({ email }: { email: string }) {
       <div style={{ marginBottom: 18, display: "flex", alignItems: "center", gap: 14 }}>
         <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="roster" /></span>
         <div>
+        <span className="ds-kicker">Your account</span>
         <h1 className="ds-title">Account</h1>
         <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>{me?.email ?? email}</p>
         </div>

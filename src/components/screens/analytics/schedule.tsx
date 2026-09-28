@@ -66,6 +66,7 @@ export function AnalyticsScheduleScreen() {
     <div className="wrap">
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
+          <span className="ds-kicker">Campaign Analytics</span>
           <h1 className="ds-title">Schedule</h1>
           <div className="tbl-sub">
             {active.data

@@ -210,6 +210,7 @@ export function TeamAccessScreen() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
         <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="team-access" /></span>
         <div>
+          <span className="ds-kicker">Admin</span>
           <h1 className="ds-title">Team access</h1>
           <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>
             Switch a tool on to give that person access.

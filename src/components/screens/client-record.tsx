@@ -5,9 +5,11 @@ import { createPortal } from "react-dom";
 
 import { Field, StatusPill, type FieldEditor } from "@/components/ds";
 import {
-  Cell, Id, PlanTag, avatarStyle, fmtDay, fmtNum, initials, intervalLabel, planLabel, tzLabel,
+  Cell, Id, avatarStyle, fmtDay, fmtNum, initials, intervalLabel, planLabel, tzLabel,
 } from "@/components/clients/cells";
-import { CATEGORIES, CATEGORY_LABEL, fieldsIn, type FieldDef } from "@/lib/clients/field-registry";
+import {
+  CATEGORIES, CATEGORY_LABEL, FIELD_BY_KEY, TOOL_VIEWS, fieldsIn, type FieldDef, type ToolViewId,
+} from "@/lib/clients/field-registry";
 import type { MasterClient } from "@/lib/clients/master-list";
 import { CLIENT_STATUSES, STATUS_MEANING, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
 import { TIME_ZONES } from "@/lib/tools/client-health/types";
@@ -17,27 +19,27 @@ import { DeleteClient } from "./clients-delete";
 import { MarketsPanel } from "./markets-panel";
 
 /*
- * ONE CLIENT — THE WHOLE MASTER RECORD, EDITABLE WHERE IT STANDS.
+ * ONE CLIENT.
  *
- * Every field of §6 and §12, in the document's categories and words, each with
- * the system that holds it (§7 "where does this information originate?") and,
- * where the master record owns it, an in-place editor (§7 "where can it be
- * edited?"). Change it here once; the save route writes it to every tool that
- * uses it (§21 step 6–7).
+ * Opened from Clients, it is the whole master record: every §6 field and the
+ * §12 dates, each with the system that holds it (§7), edited in place.
  *
- * Each field saves ALONE through /api/workspace/clients/edit, so every rule the
- * route enforces — Stripe verification, time zone checks, "a contact needs a
- * name and a role" — applies unchanged and its own words are shown when it
- * refuses. Status asks before it saves: it moves the portal, campaigns and
- * billing (§10).
+ * Opened from a TOOL's Client view (`view`), it is that tool's part of the
+ * record and nothing else — the fields §8 lists for the tool, under the
+ * tool's own names (§5: "each tool should display the fields relevant to its
+ * purpose"). A link opens the full record on Clients.
+ *
+ * Every save goes through /api/workspace/clients/edit, so the route's rules
+ * (Stripe verification, time zones, contacts) apply unchanged and its own
+ * words are shown when it refuses. Status asks before it saves (§10).
  */
 
 type Tab = "record" | "campaigns" | "people" | "markets" | "introduce" | "tools";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "record", label: "Master record" },
+  { id: "record", label: "Record" },
   { id: "campaigns", label: "Campaigns" },
-  { id: "people", label: "Team, agents & DNC" },
+  { id: "people", label: "Team · Agents · DNC" },
   { id: "markets", label: "Markets" },
   { id: "introduce", label: "Introduce to" },
   { id: "tools", label: "Tools" },
@@ -62,9 +64,9 @@ async function saveEdit(id: string, patch: Record<string, unknown>): Promise<voi
 }
 
 /** Which fields edit in place, how, and which route key they save to. */
-function editorFor(f: FieldDef, team: { salespeople: string[]; accountManagers: string[] }):
+function editorFor(key: string, team: { salespeople: string[]; accountManagers: string[] }):
   { editor: FieldEditor; save: string; transform?: (v: string) => unknown } | null {
-  switch (f.key) {
+  switch (key) {
     case "name": return { editor: { kind: "text", maxLength: 80 }, save: "name", transform: (v) => v };
     case "plan": return { editor: { kind: "select", options: PLAN_OPTIONS }, save: "plan", transform: (v) => v };
     case "startDate": return { editor: { kind: "date" }, save: "startDate" };
@@ -86,18 +88,27 @@ function editorFor(f: FieldDef, team: { salespeople: string[]; accountManagers: 
 }
 
 /** The raw value an editor starts from. */
-function rawOf(f: FieldDef, c: MasterClient): string | number | null {
-  switch (f.key) {
-    case "campaignAliases": return c.campaignAliases.join(", ");
-    case "campaignSender": return c.sender;
-    default: {
-      const v = (c as unknown as Record<string, unknown>)[f.key];
-      return typeof v === "string" || typeof v === "number" ? v : null;
-    }
+function rawOf(key: string, c: MasterClient): string | number | null {
+  if (key === "campaignAliases") return c.campaignAliases.join(", ");
+  if (key === "campaignSender") return c.sender;
+  const v = (c as unknown as Record<string, unknown>)[key];
+  return typeof v === "string" || typeof v === "number" ? v : null;
+}
+
+/** How an editable field reads when not being edited. */
+function displayFor(key: string, c: MasterClient): React.ReactNode {
+  switch (key) {
+    case "plan": return planLabel(c.plan);
+    case "timezone": return tzLabel(c.timezone);
+    case "startDate": case "billingAnchorDate": return fmtDay(c[key]);
+    case "billingInterval": return intervalLabel(c.billingInterval, c.billingIntervalDays);
+    case "campaignAliases": return c.campaignAliases.length ? c.campaignAliases.join(", ") : null;
+    case "monthlyTarget": return c.monthlyTarget === null ? null : `${c.monthlyTarget} per 28 days`;
+    default: return undefined;
   }
 }
 
-/** Where to manage a field that is edited elsewhere (tab in this panel, or another tool). */
+/** Where a field that is edited elsewhere is managed, inside this panel. */
 const MANAGED_IN: Record<string, Tab> = {
   market: "markets", mls: "markets", area: "markets",
   team: "people", agents: "people", dnc: "people",
@@ -105,16 +116,22 @@ const MANAGED_IN: Record<string, Tab> = {
 };
 
 export function ClientRecord({
-  client: c, onClose, onChanged, onDeleted,
+  client: c, view, onClose, onChanged, onDeleted, onPrev, onNext, position,
 }: {
   client: MasterClient;
+  /** Opened from a tool's Client view: show only that tool's §8 fields. */
+  view?: ToolViewId;
   onClose: () => void;
-  /** Called after any successful save, so the list re-reads. */
   onChanged: () => void;
   onDeleted: () => void;
+  onPrev?: () => void;
+  onNext?: () => void;
+  /** "12 / 50" — where this client sits in the list it was opened from. */
+  position?: string;
 }) {
   const [tab, setTab] = useState<Tab>("record");
   const [team, setTeam] = useState<{ salespeople: string[]; accountManagers: string[] }>({ salespeople: [], accountManagers: [] });
+  const tool = view ? TOOL_VIEWS.find((t) => t.id === view) ?? null : null;
 
   useEffect(() => {
     let live = true;
@@ -125,17 +142,54 @@ export function ClientRecord({
     return () => { live = false; };
   }, []);
 
+  // Escape closes; ↑ / ↓ (or k / j) move through the list — never while typing.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
+      if (typing) return;
+      if (e.key === "Escape") onClose();
+      if ((e.key === "ArrowUp" || e.key === "k") && onPrev) { e.preventDefault(); onPrev(); }
+      if ((e.key === "ArrowDown" || e.key === "j") && onNext) { e.preventDefault(); onNext(); }
+    };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
-  }, [onClose]);
+  }, [onClose, onPrev, onNext]);
 
   const save = (key: string, transform: (v: string) => unknown = (v) => v || null) => async (v: string) => {
     await saveEdit(c.id, { [key]: transform(v) });
     onChanged();
+  };
+
+  /** One field row: an in-place editor where the master record owns it, the value otherwise. */
+  const row = (key: string, label: string, def?: FieldDef) => {
+    const ed = editorFor(key, team);
+    const source = def?.source;
+    if (ed) {
+      return (
+        <div key={key} className="rx-row" title={def?.definition}>
+          <Field label={label} source={source} value={rawOf(key, c)} display={displayFor(key, c)}
+            editor={ed.editor} onSave={save(ed.save, ed.transform)} />
+        </div>
+      );
+    }
+    const managed = !tool ? MANAGED_IN[key] : undefined;
+    return (
+      <div key={key} className="rx-row" title={def?.definition}>
+        <div className="ds-field">
+          <div className="ds-field-l"><span>{label}</span>{source ? <em className="ds-field-src">{source}</em> : null}</div>
+          <div className="ds-field-v">
+            <div className="rx-static">
+              <Cell k={key} c={c} />
+              {managed ? (
+                <button type="button" className="rx-go" onClick={() => setTab(managed)}>{managed === "campaigns" ? "View" : "Manage"} →</button>
+              ) : def && !tool ? <small className="rx-why">{def.editIn}</small> : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const period = c.health.period;
@@ -146,197 +200,173 @@ export function ClientRecord({
   if (typeof document === "undefined") return null;
   return createPortal(
     <>
-      <div className="ds-scrim" onClick={onClose} />
-      <aside className="rx" role="dialog" aria-modal="true" aria-label={`${c.name} — client record`}>
+      <div className="rx-scrim" onClick={onClose} />
+      <aside className="rx" role="dialog" aria-modal="true" aria-label={`${c.name} — ${tool ? `${tool.label} view` : "client record"}`}>
         {/* ------------------------------------------------------- header */}
         <header className="rx-head">
+          <div className="rx-bar">
+            <span className="rx-kicker">{tool ? `${tool.label} · client view` : "Master client record"}</span>
+            <span className="rx-nav">
+              {position ? <span className="rx-pos">{position}</span> : null}
+              <button type="button" className="rx-icon" onClick={onPrev} disabled={!onPrev} aria-label="Previous client" title="Previous client (↑)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6" /></svg>
+              </button>
+              <button type="button" className="rx-icon" onClick={onNext} disabled={!onNext} aria-label="Next client" title="Next client (↓)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              <button type="button" className="rx-icon" onClick={onClose} aria-label="Close" title="Close (Esc)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+              </button>
+            </span>
+          </div>
           <div className="rx-id">
             <span className="cx-av lg" style={avatarStyle(c.name)} aria-hidden="true">{initials(c.name)}</span>
-            <div style={{ minWidth: 0 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
               <h2>{c.name}</h2>
               <div className="rx-tags">
-                <StatusPill status={c.status} />
-                <PlanTag plan={c.plan} />
-                {c.statusSince ? <span className="rx-meta">{statusLabel(c.status)} since {fmtDay(c.statusSince)}</span> : null}
-              </div>
-              <div className="rx-meta-row">
-                <span>Client ID <Id value={c.id} /></span>
-                {c.dateAdded ? <span>Added {fmtDay(c.dateAdded)}</span> : null}
-                {c.aliases.length ? <span title={c.aliases.join(", ")}>aka {c.aliases.join(", ")}</span> : null}
+                <StatusPill status={c.status} size="sm" />
+                {c.plan ? <span className="rx-tag">{planLabel(c.plan)}</span> : null}
+                {c.statusSince ? <span className="rx-meta">since {fmtDay(c.statusSince)}</span> : null}
+                <span className="rx-meta">ID <Id value={c.id} /></span>
               </div>
             </div>
-          </div>
-          <div className="rx-actions">
-            {c.portal.url ? <a className="ds-btn sm" href={c.portal.url} target="_blank" rel="noreferrer">Open portal ↗</a> : null}
-            <DeleteClient id={c.id} name={c.name} onDeleted={onDeleted} />
-            <button type="button" className="ds-btn ghost icon sm" onClick={onClose} aria-label="Close">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
-            </button>
+            <div className="rx-actions">
+              {c.portal.url ? <a className="rx-btn" href={c.portal.url} target="_blank" rel="noreferrer">Portal ↗</a> : null}
+              {tool ? <a className="rx-btn" href={`/roster?client=${c.id}`}>Full record →</a> : <DeleteClient id={c.id} name={c.name} onDeleted={onDeleted} />}
+            </div>
           </div>
         </header>
 
-        {/* ------------------------------------------------------ KPI strip */}
-        <div className="rx-kpis">
-          <div>
-            <small>Introductions delivered</small>
-            <b>{fmtNum(c.introductions) ?? "—"}</b>
-            <span>{c.lastIntroAt ? `last ${fmtDay(c.lastIntroAt)}` : "none yet"}</span>
-          </div>
-          <div>
-            <small>This 28-day period</small>
-            <b>{period ? `${period.delivered}/${period.target}` : "—"}</b>
-            <span>{c.health.pace === "done" ? "target met" : c.health.pace === "ok" ? "on pace" : c.health.pace === "risk" ? "behind pace" : "no target set"}</span>
-          </div>
-          <div>
-            <small>Next billing</small>
-            <b>{c.nextBillingDate ? fmtDay(c.nextBillingDate)?.replace(/, \d{4}$/, "") : "—"}</b>
-            <span>{daysToBilling === null ? "no schedule" : daysToBilling === 0 ? "today" : `in ${daysToBilling} day${daysToBilling === 1 ? "" : "s"} · ${intervalLabel(c.billingInterval, c.billingIntervalDays)?.toLowerCase()}`}</span>
-          </div>
-          <div>
-            <small>Agents</small>
-            <b>{fmtNum(c.agents) ?? "—"}</b>
-            <span>{c.team !== null ? `${c.team} team · ${fmtNum(c.dnc)} DNC` : "—"}</span>
-          </div>
-        </div>
-
-        {/* ----------------------------------------------------------- tabs */}
-        <nav className="rx-tabs" aria-label="Sections">
-          {TABS.map((t) => (
-            <button key={t.id} type="button" className={tab === t.id ? "on" : ""} aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>
-              {t.label}
-              {t.id === "campaigns" && c.campaigns ? <span className="n">{c.campaigns.length}</span> : null}
-              {t.id === "markets" && c.markets ? <span className="n">{c.markets.length}</span> : null}
-            </button>
-          ))}
-        </nav>
-
-        <div className="rx-body">
-          {tab === "record" ? (
-            <>
+        {tool ? (
+          /* ------------------------------- a tool's part of the record, only */
+          <div className="rx-body">
+            <section className="rx-sec">
+              <h3>{tool.label}<span>the fields §8 lists for this tool</span></h3>
+              {tool.columns.filter((col) => col.key !== "name").map((col) => row(col.key, col.label, FIELD_BY_KEY[col.key]))}
+            </section>
+            {view === "portal" ? (
               <section className="rx-sec">
-                <h3>Status <span>changes every tool, the portal, campaigns and billing</span></h3>
-                <StatusField id={c.id} status={c.status} onChanged={onChanged} />
+                <h3>Team · Agents · DNC<span>shared with the client&rsquo;s portal</span></h3>
+                <ClientPeople clientId={c.id} />
               </section>
-              {CATEGORIES.map((cat) => (
-                <section key={cat} className={`rx-sec cat-${cat}`}>
-                  <h3><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</h3>
-                  {fieldsIn(cat).filter((f) => f.key !== "status").map((f) => {
-                    const ed = editorFor(f, team);
-                    const managed = MANAGED_IN[f.key];
+            ) : null}
+            {view === "database" ? <Campaigns c={c} /> : null}
+            <p className="rx-hint">Read from the master client record. A change made here is made once, for every tool — the <a href={`/roster?client=${c.id}`}>full record</a> is on Clients.</p>
+          </div>
+        ) : (
+          <>
+            {/* ------------------------------------------------ at a glance */}
+            <div className="rx-kpis">
+              <div>
+                <small>Introductions</small>
+                <b>{fmtNum(c.introductions) ?? "—"}</b>
+                <span>{c.lastIntroAt ? `last ${fmtDay(c.lastIntroAt)}` : "none yet"}</span>
+              </div>
+              <div>
+                <small>28-day period</small>
+                <b>{period ? <>{period.delivered}<i>/{period.target}</i></> : "—"}</b>
+                <span className={`pace-${c.health.pace ?? "none"}`}>{c.health.pace === "done" ? "target met" : c.health.pace === "ok" ? "on pace" : c.health.pace === "risk" ? "behind pace" : "no target"}</span>
+              </div>
+              <div>
+                <small>Next billing</small>
+                <b>{c.nextBillingDate ? fmtDay(c.nextBillingDate)?.replace(/, \d{4}$/, "") : "—"}</b>
+                <span>{daysToBilling === null ? "no schedule" : daysToBilling === 0 ? "today" : `in ${daysToBilling} day${daysToBilling === 1 ? "" : "s"}`}</span>
+              </div>
+              <div>
+                <small>Agents</small>
+                <b>{fmtNum(c.agents) ?? "—"}</b>
+                <span>{c.team !== null ? `${c.team} team · ${fmtNum(c.dnc)} DNC` : "—"}</span>
+              </div>
+            </div>
+
+            <nav className="rx-tabs" aria-label="Sections">
+              {TABS.map((t) => (
+                <button key={t.id} type="button" className={tab === t.id ? "on" : ""} aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>
+                  {t.label}
+                  {t.id === "campaigns" && c.campaigns ? <span className="n">{c.campaigns.length}</span> : null}
+                  {t.id === "markets" && c.markets ? <span className="n">{c.markets.length}</span> : null}
+                </button>
+              ))}
+            </nav>
+
+            <div className="rx-body">
+              {tab === "record" ? (
+                <>
+                  <section className="rx-sec">
+                    <h3>Status<span>changes every tool, the portal, campaigns and billing</span></h3>
+                    <StatusField id={c.id} status={c.status} onChanged={onChanged} />
+                  </section>
+                  {CATEGORIES.map((cat) => (
+                    <section key={cat} className={`rx-sec cat-${cat}`}>
+                      <h3><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</h3>
+                      {fieldsIn(cat).filter((f) => f.key !== "status").map((f) => row(f.key, f.label, f))}
+                    </section>
+                  ))}
+                </>
+              ) : null}
+              {tab === "campaigns" ? <Campaigns c={c} /> : null}
+              {tab === "people" ? (
+                <section className="rx-sec">
+                  <h3>Team · Agents · DNC<span>held by Master Inbox · shared with the portal</span></h3>
+                  <ClientPeople clientId={c.id} />
+                </section>
+              ) : null}
+              {tab === "markets" ? (
+                <section className="rx-sec">
+                  <h3>Market · MLS · Area<span>a client may cover several</span></h3>
+                  <MarketsPanel clientId={c.id} />
+                </section>
+              ) : null}
+              {tab === "introduce" ? (
+                <section className="rx-sec">
+                  <h3>Introduce to<span>used by the Introduce button in Master Inbox</span></h3>
+                  <div className="rx-row">
+                    <Field label="Brokerage" source="Master record" value={c.contact.brokerage}
+                      editor={{ kind: "text" }} onSave={save("brokerage")} />
+                  </div>
+                  {[0, 1, 2].map((i) => {
+                    const v = i === 0 ? { name: c.contact.name, role: c.contact.role, email: c.contact.email } : c.contact.extra[i - 1] ?? { name: null, role: null, email: null };
+                    const p = i === 0 ? "contact" : `contact${i + 1}`;
                     return (
-                      <div key={f.key} className="rx-field" title={f.definition}>
-                        {ed ? (
-                          <Field
-                            label={f.label}
-                            source={f.source}
-                            value={rawOf(f, c)}
-                            display={displayFor(f, c)}
-                            editor={ed.editor}
-                            onSave={save(ed.save, ed.transform)}
-                          />
-                        ) : (
-                          <div className="ds-field">
-                            <div className="ds-field-l">
-                              <span>{f.label}</span>
-                              <em className="ds-field-src">{f.source}</em>
-                            </div>
-                            <div className="ds-field-v">
-                              <div className="rx-static">
-                                <Cell k={f.key} c={c} />
-                                {managed ? (
-                                  <button type="button" className="ds-link" onClick={() => setTab(managed)}>
-                                    {managed === "campaigns" ? "See campaigns" : "Manage"}
-                                  </button>
-                                ) : <small className="rx-why">{f.editIn}</small>}
-                              </div>
-                            </div>
-                          </div>
-                        )}
+                      <div key={i} className="rx-row">
+                        <ContactEditor ordinal={i} value={v}
+                          onSave={async (d) => { await saveEdit(c.id, { [`${p}Name`]: d.name, [`${p}Role`]: d.role, [`${p}Email`]: d.email }); onChanged(); }} />
                       </div>
                     );
                   })}
                 </section>
-              ))}
-            </>
-          ) : null}
-
-          {tab === "campaigns" ? <Campaigns c={c} /> : null}
-
-          {tab === "people" ? (
-            <section className="rx-sec">
-              <h3>Team, agents & DNC <span>held by Master Inbox · shared with the client&rsquo;s portal</span></h3>
-              <ClientPeople clientId={c.id} />
-            </section>
-          ) : null}
-
-          {tab === "markets" ? (
-            <section className="rx-sec">
-              <h3>Market, MLS & area <span>a client may cover several</span></h3>
-              <MarketsPanel clientId={c.id} />
-            </section>
-          ) : null}
-
-          {tab === "introduce" ? (
-            <section className="rx-sec">
-              <h3>Introduce to <span>used by the Introduce button in Master Inbox</span></h3>
-              <Field label="Brokerage" source="Master record" value={c.contact.brokerage}
-                editor={{ kind: "text" }} onSave={save("brokerage")} />
-              {[0, 1, 2].map((i) => {
-                const v = i === 0 ? { name: c.contact.name, role: c.contact.role, email: c.contact.email } : c.contact.extra[i - 1] ?? { name: null, role: null, email: null };
-                const p = i === 0 ? "contact" : `contact${i + 1}`;
-                return (
-                  <ContactEditor key={i} ordinal={i} value={v}
-                    onSave={async (d) => { await saveEdit(c.id, { [`${p}Name`]: d.name, [`${p}Role`]: d.role, [`${p}Email`]: d.email }); onChanged(); }} />
-                );
-              })}
-            </section>
-          ) : null}
-
-          {tab === "tools" ? <Tools c={c} /> : null}
-        </div>
+              ) : null}
+              {tab === "tools" ? <Tools c={c} /> : null}
+            </div>
+          </>
+        )}
       </aside>
     </>,
     document.body,
   );
 }
 
-/** How an editable field reads when not being edited. */
-function displayFor(f: FieldDef, c: MasterClient): React.ReactNode {
-  switch (f.key) {
-    case "plan": return planLabel(c.plan);
-    case "timezone": return tzLabel(c.timezone);
-    case "startDate": case "billingAnchorDate": return fmtDay(c[f.key]);
-    case "billingInterval": return intervalLabel(c.billingInterval, c.billingIntervalDays);
-    case "campaignAliases": return c.campaignAliases.length ? c.campaignAliases.join(", ") : null;
-    case "monthlyTarget": return c.monthlyTarget === null ? null : `${c.monthlyTarget} per 28 days`;
-    default: return undefined;
-  }
-}
-
 /* ---------------------------------------------------------------- campaigns --- */
 function Campaigns({ c }: { c: MasterClient }) {
-  if (!c.campaigns) return <p className="ds-note">Campaigns could not be read.</p>;
-  if (!c.campaigns.length) return <p className="ds-note">No campaign is linked to {c.name} yet.</p>;
-  const tone = (s: string | null) => (s === "running" ? "t-green" : s === "paused" ? "t-orange" : "");
   return (
     <section className="rx-sec">
-      <h3>Campaign Information <span>read from Instantly and EmailBison</span></h3>
-      <div className="rx-camps">
-        {c.campaigns.map((x) => (
-          <div key={`${x.platform}:${x.id}`} className="rx-camp">
-            <span className={`rx-plat ${x.platform === "Instantly" ? "i" : "b"}`}>{x.platform === "Instantly" ? "IN" : "EB"}</span>
-            <div style={{ minWidth: 0 }}>
-              <b title={x.name}>{x.name}</b>
-              <small>Campaign ID <Id value={x.id} /></small>
-            </div>
-            <span className="rx-camp-r">
-              {x.leads !== null ? <small>{fmtNum(x.leads)} leads</small> : null}
-              <span className={`cx-chip ${tone(x.status)}`}>{x.status ? x.status.charAt(0).toUpperCase() + x.status.slice(1) : "Unknown"}</span>
-            </span>
+      <h3>Campaigns<span>read from Instantly and EmailBison</span></h3>
+      {!c.campaigns ? <p className="rx-hint">Campaigns could not be read.</p>
+        : !c.campaigns.length ? <p className="rx-hint">No campaign is linked to {c.name} yet.</p>
+        : (
+          <div className="rx-camps">
+            {c.campaigns.map((x) => (
+              <div key={`${x.platform}:${x.id}`} className="rx-camp">
+                <span className={`rx-plat ${x.platform === "Instantly" ? "i" : "b"}`}>{x.platform === "Instantly" ? "IN" : "EB"}</span>
+                <div style={{ minWidth: 0 }}>
+                  <b title={x.name}>{x.name}</b>
+                  <small><Id value={x.id} />{x.leads !== null ? <span>{fmtNum(x.leads)} leads</span> : null}</small>
+                </div>
+                <span className={`rx-cs s-${(x.status ?? "unknown").toLowerCase()}`}><i />{x.status ? x.status.charAt(0).toUpperCase() + x.status.slice(1) : "Unknown"}</span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      <p className="rx-hint">Aliases: {c.campaignAliases.length ? c.campaignAliases.join(", ") : "none"} · Sender: {c.sender ?? "not recorded"} · MLS/location: {c.campaignLocation ?? "not recorded"}</p>
+        )}
     </section>
   );
 }
@@ -353,7 +383,7 @@ function Tools({ c }: { c: MasterClient }) {
   ];
   return (
     <section className="rx-sec">
-      <h3>Where this client exists <span>§16 — a missing tool is a sync problem unless it is a recorded exception</span></h3>
+      <h3>Where this client exists<span>§16 — a missing tool is a sync problem unless it is a recorded exception</span></h3>
       <div className="rx-tools">
         {rows.map((r) => (
           <div key={r.tool} className="rx-tool">
@@ -363,16 +393,16 @@ function Tools({ c }: { c: MasterClient }) {
           </div>
         ))}
       </div>
-      <p className="rx-hint">Full sync status for every client — counts, missing records, conflicts — is on <a href="/consistency">Consistency</a>.</p>
+      <p className="rx-hint">Sync status for every client — counts, missing records, conflicts — is on <a href="/consistency">Consistency</a>.</p>
     </section>
   );
 }
 
 /*
- * Status, with a confirmation. A status change is not a label: pausing or
- * churning closes the client's portal and pauses its campaigns and Stripe
- * billing; reactivating resumes billing and reopens the portal (campaigns stay
- * paused — restarting them is a person's decision).
+ * Status, with a confirmation. Pausing or churning closes the portal and
+ * pauses campaigns and Stripe billing; reactivating resumes billing and
+ * reopens the portal (campaigns stay paused — restarting them is a person's
+ * decision).
  */
 function StatusField({ id, status, onChanged }: { id: string; status: ClientStatus; onChanged: () => void }) {
   const [pending, setPending] = useState<ClientStatus | null>(null);
@@ -420,13 +450,13 @@ function StatusField({ id, status, onChanged }: { id: string; status: ClientStat
         ))}
       </div>
       {pending ? (
-        <div className="ds-note" role="alert" style={{ display: "grid", gap: 8, margin: 0 }}>
+        <div className="rx-confirm" role="alert">
           <span><b>Change to {statusLabel(pending)}?</b> {effect(pending)}</span>
           <span style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="ds-btn primary sm" disabled={saving} onClick={() => void confirm()}>
+            <button type="button" className="rx-btn solid" disabled={saving} onClick={() => void confirm()}>
               {saving ? "Changing…" : `Change to ${statusLabel(pending)}`}
             </button>
-            <button type="button" className="ds-btn ghost sm" disabled={saving} onClick={() => setPending(null)}>Cancel</button>
+            <button type="button" className="rx-btn" disabled={saving} onClick={() => setPending(null)}>Cancel</button>
           </span>
         </div>
       ) : null}

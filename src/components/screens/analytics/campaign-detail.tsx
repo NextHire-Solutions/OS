@@ -254,6 +254,7 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
           </>
         ) : null}
         <div style={{ flex: 1, minWidth: 0 }}>
+          <span className="ds-kicker">Campaign Analytics</span>
           <h1 className="ds-title">{c.name}</h1>
           <div className="tbl-sub">
             <span className="badge s-done" style={{ marginRight: 8 }}>{c.status}</span>

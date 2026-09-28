@@ -1,0 +1,160 @@
+/*
+ * BROKERSTAFFER OS — ONE PLATFORM (30 Sep 2026).
+ *
+ * The client, twice: "every page has its own UI", and "it should feel like
+ * we are using one platform, not different tools integrated into one place".
+ *
+ * This sheet is imported LAST and restyles the vocabulary every screen
+ * already renders — the shell, the page header, stat tiles, panels, tables,
+ * tabs, buttons, inputs — to the single language the Clients page set:
+ *
+ *   hairlines, not shadows      1px #EAEAEA, radius 14 (panels) / 8 (controls)
+ *   one accent                  #0165FE, used for the primary action and focus
+ *   ink for "selected"          tabs, the active nav item, sort arrows
+ *   mono for machine words      section labels, column heads, kickers, ids
+ *   large light numerals        stat values at 28–32px, weight 500
+ *
+ * Markup is untouched here: every tool picks this up through the classes it
+ * already uses, which is what makes the result symmetrical.
+ */
+
+:root {
+  --os-header-h: 56px;
+}
+
+/* ================================================================ frame === */
+body { background: var(--x-bg); }
+.app { inset: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: var(--x-bg) !important; }
+
+/* ---------------------------------------------------------------- rail --- */
+.rail { background: #FCFCFC !important; border-right: 1px solid var(--x-line) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.rail-head { padding: 16px 18px 12px; }
+.rail-scroll { padding: 4px 12px 16px; }
+.sec { margin-top: 22px; }
+.sec-h, .grp-h { font-family: var(--mono); font-size: 10px !important; font-weight: 500 !important; letter-spacing: .14em !important;
+  text-transform: uppercase !important; color: var(--x-faint) !important; padding: 0 11px 8px !important; }
+.nav, .acc-btn { padding: 8px 10px !important; border-radius: 8px !important; font-size: 13.5px !important; font-weight: 500 !important;
+  color: var(--x-ink-2) !important; border: 1px solid transparent !important; box-shadow: none !important; }
+.nav:hover, .acc-btn:hover { background: #F2F2F3 !important; color: var(--x-ink) !important; }
+.nav.on { background: #EFEFF1 !important; color: var(--x-ink) !important; font-weight: 550 !important; border-color: transparent !important; box-shadow: none !important; }
+.nav.on .ico, .acc.has-active:not(.open) > .acc-btn .ico { color: var(--x-ink) !important; opacity: 1 !important; }
+.acc.has-active:not(.open) > .acc-btn { color: var(--x-ink) !important; }
+.acc.open > .acc-btn { color: var(--x-ink) !important; font-weight: 550 !important; }
+.ico { opacity: .55; stroke-width: 1.6; }
+.acc-list { border-left-color: var(--x-line) !important; margin: 2px 0 8px 18px !important; padding-left: 10px !important; }
+.nav.leaf { padding: 7px 10px !important; font-size: 13px !important; color: var(--x-mute) !important; }
+.nav.leaf:hover { color: var(--x-ink) !important; }
+.nav.leaf.on { background: #EFEFF1 !important; color: var(--x-ink) !important; font-weight: 550 !important; }
+.pill { font-family: var(--mono); font-size: 10.5px !important; font-weight: 500 !important; padding: 1px 7px !important; border-radius: 6px !important;
+  background: var(--x-ink) !important; color: #fff !important; }
+.rail-foot { border-top: 1px solid var(--x-line) !important; }
+.av { background: #F2F2F3 !important; color: var(--x-ink-2) !important; box-shadow: inset 0 0 0 1px var(--x-line) !important; }
+
+/* -------------------------------------------------------------- topbar --- */
+.topbar { height: var(--os-header-h) !important; padding: 0 var(--ds-gutter) !important; background: rgba(255, 255, 255, .86) !important;
+  border-bottom: 1px solid var(--x-line) !important; box-shadow: none !important; }
+.scroll { padding-top: var(--os-header-h) !important; background: var(--x-bg) !important; }
+.crumb { font-size: 13px !important; color: var(--x-faint) !important; font-weight: 500 !important; }
+.crumb b { font-size: 14px !important; font-weight: 550 !important; color: var(--x-ink) !important; letter-spacing: -.01em !important; }
+.search-btn { height: 34px !important; border-radius: 8px !important; border: 1px solid var(--x-line) !important; box-shadow: none !important;
+  font-size: 13px !important; color: var(--x-faint) !important; background: #F6F6F7 !important; }
+.search-btn:hover { background: #F0F0F1 !important; }
+kbd { font-family: var(--mono) !important; font-weight: 500 !important; border-color: var(--x-line) !important; background: var(--x-surface) !important;
+  border-radius: 5px !important; color: var(--x-faint) !important; }
+
+/* ============================================================ page head === */
+.ds-page, .wrap, .an-header, .as { background: none !important; }
+.ds-page { padding: 28px var(--ds-gutter) 64px !important; gap: 20px !important; }
+.wrap { padding: 28px var(--ds-gutter) 64px !important; }
+.hero { padding: 28px var(--ds-gutter) 0 !important; }
+.hero + .wrap { padding-top: 20px !important; }
+.ds-head { align-items: flex-end !important; }
+.ds-head-t { display: grid !important; gap: 6px !important; }
+.ds-kicker { font-family: var(--mono); font-size: 10.5px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--x-faint); }
+.ds-head h1, .ds-title, .hero h1, .as-hd h1 { font-size: 30px !important; line-height: 1.1 !important; font-weight: 600 !important;
+  letter-spacing: -.035em !important; color: var(--x-ink) !important; margin: 0 !important; }
+.ds-head p, .hero p, .as-hd p, .ds-title + p, .ds-title + .tbl-sub { font-size: 14px !important; color: var(--x-mute) !important; margin: 0 !important; }
+.cx-head-ico, .as-logo { display: none !important; }
+.as-hd { display: flex; align-items: flex-end !important; margin-bottom: 20px !important; }
+.an-header { padding: 28px var(--ds-gutter) 0 !important; }
+
+/* ================================================================ stats === */
+/* One hairline strip, cells divided by hairlines — the Clients metrics. */
+.ds-stats, .cards, .kpi { gap: 0 !important; background: var(--x-surface) !important; border: 1px solid var(--x-line) !important;
+  border-radius: 14px !important; overflow: hidden !important; padding: 0 !important; }
+.kpi { margin: 20px var(--ds-gutter) 0 !important; }
+.ds-stat, .cards > .card, .kpi > div { background: var(--x-surface) !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: -1px -1px 0 0 var(--x-line) !important; padding: 18px 20px 16px !important; gap: 6px !important; }
+button.ds-stat:hover { background: #FCFCFC !important; }
+.ds-stat[aria-pressed="true"] { box-shadow: -1px -1px 0 0 var(--x-line), inset 0 -2px 0 var(--x-ink) !important; background: #FCFCFC !important; }
+.ds-stat-l, .card-l, .kpi .k { font-family: var(--mono); font-size: 10.5px !important; font-weight: 500 !important; letter-spacing: .12em !important;
+  text-transform: uppercase !important; color: var(--x-mute) !important; }
+.ds-stat-v, .card-n, .kpi .v { font-size: 28px !important; line-height: 1.05 !important; font-weight: 500 !important; letter-spacing: -.04em !important;
+  margin-top: 4px !important; }
+.ds-stat-v:not([class*="t-"]), .ds-stat:not([class*="t-"]) .ds-stat-v, .card-n:not([class*="n-"]) { color: var(--x-ink) !important; }
+.ds-stat-s, .card-s, .kpi .n { font-size: 12px !important; color: var(--x-faint) !important; }
+.ds-band-l { font-family: var(--mono); font-size: 10.5px !important; letter-spacing: .14em !important; color: var(--x-faint) !important; font-weight: 500 !important; }
+
+/* =============================================================== panels === */
+.ds-panel, .tbl-wrap, .abox, .as-card, .as-res, .ov-card, .tool, .pcard, .cx-panel {
+  border: 1px solid var(--x-line) !important; border-radius: 14px !important; box-shadow: none !important; background: var(--x-surface) !important; }
+.tool:hover { border-color: #DCDCDC !important; }
+.ds-panel-head, .tbl-head, .abox-h, .as-res-h { border-bottom-color: var(--x-line) !important; padding: 14px 18px !important; }
+.ds-panel-head h2, .tbl-title, .abox-h h2, .as-card h2, .as-res-h h3, .ov-title {
+  font-size: 15px !important; font-weight: 600 !important; letter-spacing: -.01em !important; color: var(--x-ink) !important; }
+.ds-panel-head p, .tbl-sub, .abox-h .note { color: var(--x-mute) !important; }
+
+/* =============================================================== tables === */
+.ds-table th, .tbl-wrap thead th, .atbl th, .tbl-wrap th {
+  background: var(--x-surface) !important; font-family: var(--mono); font-size: 10.5px !important; font-weight: 500 !important;
+  letter-spacing: .08em !important; text-transform: uppercase !important; color: var(--x-mute) !important;
+  border-bottom: 1px solid var(--x-line) !important; }
+.ds-table td, .tbl-wrap td, .atbl td { border-bottom-color: var(--x-line-2) !important; color: var(--x-ink-2); }
+.ds-table tbody tr:hover td, .tbl-wrap tbody tr:hover, .atbl tbody tr:hover { background: #FBFBFC !important; }
+
+/* ========================================================= tabs & segs === */
+.ds-tabs, .segfull { border-bottom: 1px solid var(--x-line) !important; }
+.ds-tab, .segfull button { font-size: 13.5px !important; font-weight: 500 !important; color: var(--x-mute) !important; }
+.ds-tab:hover, .segfull button:hover { color: var(--x-ink) !important; }
+.ds-tab[aria-selected="true"], .ds-tab.on, .segfull button.on { color: var(--x-ink) !important; border-bottom-color: var(--x-ink) !important; }
+.ds-seg, .seg, .qr, .pills { background: #F2F2F3 !important; border-radius: 8px !important; padding: 3px !important; }
+.ds-seg button, .seg button, .qr button, .fp { border-radius: 6px !important; font-size: 12.5px !important; font-weight: 500 !important; color: var(--x-mute) !important; }
+.ds-seg button[aria-pressed="true"], .seg button.on, .qr button.on, .fp.on {
+  background: var(--x-surface) !important; color: var(--x-ink) !important; box-shadow: 0 0 0 1px var(--x-line) !important; }
+
+/* ======================================================= buttons, inputs === */
+.ds-btn, .btn, .gh, .as-btn.ghost, .as-tog { height: 34px; border-radius: 8px !important; border: 1px solid var(--x-line) !important;
+  background: var(--x-surface) !important; box-shadow: none !important; font-size: 13px !important; font-weight: 500 !important; color: var(--x-ink) !important; }
+.ds-btn:hover, .btn:hover, .gh:hover, .as-btn.ghost:hover, .as-tog:hover { background: var(--x-hover) !important; }
+.ds-btn.sm { height: 30px; font-size: 12.5px !important; }
+.ds-btn.ghost { border-color: transparent !important; background: none !important; }
+.ds-btn.danger { color: var(--st-churned) !important; }
+.ds-btn.primary, .btn-pri, .btn.btn-pri, .as-btn:not(.ghost) { background: var(--x-accent) !important; border-color: var(--x-accent) !important;
+  color: #fff !important; box-shadow: none !important; }
+.ds-btn.primary:hover, .btn-pri:hover, .as-btn:not(.ghost):hover { background: #0057DB !important; }
+.as-tog.on { background: var(--x-accent-soft) !important; border-color: #CFE0FF !important; color: var(--x-accent) !important; }
+.ds-input, .inp, .sel, .as-i, .as-ta { border-radius: 8px !important; border: 1px solid var(--x-line) !important; box-shadow: none !important; }
+.ds-input:focus, .inp:focus, .sel:focus, .as-i:focus, .as-ta:focus { border-color: var(--x-accent) !important;
+  box-shadow: 0 0 0 3px rgba(1, 101, 254, .10) !important; outline: none; }
+.ds-note, .anno { border-radius: 10px !important; border: 1px solid var(--x-line) !important; background: var(--x-surface) !important;
+  box-shadow: none !important; color: var(--x-ink-2) !important; }
+.ds-kicker { display: block; margin-bottom: 6px; }
+.ds-head-t .ds-kicker { margin-bottom: 0; }
+
+/* Colour carries meaning only: status red / orange / green. Decorative blue values read as ink. */
+.ds-stat.t-brand .ds-stat-v, .card-n.n-intros, .card-n.n-blue, .card-n.n-emails { color: var(--x-ink) !important; }
+
+/* Home: the overview's metric picker as the same hairline strip. */
+.ov-top { padding: 16px 20px 12px !important; }
+.ov-tile { background: #F2F2F3 !important; color: var(--x-ink-2) !important; box-shadow: none !important; border-radius: 8px !important; }
+.ovkpis { background: none !important; border: 1px solid var(--x-line) !important; border-radius: 12px !important; padding: 0 !important; gap: 0 !important; overflow: hidden; }
+.ovk { border-radius: 0 !important; padding: 16px 20px !important; box-shadow: -1px 0 0 var(--x-line) !important; }
+.ovk::before { display: none !important; }
+.ovk.on { background: #FCFCFC !important; box-shadow: -1px 0 0 var(--x-line), inset 0 -2px 0 var(--x-ink) !important; }
+.ovk-l { font-family: var(--mono); font-size: 10.5px !important; letter-spacing: .12em !important; text-transform: uppercase; color: var(--x-mute) !important; }
+.ovk-l .bar { display: none !important; }
+.ovk-n { font-size: 30px !important; font-weight: 500 !important; letter-spacing: -.04em !important; color: var(--x-ink) !important; }
+.tool-i { background: #F2F2F3 !important; color: var(--x-ink-2) !important; }
+.tool b { font-weight: 600 !important; }
+.tool-m div b { font-weight: 500 !important; letter-spacing: -.03em !important; }
+.hero p { margin-top: 6px !important; }

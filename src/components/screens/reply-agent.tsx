@@ -171,6 +171,7 @@ export function ReplyAgentScreen() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
         <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="reply-agent" /></span>
         <div>
+          <span className="ds-kicker">Admin</span>
           <h1 className="ds-title">Reply agent</h1>
           <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 4 }}>
             What the agent has learned from our own replies, and whether its drafts are being sent.

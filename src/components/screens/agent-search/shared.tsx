@@ -36,6 +36,7 @@ export function AgentSearchHeader(
     <div className="as-hd">
       <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id="search" /></span>
       <div>
+        <span className="ds-kicker">Agent Search</span>
         <h1>{title}</h1>
         <p>{sub}</p>
       </div>

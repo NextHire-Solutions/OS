@@ -45,6 +45,7 @@ export function HomeScreen({
   return (
     <>
       <div className="hero">
+        <span className="ds-kicker">Workspace</span>
         <h1>
           {greeting(now)}, {firstName}
         </h1>

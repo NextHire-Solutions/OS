@@ -3,7 +3,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { ToolGlyph } from "@/components/shell/tool-glyph";
 
 /*
  * The design system's React side. Every screen builds from these, so the OS
@@ -14,30 +13,38 @@ import { ToolGlyph } from "@/components/shell/tool-glyph";
 export type Tone = "green" | "amber" | "red" | "brand" | "violet" | "muted" | "outline";
 
 /* ------------------------------------------------------------ page header --- */
+/** The section each page belongs to, as the rail names it. */
+const KICKER: Record<string, string> = {
+  home: "Workspace", performance: "Workspace", roster: "Workspace", consistency: "Workspace",
+  inbox: "Master Inbox", clients: "Client Health", analytics: "Campaign Analytics",
+  onboarding: "Onboarding", search: "Agent Search", assistant: "Admin", "team-access": "Admin", "reply-agent": "Admin",
+};
 export function PageHeader({
   title,
   description,
   actions,
   children,
   icon,
+  kicker,
 }: {
   title: string;
   description?: React.ReactNode;
   actions?: React.ReactNode;
   /** Tabs or a sub-navigation, drawn under the title row. */
   children?: React.ReactNode;
-  /** A rail glyph id (home, roster, clients, analytics, inbox, onboarding, search…) — the page's mark. */
+  /** Which part of the OS the page belongs to — shown as the kicker above the title. */
   icon?: string;
+  /** Overrides the kicker the icon implies. */
+  kicker?: string;
 }) {
+  const k = kicker ?? (icon ? KICKER[icon] : undefined);
   return (
     <header style={{ display: "grid", gap: 14 }}>
       <div className="ds-head">
         <div className="ds-head-t">
-          {icon ? <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id={icon} /></span> : null}
-          <div style={{ minWidth: 0 }}>
-            <h1>{title}</h1>
-            {description ? <p>{description}</p> : null}
-          </div>
+          {k ? <span className="ds-kicker">{k}</span> : null}
+          <h1>{title}</h1>
+          {description ? <p>{description}</p> : null}
         </div>
         {actions ? <div className="ds-head-actions">{actions}</div> : null}
       </div>

@@ -1,10 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { StatusDot } from "@/components/ds";
 import { Cell, avatarStyle, initials, textOf } from "@/components/clients/cells";
-import { ToolGlyph } from "@/components/shell/tool-glyph";
 import {
   CATEGORIES, CATEGORY_LABEL, FIELDS, FIELD_BY_KEY, TOOL_VIEWS,
   type FieldCategory, type ToolViewId,
@@ -28,27 +26,19 @@ import { invalidate, loadOnce, PlaceholderScreen } from "./lazy";
  *   Master record   every §6 field, in the document's four categories and its
  *                   own words, plus the §12 lifecycle dates.
  *   Tool views      §8, one per tool — the SAME record showing only the part
- *                   that tool needs (§5, §20), each field in the tool's own
- *                   list order.
+ *                   that tool needs (§5, §20). Opening a client from a tool
+ *                   view opens that tool's part of the record, nothing else.
  *   Data dictionary §15 — every field's definition, source of truth, who can
- *                   edit it, which tools use it, whether it syncs — and how
- *                   many clients have it filled in.
+ *                   edit it, which tools use it, whether it syncs.
  *
- * Every column comes from field-registry.ts; every value from cells.tsx. A row
- * opens the client's record, where each field is edited in place.
+ * Design (30 Sep, second pass): one metrics strip that is also the status
+ * filter, quiet text tabs, one toolbar, hairlines instead of shadows.
+ * Keyboard: "/" searches, ↑ ↓ move through clients in the record, Esc closes.
  */
 
 const DATA_URL = "/api/workspace/clients/master";
 
 type Lens = "master" | ToolViewId | "dictionary";
-
-const CAT_TONE: Record<FieldCategory, string> = {
-  client: "cat-client", billing: "cat-billing", campaign: "cat-campaign", performance: "cat-performance", lifecycle: "cat-lifecycle",
-};
-
-const LENS_GLYPH: Record<string, string> = {
-  master: "roster", health: "clients", database: "search", portal: "inbox", onboarding: "onboarding", analytics: "analytics", dictionary: "consistency",
-};
 
 /* The master record's columns: every registry field except the name, which is the pinned first column. */
 const MASTER_COLUMNS = FIELDS.filter((f) => f.key !== "name");
@@ -70,15 +60,33 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
   const [status, setStatus] = useState<ClientStatus | "all">("all");
   const [q, setQ] = useState("");
   const [hidden, setHidden] = useState<Set<FieldCategory>>(new Set());
+  const [colsOpen, setColsOpen] = useState(false);
   const [sort, setSort] = useState<{ k: string; dir: 1 | -1 }>({ k: "name", dir: 1 });
   const [openId, setOpenId] = useState<string | null>(null);
+  const search = useRef<HTMLInputElement | null>(null);
 
-  // Deep link: /roster?view=database opens straight onto a tool's view.
+  // Deep links: ?view=database opens a tool's view, ?client=<id> opens a record.
   useEffect(() => {
-    if (only) return;
-    const v = new URLSearchParams(window.location.search).get("view");
-    if (v && (v === "master" || v === "dictionary" || TOOL_VIEWS.some((t) => t.id === v))) setLens(v as Lens);
-  }, [only]);
+    const p = new URLSearchParams(window.location.search);
+    const v = p.get("view");
+    if (!only && v && (v === "master" || v === "dictionary" || TOOL_VIEWS.some((t) => t.id === v))) setLens(v as Lens);
+    const id = p.get("client");
+    if (id && data.clients.some((c) => c.id === id)) setOpenId(id);
+  }, [only, data.clients]);
+
+  // "/" jumps to search, as in every good list.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || openId) return;
+      const t = e.target as HTMLElement;
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+      e.preventDefault();
+      search.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openId]);
+
   const pickLens = (l: Lens) => {
     setLens(l);
     const u = new URL(window.location.href);
@@ -112,13 +120,19 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
       ? MASTER_COLUMNS.filter((f) => !hidden.has(f.category)).map((f) => ({ key: f.key, label: f.label, category: f.category }))
       : view ? view.columns.filter((c) => c.key !== "name") : [];
   const firstLabel = view?.columns.find((c) => c.key === "name")?.label ?? "Client";
-
   const groups = lens === "master"
     ? CATEGORIES.filter((cat) => !hidden.has(cat)).map((cat) => ({ cat, span: columns.filter((c) => c.category === cat).length }))
     : [];
 
   const toggleSort = (k: string) => setSort((s) => ({ k, dir: s.k === k ? (s.dir === 1 ? -1 : 1) : 1 }));
+
+  const openIdx = openId ? rows.findIndex((c) => c.id === openId) : -1;
   const open = openId ? data.clients.find((c) => c.id === openId) ?? null : null;
+  const close = useCallback(() => {
+    setOpenId(null);
+    const u = new URL(window.location.href);
+    if (u.searchParams.has("client")) { u.searchParams.delete("client"); window.history.replaceState(null, "", u); }
+  }, []);
 
   function exportCsv() {
     const cols = [{ key: "name", label: firstLabel }, ...columns];
@@ -137,73 +151,58 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
       {/* ---------------------------------------------------------- header */}
       <header className="cx-head">
         <div className="cx-head-t">
-          <span className="cx-head-ico" aria-hidden="true"><ToolGlyph id={only ? LENS_GLYPH[only] : "roster"} /></span>
-          <div>
-            <h1>{view && only ? `${view.label} — Client view` : "Clients"}</h1>
-            <p>
-              {view && only
-                ? <>The part of the master client record this tool uses (§8): {view.columns.map((c) => c.label).join(" · ")}. Every value is read from the master record — edit it once, on the client.</>
-                : "The master client list — one record per client. Every tool reads from it: change a field once and it changes everywhere."}
-            </p>
-          </div>
+          <span className="cx-kicker">{view && only ? `${view.label} · client view` : "Master client list"}</span>
+          <h1>{view && only ? view.label : "Clients"}</h1>
+          <p>
+            {view && only
+              ? <>The part of the client record this tool uses — {view.columns.map((c) => c.label).join(" · ")}.</>
+              : "One record per client. Every tool reads from it — change a field once, and it changes everywhere."}
+          </p>
         </div>
         <div className="cx-head-a">
-          <button type="button" className="ds-btn" onClick={exportCsv} title="Download this view as a spreadsheet">Export CSV</button>
+          <button type="button" className="cx-btn" onClick={exportCsv}>Export</button>
           {/* §2/§13: ONE place creates a client — the Clients page — never a tool view. */}
-          {only ? <a className="ds-btn" href={`/roster?view=${only}`}>All fields on Clients →</a> : <OnboardClient />}
+          {only ? <a className="cx-btn" href={`/roster?view=${only}`}>All fields →</a> : <span className="cx-primary"><OnboardClient /></span>}
         </div>
       </header>
 
-      {/* ------------------------------------------------ status overview */}
-      <section className="cx-overview" aria-label="Clients by status">
-        <div className="cx-total">
-          <span className="cx-total-n">{total}</span>
-          <span className="cx-total-l">clients</span>
-        </div>
-        <div className="cx-dist">
-          <div className="cx-bar" role="img" aria-label={CLIENT_STATUSES.map((s) => `${counts[s]} ${s}`).join(", ")}>
-            {CLIENT_STATUSES.map((s) => counts[s] ? (
-              <span key={s} className={`st-${s}`} style={{ flex: counts[s] }} title={`${statusLabel(s)}: ${counts[s]}`} />
-            ) : null)}
-          </div>
-          <div className="cx-statuses">
-            <button type="button" className="cx-st" aria-pressed={status === "all"} onClick={() => setStatus("all")}>
-              <span className="cx-st-l">All</span><span className="cx-st-n">{total}</span>
-            </button>
-            {CLIENT_STATUSES.map((s) => (
-              <button key={s} type="button" className="cx-st" aria-pressed={status === s} title={STATUS_MEANING[s]}
-                onClick={() => setStatus(status === s ? "all" : s)}>
-                <StatusDot status={s} />
-                <span className="cx-st-l">{statusLabel(s)}</span>
-                <span className="cx-st-n">{counts[s]}</span>
-                <span className="cx-st-p">{total ? Math.round((counts[s] / total) * 100) : 0}%</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <a className="cx-sync" href="/consistency" title="Where the tools disagree about clients (§16)">
-          <span className={`cx-sync-dot${data.unavailable.length ? " warn" : ""}`} aria-hidden="true" />
-          <span>
-            <b>{data.unavailable.length ? `${data.unavailable.length} source${data.unavailable.length === 1 ? "" : "s"} unreachable` : "Every tool read"}</b>
-            <small>{data.unavailable.length ? data.unavailable.join(", ") : "Sync status on Consistency →"}</small>
+      {/* ------------------------------------------------ status = filter */}
+      <section className="cx-metrics" aria-label="Clients by status — click to filter">
+        <button type="button" className="cx-metric" aria-pressed={status === "all"} onClick={() => setStatus("all")}>
+          <span className="k">All clients</span>
+          <span className="v">{total}</span>
+          <span className="cx-dist" aria-hidden="true">
+            {CLIENT_STATUSES.map((s) => counts[s] ? <i key={s} className={`st-${s}`} style={{ flex: counts[s] }} /> : null)}
           </span>
+        </button>
+        {CLIENT_STATUSES.map((s) => (
+          <button key={s} type="button" className={`cx-metric st-${s}`} aria-pressed={status === s} title={STATUS_MEANING[s]}
+            onClick={() => setStatus(status === s ? "all" : s)}>
+            <span className="k"><i className="d" aria-hidden="true" />{statusLabel(s)}</span>
+            <span className="v">{counts[s]}</span>
+            <span className="p">{total ? Math.round((counts[s] / total) * 100) : 0}%</span>
+          </button>
+        ))}
+        <a className="cx-metric cx-sync" href="/consistency" title="Where the tools disagree about clients (§16)">
+          <span className="k"><i className={`live${data.unavailable.length ? " warn" : ""}`} aria-hidden="true" />Sync</span>
+          <span className="v sm">{data.unavailable.length ? `${data.unavailable.length} unread` : "All tools"}</span>
+          <span className="p">{data.unavailable.length ? data.unavailable.join(", ") : "Consistency →"}</span>
         </a>
       </section>
 
-      {/* ------------------------------------------------------------ lenses */}
-      {only ? null : <nav className="cx-lenses" aria-label="Views of the client record">
-        <LensTab id="master" label="Master record" sub={`${FIELDS.length} fields`} on={lens === "master"} onClick={pickLens} />
-        <span className="cx-lens-sep" aria-hidden="true" />
-        {TOOL_VIEWS.map((t) => (
-          <LensTab key={t.id} id={t.id} label={t.label} sub={`${t.columns.length} fields`} on={lens === t.id} onClick={pickLens} />
-        ))}
-        <span className="cx-lens-tab disabled" title="Commission Tracker — coming soon. It will read this same record rather than keep its own (§8).">
-          <span className="cx-lens-ico" aria-hidden="true"><ToolGlyph id="performance" /></span>
-          <span><b>Commission Tracker</b><small>Coming soon</small></span>
-        </span>
-        <span className="cx-lens-sep" aria-hidden="true" />
-        <LensTab id="dictionary" label="Data dictionary" sub="Who owns each field" on={lens === "dictionary"} onClick={pickLens} />
-      </nav>}
+      {/* ------------------------------------------------------------ views */}
+      {only ? null : (
+        <nav className="cx-tabs" aria-label="Views of the client record">
+          <Tab id="master" label="Master record" n={FIELDS.length} on={lens === "master"} onClick={pickLens} />
+          <span className="cx-tabs-l">Tool views</span>
+          {TOOL_VIEWS.map((t) => (
+            <Tab key={t.id} id={t.id} label={t.label.replace(" Dashboard", "")} n={t.columns.length} on={lens === t.id} onClick={pickLens} />
+          ))}
+          <span className="cx-tab disabled" title="Commission Tracker — coming soon. It will read this same record (§8).">Commission Tracker <em>soon</em></span>
+          <span className="cx-tabs-sp" />
+          <Tab id="dictionary" label="Data dictionary" on={lens === "dictionary"} onClick={pickLens} />
+        </nav>
+      )}
 
       {lens === "dictionary" ? (
         <Dictionary clients={data.clients} />
@@ -211,41 +210,41 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
         <section className="cx-panel">
           {/* ------------------------------------------------------ toolbar */}
           <div className="cx-toolbar">
-            <div className="cx-toolbar-l">
-              <label className="cx-search">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-                <input type="search" value={q} onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search name, alias, account manager…" aria-label="Search clients" />
-              </label>
-              {view ? (
-                <p className="cx-lens-note">
-                  <b>{view.label}</b> view — the §8 fields for this tool, from the same master record.
-                </p>
-              ) : (
-                <p className="cx-lens-note">
-                  <b>Master Client Record</b> — every field of §6 and the §12 lifecycle dates, in the document&rsquo;s words.
-                </p>
-              )}
-            </div>
-            <div className="cx-toolbar-r">
-              <span className="cx-count">{rows.length === total ? `${total} clients` : `${rows.length} of ${total} clients`}</span>
-              {view ? <a className="ds-btn sm" href={view.openIn.href}>{view.openIn.label} →</a> : null}
-            </div>
-          </div>
-          {lens === "master" ? (
-            <div className="cx-subbar">
-              <span className="cx-subbar-l">Categories</span>
-              <div className="cx-groups" role="group" aria-label="Show categories">
-                {CATEGORIES.map((cat) => (
-                  <button key={cat} type="button" className={`cx-group ${CAT_TONE[cat]}`} aria-pressed={!hidden.has(cat)}
-                    onClick={() => setHidden((h) => { const n = new Set(h); if (n.has(cat)) n.delete(cat); else n.add(cat); return n; })}>
-                    <i aria-hidden="true" />{CATEGORY_LABEL[cat]}
-                    <span className="cx-group-n">{FIELDS.filter((f) => f.category === cat).length}</span>
+            <label className="cx-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+              <input ref={search} type="search" value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder="Search clients, aliases, people" aria-label="Search clients" />
+              <kbd>/</kbd>
+            </label>
+            <span className="cx-note">
+              {view ? <>{view.label} — the §8 fields, read from the master record</> : <>Every §6 field and the §12 dates, in the document&rsquo;s words</>}
+            </span>
+            <span className="cx-toolbar-r">
+              <span className="cx-count">{rows.length === total ? total : `${rows.length}/${total}`} <em>clients</em></span>
+              {lens === "master" ? (
+                <span className="cx-cols-menu">
+                  <button type="button" className="cx-btn sm" aria-expanded={colsOpen} onClick={() => setColsOpen((o) => !o)}>
+                    Columns <em>{columns.length}</em>
                   </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
+                  {colsOpen ? (
+                    <>
+                      <span className="cx-menu-scrim" onClick={() => setColsOpen(false)} />
+                      <span className="cx-menu" role="group" aria-label="Show categories">
+                        {CATEGORIES.map((cat) => (
+                          <label key={cat} className={`cx-menu-i cat-${cat}`}>
+                            <input type="checkbox" checked={!hidden.has(cat)}
+                              onChange={() => setHidden((h) => { const n = new Set(h); if (n.has(cat)) n.delete(cat); else n.add(cat); return n; })} />
+                            <i aria-hidden="true" />{CATEGORY_LABEL[cat]}
+                            <em>{FIELDS.filter((f) => f.category === cat).length}</em>
+                          </label>
+                        ))}
+                      </span>
+                    </>
+                  ) : null}
+                </span>
+              ) : view ? <a className="cx-btn sm" href={view.openIn.href}>{view.openIn.label} →</a> : null}
+            </span>
+          </div>
 
           {/* -------------------------------------------------------- table */}
           <div className="cx-scroll">
@@ -255,7 +254,7 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
                   <tr className="cx-bands">
                     <th className="cx-pin" />
                     {groups.map((g) => g.span ? (
-                      <th key={g.cat} colSpan={g.span} className={`${CAT_TONE[g.cat]} cx-gstart`}><span>{CATEGORY_LABEL[g.cat]}</span></th>
+                      <th key={g.cat} colSpan={g.span} className={`cat-${g.cat} cx-gstart`}><span>{CATEGORY_LABEL[g.cat]}</span></th>
                     ) : null)}
                   </tr>
                 ) : null}
@@ -272,18 +271,19 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
               </thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr><td colSpan={columns.length + 1} className="cx-empty">No client matches.</td></tr>
+                  <tr><td colSpan={columns.length + 1} className="cx-empty">No client matches “{q}”.</td></tr>
                 ) : rows.map((c) => (
-                  <tr key={c.id} onClick={() => setOpenId(c.id)} tabIndex={0}
+                  <tr key={c.id} onClick={() => setOpenId(c.id)} tabIndex={0} className={c.id === openId ? "on" : undefined}
                     onKeyDown={(e) => { if (e.key === "Enter") setOpenId(c.id); }} aria-label={`Open ${c.name}`}>
                     <td className="cx-pin">
                       <span className="cx-client">
+                        <span className={`cx-sdot st-${c.status}`} title={statusLabel(c.status)} aria-hidden="true" />
                         <span className="cx-av" style={avatarStyle(c.name)} aria-hidden="true">{initials(c.name)}</span>
                         <span className="cx-client-t">
                           <b>{c.name}</b>
-                          {c.aliases.length ? <small>aka {c.aliases.slice(0, 2).join(", ")}{c.aliases.length > 2 ? "…" : ""}</small> : null}
+                          {c.aliases.length ? <small>{c.aliases.slice(0, 2).join(" · ")}{c.aliases.length > 2 ? " …" : ""}</small> : null}
                         </span>
-                        <StatusDot status={c.status} />
+                        <span className="cx-open" aria-hidden="true">Open</span>
                       </span>
                     </td>
                     {columns.map((col, i) => (
@@ -297,24 +297,31 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
             </table>
           </div>
           {data.unavailable.length ? (
-            <p className="cx-foot">Could not be read this time: {data.unavailable.join(", ")} — their columns show “—”.</p>
+            <p className="cx-foot">Not read this time: {data.unavailable.join(", ")} — their columns show “—”.</p>
           ) : null}
         </section>
       )}
 
       {open ? (
-        <ClientRecord client={open} onClose={() => setOpenId(null)} onChanged={onChanged}
-          onDeleted={() => { setOpenId(null); onChanged(); }} />
+        <ClientRecord
+          client={open}
+          view={only ?? (view ? view.id : undefined)}
+          onClose={close}
+          onChanged={onChanged}
+          onDeleted={() => { close(); onChanged(); }}
+          onPrev={openIdx > 0 ? () => setOpenId(rows[openIdx - 1].id) : undefined}
+          onNext={openIdx >= 0 && openIdx < rows.length - 1 ? () => setOpenId(rows[openIdx + 1].id) : undefined}
+          position={openIdx >= 0 ? `${openIdx + 1} / ${rows.length}` : undefined}
+        />
       ) : null}
     </div>
   );
 }
 
-function LensTab({ id, label, sub, on, onClick }: { id: Lens; label: string; sub: string; on: boolean; onClick: (l: Lens) => void }) {
+function Tab({ id, label, n, on, onClick }: { id: Lens; label: string; n?: number; on: boolean; onClick: (l: Lens) => void }) {
   return (
-    <button type="button" className={`cx-lens-tab${on ? " on" : ""}`} aria-pressed={on} onClick={() => onClick(id)}>
-      <span className="cx-lens-ico" aria-hidden="true"><ToolGlyph id={LENS_GLYPH[id] ?? "roster"} /></span>
-      <span><b>{label}</b><small>{sub}</small></span>
+    <button type="button" className={`cx-tab${on ? " on" : ""}`} aria-pressed={on} onClick={() => onClick(id)}>
+      {label}{n !== undefined ? <em>{n}</em> : null}
     </button>
   );
 }
@@ -343,22 +350,18 @@ function Dictionary({ clients }: { clients: MasterClient[] }) {
   return (
     <section className="cx-panel">
       <div className="cx-toolbar">
-        <p className="cx-lens-note" style={{ margin: 0 }}>
-          <b>Master Client Data Dictionary (§15)</b> — for every field: what it means, its one source of truth, who can edit it,
-          which tools use it, and whether it syncs. <b>Filled</b> is how many of the {clients.length} clients have a value today.
-        </p>
+        <span className="cx-note" style={{ marginLeft: 0 }}>
+          <b>Master Client Data Dictionary (§15)</b> — what each field means, its one source of truth, who can edit it, which tools use
+          it, whether it syncs, and how many of the {clients.length} clients have it today.
+        </span>
       </div>
       <div className="cx-scroll">
         <table className="cx-table cx-dict">
           <thead>
             <tr className="cx-cols">
-              <th className="cx-pin"><span className="cx-thl">Field</span></th>
-              <th><span className="cx-thl">Definition</span></th>
-              <th><span className="cx-thl">Source of Truth</span></th>
-              <th><span className="cx-thl">Who Can Edit</span></th>
-              <th><span className="cx-thl">Tools That Use It</span></th>
-              <th><span className="cx-thl">Sync Required?</span></th>
-              <th><span className="cx-thl">Filled</span></th>
+              {["Field", "Definition", "Source of Truth", "Who Can Edit", "Tools That Use It", "Sync Required?", "Filled"].map((h, i) => (
+                <th key={h} className={i === 0 ? "cx-pin" : undefined}><span className="cx-thl">{h}</span></th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -374,7 +377,7 @@ function DictGroup({ cat, clients }: { cat: FieldCategory; clients: MasterClient
   const fields = FIELDS.filter((f) => f.category === cat);
   return (
     <>
-      <tr className={`cx-dict-cat ${CAT_TONE[cat]}`}><td colSpan={7}><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</td></tr>
+      <tr className={`cx-dict-cat cat-${cat}`}><td colSpan={7}><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</td></tr>
       {fields.map((f) => {
         const n = clients.filter((c) => filled(f.key, c)).length;
         const pct = clients.length ? n / clients.length : 0;
@@ -406,7 +409,7 @@ function DictGroup({ cat, clients }: { cat: FieldCategory; clients: MasterClient
 /*
  * The screen. `initial` is set only when the page was opened here — it then
  * server-renders from the warm cache with no loading state. Saves refresh the
- * list in place, and the record panel stays open on the same client.
+ * list in place, and the record stays open on the same client.
  */
 export function ClientsScreen({ initial, only }: { initial: MasterClientList | null; only?: ToolViewId }) {
   const [data, setData] = useState<MasterClientList | null>(initial);
