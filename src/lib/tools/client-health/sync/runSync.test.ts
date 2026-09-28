@@ -19,7 +19,7 @@ import {
   backfillWindow,
   bisonCampaignRow,
   bisonConfigured,
-  bisonWeeklyUpserts,
+  weeklySourceUpserts,
   bucketByNameWeek,
   clientIntroCounts,
   corofyConfigured,
@@ -210,22 +210,64 @@ test("Bison progress derives from contacted/total when the vendor gives no perce
   assert.ok(!("status_changed_at" in row));
 });
 
-// -- weekly rows: Bison adds to Instantly ------------------------------------
+// -- weekly rows: each source owns its columns, the total is derived -------
+// (ported from shaurs 6837ce6 — the fix for the 17 Sep outage)
 
-test("Bison weekly rows ADD to the Instantly subtotal and skip all-zero weeks", () => {
-  const weekly = new Map([
-    ["b1", new Map([["2026-09-07", { sent: 10, replies: 1 }]])],
-  ]);
-  const existing = new Map([["client-a|2026-09-07", { emails_sent: 100, replies: 7 }]]);
-  const rows = bisonWeeklyUpserts(
-    [{ id: "client-a", bison_campaign_ids: ["b1"] }, { id: "client-b", bison_campaign_ids: [] }],
-    ["2026-09-07", "2026-09-14"],
-    weekly,
-    existing,
-  );
-  assert.deepEqual(rows, [
-    { client_id: "client-a", week_key: "2026-09-07", emails_sent: 110, replies: 8 },
-  ]);
+const W1 = "2026-09-07", W2 = "2026-09-14";
+const src = (ei: number, ri: number, eb: number, rb: number) =>
+  ({ emails_sent_instantly: ei, replies_instantly: ri, emails_sent_bison: eb, replies_bison: rb });
+
+test("Bison writes ONLY its columns; the total is its figure plus Instantly's AS STORED", () => {
+  const weekly = new Map([["b1", new Map([[W1, { sent: 10, replies: 1 }]])]]);
+  const { upserts } = weeklySourceUpserts("bison", [{ id: "a", ids: ["b1"] }], [W1], weekly, new Set(), new Map([["a|" + W1, src(100, 7, 999, 99)]]));
+  assert.deepEqual(upserts, [{ client_id: "a", week_key: W1, emails_sent_bison: 10, replies_bison: 1, emails_sent: 110, replies: 8 }]);
+});
+
+test("Instantly mirrors it: its columns, plus Bison's as stored", () => {
+  const weekly = new Map([["i1", new Map([[W1, { sent: 40, replies: 3 }]])]]);
+  const { upserts } = weeklySourceUpserts("instantly", [{ id: "a", ids: ["i1"] }], [W1], weekly, new Set(), new Map([["a|" + W1, src(999, 99, 10, 1)]]));
+  assert.deepEqual(upserts, [{ client_id: "a", week_key: W1, emails_sent_instantly: 40, replies_instantly: 3, emails_sent: 50, replies: 4 }]);
+});
+
+test("running the same job twice gives the same total — the old design double-counted Bison", () => {
+  const weekly = new Map([["b1", new Map([[W1, { sent: 10, replies: 1 }]])]]);
+  const stored = new Map([["a|" + W1, src(100, 7, 0, 0)]]);
+  const first = weeklySourceUpserts("bison", [{ id: "a", ids: ["b1"] }], [W1], weekly, new Set(), stored).upserts[0];
+  stored.set("a|" + W1, src(100, 7, 10, 1)); // what the first run stored
+  const second = weeklySourceUpserts("bison", [{ id: "a", ids: ["b1"] }], [W1], weekly, new Set(), stored).upserts[0];
+  assert.equal(first.emails_sent, 110);
+  assert.equal(second.emails_sent, 110);
+});
+
+test("a source's real zero is used as stored — never treated as 'never populated' (72,719 vs 42,668)", () => {
+  const weekly = new Map([["b1", new Map([[W1, { sent: 5, replies: 0 }]])]]);
+  const { upserts } = weeklySourceUpserts("bison", [{ id: "a", ids: ["b1"] }], [W1], weekly, new Set(), new Map([["a|" + W1, src(0, 0, 0, 0)]]));
+  assert.equal(upserts[0].emails_sent, 5);
+});
+
+test("zero weeks are written, so a stopped campaign does not keep its last figure", () => {
+  const weekly = new Map([["b1", new Map([[W1, { sent: 10, replies: 1 }]])]]);
+  const { upserts } = weeklySourceUpserts("bison", [{ id: "a", ids: ["b1"] }], [W1, W2], weekly, new Set(), new Map());
+  assert.deepEqual(upserts.map((u) => [u.week_key, u.emails_sent_bison]), [[W1, 10], [W2, 0]]);
+});
+
+test("a client with ANY unreadable campaign is skipped whole — a failed fetch is not zero sends", () => {
+  const weekly = new Map([["b1", new Map([[W1, { sent: 10, replies: 1 }]])]]);
+  const r = weeklySourceUpserts("bison", [{ id: "a", ids: ["b1", "b2"] }, { id: "b", ids: ["b1"] }], [W1], weekly, new Set(["b2"]), new Map());
+  assert.equal(r.skipped, 1);
+  assert.deepEqual(r.upserts.map((u) => u.client_id), ["b"]);
+});
+
+test("Bison leaves clients with no Bison campaigns alone; Instantly writes every client", () => {
+  const none = new Map<string, Map<string, { sent: number; replies: number }>>();
+  assert.equal(weeklySourceUpserts("bison", [{ id: "a", ids: [] }], [W1], none, new Set(), new Map()).upserts.length, 0);
+  assert.equal(weeklySourceUpserts("instantly", [{ id: "a", ids: [] }], [W1], none, new Set(), new Map()).upserts.length, 1);
+});
+
+test("a week with no stored row takes 0 for the other source", () => {
+  const weekly = new Map([["i1", new Map([[W1, { sent: 7, replies: 2 }]])]]);
+  const { upserts } = weeklySourceUpserts("instantly", [{ id: "a", ids: ["i1"] }], [W1], weekly, new Set(), new Map());
+  assert.equal(upserts[0].emails_sent, 7);
 });
 
 // -- Corofy bucketing --------------------------------------------------------

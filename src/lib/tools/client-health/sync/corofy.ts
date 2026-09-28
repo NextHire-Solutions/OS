@@ -69,14 +69,46 @@ export async function listCorofyIntros(label?: CorofyLabel): Promise<CorofyIntro
   if (!BASE) throw new Error('CLIENT_HEALTH_COROFY_BASE_URL is not set');
   const url = new URL(`${BASE}/api/clients/intros`);
   if (label) url.searchParams.set('label', label);
-  const res = await fetch(url.toString(), {
-    headers: { 'x-admin-token': token(), Accept: 'application/json' },
-    cache: 'no-store',
-  });
-  if (!res.ok) {
+  /*
+   * A LOGIN PAGE IS NOT DATA, AND IT ARRIVES AS A 200. While Master Inbox is
+   * restarting, this token-authenticated call is briefly redirected to /login
+   * and `fetch` returns that page, successfully, as HTML — which used to throw
+   * "Unexpected token '<'" and fail the whole Corofy sync (three of fourteen
+   * runs on 17 September). So recognise the page and retry once after a
+   * moment. Ported from the standalone Client Health sync (shaurs 6837ce6).
+   */
+  const attempt = async (): Promise<{ ok: boolean; status: number; body: string; isHtml: boolean }> => {
+    const res = await fetch(url.toString(), {
+      headers: { 'x-admin-token': token(), Accept: 'application/json' },
+      cache: 'no-store',
+    });
     const body = await res.text().catch(() => '');
-    throw new Error(`Corofy /api/clients/intros${label ? `?label=${label}` : ''} ${res.status}: ${body.slice(0, 200)}`);
+    const type = res.headers.get('content-type') ?? '';
+    const isHtml = !type.includes('json') || body.trimStart().startsWith('<');
+    return { ok: res.ok, status: res.status, body, isHtml };
+  };
+
+  let r = await attempt();
+  if (r.ok && r.isHtml) {
+    console.warn('[corofy] got a web page instead of data — Master Inbox is probably restarting; retrying');
+    await new Promise((done) => setTimeout(done, 3000));
+    r = await attempt();
   }
-  const json = (await res.json()) as CorofyIntrosResp;
+
+  const what = `Corofy /api/clients/intros${label ? `?label=${label}` : ''}`;
+  if (!r.ok) throw new Error(`${what} ${r.status}: ${r.body.slice(0, 200)}`);
+  if (r.isHtml) {
+    throw new Error(
+      `${what} returned a web page rather than data, twice. Master Inbox may be down, ` +
+        `or CLIENT_HEALTH_COROFY_ADMIN_TOKEN no longer matches its service-role key.`,
+    );
+  }
+
+  let json: CorofyIntrosResp;
+  try {
+    json = JSON.parse(r.body) as CorofyIntrosResp;
+  } catch {
+    throw new Error(`${what} returned ${r.body.length} bytes that are not JSON: ${r.body.slice(0, 120)}`);
+  }
   return json.intros ?? [];
 }
