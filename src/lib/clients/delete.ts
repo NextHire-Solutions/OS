@@ -7,6 +7,7 @@ import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { deleteClientRow } from "@/lib/tools/client-health/clientWrites";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
+import { getOnboardingDb } from "@/lib/tools/onboarding/db";
 
 /*
  * Removing a client, and the limits on doing so.
@@ -18,11 +19,31 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
  *                  row, every portal keeps working. Reversible: the client can
  *                  be adopted again from any tool.
  *
- *   "tools"      — the above, plus the Analytics and Client Health rows. Throws
- *                  away campaign attribution and billing history.
+ *   "tools"      — the above, plus the Analytics, Client Health and Database
+ *                  rows. Throws away campaign attribution and billing history.
  *
  *   "everything" — the above, plus the Master Inbox row AND ITS PORTAL. This is
  *                  the one that can destroy something a customer is using.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DATABASE LEG, AND WHY IT WAS MISSING
+ *
+ * Onboarding writes FOUR tools (onboard-plan.ts: analytics, client_health,
+ * database, master_inbox). Deleting cleaned only three: the `orch_clients` row
+ * was never touched, so every client deleted here stayed in the Database app
+ * forever — in its Client filter dropdown, its Clients page and its export
+ * picker. It also kept the client's `orchKey` occupied, so re-creating that
+ * client later linked to the orphan instead of making a fresh row.
+ *
+ * Deleting an `orch_clients` row cascades ONE thing that matters:
+ *
+ *   orch_client_leads        ON DELETE CASCADE   the agents built for them
+ *   instantly_replies        ON DELETE SET NULL  kept, unlinked
+ *   bison_campaigns          ON DELETE SET NULL  kept, unlinked
+ *
+ * So the lead count is read first and shown, exactly as the portal's cascade
+ * is. Any foreign key not listed above is necessarily RESTRICT — which fails
+ * the delete loudly instead of destroying anything, and is reported per-leg.
  *
  * ---------------------------------------------------------------------------
  * WHY "everything" IS GATED ON WHAT IS ACTUALLY THERE
@@ -68,7 +89,15 @@ export interface DeletePlan {
   warnings: string[];
   /** Live counts of what the Master Inbox cascade would take. Null unless "everything". */
   cascade: CascadeCounts | null;
-  /** True when that cascade would destroy real data, not just an empty shell. */
+  /**
+   * Leads that would go with the Database record (orch_client_leads cascades).
+   * 0 at the "os" scope, which does not touch that row.
+   */
+  orchLeads: number;
+  /**
+   * True when a cascade would destroy real data, not just an empty shell —
+   * from EITHER the portal's contents or the Database's leads.
+   */
   destructive: boolean;
 }
 
@@ -109,11 +138,36 @@ interface Row {
   an_client_id: string | null;
   ch_client_id: string | null;
   mi_client_id: string | null;
+  orch_client_id: string | null;
+}
+
+/**
+ * Lead rows that would go with the Database record.
+ *
+ * `orch_client_leads.client_id` is ON DELETE CASCADE, so these are destroyed
+ * with the row. Counted before anything is decided, for the same reason the
+ * portal's cascade is: "removes its Database row" tells the reader nothing
+ * about whether that row has 0 leads or 7,000 behind it.
+ *
+ * Failure returns null rather than 0 — "we could not read this" and "there is
+ * nothing there" must not look the same when the answer gates a delete.
+ */
+async function countOrchLeads(orchClientId: string): Promise<number | null> {
+  try {
+    const { count, error } = await getOnboardingDb()
+      .from("orch_client_leads")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", orchClientId);
+    if (error) return null;
+    return count ?? 0;
+  } catch {
+    return null;
+  }
 }
 
 async function load(id: string): Promise<Row> {
   const { data, error } = await osTable("os_clients")
-    .select("id, name, status, an_client_id, ch_client_id, mi_client_id")
+    .select("id, name, status, an_client_id, ch_client_id, mi_client_id, orch_client_id")
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(`Could not read the client: ${error.message}`);
@@ -128,6 +182,14 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
   const willKeep: string[] = [];
   const warnings: string[] = [];
   let blocked: string | null = null;
+  /*
+   * Declared up here because BOTH cascades feed them: the Database's leads and
+   * the portal's contents. `destructive` gates the extra acknowledgement, and it
+   * must be true if EITHER would destroy real data — an empty portal does not
+   * make deleting 7,000 leads a cleanup.
+   */
+  let destructive = false;
+  let orchLeads = 0;
 
   /*
    * The demo portal backs a live demonstration client. Deleting it would break
@@ -166,9 +228,35 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
       willDelete.push("its Client Health client row");
       warnings.push("Client Health loses this client's plan, billing anchor and campaign links.");
     }
+    if (row.orch_client_id) {
+      const leads = await countOrchLeads(row.orch_client_id);
+      if (leads === null) {
+        willDelete.push("its Database record");
+        warnings.push(
+          "Its Database lead count could not be read, so how much this destroys is unknown. " +
+            "Leads cascade with that row — check the Database app before proceeding.",
+        );
+      } else if (leads > 0) {
+        orchLeads = leads;
+        destructive = true;
+        willDelete.push(`its Database record — and the ${leads} leads built for it`);
+        warnings.push(
+          `Its Database record has ${leads} leads attached, which are deleted with it ` +
+            "(orch_client_leads cascades). That is the agent research done for this client. " +
+            "Mark it churned instead unless you are certain.",
+        );
+      } else {
+        willDelete.push("its Database record");
+        warnings.push(
+          "Its Database record has no leads attached, so nothing researched is lost. " +
+            "The client also leaves the Database app's Client filter and export picker.",
+        );
+      }
+    }
   } else {
     if (row.an_client_id) willKeep.push("its Analytics row");
     if (row.ch_client_id) willKeep.push("its Client Health row");
+    if (row.orch_client_id) willKeep.push("its Database record and any leads built for it");
   }
 
   /*
@@ -181,11 +269,13 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
    * minutes ago or a portal with 200 pipeline entries inside it.
    */
   let cascade: CascadeCounts | null = null;
-  let destructive = false;
 
   if (row.mi_client_id) {
     cascade = await countCascade(row.mi_client_id);
+    // OR, never assign: the Database leg above may already have set this, and an
+    // empty portal must not clear a pending loss of leads.
     destructive =
+      destructive ||
       cascade.pipelineEntries > 0 ||
       cascade.agents > 0 ||
       cascade.dncEntries > 0 ||
@@ -200,6 +290,7 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
 
     if (scope === "everything") {
       willDelete.push("its Master Inbox row — and with it the portal URL, permanently");
+      willDelete.push("its Intro Macro reply template, if it has one");
       for (const p of parts) willDelete.push(`${p} inside its portal`);
       if (cascade.threads) {
         willKeep.push(`${cascade.threads} threads — kept, but they lose their client tag`);
@@ -223,7 +314,10 @@ export async function planDelete(id: string, scope: DeleteScope): Promise<Delete
     }
   }
 
-  return { name: row.name, scope, willDelete, willKeep, blocked, warnings, cascade, destructive };
+  return {
+    name: row.name, scope, willDelete, willKeep, blocked, warnings,
+    cascade, orchLeads, destructive,
+  };
 }
 
 export interface DeleteResult {
@@ -259,13 +353,26 @@ export async function deleteClient(
    * was typed, because typing a name carefully is not the same as knowing what
    * is inside the thing you are deleting.
    */
-  if (plan.destructive && scope === "everything" && !acceptDataLoss) {
-    const c = plan.cascade!;
+  /*
+   * NOT gated on scope === "everything" any more.
+   *
+   * It used to be, which was right while only the portal could cascade. The
+   * Database leg runs at "tools" as well, and `orch_client_leads` cascades with
+   * that row — so a "tools" delete could destroy thousands of researched leads
+   * while this gate looked the other way because no portal was involved.
+   */
+  if (plan.destructive && !acceptDataLoss) {
+    const c = plan.cascade;
+    const parts = [
+      c?.pipelineEntries ? `${c.pipelineEntries} pipeline entries` : null,
+      c?.agents ? `${c.agents} agents` : null,
+      c?.dncEntries ? `${c.dncEntries} do-not-contact entries` : null,
+      c?.teamMembers ? `${c.teamMembers} team members` : null,
+      plan.orchLeads ? `${plan.orchLeads} Database leads` : null,
+    ].filter(Boolean);
     throw new Error(
-      `This portal holds ${c.pipelineEntries} pipeline entries, ${c.agents} agents, ` +
-        `${c.dncEntries} do-not-contact entries and ${c.teamMembers} team members, all of ` +
-        "which would be destroyed. Acknowledge that explicitly to proceed, or mark the " +
-        "client churned instead.",
+      `This would destroy ${parts.join(", ")}. Acknowledge that explicitly to proceed, ` +
+        "or mark the client churned instead.",
     );
   }
 
@@ -313,6 +420,29 @@ export async function deleteClient(
         failed.push({ what: "Client Health", error: e instanceof Error ? e.message : String(e) });
       }
     }
+
+    if (row.orch_client_id) {
+      try {
+        /*
+         * The Database record. `orch_clients` is inside the guard's writable
+         * `orch_*` prefix, so this delete is allowed; a typo'd table name would
+         * throw before the network call rather than touching the 1.17M-row
+         * `agents` table that shares this project.
+         *
+         * Runs after Analytics and Client Health and before Master Inbox, which
+         * keeps the whole sequence cheapest-to-undo first. Re-creating this row
+         * is one insert; re-creating a portal token is impossible.
+         */
+        const { error } = await getOnboardingDb()
+          .from("orch_clients")
+          .delete()
+          .eq("id", row.orch_client_id);
+        if (error) throw new Error(error.message);
+        removed.push("Database");
+      } catch (e) {
+        failed.push({ what: "Database", error: e instanceof Error ? e.message : String(e) });
+      }
+    }
   }
 
   /*
@@ -341,7 +471,7 @@ export async function deleteClient(
        */
       const { data: existing } = await db
         .from("clients")
-        .select("id, slug")
+        .select("id, slug, name")
         .eq("id", row.mi_client_id)
         .maybeSingle();
       if (!existing) {
@@ -352,6 +482,22 @@ export async function deleteClient(
         const { error } = await db.from("clients").delete().eq("id", row.mi_client_id);
         if (error) throw new Error(error.message);
         removed.push("Master Inbox and its portal");
+        /*
+         * The client's "Intro Macro - <name>" reply template.
+         *
+         * Onboarding creates it, and nothing removed it: it has no foreign key
+         * to the client, so the cascade above never reaches it. Every delete
+         * left one behind in Master Inbox's template picker, offering to
+         * introduce a client that no longer exists ("Brandolino Group" is one,
+         * found 28 Sep).
+         *
+         * Matched on the EXACT name onboarding writes, taken from the row just
+         * deleted — never a pattern, so a similarly named client's template
+         * cannot be caught. Not fatal: the client is gone either way.
+         */
+        const templateName = `Intro Macro - ${existing.name as string}`;
+        const { error: tErr } = await db.from("reply_templates").delete().eq("name", templateName);
+        if (!tErr) removed.push("its Intro Macro template");
       }
     } catch (e) {
       failed.push({ what: "Master Inbox", error: e instanceof Error ? e.message : String(e) });
