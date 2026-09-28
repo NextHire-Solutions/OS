@@ -1,8 +1,8 @@
 import "server-only";
 
+import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { httpProbe } from "@/lib/http/probe";
-import { baseUrlEnv, optionalEnv } from "@/lib/env";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
+import { baseUrlEnv } from "@/lib/env";
 
 /*
  * The headline band on Home.
@@ -95,17 +95,11 @@ export async function getOverview(): Promise<Overview> {
     unavailable: null,
   };
 
-  const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-  if (!secret) return { ...empty, unavailable: "ANALYTICS_AUTH_SECRET not set" };
-
-  const email = optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com";
-  const token = await mintAnalyticsSession(secret, email);
-  const cookie = { cookie: `bsa_session=${token}` };
-  const base = baseUrlEnv("ANALYTICS_URL");
 
   // Current 7 days, the 7 before it, the series, and our own reply time.
   const [current, previous, series, followUp] = await Promise.allSettled([
-    httpProbe(`${base}/api/analytics/kpis?preset=7d`, { timeoutMs: TIMEOUT, headers: cookie }),
+    // In-process — the standalone Analytics app is being switched off.
+    analyticsRead("/api/analytics/kpis?preset=7d"),
     /*
      * The seven days immediately BEFORE the current seven — day 13 back to
      * day 7, adjacent to preset=7d's day 6 to day 0.
@@ -115,11 +109,8 @@ export async function getOverview(): Promise<Overview> {
      * plausible, which is exactly why it survived a first reading and only
      * surfaced when the figure was recomputed from the daily series.
      */
-    httpProbe(
-      `${base}/api/analytics/kpis?from=${isoDaysAgo(13)}&to=${isoDaysAgo(7)}`,
-      { timeoutMs: TIMEOUT, headers: cookie },
-    ),
-    httpProbe(`${base}/api/analytics/timeseries?preset=30d`, { timeoutMs: TIMEOUT, headers: cookie }),
+    analyticsRead(`/api/analytics/kpis?from=${isoDaysAgo(13)}&to=${isoDaysAgo(7)}`),
+    analyticsRead("/api/analytics/timeseries?preset=30d"),
     masterInboxMedian(),
   ]);
 

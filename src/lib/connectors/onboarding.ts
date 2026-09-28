@@ -1,6 +1,9 @@
 import "server-only";
+import { getOnboardingDb } from "@/lib/tools/onboarding/db";
+import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
+import { databaseReach } from "./in-os";
 
-import { DEFAULT_POLICY, defineConnector, type MetricsResult } from "./types";
+import { DEFAULT_POLICY, defineConnector, metric, type MetricsResult } from "./types";
 import { classifyReach } from "@/lib/http/classify";
 import { NotConfiguredError, UnsupportedError, optionalEnv } from "@/lib/env";
 
@@ -45,6 +48,11 @@ export const onboardingConnector = defineConnector({
    * what a healthy, protected app should do to an unauthenticated probe.
    * Treating it as an outage would paint the card red for working properly.
    */
+  inOs: {
+    home: "/onboarding/pipeline",
+    reach: (policy) => databaseReach(() => getOnboardingDb().from("orch_clients").select("id").limit(1), policy.slowMs),
+  },
+
   async reach(ctx) {
     const res = await ctx.http(`${ctx.baseUrl}/`, { timeoutMs: ctx.policy.reachTimeoutMs });
     // classifyReach already treats an auth challenge as "up" — a protected app
@@ -53,7 +61,17 @@ export const onboardingConnector = defineConnector({
   },
 
   async metrics(): Promise<MetricsResult> {
-    if (!optionalEnv("ONBOARDING_URL")) throw new NotConfiguredError("ONBOARDING_URL");
+    // Once the app is off (no URL), the OS's own pipeline answers.
+    if (!optionalEnv("ONBOARDING_URL")) {
+      const p = await getOnboardingPipeline();
+      const clients = (p as { clients?: { stageName?: string | null }[] }).clients ?? [];
+      return {
+        metrics: [
+          metric("clients", "On the board", clients.length, "compact"),
+          metric("live", "Live", clients.filter((c) => c.stageName === "Live").length, "compact", { intent: "good" }),
+        ],
+      };
+    }
     throw new UnsupportedError(
       "no read endpoint yet — pipeline counts live behind the app's own session",
     );

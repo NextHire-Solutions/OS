@@ -1,8 +1,8 @@
 import "server-only";
 
+import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { clientStatuses, listClientRows } from "@/lib/tools/client-health/publish";
 import type { Reading, SourceSpec } from "./types";
 
@@ -44,16 +44,8 @@ function num(value: unknown): number | null {
 
 /** Reads Analytics' KPI band, which answers several concepts at once. */
 async function analyticsKpis(field: string) {
-  const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-  if (!secret) return { value: null, unavailable: "ANALYTICS_AUTH_SECRET not set" };
-
-  const email = optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com";
-  const token = await mintAnalyticsSession(secret, email);
-
-  const res = await httpProbe(`${baseUrlEnv("ANALYTICS_URL")}/api/analytics/kpis?preset=30d`, {
-    timeoutMs: TIMEOUT,
-    headers: { cookie: `bsa_session=${token}` },
-  });
+  // In-process — the standalone Analytics app is being switched off.
+  const res = await analyticsRead("/api/analytics/kpis?preset=30d");
 
   if (res.status === 401) return { value: null, unavailable: "session rejected (secret mismatch?)" };
   if (!res.ok) return { value: null, unavailable: `returned ${res.status ?? "no response"}` };
@@ -103,16 +95,8 @@ const READERS: Record<string, Reader> = {
   "analytics:human-replies": () => analyticsKpis("humanReplies"),
 
   "analytics:clients": async (spec) => {
-    const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-    if (!secret) return { value: null, unavailable: `${spec.requiresEnv} not set` };
-
-    const email = optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com";
-    const token = await mintAnalyticsSession(secret, email);
-
-    const res = await httpProbe(`${baseUrlEnv("ANALYTICS_URL")}/api/clients`, {
-      timeoutMs: TIMEOUT,
-      headers: { cookie: `bsa_session=${token}` },
-    });
+    void spec;
+    const res = await analyticsRead("/api/clients");
     if (!res.ok) return { value: null, unavailable: `returned ${res.status ?? "no response"}` };
 
     const body = res.json;

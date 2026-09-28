@@ -1,3 +1,7 @@
+import { analyticsRead } from "@/lib/tools/analytics/in-process";
+import { syncHealth } from "@/lib/tools/analytics/sync/health";
+import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
+import { databaseReach } from "./in-os";
 import {
   DEFAULT_POLICY,
   defineConnector,
@@ -9,8 +13,7 @@ import {
   type ToolMetric,
 } from "./types";
 import { classifyReach } from "@/lib/http/classify";
-import { mintAnalyticsSession } from "./upstream-auth/analytics-session";
-import { NotConfiguredError, UnsupportedError, optionalEnv } from "@/lib/env";
+import { NotConfiguredError, UnsupportedError } from "@/lib/env";
 
 /*
  * Campaign Analytics — Next 16, EmailBison-backed, HMAC cookie auth.
@@ -55,17 +58,10 @@ function num(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-async function loadKpis(ctx: ProbeContext): Promise<KpiPayload> {
-  const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-  if (!secret) throw new NotConfiguredError("ANALYTICS_AUTH_SECRET");
-
-  const email = optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com";
-  const token = await mintAnalyticsSession(secret, email);
-
-  const res = await ctx.http(`${ctx.baseUrl}/api/analytics/kpis?preset=7d`, {
-    timeoutMs: ctx.policy.metricsTimeoutMs,
-    headers: { cookie: `bsa_session=${token}` },
-  });
+async function loadKpis(_ctx: ProbeContext): Promise<KpiPayload> {
+  // In-process: the OS's own KPI route over the same database, rather than a
+  // session minted for the standalone app, which is being switched off.
+  const res = await analyticsRead("/api/analytics/kpis?preset=7d");
 
   if (res.status === 401) {
     throw new Error("bsa_session rejected — ANALYTICS_AUTH_SECRET mismatch?");
@@ -81,19 +77,14 @@ async function loadKpis(ctx: ProbeContext): Promise<KpiPayload> {
   };
 }
 
-async function loadSyncHealth(ctx: ProbeContext): Promise<SyncPayload> {
-  const secret = optionalEnv("ANALYTICS_CRON_SECRET");
-  if (!secret) throw new NotConfiguredError("ANALYTICS_CRON_SECRET");
-
-  const res = await ctx.http(`${ctx.baseUrl}/api/cron/status`, {
-    timeoutMs: ctx.policy.metricsTimeoutMs,
-    headers: { authorization: `Bearer ${secret}` },
-  });
-
-  if (!res.ok) throw new Error(`cron/status returned ${res.status ?? "no response"}`);
-
-  const body = asRecord(res.json);
-  if (!body) throw new Error("cron/status returned a non-JSON body");
+async function loadSyncHealth(_ctx: ProbeContext): Promise<SyncPayload> {
+  /*
+   * In-process: sync_state is one table that both the OS's scheduler and the
+   * standalone app's cron write, so this is the same answer the app's
+   * /api/cron/status gave — and it stays right once that app is off.
+   */
+  const body = asRecord(await syncHealth(false));
+  if (!body) throw new Error("sync health unavailable");
 
   return {
     healthy: typeof body.healthy === "boolean" ? body.healthy : undefined,
@@ -163,6 +154,11 @@ export const analyticsConnector = defineConnector({
     ...DEFAULT_POLICY,
     metricsTimeoutMs: 9_000, // the KPI route is a real Postgres aggregate
     dataStaleAfterMs: 3 * 60 * 60_000,
+  },
+
+  inOs: {
+    home: "/analytics/campaign",
+    reach: (policy) => databaseReach(() => getAnalyticsSupabase().from("clients").select("id").limit(1), policy.slowMs),
   },
 
   async reach(ctx) {

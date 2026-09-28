@@ -9,6 +9,8 @@ import {
 } from "./types";
 import { classifyReach } from "@/lib/http/classify";
 import { clientStatuses } from "@/lib/tools/client-health/publish";
+import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
+import { databaseReach } from "./in-os";
 
 /*
  * Client Health ("Shaurs") — Next 15, Supabase-backed, per-client outreach
@@ -44,6 +46,11 @@ export const clientHealthConnector = defineConnector({
   },
 
   policy: { ...DEFAULT_POLICY },
+
+  inOs: {
+    home: "/clients/weekly",
+    reach: (policy) => databaseReach(() => getClientHealthDb().from("clients").select("id").limit(1), policy.slowMs),
+  },
 
   async reach(ctx) {
     const res = await ctx.http(`${ctx.baseUrl}/`, {

@@ -1,8 +1,8 @@
 import "server-only";
 
+import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { lifecycleOf, listClientRows } from "@/lib/tools/client-health/publish";
 import type { NamedEntry } from "./names";
 import { isPlaceholder } from "./placeholder";
@@ -134,16 +134,8 @@ async function analytics(): Promise<Roster> {
       "Clients created to match campaign names. A client exists here only once someone set it up for attribution, so one with no campaigns is usually absent.",
   };
 
-  const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-  if (!secret) return { ...base, entries: [], unavailable: "ANALYTICS_AUTH_SECRET not set" };
-
-  const email = optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com";
-  const token = await mintAnalyticsSession(secret, email);
-
-  const res = await httpProbe(`${baseUrlEnv("ANALYTICS_URL")}/api/analytics/clients`, {
-    timeoutMs: TIMEOUT,
-    headers: { cookie: `bsa_session=${token}` },
-  });
+  // In-process — the standalone Analytics app is being switched off.
+  const res = await analyticsRead("/api/analytics/clients");
   if (!res.ok) return { ...base, entries: [], unavailable: `returned ${res.status ?? "no response"}` };
 
   const rows = asRecord(res.json)?.rows;

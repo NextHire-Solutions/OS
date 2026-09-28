@@ -1,10 +1,9 @@
 import "server-only";
 
+import { deleteAnalyticsClient } from "./analytics-direct";
 import { osTable } from "./os-db";
 import { isKnownNonClient } from "./roster";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
-import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { deleteClientRow } from "@/lib/tools/client-health/clientWrites";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
@@ -494,18 +493,9 @@ export async function deleteClient(
   if (scope === "tools" || scope === "everything") {
     if (row.an_client_id) {
       try {
-        const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-        if (!secret) throw new Error("ANALYTICS_AUTH_SECRET not set");
-        const token = await mintAnalyticsSession(
-          secret,
-          optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com",
-        );
-        const res = await fetch(`${baseUrlEnv("ANALYTICS_URL")}/api/clients/${row.an_client_id}`, {
-          method: "DELETE",
-          headers: { cookie: `bsa_session=${token}` },
-          signal: AbortSignal.timeout(20_000),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Straight into Analytics' database (analytics-direct.ts); its
+        // campaigns fall back to Unassigned, as they always did.
+        await deleteAnalyticsClient(row.an_client_id);
         removed.push("Analytics");
       } catch (e) {
         failed.push({ what: "Analytics", error: e instanceof Error ? e.message : String(e) });

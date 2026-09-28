@@ -1,7 +1,6 @@
 import "server-only";
 
-import { baseUrlEnv, optionalEnv } from "@/lib/env";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
+import { updateAnalyticsClient } from "./analytics-direct";
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { pushPortalStatus } from "@/lib/portals/status-push";
@@ -130,26 +129,9 @@ export async function propagateStatus(
     );
   } else {
     try {
-      const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-      if (!secret) throw new Error("ANALYTICS_AUTH_SECRET not set");
-      const token = await mintAnalyticsSession(
-        secret,
-        optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com",
-      );
-      const res = await fetch(
-        `${baseUrlEnv("ANALYTICS_URL")}/api/clients/${anClientId}`,
-        {
-          method: "PATCH",
-          // The cookie NAME matters: Analytics reads `bsa_session`, and a bare
-          // token is simply an unauthenticated request. Same header the alias
-          // write in edit.ts sends.
-          headers: { "Content-Type": "application/json", cookie: `bsa_session=${token}` },
-          body: JSON.stringify({ status }),
-          cache: "no-store",
-          signal: AbortSignal.timeout(20_000),
-        },
-      );
-      if (!res.ok) throw new Error(`Analytics returned ${res.status}`);
+      // Straight into Analytics' database (analytics-direct.ts) — the same
+      // write the standalone app's PATCH /api/clients/:id made.
+      await updateAnalyticsClient(anClientId, { status });
       legs.push(leg("analytics"));
     } catch (error) {
       legs.push(

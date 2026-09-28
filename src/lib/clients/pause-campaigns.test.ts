@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   PAUSABLE_STATUSES,
   instantlyStatusWord,
+  matchPauseResults,
   planCampaignPause,
   type CampaignRow,
 } from "./pause-campaigns";
@@ -134,4 +135,24 @@ test("the plan never contains anything that is not pausable", () => {
     );
   }
   assert.equal(plan.pausable.length, 4, "active, queued, launching, ACTIVE");
+});
+
+test("matchPauseResults: by platform and id, never by position", () => {
+  const pausable = [{ platform: "emailbison", id: "7" }, { platform: "instantly", id: "7" }, { platform: "emailbison", id: "9" }];
+  const out = matchPauseResults(pausable, [
+    { platform: "emailbison", campaignId: "9", ok: true },
+    { platform: "instantly", campaignId: "7", ok: false, error: "rate limited" },
+    { platform: "emailbison", campaignId: "7", ok: true },
+  ]);
+  assert.deepEqual(out.map((r) => [r.campaign.platform, r.campaign.id, r.ok, r.error]), [
+    ["emailbison", "7", true, undefined],
+    ["instantly", "7", false, "rate limited"],
+    ["emailbison", "9", true, undefined],
+  ]);
+});
+
+test("matchPauseResults: a campaign with no result is a failure, not assumed paused", () => {
+  const out = matchPauseResults([{ platform: "emailbison", id: "1" }], []);
+  assert.equal(out[0].ok, false);
+  assert.match(out[0].error ?? "", /no result/);
 });

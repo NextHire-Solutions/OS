@@ -188,6 +188,14 @@ export interface Connector {
 
   reach(ctx: ProbeContext): Promise<ReachResult>;
   metrics?(ctx: ProbeContext): Promise<MetricsResult>;
+
+  /**
+   * For a tool the OS runs itself: used INSTEAD of the URL probe when
+   * `baseUrlEnv` is not set — i.e. once the standalone app is switched off and
+   * its URL removed. Until then nothing changes. `home` is the OS screen the
+   * card opens; `reach` checks what the OS actually depends on (the database).
+   */
+  inOs?: { home: string; reach(policy: ConnectorPolicy): Promise<ReachResult> };
 }
 
 /** Identity function: gives inference plus one place to assert invariants. */

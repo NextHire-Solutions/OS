@@ -5,7 +5,6 @@ import { osTable } from "./os-db";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { withStandardFlags } from "./portal-features";
 import { planOnboarding, LEGS, type Leg, type OnboardInput, type PlannedCall } from "./onboard-plan";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { createDatabaseRecord } from "./database-record";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { onboardClient } from "@/lib/tools/client-health/onboard";
@@ -13,6 +12,7 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
 import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { listOsClients } from "./os-clients";
 import { propagateStatus } from "./status-propagate";
+import { createAnalyticsClient } from "./analytics-direct";
 import { seedMarketsFromDatabase } from "./markets-mls-sync";
 
 /*
@@ -114,6 +114,20 @@ async function send(call: PlannedCall): Promise<{ status: number; body: unknown 
    * same reason as Client Health: a loopback request to our own route would
    * need a session a server process does not have.
    */
+  /*
+   * Analytics, in-process too (analytics-direct.ts): the same row the
+   * standalone app's POST /api/clients inserted, written straight into its
+   * database — that app is being switched off.
+   */
+  if (call.leg === "analytics") {
+    const b = asRecord(call.body) ?? {};
+    return createAnalyticsClient({
+      name: String(b.name ?? ""),
+      aliases: Array.isArray(b.aliases) ? (b.aliases as string[]) : undefined,
+      matchMode: (b.matchMode as "contains" | "prefix" | "exact" | undefined) ?? undefined,
+    });
+  }
+
   if (call.leg === "database") {
     const body = asRecord(call.body);
     return createDatabaseRecord(String(body?.client_name ?? ""));
@@ -130,15 +144,10 @@ async function send(call: PlannedCall): Promise<{ status: number; body: unknown 
   return { status: res.status, body };
 }
 
-async function endpoint(leg: Leg, path: string): Promise<{ url: string; headers: Record<string, string> }> {
-  if (leg === "analytics") {
-    const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-    if (!secret) throw new Error("ANALYTICS_AUTH_SECRET not set");
-    const email = optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com";
-    const token = await mintAnalyticsSession(secret, email);
-    return { url: baseUrlEnv("ANALYTICS_URL") + path, headers: { cookie: `bsa_session=${token}` } };
-  }
-  // client_health never reaches here — see send().
+async function endpoint(_leg: Leg, path: string): Promise<{ url: string; headers: Record<string, string> }> {
+  // Only Master Inbox is still reached over HTTP — it stays live (its app
+  // serves the customer portals). Analytics, Client Health and the Database
+  // are written in-process; see send().
   const token =
     optionalEnv("MASTER_INBOX_SUPABASE_SERVICE_ROLE_KEY") ?? optionalEnv("MASTER_INBOX_ADMIN_TOKEN");
   if (!token) throw new Error("MASTER_INBOX_SUPABASE_SERVICE_ROLE_KEY not set");

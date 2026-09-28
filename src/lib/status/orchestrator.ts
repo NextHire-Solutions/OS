@@ -22,7 +22,12 @@ export async function probeConnector(connector: Connector): Promise<ToolSnapshot
   const now = new Date();
   const checkedAt = now.toISOString();
 
-  const configured = isConfigured(...connector.env.required);
+  // A retired standalone app: its URL is gone and the OS answers for it.
+  const inOs = connector.inOs && !isConfigured(connector.baseUrlEnv) ? connector.inOs : null;
+  const required = inOs
+    ? connector.env.required.filter((v) => v !== connector.baseUrlEnv)
+    : connector.env.required;
+  const configured = isConfigured(...required);
 
   const base = {
     id: connector.id,
@@ -35,7 +40,7 @@ export async function probeConnector(connector: Connector): Promise<ToolSnapshot
   };
 
   if (!configured) {
-    const missing = connector.env.required.filter((v) => !isConfigured(v));
+    const missing = required.filter((v) => !isConfigured(v));
     return {
       ...base,
       href: "#",
@@ -54,7 +59,7 @@ export async function probeConnector(connector: Connector): Promise<ToolSnapshot
     };
   }
 
-  const resolvedBase = baseUrlEnv(connector.baseUrlEnv);
+  const resolvedBase = inOs ? "" : baseUrlEnv(connector.baseUrlEnv);
   const ctx: ProbeContext = {
     baseUrl: resolvedBase,
     http: httpProbe,
@@ -62,13 +67,13 @@ export async function probeConnector(connector: Connector): Promise<ToolSnapshot
     now,
   };
 
-  const deepLinks: ResolvedDeepLink[] = connector.deepLinks.map((link) => ({
+  const deepLinks: ResolvedDeepLink[] = inOs ? [] : connector.deepLinks.map((link) => ({
     ...link,
     href: `${resolvedBase}${link.path}`,
   }));
 
   const [reachOutcome, metricsOutcome] = await Promise.allSettled([
-    connector.reach(ctx),
+    inOs ? inOs.reach(connector.policy) : connector.reach(ctx),
     connector.metrics ? connector.metrics(ctx) : Promise.resolve(null),
   ]);
 
@@ -138,7 +143,7 @@ export async function probeConnector(connector: Connector): Promise<ToolSnapshot
 
   return {
     ...base,
-    href: `${resolvedBase}${connector.home}`,
+    href: inOs ? inOs.home : `${resolvedBase}${connector.home}`,
     deepLinks,
     state: deriveState({
       configured: true,

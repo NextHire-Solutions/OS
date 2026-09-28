@@ -1,10 +1,9 @@
 import "server-only";
 
+import { updateAnalyticsClient } from "./analytics-direct";
 import { osTable } from "./os-db";
 import { syncIntroTemplate } from "./intro-template-sync";
 import { CLIENT_STATUSES, type ClientStatus } from "./client-status";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
-import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { planInboxAliases, type InboxRow } from "./inbox-aliases";
@@ -473,19 +472,8 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   /* ----------------------------------------------------------- Analytics */
   if (edit.aliases !== undefined && row.an_client_id) {
     try {
-      const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-      if (!secret) throw new Error("ANALYTICS_AUTH_SECRET not set");
-      const token = await mintAnalyticsSession(
-        secret,
-        optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com",
-      );
-      const res = await fetch(`${baseUrlEnv("ANALYTICS_URL")}/api/clients/${row.an_client_id}`, {
-        method: "PATCH",
-        headers: { cookie: `bsa_session=${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ aliases: edit.aliases }),
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Straight into Analytics' database (analytics-direct.ts).
+      await updateAnalyticsClient(row.an_client_id, { aliases: edit.aliases });
       updated.push("Analytics aliases");
     } catch (e) {
       failed.push({ what: "Analytics aliases", error: e instanceof Error ? e.message : String(e) });

@@ -1,8 +1,8 @@
 import "server-only";
 
+import { pauseCampaigns } from "./analytics-direct";
 import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
-import { baseUrlEnv, optionalEnv } from "@/lib/env";
+import { optionalEnv } from "@/lib/env";
 import { keyOf } from "./roster";
 
 /*
@@ -93,6 +93,22 @@ export function instantlyStatusWord(code: unknown): string {
  *
  * Pure, so the rule is testable without touching a campaign platform.
  */
+/**
+ * Each planned campaign's outcome, found by platform AND id — the two
+ * platforms' id spaces are separate. A campaign with no result is a failure,
+ * never assumed paused.
+ */
+export function matchPauseResults<C extends { platform: string; id: string }>(
+  pausable: C[],
+  actions: { platform: string; campaignId: string; ok: boolean; error?: string }[],
+): { campaign: C; ok: boolean; error?: string }[] {
+  const byKey = new Map(actions.map((r) => [`${r.platform}:${r.campaignId}`, r]));
+  return pausable.map((campaign) => {
+    const r = byKey.get(`${campaign.platform}:${campaign.id}`);
+    return { campaign, ok: r?.ok === true, error: r ? r.error : "no result returned for this campaign" };
+  });
+}
+
 export function planCampaignPause(campaigns: CampaignRow[]): PausePlan {
   const pausable: CampaignRow[] = [];
   const skipped: PausePlan["skipped"] = [];
@@ -230,38 +246,18 @@ export async function pauseCampaignsForClient(
 
   if (!apply || plan.pausable.length === 0) return { ...none, plan };
 
-  const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-  if (!secret) return { ...none, plan, error: "ANALYTICS_AUTH_SECRET not set" };
-
   try {
-    const token = await mintAnalyticsSession(
-      secret,
+    /*
+     * In-process (analytics-direct.ts): the same applyCampaignAction the
+     * standalone app's /api/campaigns/actions ran, with "pause" as a literal.
+     * Results matched by campaign id, not position; a campaign with no result
+     * is reported as failed rather than assumed paused.
+     */
+    const actions = await pauseCampaigns(
+      plan.pausable.map((c) => ({ platform: c.platform, id: c.id })),
       optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com",
     );
-    const res = await fetch(`${baseUrlEnv("ANALYTICS_URL")}/api/campaigns/actions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", cookie: `bsa_session=${token}` },
-      body: JSON.stringify({
-        // The literal. Never a variable, never from an argument.
-        action: "pause",
-        targets: plan.pausable.map((c) => ({ platform: c.platform, id: c.id })),
-        confirm: true,
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
-    const body = (await res.json().catch(() => null)) as {
-      results?: { ok?: boolean; error?: string }[];
-      error?: string;
-    } | null;
-    // 207 is the honest partial: some paused, some refused.
-    if (!res.ok && res.status !== 207) {
-      return { ...none, plan, error: body?.error ?? `HTTP ${res.status}` };
-    }
-    const results = plan.pausable.map((campaign, i) => {
-      const r = body?.results?.[i];
-      return { campaign, ok: r?.ok !== false, error: r?.error };
-    });
-    return { plan, applied: true, results };
+    return { plan, applied: true, results: matchPauseResults(plan.pausable, actions) };
   } catch (e) {
     return { ...none, plan, error: e instanceof Error ? e.message : "pause request failed" };
   }

@@ -197,8 +197,8 @@ export function planOnboarding(input: OnboardInput): OnboardPlan {
     leg: "analytics",
     tool: "Campaign Analytics",
     method: "POST",
-    path: "/api/clients",
-    auth: "Analytics session (ANALYTICS_AUTH_SECRET)",
+    path: "(in-process) Analytics clients insert",
+    auth: "the OS's own database access (ANALYTICS_SUPABASE_*)",
     body: { name, aliases, matchMode },
     sideEffects: [
       "Inserts a client row with team_id, name, slug, aliases, match_mode.",

@@ -1,9 +1,9 @@
 import "server-only";
 
+import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { lifecycleOf, listClientRows } from "@/lib/tools/client-health/publish";
-import { mintAnalyticsSession } from "@/lib/connectors/upstream-auth/analytics-session";
 import { ROSTER, matchRoster, type CanonicalClient } from "./roster";
 import { indexById, indexByName, pickFor, keysForClient } from "./tool-index";
 import { keyOf } from "./roster";
@@ -428,14 +428,8 @@ async function readMasterInbox(): Promise<ToolRead> {
 }
 
 async function readAnalytics(): Promise<ToolRead> {
-  const secret = optionalEnv("ANALYTICS_AUTH_SECRET");
-  if (!secret) throw new Error("ANALYTICS_AUTH_SECRET not set");
-  const email = optionalEnv("ANALYTICS_SERVICE_EMAIL") ?? "command-center@brokerstaffer.com";
-  const token = await mintAnalyticsSession(secret, email);
-  const res = await httpProbe(`${baseUrlEnv("ANALYTICS_URL")}/api/clients`, {
-    timeoutMs: TIMEOUT,
-    headers: { cookie: `bsa_session=${token}` },
-  });
+  // In-process — the standalone Analytics app is being switched off.
+  const res = await analyticsRead("/api/clients");
   if (!res.ok) throw new Error(`returned ${res.status ?? "no response"}`);
   const body = res.json;
   const rows = Array.isArray(body) ? body : rec(body)?.clients ?? rec(body)?.rows;
