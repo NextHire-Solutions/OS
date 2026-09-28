@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.5** | [What changed on 28 September](#05-what-changed-on-28-september) — the latest work, how it was verified, what is open |
+| **0.6** | [Switching off Analytics, Client Health and Onboarding](#06-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -180,6 +181,61 @@ server errors; 37/37 open customer portals serving their page.
   production, 0 in 12 locally); React recovers by re-rendering. In untouched
   Master Inbox code; not yet located.
 - Master Inbox and Analytics Add Client buttons inside the OS — see §2.
+
+---
+
+## 0.6 Switching off Analytics, Client Health and Onboarding
+
+**Stay live:** Master Inbox (its app serves every customer portal) and the
+Database app. **To be switched off once the OS is complete:** Analytics, Client
+Health, Onboarding. State on 28 September:
+
+**Done — the OS no longer needs their servers** (`a6c75a6`). Every status
+change, edit, delete, onboarding leg, campaign pause, overview figure and
+consistency reader now works on the tools' databases directly. The OS mints no
+session for any of the three apps. Home's status cards switch to a database
+check and an OS link by themselves once a tool's `*_URL` variable is removed
+(`Connector.inOs`), and nothing is embedded from a standalone app: every
+destination is an OS screen.
+
+**Done — the OS's copies of their background logic match theirs:**
+
+| Tool | Parity | Runs in the OS today? |
+|---|---|---|
+| Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
+| Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **yes** — `ONBOARDING_CRON_ENABLED=1` |
+
+**Switch-off order, per tool — never run two copies of a sync at once:**
+
+1. **Analytics:** stop the `analytics-cron` Railway service → confirm the OS's
+   runs keep `sync_state` green for a day → remove `ANALYTICS_URL` from `os` →
+   stop `analytics-web`.
+2. **Client Health:** stop the Health Dashboard `sync-worker` **and** `web`
+   (both run the sync) between cycles (`sync_runs` shows nothing in flight) →
+   set `CLIENT_HEALTH_SYNC_ENABLED=1` on `os` → watch two cycles: every weekly
+   row keeps total = instantly + bison → remove `CLIENT_HEALTH_URL`.
+3. **Onboarding — needs people first:**
+   - **Gmail is disconnected in the OS** (`invalid_grant` for
+     eddy@brokerstaffer.com). Eddy reconnects at Onboarding → Settings →
+     Connect; until then the OS cannot poll client replies.
+   - **The seven client emails and the Stripe payment link are switched off in
+     the OS** by decision (`step-run.ts`, 501). If the standalone orchestrator
+     sends them today, switching it off stops them until someone enables them
+     in the OS.
+   - **Third-party webhooks still point at the old orchestrator** — Typeform,
+     Stripe, Calendly, EmailBison and the Master Inbox intro hook. Re-point each
+     to `https://os.brokerstaffer.com/api/tools/onboarding/webhooks/…` (the OS
+     receivers are live and their secrets are set) and remove the old ones in
+     the same sitting, or events arrive twice.
+   - Then remove `ONBOARDING_URL` and stop `orchestrator`.
+
+**Open, not blocking a switch-off:** an intermittent hydration error on the
+OS's Master Inbox list screens (~1 load in 3 on production; React recovers by
+re-rendering). Narrowed by diffing server HTML against the hydrated page: not a
+date, not the folder icons (they change after load by design); the development
+build shows the component tree above the tab bar differing between server and
+client. Untouched Master Inbox code.
 
 ---
 
