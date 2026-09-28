@@ -1,20 +1,22 @@
 "use client";
 
-import type { ReactNode } from "react";
-
+import { Stat, Stats } from "@/components/ds";
 import type { FunnelTotals, WeeklySummary } from "@/lib/tools/client-health/summarize";
 import { funnelRates } from "@/lib/tools/client-health/summarize";
-import { weekLabel } from "./toolbar";
 
+import { weekLabel } from "./toolbar";
 
 /*
  * The 24 summary cards — Status, Performance, Funnel Lifetime, Funnel Week.
  *
- * In the tool (app/Dashboard.tsx 876–929) these sit above the table on EVERY
- * view; the view switch is below them. The workspace drew them on Weekly only,
- * so on Bi-Weekly you could not see "At Risk" or either funnel without going
- * back. Lifted out of weekly.tsx so all three screens render the same block
- * from the same numbers.
+ * In the tool these sit above the table on EVERY view, so all three screens
+ * render this one block from the same numbers.
+ *
+ * Status and Performance follow the billing-cycle rules (port document §6.5,
+ * §6.6): status is the 28-day pace; the weekly target is gone; "Due This Week"
+ * is what the clients billing this week owe, carry included; "Delivered" caps
+ * each client at their own due, so one client's surplus cannot hide another's
+ * shortfall.
  */
 export function SummaryCards({
   s, lifetime, week, isCurrent, weekKey,
@@ -26,76 +28,79 @@ export function SummaryCards({
   weekKey: string;
 }) {
   return (
-    <>
-      <CardGroup label="Status">
-        <Card label="Clients" value={s.total} sub="active" />
-        <Card label="At Risk" value={s.risk} sub="below half target" tone="n-risk" />
-        <Card label="On Track" value={s.ok} sub="meeting target this week" tone="n-ok" />
-        <Card label="Done" value={s.done} sub="met weekly target" tone="n-done" />
-        <Card label="Client Paused" value={s.clientPaused} sub="manually paused" />
-        <Card
-          label="By Plan"
-          value={`${s.plans.minimum} · ${s.plans.production} · ${s.plans.partner}`}
-          sub="min · prod · partner"
-          size={26}
-        />
-      </CardGroup>
+    <div className="ds-bands">
+      <Band label="Status">
+        <Stat label="Clients" value={s.total} sub="active" />
+        <Stat label="At Risk" value={s.risk} sub="behind 28-day pace" tone="red" />
+        <Stat label="On Track" value={s.ok} sub="on pace for 28-day target" tone="amber" />
+        <Stat label="Done" value={s.done} sub="28-day target met" tone="green" />
+        <Stat label="Client Paused" value={s.clientPaused} sub="manually paused" />
+        <Stat label="By Plan" value={`${s.plans.minimum} · ${s.plans.production} · ${s.plans.partner}`} sub="min · prod · partner" />
+      </Band>
 
-      <CardGroup label="Performance">
-        <Card label="Weekly Intros Sent" value={s.intros} sub="across all clients" tone="n-intros" />
-        <Card label="Weekly Target" value={s.target} sub="intros / week" />
-        <Card label="Weekly Completion" value={`${s.completionPct}%`} sub="intros vs weekly target" tone="n-green" />
-        <Card label="Monthly Intros Sent" value={s.monthlyIntros} sub="this monthly cycle" tone="n-intros" />
-        <Card
+      <Band label={isCurrent ? "Performance" : `Performance — week of ${weekLabel(weekKey)}`}>
+        <Stat
+          label="Due This Week"
+          value={s.dueThisWeek}
+          sub={`${s.billingThisWeek} client${s.billingThisWeek === 1 ? "" : "s"} billing this week`}
+          tone="brand"
+        />
+        <Stat label="Delivered" value={s.deliveredThisWeek} sub="toward this week's due" tone="brand" />
+        <Stat
+          label="Due Completion"
+          value={s.dueCompletionPct === null ? <None /> : `${s.dueCompletionPct}%`}
+          sub="delivered vs due this week"
+          tone={s.dueCompletionPct === null ? undefined : "green"}
+        />
+        <Stat label="Monthly Intros Sent" value={s.monthlyIntros} sub="this 28-day period" tone="brand" />
+        <Stat
           label="Monthly Target"
           value={s.monthlyTarget}
-          sub={s.monthlyTarget > 0 ? "intros / month" : "no client has one set"}
+          sub={s.monthlyTarget > 0 ? "intros / 28 days" : "no client has one set"}
         />
-        <Card
+        <Stat
           label="Monthly Completion"
-          value={s.monthlyTarget > 0 ? `${s.monthlyCompletionPct}%` : null}
-          sub="intros vs monthly target"
-          tone="n-green"
+          value={s.monthlyTarget > 0 ? `${s.monthlyCompletionPct}%` : <None />}
+          sub="intros vs 28-day target"
+          tone={s.monthlyTarget > 0 ? "green" : undefined}
         />
-      </CardGroup>
+      </Band>
 
-      <FunnelGroup label="Funnel — Lifetime" totals={s.lifetime} rates={lifetime} emailsSub="all campaigns" />
-      <FunnelGroup
+      <FunnelBand label="Funnel — Lifetime" totals={s.lifetime} rates={lifetime} emailsSub="all campaigns" />
+      <FunnelBand
         label={isCurrent ? "Funnel — This Week" : `Funnel — Week of ${weekLabel(weekKey)}`}
         totals={s.week}
         rates={week}
         emailsSub="this week"
       />
-    </>
+    </div>
   );
 }
 
-/* ---- the same formatting helpers weekly.tsx uses for its table ---- */
 const n = (v: number) => v.toLocaleString("en-US");
-const pct = (v: number | null, digits = 1) => (v === null ? "—" : `${v.toFixed(digits)}%`);
 const ratio = (a: number, b: number) => `${n(a)} / ${n(b)}`;
 
-/** One labelled band of six cards — the tool's own grouping. */
-export function CardGroup({ label, children }: { label: string; children: ReactNode }) {
+/** A missing figure. Never a zero — "0%" is a claim, "—" is the absence of one. */
+function None() {
+  return <span style={{ color: "var(--ds-faint)" }}>—</span>;
+}
+const pct = (v: number | null, digits = 1) => (v === null ? <None /> : `${v.toFixed(digits)}%`);
+
+function Band({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <section style={{ marginBottom: 20 }}>
-      <div className="grp-h" style={{ marginBottom: 10 }}>{label}</div>
-      <div className="cards" style={{ gridTemplateColumns: "repeat(6, 1fr)", marginBottom: 0 }}>
-        {children}
-      </div>
+    <section className="ds-band" aria-label={label}>
+      <div className="ds-band-l">{label}</div>
+      <Stats min={150}>{children}</Stats>
     </section>
   );
 }
 
 /**
- * One funnel band.
- *
- * Both funnels have identical shape, so they are one component — which is also
- * what guarantees the two read the same way. Each rate card carries its own
- * numerator and denominator as its subtitle, because a percentage without them
- * cannot be checked and a wrong one looks exactly like a right one.
+ * One funnel band. Both funnels have identical shape, so they are one
+ * component. Each rate carries its numerator and denominator as its subtitle,
+ * because a percentage without them cannot be checked.
  */
-function FunnelGroup({
+function FunnelBand({
   label, totals, rates, emailsSub,
 }: {
   label: string;
@@ -105,39 +110,13 @@ function FunnelGroup({
 }) {
   const funnel = totals.converted + totals.interested;
   return (
-    <CardGroup label={label}>
-      <Card label="Emails Sent" value={totals.emails} sub={emailsSub} tone="n-emails" />
-      <Card label="Reply Rate" value={pct(rates.replyRate)} sub={ratio(totals.replies, totals.emails)} tone="n-ok" />
-      <Card label="Positive Reply" value={pct(rates.positiveReply)} sub={ratio(totals.interested, totals.replies)} tone="n-ok" />
-      <Card label="Avg Conv." value={pct(rates.convPer1k)} sub={`${ratio(totals.converted, totals.emails)} · per 1k`} tone="n-ok" />
-      <Card label="Converted" value={totals.converted} sub="interested → intro" tone="n-green" />
-      <Card label="Int → Intro" value={pct(rates.intToIntro)} sub={ratio(totals.converted, funnel)} tone="n-blue" />
-    </CardGroup>
-  );
-}
-
-export function Card({
-  label, value, sub, tone, size,
-}: {
-  label: string;
-  value: number | string | null;
-  sub: string;
-  tone?: string;
-  size?: number;
-}) {
-  // An em dash string counts as missing too — that is how the rate helpers
-  // say "no denominator", and it should look the same as a null.
-  const missing = value === null || value === "—";
-  return (
-    <div className="card">
-      <div className="card-l">{label}</div>
-      <div
-        className={`card-n tnum${tone && !missing ? ` ${tone}` : ""}`}
-        style={{ ...(size ? { fontSize: size } : {}), ...(missing ? { color: "#B9C0CB" } : {}) }}
-      >
-        {missing ? "—" : typeof value === "number" ? n(value) : value}
-      </div>
-      <div className="card-s">{sub}</div>
-    </div>
+    <Band label={label}>
+      <Stat label="Emails Sent" value={totals.emails} sub={emailsSub} />
+      <Stat label="Reply Rate" value={pct(rates.replyRate)} sub={ratio(totals.replies, totals.emails)} />
+      <Stat label="Positive Reply" value={pct(rates.positiveReply)} sub={ratio(totals.interested, totals.replies)} />
+      <Stat label="Avg Conv." value={pct(rates.convPer1k)} sub={`${ratio(totals.converted, totals.emails)} · per 1k`} />
+      <Stat label="Converted" value={totals.converted} sub="interested → intro" tone="green" />
+      <Stat label="Int → Intro" value={pct(rates.intToIntro)} sub={ratio(totals.converted, funnel)} tone="brand" />
+    </Band>
   );
 }

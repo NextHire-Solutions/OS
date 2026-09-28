@@ -1,4 +1,5 @@
-import { derive, type DerivedRow } from "./derive.ts";
+import { addDays, derive, type DerivedRow } from "./derive.ts";
+import { billingDueInWeek, billingSnapshot, type BillingDueInWeek, type BillingSnapshot } from "./billing.ts";
 import type { DashboardClient } from "./types.ts";
 
 /*
@@ -21,6 +22,23 @@ import type { DashboardClient } from "./types.ts";
 export interface WeeklyRow {
   client: DashboardClient;
   derived: DerivedRow;
+  /**
+   * The client's billing snapshot as of the viewed week (billing.ts): the
+   * current cycle (Intros / Billing), the 28-day period (Monthly) and the
+   * status. One per client; every column, card, filter and sort reads it.
+   * Null when the client has no billing schedule.
+   */
+  snap: BillingSnapshot | null;
+  /** The cycle billing inside the viewed week, or null (Performance, R25–R29). */
+  due: BillingDueInWeek | null;
+}
+
+/**
+ * The date billing is measured at: now for the current week, and Sunday 12:00
+ * UTC of the viewed week when browsing history (§6.3).
+ */
+export function asOfForWeek(monday: Date, isCurrent: boolean, now: Date): Date {
+  return isCurrent ? now : new Date(addDays(monday, 6).getTime() + 12 * 3_600_000);
 }
 
 /*
@@ -79,11 +97,16 @@ export interface WeeklySummary {
   ok: number;
   done: number;
   intros: number;
-  target: number;
   emails: number;
   clientPaused: number;
   plans: { minimum: number; production: number; partner: number };
-  completionPct: number;
+
+  /** R25–R29: intros due from the clients whose billing date falls in the week, carry included. */
+  dueThisWeek: number;
+  /** Σ min(delivered, due) over those clients — one surplus cannot hide another's shortfall. */
+  deliveredThisWeek: number;
+  billingThisWeek: number;
+  dueCompletionPct: number | null;
 
   /** Introductions so far in each client's current monthly cycle, summed. */
   monthlyIntros: number;
@@ -105,8 +128,19 @@ export interface WeeklySummary {
 }
 
 /** Derives every client for one week. */
-export function deriveRows(clients: DashboardClient[], key: string): WeeklyRow[] {
-  return clients.map((client) => ({ client, derived: derive(client, key) }));
+export function deriveRows(clients: DashboardClient[], key: string, asOf: Date = new Date(), monday?: Date): WeeklyRow[] {
+  const mon = monday ?? new Date(key + "T00:00:00Z");
+  return clients.map((client) => ({
+    client,
+    derived: derive(client, key),
+    snap: billingSnapshot(billingInput(client), asOf),
+    due: billingDueInWeek(billingInput(client), mon, asOf),
+  }));
+}
+
+/** The billing engine's input. monthly_target is nullable in the table; the engine wants 0. */
+function billingInput(c: DashboardClient) {
+  return { ...c, monthly_target: c.monthly_target ?? 0, intro_dates: c.intro_dates ?? [] };
 }
 
 /*
@@ -151,7 +185,8 @@ export function allTimeCorofy(c: DashboardClient): { converted: number; interest
  */
 export function summarize(rows: WeeklyRow[], key: string): WeeklySummary {
   let total = 0, risk = 0, ok = 0, done = 0;
-  let intros = 0, emails = 0, target = 0, clientPaused = 0;
+  let intros = 0, emails = 0, clientPaused = 0;
+  let dueThisWeek = 0, deliveredThisWeek = 0, billingThisWeek = 0;
   let convNum = 0, convDen = 0;
   let monthlyIntros = 0, monthlyTarget = 0;
   const plans = { minimum: 0, production: 0, partner: 0 };
@@ -159,18 +194,23 @@ export function summarize(rows: WeeklyRow[], key: string): WeeklySummary {
   const lifetime: FunnelTotals = { ...EMPTY_FUNNEL };
   const week: FunnelTotals = { ...EMPTY_FUNNEL };
 
-  for (const { client, derived } of rows) {
+  for (const { client, derived, snap, due } of rows) {
     if (client.hidden) continue;
     if (client.client_paused) {
       clientPaused++;
       continue;
     }
     total++;
-    target += client.weekly_target;
     if (client.plan in plans) plans[client.plan as keyof typeof plans]++;
-    if (derived.status === "risk") risk++;
-    if (derived.status === "ok") ok++;
-    if (derived.metTarget) done++;
+    // R20–R23: status from the 28-day target, not a weekly one.
+    if (snap?.status === "risk") risk++;
+    if (snap?.status === "ok") ok++;
+    if (snap?.status === "done") done++;
+    if (due && due.due > 0) {
+      billingThisWeek++;
+      dueThisWeek += due.due;
+      deliveredThisWeek += Math.min(due.delivered, due.due);
+    }
     intros += derived.intros;
     emails += derived.emails;
     if (derived.emails > 0) {
@@ -201,15 +241,19 @@ export function summarize(rows: WeeklyRow[], key: string): WeeklySummary {
       week.interested += m.interested_corofy ?? 0;
     }
 
-    monthlyIntros += client.intros_this_month ?? 0;
-    monthlyTarget += client.monthly_target ?? 0;
+    // R15–R18: the current 28-day block, from the snapshot.
+    if (snap && snap.period.target > 0) {
+      monthlyIntros += snap.period.delivered;
+      monthlyTarget += snap.period.target;
+    }
   }
 
   const totalFunnel = lifetime.converted + lifetime.interested;
 
   return {
-    total, risk, ok, done, intros, target, emails, clientPaused, plans,
-    completionPct: target > 0 ? Math.round((intros / target) * 100) : 0,
+    total, risk, ok, done, intros, emails, clientPaused, plans,
+    dueThisWeek, deliveredThisWeek, billingThisWeek,
+    dueCompletionPct: dueThisWeek > 0 ? Math.round((deliveredThisWeek / dueThisWeek) * 100) : null,
     monthlyIntros,
     monthlyTarget,
     monthlyCompletionPct: monthlyTarget > 0 ? Math.round((monthlyIntros / monthlyTarget) * 100) : 0,

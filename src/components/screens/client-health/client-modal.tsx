@@ -13,7 +13,6 @@ import {
 } from "@/lib/tools/client-health/clientForm";
 import {
   BILLING_INTERVAL_LABEL,
-  PLAN_DEFAULT_TARGET,
   TIME_ZONES,
   type BillingInterval,
   type Plan,
@@ -43,9 +42,9 @@ import { saveClient } from "./mutations";
  */
 
 const PLAN_OPTIONS: { id: Plan; label: string }[] = [
-  { id: "minimum", label: `Minimum — ${PLAN_DEFAULT_TARGET.minimum} intro/week` },
-  { id: "production", label: `Production — ${PLAN_DEFAULT_TARGET.production} intros/week` },
-  { id: "partner", label: `Partner — ${PLAN_DEFAULT_TARGET.partner} intros/week` },
+  { id: "minimum", label: "Minimum" },
+  { id: "production", label: "Production" },
+  { id: "partner", label: "Partner" },
 ];
 
 const INTERVALS: BillingInterval[] = ["biweekly", "28-days", "monthly", "custom"];
@@ -122,22 +121,8 @@ export function ClientModal({
         </Field>
 
         <Field
-          label="Weekly Intros Target"
-          help="Drives the At Risk / On Track status. Defaults to the plan tier, but you can override it."
-        >
-          <input
-            className="inp tnum"
-            style={input}
-            type="number"
-            min={0}
-            value={form.weeklyTarget}
-            onChange={(e) => set("weeklyTarget", parseInt(e.target.value || "0", 10))}
-          />
-        </Field>
-
-        <Field
           label="Monthly Intros Target"
-          help="Progress resets on the client’s billing anchor day each month. 0 leaves the Monthly column blank."
+          help="Intros due per 28-day period. Split across billing cycles — e.g. 8 = 4 due every 14-day cycle. Drives At Risk / On Track, Intros / Billing and carry-forward. 0 = no target."
         >
           <input
             className="inp tnum"

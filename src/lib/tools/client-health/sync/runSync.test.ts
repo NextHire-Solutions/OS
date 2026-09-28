@@ -22,6 +22,7 @@ import {
   weeklySourceUpserts,
   bucketByNameWeek,
   clientIntroCounts,
+  introDates,
   corofyConfigured,
   deriveStatusChangedAt,
   instantlyCampaignRow,
@@ -377,4 +378,29 @@ test("Interested rows attribute to campaigns by the string Corofy sends", () => 
     { client_name: "A", assigned_at: "2026-09-01T00:00:00Z", campaign_id: null },
   ]);
   assert.deepEqual([...m.entries()], [["uuid-1", 2], ["55", 1]]);
+});
+
+test("intro_dates: every valid assigned_at, oldest first; junk dropped", () => {
+  assert.deepEqual(
+    introDates([
+      { assigned_at: "2026-09-20T10:00:00Z" },
+      { assigned_at: "not a date" },
+      { assigned_at: "2026-09-02T00:00:00Z" },
+      { assigned_at: "" },
+      { assigned_at: "2026-09-15T23:59:00Z" },
+    ]),
+    ["2026-09-02T00:00:00Z", "2026-09-15T23:59:00Z", "2026-09-20T10:00:00Z"],
+  );
+  assert.deepEqual(introDates([]), []);
+});
+
+test("intro_dates is written by the Corofy pass as its OWN update, after the counters", async () => {
+  // The billing views read clients.intro_dates. If it rode inside the counter
+  // update, one bad column would freeze every billing figure; if the OS sync
+  // stopped writing it, they would freeze on switch-over day (port doc §5).
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("./runSync.ts", import.meta.url), "utf8");
+  const counters = src.indexOf(".update(clientIntroCounts(clientIntros, c, nowMs))");
+  const dates = src.indexOf(".update({ intro_dates: introDates(clientIntros) })");
+  assert.ok(counters > 0 && dates > counters);
 });

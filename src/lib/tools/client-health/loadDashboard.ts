@@ -2,6 +2,7 @@
 // query so the dashboard can switch weeks client-side without re-fetching.
 
 import { getSupabase } from './supabase';
+import { masterByToolId } from '@/lib/clients/master-lookup';
 import { lifecycleOf } from "./publish";
 import { generateSeed } from './seed';
 import {
@@ -11,6 +12,7 @@ import {
   type DashboardClient,
   type InstantlyCampaign,
   type Plan,
+  type ToggledCampaign,
   type WeeklyMetric,
 } from './types';
 import { addDays, getMondayOf, weekKey } from './derive';
@@ -44,6 +46,8 @@ interface ClientRow {
   portal_url: string | null;
   /** Other spellings this client's campaigns are named by (migration on the tool). */
   campaign_aliases: string[] | null;
+  intro_dates: string[] | null;
+  toggle_paused_campaigns: ToggledCampaign[] | null;
 }
 
 export async function loadDashboardClients(): Promise<{
@@ -94,11 +98,13 @@ export async function loadDashboardClients(): Promise<{
     return { data: all, error: null };
   }
 
-  const [clientsRes, metricsRes, campaignsRes, bisonRes] = await Promise.all([
+  const [clientsRes, metricsRes, campaignsRes, bisonRes, masters] = await Promise.all([
     sb.from('clients').select('*').order('name'),
     fetchAllMetrics(),
     sb.from('instantly_campaigns').select('*'),
     sb.from('bison_campaigns').select('*'),
+    // Null on failure: "could not read" is not "no markets" (R1).
+    masterByToolId('clientHealth').catch(() => null),
   ]);
 
   if (clientsRes.error) {
@@ -163,6 +169,10 @@ export async function loadDashboardClients(): Promise<{
       // campaigns by NAME, so the list is shown in the client modal; the OS is
       // the single editor and writes it alongside Analytics and os_clients.
       campaign_aliases: c.campaign_aliases ?? [],
+      intro_dates: c.intro_dates ?? [],
+      toggle_paused_campaigns: c.toggle_paused_campaigns ?? [],
+      // The OS's own markets, joined through os_clients.ch_client_id (R1).
+      markets: masters ? masters.get(c.id)?.markets ?? [] : null,
       billing_interval_days: c.billing_interval_days ?? null,
       emails_today: c.emails_today ?? 0,
       emails_today_date: c.emails_today_date ?? null,

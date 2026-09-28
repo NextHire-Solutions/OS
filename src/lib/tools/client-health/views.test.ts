@@ -37,6 +37,7 @@ function client(name: string, o: Record<string, unknown> = {}): DashboardClient 
     start_date: "2026-01-05",
     billing_anchor_date: null, billing_interval: "biweekly", billing_interval_days: null,
     intros_since_last_billing: 0,
+    monthly_target: 0, intro_dates: [],
     time_zone: null,
     last_lead_activity_at: null,
     stagnant_intros_count: 0, dnc_count: 0, agents_count: 0,
@@ -60,22 +61,26 @@ test("a custom interval uses its own day count, and falls back when unset", () =
   assert.equal(cycleDays(client("a", { billing_interval: "custom", billing_interval_days: null })), 14);
 });
 
-test("a monthly client's cycle target is four weeks of work, not two", () => {
-  // The mistake that would make every monthly client look permanently behind.
-  const [biweekly] = biweeklyRows([client("A", { weekly_target: 3 })], NOW);
-  const [monthly] = biweeklyRows([client("B", { weekly_target: 3, billing_interval: "monthly" })], NOW);
-  assert.equal(biweekly.target, 6);   // 3 × 14/7
-  assert.equal(monthly.target, 13);   // 3 × 30/7, rounded
+test("a cycle owes half the monthly target on 14 days, all of it on a monthly schedule (D5)", () => {
+  const [biweekly] = biweeklyRows([client("A", { monthly_target: 8, billing_anchor_date: "2026-09-01" })], NOW);
+  const [monthly] = biweeklyRows([client("B", { monthly_target: 8, billing_anchor_date: "2026-09-01", billing_interval: "monthly" })], NOW);
+  assert.equal(biweekly.required, 4);
+  assert.equal(monthly.required, 8);
 });
 
-test("a cycle target is never zero, however small the weekly target", () => {
+test("no monthly target shows — rather than a made-up cycle target (§6.8)", () => {
   // A target of 0 would make "0/0" read as complete for a client doing nothing.
-  const [r] = biweeklyRows([client("A", { weekly_target: 0 })], NOW);
-  assert.equal(r.target, 1);
+  const [r] = biweeklyRows([client("A", { monthly_target: 0, billing_anchor_date: "2026-09-01" })], NOW);
+  assert.equal(r.required, null);
+  assert.equal(r.leftCycle, null);
 });
 
-test("introductions left never goes negative when a client overdelivers", () => {
-  const [r] = biweeklyRows([client("A", { weekly_target: 1, intros_since_last_billing: 99 })], NOW);
+test("introductions come from the cycle's own dates, and left never goes negative", () => {
+  const [r] = biweeklyRows([client("A", {
+    monthly_target: 8, billing_anchor_date: "2026-09-01",
+    intro_dates: Array(9).fill("2026-09-03T15:00:00Z"),
+  })], NOW);
+  assert.equal(r.intros, 9);
   assert.equal(r.leftCycle, 0);
 });
 
@@ -174,11 +179,11 @@ test("a client with too little history has no score, not a zero", () => {
 });
 
 test("unscored clients sink to the bottom in either direction", () => {
+  // D9: scored from completed billing cycles — here, two per month since July.
   const scored = client("Scored", {
-    weekly_target: 1,
-    metricsByWeek: Object.fromEntries(
-      ["2026-07-20", "2026-07-27", "2026-08-03", "2026-08-10"].map((k) => [k, { intros_corofy: 2 }]),
-    ),
+    monthly_target: 4, billing_anchor_date: "2026-07-07", start_date: "2026-07-07",
+    intro_dates: ["2026-07-10", "2026-07-15", "2026-07-25", "2026-07-30", "2026-08-06", "2026-08-12", "2026-08-20", "2026-08-26"]
+      .map((d) => `${d}T15:00:00Z`),
   });
   const rows = successRows([client("New"), scored], NOW);
   assert.notEqual(rows.find((r) => r.client.name === "Scored")?.score, null);
@@ -248,7 +253,7 @@ test("dates format in UTC, so a calendar day never shifts by one", () => {
 
 // -- the hydration trap ------------------------------------------------------
 
-test("derive() is NOT pure — it reads the local clock, so rows cannot be re-derived on the client", () => {
+test("Last Intro is the same in every timezone (§6.10)", () => {
   // This is the reason ClientHealthWeeklyData carries optional `rows`, and it
   // is not obvious from reading derive(): `daysSinceLastIntro` calls
   // `new Date()` and then `setHours`, which is LOCAL midnight. The server runs
@@ -287,9 +292,12 @@ test("derive() is NOT pure — it reads the local clock, so rows cannot be re-de
   } finally {
     process.env.TZ = original;
   }
-  assert.notEqual(
-    divergentAt,
-    null,
-    "derive() now looks timezone-independent at every offset — re-check the hydration workaround in weekly.ts",
-  );
+  /*
+   * INVERTED on 29 Sep with the port of shaurs fba22e4 (§6.10): Last Intro is
+   * now counted on US Eastern calendar dates, so every machine timezone gives
+   * the same answer — the server (UTC) and an IST browser used to say "4d" and
+   * "5d" and React threw #418 on every load. A divergence here means that bug
+   * is back.
+   */
+  assert.equal(divergentAt, null, `Last Intro differs between timezones ${divergentAt} hours ago — the #418 hydration bug is back`);
 });

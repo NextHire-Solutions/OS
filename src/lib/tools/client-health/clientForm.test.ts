@@ -41,30 +41,25 @@ const BISON: NamedCampaign[] = [{ id: "b1", name: "Premier Metro Realty · Bison
 
 // -- plan and target ---------------------------------------------------------
 
-test("a fresh form defaults to Production and its target", () => {
+test("a fresh form defaults to Production, with no weekly target to edit", () => {
   const f = blankForm(TODAY);
   assert.equal(f.plan, "production");
-  assert.equal(f.weeklyTarget, PLAN_DEFAULT_TARGET.production);
+  assert.equal("weeklyTarget" in f, false);
   assert.equal(f.startDate, TODAY);
   assert.equal(f.editingId, null);
 });
 
-test("changing plan moves an untouched target to the new default", () => {
-  const f = withPlan(blankForm(TODAY), "partner");
-  assert.equal(f.weeklyTarget, PLAN_DEFAULT_TARGET.partner);
+test("changing plan changes only the plan — the monthly target is set on its own", () => {
+  const f = withPlan({ ...blankForm(TODAY), monthlyTarget: 8 }, "partner");
+  assert.equal(f.plan, "partner");
+  assert.equal(f.monthlyTarget, 8);
 });
 
-test("changing plan leaves a hand-typed target alone", () => {
-  // A form that overwrites what you typed is a form that fights you.
-  const typed = { ...blankForm(TODAY), weeklyTarget: 4 };
-  assert.equal(withPlan(typed, "partner").weeklyTarget, 4);
-});
-
-test("a target that happens to equal another plan's default still follows", () => {
-  // The tool's own test for "untouched" — imperfect, and reproduced exactly so
-  // this port cannot behave differently from the live app.
-  const atMinimumDefault = { ...blankForm(TODAY), weeklyTarget: PLAN_DEFAULT_TARGET.minimum };
-  assert.equal(withPlan(atMinimumDefault, "partner").weeklyTarget, PLAN_DEFAULT_TARGET.partner);
+test("a CREATE sends the plan's default weekly_target (the column is NOT NULL); an EDIT sends none", () => {
+  const create = toPayload({ ...blankForm(TODAY), name: "Acme", plan: "partner" }, [], []);
+  assert.equal(create.weekly_target, PLAN_DEFAULT_TARGET.partner);
+  const edit = toPayload({ ...blankForm(TODAY), editingId: "x", name: "Acme", plan: "partner" }, [], []);
+  assert.equal("weekly_target" in edit, false);
 });
 
 // -- the custom billing interval --------------------------------------------
@@ -148,7 +143,7 @@ test("the payload carries every field the tool's API accepts", () => {
   const p = toPayload(
     {
       editingId: "x", name: "Acme", plan: "partner", startDate: "2026-01-05",
-      weeklyTarget: 6, monthlyTarget: 24, billingAnchorDate: "2026-01-12",
+      monthlyTarget: 24, billingAnchorDate: "2026-01-12",
       billingInterval: "custom", billingIntervalDays: "21", timeZone: "America/Denver",
       // Read-only in the form and deliberately NOT in the payload — the OS is
       // the single editor of aliases. The assertion below pins that.
@@ -161,7 +156,6 @@ test("the payload carries every field the tool's API accepts", () => {
   assert.deepEqual(p, {
     name: "Acme",
     plan: "partner",
-    weekly_target: 6,
     monthly_target: 24,
     start_date: "2026-01-05",
     instantly_campaign_ids: [],

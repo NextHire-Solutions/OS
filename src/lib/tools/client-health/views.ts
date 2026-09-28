@@ -1,4 +1,5 @@
-import { clientScore, daysUntil, nextBillingDate } from "./derive.ts";
+import { clientScore, daysUntil } from "./derive.ts";
+import { billingSnapshot, type BillingSnapshot } from "./billing.ts";
 import { TZ_SHORT_BY_VALUE, type DashboardClient } from "./types.ts";
 
 /*
@@ -24,11 +25,14 @@ export interface BiWeeklyRow {
   billing: Date | null;
   /** Days until billing, null when there is no billing date. */
   days: number | null;
-  /** Introductions since the last billing day, precomputed by the sync worker. */
+  /** cycle.delivered — intros in the current billing cycle (billing.ts). */
   intros: number;
-  /** The cycle target — the weekly target scaled to the billing interval. */
-  target: number;
-  leftCycle: number;
+  /** cycle.required — the cycle target plus carry-forward. Null: no target or schedule. */
+  required: number | null;
+  /** cycle.remaining. Null: no target or schedule. */
+  leftCycle: number | null;
+  /** The snapshot the row was read from — the carry badge needs it. */
+  snap: BillingSnapshot | null;
   tzShort: string | null;
 }
 
@@ -53,17 +57,18 @@ export function cycleDays(c: DashboardClient): number {
 
 export function biweeklyRows(clients: DashboardClient[], now: Date): BiWeeklyRow[] {
   return clients.map((c) => {
-    const anchor = c.billing_anchor_date ?? c.start_date;
-    const billing = nextBillingDate(anchor, c.billing_interval, now, c.billing_interval_days);
-    const intros = c.intros_since_last_billing;
-    const target = Math.max(1, Math.round((c.weekly_target * cycleDays(c)) / 7));
+    // §6.8: from the billing snapshot at now — no weekly target anywhere.
+    const snap = billingSnapshot({ ...c, monthly_target: c.monthly_target ?? 0, intro_dates: c.intro_dates ?? [] }, now);
+    const billing = snap?.cycle.end ?? null;
+    const hasTarget = Boolean(snap && snap.cycle.target > 0);
     return {
       client: c,
       billing,
       days: billing ? daysUntil(billing, now) : null,
-      intros,
-      target,
-      leftCycle: Math.max(0, target - intros),
+      intros: snap?.cycle.delivered ?? 0,
+      required: hasTarget ? snap!.cycle.required : null,
+      leftCycle: hasTarget ? snap!.cycle.remaining : null,
+      snap,
       tzShort: c.time_zone ? (TZ_SHORT_BY_VALUE[c.time_zone] ?? c.time_zone) : null,
     };
   });
@@ -105,7 +110,12 @@ export function sortBiWeekly(
         return mul * (b.days - a.days);
       }
       case "intros": return mul * (b.intros - a.intros);
-      case "leftCycle": return mul * (b.leftCycle - a.leftCycle);
+      case "leftCycle": {
+        if (a.leftCycle === null && b.leftCycle === null) return byName(a, b);
+        if (a.leftCycle === null) return 1;
+        if (b.leftCycle === null) return -1;
+        return mul * (b.leftCycle - a.leftCycle);
+      }
       case "tz": {
         const av = a.tzShort ?? "", bv = b.tzShort ?? "";
         if (!av && !bv) return byName(a, b);
@@ -148,7 +158,8 @@ export function successRows(clients: DashboardClient[], now: Date): SuccessRow[]
       client: c,
       hiredTotal,
       lastHireAt: lastHireMs > 0 ? new Date(lastHireMs).toISOString() : null,
-      score: clientScore(c.metricsByWeek, c.weekly_target, now).score,
+      // D9: the last 4 completed billing cycles, base target, no carry.
+      score: clientScore({ ...c, monthly_target: c.monthly_target ?? 0, intro_dates: c.intro_dates ?? [] }, now).score,
       tzShort: c.time_zone ? (TZ_SHORT_BY_VALUE[c.time_zone] ?? c.time_zone) : null,
     };
   });

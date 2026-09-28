@@ -20,22 +20,27 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { sortWeekly, type SortCol } from "./sorting.ts";
+import { billingSnapshot } from "./billing.ts";
 import type { WeeklyRow } from "./summarize.ts";
 
 const NOW = new Date("2026-09-09T12:00:00Z");
 
 function row(name: string, client: Record<string, unknown> = {}, derived: Record<string, unknown> = {}): WeeklyRow {
+  const c = {
+    id: name, name,
+    time_zone: null, monthly_target: 0, intros_this_month: 0, intro_dates: [] as string[],
+    billing_anchor_date: null, start_date: null,
+    billing_interval: "biweekly", billing_interval_days: null,
+    campaigns: [], bisonCampaigns: [], metricsByWeek: {},
+    ...client,
+  };
   return {
-    client: {
-      id: name, name,
-      time_zone: null, monthly_target: 0, intros_this_month: 0,
-      billing_anchor_date: null, start_date: null,
-      billing_interval: "biweekly", billing_interval_days: null,
-      campaigns: [], bisonCampaigns: [], metricsByWeek: {},
-      ...client,
-    },
+    client: c,
+    // The REAL billing engine, from the same fields the loader supplies.
+    snap: billingSnapshot(c as never, NOW),
+    due: null,
     derived: {
-      leftThisWeek: 0, emails: 0, intros: 0, campaignsAvgPct: 0,
+      emails: 0, intros: 0, campaignsAvgPct: 0,
       convPct: null, daysSince: null,
       ...derived,
     },
@@ -50,10 +55,12 @@ test("a missing value sinks to the bottom in BOTH directions", () => {
   // The rule the whole file exists for, checked on every column that has one.
   const cases: [SortCol, WeeklyRow[]][] = [
     ["tz", [row("None"), row("Has", { time_zone: "America/New_York" })]],
-    ["monthly", [row("None"), row("Has", { monthly_target: 5, intros_this_month: 2 })]],
+    ["monthly", [row("None"), row("Has", { monthly_target: 5, billing_anchor_date: "2026-09-01", intro_dates: ["2026-09-05T15:00:00Z"] })]],
     ["lastIntro", [row("None"), row("Has", {}, { daysSince: 3 })]],
     ["conv", [row("None"), row("Has", {}, { convPct: 40 })]],
     ["billing", [row("None"), row("Has", { billing_anchor_date: "2026-09-01" })]],
+    ["lastBilling", [row("None"), row("Has", { billing_anchor_date: "2026-09-01" })]],
+    ["introsBilling", [row("None"), row("Has", { billing_anchor_date: "2026-09-01", monthly_target: 8 })]],
     ["convRate", [
       row("None"),
       row("Has", { metricsByWeek: { w: { intros_corofy: 2, interested_corofy: 3 } } }),
@@ -69,8 +76,9 @@ test("a missing value sinks to the bottom in BOTH directions", () => {
 test("monthly compares progress, and an unset target is not 'furthest behind'", () => {
   const rows = [
     row("Unset"),
-    row("Behind", { monthly_target: 10, intros_this_month: 1 }),
-    row("Ahead", { monthly_target: 10, intros_this_month: 9 }),
+    // Intros in the current 28-day period, counted by the billing engine from intro_dates.
+    row("Behind", { monthly_target: 10, billing_anchor_date: "2026-09-01", intro_dates: ["2026-09-05T15:00:00Z"] }),
+    row("Ahead", { monthly_target: 10, billing_anchor_date: "2026-09-01", intro_dates: Array(9).fill("2026-09-05T15:00:00Z") }),
   ];
   assert.deepEqual(names(sortWeekly(rows, { col: "monthly", dir: "desc" }, NOW)), ["Ahead", "Behind", "Unset"]);
   assert.deepEqual(names(sortWeekly(rows, { col: "monthly", dir: "asc" }, NOW)), ["Behind", "Ahead", "Unset"]);
@@ -95,7 +103,7 @@ test("billing sorts by the NEXT date, which recurs from the anchor", () => {
 });
 
 test("numeric columns sort straightforwardly and reverse", () => {
-  for (const [col, field] of [["emails", "emails"], ["intros", "intros"], ["leftWeek", "leftThisWeek"], ["progress", "campaignsAvgPct"]] as const) {
+  for (const [col, field] of [["emails", "emails"], ["intros", "intros"], ["progress", "campaignsAvgPct"]] as const) {
     const rows = [row("low", {}, { [field]: 1 }), row("high", {}, { [field]: 9 })];
     assert.deepEqual(names(sortWeekly(rows, { col, dir: "desc" }, NOW)), ["high", "low"], col);
     assert.deepEqual(names(sortWeekly(rows, { col, dir: "asc" }, NOW)), ["low", "high"], col);
@@ -139,4 +147,15 @@ test("no sort returns the rows untouched, and sorting never mutates", () => {
   assert.deepEqual(names(sortWeekly(rows, null, NOW)), ["B", "A"]);
   sortWeekly(rows, { col: "emails", dir: "desc" }, NOW);
   assert.deepEqual(names(rows), ["B", "A"], "the caller's array was reordered");
+});
+
+test("Intros / Billing sorts by intros still OWED this cycle, most first (R6–R9)", () => {
+  // Monthly 8 on a 14-day cycle = 4 due. One intro leaves 3 owed; three leave 1.
+  const rows = [
+    row("Nearly", { monthly_target: 8, billing_anchor_date: "2026-09-01", intro_dates: Array(3).fill("2026-09-03T15:00:00Z") }),
+    row("Behind", { monthly_target: 8, billing_anchor_date: "2026-09-01", intro_dates: ["2026-09-03T15:00:00Z"] }),
+    row("NoSchedule"),
+  ];
+  assert.deepEqual(names(sortWeekly(rows, { col: "introsBilling", dir: "desc" }, NOW)), ["Behind", "Nearly", "NoSchedule"]);
+  assert.deepEqual(names(sortWeekly(rows, { col: "introsBilling", dir: "asc" }, NOW)), ["Nearly", "Behind", "NoSchedule"]);
 });

@@ -2,17 +2,20 @@
 
 import { useMemo, useState } from "react";
 
+import { Badge, Panel, Stat, Stats } from "@/components/ds";
 import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
 } from "@/lib/tools/client-health/clientForm";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
-import { deriveRows, funnelRates, summarize } from "@/lib/tools/client-health/summarize";
+import { asOfForWeek, deriveRows, funnelRates, summarize } from "@/lib/tools/client-health/summarize";
 import type { DashboardClient } from "@/lib/tools/client-health/types";
 import {
-  biweeklyRows, sortBiWeekly, fmtDateUTC,
+  biweeklyRows, sortBiWeekly,
   type BwSortCol, type BiWeeklyRow,
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
+
+import { CarryBadge, fmtMDY, isBehind } from "./billing-cells";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
@@ -29,33 +32,27 @@ import { setFilters, useClientHealthView } from "./view-state";
  * "Left This Cycle" column is loud — a client billing in two days who is four
  * introductions short is the whole point of the screen.
  *
- * All arithmetic comes from the tool's own BiWeeklyTable via views.ts, so this
- * screen and the live app cannot disagree.
+ * Every figure is the billing snapshot at NOW (views.ts biweeklyRows, from
+ * billing.ts): Introductions = delivered / required this cycle, carry
+ * included; Left This Cycle = what is still owed ("Done" at 0); "—" when the
+ * client has no target or no schedule. Port document §6.8.
  *
- * `now` is the SERVER's clock, sent with the data — not read during render and
- * not the week's Monday. Every value on this screen is a number of days until
- * a date, so measuring them from Monday would overstate every one of them by
- * however far into the week you happen to be reading.
+ * `now` is the SERVER's clock, sent with the data — never read during render.
  *
- * The week and the filters are shared with Weekly (view-state.ts). In the tool
- * the header's week arrows and one filtered list feed every view, so stepping
+ * The week and the filters are shared with Weekly (view-state.ts): stepping
  * back a week narrows the "At Risk" / "Done" subset here exactly as it does
  * there — the billing arithmetic itself is always measured from today.
  */
 
-const PLAN_CLASS: Record<string, string> = {
-  minimum: "plan-min",
-  production: "plan-prod",
-  partner: "plan-partner",
-};
+const PLAN_TONE = { minimum: "outline", production: "brand", partner: "violet" } as const;
 
 const COLUMNS: { col: BwSortCol; label: string; title: string }[] = [
   { col: "name", label: "Client", title: "Sort by client name" },
   { col: "tz", label: "Time Zone", title: "Sort by time zone" },
   { col: "billing", label: "Billing Date", title: "Sort by next billing date" },
   { col: "days", label: "Days Until Billing", title: "Sort by days until billing" },
-  { col: "intros", label: "Introductions", title: "Introductions since the client's last billing day" },
-  { col: "leftCycle", label: "Left This Cycle", title: "Introductions left in the current billing cycle" },
+  { col: "intros", label: "Introductions", title: "Delivered this billing cycle vs required, carry included" },
+  { col: "leftCycle", label: "Left This Cycle", title: "Introductions still owed this billing cycle" },
 ];
 
 function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
@@ -69,38 +66,26 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const openAdd = () => setModal(blankForm(todayLocalISO()));
   const openEdit = (c: DashboardClient) => setModal(formForClient(c));
 
-  // Filtered with the Weekly view's own predicates, so "At Risk" means the
-  // same thing on both screens — and for the same week.
-  // The server's rows when it rendered this screen and the week is current —
-  // `derive()` reads the local clock, so deriving again would break hydration.
-  // Once the reader changes week there is no server render to match. See
-  // weekly.ts.
-  const rowsAll = useMemo(
-    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
-    [data.rows, data.clients, key, isCurrent],
-  );
+  /*
+   * The Weekly rows for the selected week — they drive the filters and the 24
+   * cards, so "At Risk" means the same thing on both screens and for the same
+   * week. The server's rows on the current week, derived here otherwise.
+   */
+  const rowsAll = useMemo(() => {
+    if (isCurrent && data.rows) return data.rows;
+    const monday = new Date(`${key}T00:00:00Z`);
+    return deriveRows(data.clients, key, asOfForWeek(monday, isCurrent, now), monday);
+  }, [data.rows, data.clients, key, isCurrent, now]);
 
-  const filtered = useMemo(
-    () => applyFilters(rowsAll, filters, now),
-    [rowsAll, filters, now],
-  );
+  const filtered = useMemo(() => applyFilters(rowsAll, filters, now), [rowsAll, filters, now]);
 
   const rows = useMemo(
     () => sortBiWeekly(biweeklyRows(filtered.map((r) => r.client), now), sort),
     [filtered, now, sort],
   );
-  /*
-   * The 24 cards use the WEEKLY rows and summary — the same numbers Weekly
-   * shows, from the same server-derived data when on the current week — not
-   * this view's own row shape. Otherwise "At Risk" could differ between tabs.
-   */
-  const weeklyRows = useMemo(
-    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
-    [isCurrent, data.rows, data.clients, key],
-  );
   const summary = useMemo(
-    () => (isCurrent && data.summary ? data.summary : summarize(weeklyRows, key)),
-    [isCurrent, data.summary, weeklyRows, key],
+    () => (isCurrent && data.summary ? data.summary : summarize(rowsAll, key)),
+    [isCurrent, data.summary, rowsAll, key],
   );
   const lifetimeRates = funnelRates(summary.lifetime);
   const weekRates = funnelRates(summary.week);
@@ -110,43 +95,42 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
     setSort((cur) => (cur?.col !== col ? { col, dir: "desc" } : cur.dir === "desc" ? { col, dir: "asc" } : null));
 
   const dueSoon = rows.filter((r) => r.days !== null && r.days <= 3).length;
-  const short = rows.filter((r) => r.leftCycle > 0).length;
+  const short = rows.filter((r) => (r.leftCycle ?? 0) > 0).length;
   const unset = rows.filter((r) => r.billing === null).length;
 
   return (
-    <div className="wrap wrap-wide">
+    <div className="ds-page">
       {data.source === "seed" ? (
-        <div className="anno">
+        <p className="ds-note">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
           {data.error ? ` — ${data.error}` : ""}.
-        </div>
+        </p>
       ) : null}
 
       <ClientHealthToolbar week={week} onAdd={openAdd} sync={data.sync} now={now} />
       <SummaryCards s={summary} lifetime={lifetimeRates} week={weekRates} isCurrent={isCurrent} weekKey={key} />
 
-      <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-        <Card label="Clients" value={rows.length} sub="in this cycle view" />
-        <Card label="Billing in ≤3 days" value={dueSoon} sub="invoice imminent" tone={dueSoon > 0 ? "n-risk" : undefined} />
-        <Card label="Short of Cycle Target" value={short} sub="introductions still owed" tone={short > 0 ? "n-risk" : "n-green"} />
-        <Card label="No Billing Date" value={unset} sub="anchor not set" tone={unset > 0 ? "n-risk" : undefined} />
-      </div>
+      <Stats>
+        <Stat label="Clients" value={rows.length} sub="in this cycle view" />
+        <Stat label="Billing in ≤3 days" value={dueSoon} sub="invoice imminent" tone={dueSoon > 0 ? "red" : undefined} />
+        <Stat label="Short of Cycle Target" value={short} sub="introductions still owed" tone={short > 0 ? "red" : "green"} />
+        <Stat label="No Billing Date" value={unset} sub="anchor not set" tone={unset > 0 ? "red" : undefined} />
+      </Stats>
 
-      <div className="tbl-wrap">
-        <div className="tbl-head">
-          <div>
-            <div className="tbl-title">Billing Cycles</div>
-            <div className="tbl-sub">
-              Introductions since each client&rsquo;s last billing day, against a target scaled to their interval
-              {isCurrent ? "" : ` · status filters as of week of ${weekLabel(key)}`}
-              {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
-            </div>
-          </div>
-          <FilterBar value={filters} onChange={setFilters} now={now} />
-        </div>
-
-        <div className="tbl-scroll">
-          <table style={{ minWidth: 900 }}>
+      <Panel
+        title="Billing Cycles"
+        description={
+          <>
+            Introductions this billing cycle against what is due, carry included
+            {isCurrent ? "" : ` · status filters as of week of ${weekLabel(key)}`}
+            {rows.length !== visibleTotal(rowsAll) ? ` · showing ${rows.length}` : ""}
+          </>
+        }
+        actions={<FilterBar value={filters} onChange={setFilters} now={now} />}
+        flush
+      >
+        <div className="ds-table-scroll">
+          <table className="ds-table" style={{ minWidth: 900 }}>
             <thead>
               <tr>
                 {COLUMNS.map((c) => {
@@ -171,7 +155,7 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                  <td colSpan={COLUMNS.length} className="ds-none" style={{ padding: "34px 16px", textAlign: "center" }}>
                     No clients match {filters.search.trim() ? `“${filters.search.trim()}”` : "this filter"}.
                   </td>
                 </tr>
@@ -181,7 +165,7 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             </tbody>
           </table>
         </div>
-      </div>
+      </Panel>
 
       {modal ? (
         <ClientModal
@@ -198,90 +182,64 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
 }
 
 function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
-  const { client: c, billing, days, intros, target, leftCycle, tzShort } = row;
+  const { client: c, billing, days, intros, required, leftCycle, snap, tzShort } = row;
 
-  // Matches the tool's three-way colouring: met, at least half, below half.
-  const introTone =
-    intros >= target ? "var(--green)"
-    : intros >= Math.ceil(target / 2) ? "var(--yellow)"
-    : "var(--red)";
+  // The tool's three-way colouring: met, at least half, below half.
+  const tone =
+    required === null ? undefined
+    : leftCycle === 0 ? "tone-green"
+    : (snap?.cycle.carryIn ?? 0) > 0 ? "tone-red"
+    : intros >= Math.ceil(required / 2) ? "tone-amber"
+    : "tone-red";
 
   return (
-    <tr>
+    <tr className={isBehind(snap) ? "has-carry" : undefined}>
       <td>
-        <div className="cname">{c.name}</div>
-        <span className="plan-inline">
-          <span className={`plan ${PLAN_CLASS[c.plan] ?? "plan-min"}`}>
+        <span className="ds-primary">{c.name}</span>
+        <span className="ds-sub">
+          <Badge tone={PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
             {c.plan.charAt(0).toUpperCase() + c.plan.slice(1)}
-          </span>
+          </Badge>
         </span>
       </td>
 
-      <td>{tzShort ? <span className="tg">{tzShort}</span> : <SetLink onClick={onEdit}>Set</SetLink>}</td>
+      <td>{tzShort ? <Badge tone="outline">{tzShort}</Badge> : <button type="button" className="ds-link" onClick={onEdit}>Set</button>}</td>
 
-      <td className="tnum">
-        {billing ? fmtDateUTC(billing) : <SetLink onClick={onEdit}>Set billing date</SetLink>}
+      <td className="num">
+        {billing ? fmtMDY(billing) : <button type="button" className="ds-link" onClick={onEdit}>Set billing date</button>}
       </td>
 
       <td>
         {days === null ? (
-          <span className="api-none">—</span>
+          <span className="ds-none">—</span>
         ) : days <= 3 ? (
-          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
-            {days} day{days === 1 ? "" : "s"}
-          </span>
+          <Badge tone="red">{days} day{days === 1 ? "" : "s"}</Badge>
         ) : (
-          <span className="tnum mut">{days} days</span>
+          <span className="num">{days} days</span>
         )}
       </td>
 
       <td>
-        <span className="tnum" style={{ fontWeight: 700, color: introTone }}>
-          {intros}/{target}
-        </span>
+        {required === null ? (
+          <span className="ds-none" title={billing ? "No monthly target set" : "No billing schedule"}>—</span>
+        ) : (
+          <span className="ds-ib">
+            <b className={tone}>{intros} / {required}</b>
+            {snap ? <CarryBadge cycle={snap.cycle} /> : null}
+          </span>
+        )}
       </td>
 
       <td>
-        {leftCycle === 0 ? (
-          <span className="badge s-done"><span className="dot" />Done</span>
+        {leftCycle === null ? (
+          <span className="ds-none">—</span>
+        ) : leftCycle === 0 ? (
+          <Badge tone="green" dot>Done</Badge>
         ) : (
-          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
-            {leftCycle} left
-          </span>
+          <Badge tone="red">{leftCycle} left</Badge>
         )}
       </td>
     </tr>
-  );
-}
-
-/*
- * The "Set" affordance on an empty cell.
- *
- * A date this screen cannot derive is not a gap to report — it is a gap to
- * fill, and the person reading the row is the person who can fill it. So the
- * cell offers the edit modal rather than an em dash.
- */
-function SetLink({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        border: 0, background: "none", padding: 0, font: "inherit", fontSize: 12.5,
-        color: "var(--blue)", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Card({ label, value, sub, tone }: { label: string; value: number; sub: string; tone?: string }) {
-  return (
-    <div className="card">
-      <div className="card-l">{label}</div>
-      <div className={`card-n tnum${tone ? ` ${tone}` : ""}`}>{value.toLocaleString("en-US")}</div>
-      <div className="card-s">{sub}</div>
-    </div>
   );
 }
 

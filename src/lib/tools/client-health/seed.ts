@@ -28,6 +28,9 @@ export function generateSeed(): DashboardClient[] {
     DashboardClient,
     'hidden'
     | 'client_paused'
+    | 'intro_dates'
+    | 'toggle_paused_campaigns'
+    | 'markets'
     | 'portal_active'
     | 'portalActive'
     | 'billing_anchor_date'
@@ -181,6 +184,9 @@ export function generateSeed(): DashboardClient[] {
     ...c,
     hidden: false,
     client_paused: false,
+    intro_dates: [],
+    toggle_paused_campaigns: [],
+    markets: null,
     portal_active: false,
     portalActive: false,
     billing_anchor_date: null,

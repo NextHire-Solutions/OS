@@ -134,7 +134,6 @@ function EditBody({
   const [aliases, setAliases] = useState(client.aliases.join("\n"));
   const [status, setStatus] = useState<ClientStatus>(client.status);
   const [plan, setPlan] = useState(client.plan ?? "production");
-  const [weeklyTarget, setWeeklyTarget] = useState(String(client.weeklyTarget ?? 3));
   const [monthlyTarget, setMonthlyTarget] = useState(
     client.monthlyTarget === null ? "" : String(client.monthlyTarget),
   );
@@ -222,7 +221,6 @@ function EditBody({
       if (JSON.stringify(nextAliases) !== JSON.stringify(client.aliases)) body.aliases = nextAliases;
       if (status !== client.status) body.status = status;
       if (plan !== (client.plan ?? "production")) body.plan = plan;
-      if (Number(weeklyTarget) !== (client.weeklyTarget ?? 3)) body.weeklyTarget = Number(weeklyTarget);
       /*
        * Blank is left ALONE rather than sent as 0. A monthly target of zero is
        * a real promise of nothing; an empty box is someone who did not fill it
@@ -319,11 +317,6 @@ function EditBody({
             <select className="inp" value={plan} onChange={(e) => setPlan(e.target.value)}>
               {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
-          </label>
-          <label style={FIELD}>
-            <span style={LABEL}>Weekly target <span className="mut">· Client Health</span></span>
-            <input className="inp tnum" type="number" min={0} value={weeklyTarget}
-              onChange={(e) => setWeeklyTarget(e.target.value)} />
           </label>
           <label style={FIELD}>
             <span style={LABEL}>Monthly target <span className="mut">· Client Health</span></span>

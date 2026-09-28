@@ -2,7 +2,7 @@ import "server-only";
 
 import { loadDashboardClients } from "./loadDashboard";
 import { getMondayOf, weekKey } from "./derive";
-import { deriveRows, summarize, type WeeklyRow, type WeeklySummary } from "./summarize";
+import { asOfForWeek, deriveRows, summarize, type WeeklyRow, type WeeklySummary } from "./summarize";
 import type { NamedCampaign } from "./clientForm";
 import type { DashboardClient } from "./types";
 import { syncHealth, type SyncHealth } from "./sync/health";
@@ -126,15 +126,20 @@ async function loadWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData> {
       syncHealth().catch(() => null),
     ]);
 
-  const monday = getMondayOf(new Date());
+  // ONE clock for the rows, the summary and `data.now`: the screen re-derives
+  // against `data.now` after an edit, and the billing snapshot is taken as of
+  // it, so the two must be the same instant.
+  const now = new Date();
+  const monday = getMondayOf(now);
   monday.setDate(monday.getDate() + weekOffset * 7);
   const key = weekKey(monday);
-  const rows = deriveRows(clients, key);
+  const mondayUtc = new Date(`${key}T00:00:00Z`);
+  const rows = deriveRows(clients, key, asOfForWeek(mondayUtc, weekOffset === 0, now), mondayUtc);
 
   return {
     clients,
     weekKey: key,
-    now: new Date().toISOString(),
+    now: now.toISOString(),
     instantlyCampaigns: named(allInstantlyCampaigns),
     bisonCampaigns: named(allBisonCampaigns),
     rows,

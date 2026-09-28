@@ -1,9 +1,10 @@
 "use client";
 
-import { addDays, formatWeek, getMondayOf, weekKey } from "@/lib/tools/client-health/derive";
+import { formatWeek, getMondayOf } from "@/lib/tools/client-health/derive";
 import type { SyncHealth } from "@/lib/tools/client-health/sync/health";
 import { humanizeAgo } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
+import { shiftWeekKey } from "@/lib/tools/client-health/weeks";
 
 import { SyncButton } from "./sync-button";
 import { setWeekOffset, useClientHealthView } from "./view-state";
@@ -31,13 +32,13 @@ export interface SelectedWeek {
  */
 export function useSelectedWeek(data: ClientHealthWeeklyData): SelectedWeek {
   const { weekOffset } = useClientHealthView();
-  const key =
-    weekOffset === 0 ? data.weekKey : weekKey(addDays(`${data.weekKey}T00:00:00`, weekOffset * 7));
+  const key = shiftWeekKey(data.weekKey, weekOffset);
   return { key, isCurrent: weekOffset === 0, offset: weekOffset };
 }
 
 export function weekLabel(key: string): string {
-  return formatWeek(getMondayOf(`${key}T00:00:00`));
+  // The bare key reads as UTC midnight — see weeks.ts for why not "T00:00:00".
+  return formatWeek(getMondayOf(key));
 }
 
 export function ClientHealthToolbar({

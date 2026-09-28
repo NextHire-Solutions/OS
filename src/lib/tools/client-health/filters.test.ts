@@ -18,6 +18,7 @@ import {
   type FilterState,
 } from "./filters.ts";
 import type { WeeklyRow } from "./summarize.ts";
+import { billingSnapshot } from "./billing.ts";
 
 const BASE: FilterState = { search: "", filter: "all", plan: "all" };
 
@@ -26,8 +27,9 @@ function row(
   name: string,
   o: Partial<{
     hidden: boolean; client_paused: boolean; plan: string;
-    status: "risk" | "ok" | "done"; metTarget: boolean;
-    campaigns: string[]; leftThisWeek: number; campaignsAvgPct: number;
+    /** The billing snapshot's status (R20–R23). */
+    status: "risk" | "ok" | "done" | "pending";
+    campaigns: string[]; campaignsAvgPct: number;
   }> = {},
 ): WeeklyRow {
   return {
@@ -40,11 +42,10 @@ function row(
       bisonCampaigns: [],
     },
     derived: {
-      status: o.status ?? "ok",
-      metTarget: o.metTarget ?? false,
-      leftThisWeek: o.leftThisWeek ?? 0,
       campaignsAvgPct: o.campaignsAvgPct ?? 0,
     },
+    snap: { status: o.status ?? "ok", cycle: {}, period: {} },
+    due: null,
   } as unknown as WeeklyRow;
 }
 
@@ -70,14 +71,15 @@ test("each excluded group has its own tab, and shows only itself there", () => {
   assert.deepEqual(names(applyFilters(rows, { ...BASE, filter: "client-paused" })), ["Paused"]);
 });
 
-test("status pills select on derived status, not on the badge text", () => {
+test("each status pill selects exactly its own status from the billing snapshot (§6.5)", () => {
   const rows = [
     row("R", { status: "risk" }),
     row("O", { status: "ok" }),
-    row("D", { status: "ok", metTarget: true }),
+    row("D", { status: "done" }),
   ];
   assert.deepEqual(names(applyFilters(rows, { ...BASE, filter: "risk" })), ["R"]);
-  assert.deepEqual(names(applyFilters(rows, { ...BASE, filter: "ok" })), ["O", "D"]);
+  // Done is its own status now, not a kind of On Track (as in the standalone app).
+  assert.deepEqual(names(applyFilters(rows, { ...BASE, filter: "ok" })), ["O"]);
   assert.deepEqual(names(applyFilters(rows, { ...BASE, filter: "done" })), ["D"]);
 });
 
@@ -149,17 +151,18 @@ function client(
   }> = {},
 ): WeeklyRow {
   const base = row(name);
-  return {
-    ...base,
-    client: {
-      ...base.client,
-      time_zone: o.time_zone ?? null,
-      start_date: o.start_date ?? null,
-      billing_anchor_date: o.billing_anchor_date ?? null,
-      billing_interval: o.billing_interval ?? "biweekly",
-      billing_interval_days: o.billing_interval_days ?? null,
-    },
-  } as unknown as WeeklyRow;
+  const c = {
+    ...base.client,
+    time_zone: o.time_zone ?? null,
+    start_date: o.start_date ?? null,
+    billing_anchor_date: o.billing_anchor_date ?? null,
+    billing_interval: o.billing_interval ?? "biweekly",
+    billing_interval_days: o.billing_interval_days ?? null,
+    monthly_target: 0,
+    intro_dates: [] as string[],
+  };
+  // The real billing engine decides the next billing date (the cycle's end).
+  return { ...base, client: c, snap: billingSnapshot(c as never, NOW) } as unknown as WeeklyRow;
 }
 
 const NOW = new Date("2026-09-11T12:00:00Z");

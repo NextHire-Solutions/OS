@@ -744,6 +744,19 @@ export interface BillingClient {
 }
 
 /**
+ * Every valid assigned_at for one client, oldest first — `clients.intro_dates`.
+ * The Weekly, Bi-Weekly and Success views compute billing cycles, carry-forward
+ * and the 28-day period from this list; without it they freeze on the day the
+ * OS sync takes over from the standalone worker.
+ */
+export function introDates(clientIntros: Pick<CorofyIntro, 'assigned_at'>[]): string[] {
+  return clientIntros
+    .map((r) => r.assigned_at)
+    .filter((a) => Number.isFinite(new Date(a).getTime()))
+    .sort();
+}
+
+/**
  * The per-client Introduction metrics that live on the clients table (not
  * weekly_metrics):
  *
@@ -897,6 +910,18 @@ export async function runCorofy(ctx: RunContext): Promise<SyncResult['corofy']> 
           cfWriteErrors++;
           if (cfWriteErrors <= 3) {
             console.warn(`[corofy] client-field update failed for ${c.name}: ${error.message}`);
+          }
+        }
+        // Raw intro dates for the billing-cycle math (billing.ts). Its own
+        // write, so a failure here cannot block the counters above.
+        const { error: datesErr } = await sb
+          .from('clients')
+          .update({ intro_dates: introDates(clientIntros) })
+          .eq('id', c.id);
+        if (datesErr) {
+          cfWriteErrors++;
+          if (cfWriteErrors <= 3) {
+            console.warn(`[corofy] intro_dates update failed for ${c.name}: ${datesErr.message}`);
           }
         }
       }

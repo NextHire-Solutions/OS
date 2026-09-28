@@ -38,7 +38,6 @@ export interface ClientFormState {
   name: string;
   plan: Plan;
   startDate: string;
-  weeklyTarget: number;
   monthlyTarget: number;
   billingAnchorDate: string;
   billingInterval: BillingInterval;
@@ -72,7 +71,6 @@ export function blankForm(today: string): ClientFormState {
     name: "",
     plan: "production",
     startDate: today,
-    weeklyTarget: PLAN_DEFAULT_TARGET.production,
     monthlyTarget: 0,
     billingAnchorDate: "",
     billingInterval: "biweekly",
@@ -97,7 +95,6 @@ export function formForClient(c: DashboardClient): ClientFormState {
     name: c.name,
     plan: c.plan,
     startDate: c.start_date ?? "",
-    weeklyTarget: c.weekly_target,
     monthlyTarget: c.monthly_target ?? 0,
     billingAnchorDate: c.billing_anchor_date ?? "",
     billingInterval: c.billing_interval ?? "biweekly",
@@ -107,14 +104,12 @@ export function formForClient(c: DashboardClient): ClientFormState {
 }
 
 /**
- * Changing the plan, keeping a hand-typed target.
- *
- * The target moves to the new plan's default only if it is currently SOME
- * plan's default — which is the tool's test for "the user has not touched it".
+ * Changing the plan. The plan no longer carries a target with it: the weekly
+ * target is gone (port document §6.9, D8) and the monthly target is set on
+ * its own.
  */
 export function withPlan(form: ClientFormState, plan: Plan): ClientFormState {
-  const untouched = Object.values(PLAN_DEFAULT_TARGET).includes(form.weeklyTarget);
-  return { ...form, plan, weeklyTarget: untouched ? PLAN_DEFAULT_TARGET[plan] : form.weeklyTarget };
+  return { ...form, plan };
 }
 
 /**
@@ -133,7 +128,11 @@ export function parseIntervalDays(form: ClientFormState): number | null {
 export interface ClientPayload {
   name: string;
   plan: Plan;
-  weekly_target: number;
+  /**
+   * Sent on CREATE only, as the plan's default. The column is NOT NULL and
+   * other apps still read it, but nothing here edits it any more (§6.9).
+   */
+  weekly_target?: number;
   monthly_target: number;
   start_date: string | null;
   instantly_campaign_ids: string[];
@@ -160,7 +159,7 @@ export function toPayload(
   return {
     name,
     plan: form.plan,
-    weekly_target: form.weeklyTarget,
+    ...(form.editingId === null ? { weekly_target: PLAN_DEFAULT_TARGET[form.plan] } : {}),
     monthly_target: form.monthlyTarget,
     start_date: form.startDate || null,
     instantly_campaign_ids: autoMatchCampaignIds(name, instantly),
@@ -220,10 +219,15 @@ export function deleteConfirmText(c: DashboardClient): string {
 export function optimisticClient(id: string, payload: ClientPayload): DashboardClient {
   return {
     ...payload,
+    // Only an edit omits it, and an edit never builds an optimistic row.
+    weekly_target: payload.weekly_target ?? PLAN_DEFAULT_TARGET[payload.plan],
     id,
     campaign_size: 0,
     hidden: false,
     client_paused: false,
+    intro_dates: [],
+    toggle_paused_campaigns: [],
+    markets: null,
     portal_active: false,
     emails_today: 0,
     emails_today_date: null,

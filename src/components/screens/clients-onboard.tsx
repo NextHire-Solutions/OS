@@ -10,6 +10,7 @@ import {
   type BillingInterval, type Plan,
 } from "@/lib/clients/onboard-plan";
 import { ModalDialog } from "@/components/ui/modal-dialog";
+import { PLAN_DEFAULT_TARGET } from "@/lib/tools/client-health/types";
 
 /*
  * Onboard a client — the form, and the plan it produces.
@@ -62,7 +63,6 @@ export function OnboardClient() {
 function OnboardForm({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [plan, setPlan] = useState<Plan>(DEFAULTS.plan);
-  const [weeklyTarget, setWeeklyTarget] = useState(String(DEFAULTS.weeklyTarget));
   const [aliases, setAliases] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [billingInterval, setBillingInterval] = useState<BillingInterval>(DEFAULTS.billingInterval);
@@ -132,7 +132,6 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
    */
   const canOnboard =
     name.trim().length > 0 &&
-    Number(weeklyTarget) > 0 &&
     (!macroOn || (fullName.trim().length > 0 && role.trim().length > 0)) &&
     (!stripeSub.trim() || SUBSCRIPTION_ID.test(stripeSub.trim()));
 
@@ -159,7 +158,10 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
           // Every leg, always — including the portal.
           name,
           plan,
-          weeklyTarget: Number(weeklyTarget),
+          // The weekly target is gone from Client Health's screens (billing
+          // cycles replaced it); the column is NOT NULL and other apps read
+          // it, so a new client gets its plan's default — as the tool does.
+          weeklyTarget: PLAN_DEFAULT_TARGET[plan],
           aliases: aliases.split("\n").map((a) => a.trim()).filter(Boolean),
           startDate: startDate || undefined,
           billingInterval,
@@ -245,11 +247,6 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
             <select className="inp" value={plan} onChange={(e) => setPlan(e.target.value as Plan)}>
               {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
-          </label>
-          <label style={FIELD}>
-            <span style={LABEL}>Weekly target *</span>
-            <input className="inp tnum" type="number" min={0} value={weeklyTarget}
-              onChange={(e) => setWeeklyTarget(e.target.value)} />
           </label>
           <label style={FIELD}>
             <span style={LABEL}>Start date</span>

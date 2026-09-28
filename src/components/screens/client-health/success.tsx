@@ -6,7 +6,7 @@ import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
 } from "@/lib/tools/client-health/clientForm";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
-import { deriveRows, funnelRates, summarize } from "@/lib/tools/client-health/summarize";
+import { asOfForWeek, deriveRows, funnelRates, summarize } from "@/lib/tools/client-health/summarize";
 import type { DashboardClient } from "@/lib/tools/client-health/types";
 import {
   successRows, sortSuccess, scoreTone, humanizeAgo, fmtDateShort,
@@ -82,13 +82,16 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
   const openAdd = () => setModal(blankForm(todayLocalISO()));
   const openEdit = (c: DashboardClient) => setModal(formForClient(c));
 
-  // The selected week's rows, derived rather than sent — see weekly.ts.
-  // The server's rows when it rendered this screen and the week is current —
-  // `derive()` reads the local clock, so deriving again would break hydration.
-  const rowsAll = useMemo(
-    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
-    [data.rows, data.clients, key, isCurrent],
-  );
+  /*
+   * The selected week's Weekly rows — they drive the filters and the 24 cards,
+   * so "At Risk" means the same on every tab. The server's rows on the current
+   * week; otherwise derived here with the billing snapshot as of that week.
+   */
+  const rowsAll = useMemo(() => {
+    if (isCurrent && data.rows) return data.rows;
+    const monday = new Date(`${key}T00:00:00Z`);
+    return deriveRows(data.clients, key, asOfForWeek(monday, isCurrent, now), monday);
+  }, [data.rows, data.clients, key, isCurrent, now]);
 
   const filtered = useMemo(
     () => applyFilters(rowsAll, filters, now),
@@ -99,18 +102,9 @@ function SuccessView({ data }: { data: ClientHealthWeeklyData }) {
     () => sortSuccess(successRows(filtered.map((r) => r.client), now), sort),
     [filtered, now, sort],
   );
-  /*
-   * The 24 cards use the WEEKLY rows and summary — the same numbers Weekly
-   * shows, from the same server-derived data when on the current week — not
-   * this view's own row shape. Otherwise "At Risk" could differ between tabs.
-   */
-  const weeklyRows = useMemo(
-    () => (isCurrent && data.rows ? data.rows : deriveRows(data.clients, key)),
-    [isCurrent, data.rows, data.clients, key],
-  );
   const summary = useMemo(
-    () => (isCurrent && data.summary ? data.summary : summarize(weeklyRows, key)),
-    [isCurrent, data.summary, weeklyRows, key],
+    () => (isCurrent && data.summary ? data.summary : summarize(rowsAll, key)),
+    [isCurrent, data.summary, rowsAll, key],
   );
   const lifetimeRates = funnelRates(summary.lifetime);
   const weekRates = funnelRates(summary.week);

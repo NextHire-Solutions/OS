@@ -47,8 +47,12 @@ function row(
     metricsByWeek: Record<string, WeeklyMetric>;
     campaigns: { emails_sent_total: number; reply_count: number }[];
     bisonCampaigns: { emails_sent_total: number; reply_count: number }[];
+    /** The billing snapshot's status (R20–R23). */
     status: "risk" | "ok" | "done" | "pending";
-    metTarget: boolean;
+    /** The snapshot's 28-day period (R15–R18). */
+    period: { delivered: number; target: number };
+    /** The cycle billing inside the viewed week (R25–R29). */
+    due: { due: number; delivered: number };
     intros: number;
     emails: number;
   }> = {},
@@ -69,11 +73,13 @@ function row(
       bisonCampaigns: o.bisonCampaigns ?? [],
     },
     derived: {
-      status: o.status ?? "ok",
-      metTarget: o.metTarget ?? false,
       intros: o.intros ?? 0,
       emails: o.emails ?? 0,
     },
+    snap: o.status || o.period
+      ? { status: o.status ?? "ok", period: { delivered: 0, target: 0, ...o.period }, cycle: {} }
+      : null,
+    due: o.due ? { ...o.due, carryIn: 0, billingDate: new Date() } : null,
   } as unknown as WeeklyRow;
 }
 
@@ -82,16 +88,16 @@ function row(
 test("hidden clients are counted nowhere; paused ones only on their own card", () => {
   const s = summarize(
     [
-      row("Live", { weekly_target: 3, intros: 2 }),
-      row("Churned", { hidden: true, weekly_target: 99, intros: 99 }),
-      row("Paused", { client_paused: true, weekly_target: 99, intros: 99 }),
+      row("Live", { due: { due: 4, delivered: 2 }, intros: 2 }),
+      row("Churned", { hidden: true, due: { due: 99, delivered: 99 }, intros: 99 }),
+      row("Paused", { client_paused: true, due: { due: 99, delivered: 99 }, intros: 99 }),
     ],
     WEEK,
   );
 
   assert.equal(s.total, 1, "only the live client is on the roster");
   assert.equal(s.clientPaused, 1);
-  assert.equal(s.target, 3, "a churned client's target must not inflate the target");
+  assert.equal(s.dueThisWeek, 4, "a churned or paused client's intros must not inflate what is due");
   assert.equal(s.intros, 2);
 });
 
@@ -220,20 +226,20 @@ test("a client with no row for the visible week contributes nothing to it", () =
 
 // -- monthly -----------------------------------------------------------------
 
-test("monthly totals sum per client, and completion needs a target", () => {
+test("monthly totals are each client's current 28-day block (R15–R18)", () => {
   const s = summarize(
     [
-      row("A", { monthly_target: 12, intros_this_month: 9 }),
-      row("B", { monthly_target: 8, intros_this_month: 3 }),
-      // No target: contributes its introductions but no denominator.
-      row("C", { monthly_target: 0, intros_this_month: 4 }),
+      row("A", { period: { delivered: 9, target: 12 } }),
+      row("B", { period: { delivered: 3, target: 8 } }),
+      // No target: outside the monthly totals entirely, as in the standalone app.
+      row("C", { period: { delivered: 4, target: 0 } }),
     ],
     WEEK,
   );
 
-  assert.equal(s.monthlyIntros, 16);
+  assert.equal(s.monthlyIntros, 12);
   assert.equal(s.monthlyTarget, 20);
-  assert.equal(s.monthlyCompletionPct, 80);
+  assert.equal(s.monthlyCompletionPct, 60);
 });
 
 test("no monthly target anywhere gives 0%, not a division by zero", () => {
@@ -268,15 +274,29 @@ test("avgConv is null when nobody has sent anything", () => {
   assert.equal(summarize([row("Silent")], WEEK).avgConv, null);
 });
 
-test("completion is a whole percentage of the weekly target", () => {
-  const s = summarize([row("A", { weekly_target: 3, intros: 2 })], WEEK);
-  assert.equal(s.completionPct, 67);
+test("Due This Week: only clients billing this week, and one surplus cannot hide another's shortfall (R25–R29)", () => {
+  const s = summarize(
+    [
+      row("Over", { due: { due: 4, delivered: 6 } }),
+      row("Short", { due: { due: 4, delivered: 1 } }),
+      row("NotBilling"),
+    ],
+    WEEK,
+  );
+  assert.equal(s.billingThisWeek, 2);
+  assert.equal(s.dueThisWeek, 8);
+  assert.equal(s.deliveredThisWeek, 5, "min(6,4) + min(1,4)");
+  assert.equal(s.dueCompletionPct, 63);
+});
+
+test("nothing due this week reads as unknown, not 0%", () => {
+  assert.equal(summarize([row("A")], WEEK).dueCompletionPct, null);
 });
 
 test("summarising nothing yields zeroes and nulls, not NaN", () => {
   const s = summarize([] as WeeklyRow[], WEEK);
   assert.equal(s.total, 0);
-  assert.equal(s.completionPct, 0);
+  assert.equal(s.dueCompletionPct, null);
   assert.equal(s.avgConv, null);
   assert.equal(s.intToIntroPct, null);
   assert.deepEqual(s.lifetime, { emails: 0, replies: 0, interested: 0, converted: 0 });
@@ -290,12 +310,13 @@ test("convertedTotal and interestedTotal mirror the lifetime funnel", () => {
   assert.equal(s.intToIntroPct?.toFixed(0), "70");
 });
 
-test("statuses are counted from the derived rows", () => {
+test("statuses are counted from the billing snapshot (R20–R23)", () => {
   const s = summarize(
     [
       row("r", { status: "risk" }),
       row("o", { status: "ok" }),
-      row("d", { status: "done", metTarget: true }),
+      row("d", { status: "done" }),
+      row("p", { status: "pending" }),
     ],
     WEEK,
   );
@@ -321,7 +342,12 @@ test("a real DashboardClient shape flows through untouched", () => {
     metricsByWeek: {},
   };
   const s = summarize(
-    [{ client: c as DashboardClient, derived: { status: "ok", metTarget: false, intros: 4, emails: 900 } } as WeeklyRow],
+    [{
+      client: c as DashboardClient,
+      derived: { intros: 4, emails: 900 },
+      snap: { status: "ok", period: { delivered: 11, target: 24 }, cycle: {} },
+      due: null,
+    } as unknown as WeeklyRow],
     WEEK,
   );
   assert.equal(s.total, 1);

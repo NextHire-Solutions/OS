@@ -1,4 +1,4 @@
-import { lastBillingDate, nextBillingDate, todayInET } from "./derive.ts";
+import { todayInET } from "./derive.ts";
 import type { WeeklyRow } from "./summarize.ts";
 
 /*
@@ -22,7 +22,7 @@ import type { WeeklyRow } from "./summarize.ts";
 export type SortCol =
   | "tz" | "monthly" | "lastIntro" | "lastBilling" | "billing" | "billingDays"
   | "today" | "emails"
-  | "intros" | "conv" | "leftWeek" | "progress" | "interested"
+  | "intros" | "conv" | "introsBilling" | "progress" | "interested"
   | "converted" | "convRate" | "campaigns";
 
 export interface Sort {
@@ -98,7 +98,9 @@ export function sortWeekly(rows: WeeklyRow[], sort: Sort | null, now: Date): Wee
   const today = todayInET(now);
 
   switch (sort.col) {
-    case "leftWeek": return num((r) => r.derived.leftThisWeek);
+    // Most intros still owed this cycle first; no schedule / no target sinks.
+    case "introsBilling":
+      return sinking((r) => (r.snap && r.snap.cycle.target > 0 ? r.snap.cycle.remaining : null));
     case "emails": return num((r) => r.derived.emails);
     case "intros": return num((r) => r.derived.intros);
     case "progress": return num((r) => r.derived.campaignsAvgPct);
@@ -110,9 +112,10 @@ export function sortWeekly(rows: WeeklyRow[], sort: Sort | null, now: Date): Wee
     case "convRate": return sinking(convRateFor);
 
     // A client with no monthly target has no monthly progress to compare.
+    // Intros in the current 28-day period; no monthly target sinks.
     case "monthly":
       return sinking((r) =>
-        r.client.monthly_target === 0 ? null : r.client.intros_this_month,
+        !r.client.monthly_target ? null : r.snap?.period.delivered ?? 0,
       );
 
     /*
@@ -130,29 +133,15 @@ export function sortWeekly(rows: WeeklyRow[], sort: Sort | null, now: Date): Wee
      * a new client has not "billed longest ago", it has not billed at all.
      */
     case "lastBilling":
-      return sinking((r) => {
-        const d = lastBillingDate(
-          r.client.billing_anchor_date ?? r.client.start_date,
-          r.client.billing_interval,
-          now,
-          r.client.billing_interval_days,
-        );
-        return d ? d.getTime() : null;
-      });
+      // The snapshot's cycle start: the billing date that opened this cycle.
+      return sinking((r) => (r.snap ? r.snap.cycle.start.getTime() : null));
 
     // Days until billing sorts the same set as the date, so it shares its
     // score — otherwise the two columns could disagree about the same rows.
     case "billingDays":
     case "billing":
-      return sinking((r) => {
-        const d = nextBillingDate(
-          r.client.billing_anchor_date ?? r.client.start_date,
-          r.client.billing_interval,
-          now,
-          r.client.billing_interval_days,
-        );
-        return d ? d.getTime() : null;
-      });
+      // The snapshot's cycle end: the next billing date (§6.3).
+      return sinking((r) => (r.snap ? r.snap.cycle.end.getTime() : null));
 
     // Text, so it cannot go through the numeric paths. Empty still sinks.
     case "tz":

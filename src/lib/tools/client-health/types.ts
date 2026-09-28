@@ -91,6 +91,28 @@ export interface Client {
    * is the copy Client Health matches on.
    */
   campaign_aliases?: string[];
+  // Migration 0020 (shaurs): assigned_at of every Corofy Introduction for this
+  // client, rewritten by the sync each tick. Drives the billing-cycle maths in
+  // billing.ts (intros due / delivered / carried forward, 28-day period).
+  intro_dates: string[];
+  // Campaigns the Play/Pause toggle paused — Play resumes exactly these.
+  // Shared with the standalone app, so the two UIs can never disagree.
+  toggle_paused_campaigns: ToggledCampaign[];
+}
+
+export interface ToggledCampaign {
+  platform: 'instantly' | 'bison';
+  id: string;          // Instantly uuid, or Bison uuid (our key)
+  int_id?: number | null; // Bison's integer id — its API only accepts this
+  name: string;
+  paused_at: string;
+}
+
+/** One market the client covers, from the OS's own client record (os_client_markets). */
+export interface ClientMarket {
+  market: string;
+  mls: string | null;
+  area: string | null;
 }
 
 export interface WeeklyMetric {
@@ -115,6 +137,9 @@ export interface DashboardClient extends Client {
   // Derived runtime field (not a DB column): true when the client appears
   // in Corofy's /api/clients/portals response with portal_enabled=true.
   portalActive: boolean;
+  // Markets from the OS client record. Null when they could not be read —
+  // distinct from [] (none entered yet).
+  markets: ClientMarket[] | null;
 }
 
 export const HISTORICAL_WEEKS = 26;

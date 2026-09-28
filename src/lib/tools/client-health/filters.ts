@@ -42,9 +42,9 @@ export type BillingWindow = "all" | "7" | "14" | "30";
  */
 export const FILTER_TABS: { id: Filter; label: string; cls?: string; title: string }[] = [
   { id: "all", label: "All", title: "Every active client" },
-  { id: "risk", label: "At Risk", cls: "f-risk", title: "Below half their weekly target" },
-  { id: "ok", label: "On Track", cls: "f-ok", title: "Between half target and full" },
-  { id: "done", label: "Done", cls: "f-ok", title: "Clients who reached their weekly intro target" },
+  { id: "risk", label: "At Risk", cls: "f-risk", title: "Behind the pace for their 28-day intro target" },
+  { id: "ok", label: "On Track", cls: "f-ok", title: "On pace for their 28-day intro target" },
+  { id: "done", label: "Done", cls: "f-ok", title: "Clients who reached their 28-day intro target" },
   { id: "active", label: "Active", title: "Clients with at least one running campaign" },
   { id: "paused", label: "Campaign Paused", title: "Clients whose campaigns are paused or finished (no running)" },
   { id: "inactive", label: "Inactive", title: "Clients with no campaign launched yet" },
@@ -102,14 +102,15 @@ export function applyFilters(rows: WeeklyRow[], o: FilterState, now: Date = new 
     return !c.hidden && !c.client_paused;
   });
 
-  list = list.filter(({ client: c, derived: d }) => {
+  list = list.filter(({ client: c, snap }) => {
     const all = [...c.campaigns, ...c.bisonCampaigns];
     const hasRunning = all.some((x) => x.status === "running");
     const hasLaunched = all.some((x) => x.status === "paused" || x.status === "finished");
     switch (o.filter) {
-      case "risk": return d.status === "risk";
-      case "ok": return d.status === "ok";
-      case "done": return d.metTarget;
+      // R20–R23: the billing snapshot's status (28-day pace), not a weekly target.
+      case "risk": return snap?.status === "risk";
+      case "ok": return snap?.status === "ok";
+      case "done": return snap?.status === "done";
       case "active": return hasRunning;
       // Launched but not running now — matches the "Campaign Paused" badge.
       case "paused": return !hasRunning && hasLaunched;
@@ -133,13 +134,9 @@ export function applyFilters(rows: WeeklyRow[], o: FilterState, now: Date = new 
    */
   if (o.billingWindow && o.billingWindow !== "all") {
     const days = parseInt(o.billingWindow, 10);
-    list = list.filter(({ client: c }) => {
-      const next = nextBillingDate(
-        c.billing_anchor_date ?? c.start_date,
-        c.billing_interval,
-        now,
-        c.billing_interval_days,
-      );
+    list = list.filter(({ snap }) => {
+      // The snapshot's cycle end IS the next billing date (§6.3).
+      const next = snap?.cycle.end ?? null;
       if (!next) return false;
       const du = daysUntil(next, now);
       return du >= 0 && du <= days;

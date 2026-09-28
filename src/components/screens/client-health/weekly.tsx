@@ -2,29 +2,31 @@
 
 import { useMemo, useState } from "react";
 
+import { Badge, Panel } from "@/components/ds";
 import {
   activeCampaigns, campaignProgress, campaignsLabel, clientFunnel,
 } from "@/lib/tools/client-health/campaigns";
 import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
 } from "@/lib/tools/client-health/clientForm";
-import {
-  daysUntil, lastBillingDate, nextBillingDate, todayInET,
-} from "@/lib/tools/client-health/derive";
+import { daysUntil, todayInET } from "@/lib/tools/client-health/derive";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
 import {
-  deriveRows, funnelRates, summarize,
-  type FunnelTotals, type WeeklyRow,
+  asOfForWeek, deriveRows, funnelRates, summarize, type WeeklyRow,
 } from "@/lib/tools/client-health/summarize";
 import { sortWeekly, type Sort, type SortCol } from "@/lib/tools/client-health/sorting";
-import { TZ_SHORT_BY_VALUE, type DashboardClient } from "@/lib/tools/client-health/types";
-import { fmtDateUTC } from "@/lib/tools/client-health/views";
+import {
+  TZ_SHORT_BY_VALUE, type ClientMarket, type DashboardClient,
+} from "@/lib/tools/client-health/types";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
+import { IntrosBillingCell, MonthlyCell, asDate, fmtMDY, isBehind } from "./billing-cells";
+import { CampaignToggleDialog } from "./campaign-toggle-dialog";
 import { CampaignsPopup } from "./campaigns-popup";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
+import { patchClient, refreshClientHealth } from "./load";
 import { ToastHost } from "./toast";
 import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
 import { SummaryCards } from "./summary-cards";
@@ -33,50 +35,46 @@ import { setFilters, useClientHealthView } from "./view-state";
 /*
  * Client Health — Weekly.
  *
- * The design file's markup: its cards, its table, its class names. The numbers
- * come from the tool's own derive(), summarize() and campaign helpers, so this
- * screen and the live app cannot disagree.
+ * The numbers come from the tool's own derive(), summarize(), billing engine
+ * and campaign helpers, so this screen and the live app cannot disagree. Every
+ * control does what the live tool's does — the filters, the columns, the
+ * campaigns popup, the client modal, Play/Pause.
  *
- * Every control does what the live tool's does — the filters, the nineteen
- * columns, the campaigns popup, the client modal, the row actions. A pill
- * labelled "At Risk" that selects a slightly different set than the tool's is
- * worse than no pill at all, because the reader would trust it.
+ * BILLING CYCLES (port document §6). There is no weekly target any more. Each
+ * row carries one billing snapshot (`row.snap`, billing.ts) taken as of NOW
+ * for the current week and as of Sunday 12:00 UTC for a past one; the Monthly,
+ * Intros / Billing, Last / Next Billing, Days Until and Status cells, the
+ * cards, the filters and the sorts all read that one snapshot.
  *
  * Changing week is a re-derive in the browser, not a round trip: each client
- * already carries `metricsByWeek` for every week it has. The base week comes
- * from the server's own answer rather than a fresh `new Date()`, so the first
- * client render is identical to the server's and hydration never mismatches
- * across a Monday boundary.
+ * already carries `metricsByWeek`. The first render uses the server's own rows
+ * and clock (`data.now`), so the client's first render is identical and
+ * hydration never mismatches.
  *
  * The selected week and the filters live in view-state.ts, shared with the
- * Bi-Weekly and Client Success screens — the tool has one header and one
- * filtered list for all three views, so a week or a filter chosen here is in
- * force there too.
+ * Bi-Weekly and Client Success screens.
  *
  * A cell with no data shows an em dash. Never a zero — on a health dashboard
  * "0 emails sent" is a claim, and a different one from "we have no figure".
  */
 
 const STATUS = {
-  risk: { label: "At Risk", cls: "s-risk" },
-  ok: { label: "On Track", cls: "s-ok" },
-  done: { label: "Done", cls: "s-done" },
-  pending: { label: "Pending", cls: "s-pending" },
+  risk: { label: "At Risk", tone: "red" },
+  ok: { label: "On Track", tone: "amber" },
+  done: { label: "Done", tone: "green" },
+  pending: { label: "Pending", tone: "muted" },
 } as const;
 
-const PLAN_CLASS: Record<string, string> = {
-  minimum: "plan-min",
-  production: "plan-prod",
-  partner: "plan-partner",
-};
+const PLAN_TONE = { minimum: "outline", production: "brand", partner: "violet" } as const;
 
 const n = (v: number) => v.toLocaleString("en-US");
 
 /** A percentage, or an em dash when its denominator was zero. */
 const pct = (v: number | null, digits = 1) => (v === null ? "—" : `${v.toFixed(digits)}%`);
 
-/** "1,204 / 96,331" — the numerator and denominator behind a rate. */
-const ratio = (a: number, b: number) => `${n(a)} / ${n(b)}`;
+const describeMarket = (m: ClientMarket) => [m.market, m.mls, m.area].filter(Boolean).join(" · ");
+
+type ToggleTarget = { id: string; name: string; action: "pause" | "resume" };
 
 function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const { filters } = useClientHealthView();
@@ -87,40 +85,32 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [modal, setModal] = useState<ClientFormState | null>(null);
   const [popup, setPopup] = useState<string | null>(null);
+  const [toggle, setToggle] = useState<ToggleTarget | null>(null);
 
   /*
-   * The server's rows win on the first render, because `derive()` reads the
-   * local clock — deriving again here would compute "2d ago" against the
-   * server's "3d ago" and break hydration. Once the reader changes week there
-   * is no server render to match, so deriving is safe.
-   *
-   * `data.rows` is also dropped the moment anything is edited (see load.ts),
-   * which is what keeps the headline numbers honest after a pause.
-   */
-  const rows = useMemo(
-    () => (offset === 0 && data.rows ? data.rows : deriveRows(data.clients, key)),
-    [data.rows, data.clients, key, offset],
-  );
-  const summary = useMemo(
-    () => (offset === 0 && data.summary ? data.summary : summarize(rows, key)),
-    [data.summary, rows, key, offset],
-  );
-
-  /*
-   * The SERVER's clock — not the week's Monday, and not the browser's.
-   *
-   * "Daily Emails Sent" only counts when the stored date is today, the billing
-   * sort needs the next date from now, and the billing-window filter needs
-   * both. Passing the Monday made every daily figure compare as zero, so that
-   * column quietly did not sort at all.
+   * The SERVER's clock — not the browser's. Daily Emails only counts when the
+   * stored date is today, the billing snapshot is taken as of it, and the
+   * billing sort and window filter need it. One clock for the whole screen.
    */
   const now = useMemo(() => new Date(data.now), [data.now]);
   const todayET = useMemo(() => todayInET(now), [now]);
 
   /*
-   * Filter first, then sort. The tool's own order, and the cheaper one — the
-   * sort only ever runs over what survived the filter.
+   * The server's rows win on the first render. `data.rows` is dropped the
+   * moment anything is edited (see load.ts); after that, and on any other
+   * week, the rows are derived here against the same clock.
    */
+  const rows = useMemo(() => {
+    if (offset === 0 && data.rows) return data.rows;
+    const monday = new Date(`${key}T00:00:00Z`);
+    return deriveRows(data.clients, key, asOfForWeek(monday, isCurrent, now), monday);
+  }, [data.rows, data.clients, key, offset, isCurrent, now]);
+  const summary = useMemo(
+    () => (offset === 0 && data.summary ? data.summary : summarize(rows, key)),
+    [data.summary, rows, key, offset],
+  );
+
+  /* Filter first, then sort — the tool's own order. */
   const visible = useMemo(
     () => sortWeekly(applyFilters(rows, filters, now), sort, now),
     [rows, filters, sort, now],
@@ -139,53 +129,43 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const openEdit = (c: DashboardClient) => setModal(formForClient(c));
 
   const popupClient = popup ? data.clients.find((c) => c.id === popup) ?? null : null;
+  const shown = visible.length !== visibleTotal(rows) ? `Showing ${visible.length} of ${visibleTotal(rows)}` : `${visible.length} clients`;
 
   return (
-    <div className="wrap wrap-wide">
+    <div className="ds-page">
       {data.source === "seed" ? (
-        <div className="anno">
+        <p className="ds-note">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
           {data.error ? ` — ${data.error}` : ""}.
-        </div>
+        </p>
       ) : null}
 
       <ClientHealthToolbar week={selected} onAdd={openAdd} sync={data.sync} now={now} />
 
-      {/*
-        The tool renders these 24 cards above every view; the workspace used to
-        draw them on Weekly only. Shared component, same numbers on all three.
-      */}
       <SummaryCards s={s} lifetime={lifetime} week={week} isCurrent={isCurrent} weekKey={key} />
 
-      <div className="tbl-wrap">
-        <div className="tbl-head">
-          <div>
-            <div className="tbl-title">Client Health</div>
-            <div className="tbl-sub">
-              {isCurrent
-                ? "Live data from Instantly · Bison · MasterInbox"
-                : `Week of ${weekLabel(key)}`}
-              {visible.length !== visibleTotal(rows) ? ` · showing ${visible.length}` : ""}
-            </div>
-          </div>
-          <FilterBar value={filters} onChange={setFilters} now={now} />
-        </div>
-
-        <div className="tbl-scroll">
-          <table style={{ minWidth: 2180 }}>
+      <Panel
+        title="Client Health"
+        description={`${isCurrent ? "Live data from Instantly · Bison · MasterInbox" : `Week of ${weekLabel(key)}`} · ${shown}`}
+        actions={<FilterBar value={filters} onChange={setFilters} now={now} />}
+        flush
+      >
+        <div className="ds-table-scroll">
+          <table className="ds-table" style={{ minWidth: 2300 }}>
             <thead>
               <tr>
                 <SortableTh col="campaigns" sort={sort} onClick={toggleSort} title="Sort by number of active campaigns">Client</SortableTh>
                 <SortableTh col="tz" sort={sort} onClick={toggleSort}>Time Zone</SortableTh>
-                <SortableTh col="monthly" sort={sort} onClick={toggleSort} title="Intros this monthly cycle, which starts on the billing anchor day">Monthly</SortableTh>
+                <SortableTh col="monthly" sort={sort} onClick={toggleSort} title="Intros in the current 28-day period vs the monthly target">Monthly</SortableTh>
                 <SortableTh col="lastIntro" sort={sort} onClick={toggleSort}>Last Intro</SortableTh>
                 <SortableTh col="lastBilling" sort={sort} onClick={toggleSort} title="Sort by the most recent billing date">Last Billing</SortableTh>
                 <SortableTh col="billing" sort={sort} onClick={toggleSort}>Next Billing</SortableTh>
                 <SortableTh col="billingDays" sort={sort} onClick={toggleSort}>Days Until Billing</SortableTh>
+                <SortableTh col="introsBilling" sort={sort} onClick={toggleSort} title="Delivered since the last billing date vs due by the next, carry included">Intros / Billing</SortableTh>
                 <SortableTh col="today" sort={sort} onClick={toggleSort} title="Emails sent today, Eastern">Daily Emails Sent</SortableTh>
+                <SortableTh col="emails" sort={sort} onClick={toggleSort} title="Emails sent in the selected week, Monday to Sunday">Weekly Emails Sent</SortableTh>
                 <SortableTh col="intros" sort={sort} onClick={toggleSort}>Intros This Week</SortableTh>
                 <SortableTh col="conv" sort={sort} onClick={toggleSort} title="Introductions per 1,000 emails">Conv. Rate</SortableTh>
-                <SortableTh col="leftWeek" sort={sort} onClick={toggleSort}>Left This Week</SortableTh>
                 <SortableTh col="progress" sort={sort} onClick={toggleSort}>Campaign Progress</SortableTh>
                 <th>Status</th>
                 <SortableTh col="interested" sort={sort} onClick={toggleSort} title="All-time Interested count">Interested</SortableTh>
@@ -193,7 +173,6 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
                 <SortableTh col="convRate" sort={sort} onClick={toggleSort} title="Interested → Introduction conversion rate">Int → Intro</SortableTh>
                 <th>Plan</th>
                 {/* §8 Client Health fields that were held but never shown. */}
-                <th title="Introductions promised per week">Weekly Target</th>
                 <th>Billing</th>
                 <th title="Other names this client's campaigns go by">Aliases</th>
                 <th>Portal</th>
@@ -203,14 +182,12 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={22} style={{ padding: "34px 16px", textAlign: "center", color: "var(--muted)" }}>
+                  <td colSpan={22} style={{ padding: "34px 16px", textAlign: "center" }} className="ds-none">
                     {rows.length === 0 ? (
                       <>
-                        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 6 }}>
-                          No clients yet
-                        </div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ds-ink)", marginBottom: 6 }}>No clients yet</div>
                         <div style={{ marginBottom: 14 }}>Add your first client to start tracking.</div>
-                        <a className="btn btn-pri" href="/roster">Add a client on the Clients page</a>
+                        <a className="ds-btn primary" href="/roster">Add a client on the Clients page</a>
                       </>
                     ) : (
                       <>No clients match {filters.search.trim() ? `“${filters.search.trim()}”` : "this filter"}.</>
@@ -229,13 +206,14 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
                     onPick={(id) => setPicked((p) => ({ ...p, [row.client.id]: id }))}
                     onEdit={() => openEdit(row.client)}
                     onCampaigns={() => setPopup(row.client.id)}
+                    onToggle={(action) => setToggle({ id: row.client.id, name: row.client.name, action })}
                   />
                 ))
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </Panel>
 
       {modal ? (
         <ClientModal
@@ -247,6 +225,19 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
       ) : null}
 
       {popupClient ? <CampaignsPopup client={popupClient} onClose={() => setPopup(null)} /> : null}
+
+      {toggle ? (
+        <CampaignToggleDialog
+          clientId={toggle.id}
+          clientName={toggle.name}
+          action={toggle.action}
+          onClose={() => setToggle(null)}
+          onApplied={(held) => {
+            patchClient(toggle.id, { toggle_paused_campaigns: held });
+            void refreshClientHealth().catch(() => undefined);
+          }}
+        />
+      ) : null}
 
       <ToastHost />
     </div>
@@ -279,7 +270,7 @@ function SortableTh({
 }
 
 function Row({
-  row, now, todayET, convAvg, picked, onPick, onEdit, onCampaigns,
+  row, now, todayET, convAvg, picked, onPick, onEdit, onCampaigns, onToggle,
 }: {
   row: WeeklyRow;
   now: Date;
@@ -289,97 +280,108 @@ function Row({
   onPick: (id: string) => void;
   onEdit: () => void;
   onCampaigns: () => void;
+  onToggle: (action: "pause" | "resume") => void;
 }) {
-  const { client: c, derived: d } = row;
+  const { client: c, derived: d, snap } = row;
 
   /*
-   * The billing dates.
-   *
-   * `now` comes from the parent, seeded from the server — NOT from
-   * `new Date()`. Reading the clock here would be the same hydration bug that
-   * has already shipped three times in this workspace.
+   * Billing dates from the snapshot: the cycle runs from the last billing date
+   * to the next. A billing date closes the cycle billed that day, so on a
+   * billing day Next Billing is today. `now` is the server's clock, never
+   * `new Date()` here — that is the hydration bug this workspace has shipped
+   * three times.
    */
-  const anchor = c.billing_anchor_date ?? c.start_date;
-  const lastBilling = lastBillingDate(anchor, c.billing_interval, now, c.billing_interval_days);
-  const billing = nextBillingDate(anchor, c.billing_interval, now, c.billing_interval_days);
+  const lastBilling = snap ? asDate(snap.cycle.start) : null;
+  const billing = snap ? asDate(snap.cycle.end) : null;
   const billingDays = billing ? daysUntil(billing, now) : null;
 
-  const status = STATUS[d.status];
+  const status = STATUS[snap?.status ?? "pending"];
   const active = activeCampaigns(c);
   const progress = campaignProgress(active, picked);
   const funnel = clientFunnel(c);
   const label = campaignsLabel(c);
 
-  /*
-   * Today's emails only count when the stored date IS today, in Eastern.
-   *
-   * Without the check the row shows yesterday's number between midnight and
-   * the next sync tick — a figure that is not wrong so much as answering a
-   * different question than the column asks.
-   */
+  /* Today's emails only count when the stored date IS today, in Eastern. */
   const todayEmails = c.emails_today_date === todayET ? c.emails_today : 0;
 
+  /*
+   * Play/Pause for every campaign of this client. ▶ when this toggle is
+   * holding campaigns paused (it resumes exactly those); ⏸ when something is
+   * running; ⏸ disabled when nothing is. Distinct from the client's status,
+   * which is the lifecycle on the Clients page.
+   */
+  const held = c.toggle_paused_campaigns?.length ?? 0;
+  const campToggle = held > 0 ? (
+    <button
+      type="button"
+      className="ds-camp-toggle is-paused"
+      title={`Campaigns paused from here (${held}). Click to resume them.`}
+      aria-label={`Resume ${held} campaign${held === 1 ? "" : "s"} for ${c.name}`}
+      onClick={(e) => { e.stopPropagation(); onToggle("resume"); }}
+    >▶</button>
+  ) : (
+    <button
+      type="button"
+      className="ds-camp-toggle"
+      disabled={active.length === 0}
+      title={active.length ? `Pause all ${active.length} running campaign${active.length === 1 ? "" : "s"}` : "No running campaigns to pause"}
+      aria-label={active.length ? `Pause ${active.length} running campaigns for ${c.name}` : `No running campaigns to pause for ${c.name}`}
+      onClick={(e) => { e.stopPropagation(); onToggle("pause"); }}
+    >⏸</button>
+  );
+
+  /* Markets covered, from the OS's own client record. null = could not be read. */
+  const markets = c.markets;
+
   return (
-    <tr style={c.hidden || c.client_paused ? { opacity: 0.62 } : undefined}>
-      <td>
-        <div className="cname" style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-          {c.name}
-          {/* The deep link into Corofy's portal for this client. Present only
-              when the sync has seen a portal — a link to nothing is worse
-              than no link. */}
-          {c.portal_url ? (
-            <a
-              href={c.portal_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Open this client’s portal in Corofy"
-              aria-label={`Open ${c.name}’s portal in Corofy`}
-              /*
-               * Padded to a real hit area. The glyph is 9x19, which measured as
-               * the smallest click target in the workspace — and this is the
-               * link that opens a CUSTOMER'S portal, so a near-miss opens
-               * nothing and reads as the link being broken. The negative margin
-               * keeps the row's spacing exactly as it was.
-               */
-              style={{
-                color: "var(--blue)", textDecoration: "none", fontSize: 12, fontWeight: 700,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                minWidth: 24, minHeight: 24, margin: "-4px -6px", borderRadius: 6,
-              }}
-            >
-              ↗
-            </a>
-          ) : null}
-          {c.hidden ? <Tag text="Churned" tone="red" /> : null}
-          {!c.hidden && c.client_paused ? <Tag text="Client Paused" tone="amber" /> : null}
-          {/* The booleans cannot say "onboarding" — without this an onboarding
-              client looked like any active client here. */}
-          {c.status === "onboarding" ? <Tag text="Onboarding" tone="blue" /> : null}
+    <tr className={isBehind(snap) ? "has-carry" : undefined} style={c.hidden || c.client_paused ? { opacity: 0.62 } : undefined}>
+      <td style={{ minWidth: 220 }}>
+        <div className="ds-client-name">
+          <span>{c.name}</span>
+          {/* ↗ and Play/Pause in one nowrap group, so they never split on a long name. */}
+          <span className="ds-client-icons">
+            {c.portal_url ? (
+              <a
+                className="ds-portal-link"
+                href={c.portal_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open this client’s portal in Corofy"
+                aria-label={`Open ${c.name}’s portal in Corofy`}
+              >↗</a>
+            ) : null}
+            {campToggle}
+          </span>
+          {c.hidden ? <Badge tone="red">Churned</Badge> : null}
+          {!c.hidden && c.client_paused ? <Badge tone="amber">Client Paused</Badge> : null}
+          {c.status === "onboarding" ? <Badge tone="brand">Onboarding</Badge> : null}
         </div>
 
-        {c.start_date ? <div className="csince">Since {formatDate(c.start_date)}</div> : null}
+        {/* Since … · N markets — one line. Markets are the OS's own record; null = could not be read. */}
+        {c.start_date || markets !== null ? (
+          <span className="ds-sub">
+            {c.start_date ? `Since ${formatDate(c.start_date)}` : null}
+            {c.start_date && markets !== null ? " · " : null}
+            {markets === null ? null : (
+              <span
+                className={`ds-markets${markets.length === 0 ? " empty" : ""}`}
+                title={markets.length ? markets.map(describeMarket).join("\n") : "No markets added yet — add them on the client’s record"}
+              >
+                {markets.length === 0 ? "No markets" : `${markets.length} market${markets.length === 1 ? "" : "s"}`}
+              </span>
+            )}
+          </span>
+        ) : null}
 
-        {/* The campaign line. Clickable only when there is something to open —
-            a button that opens an empty dialog is a broken button. */}
+        {/* The campaign line. Clickable only when there is something to open. */}
         {active.length > 0 ? (
-          <button
-            className="cmeta"
-            onClick={onCampaigns}
-            title="View this client’s campaigns"
-            aria-label={`View ${label} for ${c.name}`}
-            style={{ cursor: "pointer", font: "inherit" }}
-          >
-            {label} ›
+          <button type="button" className="ds-camps" onClick={onCampaigns} aria-label={`View ${label} for ${c.name}`}>
+            <span className="dot" />{label} ›
           </button>
         ) : (
           <span
-            className="cmeta"
-            style={{ borderStyle: "dashed", opacity: 0.8 }}
-            title={
-              label === "Campaign Paused"
-                ? "Every linked campaign is paused or finished"
-                : "No campaign has ever launched for this client"
-            }
+            className="ds-camps idle"
+            title={label === "Campaign Paused" ? "Every linked campaign is paused or finished" : "No campaign has ever launched for this client"}
           >
             {label}
           </span>
@@ -388,132 +390,63 @@ function Row({
 
       <td>
         {c.time_zone ? (
-          <span className="tg" title={c.time_zone}>
-            {TZ_SHORT_BY_VALUE[c.time_zone] ?? c.time_zone}
-          </span>
+          <Badge tone="outline" title={c.time_zone}>{TZ_SHORT_BY_VALUE[c.time_zone] ?? c.time_zone}</Badge>
         ) : (
-          <SetLink onClick={onEdit}>Set</SetLink>
+          <button type="button" className="ds-link" onClick={onEdit}>Set</button>
         )}
       </td>
 
-      {/*
-        Monthly progress against the client's own monthly target. An em dash
-        rather than "0/0" when no target is set: 0/0 reads as complete.
-        Thresholds are the tool's — met, at least half, below half.
-      */}
-      <td>
-        {c.monthly_target === 0 ? (
-          <span className="api-none" title="No monthly target set for this client">—</span>
-        ) : (
-          <span
-            className="tnum"
-            style={{
-              fontWeight: 700,
-              color:
-                c.intros_this_month >= c.monthly_target ? "var(--green)"
-                : c.intros_this_month >= Math.ceil(c.monthly_target / 2) ? "var(--yellow)"
-                : "var(--red)",
-            }}
-          >
-            {c.intros_this_month}/{c.monthly_target}
-          </span>
-        )}
-      </td>
+      <td><MonthlyCell snap={snap} /></td>
 
       <td>
         {d.daysSince === null ? (
-          <span style={{ fontSize: 13, color: "var(--muted)" }}>No data</span>
-        ) : d.daysSince <= 1 ? (
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--green)" }}>
-            {d.daysSince === 0 ? "Today" : "Yesterday"}
-          </span>
+          <span className="ds-none">No data</span>
         ) : d.daysSince <= 5 ? (
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--green)" }}>{d.daysSince}d ago</span>
-        ) : (
-          <span
-            className="tg"
-            style={{ background: "var(--yellow-bg)", borderColor: "transparent", color: "var(--yellow)" }}
-          >
-            {d.daysSince}d ago
+          <span className="tone-green" style={{ fontWeight: 650 }}>
+            {d.daysSince === 0 ? "Today" : d.daysSince === 1 ? "Yesterday" : `${d.daysSince}d ago`}
           </span>
+        ) : (
+          <Badge tone="amber">{d.daysSince}d ago</Badge>
         )}
       </td>
 
-      {/* The last billing day. Null until a client has billed once — a new
-          client has not "billed longest ago", it has not billed at all. */}
-      <td className="tnum mut">
-        {lastBilling ? fmtDateUTC(lastBilling) : <span className="api-none">—</span>}
+      <td className="num">{lastBilling ? fmtMDY(lastBilling) : <span className="ds-none">—</span>}</td>
+
+      <td className="num">
+        {billing ? fmtMDY(billing) : <button type="button" className="ds-link" onClick={onEdit}>Set billing date</button>}
       </td>
 
-      {/* The next billing date, using the tool's own nextBillingDate. An anchor
-          is the FIRST billing day, not the next one, so it rolls forward a
-          whole cycle — reading it as the next date would show a date in the
-          past for every long-standing client. */}
-      <td className="tnum mut">
-        {billing ? fmtDateUTC(billing) : <SetLink onClick={onEdit}>Set billing date</SetLink>}
-      </td>
-
-      {/* Days until billing. Three days or fewer is the number somebody acts
-          on, so it is the only one coloured. */}
+      {/* Three days or fewer is the number somebody acts on, so only it is coloured. */}
       <td>
         {billingDays === null ? (
-          <span className="api-none">—</span>
+          <span className="ds-none">—</span>
         ) : billingDays <= 3 ? (
-          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
-            {billingDays} day{billingDays === 1 ? "" : "s"}
-          </span>
+          <Badge tone="red">{billingDays} day{billingDays === 1 ? "" : "s"}</Badge>
         ) : (
-          <span className="tnum mut">{billingDays} days</span>
+          <span className="num">{billingDays} days</span>
         )}
       </td>
 
-      <td>
-        {todayEmails > 0
-          ? <span className="api-num tnum">{n(todayEmails)}</span>
-          : <span className="api-none">—</span>}
-      </td>
+      <td><IntrosBillingCell snap={snap} onSetBilling={onEdit} /></td>
 
-      <td>
-        <input
-          className={`mi tnum${d.status === "risk" ? " risk" : d.metTarget ? " ok" : ""}`}
-          value={d.intros}
-          readOnly
-          aria-label={`Introductions this week for ${c.name}`}
-        />
-      </td>
+      <td className="num">{todayEmails > 0 ? n(todayEmails) : <span className="ds-none">—</span>}</td>
 
-      <td>
+      <td className="num">{d.emails > 0 ? n(d.emails) : <span className="ds-none">—</span>}</td>
+
+      {/* A plain count: there is no weekly target to colour it against. */}
+      <td className="num">{n(d.intros)}</td>
+
+      <td className="num">
         {d.convPct === null ? (
-          <span className="api-none">—</span>
+          <span className="ds-none">—</span>
         ) : (
-          <span
-            className="tnum"
-            style={{
-              fontWeight: 700,
-              // The tool's own rule: above 3 is good; 1–3 is acceptable only
-              // if it also beats the dashboard average; everything else is not.
-              color:
-                d.convPct > 3 ? "var(--green)"
-                : d.convPct >= 1 && d.convPct >= convAvg ? "var(--yellow)"
-                : "var(--red)",
-            }}
+          <b
+            // The tool's rule: above 3 is good; 1–3 only if it also beats the
+            // dashboard average; everything else is not.
+            className={d.convPct > 3 ? "tone-green" : d.convPct >= 1 && d.convPct >= convAvg ? "tone-amber" : "tone-red"}
           >
             {d.convPct.toFixed(1)}%
-          </span>
-        )}
-      </td>
-
-      {/* A client with no weekly target has nothing left to do this week —
-          which is not the same as having finished. */}
-      <td>
-        {c.weekly_target === 0 ? (
-          <span className="api-none" title="No weekly target set for this client">—</span>
-        ) : d.metTarget ? (
-          <span className="tnum" style={{ color: "var(--muted)" }}>0</span>
-        ) : (
-          <span className="tg" style={{ background: "var(--red-bg)", borderColor: "transparent", color: "var(--red)" }}>
-            {d.leftThisWeek} left
-          </span>
+          </b>
         )}
       </td>
 
@@ -523,18 +456,18 @@ function Row({
         sum of leads — so a 40-lead campaign at 100% cannot flatter a
         4,000-lead one at 10%.
       */}
-      <td style={{ minWidth: 190 }}>
+      <td style={{ minWidth: 200 }}>
         {active.length === 0 ? (
-          <span className="api-none">—</span>
+          <span className="ds-none">—</span>
         ) : (
           <>
             {active.length > 1 ? (
               <select
-                className="inp"
+                className="ds-input"
                 value={picked ?? "__avg__"}
                 onChange={(e) => onPick(e.target.value)}
                 aria-label={`Campaign shown for ${c.name}`}
-                style={{ width: "100%", marginBottom: 6, padding: "5px 8px", fontSize: 12, cursor: "pointer" }}
+                style={{ width: "100%", height: 28, marginBottom: 6, fontSize: 12 }}
               >
                 <option value="__avg__">All active (avg)</option>
                 {active.map((camp) => (
@@ -543,160 +476,67 @@ function Row({
               </select>
             ) : null}
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5 }}>
-              <span className="tnum mut">{n(progress.completedLeads)} / {n(progress.totalLeads)}</span>
-              <span className="tnum" style={{ fontWeight: 700 }}>{Math.round(progress.pct)}%</span>
+              <span className="num ds-none" style={{ color: "var(--ds-muted)" }}>{n(progress.completedLeads)} / {n(progress.totalLeads)}</span>
+              <b className="num">{Math.round(progress.pct)}%</b>
             </div>
             <div className="track"><i style={{ width: `${Math.min(100, progress.pct)}%` }} /></div>
-            <div style={{ marginTop: 5, fontSize: 12, color: "var(--muted)" }}>
-              <span className="tnum">{n(progress.sent)}</span> sent · Running
-            </div>
+            <span className="ds-sub">{n(progress.sent)} sent · Running</span>
           </>
         )}
       </td>
 
-      <td>
-        <span className={`badge ${status.cls}`}>
-          <span className="dot" />
-          {status.label}
-        </span>
-      </td>
+      <td><Badge tone={status.tone} dot>{status.label}</Badge></td>
 
-      <td><input className="mi tnum" value={funnel.interested} readOnly aria-label={`Interested, all time, for ${c.name}`} /></td>
-      <td><input className="mi tnum" value={funnel.converted} readOnly aria-label={`Converted, all time, for ${c.name}`} /></td>
-
-      <td>
-        {funnel.ratePct === null ? (
-          <span className="api-none" title="Nobody has entered the funnel yet">—</span>
-        ) : (
-          <span className="api-num tnum">{pct(funnel.ratePct)}</span>
-        )}
+      <td className="num">{n(funnel.interested)}</td>
+      <td className="num">{n(funnel.converted)}</td>
+      <td className="num">
+        {funnel.ratePct === null
+          ? <span className="ds-none" title="Nobody has entered the funnel yet">—</span>
+          : pct(funnel.ratePct)}
       </td>
 
       <td>
-        <span className={`plan ${PLAN_CLASS[c.plan] ?? "plan-min"}`}>
+        <Badge tone={PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
           {c.plan.charAt(0).toUpperCase() + c.plan.slice(1)}
-        </span>
+        </Badge>
       </td>
 
-      {/* §8: weekly target, billing interval + anchor, aliases — held on every
-          row all along, shown nowhere in the table. */}
-      <td className="tnum">{c.weekly_target}</td>
-      <td style={{ whiteSpace: "nowrap" }}>
+      {/* §8: billing interval + anchor, and aliases — held on every row, shown nowhere before. */}
+      <td>
         {c.billing_interval === "custom" && c.billing_interval_days
           ? `every ${c.billing_interval_days}d`
           : (c.billing_interval ?? "—")}
-        <div className="cell-sub mut">
-          {c.billing_anchor_date ? `anchor ${formatDate(c.billing_anchor_date)}` : "no anchor set"}
-        </div>
+        <span className="ds-sub">{c.billing_anchor_date ? `anchor ${formatDate(c.billing_anchor_date)}` : "no anchor set"}</span>
       </td>
-      <td style={{ maxWidth: 220 }}>
+      <td className="wrap" style={{ maxWidth: 220, minWidth: 120 }}>
         {(c.campaign_aliases ?? []).length
           ? <span title={(c.campaign_aliases ?? []).join(", ")}>{(c.campaign_aliases ?? []).join(", ")}</span>
-          : <span className="api-none">—</span>}
+          : <span className="ds-none">—</span>}
       </td>
 
-      <td
-        className={c.portal_active ? "" : "mut"}
-        style={c.portal_active ? { color: "var(--green)", fontWeight: 700 } : undefined}
-        title={c.portal_active ? "Portal active in Corofy" : "Not in Corofy portals, or the portal is disabled"}
-      >
-        {c.portal_active ? "✓" : "—"}
+      <td title={c.portal_active ? "Portal active in Corofy" : "Not in Corofy portals, or the portal is disabled"}>
+        {c.portal_active ? <b className="tone-green">✓</b> : <span className="ds-none">—</span>}
       </td>
 
       <td>
-        <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-          <IconButton label={`Edit ${c.name}`} onClick={onEdit}>Edit</IconButton>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+          <button type="button" className="ds-btn sm" onClick={onEdit} aria-label={`Edit ${c.name}`}>Edit</button>
           {/*
-            §10 — status is changed once and reaches every tool. Pause, Churn,
-            Restore and Delete lived here and wrote to Client Health ONLY: the
-            portal, campaigns, billing and the other tools never heard, and a
-            client ended up "paused" in one tool and active in four (Discover
-            PHX, 28 Sep). The Clients page does each of these everywhere.
+            §10 — status is changed once and reaches every tool: pause, churn,
+            reactivate and delete live on the Clients page, which updates the
+            portal, campaigns and billing together.
           */}
           <a
-            className="btn"
+            className="ds-btn sm"
             href="/roster"
             aria-label={`Change ${c.name}'s status on the Clients page`}
             title="Pause, churn, reactivate or delete on the Clients page — it updates every tool, the portal, campaigns and billing together"
-            style={{ fontSize: 12, padding: "4px 9px", whiteSpace: "nowrap" }}
           >
             Status…
           </a>
         </div>
       </td>
     </tr>
-  );
-}
-
-/** A small text button in a row — the tool's emoji icons, said in words. */
-function IconButton({
-  label, danger, onClick, children,
-}: {
-  label: string;
-  danger?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      style={{
-        border: "1px solid var(--line)",
-        background: "var(--surface)",
-        borderRadius: 8,
-        padding: "4px 8px",
-        font: "inherit",
-        fontSize: 11.5,
-        fontWeight: 600,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-        color: danger ? "var(--red)" : "var(--muted)",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** The "Set" affordance on an empty cell — opens the edit modal. */
-function SetLink({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        border: 0,
-        background: "none",
-        padding: 0,
-        font: "inherit",
-        fontSize: 12.5,
-        color: "var(--blue)",
-        cursor: "pointer",
-        textDecoration: "underline",
-        textUnderlineOffset: 2,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Tag({ text, tone }: { text: string; tone: "red" | "amber" | "blue" }) {
-  return (
-    <span
-      style={{
-        padding: "2px 7px",
-        borderRadius: 7,
-        fontSize: 10.5,
-        fontWeight: 700,
-        letterSpacing: ".02em",
-        color: tone === "red" ? "var(--red)" : tone === "blue" ? "var(--blue-ink, var(--blue))" : "var(--yellow)",
-        background: tone === "red" ? "var(--red-bg)" : tone === "blue" ? "var(--blue-bg, #eaf2ff)" : "var(--yellow-bg)",
-      }}
-    >
-      {text}
-    </span>
   );
 }
 
