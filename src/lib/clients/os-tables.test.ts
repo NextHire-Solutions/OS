@@ -25,6 +25,10 @@ test("the allowlist contains exactly the OS tables", () => {
     // exceptions that say a client is deliberately absent from a tool (0014).
     // Both are the OS's own tables, read by nothing else.
     "os_client_status_history", "os_client_tool_exceptions",
+    // Added 2026-09-28: the markets a client covers (0017). Many rows per
+    // client, replacing the single market/mls/area columns 0015 put on
+    // os_clients — a client works several markets, not one.
+    "os_client_markets",
   ]);
 });
 

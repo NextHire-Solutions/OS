@@ -243,33 +243,57 @@ function ClientsView({ data, onChanged }: { data: ClientsOverview; onChanged: ()
  * forever is a panel people stop seeing.
  */
 function RecordCoverage({ rows }: { rows: ClientRow[] }) {
-  const FIELDS = [
-    ["Account manager", (r: ClientRow) => r.os.record.accountManager],
-    ["Salesperson", (r: ClientRow) => r.os.record.salesperson],
-    ["Sender", (r: ClientRow) => r.os.record.sender],
-    ["Market", (r: ClientRow) => r.os.record.market],
-    ["MLS", (r: ClientRow) => r.os.record.mls],
-    ["Area", (r: ClientRow) => r.os.record.area],
-  ] as const;
+  /*
+   * Market, MLS and Area count from `os.markets` (migration 0017), NOT from
+   * `os.record.market/mls/area`.
+   *
+   * Those three record columns are 0015's single-value fields. A client covers
+   * several markets, so they moved to their own table and are no longer
+   * written. Counting them here would report 0/50 forever while the Markets
+   * panel filled up — the counter meant to show progress would be the one
+   * thing guaranteed never to move.
+   *
+   * A client counts toward MLS if ANY of its markets has one, and likewise Area:
+   * the question is "do we know this client's MLS", not "is every row complete".
+   */
+  const hasText = (get: (r: ClientRow) => string | null) => (r: ClientRow) => Boolean((get(r) ?? "").trim());
+  const FIELDS: ReadonlyArray<readonly [string, (r: ClientRow) => boolean]> = [
+    ["Account manager", hasText((r) => r.os.record.accountManager)],
+    ["Salesperson", hasText((r) => r.os.record.salesperson)],
+    ["Sender", hasText((r) => r.os.record.sender)],
+    ["Market", (r) => (r.os.markets?.count ?? 0) > 0],
+    ["MLS", (r) => (r.os.markets?.withMls ?? 0) > 0],
+    ["Area", (r) => (r.os.markets?.withArea ?? 0) > 0],
+  ];
+  // If the markets table could not be read for anyone, those three counts are
+  // unknown rather than zero, and are labelled so instead of shown in red.
+  const marketsUnreadable = rows.length > 0 && rows.every((r) => r.os.markets === null);
+  const MARKET_FIELDS = new Set(["Market", "MLS", "Area"]);
 
   const total = rows.length;
-  const counts = FIELDS.map(([label, get]) => ({
+  const counts = FIELDS.map(([label, has]) => ({
     label,
-    n: rows.filter((r) => (get(r) ?? "").trim()).length,
+    n: rows.filter(has).length,
+    unknown: marketsUnreadable && MARKET_FIELDS.has(label),
   }));
   if (total === 0 || counts.every((c) => c.n === total)) return null;
 
   return (
     <div style={{ ...note, marginTop: 0, marginBottom: 14, maxWidth: "none" }}>
       <b>Client record</b> — the fields the architecture spec asks the master record to
-      hold. Recorded on the Edit dialog; held by the OS and by no other tool.
+      hold, held by the OS and by no other tool. People fields are set on the Edit
+      dialog; markets, MLS and areas in the Markets section when you open a client.
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 7 }}>
         {counts.map((c) => (
           <span key={c.label} className="tnum">
             {c.label}{" "}
-            <b style={{ color: c.n === 0 ? "var(--red)" : c.n === total ? "var(--green)" : "var(--yellow)" }}>
-              {c.n}/{total}
-            </b>
+            {c.unknown ? (
+              <b style={{ color: "var(--muted)" }} title="The markets table could not be read">—</b>
+            ) : (
+              <b style={{ color: c.n === 0 ? "var(--red)" : c.n === total ? "var(--green)" : "var(--yellow)" }}>
+                {c.n}/{total}
+              </b>
+            )}
           </span>
         ))}
       </div>

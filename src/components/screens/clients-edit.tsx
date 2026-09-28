@@ -53,9 +53,9 @@ export interface EditableClient {
     accountManager: string | null;
     salesperson: string | null;
     sender: string | null;
-    market: string | null;
-    mls: string | null;
-    area: string | null;
+    // Markets are not edited here (migration 0017) — see the Markets note.
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
   };
 }
 
@@ -166,9 +166,9 @@ function EditBody({
   const [accountManager, setAccountManager] = useState(client.record.accountManager ?? "");
   const [salesperson, setSalesperson] = useState(client.record.salesperson ?? "");
   const [sender, setSender] = useState(client.record.sender ?? "");
-  const [market, setMarket] = useState(client.record.market ?? "");
-  const [mls, setMls] = useState(client.record.mls ?? "");
-  const [area, setArea] = useState(client.record.area ?? "");
+  // Market, MLS and Area are not edited here — see the Markets note in the form.
+  const [stripeCustomer, setStripeCustomer] = useState(client.record.stripeCustomerId ?? "");
+  const [stripeSubscription, setStripeSubscription] = useState(client.record.stripeSubscriptionId ?? "");
   const setPerson = (i: number, patch: Partial<(typeof people)[number]>) =>
     setPeople((cur) => cur.map((p, n) => (n === i ? { ...p, ...patch } : p)));
 
@@ -244,9 +244,8 @@ function EditBody({
         ["accountManager", accountManager, client.record.accountManager],
         ["salesperson", salesperson, client.record.salesperson],
         ["sender", sender, client.record.sender],
-        ["market", market, client.record.market],
-        ["mls", mls, client.record.mls],
-        ["area", area, client.record.area],
+        ["stripeCustomerId", stripeCustomer, client.record.stripeCustomerId],
+        ["stripeSubscriptionId", stripeSubscription, client.record.stripeSubscriptionId],
       ] as const;
       for (const [key, next, was] of RECORD_FIELDS) {
         if (next.trim() !== (was ?? "")) body[key] = next.trim();
@@ -398,20 +397,60 @@ function EditBody({
               <input className="inp" value={sender} maxLength={120}
                 onChange={(e) => setSender(e.target.value)} />
             </label>
+          </div>
+
+          {/*
+            Market, MLS and Area are deliberately NOT here any more.
+
+            They were three single-value inputs, written to os_clients' 0015
+            columns — one market per client. A client covers several, so they
+            moved to their own table (migration 0017) and are managed in the
+            Markets section of the client's detail panel.
+
+            Leaving these inputs in place would have been worse than removing
+            them: two places to enter the same thing (the §15 rule), and the one
+            here writing to columns nothing reads, so a market typed here would
+            appear to vanish on save.
+          */}
+          <div style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 }}>
+            <b style={{ color: "var(--ink)", fontWeight: 600 }}>Markets, MLS &amp; Areas</b> — a
+            client can cover several, so these are added one at a time: open the client from
+            the roster and use its Markets section.
+          </div>
+        </div>
+
+        {/*
+          Stripe. The only place in the OS these can be set — before 28 Sep
+          nothing could, so every client added afterwards had billing that no
+          status change could reach.
+
+          Checked against Stripe on save (lib/clients/stripe-link.ts): the
+          billing leg pauses and resumes THIS subscription in live mode, so an
+          id one character off would move someone else's money.
+        */}
+        <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 13, display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 650 }}>Billing — Stripe</div>
+            <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.55 }}>
+              Pausing or churning this client pauses this subscription; making them active
+              again resumes it. Nothing is ever cancelled. Checked with Stripe when you save
+              &mdash; leave the customer blank and it is filled in from the subscription.
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
             <label style={FIELD}>
-              <span style={LABEL}>Market</span>
-              <input className="inp" value={market} maxLength={120} placeholder="Phoenix, AZ"
-                onChange={(e) => setMarket(e.target.value)} />
+              <span style={LABEL}>Subscription ID</span>
+              <input className="inp" value={stripeSubscription} maxLength={80}
+                placeholder="sub_…" spellCheck={false} autoComplete="off"
+                style={{ fontFamily: "var(--mono, ui-monospace, monospace)", minWidth: 0 }}
+                onChange={(e) => setStripeSubscription(e.target.value)} />
             </label>
             <label style={FIELD}>
-              <span style={LABEL}>MLS</span>
-              <input className="inp" value={mls} maxLength={120} placeholder="ARMLS"
-                onChange={(e) => setMls(e.target.value)} />
-            </label>
-            <label style={FIELD}>
-              <span style={LABEL}>Area</span>
-              <input className="inp" value={area} maxLength={120}
-                onChange={(e) => setArea(e.target.value)} />
+              <span style={LABEL}>Customer ID</span>
+              <input className="inp" value={stripeCustomer} maxLength={80}
+                placeholder="cus_… (optional)" spellCheck={false} autoComplete="off"
+                style={{ fontFamily: "var(--mono, ui-monospace, monospace)", minWidth: 0 }}
+                onChange={(e) => setStripeCustomer(e.target.value)} />
             </label>
           </div>
         </div>

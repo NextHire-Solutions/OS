@@ -10,6 +10,7 @@ import { keyOf } from "./roster";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 import { listOsClients, type OsClient } from "./os-clients";
+import { osTable } from "./os-db";
 import { latestStatusMoments, type StatusMoment } from "./status-history";
 import { type ClientStatus } from "./client-status";
 import { nextBillingDate } from "@/lib/tools/client-health/derive";
@@ -63,6 +64,19 @@ export interface ClientRow {
       stripeCustomerId: string | null;
       stripeSubscriptionId: string | null;
     };
+    /*
+     * The markets this client covers (migration 0017), summarised.
+     *
+     * `record.market/mls/area` above are the single-value columns from 0015,
+     * which could hold one market per client and are no longer written. Anything
+     * counting market coverage must read THIS, or it reports 0 forever while the
+     * Markets panel fills up.
+     *
+     * Null when os_client_markets could not be read — distinct from a summary of
+     * zeros, because "we could not look" and "none are recorded" must not render
+     * the same way on a coverage counter.
+     */
+    markets: { count: number; withMls: number; withArea: number } | null;
     /** Onboarding is read from the stored link, not by name-matching again. */
     inOnboarding: boolean;
     /*
@@ -130,17 +144,44 @@ const rec = (v: unknown) =>
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
+type MarketSummary = { count: number; withMls: number; withArea: number };
+
+/**
+ * Every client's market coverage, in one query.
+ *
+ * One read for the whole roster rather than one per row: the table holds a
+ * handful of rows per client, so this is small, and fifty round trips to render
+ * a counter would be the slowest thing on the page.
+ */
+async function marketSummaries(): Promise<Map<string, MarketSummary>> {
+  const { data, error } = await osTable("os_client_markets").select("client_id, mls, area");
+  if (error) throw new Error(error.message);
+  const out = new Map<string, MarketSummary>();
+  for (const r of (data ?? []) as unknown as { client_id: string; mls: string | null; area: string | null }[]) {
+    const s = out.get(r.client_id) ?? { count: 0, withMls: 0, withArea: 0 };
+    s.count += 1;
+    if (r.mls?.trim()) s.withMls += 1;
+    if (r.area?.trim()) s.withArea += 1;
+    out.set(r.client_id, s);
+  }
+  return out;
+}
+
 export async function getClientsOverview(): Promise<ClientsOverview> {
-  const [health, inbox, analytics, stored, portals, momentsResult] = await Promise.allSettled([
+  const [health, inbox, analytics, stored, portals, momentsResult, marketsResult] = await Promise.allSettled([
     readClientHealth(),
     readMasterInbox(),
     readAnalytics(),
     listOsClients(),
     readPortalTokens(),
     latestStatusMoments(),
+    marketSummaries(),
   ]);
   const portalByKey: Map<string, string> =
     portals.status === "fulfilled" ? portals.value : new Map();
+  // Null, not an empty map, when unreadable — see ClientRow.os.markets.
+  const marketsByClient: Map<string, MarketSummary> | null =
+    marketsResult.status === "fulfilled" ? marketsResult.value : null;
   // A missing date costs a line of subtext, never the page.
   const moments: Map<string, StatusMoment> =
     momentsResult.status === "fulfilled" ? momentsResult.value : new Map();
@@ -205,6 +246,11 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
           market: null, mls: null, area: null,
           stripeCustomerId: null, stripeSubscriptionId: null,
         },
+        // A client with no rows yet is a real zero, not an unknown — so it gets
+        // a zero summary. Only a failed READ yields null.
+        markets: marketsByClient === null
+          ? null
+          : (os?.id && marketsByClient.get(os.id)) || { count: 0, withMls: 0, withArea: 0 },
         inOnboarding: Boolean(os?.links.onboarding),
         contact:
           os?.contact ?? {

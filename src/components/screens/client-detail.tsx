@@ -2,6 +2,8 @@
 
 import type { ClientRow } from "@/lib/clients/overview";
 
+import { MarketsPanel } from "./markets-panel";
+
 /*
  * One client, every field the master record holds — §6 made visible.
  *
@@ -82,14 +84,40 @@ export function ClientDetail({ row, onClose }: { row: ClientRow; onClose: () => 
             <Row label="Plan" value={health.plan} owner="Client Health" />
             <Row label="Start date" value={date(health.startDate)} owner="Client Health" />
             <Row label="Status set on" value={date(os.statusSince?.at ?? null)} owner="Master record" />
-            <Row label="Market" value={os.record.market} owner="Master record" />
-            <Row label="MLS" value={os.record.mls} owner="Master record" />
-            <Row label="Area" value={os.record.area} owner="Master record" />
             <Row label="Timezone" value={health.timezone} owner="Client Health" />
             <Row label="Sender" value={os.record.sender} owner="Master record" />
             <Row label="Salesperson" value={os.record.salesperson} owner="Master record" />
             <Row label="Account Manager" value={os.record.accountManager} owner="Master record" />
             <Row label="Brokerage" value={os.contact.brokerage} owner="Master record" />
+          </Section>
+
+          {/*
+            * Markets are a LIST, not three fields.
+            *
+            * They sat in Client Information as three single values until
+            * migration 0017, which could describe one market per client — and a
+            * client covering Boston and Florida has to be describable. This
+            * section is editable in place because it is the one part of §6 the
+            * client asked to manage themselves.
+            */}
+          <Section
+            title="Markets, MLS & Areas"
+            note="§6 · a client may cover several — each can carry its own campaigns"
+          >
+            {/*
+              * `os.id` is nullable: a client can appear here from a tool while
+              * having no master-record row yet. Markets hang off that row, so
+              * there is nowhere to put them until it exists — say that, rather
+              * than render a form whose every save would 404.
+              */}
+            {os.id ? (
+              <MarketsPanel clientId={os.id} />
+            ) : (
+              <p className="cd-empty">
+                This client has no master record yet, so markets cannot be recorded.
+                Adopt it into the OS client list first.
+              </p>
+            )}
           </Section>
 
           <Section title="People" note="§6 · Master Inbox owns these — edit them in the People panel">
@@ -111,7 +139,19 @@ export function ClientDetail({ row, onClose }: { row: ClientRow; onClose: () => 
             <Row label="Campaigns" value={analytics.campaigns} owner="Analytics" />
             <Row label="Emails sent" value={analytics.sent?.toLocaleString() ?? null} owner="Analytics" />
             <Row label="Campaign aliases" value={(client.aliases ?? []).join(", ") || null} owner="Master record" />
-            <Row label="MLS / location" value={os.record.mls ?? os.record.area} owner="Master record" />
+            {/*
+              * Points at the Markets section rather than repeating one value.
+              *
+              * This row used to read `mls ?? area` off the master record, which
+              * silently showed ONE of a client's markets and hid the rest —
+              * exactly the wrong impression on the panel that explains which
+              * campaigns a client runs, since campaigns follow markets.
+              */}
+            <Row
+              label="MLS / location"
+              value="see Markets, MLS & Areas above"
+              owner="Master record"
+            />
             <Row label="Sender" value={os.record.sender} owner="Master record" />
           </Section>
 

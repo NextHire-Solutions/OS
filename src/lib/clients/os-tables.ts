@@ -29,6 +29,9 @@ export const OS_TABLES = [
   // Clients deliberately absent from a tool, and why —
   // see migrations/0014_client_tool_exceptions.sql.
   "os_client_tool_exceptions",
+  // The markets a client covers, many per client —
+  // see migrations/0017_client_markets.sql.
+  "os_client_markets",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

@@ -1568,3 +1568,56 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
   .cd-row { grid-template-columns: 1fr; gap: 2px; }
   .cd-owner { text-align: left; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Markets, MLS & Areas — the list inside the client detail panel.
+ *
+ * `.mk-inp` is `.inp` WITHOUT its 200px min-width. Three of those plus two
+ * buttons cannot fit the dialog's width, and the min-width wins over the grid,
+ * so the buttons get pushed past the panel edge. Scoped here rather than
+ * changed globally: the wide single fields elsewhere depend on that floor.
+ */
+.mk { display: flex; flex-direction: column; gap: 10px;
+      /* Section wraps its children in .cd-rows (a bordered box with
+         overflow:hidden), so without this the inputs sit flush on its edge. */
+      padding: 12px; }
+
+.mk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mk-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto;
+           gap: 10px; align-items: center;
+           border: 1px solid var(--line, #e3e8ee); border-radius: 8px; padding: 8px 10px; }
+.mk-item.mk-editing { border-color: var(--blue, #0165fe);
+                      box-shadow: 0 0 0 3px rgba(1, 101, 254, .1); }
+.mk-market { font-weight: 600; font-size: 13.5px; min-width: 0; overflow-wrap: anywhere; }
+.mk-sub { font-size: 12.5px; color: var(--muted, #98a2b3); min-width: 0; overflow-wrap: anywhere; }
+.mk-acts { display: flex; gap: 4px; justify-content: flex-end; }
+.mk-del:hover { color: var(--red, #d92d20); }
+
+/* A TEXT button. Not `.ib`: that class is a fixed 36x36 icon button, so the
+   word "Remove" overflowed its box, the grid sized the column to the boxes
+   rather than the words, and the spill was clipped by .cd-rows' overflow —
+   the button read "Remov" on screen. */
+.mk-btn { border: 0; background: none; border-radius: 8px; padding: 6px 9px;
+          font: inherit; font-size: 12.5px; font-weight: 550; color: var(--muted);
+          cursor: pointer; white-space: nowrap; }
+.mk-btn:hover:not(:disabled) { background: var(--inset); color: var(--ink); }
+.mk-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.mk-btn:disabled { opacity: .5; cursor: default; }
+
+.mk-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mk-inp { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+          padding: 8px 11px; font: inherit; font-size: 13px; color: var(--ink);
+          flex: 1 1 130px; min-width: 0; }
+.mk-inp::placeholder { color: var(--muted); }
+.mk-inp:focus { outline: 0; border-color: var(--blue);
+                box-shadow: 0 0 0 3px rgba(1, 101, 254, .12); }
+.mk-inp:disabled { opacity: .6; }
+
+.mk-err { margin: 0; font-size: 12.5px; color: var(--red, #d92d20); }
+
+/* The row collapses to two lines on a narrow panel rather than squeezing the
+ * action buttons, which is what makes Remove mis-tappable. */
+@media (max-width: 560px) {
+  .mk-item { grid-template-columns: minmax(0, 1fr) auto; }
+  .mk-sub { grid-column: 1 / -1; }
+}

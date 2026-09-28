@@ -9,6 +9,41 @@ import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { planInboxAliases, type InboxRow } from "./inbox-aliases";
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
+import { decideStripeLink, stripeIdErrors, type StripeLookup } from "./stripe-link";
+import { stripeKey } from "@/lib/tools/onboarding/stripe";
+
+/**
+ * Ask Stripe who owns a subscription. A read — this never changes anything.
+ *
+ * Distinguishes "Stripe says there is no such subscription" (404) from "Stripe
+ * could not be asked" (no key, network, 5xx), because decideStripeLink treats
+ * them differently and the person reading the error needs to know which.
+ */
+async function lookupSubscription(id: string): Promise<StripeLookup> {
+  let key: string;
+  try {
+    key = stripeKey();
+  } catch (e) {
+    return { unreachable: true, reason: e instanceof Error ? e.message : "no Stripe key" };
+  }
+  try {
+    const res = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${key}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status === 404) return { found: false };
+    if (!res.ok) return { unreachable: true, reason: `HTTP ${res.status}` };
+    const body = (await res.json().catch(() => null)) as { customer?: unknown } | null;
+    // `customer` is a string id unless the request expands it; handle both.
+    const c = body?.customer;
+    const customer = typeof c === "string" ? c : (c as { id?: string } | null)?.id;
+    if (!customer) return { unreachable: true, reason: "Stripe returned no customer" };
+    return { found: true, customer };
+  } catch (e) {
+    return { unreachable: true, reason: e instanceof Error ? e.message : "request failed" };
+  }
+}
 
 /*
  * Editing a client from the workspace.
@@ -97,9 +132,20 @@ export interface ClientEdit {
   accountManager?: string | null;
   salesperson?: string | null;
   sender?: string | null;
-  market?: string | null;
-  mls?: string | null;
-  area?: string | null;
+  /*
+   * NOT market / mls / area. Those were 0015's single-value columns; a client
+   * covers several markets, so they moved to os_client_markets (migration
+   * 0017) and are edited through /api/workspace/clients/markets. Accepting them
+   * here would keep a second, dead write path open — writing columns nothing
+   * reads any more.
+   */
+  /*
+   * Stripe (migration 0016). Checked against Stripe before saving — see
+   * stripe-link.ts: the billing leg acts on this subscription, in live mode.
+   * Leave the customer blank and it is taken from the subscription.
+   */
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
   brokerage?: string | null;
   plan?: (typeof PLANS)[number];
   weeklyTarget?: number;
@@ -198,6 +244,9 @@ export function validateEdit(edit: ClientEdit): string[] {
    * the platform's own zone database rather than a regex, which would happily
    * accept "America/New_Yrok".
    */
+  // Format only here; whether Stripe agrees is checked in editClient, which is
+  // the only place that can see the saved half of a partially-edited pair.
+  errors.push(...stripeIdErrors(edit.stripeCustomerId, edit.stripeSubscriptionId));
   if (edit.timezone) {
     try {
       new Intl.DateTimeFormat("en-US", { timeZone: edit.timezone });
@@ -296,7 +345,8 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
       "id, name, an_client_id, ch_client_id, mi_client_id, " +
         "contact_name, contact_role, contact_email, " +
         "contact2_name, contact2_role, contact2_email, " +
-        "contact3_name, contact3_role, contact3_email, brokerage",
+        "contact3_name, contact3_role, contact3_email, brokerage, " +
+        "stripe_customer_id, stripe_subscription_id",
     )
     .eq("id", id)
     .maybeSingle();
@@ -332,9 +382,24 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   if (edit.accountManager !== undefined) local.account_manager = blankToNull(edit.accountManager);
   if (edit.salesperson !== undefined) local.salesperson = blankToNull(edit.salesperson);
   if (edit.sender !== undefined) local.sender_name = blankToNull(edit.sender);
-  if (edit.market !== undefined) local.market = blankToNull(edit.market);
-  if (edit.mls !== undefined) local.mls = blankToNull(edit.mls);
-  if (edit.area !== undefined) local.area = blankToNull(edit.area);
+  /*
+   * Stripe. Resolved against what is SAVED, because the dialog sends only the
+   * field that changed: editing just the subscription must still be checked
+   * against the customer already on the record.
+   *
+   * Refused as a whole on any doubt — nothing else in this edit is written
+   * either, so a rejected link never leaves a half-saved client behind.
+   */
+  if (edit.stripeCustomerId !== undefined || edit.stripeSubscriptionId !== undefined) {
+    const saved = row as unknown as { stripe_customer_id: string | null; stripe_subscription_id: string | null };
+    const customer = edit.stripeCustomerId !== undefined ? blankToNull(edit.stripeCustomerId) : saved.stripe_customer_id;
+    const subscription = edit.stripeSubscriptionId !== undefined ? blankToNull(edit.stripeSubscriptionId) : saved.stripe_subscription_id;
+    const lookup = subscription ? await lookupSubscription(subscription) : null;
+    const decision = decideStripeLink(customer, subscription, lookup);
+    if (!decision.ok) throw new InvalidEditError(decision.error);
+    local.stripe_customer_id = decision.customer;
+    local.stripe_subscription_id = decision.subscription;
+  }
   if (Object.keys(local).length > 1) {
     const { error: e } = await osTable("os_clients").update(local).eq("id", id);
     if (e) failed.push({ what: "the OS record", error: e.message });
