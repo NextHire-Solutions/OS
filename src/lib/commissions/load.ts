@@ -202,7 +202,12 @@ export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeo
   for (const sp of inp.salespeople) {
     earners.set(`sp:${sp.id}`, { key: `sp:${sp.id}`, role: "salesperson", name: sp.name, email: sp.email, rates: sp.rates });
   }
+  // Account managers: people with the role, and anyone a client still names —
+  // never every team member (someone with no role saw a $0 card, audit 30 Sep).
+  const pool = new Set(accountManagerPool(inp.team).map((m) => m.email));
+  const named = new Set(inp.clients.map(firstManager).filter((n): n is string => !!n));
   for (const m of inp.team) {
+    if (!pool.has(m.email) && ![...named].some((n) => isManagedBy(n, m))) continue;
     earners.set(`am:${m.email}`, { key: `am:${m.email}`, role: "account_manager", name: m.name, email: m.email, rates: inp.settings.rates.get(m.email) ?? DEFAULT_RATES });
   }
   const onClient = (c: MasterClient): Earner[] => {
@@ -211,7 +216,7 @@ export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeo
     if (sp) out.push(earners.get(`sp:${sp.id}`)!);
     const amName = firstManager(c);
     const am = amName ? inp.team.find((m) => isManagedBy(amName, m)) : undefined;
-    if (am) out.push(earners.get(`am:${am.email}`)!);
+    if (am && earners.has(`am:${am.email}`)) out.push(earners.get(`am:${am.email}`)!);
     return out;
   };
   return { earners, onClient };

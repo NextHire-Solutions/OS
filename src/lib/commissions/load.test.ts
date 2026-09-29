@@ -132,3 +132,11 @@ test("a churn date entered on the record stops accrual from that day, with no st
   const earlier = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: [churned], run: "2026-07-01" }));
   assert.ok(earlier.rows[0].earnings.every((e) => e.lines.length === 1), "Jun 24, before the churn date, still pays");
 });
+
+test("someone on the team with no role gets no card at all", () => {
+  const teamWithOther = [...team, { name: "Sankalp", email: "sankalp@x.com", active: true, admin: false, accountManager: false }];
+  const v = buildCommissionsView(base({ team: teamWithOther, viewerEmail: "sankalp@x.com" }));
+  assert.deepEqual([v.rows.length, v.reps.length], [0, 0]);
+  const all = buildCommissionsView(base({ team: teamWithOther, viewerEmail: "admin@x.com", admin: true }));
+  assert.ok(!all.people.some((p) => p.name === "Sankalp"), "not offered in the admin's switcher either");
+});
