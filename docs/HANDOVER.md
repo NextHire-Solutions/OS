@@ -282,8 +282,8 @@ Onboarding date 0/50.
   - Salesperson ×39 (Ryan Jagdeo 24, Scott Craigue 10, Eddy 6).
   - Account Manager for the 10 clients managed by Eddy alone. **The 30 rows
     that name Amy wait until Amy is on Team access.**
-  - Brokerage filled on 11 blanks. Douglas Elliman LA was left as "Douglas
-    Elliman LA"; the sheet says "Los Angeles".
+  - Brokerage filled on 11 blanks. Douglas Elliman LA keeps "Douglas
+    Elliman LA"; the sheet's "Los Angeles" is the same brokerage (confirmed).
   - 58 market rows. The sheet does not pair MLS codes with areas, so each
     client has one row per MLS code, with the sheet's area text as the market.
   - Onboarding's MLS now comes from those rows (34 clients). Five codes match
