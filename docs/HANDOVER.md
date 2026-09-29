@@ -382,10 +382,39 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
 - **Open:**
   - **Migration 0021** must be run. Until then nobody has the Account manager
     role, so every active member can be picked, and only owners are admins.
-  - **Markets:** they need re-importing once the user confirms the mapping.
-    The sheet gives Markets as a count, plus MLS codes and Area names. The
-    import put the area text in Market, left Area empty, and made one row per
-    MLS code.
+  - **Markets:** done — see the next entry.
+
+**Markets, MLS and Area as the client data sheet has them (30 Sep, `fa6e1da`).**
+- They are three independent fields on `os_clients` (migration 0022, run):
+  - `market_count` is a number.
+  - `mls_codes` is a list of board codes.
+  - `areas` is a list of area names.
+- They replaced the paired (market, MLS, area) rows of 0017, which forced a
+  symmetry the business does not have: ChuckTown has 6 markets, 5 boards and
+  7 areas. `os_client_markets` is left in place, unread.
+- Code: `lib/clients/coverage.ts` (pure, tested), `coverage-db.ts`, and
+  `/api/workspace/clients/markets` (GET, PUT).
+- Everything that reads markets now reads these fields: the Markets tab, the
+  Clients table, Client Health (the OS screen and the standalone app), the
+  Database and Onboarding location lines, and the MLS sync to Onboarding.
+- All 40 sheet clients were imported as written and checked 40/40. Onboarding's
+  MLS codes are unchanged; five clients' codes are now in the sheet's order.
+
+**Client Health feedback (30 Sep).**
+- A "+N ahead" badge now shows beside the intros when a client has delivered
+  more than the current cycle requires. It is in both the OS and the
+  standalone app, and is display only.
+- The standalone app's market count now reads the new fields; it was
+  counting the old paired rows. Only the `web` service was deployed, because
+  sync code did not change.
+- The client's questions were answered from `billing.ts`:
+  - The anchor date still sets every billing date.
+  - Monthly periods are 28-day blocks phased from each client's cycle that was
+    in progress on 28 Sep.
+  - At Risk means delivered is below `floor(carry + target × elapsed / 28)`.
+- **Open:** should over-delivery bank credit toward the next cycle? That is a
+  rule change, pending the client. Syncing billing dates from Stripe is also
+  open; the client called it not a necessity.
 
 **Speed (`e06c255`, `a1bec34`).** Measured on production
 before and after, from India (network floor ~255ms a request):
