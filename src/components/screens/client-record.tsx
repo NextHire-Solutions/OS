@@ -446,12 +446,15 @@ function StatusField({ id, status, onChanged }: { id: string; status: ClientStat
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, status: pending }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       setPending(null);
       onChanged();
+      // The status is saved; a tool that did not take it must still be named.
+      const failed = ((body?.propagation?.legs ?? []) as { label: string; ok: boolean; error?: string }[]).filter((l) => !l.ok);
+      if (failed.length) {
+        setError(`Saved, but not everywhere: ${failed.map((l) => `${l.label}${l.error ? ` (${l.error})` : ""}`).join("; ")}. Try the change again, or see Consistency.`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not change the status");
     } finally {

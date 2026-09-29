@@ -12,8 +12,9 @@ import { propagateStatus } from "@/lib/clients/status-propagate";
  * history have to survive, and "we removed the row" is not a recoverable
  * state. `status` is the only field that moves.
  *
- * Writes to `os_clients`, then propagates: Client Health, Analytics, and a
- * nudge that makes MasterInbox re-read the feed and reconcile the portal.
+ * Writes to `os_clients`, then propagates: Client Health, the Database
+ * (orch_clients.health_status, at once — not on the daily pass), Analytics,
+ * and a nudge that makes MasterInbox re-read the feed and reconcile the portal.
  *
  * That reverses what this comment used to say ("no tool is contacted"). The
  * reason is the spec's §10 and §21 — CHANGE ONCE, UPDATE EVERYWHERE. A status

@@ -8,6 +8,7 @@ import { pauseCampaignsForClient } from "./pause-campaigns";
 import { billingEnabled, syncBillingForClient } from "./stripe-billing-live";
 import type { ClientStatus } from "./client-status";
 import type { OsClient } from "./os-clients";
+import { getOnboardingDb } from "@/lib/tools/onboarding/db";
 
 /*
  * CHANGE ONCE -> UPDATE EVERYWHERE, for a client's status.
@@ -48,7 +49,7 @@ import type { OsClient } from "./os-clients";
  * Every leg returns its own outcome and the caller shows them.
  */
 
-export type PropagationTool = "client_health" | "analytics" | "portal" | "campaigns" | "billing";
+export type PropagationTool = "client_health" | "database" | "analytics" | "portal" | "campaigns" | "billing";
 
 export interface PropagationLeg {
   tool: PropagationTool;
@@ -67,6 +68,7 @@ export interface PropagationResult {
 
 const LABELS: Record<PropagationTool, string> = {
   client_health: "Client Health",
+  database: "Database",
   analytics: "Analytics",
   portal: "Client portal",
   campaigns: "Campaigns",
@@ -117,6 +119,31 @@ export async function propagateStatus(
           error: error instanceof Error ? error.message : "Client Health write failed",
         }),
       );
+    }
+  }
+
+  /* ------------------------------------------------ 1b. Database ------ */
+  /*
+   * The Database's own status column (orch_clients.health_status), written
+   * now — the client, 30 Sep: "database status should be synced instantly, it
+   * should not wait for cron". It used to follow Client Health on the
+   * Onboarding scheduler's daily pass, so a client paused here read "active"
+   * in the Database for up to a day. The daily pass still runs, and now finds
+   * nothing to change.
+   */
+  const orchClientId = client.links.onboarding;
+  if (!orchClientId) {
+    legs.push(leg("database", { skipped: "No Database record is linked to this client." }));
+  } else {
+    try {
+      const { data, error } = await getOnboardingDb().from("orch_clients")
+        .update({ health_status: status, updated_at: new Date().toISOString() })
+        .eq("id", orchClientId).select("id");
+      if (error) legs.push(leg("database", { ok: false, error: error.message }));
+      else if (!data?.length) legs.push(leg("database", { ok: false, error: "The linked Database record was not found." }));
+      else legs.push(leg("database"));
+    } catch (error) {
+      legs.push(leg("database", { ok: false, error: error instanceof Error ? error.message : "Database write failed" }));
     }
   }
 
