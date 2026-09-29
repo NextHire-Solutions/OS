@@ -416,6 +416,41 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   rule change, pending the client. Syncing billing dates from Stripe is also
   open; the client called it not a necessity.
 
+**Create a subscription from the OS — payment links (1 Oct).**
+- For a client with no subscription, or a cancelled one, the record's
+  Billing section offers **Create subscription**. Admins only.
+- Enter the amount, then choose every 14 days, every 28 days or every
+  month. Continue shows the price in words; confirming creates a Stripe Price
+  and a Payment Link. The link can be paid once, and nothing is charged until
+  the client pays.
+- The record then shows the open link, with Copy link, Open, Check payment
+  and Cancel link.
+- When the client pays, Stripe creates the subscription. The OS finds the
+  paid session and writes the customer and subscription to the record
+  through `editClient`. That happens on Check payment, when the record's
+  billing is read, and every 180s in the background (`instrumentation.ts`).
+  Commissions and Pause/Resume then work for that client.
+- **Guards:**
+  - It refuses a client whose subscription is still live.
+  - A client has one open link at a time.
+  - If the database insert fails, the link is switched off in Stripe, so no
+    payable, untracked link is left behind.
+- Code: `lib/clients/payment-link-plan.ts` (pure, tested),
+  `payment-links-stripe.ts` and `payment-links.ts`. The billing route
+  handles `create_link` and `cancel_link`. Table `os_payment_links` is
+  migration 0024, run 1 Oct.
+- **Verified:**
+  - Stripe test mode, end to end: the link was created, paid with the 4242
+    card, and settled with the right amount and interval. The test objects
+    were then removed.
+  - Production Chrome, writes blocked: 7/7. Cain and Toll show the button.
+    The confirmation reads "$750 every 14 days". The create request carried
+    the right body and was blocked. The Keyes (collecting) does not offer it.
+    No link was created.
+- This is separate from Onboarding's payment-link step, which stays switched
+  off. The client chose this option (a link to send) over the OS charging a
+  card directly.
+
 **Billing button, admin pages, and a full audit (30 Sep night).**
 - **Pause billing / Resume billing** is on the client's record, under
   Billing (`lib/clients/billing-control.ts`, `/api/workspace/clients/billing`).
