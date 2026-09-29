@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Cell, avatarStyle, initials, textOf } from "@/components/clients/cells";
 import {
-  CATEGORIES, CATEGORY_LABEL, FIELDS, FIELD_BY_KEY, TOOL_VIEWS,
+  CATEGORIES, CATEGORY_LABEL, FIELDS, FIELD_BY_KEY, TOOL_VIEWS, shown,
   type FieldCategory, type ToolViewId,
 } from "@/lib/clients/field-registry";
 import type { MasterClient, MasterClientList } from "@/lib/clients/master-list";
@@ -41,7 +41,7 @@ const DATA_URL = "/api/workspace/clients/master";
 type Lens = "master" | ToolViewId | "dictionary";
 
 /* The master record's columns: every registry field except the name, which is the pinned first column. */
-const MASTER_COLUMNS = FIELDS.filter((f) => f.key !== "name");
+const MASTER_COLUMNS = FIELDS.filter((f) => f.key !== "name" && !f.hidden);
 
 function sortValue(k: string, c: MasterClient): string | number {
   const v = (c as unknown as Record<string, unknown>)[k];
@@ -118,7 +118,7 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
   const columns: { key: string; label: string; category?: FieldCategory }[] =
     lens === "master"
       ? MASTER_COLUMNS.filter((f) => !hidden.has(f.category)).map((f) => ({ key: f.key, label: f.label, category: f.category }))
-      : view ? view.columns.filter((c) => c.key !== "name") : [];
+      : view ? view.columns.filter((c) => c.key !== "name" && shown(c.key)) : [];
   const firstLabel = view?.columns.find((c) => c.key === "name")?.label ?? "Client";
   const groups = lens === "master"
     ? CATEGORIES.filter((cat) => !hidden.has(cat)).map((cat) => ({ cat, span: columns.filter((c) => c.category === cat).length }))
@@ -193,10 +193,10 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
       {/* ------------------------------------------------------------ views */}
       {only ? null : (
         <nav className="cx-tabs" aria-label="Views of the client record">
-          <Tab id="master" label="Master record" n={FIELDS.length} on={lens === "master"} onClick={pickLens} />
+          <Tab id="master" label="Master record" n={FIELDS.filter((f) => !f.hidden).length} on={lens === "master"} onClick={pickLens} />
           <span className="cx-tabs-l">Tool views</span>
           {TOOL_VIEWS.map((t) => (
-            <Tab key={t.id} id={t.id} label={t.label.replace(" Dashboard", "")} n={t.columns.length} on={lens === t.id} onClick={pickLens} />
+            <Tab key={t.id} id={t.id} label={t.label.replace(" Dashboard", "")} n={t.columns.filter((c) => shown(c.key)).length} on={lens === t.id} onClick={pickLens} />
           ))}
           <span className="cx-tab disabled" title="Commission Tracker — coming soon. It will read this same record (§8).">Commission Tracker <em>soon</em></span>
           <span className="cx-tabs-sp" />
@@ -235,7 +235,7 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
                             <input type="checkbox" checked={!hidden.has(cat)}
                               onChange={() => setHidden((h) => { const n = new Set(h); if (n.has(cat)) n.delete(cat); else n.add(cat); return n; })} />
                             <i aria-hidden="true" />{CATEGORY_LABEL[cat]}
-                            <em>{FIELDS.filter((f) => f.category === cat).length}</em>
+                            <em>{FIELDS.filter((f) => f.category === cat && !f.hidden).length}</em>
                           </label>
                         ))}
                       </span>

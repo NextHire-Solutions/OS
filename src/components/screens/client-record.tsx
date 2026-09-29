@@ -8,7 +8,7 @@ import {
   Cell, Id, avatarStyle, fmtDay, fmtNum, initials, intervalLabel, planLabel, tzLabel,
 } from "@/components/clients/cells";
 import {
-  CATEGORIES, CATEGORY_LABEL, FIELD_BY_KEY, TOOL_VIEWS, fieldsIn, type FieldDef, type ToolViewId,
+  CATEGORIES, CATEGORY_LABEL, FIELD_BY_KEY, TOOL_VIEWS, fieldsIn, shown, type FieldDef, type ToolViewId,
 } from "@/lib/clients/field-registry";
 import type { MasterClient } from "@/lib/clients/master-list";
 import { CLIENT_STATUSES, STATUS_MEANING, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
@@ -266,7 +266,7 @@ export function ClientRecord({
           <div className="rx-body">
             <section className="rx-sec">
               <h3>{tool.label}<span>the fields §8 lists for this tool</span></h3>
-              {tool.columns.filter((col) => col.key !== "name").map((col) => row(col.key, col.label, FIELD_BY_KEY[col.key]))}
+              {tool.columns.filter((col) => col.key !== "name" && shown(col.key)).map((col) => row(col.key, col.label, FIELD_BY_KEY[col.key]))}
             </section>
             {view === "portal" ? (
               <section className="rx-sec">

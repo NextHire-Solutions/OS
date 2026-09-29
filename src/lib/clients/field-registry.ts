@@ -59,6 +59,12 @@ export interface FieldDef {
   editIn: string;
   /** Editable in place on the Clients page's record panel. */
   editable: boolean;
+  /**
+   * Kept on the record and in the Data dictionary, but not shown in the table,
+   * the tool views or the record panel (the user's call, 30 Sep: "we can hide
+   * date added" — it is the migration day for every existing client).
+   */
+  hidden?: boolean;
   /** §7 "Which tools consume it?" */
   tools: string[];
   /** §15 "Sync Required?" and §7 "What happens when it changes?" */
@@ -87,7 +93,7 @@ export const FIELDS: FieldDef[] = [
   { key: "onboardingDate", label: "Onboarding date", category: "client", kind: "date",
     definition: "When onboarding began.", sourceOfTruth: MASTER, source: "Master record",
     editIn: "Clients — set to the day a client is added; editable", editable: true, tools: ["Onboarding", "Performance"], sync: "No — a recorded moment" },
-  { key: "dateAdded", label: "Date added", category: "client", kind: "date",
+  { key: "dateAdded", label: "Date added", category: "client", kind: "date", hidden: true,
     definition: "When the client record was created.", sourceOfTruth: MASTER, source: "Master record",
     editIn: "Nobody — set at creation", editable: false, tools: ["Onboarding"], sync: "No" },
   { key: "market", label: "Market", category: "client", kind: "number",
@@ -204,8 +210,11 @@ export const FIELD_BY_KEY: Record<string, FieldDef> = Object.fromEntries(FIELDS.
 export const CATEGORIES: FieldCategory[] = ["client", "billing", "campaign", "performance", "lifecycle"];
 
 export function fieldsIn(category: FieldCategory): FieldDef[] {
-  return FIELDS.filter((f) => f.category === category);
+  return FIELDS.filter((f) => f.category === category && !f.hidden);
 }
+
+/** Shown on screen: every field but the hidden ones (the dictionary lists all). */
+export const shown = (key: string) => !FIELD_BY_KEY[key]?.hidden;
 
 /* ======================================================================
  * §8 TOOL-SPECIFIC VIEWS — each tool's list, in the document's words and
