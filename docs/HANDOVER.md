@@ -416,6 +416,43 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   rule change, pending the client. Syncing billing dates from Stripe is also
   open; the client called it not a necessity.
 
+**Audit, 30 Sep (evening).**
+- **Clean:**
+  - Statuses agree 50/50 across all tools.
+  - 0 coverage gaps, 200/200 links, 0 duplicates, 0 alias drift.
+  - Every tool holds all 50 clients; its extra rows are named second portals
+    or non-clients.
+  - 34/34 open portals serve and match their status.
+  - The sheet matches the master for status, salesperson, markets / MLS /
+    area and brokerage on all 40 sheet clients. The 10 clients not on the
+    sheet are exactly the churned ones.
+  - 1,419 tests pass; 77 read APIs with 0 server errors.
+- **Fixed during the audit:**
+  - Play/Pause could not resume campaigns paused outside the toggle — Eddy's
+    54 Realty report. Now ▶ offers them, after the same live preview. Changed
+    in the OS and in standalone Client Health (`cf2284a`, shaurs).
+  - Stripe reads for Commissions were rate-limited when fired all at once.
+    They are now 4 at a time, with retries.
+  - Railway paused all deploys on 30 Sep evening. Both of these fixes are
+    committed and waiting on a retrying deploy.
+- **Open, for the user:**
+  - 7 clients still name two Account Managers (the user is fixing the data).
+  - Eddy is "Eddy" on Team access but "Eddy Boccara" as a salesperson and in
+    Onboarding, which shares one person row for both roles.
+  - Commissions:
+    - 11 clients have no Stripe link, so they earn $0. Stripe search
+      candidates: Raintown (2 active subs); Douglas Elliman Real Estate (2
+      active subs — LV / LA?); cancelled subs for Kelly + Co, LPT Military and
+      RE Home Group; nothing for 54 Realty, JPAR or Wurst.
+    - Month 1 is "the first 28 days" versus the spec's "first gross payment".
+    - Both roles take 70% of month 1 by default.
+    - Ryan and Scott are not invited yet.
+  - Onboarding's Gmail connection is still `invalid_grant` (Eddy must
+    reconnect). The Slack alert channel is unchosen. Client emails and payment
+    links are still off.
+  - Before switching off Client Health, point Master Inbox's
+    `CLIENT_STATUS_URL` at the OS status feed.
+
 **Speed (`e06c255`, `a1bec34`).** Measured on production
 before and after, from India (network floor ~255ms a request):
 
