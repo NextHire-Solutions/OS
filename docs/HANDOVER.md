@@ -292,6 +292,33 @@ Onboarding date 0/50.
   (`markets-mls-sync.ts`). Each market's MLS must be ONE code: "BRIGHT, CVR"
   on a single row matches no board and would clear the codes.
 
+**"The tools show different client counts" (30 Sep).** The client read 50 in
+the Database, 54 with 35 active in Analytics, and 31 active in Health.
+
+- Every number was true of its own table. Analytics counts rows: the 50
+  clients, plus 2 second-portal rows (Properties & Estates Florida, SERHANT. PA
+  15M+), plus 2 rows that are not clients (Demo Portal, Test FUB). All 4 are
+  marked active, which turns 31 into 35.
+- Every tool's client screen in the OS now opens with the same line: "50
+  clients · 31 active · 9 paused · 10 churned".
+  - Where that tool's table differs, the line names the rows that make the
+    difference.
+  - Analytics also tags those rows in place.
+  - Code: `lib/reconcile/client-counts.ts`, `/api/workspace/clients/counts`,
+    `components/clients/count-line.tsx`.
+- The standalone Analytics app still says 35/54, because it counts rows. Only
+  a data change would move it, and that data belongs to a live tool, so it
+  needs the user's decision. The facts for that decision:
+  - P&E Florida, Demo Portal and Test FUB have no campaigns.
+  - SERHANT. PA 15M+ has one live EmailBison campaign.
+- **The Database's status is now written in the same request.** A status
+  change writes `orch_clients.health_status` at once, as its own "database"
+  step. It used to follow Client Health on the Onboarding scheduler's daily
+  pass.
+- The record's status control now names any tool that did not take the change.
+- Amy was added to Team access, and the sheet's remaining 30 Account Manager
+  rows were imported.
+
 **Speed (`e06c255`, `a1bec34`).** Measured on production
 before and after, from India (network floor ~255ms a request):
 
