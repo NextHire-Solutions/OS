@@ -416,6 +416,31 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   rule change, pending the client. Syncing billing dates from Stripe is also
   open; the client called it not a necessity.
 
+**Onboarding / churn dates and Performance (30 Sep, `821e2aa`, `2fe5388`).**
+- **Migration 0023** adds `os_clients.onboarding_date` and `churn_date`.
+  - Both are editable on the client's record.
+  - The churn date is stamped when a status CHANGES to Churned (not on a
+    re-save).
+  - The onboarding date is stamped when a client is added through Add Client.
+  - They are read on their own (`lib/clients/client-dates.ts`), so the
+    record still loads before the migration.
+  - Onboarding's own `orch_clients.onboarding_date` is the Calendly CALL
+    time, which its booking alerts rely on. It is deliberately not written.
+- **Performance** is rebuilt from the master record
+  (`lib/workspace/performance-model.ts`, pure and tested):
+  - Added: onboarding date, with start date as the fallback.
+  - Churned: churn date.
+  - Net.
+  - Active at month end.
+  - Revenue: paid Stripe invoices by month, from the 30 linked clients.
+  - It is cached and warmed in instrumentation.
+- **Commissions** stops accrual at a churn date entered on the record.
+- **Data to enter:** 9 of the 10 churned clients have no churn date, and 5
+  clients have no onboarding or start date.
+- **Not yet deployed:** Railway paused all deploys on 30 Sep evening. This
+  work, the Play/Pause fix and the Stripe throttle are all committed; deploy
+  once 0023 is run and Railway resumes.
+
 **Audit, 30 Sep (evening).**
 - **Clean:**
   - Statuses agree 50/50 across all tools.
