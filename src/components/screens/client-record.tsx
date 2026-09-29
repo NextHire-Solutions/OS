@@ -500,10 +500,16 @@ function StatusField({ id, status, onChanged }: { id: string; status: ClientStat
  * set in the Stripe dashboard. Pausing never cancels.
  */
 interface BillingNow { status: string; paused: boolean; behavior: string | null; amount: number | null; every: string | null; nextBilling: string | null }
+interface OpenLink { id: string; url: string; label: string; createdAt: string }
 
 function BillingControl({ clientId }: { clientId: string }) {
-  const [state, setState] = useState<{ hidden?: true; linked?: boolean; billing?: BillingNow; error?: string } | null>(null);
+  const [state, setState] = useState<{ hidden?: true; linked?: boolean; billing?: BillingNow; links?: OpenLink[] | null; canCreateLinks?: boolean; error?: string } | null>(null);
   const [pending, setPending] = useState<"pause" | "resume" | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [every, setEvery] = useState<"14 days" | "28 days" | "month">("14 days");
+  const [confirmCreate, setConfirmCreate] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -520,30 +526,48 @@ function BillingControl({ clientId }: { clientId: string }) {
   useEffect(() => { void load(); }, [clientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!state || state.hidden) return null;
-  if (state.linked === false) {
-    return <div className="rx-row"><div className="ds-field"><div className="ds-field-l"><span>Stripe billing</span></div><div className="ds-field-v"><div className="rx-static"><span className="cx-none">Not linked to a Stripe subscription</span></div></div></div></div>;
-  }
   const b = state.billing;
   const money = (n: number | null) => (n === null ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
   const cancelled = b && (b.status === "canceled" || b.status === "incomplete_expired");
+  const links = state.links ?? [];
+  // A new subscription: none linked, or the linked one has ended — and no link already waiting.
+  const mayCreate = state.canCreateLinks && (state.linked === false || cancelled) && links.length === 0;
 
-  async function confirm() {
-    if (!pending) return;
+  async function post(body: Record<string, unknown>) {
     setSaving(true); setError(null);
     try {
       const res = await fetch("/api/workspace/clients/billing", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, action: pending }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, ...body }),
       });
       const out = await res.json().catch(() => null);
       if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
-      setPending(null);
-      setState({ linked: true, billing: out.billing });
+      return out;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not change billing");
+      setError(e instanceof Error ? e.message : "Could not save");
+      return null;
     } finally {
       setSaving(false);
     }
   }
+
+  async function confirmPause() {
+    if (!pending) return;
+    const out = await post({ action: pending });
+    if (out) { setPending(null); setState((s) => ({ ...s, linked: true, billing: out.billing })); }
+  }
+  async function createLink() {
+    const out = await post({ action: "create_link", amount, every });
+    if (out) { setCreating(false); setConfirmCreate(false); setAmount(""); await load(); }
+  }
+  async function cancelLink(id: string) {
+    const out = await post({ action: "cancel_link", linkId: id });
+    await load();
+    if (out) setCopied(null);
+  }
+  const copy = async (url: string, id: string) => {
+    try { await navigator.clipboard.writeText(url); setCopied(id); } catch { setCopied(null); }
+  };
+  const everyLabel = every === "month" ? "every month" : `every ${every}`;
 
   return (
     <div className="rx-row">
@@ -551,6 +575,7 @@ function BillingControl({ clientId }: { clientId: string }) {
         <div className="ds-field-l"><span>Stripe billing</span><em className="ds-field-src">Stripe · admins only</em></div>
         <div className="ds-field-v" style={{ display: "grid", gap: 8 }}>
           {state.error && !b ? <span className="ds-field-err">{state.error}</span> : null}
+          {state.linked === false && !links.length ? <span className="cx-none">No Stripe subscription yet</span> : null}
           {b ? (
             <div className="rx-static">
               <span>
@@ -578,10 +603,56 @@ function BillingControl({ clientId }: { clientId: string }) {
                   : "Stripe starts charging this client again from the next billing date. The client's status does not change."}
               </span>
               <span style={{ display: "flex", gap: 8 }}>
-                <button type="button" className="rx-btn solid" disabled={saving} onClick={() => void confirm()}>
+                <button type="button" className="rx-btn solid" disabled={saving} onClick={() => void confirmPause()}>
                   {saving ? "Saving…" : pending === "pause" ? "Pause billing" : "Resume billing"}
                 </button>
                 <button type="button" className="rx-btn" disabled={saving} onClick={() => setPending(null)}>Cancel</button>
+              </span>
+            </div>
+          ) : null}
+
+          {/* Payment links waiting to be paid — copy and send; the subscription links itself once paid. */}
+          {links.map((l) => (
+            <div key={l.id} className="rx-confirm">
+              <span><b>Payment link — {l.label}</b> · waiting for the client to pay. Once paid, the subscription is linked to this client automatically.</span>
+              <input className="ds-input" readOnly value={l.url} aria-label="Payment link" onFocus={(e) => e.currentTarget.select()} />
+              <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" className="rx-btn solid" onClick={() => void copy(l.url, l.id)}>{copied === l.id ? "Copied" : "Copy link"}</button>
+                <a className="rx-btn" href={l.url} target="_blank" rel="noreferrer">Open ↗</a>
+                <button type="button" className="rx-btn" disabled={saving} onClick={() => void load()}>Check payment</button>
+                <button type="button" className="rx-btn" disabled={saving} onClick={() => void cancelLink(l.id)}>Cancel link</button>
+              </span>
+            </div>
+          ))}
+
+          {mayCreate && !creating ? (
+            <div><button type="button" className="rx-btn" onClick={() => { setError(null); setCreating(true); }}>Create subscription</button></div>
+          ) : null}
+          {creating ? (
+            <div className="rx-confirm">
+              <span><b>Create a subscription</b> — the OS makes a Stripe payment link for this amount. Send it to the client; the subscription starts when they pay.</span>
+              <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <input className="ds-input" style={{ width: 140 }} inputMode="decimal" placeholder="Amount, e.g. 750" aria-label="Amount in dollars"
+                  value={amount} disabled={confirmCreate || saving} onChange={(e) => setAmount(e.target.value.replace(/[^\d.,$]/g, ""))} />
+                <select className="ds-input" style={{ width: 170 }} aria-label="How often" value={every} disabled={confirmCreate || saving}
+                  onChange={(e) => setEvery(e.target.value as typeof every)}>
+                  <option value="14 days">Every 14 days</option>
+                  <option value="28 days">Every 28 days</option>
+                  <option value="month">Every month</option>
+                </select>
+              </span>
+              {confirmCreate ? (
+                <span>
+                  Create a Stripe payment link for <b>${amount.replace(/[$,]/g, "")} {everyLabel}</b>? Nothing is charged until the client pays through it, and it can only be paid once.
+                </span>
+              ) : null}
+              <span style={{ display: "flex", gap: 8 }}>
+                {confirmCreate ? (
+                  <button type="button" className="rx-btn solid" disabled={saving} onClick={() => void createLink()}>{saving ? "Creating…" : "Create payment link"}</button>
+                ) : (
+                  <button type="button" className="rx-btn solid" disabled={!amount.trim()} onClick={() => setConfirmCreate(true)}>Continue</button>
+                )}
+                <button type="button" className="rx-btn" disabled={saving} onClick={() => { setCreating(false); setConfirmCreate(false); }}>Cancel</button>
               </span>
             </div>
           ) : null}

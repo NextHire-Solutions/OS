@@ -33,6 +33,7 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_commission_reps",
     "os_client_commission",
     "os_salespeople",
+    "os_payment_links",
   ]);
 });
 

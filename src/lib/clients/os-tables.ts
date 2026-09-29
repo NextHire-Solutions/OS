@@ -37,6 +37,7 @@ export const OS_TABLES = [
   "os_commission_reps",
   "os_client_commission",
   "os_salespeople",
+  "os_payment_links",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

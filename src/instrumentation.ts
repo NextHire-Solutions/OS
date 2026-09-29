@@ -101,6 +101,18 @@ export async function register() {
     await Promise.allSettled([getAllSnapshots(), loadRailBadges(), getOverview(), getPerformance()]);
   };
   const warmShellSafely = () => { warmShell().catch(() => { /* best effort */ }); };
+
+  /*
+   * Payment links created from a client's record (0024): a paid one becomes
+   * that client's subscription within a few minutes, even if nobody opens
+   * the record. Reads Stripe only; links a subscription only once it is paid.
+   */
+  const settleLinks = async () => {
+    if (!process.env.MASTER_INBOX_SUPABASE_URL) return;
+    const { settle } = await import("./lib/clients/payment-links");
+    await settle();
+  };
+  setInterval(() => { settleLinks().catch(() => { /* best effort */ }); }, 180_000).unref?.();
   setTimeout(warmShellSafely, 6_000).unref?.();
   setInterval(warmShellSafely, 240_000).unref?.();
 }
