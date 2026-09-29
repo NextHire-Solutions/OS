@@ -323,6 +323,7 @@ export function ClientRecord({
                   {CATEGORIES.map((cat) => (
                     <section key={cat} className={`rx-sec cat-${cat}`}>
                       <h3><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</h3>
+                      {cat === "billing" ? <BillingControl clientId={c.id} /> : null}
                       {fieldsIn(cat).filter((f) => f.key !== "status").map((f) => row(f.key, f.label, f))}
                     </section>
                   ))}
@@ -488,6 +489,105 @@ function StatusField({ id, status, onChanged }: { id: string; status: ClientStat
         </div>
       ) : null}
       {error ? <div className="ds-field-err" role="alert">{error}</div> : null}
+    </div>
+  );
+}
+
+/*
+ * Pause / resume Stripe billing by hand (30 Sep). Admins only: the route
+ * refuses everyone else, and for them this renders nothing. Reads Stripe live,
+ * so what it shows is what Stripe is doing now — including a pause somebody
+ * set in the Stripe dashboard. Pausing never cancels.
+ */
+interface BillingNow { status: string; paused: boolean; behavior: string | null; amount: number | null; every: string | null; nextBilling: string | null }
+
+function BillingControl({ clientId }: { clientId: string }) {
+  const [state, setState] = useState<{ hidden?: true; linked?: boolean; billing?: BillingNow; error?: string } | null>(null);
+  const [pending, setPending] = useState<"pause" | "resume" | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const res = await fetch(`/api/workspace/clients/billing?clientId=${encodeURIComponent(clientId)}`, { cache: "no-store" });
+      if (res.status === 403 || res.status === 401) { setState({ hidden: true }); return; }
+      const body = await res.json().catch(() => null);
+      setState(body ?? { error: `HTTP ${res.status}` });
+    } catch (e) {
+      setState({ error: e instanceof Error ? e.message : "Stripe could not be read" });
+    }
+  };
+  useEffect(() => { void load(); }, [clientId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!state || state.hidden) return null;
+  if (state.linked === false) {
+    return <div className="rx-row"><div className="ds-field"><div className="ds-field-l"><span>Stripe billing</span></div><div className="ds-field-v"><div className="rx-static"><span className="cx-none">Not linked to a Stripe subscription</span></div></div></div></div>;
+  }
+  const b = state.billing;
+  const money = (n: number | null) => (n === null ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
+  const cancelled = b && (b.status === "canceled" || b.status === "incomplete_expired");
+
+  async function confirm() {
+    if (!pending) return;
+    setSaving(true); setError(null);
+    try {
+      const res = await fetch("/api/workspace/clients/billing", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, action: pending }),
+      });
+      const out = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
+      setPending(null);
+      setState({ linked: true, billing: out.billing });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not change billing");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rx-row">
+      <div className="ds-field">
+        <div className="ds-field-l"><span>Stripe billing</span><em className="ds-field-src">Stripe · admins only</em></div>
+        <div className="ds-field-v" style={{ display: "grid", gap: 8 }}>
+          {state.error && !b ? <span className="ds-field-err">{state.error}</span> : null}
+          {b ? (
+            <div className="rx-static">
+              <span>
+                <b style={{ color: cancelled ? "var(--x-mute)" : b.paused ? "var(--st-paused)" : "var(--st-active)" }}>
+                  {cancelled ? `Subscription ${b.status}` : b.paused ? "Paused" : "Collecting"}
+                </b>
+                {" · "}{money(b.amount)}{b.every ? ` every ${b.every}` : ""}
+                {!cancelled && !b.paused && b.nextBilling ? ` · next charge ${fmtDay(b.nextBilling)}` : ""}
+                {b.paused && b.behavior === "keep_as_draft" ? " · invoices held as drafts" : b.paused && b.behavior === "void" ? " · invoices voided while paused" : ""}
+              </span>
+              {!cancelled ? (
+                <button type="button" className="rx-btn" disabled={saving || pending !== null}
+                  onClick={() => { setError(null); setPending(b.paused ? "resume" : "pause"); }}>
+                  {b.paused ? "Resume billing" : "Pause billing"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {pending ? (
+            <div className="rx-confirm" role="alert">
+              <span>
+                <b>{pending === "pause" ? "Pause billing?" : "Resume billing?"}</b>{" "}
+                {pending === "pause"
+                  ? "Stripe stops charging this client and voids invoices while paused. The subscription is kept, never cancelled, and can be resumed. The client's status does not change."
+                  : "Stripe starts charging this client again from the next billing date. The client's status does not change."}
+              </span>
+              <span style={{ display: "flex", gap: 8 }}>
+                <button type="button" className="rx-btn solid" disabled={saving} onClick={() => void confirm()}>
+                  {saving ? "Saving…" : pending === "pause" ? "Pause billing" : "Resume billing"}
+                </button>
+                <button type="button" className="rx-btn" disabled={saving} onClick={() => setPending(null)}>Cancel</button>
+              </span>
+            </div>
+          ) : null}
+          {error ? <div className="ds-field-err" role="alert">{error}</div> : null}
+        </div>
+      </div>
     </div>
   );
 }

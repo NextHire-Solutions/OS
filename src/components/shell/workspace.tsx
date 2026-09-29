@@ -11,6 +11,8 @@ import { Topbar } from "./topbar";
 import { Palette } from "./palette";
 import { ToolPane } from "./tool-pane";
 import { NAV, destinations, idForPath, pathForId, type Destination } from "@/lib/workspace/nav";
+import { canSeePage } from "@/lib/workspace/nav";
+import { ALL_TOOLS } from "@/lib/bs-auth";
 
 /*
  * The workspace frame: rail, top bar, and whatever is on stage.
@@ -31,6 +33,8 @@ import { NAV, destinations, idForPath, pathForId, type Destination } from "@/lib
 
 export interface WorkspaceProps {
   grants: string[];
+  /** An owner or a marked admin (checked on the server). */
+  admin?: boolean;
   user: { name: string; email: string };
   /** Absolute base URL per tool, resolved on the server. */
   toolUrls: Partial<Record<string, string>>;
@@ -44,6 +48,7 @@ export interface WorkspaceProps {
 
 export function Workspace({
   grants,
+  admin = false,
   user,
   toolUrls,
   shellHost,
@@ -69,8 +74,9 @@ export function Workspace({
 
   const all = useMemo(() => destinations(), []);
   const reachable = useMemo(
-    () => all.filter((d) => !d.tool || grants.includes(d.tool)),
-    [all, grants],
+    // The command palette offers exactly what the menu does.
+    () => all.filter((d) => (!d.tool || grants.includes(d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS)),
+    [all, grants, admin],
   );
 
   const router = useRouter();
@@ -221,6 +227,7 @@ export function Workspace({
       <div className="app">
         <Rail
           grants={grants}
+          admin={admin}
           activeId={activeId}
           onNavigate={navigate}
           onPrefetch={prefetch}

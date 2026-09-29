@@ -332,3 +332,16 @@ export function idForPath(pathname: string): string {
     );
   return `${tool}:${leaf?.id ?? product.children[0]?.id ?? ""}`;
 }
+
+/*
+ * Pages only admins can use (30 Sep). Their data is refused to everyone else
+ * at the API; hiding them from the menu stops a non-admin clicking into an
+ * error. The Assistant also opens for someone who holds every tool.
+ */
+export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent"]);
+
+export function canSeePage(id: string, admin: boolean, grants: string[], allTools: readonly string[]): boolean {
+  if (ADMIN_ONLY_PAGES.has(id)) return admin;
+  if (id === "assistant") return admin || allTools.every((t) => grants.includes(t));
+  return true;
+}

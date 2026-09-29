@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { NAV, type NavProduct } from "@/lib/workspace/nav";
 import { RailBrand } from "./rail-brand";
 import { ToolGlyph } from "./tool-glyph";
+import { canSeePage } from "@/lib/workspace/nav";
+import { ALL_TOOLS } from "@/lib/bs-auth";
 
 /*
  * The left rail.
@@ -28,6 +30,8 @@ export interface RailProps {
   onPrefetch?: (id: string) => void;
   badges?: Partial<Record<string, number>>;
   user: { name: string; email: string };
+  /** An owner or a marked admin — sees the admin-only pages. */
+  admin?: boolean;
 }
 
 /**
@@ -39,7 +43,7 @@ function productOf(activeId: string): string | null {
   return leaf ? product : null;
 }
 
-export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, user }: RailProps) {
+export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, user, admin = false }: RailProps) {
   /*
    * Which product's list is open.
    *
@@ -82,7 +86,7 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
       <div className="rail-scroll">
         {NAV.map((section) => {
           const items = section.items.filter(
-            (item) => item.kind === "page" || grants.includes(item.id),
+            (item) => item.kind === "page" ? canSeePage(item.id, admin, grants, ALL_TOOLS) : grants.includes(item.id),
           );
           // A section whose every item is ungranted renders nothing at all —
           // not an empty heading, which would advertise what someone cannot have.

@@ -58,6 +58,7 @@ import { AnalyticsScheduleScreen } from "@/components/screens/analytics/schedule
 import { AnalyticsClientsScreen } from "@/components/screens/analytics/clients";
 import { idForPath, products } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
+import { isAdminUser } from "@/lib/identity/admin-db";
 
 /*
  * The workspace, at every address.
@@ -260,6 +261,8 @@ export default async function WorkspacePage({
     loadRailBadges(),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
+  // Owners and marked admins see the admin-only pages in the menu.
+  const admin = await isAdminUser(email);
 
   const toolUrls: Record<string, string> = {};
   for (const product of products()) {
@@ -286,6 +289,7 @@ export default async function WorkspacePage({
     <Workspace
       initialId={initialId}
       grants={grants}
+      admin={admin}
       badges={railBadges}
       user={{ name: firstName, email }}
       toolUrls={toolUrls}
