@@ -447,6 +447,18 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   - Someone with no role saw a $0 "Account manager" card in Commissions.
   - Team access opened by a non-admin said only "Forbidden".
 
+**Stripe links, round 2 — the client's answers (30 Sep).**
+- Douglas Elliman Las Vegas → $250; Douglas Elliman Los Angeles → $500. One
+  customer, two clients.
+- Raintown → $750; JPAR Iron Horse → $500. Same card.
+- Kelly + Co → its most recent subscription ($1,500/month, cancelled).
+- Military Veteran → its subscription from 29 Apr (cancelled 13 May). The
+  client says this client is churned, but the OS says paused, pending
+  confirmation.
+- Commissions now reads Stripe for 38/40. Cain and Toll have no subscription
+  yet; the client asked whether one can be created from the OS. The
+  Onboarding payment-link step exists but is switched off.
+
 **Stripe links from the client's "Subscriptions" sheet (30 Sep).**
 - All 51 rows were checked against Stripe. Every subscription belongs to the
   customer the sheet names.
