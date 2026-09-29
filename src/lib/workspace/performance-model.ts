@@ -113,6 +113,8 @@ export function performanceFrom(
       const activeAtEnd = clients.filter((c) => {
         const a = addedOn(c);
         const ch = churnedOn(c);
+        // This month: a client churned now is not active, even with no churn date entered.
+        if (m === thisMonth && c.status === "churned") return false;
         return a !== null && a <= end && !(ch !== null && ch <= end);
       }).length;
       months.push({ month: m, label: monthLabel(m), added, churned, net: added - churned, activeAtEnd,

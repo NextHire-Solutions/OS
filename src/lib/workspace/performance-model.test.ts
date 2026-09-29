@@ -40,3 +40,9 @@ test("a reactivated client (active again) is not counted as churned even with an
   assert.equal(p.months.find((m) => m.month === "2026-07")!.churned, 0);
   assert.equal(p.totals.churned, 0);
 });
+
+test("this month, a churned client is not active even before its churn date is entered", () => {
+  const p = performanceFrom([c("active", "2026-06-01"), c("churned", "2026-06-01", null)], new Map(), null, 0, TODAY);
+  assert.equal(p.months.find((m) => m.month === "2026-09")!.activeAtEnd, 1);
+  assert.equal(p.months.find((m) => m.month === "2026-08")!.activeAtEnd, 2, "earlier months cannot know without the date");
+});
