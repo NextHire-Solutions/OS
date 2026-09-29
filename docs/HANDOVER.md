@@ -353,6 +353,40 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
     0 link errors, 0 duplicates and 0 alias findings. All 34 open portals
     serve and match their status.
 
+**Team roles, one account manager, commissions for both roles (30 Sep).**
+- **Team access** now carries the roles. Every person can be Admin, Account
+  manager and/or Salesperson. Roles are chosen when inviting and changed from
+  the row's Edit dialog, which also edits name and email.
+  - A rename is carried to their clients and to Onboarding.
+  - A new email moves their access, salesperson record and rates, and signs
+    them out.
+  - The separate Salespeople section is gone. Salespeople with no sign-in yet
+    are listed in the team table with an Invite link, which links their
+    existing record (clients and rates) to the new sign-in.
+  - Storage: Admin and Account manager are columns on `os_users` (migration
+    0021). Salesperson is an active `os_salespeople` row carrying the
+    person's email. Code: `lib/identity/team-roles.ts`.
+- **Admins** are the owners in ADMIN_EMAILS (fixed, never editable) plus
+  anyone marked Admin. Every admin check reads both
+  (`lib/identity/admin-db.ts`). A marked admin holds every tool.
+- **Account Manager is one person per client**, chosen from people with the
+  role; saving two is refused. Older "Amy, Eddy" values still read, and
+  Commissions pays the first named until the data is fixed.
+- **Commissions:** a client's salesperson and its account manager each earn,
+  at their own rates.
+  - Everyone sees only their own earnings, as either role or both. Checked on
+    production: Amy asking for everyone, or for Eddy, gets only her own.
+  - Admins see everyone, set rates per person, and assign both people.
+  - At the default rates both people get 70% of month 1 — confirm the rates
+    with the client.
+- **Open:**
+  - **Migration 0021** must be run. Until then nobody has the Account manager
+    role, so every active member can be picked, and only owners are admins.
+  - **Markets:** they need re-importing once the user confirms the mapping.
+    The sheet gives Markets as a count, plus MLS codes and Area names. The
+    import put the area text in Market, left Area empty, and made one row per
+    MLS code.
+
 **Speed (`e06c255`, `a1bec34`).** Measured on production
 before and after, from India (network floor ~255ms a request):
 
