@@ -8,10 +8,9 @@ import { Lazy, PlaceholderScreen } from "./lazy";
 /*
  * Performance — client base, plans and movement.
  *
- * Follows the design's markup, including its decision to grey out clients
- * churned and monthly revenue. That decision turned out to be exactly right:
- * churn is stored as a boolean with no date, and plans carry no price, so
- * neither figure exists anywhere in the stack.
+ * Built from the master client record (30 Sep): onboarding and churn dates
+ * are stored and editable on each client, and revenue is what Stripe actually
+ * collected. A client missing a date is counted as undated, never guessed.
  *
  * Where a number is unavailable the cell says WHY. "—" alone invites someone
  * to assume the value is zero; "needs status history" tells them what would
@@ -43,7 +42,7 @@ function PerformanceView({ performance }: { performance: Performance }) {
 
       <div className="wrap">
         <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-          <Card label="Total clients" value={totals.clients} sub={`${totals.active} active · ${totals.paused} paused`} />
+          <Card label="Total clients" value={totals.clients} sub={`${totals.active} active · ${totals.paused} paused · ${totals.churned} churned`} />
           <Card
             label="Clients added"
             value={totals.addedLast90}
@@ -51,17 +50,17 @@ function PerformanceView({ performance }: { performance: Performance }) {
             prefix="+"
             sub="last 90 days"
           />
-          {/*
-           * Churned is known as a COUNT but not as a rate over time, because
-           * `hidden` carries no date. Showing the count beside "needs status
-           * history" is the honest middle: we know 7 have left, not when.
-           */}
           <Card
             label="Clients churned"
-            value={totals.churned}
-            sub="all time · needs status history for a rate"
+            value={totals.churnedLast90}
+            sub={`last 90 days · ${totals.churned} churned in all`}
           />
-          <Card label="Monthly revenue" value={null} sub="needs plan pricing" />
+          <Card
+            label="Revenue this month"
+            value={totals.revenueThisMonth === null ? null : Math.round(totals.revenueThisMonth)}
+            prefix="$"
+            sub={totals.revenueThisMonth === null ? "Stripe could not be read" : `collected so far · ${totals.stripeLinked} clients on Stripe`}
+          />
         </div>
 
         <div className="cards" style={{ gridTemplateColumns: `repeat(${Math.max(1, plans.length)}, 1fr)` }}>
@@ -88,9 +87,12 @@ function PerformanceView({ performance }: { performance: Performance }) {
             <div>
               <div className="tbl-title">Client movement</div>
               <div className="tbl-sub">
-                When each client was onboarded
+                By onboarding date and churn date
                 {totals.undated > 0
-                  ? ` · ${totals.undated} client${totals.undated === 1 ? "" : "s"} have no start date and are not counted below`
+                  ? ` · ${totals.undated} client${totals.undated === 1 ? " has" : "s have"} no onboarding or start date`
+                  : ""}
+                {totals.churnUndated > 0
+                  ? ` · ${totals.churnUndated} churned client${totals.churnUndated === 1 ? " has" : "s have"} no churn date`
                   : ""}
               </div>
             </div>
@@ -103,7 +105,7 @@ function PerformanceView({ performance }: { performance: Performance }) {
                   <th>Added</th>
                   <th>Churned</th>
                   <th>Net</th>
-                  <th>Onboarded to date</th>
+                  <th>Active at month end</th>
                   <th>Revenue</th>
                 </tr>
               </thead>
@@ -111,11 +113,13 @@ function PerformanceView({ performance }: { performance: Performance }) {
                 {months.map((row) => (
                   <tr key={row.month}>
                     <td>{row.label}</td>
-                    <td className="tnum n-green">+{row.added}</td>
-                    <td className="mut">—</td>
-                    <td className="mut">—</td>
-                    <td className="tnum">{row.onboardedToDate}</td>
-                    <td className="mut">—</td>
+                    <td className={`tnum${row.added ? " n-green" : " mut"}`}>{row.added ? `+${row.added}` : "0"}</td>
+                    <td className={`tnum${row.churned ? " n-red" : " mut"}`}>{row.churned ? `−${row.churned}` : "0"}</td>
+                    <td className="tnum">{row.net > 0 ? `+${row.net}` : row.net < 0 ? `−${-row.net}` : "0"}</td>
+                    <td className="tnum">{row.activeAtEnd}</td>
+                    <td className={`tnum${row.revenue === null ? " mut" : ""}`}>
+                      {row.revenue === null ? "—" : row.revenue.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -128,11 +132,12 @@ function PerformanceView({ performance }: { performance: Performance }) {
          * reads as broken rather than as honest about a gap in the data.
          */}
         <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 14, lineHeight: 1.7, maxWidth: "80ch" }}>
-          <b>Churned</b> and <b>Net</b> are blank because Client Health records churn as a
-          flag with no date — the total is known, the month is not. A status-history table
-          would fill both columns. <b>Revenue</b> needs a price on each plan.{" "}
-          <b>Onboarded to date</b> is a running total of onboardings and never subtracts
-          churn, so it is not the client count at that moment.
+          <b>Added</b> is each client&rsquo;s onboarding date
+          {totals.byStartDate > 0 ? ` (${totals.byStartDate} use their start date because no onboarding date is recorded)` : ""};{" "}
+          <b>Churned</b> is each churned client&rsquo;s churn date. Both are on the client&rsquo;s record in{" "}
+          <a href="/roster">Clients</a> — the churn date is set automatically when a client is marked Churned.{" "}
+          <b>Active at month end</b> counts clients onboarded by then and not yet churned.{" "}
+          <b>Revenue</b> is what Stripe collected that month from the {totals.stripeLinked} clients linked to a subscription.
         </p>
       </div>
     </>

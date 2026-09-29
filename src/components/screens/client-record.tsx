@@ -70,6 +70,8 @@ function editorFor(key: string, team: { salespeople: string[]; accountManagers: 
     case "name": return { editor: { kind: "text", maxLength: 80 }, save: "name", transform: (v) => v };
     case "plan": return { editor: { kind: "select", options: PLAN_OPTIONS }, save: "plan", transform: (v) => v };
     case "startDate": return { editor: { kind: "date" }, save: "startDate" };
+    case "onboardingDate": return { editor: { kind: "date" }, save: "onboardingDate" };
+    case "churnDate": return { editor: { kind: "date" }, save: "churnDate" };
     case "timezone": return { editor: { kind: "select", options: TZ_OPTIONS }, save: "timezone" };
     case "sender": case "campaignSender": return { editor: { kind: "text" }, save: "sender" };
     // Salesperson: someone on Team access → Salespeople. Before that list
@@ -99,6 +101,8 @@ function editorFor(key: string, team: { salespeople: string[]; accountManagers: 
 function rawOf(key: string, c: MasterClient): string | number | null {
   if (key === "campaignAliases") return c.campaignAliases.join(", ");
   if (key === "campaignSender") return c.sender;
+  // A derived date can be a timestamp; the date editor wants YYYY-MM-DD.
+  if (key === "onboardingDate" || key === "churnDate") return c[key] ? c[key]!.slice(0, 10) : null;
   const v = (c as unknown as Record<string, unknown>)[key];
   return typeof v === "string" || typeof v === "number" ? v : null;
 }
@@ -108,7 +112,7 @@ function displayFor(key: string, c: MasterClient): React.ReactNode {
   switch (key) {
     case "plan": return planLabel(c.plan);
     case "timezone": return tzLabel(c.timezone);
-    case "startDate": case "billingAnchorDate": return fmtDay(c[key]);
+    case "startDate": case "billingAnchorDate": case "onboardingDate": case "churnDate": return fmtDay(c[key]);
     case "billingInterval": return intervalLabel(c.billingInterval, c.billingIntervalDays);
     case "campaignAliases": return c.campaignAliases.length ? c.campaignAliases.join(", ") : null;
     case "monthlyTarget": return c.monthlyTarget === null ? null : `${c.monthlyTarget} per 28 days`;

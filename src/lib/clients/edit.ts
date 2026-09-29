@@ -15,6 +15,7 @@ import { stripeKey } from "@/lib/tools/onboarding/stripe";
 import { resolveAccountManager } from "@/lib/identity/team-directory";
 import { joinManagers, splitManagers } from "@/lib/identity/team-match";
 import { listSalespeople, resolveSalesperson } from "@/lib/identity/salespeople";
+import { setClientDates } from "./client-dates";
 
 /**
  * Ask Stripe who owns a subscription. A read — this never changes anything.
@@ -154,6 +155,10 @@ export interface ClientEdit {
   plan?: (typeof PLANS)[number];
   weeklyTarget?: number;
   startDate?: string | null;
+  /** §6 Onboarding date, entered on the record (os_clients.onboarding_date, 0023). */
+  onboardingDate?: string | null;
+  /** §12 Churn date, entered on the record (os_clients.churn_date, 0023). */
+  churnDate?: string | null;
   billingInterval?: (typeof BILLING_INTERVALS)[number];
   billingAnchorDate?: string | null;
   /** Introductions promised per month. §6 field; Client Health owns the column. */
@@ -233,7 +238,8 @@ export function validateEdit(edit: ClientEdit): string[] {
       (!Number.isInteger(edit.weeklyTarget) || edit.weeklyTarget < 0)) {
     errors.push("Weekly target must be a whole number of 0 or more.");
   }
-  for (const [label, v] of [["Start date", edit.startDate], ["Billing anchor date", edit.billingAnchorDate]] as const) {
+  for (const [label, v] of [["Start date", edit.startDate], ["Billing anchor date", edit.billingAnchorDate],
+    ["Onboarding date", edit.onboardingDate], ["Churn date", edit.churnDate]] as const) {
     if (v && !ISO_DATE.test(v)) errors.push(`${label} must be YYYY-MM-DD.`);
   }
   if (edit.billingInterval !== undefined && !BILLING_INTERVALS.includes(edit.billingInterval)) {
@@ -470,6 +476,19 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     const { error: e } = await osTable("os_clients").update(local).eq("id", id);
     if (e) failed.push({ what: "the OS record", error: e.message });
     else updated.push("the OS record");
+  }
+  // Onboarding and churn dates: their own columns (0023), written on their own
+  // so a database without the migration still saves every other field.
+  if (edit.onboardingDate !== undefined || edit.churnDate !== undefined) {
+    try {
+      await setClientDates(id, {
+        ...(edit.onboardingDate !== undefined ? { onboardingDate: edit.onboardingDate || null } : {}),
+        ...(edit.churnDate !== undefined ? { churnDate: edit.churnDate || null } : {}),
+      });
+      updated.push("the onboarding / churn date");
+    } catch (err) {
+      failed.push({ what: "the onboarding / churn date", error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   /* ------------------------------------------ the stored intro template */

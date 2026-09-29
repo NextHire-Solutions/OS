@@ -3,6 +3,9 @@ import { getWeekly } from "@/lib/tools/client-health/weekly";
 
 import { CLIENT_STATUSES, setClientStatus, type ClientStatus } from "@/lib/clients/os-clients";
 import { propagateStatus } from "@/lib/clients/status-propagate";
+import { stampStatusDate } from "@/lib/clients/client-dates";
+import { osTable } from "@/lib/clients/os-db";
+import { easternDay } from "@/lib/commissions/schedule";
 
 /*
  * Change a client's status. The only mutation the Clients screen performs.
@@ -54,7 +57,12 @@ export async function POST(request: Request) {
   }
 
   try {
+    // The status before, so the churn date is stamped on a change, not a re-save.
+    const { data: before } = await osTable("os_clients").select("status").eq("id", id).maybeSingle();
     const client = await setClientStatus(id, status as ClientStatus);
+    if ((before as { status?: string } | null)?.status !== client.status) {
+      await stampStatusDate(client.id, client.status, easternDay(new Date()));
+    }
 
     /*
      * After the master write, never before. The propagation writes Client

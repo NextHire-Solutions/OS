@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { osTable } from "@/lib/clients/os-db";
 import { toSlug } from "@/lib/clients/slug";
+import { stampStatusDate } from "@/lib/clients/client-dates";
+import { easternDay } from "@/lib/commissions/schedule";
 
 /*
  * Create (or find) the OS record a run attaches its history to.
@@ -47,6 +49,8 @@ export async function POST(request: Request) {
       .single();
     if (error) throw new Error(error.message);
     const row = data as unknown as { id: string; name: string; status: string };
+    // A new client's onboarding date is the day it was added, unless someone enters another.
+    await stampStatusDate(row.id, "onboarding", easternDay(new Date()));
     return NextResponse.json({ id: row.id, name: row.name, status: row.status, created: true });
   } catch (error) {
     return NextResponse.json(

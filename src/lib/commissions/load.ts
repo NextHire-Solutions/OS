@@ -243,7 +243,14 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
   const horizon = run < today ? run : today;
 
   const rows: CommissionRow[] = inScope.map((c) => {
-    const changes = history.get(c.id) ?? [];
+    /*
+     * A churn date entered on the record (0023) is when accrual stops, even
+     * when the status history (which starts 13 Sep) has no such change.
+     */
+    const recorded = history.get(c.id) ?? [];
+    const changes: StatusChange[] = c.status === "churned" && c.churnDate
+      ? [...recorded, { from: "active", to: "churned", at: `${c.churnDate.slice(0, 10)}T12:00:00Z` }]
+      : recorded;
     const manual = settings.gross.get(c.id) ?? null;
     const linked = Boolean(c.stripeSubscriptionId);
     const st = inp.stripe.get(c.id);

@@ -213,7 +213,7 @@ kbd{font-family:var(--sans);font-size:11px;font-weight:600;border:1px solid var(
         color:var(--ink);font-variant-numeric:tabular-nums}
 .card-s{font-size:13px;color:var(--muted)}
 .n-risk{color:var(--red)} .n-ok{color:var(--yellow)} .n-intros{color:var(--accent)}
-.n-done{color:var(--green)} .n-green{color:var(--green)} .n-blue{color:var(--accent)}
+.n-done{color:var(--green)} .n-green{color:var(--green)} .n-blue{color:var(--accent)} .n-red{color:var(--red)}
 .n-emails{color:var(--text-muted)}
 
 /* ------------------------------- TABLES ---------------------------------- */

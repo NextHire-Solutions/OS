@@ -91,12 +91,14 @@ export async function register() {
    */
   const warmShell = async () => {
     if (!process.env.MASTER_INBOX_SUPABASE_URL) return;
-    const [{ getAllSnapshots }, { loadRailBadges }, { getOverview }] = await Promise.all([
+    const [{ getAllSnapshots }, { loadRailBadges }, { getOverview }, { getPerformance }] = await Promise.all([
       import("./lib/status/store"),
       import("./lib/workspace/badges"),
       import("./lib/workspace/overview"),
+      import("./lib/workspace/performance"),
     ]);
-    await Promise.allSettled([getAllSnapshots(), loadRailBadges(), getOverview()]);
+    // Performance reads every linked Stripe subscription; warm it so opening the page never waits on Stripe.
+    await Promise.allSettled([getAllSnapshots(), loadRailBadges(), getOverview(), getPerformance()]);
   };
   const warmShellSafely = () => { warmShell().catch(() => { /* best effort */ }); };
   setTimeout(warmShellSafely, 6_000).unref?.();

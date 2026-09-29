@@ -21,6 +21,7 @@ import { portalsFor, type MiPortalRow } from "./people";
 import { keyOf } from "./roster";
 import { EMPTY_COVERAGE, type Coverage } from "./coverage";
 import { listCoverage } from "./coverage-db";
+import { listClientDates, type ClientDates } from "./client-dates";
 
 /*
  * THE MASTER CLIENT LIST — every §6 field for every client, in one read.
@@ -249,11 +250,13 @@ async function load(): Promise<MasterClientList> {
   const names = [
     "Master record", "Status history", "Markets", "Client Health", "Client Health campaigns",
     "Master Inbox portals", "Team, agents and DNC", "Introductions", "Database", "Onboarding", "Analytics",
+    "Onboarding and churn dates",
   ] as const;
   const settled = await Promise.allSettled([
     listOsClients(), readHistory(), readMarkets(), listClientRows(), readHealthCampaigns(),
     readPortals(), portalPeopleByMiId(), loadCombinedIntroSummaryByClient(), loadDatabaseClients(),
     getOnboardingPipeline(), readAnalytics(),
+    listClientDates().then((m) => { if (!m) throw new Error("migration 0023"); return m; }),
   ]);
   const unavailable: string[] = [];
   const get = <T,>(i: number): T | null => {
@@ -266,6 +269,7 @@ async function load(): Promise<MasterClientList> {
   if (!os) throw new Error("The master client record could not be read.");
   const history = get<Map<string, StatusChange[]>>(1);
   const markets = get<Map<string, Coverage>>(2);
+  const dates = get<Map<string, ClientDates>>(11);
   const healthRows = get<Row[]>(3);
   const healthCampaigns = get<Map<string, { name: string; status: string | null; size: number | null }>>(4);
   const portals = get<(MiPortalRow & { portal_token: string | null })[]>(5);
@@ -326,7 +330,8 @@ async function load(): Promise<MasterClientList> {
       statusSince: changes.length ? changes[changes.length - 1].at : null,
       plan: str(h?.plan),
       startDate: str(h?.start_date),
-      onboardingDate: life.onboardingDate ?? str(onb?.onboardingDate),
+      // Entered on the record (0023) wins; else the history; else Onboarding's call date.
+      onboardingDate: dates?.get(c.id)?.onboardingDate ?? life.onboardingDate ?? str(onb?.onboardingDate),
       dateAdded: c.createdAt ?? null,
       markets: markets ? markets.get(c.id) ?? EMPTY_COVERAGE : null,
       timezone: str(h?.time_zone),
@@ -361,7 +366,7 @@ async function load(): Promise<MasterClientList> {
       exported: num(onb?.leadsExported) ?? (d ? d.exported : null),
 
       pauseDate: life.pauseDate,
-      churnDate: life.churnDate,
+      churnDate: dates?.get(c.id)?.churnDate ?? life.churnDate,
       reactivationDate: life.reactivationDate,
 
       contact: c.contact,

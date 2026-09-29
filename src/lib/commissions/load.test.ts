@@ -124,3 +124,11 @@ test("older data naming two account managers pays the first only — never twice
   assert.deepEqual(all.rows[0].earnings.map((e) => e.name), ["Eddy"]);
   assert.deepEqual(buildCommissionsView(base({ clients: two })).rows, [], "Amy does not also earn on it");
 });
+
+test("a churn date entered on the record stops accrual from that day, with no status history", () => {
+  const churned = client("k", "Keyes Company", "Scott Craigue", "Amy", { stripeSubscriptionId: "sub_k", status: "churned", churnDate: "2026-07-01" });
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: [churned], run: "2026-07-15" }));
+  assert.deepEqual(v.rows[0].earnings.map((e) => e.lines.map((l) => l.date)), [[], []], "the Jul 8 payment falls after the churn date");
+  const earlier = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: [churned], run: "2026-07-01" }));
+  assert.ok(earlier.rows[0].earnings.every((e) => e.lines.length === 1), "Jun 24, before the churn date, still pays");
+});
