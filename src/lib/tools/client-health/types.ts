@@ -108,11 +108,11 @@ export interface ToggledCampaign {
   paused_at: string;
 }
 
-/** One market the client covers, from the OS's own client record (os_client_markets). */
+/** Markets / MLS / Area from the OS's own client record (0022): a count and two lists. */
 export interface ClientMarket {
-  market: string;
-  mls: string | null;
-  area: string | null;
+  markets: number | null;
+  mls: string[];
+  areas: string[];
 }
 
 export interface WeeklyMetric {
@@ -139,7 +139,7 @@ export interface DashboardClient extends Client {
   portalActive: boolean;
   // Markets from the OS client record. Null when they could not be read —
   // distinct from [] (none entered yet).
-  markets: ClientMarket[] | null;
+  markets: ClientMarket | null;
 }
 
 export const HISTORICAL_WEEKS = 26;

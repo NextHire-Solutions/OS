@@ -304,7 +304,7 @@ export function ClientRecord({
                 <button key={t.id} type="button" className={tab === t.id ? "on" : ""} aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>
                   {t.label}
                   {t.id === "campaigns" && c.campaigns ? <span className="n">{c.campaigns.length}</span> : null}
-                  {t.id === "markets" && c.markets ? <span className="n">{c.markets.length}</span> : null}
+                  {t.id === "markets" && c.markets?.markets != null ? <span className="n">{c.markets.markets}</span> : null}
                 </button>
               ))}
             </nav>

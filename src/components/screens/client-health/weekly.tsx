@@ -73,7 +73,9 @@ const n = (v: number) => v.toLocaleString("en-US");
 /** A percentage, or an em dash when its denominator was zero. */
 const pct = (v: number | null, digits = 1) => (v === null ? "—" : `${v.toFixed(digits)}%`);
 
-const describeMarket = (m: ClientMarket) => [m.market, m.mls, m.area].filter(Boolean).join(" · ");
+/** "MLS: BRIGHT, CVR\nArea: greater Richmond" — the hover on "N markets". Null when nothing is recorded. */
+const describeMarkets = (m: ClientMarket) =>
+  [m.mls.length ? `MLS: ${m.mls.join(", ")}` : null, m.areas.length ? `Area: ${m.areas.join(", ")}` : null].filter(Boolean).join("\n") || null;
 
 type ToggleTarget = { id: string; name: string; action: "pause" | "resume" };
 
@@ -367,10 +369,10 @@ function Row({
             {c.start_date && markets !== null ? " · " : null}
             {markets === null ? null : (
               <span
-                className={`ds-markets${markets.length === 0 ? " empty" : ""}`}
-                title={markets.length ? markets.map(describeMarket).join("\n") : "No markets added yet — add them on the client’s record"}
+                className={`ds-markets${!markets.markets ? " empty" : ""}`}
+                title={describeMarkets(markets) ?? "No markets added yet — add them on the client’s record"}
               >
-                {markets.length === 0 ? "No markets" : `${markets.length} market${markets.length === 1 ? "" : "s"}`}
+                {!markets.markets ? "No markets" : `${markets.markets} market${markets.markets === 1 ? "" : "s"}`}
               </span>
             )}
           </span>

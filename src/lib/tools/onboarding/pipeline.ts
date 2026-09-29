@@ -1,5 +1,6 @@
 import "server-only";
 import { masterByToolId, marketsLine, portalPeopleByMiId, type MasterFacts, type PortalPeopleCounts } from "@/lib/clients/master-lookup";
+import { hasCoverage } from "@/lib/clients/coverage";
 
 import { getCorofySupabase } from "../corofy/supabase";
 import { resolve } from "@/lib/clients/roster";
@@ -305,7 +306,7 @@ async function computeOnboardingPipeline(): Promise<OnboardingPipeline> {
         weeklyTarget: realPlans.get(String(c.id))?.weeklyTarget ?? num(c.weekly_target),
         // The client's markets (many per client, migration 0017) first.
         mls: (m && marketsLine(m.markets)) ?? str(c.mls),
-        location: m?.markets.length ? null : str(c.location),
+        location: m && hasCoverage(m.markets) ? null : str(c.location),
         paid: c.stripe_paid === true,
         paidAt: str(c.stripe_paid_at),
         amount: num(c.stripe_amount),

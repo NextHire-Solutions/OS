@@ -118,9 +118,14 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
       const v = fmtDay(c[k]);
       return v ? <span className="cx-date">{v}</span> : <None />;
     }
-    case "market": case "mls": case "area": {
+    // As the client data sheet has them (0022): Markets a number, MLS and Area lists.
+    case "market": {
       if (c.markets === null) return <None title="Markets could not be read" />;
-      const vals = [...new Set(c.markets.map((m) => m[k]).filter((x): x is string => !!x))];
+      return c.markets.markets === null ? <None title="None recorded yet" /> : <span className="cx-num">{c.markets.markets}</span>;
+    }
+    case "mls": case "area": {
+      if (c.markets === null) return <None title="Markets could not be read" />;
+      const vals = k === "mls" ? c.markets.mls : c.markets.areas;
       if (!vals.length) return <None title="None recorded yet" />;
       return <span title={vals.join(", ")}>{vals[0]}{vals.length > 1 ? <span className="cx-more">+{vals.length - 1}</span> : null}</span>;
     }
@@ -249,8 +254,9 @@ export function textOf(k: string, c: MasterClient): string {
     case "clientId": return c.id;
     case "status": return c.status.charAt(0).toUpperCase() + c.status.slice(1);
     case "plan": return planLabel(c.plan) ?? "";
-    case "market": case "mls": case "area":
-      return [...new Set((c.markets ?? []).map((m) => m[k]).filter(Boolean))].join("; ");
+    case "market": return c.markets?.markets == null ? "" : String(c.markets.markets);
+    case "mls": return (c.markets?.mls ?? []).join("; ");
+    case "area": return (c.markets?.areas ?? []).join("; ");
     case "timezone": return tzLabel(c.timezone) ?? "";
     case "billingInterval": return intervalLabel(c.billingInterval, c.billingIntervalDays) ?? "";
     case "campaignId": return (c.campaigns ?? []).map((x) => x.id).join("; ");

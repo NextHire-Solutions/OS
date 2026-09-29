@@ -1638,3 +1638,10 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
 .dc-alert ul { margin: 6px 0 8px 18px; padding: 0; }
 .dc-alert a { color: var(--blue); font-weight: 600; }
 .dc-urgent { border-color: var(--red); }
+
+/* Markets / MLS / Area as three fields (markets-panel.tsx, 0022). */
+.mk-field { display: grid; gap: 6px; margin-bottom: 12px; }
+.mk-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.mk-num { width: 110px; }
+.mk-x { border: 0; background: none; color: inherit; font: inherit; padding: 0 0 0 2px; cursor: pointer; opacity: .7; }
+.mk-x:hover { opacity: 1; }

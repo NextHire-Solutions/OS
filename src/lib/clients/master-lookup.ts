@@ -4,6 +4,8 @@ import { osTable } from "./os-db";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
 import type { ClientStatus } from "./client-status";
+import { coverageLine, EMPTY_COVERAGE, type Coverage } from "./coverage";
+import { listCoverage } from "./coverage-db";
 
 /*
  * THE MASTER RECORD, LOOKED UP FROM ANY TOOL'S ROW.
@@ -26,11 +28,7 @@ import type { ClientStatus } from "./client-status";
 
 export type ToolKey = "masterInbox" | "clientHealth" | "analytics" | "database";
 
-export interface MasterMarket {
-  market: string;
-  mls: string | null;
-  area: string | null;
-}
+export type { Coverage as MasterMarkets } from "./coverage";
 
 export interface MasterFacts {
   id: string;
@@ -44,7 +42,8 @@ export interface MasterFacts {
   contactName: string | null;
   contactEmail: string | null;
   brokerage: string | null;
-  markets: MasterMarket[];
+  /** Markets / MLS / Area (0022). */
+  markets: Coverage;
   /** When the client was added to the master record. */
   createdAt: string | null;
   /** When the current status was set (status history), or null. */
@@ -52,10 +51,9 @@ export interface MasterFacts {
   links: { masterInbox: string | null; clientHealth: string | null; analytics: string | null; database: string | null };
 }
 
-/** "Boston · MLS PIN, Florida" — how a client's markets read on one line. */
-export function marketsLine(markets: MasterMarket[]): string | null {
-  if (!markets.length) return null;
-  return markets.map((m) => [m.market, m.mls].filter(Boolean).join(" · ")).join(", ");
+/** "BRIGHT, CVR · greater Richmond" — how a client's MLS and areas read on one line. */
+export function marketsLine(markets: Coverage): string | null {
+  return coverageLine(markets);
 }
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -66,17 +64,12 @@ async function loadAll(): Promise<MasterFacts[]> {
       "id, name, aliases, status, salesperson, account_manager, sender_name, contact_name, contact_email, " +
         "brokerage, created_at, mi_client_id, ch_client_id, an_client_id, orch_client_id",
     ),
-    osTable("os_client_markets").select("client_id, market, mls, area"),
+    listCoverage(),
     osTable("os_client_status_history").select("os_client_id, changed_at").order("changed_at", { ascending: false }),
   ]);
   if (clients.error) throw new Error(`os_clients: ${clients.error.message}`);
 
-  const byClient = new Map<string, MasterMarket[]>();
-  for (const m of ((markets.data ?? []) as unknown as { client_id: string; market: string; mls: string | null; area: string | null }[])) {
-    const list = byClient.get(m.client_id) ?? [];
-    list.push({ market: m.market, mls: m.mls, area: m.area });
-    byClient.set(m.client_id, list);
-  }
+  const byClient: Map<string, Coverage> = markets ?? new Map();
   const since = new Map<string, string>();
   for (const h of ((history.data ?? []) as unknown as { os_client_id: string; changed_at: string }[])) {
     if (!since.has(h.os_client_id)) since.set(h.os_client_id, h.changed_at); // newest first
@@ -93,7 +86,7 @@ async function loadAll(): Promise<MasterFacts[]> {
     contactName: str(r.contact_name),
     contactEmail: str(r.contact_email),
     brokerage: str(r.brokerage),
-    markets: byClient.get(String(r.id)) ?? [],
+    markets: byClient.get(String(r.id)) ?? EMPTY_COVERAGE,
     createdAt: str(r.created_at),
     statusSince: since.get(String(r.id)) ?? null,
     links: {

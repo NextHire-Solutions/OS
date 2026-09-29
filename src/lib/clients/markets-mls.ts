@@ -80,3 +80,12 @@ export function seedFromCodes(codes: string[], boards: Board[]): { market: strin
   }
   return out;
 }
+
+/**
+ * Board codes from a client's MLS list (0022): each entry matched to a board
+ * the Database knows, in the boards' own spelling; the rest reported as
+ * unknown so someone can fix them.
+ */
+export function deriveCodesFromList(mls: string[], boards: Board[]): Derived {
+  return deriveCodes(mls.map((code) => ({ market: "", mls: code, area: null })), boards);
+}

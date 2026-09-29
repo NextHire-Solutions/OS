@@ -19,6 +19,8 @@ import { listOsClients, type OsClient } from "./os-clients";
 import { osTable } from "./os-db";
 import { portalsFor, type MiPortalRow } from "./people";
 import { keyOf } from "./roster";
+import { EMPTY_COVERAGE, type Coverage } from "./coverage";
+import { listCoverage } from "./coverage-db";
 
 /*
  * THE MASTER CLIENT LIST — every §6 field for every client, in one read.
@@ -39,7 +41,6 @@ import { keyOf } from "./roster";
  * is `null` — "we could not look" — never a zero.
  */
 
-export interface MasterMarket { market: string | null; mls: string | null; area: string | null }
 
 export interface MasterCampaign {
   id: string;
@@ -62,7 +63,8 @@ export interface MasterClient {
   startDate: string | null;
   onboardingDate: string | null;
   dateAdded: string | null;
-  markets: MasterMarket[] | null;
+  /** §6 Market / MLS / Area, as the client data sheet has them (0022). Null when unreadable. */
+  markets: Coverage | null;
   timezone: string | null;
   team: number | null;
   agents: number | null;
@@ -204,16 +206,11 @@ async function readHistory(): Promise<Map<string, StatusChange[]>> {
   return out;
 }
 
-async function readMarkets(): Promise<Map<string, MasterMarket[]>> {
-  const { data, error } = await osTable("os_client_markets").select("client_id, market, mls, area");
-  if (error) throw new Error(error.message);
-  const out = new Map<string, MasterMarket[]>();
-  for (const r of (data ?? []) as unknown as { client_id: string; market: string | null; mls: string | null; area: string | null }[]) {
-    const list = out.get(r.client_id) ?? [];
-    list.push({ market: str(r.market), mls: str(r.mls), area: str(r.area) });
-    out.set(r.client_id, list);
-  }
-  return out;
+/** Markets / MLS / Area for every client (0022). Throws before the migration, so the list says "unreadable". */
+async function readMarkets(): Promise<Map<string, Coverage>> {
+  const all = await listCoverage();
+  if (!all) throw new Error("Markets, MLS and Area need migration 0022.");
+  return all;
 }
 
 async function readPortals(): Promise<(MiPortalRow & { portal_token: string | null })[]> {
@@ -268,7 +265,7 @@ async function load(): Promise<MasterClientList> {
   const os = get<OsClient[]>(0);
   if (!os) throw new Error("The master client record could not be read.");
   const history = get<Map<string, StatusChange[]>>(1);
-  const markets = get<Map<string, MasterMarket[]>>(2);
+  const markets = get<Map<string, Coverage>>(2);
   const healthRows = get<Row[]>(3);
   const healthCampaigns = get<Map<string, { name: string; status: string | null; size: number | null }>>(4);
   const portals = get<(MiPortalRow & { portal_token: string | null })[]>(5);
@@ -331,7 +328,7 @@ async function load(): Promise<MasterClientList> {
       startDate: str(h?.start_date),
       onboardingDate: life.onboardingDate ?? str(onb?.onboardingDate),
       dateAdded: c.createdAt ?? null,
-      markets: markets ? markets.get(c.id) ?? [] : null,
+      markets: markets ? markets.get(c.id) ?? EMPTY_COVERAGE : null,
       timezone: str(h?.time_zone),
       team: sum("team"),
       agents: sum("agents"),

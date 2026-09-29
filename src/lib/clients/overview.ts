@@ -15,6 +15,7 @@ import { latestStatusMoments, type StatusMoment } from "./status-history";
 import { type ClientStatus } from "./client-status";
 import { nextBillingDate } from "@/lib/tools/client-health/derive";
 import type { BillingInterval } from "@/lib/tools/client-health/types";
+import { listCoverage } from "./coverage-db";
 
 /*
  * One row per client, gathered from every tool.
@@ -154,16 +155,11 @@ type MarketSummary = { count: number; withMls: number; withArea: number };
  * a counter would be the slowest thing on the page.
  */
 async function marketSummaries(): Promise<Map<string, MarketSummary>> {
-  const { data, error } = await osTable("os_client_markets").select("client_id, mls, area");
-  if (error) throw new Error(error.message);
+  // Markets / MLS / Area as the client data sheet has them (0022).
+  const all = await listCoverage();
+  if (!all) throw new Error("Markets, MLS and Area need migration 0022.");
   const out = new Map<string, MarketSummary>();
-  for (const r of (data ?? []) as unknown as { client_id: string; mls: string | null; area: string | null }[]) {
-    const s = out.get(r.client_id) ?? { count: 0, withMls: 0, withArea: 0 };
-    s.count += 1;
-    if (r.mls?.trim()) s.withMls += 1;
-    if (r.area?.trim()) s.withArea += 1;
-    out.set(r.client_id, s);
-  }
+  for (const [id, c] of all) out.set(id, { count: c.markets ?? 0, withMls: c.mls.length, withArea: c.areas.length });
   return out;
 }
 
