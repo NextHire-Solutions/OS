@@ -314,7 +314,18 @@ function Row({
    * which is the lifecycle on the Clients page.
    */
   const held = c.toggle_paused_campaigns?.length ?? 0;
-  const campToggle = held > 0 ? (
+  // Nothing running and everything paused/finished — paused somewhere else.
+  // ▶ still resumes: the dialog previews the live-paused ones first.
+  const pausedElsewhere = held === 0 && active.length === 0 && label === "Campaign Paused";
+  const campToggle = pausedElsewhere ? (
+    <button
+      type="button"
+      className="ds-camp-toggle is-paused"
+      title="Every campaign is paused or finished. Click to see which paused ones can be resumed."
+      aria-label={`Resume paused campaigns for ${c.name}`}
+      onClick={(e) => { e.stopPropagation(); onToggle("resume"); }}
+    >▶</button>
+  ) : held > 0 ? (
     <button
       type="button"
       className="ds-camp-toggle is-paused"

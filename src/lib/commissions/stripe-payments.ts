@@ -13,16 +13,46 @@ import { easternDay, round2, type Payment } from "./schedule";
  * Paused collection and cancellation need no special handling here: no
  * invoice is paid, so no payment appears.
  */
+/*
+ * Every Stripe read goes through here: at most 4 at once, and a 429 (Stripe's
+ * rate limit) or a 5xx is retried after the delay Stripe asks for. Commissions
+ * reads ~30 subscriptions for an admin; fired all at once, some came back
+ * rate-limited and those clients showed "No billing data" (audit, 30 Sep).
+ */
+const MAX_IN_FLIGHT = 4;
+let inFlight = 0;
+const waiting: (() => void)[] = [];
+async function slot(): Promise<() => void> {
+  if (inFlight >= MAX_IN_FLIGHT) await new Promise<void>((r) => waiting.push(r));
+  inFlight++;
+  return () => { inFlight--; waiting.shift()?.(); };
+}
+
+async function stripeGet(url: string): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const release = await slot();
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${stripeKey()}` }, cache: "no-store" });
+    } finally {
+      release();
+    }
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      const wait = Number(res.headers.get("retry-after")) * 1000 || 500 * 2 ** attempt;
+      await new Promise((r) => setTimeout(r, Math.min(wait, 4000)));
+      continue;
+    }
+    return res;
+  }
+}
+
 async function load(subscriptionId: string): Promise<Payment[]> {
   const out: Payment[] = [];
   let after: string | null = null;
   for (let page = 0; page < 20; page++) {
     const q = new URLSearchParams({ subscription: subscriptionId, status: "paid", limit: "100" });
     if (after) q.set("starting_after", after);
-    const res = await fetch(`https://api.stripe.com/v1/invoices?${q}`, {
-      headers: { Authorization: `Bearer ${stripeKey()}` },
-      cache: "no-store",
-    });
+    const res = await stripeGet(`https://api.stripe.com/v1/invoices?${q}`);
     const body = (await res.json().catch(() => null)) as {
       data?: { id: string; amount_paid?: number; status_transitions?: { paid_at?: number | null }; created?: number }[];
       has_more?: boolean; error?: { message?: string };
@@ -48,10 +78,7 @@ export const stripePayments = ttlCache(load, { ttlMs: 10 * 60_000, staleMs: 50 *
  * $1,000; a monthly price is taken as it is. Null when it cannot be read.
  */
 async function loadGross(subscriptionId: string): Promise<{ per28: number; cycleDays: number | null; paused: boolean } | null> {
-  const res = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscriptionId)}?expand[]=items.data.price`, {
-    headers: { Authorization: `Bearer ${stripeKey()}` },
-    cache: "no-store",
-  });
+  const res = await stripeGet(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscriptionId)}?expand[]=items.data.price`);
   const s = (await res.json().catch(() => null)) as {
     items?: { data?: { quantity?: number; price?: { unit_amount?: number | null; recurring?: { interval?: string; interval_count?: number } } }[] };
     pause_collection?: unknown;
