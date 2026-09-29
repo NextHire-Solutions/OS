@@ -346,9 +346,9 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   if (errors.length) throw new Error(errors.join(" "));
 
   /*
-   * Account Manager is a team member (30 Sep), and a client may have several:
-   * each must be an active person on Team access, saved under their exact
-   * name, in the order given, as "Amy, Eddy" (team-match.ts). Blank clears.
+   * Account Manager is ONE team member with the Account manager role (30 Sep),
+   * saved under their exact name. Blank clears. Older values naming two people
+   * ("Amy, Eddy") still read, and are replaced by the next save.
    *
    * Salesperson is someone on Team access → Salespeople (0020), saved under
    * the list's own spelling. Before that list exists, anything typed is kept
@@ -358,6 +358,10 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
    * changes nothing.
    */
   if (typeof edit.accountManager === "string" && edit.accountManager.trim()) {
+    // One account manager per client (the client, 30 Sep).
+    if (splitManagers(edit.accountManager).length > 1) {
+      throw new InvalidEditError("A client has one account manager. Choose one.");
+    }
     const names: string[] = [];
     for (const typed of splitManagers(edit.accountManager)) {
       const r = await resolveAccountManager(typed);

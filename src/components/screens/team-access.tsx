@@ -3,7 +3,6 @@
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModalDialog } from "@/components/ui/modal-dialog";
-import { SalespeopleSection } from "./team-salespeople";
 
 /*
  * Team access — who may open which tool.
@@ -42,12 +41,20 @@ interface TeamUser {
   grants: string[];
   isActive: boolean;
   isAdmin: boolean;
+  /** ADMIN_EMAILS — always an admin, never editable here. */
+  isOwner?: boolean;
   role: string;
+  /** Can be a client's Account Manager (and earns as one). */
+  accountManager?: boolean;
+  /** Has an active salesperson record (and earns as one). */
+  salesperson?: boolean;
   isSelf: boolean;
 }
 
 interface TeamPayload {
   users: TeamUser[];
+  /** Salespeople on record with no sign-in yet — shown so they can be invited. */
+  notInvited?: { id: string; name: string }[];
   tools: ToolDescriptor[];
   capabilities: { writable: boolean; canInvite?: boolean; inviteReason?: string | null; editable?: boolean; reason: string };
   governance: {
@@ -104,6 +111,9 @@ export function TeamAccessScreen() {
   const [saving, setSaving] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  /** Inviting someone already on record as a salesperson links their record. */
+  const [invitePreset, setInvitePreset] = useState<{ name: string; salespersonId: string } | null>(null);
+  const [editing, setEditing] = useState<TeamUser | null>(null);
   /** A freshly minted temporary password, shown once for one person. */
   const [handover, setHandover] = useState<{ email: string; password: string; kind: "invited" | "reset" } | null>(null);
 
@@ -234,12 +244,15 @@ export function TeamAccessScreen() {
         </div>
       ) : null}
 
-      <ModalDialog open={inviteOpen} onClose={() => setInviteOpen(false)} width={620} label="Invite a teammate">
+      <ModalDialog open={inviteOpen} onClose={() => { setInviteOpen(false); setInvitePreset(null); }} width={620} label="Invite a teammate">
         <InviteForm
+          key={invitePreset?.salespersonId ?? "new"}
           tools={data.tools}
-          onClose={() => setInviteOpen(false)}
+          preset={invitePreset}
+          onClose={() => { setInviteOpen(false); setInvitePreset(null); }}
           onInvited={async (email, password) => {
             setInviteOpen(false);
+            setInvitePreset(null);
             setHandover({ email, password, kind: "invited" });
             await reload();
           }}
@@ -248,6 +261,17 @@ export function TeamAccessScreen() {
 
       <ModalDialog open={handover !== null} onClose={() => setHandover(null)} width={520} label="Temporary password">
         {handover ? <Handover {...handover} onDone={() => setHandover(null)} /> : null}
+      </ModalDialog>
+
+      <ModalDialog open={editing !== null} onClose={() => setEditing(null)} width={560} label="Edit teammate">
+        {editing ? (
+          <EditPerson
+            key={editing.email}
+            user={editing}
+            onClose={() => setEditing(null)}
+            onSaved={async () => { setEditing(null); await reload(); }}
+          />
+        ) : null}
       </ModalDialog>
 
       {/*
@@ -286,11 +310,23 @@ export function TeamAccessScreen() {
                     </div>
                     <div className="csince">
                       {user.email}
-                      {user.isAdmin ? ` · ${user.role} · every tool, always` : ""}
+                      {user.isAdmin ? ` · ${user.role} · every tool${user.isOwner ? ", always" : ""}` : ""}
                       {user.source === "env" && !user.isAdmin ? " · from AUTH_USERS" : ""}
                     </div>
+                    {user.accountManager || user.salesperson ? (
+                      <div className="csince">
+                        {[user.accountManager ? "Account manager" : null, user.salesperson ? "Salesperson" : null].filter(Boolean).join(" · ")}
+                      </div>
+                    ) : null}
                     {user.source === "db" && !user.isSelf && data.capabilities.canInvite ? (
                       <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                        <button
+                          type="button"
+                          style={{ ...LINK_BUTTON, fontSize: 12.5 }}
+                          onClick={() => setEditing(user)}
+                        >
+                          Edit
+                        </button>
                         <button
                           type="button"
                           style={{ ...LINK_BUTTON, fontSize: 12.5 }}
@@ -333,6 +369,27 @@ export function TeamAccessScreen() {
                   })}
                 </tr>
               ))}
+              {/* On record as salespeople, no sign-in yet. Inviting links the record. */}
+              {(data.notInvited ?? []).map((p) => (
+                <tr key={`sp-${p.id}`}>
+                  <td>
+                    <div className="cname" style={{ opacity: 0.75 }}>{p.name}</div>
+                    <div className="csince">Salesperson · not invited yet</div>
+                    {data.capabilities.canInvite ? (
+                      <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                        <button
+                          type="button"
+                          style={{ ...LINK_BUTTON, fontSize: 12.5 }}
+                          onClick={() => { setInvitePreset({ name: p.name, salespersonId: p.id }); setInviteOpen(true); }}
+                        >
+                          Invite
+                        </button>
+                      </div>
+                    ) : null}
+                  </td>
+                  {data.tools.map((tool) => <td key={tool.id} style={{ color: "var(--muted)" }}>—</td>)}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -360,8 +417,6 @@ export function TeamAccessScreen() {
       </div>
 
       {preview ? <Preview preview={preview} copied={copied} onCopied={setCopied} /> : null}
-
-      <SalespeopleSection />
     </div>
   );
 }
@@ -457,20 +512,24 @@ const LABEL: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(
 
 function InviteForm({
   tools,
+  preset,
   onClose,
   onInvited,
 }: {
   tools: ToolDescriptor[];
+  preset?: { name: string; salespersonId: string } | null;
   onClose: () => void;
   onInvited: (email: string, temporaryPassword: string) => void | Promise<void>;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(preset?.name ?? "");
   const [email, setEmail] = useState("");
   const [grants, setGrants] = useState<string[]>([]);
+  const [roles, setRoles] = useState<Roles>({ admin: false, accountManager: false, salesperson: Boolean(preset) });
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState("");
 
-  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && grants.length > 0;
+  // An admin holds every tool, so needs none switched on here.
+  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && (grants.length > 0 || roles.admin);
 
   async function submit() {
     setBusy(true);
@@ -479,7 +538,10 @@ function InviteForm({
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), name: name.trim(), grants }),
+        body: JSON.stringify({
+          email: email.trim(), name: name.trim(), grants, ...roles,
+          salespersonId: roles.salesperson ? preset?.salespersonId ?? null : null,
+        }),
       });
       const out = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
@@ -516,7 +578,12 @@ function InviteForm({
         </div>
 
         <div style={FIELD}>
-          <span style={LABEL}>Tools they can open *</span>
+          <span style={LABEL}>Role</span>
+          <RoleSwitches roles={roles} onChange={setRoles} />
+        </div>
+
+        <div style={FIELD}>
+          <span style={LABEL}>Tools they can open {roles.admin ? "(an admin has every tool)" : "*"}</span>
           <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
             {tools.map((t) => {
               const on = grants.includes(t.id);
@@ -596,6 +663,132 @@ function Handover({ email, password, kind, onDone }: { email: string; password: 
           {copied ? "Copied" : "Copy password"}
         </button>
         <button type="button" className="btn btn-pri" style={{ flex: 1 }} onClick={onDone}>Done</button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ roles --- */
+
+interface Roles { admin: boolean; accountManager: boolean; salesperson: boolean }
+
+const ROLE_ROWS: { key: keyof Roles; label: string; description: string }[] = [
+  { key: "admin", label: "Admin", description: "Every tool, Team access, and everyone's commissions." },
+  { key: "accountManager", label: "Account manager", description: "Can be a client's account manager, and earns commission as one." },
+  { key: "salesperson", label: "Salesperson", description: "Can be a client's salesperson, and earns commission as one." },
+];
+
+/** The same switch cards as "Tools they can open", so the dialog reads as one. */
+function RoleSwitches({ roles, onChange, locked = {} }: {
+  roles: Roles;
+  onChange: (next: Roles) => void;
+  /** Switches that cannot change here, with the reason shown under them. */
+  locked?: Partial<Record<keyof Roles, string>>;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+      {ROLE_ROWS.map((r) => {
+        const on = roles[r.key];
+        const why = locked[r.key];
+        return (
+          <button
+            key={r.key}
+            type="button"
+            role="switch"
+            aria-checked={on}
+            aria-label={r.label}
+            disabled={Boolean(why)}
+            onClick={() => onChange({ ...roles, [r.key]: !on })}
+            style={{
+              display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+              padding: "10px 12px", borderRadius: "var(--r-md)", cursor: why ? "default" : "pointer", font: "inherit",
+              border: `1px solid ${on ? "var(--blue)" : "var(--line)"}`,
+              background: on ? "var(--blue-bg, var(--inset))" : "var(--surface)",
+              opacity: why ? 0.75 : 1,
+            }}
+          >
+            <span className={`tg${on ? " on" : ""}`} aria-hidden style={{ pointerEvents: "none" }}>
+              <i />
+              {on ? "On" : "Off"}
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>{r.label}</span>
+              <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{why ?? r.description}</span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Edit one person: name, email and roles. Tools stay on the row's switches. */
+function EditPerson({ user, onClose, onSaved }: { user: TeamUser; onClose: () => void; onSaved: () => void | Promise<void> }) {
+  const start: Roles = { admin: user.isAdmin, accountManager: Boolean(user.accountManager), salesperson: Boolean(user.salesperson) };
+  const [name, setName] = useState(user.name ?? "");
+  const [email, setEmail] = useState(user.email);
+  const [roles, setRoles] = useState<Roles>(start);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState("");
+  const [note, setNote] = useState("");
+
+  const locked: Partial<Record<keyof Roles, string>> = {};
+  if (user.isOwner) locked.admin = "An Owner is always an admin.";
+  else if (user.isSelf) locked.admin = "You cannot change your own admin standing.";
+
+  const body: Record<string, unknown> = { email: user.email };
+  if (name.trim() && name.trim() !== (user.name ?? "")) body.name = name.trim();
+  if (email.trim().toLowerCase() !== user.email) body.newEmail = email.trim();
+  for (const k of ["admin", "accountManager", "salesperson"] as const) if (roles[k] !== start[k]) body[k] = roles[k];
+  const changed = Object.keys(body).length > 1;
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+  async function save() {
+    setBusy(true); setFailed(""); setNote("");
+    try {
+      const res = await fetch("/api/admin/users", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
+      if (out.clientsRenamed) setNote(`Renamed on ${out.clientsRenamed} client${out.clientsRenamed === 1 ? "" : "s"}.`);
+      await onSaved();
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+      <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--line-soft)", flex: "none" }}>
+        <div style={{ fontWeight: 650, fontSize: 14 }}>Edit {user.name ?? user.email}</div>
+        <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
+          A new name is carried to every client that names them. A new email signs them out; they sign in with the new address.
+        </div>
+      </div>
+      <div style={{ padding: 16, overflowY: "auto", flex: 1, minHeight: 0, display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+          <label style={FIELD}>
+            <span style={LABEL}>Name</span>
+            <input className="inp" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} disabled={user.source !== "db"} />
+          </label>
+          <label style={FIELD}>
+            <span style={LABEL}>Email</span>
+            <input className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={user.source !== "db" || user.isSelf || Boolean(user.isOwner)} />
+          </label>
+        </div>
+        <div style={FIELD}>
+          <span style={LABEL}>Role</span>
+          <RoleSwitches roles={roles} onChange={setRoles} locked={locked} />
+        </div>
+        {failed ? <div style={{ fontSize: 13, color: "var(--red)" }}>{failed}</div> : null}
+        {note ? <div style={{ fontSize: 13, color: "var(--muted)" }}>{note}</div> : null}
+      </div>
+      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--line-soft)", display: "flex", gap: 8, flex: "none" }}>
+        <button type="button" className="btn" style={{ flex: 1 }} onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="button" className="btn btn-pri" style={{ flex: 1 }} onClick={() => void save()} disabled={!changed || !validEmail || busy}>
+          {busy ? "Saving…" : "Save"}
+        </button>
       </div>
     </div>
   );

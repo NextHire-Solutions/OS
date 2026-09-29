@@ -17,6 +17,10 @@ export interface UserRow {
   tokenVersion: number;
   createdAt: string | null;
   createdBy: string | null;
+  /** Marked Admin on Team access (0021). Owners are admins whatever this says. */
+  isAdmin: boolean;
+  /** Can be a client's Account Manager, and earns commission as one (0021). */
+  isAccountManager: boolean;
 }
 
 /** A row as Supabase returns it; every field is treated as untrusted. */
@@ -33,6 +37,8 @@ export function coerceUserRow(raw: Record<string, unknown>): UserRow | null {
     tokenVersion: typeof raw.token_version === "number" && raw.token_version > 0 ? raw.token_version : 1,
     createdAt: typeof raw.created_at === "string" ? raw.created_at : null,
     createdBy: typeof raw.created_by === "string" ? raw.created_by : null,
+    isAdmin: raw.is_admin === true,
+    isAccountManager: raw.is_account_manager === true,
   };
 }
 
@@ -82,6 +88,9 @@ export interface MergedUser extends StoredUser {
   source: "env" | "db";
   name: string | null;
   mustChangePassword: boolean;
+  /** Marked Admin on Team access (0021) — not the Owner rule, which is ADMIN_EMAILS. */
+  adminFlag: boolean;
+  accountManager: boolean;
 }
 
 export function mergeUsers(
@@ -101,6 +110,8 @@ export function mergeUsers(
       source: "env",
       name: own?.name ?? null,
       mustChangePassword: false,
+      adminFlag: own?.isAdmin ?? false,
+      accountManager: own?.isAccountManager ?? false,
       ...(own ? { passwordHash: own.passwordHash, tokenVersion: own.tokenVersion } : {}),
     });
   }
@@ -117,6 +128,8 @@ export function mergeUsers(
       source: "db",
       name: row.name,
       mustChangePassword: row.mustChangePassword,
+      adminFlag: row.isAdmin,
+      accountManager: row.isAccountManager,
     });
   }
   return out.sort((a, b) => a.email.localeCompare(b.email));

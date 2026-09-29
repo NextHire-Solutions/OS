@@ -4,6 +4,10 @@ import { createUser, DbGrantStore, grantStore, resetUserPassword, setUserActive,
 import { generateTemporaryPassword } from "@/lib/identity/user-table";
 import { sha256Hex } from "@/lib/bs-auth";
 import { coerceTools, describeAdmins, GRANTABLE_TOOLS, isAdmin } from "@/lib/identity/admin";
+import { isAdminUser } from "@/lib/identity/admin-db";
+import {
+  changeEmail, renameMember, salespersonRecords, setAccountManager, setAdmin, setSalesperson, TeamRoleError,
+} from "@/lib/identity/team-roles";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +46,7 @@ export async function GET(request: Request) {
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isAdmin(session.email)) {
+  if (!(await isAdminUser(session.email))) {
     return NextResponse.json(
       { error: "Forbidden", detail: "Only workspace admins can view team access." },
       { status: 403 },
@@ -58,21 +62,34 @@ export async function GET(request: Request) {
   // switches that saved on click when every click would have failed.
   const tables = store instanceof DbGrantStore ? await store.probeTables() : { grants: false, users: false };
 
+  const sp = await salespersonRecords();
   return NextResponse.json({
     users: users
-      .map((u) => ({
-        email: u.email,
-        name: "name" in u ? u.name : null,
-        source: "source" in u ? u.source : "env",
-        grants: u.grants,
-        isActive: u.isActive,
-        isAdmin: isAdmin(u.email),
-        // The design labels the account under its email ("· Owner"), so the
-        // label is decided here rather than inferred from isAdmin in the UI.
-        role: isAdmin(u.email) ? "Owner" : "Member",
-        isSelf: u.email === session.email,
-      }))
+      .map((u) => {
+        const owner = isAdmin(u.email);
+        const flagged = "adminFlag" in u && u.adminFlag === true;
+        return {
+          email: u.email,
+          name: "name" in u ? u.name : null,
+          source: "source" in u ? u.source : "env",
+          grants: u.grants,
+          isActive: u.isActive,
+          isAdmin: owner || flagged,
+          isOwner: owner,
+          // The design labels the account under its email ("· Owner"), so the
+          // label is decided here rather than inferred from isAdmin in the UI.
+          role: owner ? "Owner" : flagged ? "Admin" : "Member",
+          accountManager: "accountManager" in u && u.accountManager === true,
+          salesperson: sp.byEmail.get(u.email)?.active === true,
+          isSelf: u.email === session.email,
+        };
+      })
       .sort((a, b) => a.email.localeCompare(b.email)),
+
+    // Salespeople on record who have no sign-in yet (Ryan Jagdeo, Scott
+    // Craigue): listed with the team so they can be invited, which links
+    // their record — clients and rates — to the new sign-in.
+    notInvited: sp.notInvited.map((r) => ({ id: r.id, name: r.name })),
 
     tools: GRANTABLE_TOOLS,
 
@@ -121,7 +138,7 @@ export async function PATCH(request: Request) {
   if (!secret) return NextResponse.json({ error: "Not configured." }, { status: 503 });
   const session = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isAdmin(session.email)) {
+  if (!(await isAdminUser(session.email))) {
     return NextResponse.json({ error: "Forbidden", detail: "Only workspace admins can change team access." }, { status: 403 });
   }
   const store = grantStore();
@@ -132,10 +149,58 @@ export async function PATCH(request: Request) {
       { status: 409 },
     );
   }
-  let body: { email?: unknown; grants?: unknown; active?: unknown; resetPassword?: unknown };
+  let body: {
+    email?: unknown; grants?: unknown; active?: unknown; resetPassword?: unknown;
+    name?: unknown; newEmail?: unknown; admin?: unknown; accountManager?: unknown; salesperson?: unknown;
+  };
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Malformed request." }, { status: 400 }); }
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   if (!email) return NextResponse.json({ error: "email is required" }, { status: 400 });
+
+  /*
+   * Edit a person: name, email, Admin, Account Manager, Salesperson (30 Sep:
+   * "we should be able to edit anything from here"). Invited people only —
+   * an Owner's standing is ADMIN_EMAILS, and nobody edits their own admin
+   * standing or email here, so an admin cannot lock themselves out.
+   */
+  const editing = ["name", "newEmail", "admin", "accountManager", "salesperson"].some((k) => (body as Record<string, unknown>)[k] !== undefined);
+  if (editing) {
+    if (!tables.users) return NextResponse.json({ error: "Run migrations/0004_os_users.sql first." }, { status: 409 });
+    const people = store instanceof DbGrantStore ? await store.listMerged() : [];
+    const person = people.find((p) => p.email === email);
+    if (!person) return NextResponse.json({ error: `${email} is not a workspace user.` }, { status: 404 });
+    const owner = isAdmin(email);
+    const self = email === session.email;
+    try {
+      let clientsRenamed = 0;
+      if (typeof body.admin === "boolean") {
+        if (owner) return NextResponse.json({ error: `${email} is an Owner and is always an admin.` }, { status: 409 });
+        if (self) return NextResponse.json({ error: "You cannot change your own admin standing." }, { status: 400 });
+        if (person.source !== "db") return NextResponse.json({ error: `${email} signs in through AUTH_USERS; manage that account in Railway.` }, { status: 409 });
+        await setAdmin(email, body.admin);
+      }
+      if (typeof body.accountManager === "boolean") {
+        if (person.source !== "db") return NextResponse.json({ error: `${email} signs in through AUTH_USERS; manage that account in Railway.` }, { status: 409 });
+        await setAccountManager(email, body.accountManager);
+      }
+      if (typeof body.salesperson === "boolean") {
+        await setSalesperson({ email, name: person.name }, body.salesperson, null, session.email);
+      }
+      if (typeof body.name === "string" && body.name.trim() !== (person.name ?? "")) {
+        if (person.source !== "db") return NextResponse.json({ error: `${email} signs in through AUTH_USERS; manage that account in Railway.` }, { status: 409 });
+        clientsRenamed = (await renameMember(email, person.name, body.name, session.email)).clients;
+      }
+      if (typeof body.newEmail === "string" && body.newEmail.trim().toLowerCase() !== email) {
+        if (self) return NextResponse.json({ error: "Change your own email from your Account page." }, { status: 400 });
+        if (person.source !== "db" || owner) return NextResponse.json({ error: `${email} is managed in Railway; its email cannot change here.` }, { status: 409 });
+        await changeEmail(email, body.newEmail);
+      }
+      return NextResponse.json({ ok: true, email, clientsRenamed });
+    } catch (e) {
+      const status = e instanceof TeamRoleError ? 400 : 500;
+      return NextResponse.json({ error: e instanceof Error ? e.message : "Could not save." }, { status });
+    }
+  }
 
   /*
    * Deactivate / reactivate / new temporary password — invited people only.
@@ -194,7 +259,7 @@ export async function POST(request: Request) {
   if (!secret) return NextResponse.json({ error: "Not configured." }, { status: 503 });
   const session = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isAdmin(session.email)) {
+  if (!(await isAdminUser(session.email))) {
     return NextResponse.json({ error: "Forbidden", detail: "Only workspace admins can invite people." }, { status: 403 });
   }
   const store = grantStore();
@@ -205,14 +270,16 @@ export async function POST(request: Request) {
       { status: 409 },
     );
   }
-  let body: { email?: unknown; name?: unknown; grants?: unknown };
+  let body: { email?: unknown; name?: unknown; grants?: unknown; admin?: unknown; accountManager?: unknown; salesperson?: unknown; salespersonId?: unknown };
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Malformed request." }, { status: 400 }); }
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return NextResponse.json({ error: "Enter a valid email address." }, { status: 400 });
   }
   const name = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 120) : null;
-  const grants = coerceTools(body.grants);
+  const asAdmin = body.admin === true;
+  // An admin holds every tool; nobody else is invited into an empty workspace.
+  const grants = asAdmin ? coerceTools(GRANTABLE_TOOLS.map((t) => t.id)) : coerceTools(body.grants);
   if (grants.length === 0) {
     return NextResponse.json({ error: "Switch on at least one tool, or the person will sign in to an empty workspace." }, { status: 400 });
   }
@@ -238,5 +305,19 @@ export async function POST(request: Request) {
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Could not invite." }, { status: 500 });
   }
+  // Roles after the account exists. A role that cannot be saved is reported,
+  // not hidden — the person is invited either way and the role can be set on
+  // their row.
+  const roleErrors: string[] = [];
+  const role = async (label: string, run: () => Promise<void>) => {
+    try { await run(); } catch (e) { roleErrors.push(`${label}: ${e instanceof Error ? e.message : "not saved"}`); }
+  };
+  if (asAdmin) await role("Admin", () => setAdmin(email, true));
+  if (body.accountManager === true) await role("Account manager", () => setAccountManager(email, true));
+  if (body.salesperson === true) {
+    const linkId = typeof body.salespersonId === "string" ? body.salespersonId : null;
+    await role("Salesperson", () => setSalesperson({ email, name }, true, linkId, session.email));
+  }
+  if (roleErrors.length) return NextResponse.json({ ok: true, email, name, grants, temporaryPassword, roleErrors });
   return NextResponse.json({ ok: true, email, name, grants, temporaryPassword });
 }

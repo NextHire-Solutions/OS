@@ -189,7 +189,14 @@ export class DbGrantStore implements GrantStore {
     // with the tools their grants row names — no fail-open for them.
     const invited = (await this.users())?.get(key);
     if (!invited || !invited.isActive) return null;
-    // Invited people get exactly their grants row — never the admin rule.
+    // Invited people get exactly their grants row — unless they were marked
+    // Admin on Team access (0021), which is every tool, like an Owner.
+    if (invited.isAdmin) {
+      return {
+        email: invited.email, passwordHash: invited.passwordHash, tokenVersion: invited.tokenVersion,
+        grants: [...ALL_TOOLS], isActive: true, source: "db" as const, mustChangePassword: invited.mustChangePassword,
+      };
+    }
     return ({
       email: invited.email,
       passwordHash: invited.passwordHash,
@@ -209,7 +216,8 @@ export class DbGrantStore implements GrantStore {
   async listMerged(): Promise<MergedUser[]> {
     const base = await this.env.listUsers();
     const [rows, users] = await Promise.all([this.table(), this.users()]);
-    return mergeUsers(base, users ?? new Map(), rows).map((u) => (u.source === "env" ? withAdminGrants(u) : u));
+    return mergeUsers(base, users ?? new Map(), rows)
+      .map((u) => (u.source === "env" ? withAdminGrants(u) : u.adminFlag ? { ...u, grants: [...ALL_TOOLS] } : u));
   }
 
   /*

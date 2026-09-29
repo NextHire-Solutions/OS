@@ -4,6 +4,19 @@ export interface TeamMember {
   name: string;
   active: boolean;
   admin: boolean;
+  /** Has the Account manager role on Team access (0021). */
+  accountManager?: boolean;
+}
+
+/**
+ * Who can be a client's Account Manager: active people with the Account
+ * manager role. Before roles existed (0021 not run, nobody has one) it is
+ * every active person, as it was.
+ */
+export function accountManagerPool(members: TeamMember[]): TeamMember[] {
+  const active = members.filter((m) => m.active);
+  const withRole = active.filter((m) => m.accountManager);
+  return withRole.length ? withRole : active;
 }
 
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();

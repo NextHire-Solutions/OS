@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { coerceTools, isAdmin } from "@/lib/identity/admin";
+import { coerceTools } from "@/lib/identity/admin";
+import { isAdminUser } from "@/lib/identity/admin-db";
 import { buildGrantsConfig } from "@/lib/identity/grants-config";
 import { grantStore } from "@/lib/identity/store";
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
 
   const session = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isAdmin(session.email)) {
+  if (!(await isAdminUser(session.email))) {
     return NextResponse.json(
       { error: "Forbidden", detail: "Only workspace admins can change team access." },
       { status: 403 },

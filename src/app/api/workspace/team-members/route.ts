@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { listTeamMembers } from "@/lib/identity/team-directory";
+import { listAccountManagers } from "@/lib/identity/team-directory";
 
 /*
  * The people who can be a client's Account Manager: the active members of
@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const members = (await listTeamMembers())
-      .filter((m) => m.active)
+    // People with the Account manager role on Team access (see accountManagerPool).
+    const members = (await listAccountManagers())
       .map((m) => ({ name: m.name }))
       .sort((a, b) => a.name.localeCompare(b.name));
     return NextResponse.json({ members });

@@ -5,24 +5,26 @@ import { editClient, InvalidEditError } from "@/lib/clients/edit";
 import { getMasterClientList } from "@/lib/clients/master-list";
 import { osTable } from "@/lib/clients/os-db";
 import { loadCommissions } from "@/lib/commissions/load";
-import { isAdmin } from "@/lib/identity/admin";
+import { isAdminUser } from "@/lib/identity/admin-db";
 import { listTeamMembers } from "@/lib/identity/team-directory";
+import { RESIDUAL_RATES, SalespersonError, updateSalesperson } from "@/lib/identity/salespeople";
 
 /*
  * Commissions.
  *
- *   GET   ?as=<email|all>&run=YYYY-MM-DD
- *         The viewer's own payouts. Admins may view any account manager, or
- *         all of them; everyone else is scoped to themselves no matter what
- *         `as` says — the scoping is in loadCommissions, from the SIGNED
- *         session, never from the request.
+ *   GET   ?as=<earner key|all>&run=YYYY-MM-DD
+ *         The viewer's own payouts — as a salesperson, an account manager, or
+ *         both. Admins may view anyone ("sp:<id>" / "am:<email>") or
+ *         everyone; everyone else sees only their own, whatever `as` says —
+ *         the scoping is in loadCommissions, from the SIGNED session, never
+ *         from the request.
  *
  *   POST  admin only
- *         { kind: "assign", clientId, accountManager?, monthlyGross? }
- *           accountManager goes through the master record's own edit
- *           (Team access members only); monthlyGross is the stand-in for a
+ *         { kind: "assign", clientId, salesperson?, accountManager?, monthlyGross? }
+ *           salesperson / accountManager go through the master record's own
+ *           edit (role holders only); monthlyGross is the stand-in for a
  *           client with no Stripe link (null removes it).
- *         { kind: "rates", email, residualRate, monthOneRate? }
+ *         { kind: "rates", key, residualRate }
  */
 export const dynamic = "force-dynamic";
 
@@ -31,7 +33,7 @@ async function who(request: Request): Promise<{ email: string; admin: boolean } 
   if (!secret) return null;
   const session = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
   if (!session?.email) return null;
-  return { email: session.email.toLowerCase(), admin: isAdmin(session.email) };
+  return { email: session.email.toLowerCase(), admin: await isAdminUser(session.email) };
 }
 
 export async function GET(request: Request) {
@@ -49,8 +51,6 @@ export async function GET(request: Request) {
   }
 }
 
-const RESIDUAL_OK = [0.15, 0.25];
-
 export async function POST(request: Request) {
   const me = await who(request);
   if (!me) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -64,11 +64,14 @@ export async function POST(request: Request) {
       const clientId = typeof body.clientId === "string" ? body.clientId : "";
       if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
       const done: string[] = [];
-      if (body.accountManager !== undefined) {
-        const am = typeof body.accountManager === "string" ? body.accountManager : "";
-        // The master record's own edit: Team access members only, synced to every tool.
-        await editClient(clientId, { accountManager: am.trim() || null });
-        done.push("account manager");
+      // The master record's own edit: role holders only, synced to every tool.
+      const people: { salesperson?: string | null; accountManager?: string | null } = {};
+      if (body.salesperson !== undefined) people.salesperson = typeof body.salesperson === "string" && body.salesperson.trim() ? body.salesperson.trim() : null;
+      if (body.accountManager !== undefined) people.accountManager = typeof body.accountManager === "string" && body.accountManager.trim() ? body.accountManager.trim() : null;
+      if (Object.keys(people).length) {
+        await editClient(clientId, people);
+        if ("salesperson" in people) done.push("salesperson");
+        if ("accountManager" in people) done.push("account manager");
       }
       if (body.monthlyGross !== undefined) {
         const g = body.monthlyGross;
@@ -91,23 +94,30 @@ export async function POST(request: Request) {
     }
 
     if (body.kind === "rates") {
-      const email = typeof body.email === "string" ? body.email.toLowerCase() : "";
+      const key = typeof body.key === "string" ? body.key : "";
       const residual = Number(body.residualRate);
-      const monthOne = body.monthOneRate === undefined ? 0.7 : Number(body.monthOneRate);
-      if (!(await listTeamMembers()).some((m) => m.email === email)) {
-        return NextResponse.json({ error: "That person is not on Team access." }, { status: 400 });
+      if (!RESIDUAL_RATES.includes(residual)) return NextResponse.json({ error: "The residual rate is 15% or 25%." }, { status: 400 });
+      if (key.startsWith("sp:")) {
+        // A salesperson's rates live on their record.
+        await updateSalesperson(key.slice(3), { residualRate: residual }, me.email);
+        return NextResponse.json({ ok: true });
       }
-      if (!RESIDUAL_OK.includes(residual)) return NextResponse.json({ error: "The residual rate is 15% or 25%." }, { status: 400 });
-      if (!Number.isFinite(monthOne) || monthOne < 0 || monthOne > 1) return NextResponse.json({ error: "The month-one rate must be between 0% and 100%." }, { status: 400 });
-      const { error } = await osTable("os_commission_reps")
-        .upsert({ email, residual_rate: residual, month_one_rate: monthOne, updated_at: now, updated_by: me.email });
-      if (error) throw new Error(migrationHint(error.message));
-      return NextResponse.json({ ok: true });
+      if (key.startsWith("am:")) {
+        const email = key.slice(3).toLowerCase();
+        if (!(await listTeamMembers()).some((m) => m.email === email)) {
+          return NextResponse.json({ error: "That person is not on Team access." }, { status: 400 });
+        }
+        const { error } = await osTable("os_commission_reps")
+          .upsert({ email, residual_rate: residual, month_one_rate: 0.7, updated_at: now, updated_by: me.email });
+        if (error) throw new Error(migrationHint(error.message));
+        return NextResponse.json({ ok: true });
+      }
+      return NextResponse.json({ error: "Unknown person." }, { status: 400 });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
-    if (error instanceof InvalidEditError) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error instanceof InvalidEditError || error instanceof SalespersonError) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not save" }, { status: 502 });
   }
 }

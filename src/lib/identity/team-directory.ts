@@ -2,7 +2,7 @@ import "server-only";
 
 import { isAdmin } from "./admin";
 import { DbGrantStore, grantStore } from "./store";
-import { matchTeamMember, type TeamMember } from "./team-match";
+import { accountManagerPool, matchTeamMember, type TeamMember } from "./team-match";
 
 export { matchTeamMember, type TeamMember } from "./team-match";
 
@@ -26,12 +26,18 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
       // Someone invited without a name is shown by their address's first part.
       name: named ?? u.email.split("@")[0],
       active: u.isActive !== false,
-      admin: isAdmin(u.email),
+      admin: isAdmin(u.email) || ("adminFlag" in u && u.adminFlag === true),
+      accountManager: "accountManager" in u && u.accountManager === true,
     };
   });
 }
 
 /** The active member the typed name belongs to — the Account Manager rule. */
 export async function resolveAccountManager(input: string): Promise<ReturnType<typeof matchTeamMember>> {
-  return matchTeamMember(input, (await listTeamMembers()).filter((m) => m.active));
+  return matchTeamMember(input, accountManagerPool(await listTeamMembers()));
+}
+
+/** The names the client record offers as Account Manager. */
+export async function listAccountManagers(): Promise<TeamMember[]> {
+  return accountManagerPool(await listTeamMembers());
 }

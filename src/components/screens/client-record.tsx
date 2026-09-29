@@ -77,9 +77,9 @@ function editorFor(key: string, team: { salespeople: string[]; accountManagers: 
     case "salesperson": return sellers
       ? { editor: { kind: "select", options: [{ value: "", label: "— No salesperson —" }, ...sellers.map((n) => ({ value: n, label: n }))] }, save: "salesperson" }
       : { editor: { kind: "text", list: team.salespeople }, save: "salesperson" };
-    // Account Managers: one or more Team access members, in order (30 Sep).
+    // Account Manager: ONE Team access member with the Account manager role (30 Sep).
     case "accountManager": return {
-      editor: { kind: "multi", options: members, empty: "No one on Team access yet — invite people there first." },
+      editor: { kind: "select", options: [{ value: "", label: "— No account manager —" }, ...members.map((n) => ({ value: n, label: n }))] },
       save: "accountManager",
     };
     case "billingAnchorDate": return { editor: { kind: "date" }, save: "billingAnchorDate" };

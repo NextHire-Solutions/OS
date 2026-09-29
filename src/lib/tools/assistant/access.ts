@@ -20,6 +20,7 @@ import { isAdmin } from "@/lib/identity/admin";
 
 export function canUseAssistant(session: SsoSession | null): boolean {
   if (!session?.email) return false;
+  // Owners. An admin marked on Team access holds every tool, so passes below.
   if (isAdmin(session.email)) return true;
   const held = new Set(session.grants ?? []);
   return ALL_TOOLS.every((tool) => held.has(tool));

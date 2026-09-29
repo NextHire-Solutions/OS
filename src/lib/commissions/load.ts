@@ -5,15 +5,9 @@ import { getMasterClientList, type MasterClient } from "@/lib/clients/master-lis
 import { dayNumber, dayToDate, scheduleFor } from "@/lib/tools/client-health/billing";
 import type { BillingInterval } from "@/lib/tools/client-health/types";
 import { listTeamMembers, type TeamMember } from "@/lib/identity/team-directory";
-import { isManagedBy, splitManagers } from "@/lib/identity/team-match";
-
-/*
- * A client can have several Account Managers (30 Sep). Until the business
- * says how a commission is split between them, it is earned once, by the
- * FIRST one named — never paid twice. The page says so.
- */
-const earnerOf = (c: { accountManager: string | null }) => splitManagers(c.accountManager)[0] ?? null;
-const earnsOn = (c: { accountManager: string | null }, m: Pick<TeamMember, "name" | "email">) => isManagedBy(earnerOf(c), m);
+import { accountManagerPool, isManagedBy, splitManagers } from "@/lib/identity/team-match";
+import { isSoldBy, type Salesperson } from "@/lib/identity/salesperson-match";
+import { listSalespeople } from "@/lib/identity/salespeople";
 
 import {
   DEFAULT_RATES, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, nextRun, previousRun,
@@ -24,22 +18,49 @@ import { stripeGross, stripePayments } from "./stripe-payments";
 /*
  * COMMISSIONS — who earns what, on which payout run.
  *
- *   who     the client's Account Manager (a Team access member)
+ *   who     BOTH people on a client (the client, 30 Sep): its Salesperson and
+ *           its Account Manager, each at their own rates — 70% of the first
+ *           month, then their residual (15% or 25%). A salesperson is someone
+ *           with the Salesperson role (os_salespeople); an account manager,
+ *           someone with the Account manager role on Team access.
  *   what    paid Stripe invoices on the client's subscription; for a client
  *           with no Stripe link, an admin-entered gross ESTIMATED on its
  *           billing schedule (and labelled as an estimate)
  *   when    the next payout run (1st / 15th) after each payment
  *
- * SCOPE IS ENFORCED HERE, not in the browser: an account manager's view is
- * built from their own clients only, and nothing about another person's
- * clients or payouts is in the response. Only admins see everyone.
+ * SCOPE IS ENFORCED HERE, not in the browser: a person's view is built from
+ * their own earnings only — as a salesperson, an account manager, or both —
+ * and nothing about anyone else's payouts is in the response. Only admins
+ * see everyone.
  */
+
+export type EarnerRole = "salesperson" | "account_manager";
+
+/** Someone who can earn: "sp:<salesperson id>" or "am:<email>". */
+export interface Earner {
+  key: string;
+  role: EarnerRole;
+  name: string;
+  email: string | null;
+  rates: Rates;
+}
+
+export interface Earning {
+  key: string;
+  role: EarnerRole;
+  name: string;
+  rates: Rates;
+  due: number;
+  lines: Line[];
+  lifetime: number;
+}
 
 export interface CommissionRow {
   id: string;
   name: string;
   plan: string | null;
   status: MasterClient["status"];
+  salesperson: string | null;
   accountManager: string | null;
   /** Gross per 28 days, and where it came from. */
   gross: number | null;
@@ -48,17 +69,18 @@ export interface CommissionRow {
   manualGross: number | null;
   stripeLinked: boolean;
   statusLabel: string;
-  /** Commission on the selected run, and the payments behind it. */
+  /** What each person IN VIEW earns on this client. */
+  earnings: Earning[];
+  /** Their total on the selected run. */
   due: number;
-  lines: Line[];
-  /** Every commission this client has earned the rep, all runs. */
-  lifetime: number;
   lastPayment: string | null;
 }
 
 export interface RepSummary {
-  email: string;
+  key: string;
+  role: EarnerRole;
   name: string;
+  email: string | null;
   rates: Rates;
   due: number;
   clients: number;
@@ -74,15 +96,17 @@ export interface CommissionsView {
   /** The run date is still ahead: its figures are what has been billed so far. */
   runOpen: boolean;
   viewer: { email: string; name: string; admin: boolean };
-  /** "all" (admins) or the email of the account manager being shown. */
+  /** "all" (admins), one earner key, or "mine" — everything the viewer earns. */
   scope: string;
   reps: RepSummary[];
   rows: CommissionRow[];
-  /** Admin only: clients with no account manager, and the team to pick from. */
-  unassigned: { id: string; name: string; status: MasterClient["status"] }[];
+  /** Admin only: clients missing a salesperson or an account manager. */
+  unassigned: { id: string; name: string; status: MasterClient["status"]; missing: EarnerRole[] }[];
+  /** Admin only: who can be picked, by role. */
   team: string[];
-  /** Admin only: everyone who can be viewed — active members, and anyone still holding clients. */
-  people: { email: string; name: string }[];
+  salespeople: string[];
+  /** Admin only: everyone who can be viewed. */
+  people: { key: string; name: string; role: EarnerRole }[];
   settingsAvailable: boolean;
   unavailable: string[];
 }
@@ -152,6 +176,8 @@ function label(c: MasterClient, changes: StatusChange[], lines: Line[], runLines
 export interface BuildInputs {
   clients: MasterClient[];
   team: TeamMember[];
+  /** The Salesperson role's records (os_salespeople), with their rates. */
+  salespeople: Salesperson[];
   settings: Settings;
   history: Map<string, StatusChange[]>;
   /** Per client id: its Stripe payments and gross, or null when Stripe could not be read. */
@@ -164,30 +190,59 @@ export interface BuildInputs {
   unavailable: string[];
 }
 
-/** Which clients a viewer may see — the one place scope is decided. */
-export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "viewerEmail" | "admin" | "as">) {
+/*
+ * A client with more than one Account Manager written on it (older data,
+ * "Amy, Eddy") is earned once, by the first one named — never paid twice.
+ */
+const firstManager = (c: { accountManager: string | null }) => splitManagers(c.accountManager)[0] ?? null;
+
+/** Everyone who can earn, and who earns on each client. */
+export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings">) {
+  const earners = new Map<string, Earner>();
+  for (const sp of inp.salespeople) {
+    earners.set(`sp:${sp.id}`, { key: `sp:${sp.id}`, role: "salesperson", name: sp.name, email: sp.email, rates: sp.rates });
+  }
+  for (const m of inp.team) {
+    earners.set(`am:${m.email}`, { key: `am:${m.email}`, role: "account_manager", name: m.name, email: m.email, rates: inp.settings.rates.get(m.email) ?? DEFAULT_RATES });
+  }
+  const onClient = (c: MasterClient): Earner[] => {
+    const out: Earner[] = [];
+    const sp = c.salesperson ? inp.salespeople.find((p) => isSoldBy(c.salesperson, p)) : undefined;
+    if (sp) out.push(earners.get(`sp:${sp.id}`)!);
+    const amName = firstManager(c);
+    const am = amName ? inp.team.find((m) => isManagedBy(amName, m)) : undefined;
+    if (am) out.push(earners.get(`am:${am.email}`)!);
+    return out;
+  };
+  return { earners, onClient };
+}
+
+/** Which earnings a viewer may see — the one place scope is decided. */
+export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings" | "viewerEmail" | "admin" | "as">) {
   const viewerEmail = inp.viewerEmail.toLowerCase();
-  const viewer = inp.team.find((m) => m.email === viewerEmail) ?? { email: viewerEmail, name: viewerEmail.split("@")[0], active: true, admin: inp.admin };
-  let scopeMember: TeamMember | null = inp.admin ? null : viewer;
-  if (inp.admin && inp.as && inp.as !== "all") scopeMember = inp.team.find((m) => m.email === inp.as!.toLowerCase()) ?? null;
-  const assigned = inp.clients.filter((c) => c.accountManager);
-  const inScope = scopeMember ? assigned.filter((c) => earnsOn(c, scopeMember!)) : inp.admin ? assigned : [];
-  return { viewer, scopeMember, assigned, inScope };
+  const { earners, onClient } = earnersFor(inp);
+  // The viewer's own earner keys: as an account manager, as a salesperson, or both.
+  const mine = [...earners.values()].filter((e) => e.email === viewerEmail).map((e) => e.key);
+  let keys: Set<string>;
+  let scope: string;
+  if (inp.admin && inp.as && inp.as !== "all" && earners.has(inp.as)) { keys = new Set([inp.as]); scope = inp.as; }
+  else if (inp.admin) { keys = new Set(earners.keys()); scope = "all"; }
+  else { keys = new Set(mine); scope = "mine"; }
+  const inScope = inp.clients.filter((c) => onClient(c).some((e) => keys.has(e.key)));
+  const member = inp.team.find((m) => m.email === viewerEmail);
+  const viewerName = member?.name ?? inp.salespeople.find((p) => p.email === viewerEmail)?.name ?? viewerEmail.split("@")[0];
+  return { earners, onClient, keys, scope, inScope, mine, viewerName };
 }
 
 /** The whole view from its inputs — pure, so scope and sums are tested without a database. */
 export function buildCommissionsView(inp: BuildInputs): CommissionsView {
-  const { today, settings, history, team } = inp;
+  const { today, settings, history } = inp;
   const run = inp.run && /^\d{4}-\d{2}-(01|15)$/.test(inp.run) ? inp.run : runOnOrAfter(today);
-  const { viewer, scopeMember, assigned, inScope } = scopeFor(inp);
-  const scope = scopeMember ? scopeMember.email : "all";
-  const repOf = (c: MasterClient) => team.find((m) => earnsOn(c, m)) ?? null;
-  const ratesFor = (m: TeamMember | null) => (m && settings.rates.get(m.email)) || DEFAULT_RATES;
+  const { earners, onClient, keys, scope, inScope, viewerName } = scopeFor(inp);
   // Payments are counted up to today only — a run still ahead shows what has been billed so far.
   const horizon = run < today ? run : today;
 
   const rows: CommissionRow[] = inScope.map((c) => {
-    const rates = ratesFor(repOf(c));
     const changes = history.get(c.id) ?? [];
     const manual = settings.gross.get(c.id) ?? null;
     const linked = Boolean(c.stripeSubscriptionId);
@@ -205,40 +260,56 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
       gross = manual;
       grossSource = "manual";
     }
-    const lines = commissionLines(payments, changes, c.status, rates);
-    const runLines = linesForRun(lines, run);
+    const earnings: Earning[] = onClient(c).filter((e) => keys.has(e.key)).map((e) => {
+      const lines = commissionLines(payments, changes, c.status, e.rates);
+      const runLines = linesForRun(lines, run);
+      return { key: e.key, role: e.role, name: e.name, rates: e.rates, due: sum(runLines), lines: runLines, lifetime: sum(lines) };
+    });
+    // The status label reads the same whoever earns: from the first earner's lines.
+    const all = commissionLines(payments, changes, c.status, earnings[0]?.rates ?? DEFAULT_RATES);
     return {
-      id: c.id, name: c.name, plan: c.plan, status: c.status, accountManager: c.accountManager,
+      id: c.id, name: c.name, plan: c.plan, status: c.status,
+      salesperson: c.salesperson, accountManager: firstManager(c),
       gross, grossSource, manualGross: manual, stripeLinked: linked,
-      statusLabel: label(c, changes, lines, runLines, payments.length > 0 || gross !== null),
-      due: sum(runLines), lines: runLines,
-      lifetime: sum(lines),
+      statusLabel: label(c, changes, all, linesForRun(all, run), payments.length > 0 || gross !== null),
+      earnings,
+      due: sum(earnings.flatMap((e) => e.lines)),
       lastPayment: payments.length ? payments[payments.length - 1].date : null,
     };
   }).sort((a, b) => b.due - a.due || a.name.localeCompare(b.name));
 
-  // Cards: the person in view, or — for "all" — everyone who actually holds clients.
-  const people = scopeMember ? [scopeMember] : inp.admin ? team.filter((m) => assigned.some((c) => earnsOn(c, m))) : [];
-  const reps: RepSummary[] = people.map((m) => {
-    const mine = rows.filter((r) => earnsOn(r, m));
-    return {
-      email: m.email, name: m.name, rates: ratesFor(m),
-      due: sum(mine.flatMap((r) => r.lines)),
+  // Cards: each earner in view who holds a client here.
+  const reps: RepSummary[] = [...keys].map((k) => earners.get(k)!).flatMap((e) => {
+    const mine = rows.flatMap((r) => r.earnings.filter((x) => x.key === e.key));
+    if (!mine.length && scope === "all") return [];
+    return [{
+      key: e.key, role: e.role, name: e.name, email: e.email, rates: e.rates,
+      due: sum(mine.flatMap((x) => x.lines)),
       clients: mine.length,
-      month1: mine.filter((r) => r.lines.some((l) => l.kind === "month1")).length,
-      residual: mine.filter((r) => r.lines.some((l) => l.kind === "residual")).length,
-    };
+      month1: mine.filter((x) => x.lines.some((l) => l.kind === "month1")).length,
+      residual: mine.filter((x) => x.lines.some((l) => l.kind === "residual")).length,
+    }];
   }).sort((a, b) => b.due - a.due || a.name.localeCompare(b.name));
 
+  const holding = new Set(inp.clients.flatMap((c) => onClient(c).map((e) => e.key)));
   return {
     today, run, previousRun: previousRun(run), nextRun: nextRun(run), runOpen: run > today,
-    viewer: { email: viewer.email, name: viewer.name, admin: inp.admin },
+    viewer: { email: inp.viewerEmail.toLowerCase(), name: viewerName, admin: inp.admin },
     scope, reps, rows,
-    unassigned: inp.admin ? inp.clients.filter((c) => !c.accountManager).map((c) => ({ id: c.id, name: c.name, status: c.status })) : [],
-    team: inp.admin ? team.filter((m) => m.active).map((m) => m.name).sort() : [],
+    unassigned: inp.admin
+      ? inp.clients.flatMap((c) => {
+          const on = onClient(c).map((e) => e.role);
+          const missing = (["salesperson", "account_manager"] as EarnerRole[]).filter((r) => !on.includes(r));
+          return missing.length ? [{ id: c.id, name: c.name, status: c.status, missing }] : [];
+        })
+      : [],
+    team: inp.admin ? accountManagerPool(inp.team).map((m) => m.name).sort() : [],
+    salespeople: inp.admin ? inp.salespeople.filter((p) => p.active).map((p) => p.name).sort() : [],
     people: inp.admin
-      ? team.filter((m) => m.active || assigned.some((c) => earnsOn(c, m)))
-          .map((m) => ({ email: m.email, name: m.name })).sort((a, b) => a.name.localeCompare(b.name))
+      ? [...earners.values()]
+          .filter((e) => holding.has(e.key) || (e.role === "salesperson" ? inp.salespeople.find((p) => `sp:${p.id}` === e.key)?.active : accountManagerPool(inp.team).some((m) => `am:${m.email}` === e.key)))
+          .map((e) => ({ key: e.key, name: e.name, role: e.role }))
+          .sort((a, b) => a.name.localeCompare(b.name) || a.role.localeCompare(b.role))
       : [],
     settingsAvailable: settings.available,
     unavailable: inp.unavailable,
@@ -248,15 +319,17 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
 export async function loadCommissions(opts: { viewerEmail: string; admin: boolean; as?: string | null; run?: string | null }): Promise<CommissionsView> {
   const today = easternDay(new Date());
   const unavailable: string[] = [];
-  const [list, team, settings, history] = await Promise.all([
+  const [list, team, sp, settings, history] = await Promise.all([
     getMasterClientList(),
     listTeamMembers(),
+    listSalespeople().catch(() => { unavailable.push("Salespeople"); return { available: false, people: [] as Salesperson[] }; }),
     readSettings().catch(() => ({ rates: new Map(), gross: new Map(), available: false } as Settings)),
     readHistory().catch(() => { unavailable.push("Status history"); return new Map<string, StatusChange[]>(); }),
   ]);
+  const base = { clients: list.clients, team, salespeople: sp.people, settings };
 
   // Stripe is read only for the clients this viewer may see.
-  const { inScope } = scopeFor({ clients: list.clients, team, viewerEmail: opts.viewerEmail, admin: opts.admin, as: opts.as });
+  const { inScope } = scopeFor({ ...base, viewerEmail: opts.viewerEmail, admin: opts.admin, as: opts.as });
   const linked = inScope.filter((c) => c.stripeSubscriptionId);
   const results = await Promise.all(linked.map(async (c) => {
     try {
@@ -270,7 +343,7 @@ export async function loadCommissions(opts: { viewerEmail: string; admin: boolea
   if (results.some(([, v]) => v === null)) unavailable.push("Stripe (some clients)");
 
   return buildCommissionsView({
-    clients: list.clients, team, settings, history, stripe,
+    ...base, history, stripe,
     viewerEmail: opts.viewerEmail, admin: opts.admin, as: opts.as, run: opts.run,
     today, unavailable: [...unavailable, ...list.unavailable],
   });

@@ -8,7 +8,7 @@ import { planLabel } from "@/components/clients/cells";
 import { PlaceholderScreen } from "./lazy";
 
 /*
- * COMMISSIONS — sales payouts, by account manager.
+ * COMMISSIONS — sales payouts, to each client's salesperson and account manager.
  *
  * Built from the client's mockup (commissions-mockup.html): the next payout
  * run, the account manager's card with what is due, their clients, an admin
@@ -31,6 +31,7 @@ import { PlaceholderScreen } from "./lazy";
 const money = (n: number | null | undefined, cents = false) =>
   n === null || n === undefined ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
 const pct = (r: number) => `${Math.round(r * 100)}%`;
+const ROLE: Record<"salesperson" | "account_manager", string> = { salesperson: "Salesperson", account_manager: "Account manager" };
 const day = (iso: string, year = false) =>
   new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
 
@@ -88,7 +89,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
         <div className="cx-head-t">
           <span className="cx-kicker">Workspace</span>
           <h1>Commissions</h1>
-          <p>Sales payouts — each account manager earns on the clients they manage. Payouts run on the 1st and 15th.</p>
+          <p>Sales payouts — a client&rsquo;s salesperson and its account manager each earn on it, at their own rates. Payouts run on the 1st and 15th.</p>
         </div>
         <div className="cm-run">
           <span className="cx-kicker">{data.runOpen ? "Next payout run" : "Payout run"}</span>
@@ -110,11 +111,11 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
         {data.viewer.admin ? (
           <>
             <span>Viewing</span>
-            <select className="cm-select" value={data.scope} onChange={(e) => onAs(e.target.value)} aria-label="Account manager to view">
-              <option value="all">All account managers</option>
-              {data.people.map((p) => <option key={p.email} value={p.email}>{p.name}</option>)}
+            <select className="cm-select" value={data.scope} onChange={(e) => onAs(e.target.value)} aria-label="Person to view">
+              <option value="all">Everyone</option>
+              {data.people.map((p) => <option key={p.key} value={p.key}>{p.name} — {ROLE[p.role]}</option>)}
             </select>
-            <span className="cm-note">— account managers see only their own clients and payouts. You are an admin, so you can see everyone.</span>
+            <span className="cm-note">— each person sees only their own clients and payouts. You are an admin, so you can see everyone.</span>
           </>
         ) : (
           <span>Signed in as <b>{data.viewer.name}</b><span className="cm-note"> — you see only your own clients and payouts.</span></span>
@@ -124,25 +125,29 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
       {data.viewer.admin && !data.settingsAvailable ? (
         <p className="ds-note" style={{ margin: 0 }}>
           <b>Rates and manual gross amounts can&rsquo;t be saved yet.</b> Run <code>migrations/0019_commissions.sql</code> in Supabase once.
-          Until then every account manager is on 70% / 15%, and only clients linked to Stripe are counted.
+          Until then everyone is on 70% / 15%, and only clients linked to Stripe are counted.
         </p>
       ) : null}
       {error ? <p className="ds-note" style={{ margin: 0 }}><b>Could not refresh.</b> {error}</p> : null}
       {data.unavailable.length ? <p className="ds-note" style={{ margin: 0 }}>Not read this time: {data.unavailable.join(", ")}.</p> : null}
 
       {/* ------------------------------------------------------- rep cards */}
-      <section className="cm-reps" aria-label="Due per account manager">
+      <section className="cm-reps" aria-label="Due per person">
         {(single && shown ? [shown] : data.reps).map((r) => (
-          <RepCard key={r.email} rep={r} run={data.run} admin={data.viewer.admin} canSave={data.settingsAvailable}
-            onPick={single ? undefined : () => onAs(r.email)} onChanged={onChanged} />
+          <RepCard key={r.key} rep={r} run={data.run} admin={data.viewer.admin} canSave={data.settingsAvailable}
+            onPick={single || !data.viewer.admin ? undefined : () => onAs(r.key)} onChanged={onChanged} />
         ))}
-        {data.reps.length === 0 ? <p className="cm-empty">No account managers yet — invite them on Team access, then assign clients below.</p> : null}
+        {data.reps.length === 0 ? (
+          <p className="cm-empty">{data.viewer.admin
+            ? "Nobody holds a client yet — give people the Salesperson or Account manager role on Team access, then assign clients below."
+            : "You have no clients yet. Your clients and payouts appear here once one is assigned to you."}</p>
+        ) : null}
       </section>
 
       {/* ----------------------------------------------------------- table */}
       <section className="cx-panel">
         <div className="cx-toolbar">
-          <span className="cm-title">{single ? (data.viewer.admin ? `${shown?.name ?? ""}’s clients` : "My clients") : "Clients by account manager"}</span>
+          <span className="cm-title">{!data.viewer.admin ? "My clients" : single ? `${shown?.name ?? ""}’s clients` : "Clients"}</span>
           <span className="cx-toolbar-r">
             <span className="cx-count">{data.rows.length} <em>clients</em></span>
             <span className="cm-total">Due {day(data.run)} <b>{money(total, true)}</b></span>
@@ -152,14 +157,14 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
           <table className="cx-table cm-table">
             <thead>
               <tr className="cx-cols">
-                {["Client", "Plan", "Monthly (gross)", "Account manager", "Status", `Due ${day(data.run)}`].map((h, i) => (
-                  <th key={h} className={i === 0 ? "cx-pin" : i === 2 || i === 5 ? "num" : undefined}><span className="cx-thl">{h}</span></th>
+                {["Client", "Plan", "Monthly (gross)", "Salesperson", "Account manager", "Status", `Due ${day(data.run)}`].map((h, i) => (
+                  <th key={h} className={i === 0 ? "cx-pin" : i === 2 || i === 6 ? "num" : undefined}><span className="cx-thl">{h}</span></th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {data.rows.length === 0 ? (
-                <tr><td colSpan={6} className="cx-empty">{single ? "No clients are assigned to this account manager yet." : "No client has an account manager yet."}</td></tr>
+                <tr><td colSpan={7} className="cx-empty">{single ? "No clients are assigned to this person yet." : "No client has a salesperson or account manager yet."}</td></tr>
               ) : data.rows.map((r) => (
                 <Row key={r.id} r={r} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
               ))}
@@ -176,7 +181,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
         <div className="cm-h2">How payouts are calculated</div>
         <div className="cm-rules">
           <div><span className="k">Month 1</span><p>Earns <b>70%</b> of the client&rsquo;s first month of payments — the first 28 days of billing (two 14-day payments, or one 28-day). Paid on the next payout date after each payment.</p></div>
-          <div><span className="k">Month 2+</span><p>Earns the account manager&rsquo;s residual rate — <b>15%</b> or <b>25%</b> — of every later payment, for as long as the client stays active. A client with more than one account manager is earned once, by the first one named.</p></div>
+          <div><span className="k">Month 2+</span><p>Earns the person&rsquo;s residual rate — <b>15%</b> or <b>25%</b> — of every later payment, for as long as the client stays active. The salesperson and the account manager each earn at their own rates.</p></div>
           <div><span className="k">On cancellation</span><p>Nothing accrues from the cancellation date. Paused billing collects nothing, so nothing accrues while paused either.</p></div>
         </div>
       </section>
@@ -199,7 +204,7 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
     try {
       const res = await fetch("/api/workspace/commissions", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: "rates", email: rep.email, residualRate: v, monthOneRate: rep.rates.monthOne }),
+        body: JSON.stringify({ kind: "rates", key: rep.key, residualRate: v }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -210,7 +215,10 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
   return (
     <div className="cm-rep">
       <div className="cm-rep-top">
-        {onPick ? <button type="button" className="cm-rep-name link" onClick={onPick}>{rep.name}</button> : <span className="cm-rep-name">{rep.name}</span>}
+        <span>
+          {onPick ? <button type="button" className="cm-rep-name link" onClick={onPick}>{rep.name}</button> : <span className="cm-rep-name">{rep.name}</span>}
+          <small className="cm-note" style={{ display: "block" }}>{ROLE[rep.role]}</small>
+        </span>
         <span className="cm-rate">
           {pct(rep.rates.monthOne)} MONTH 1 ·{" "}
           {admin && canSave ? (
@@ -246,27 +254,34 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
           {r.grossSource ? <span className={`cm-src ${r.grossSource}`}>{r.grossSource === "stripe" ? "Stripe" : "Estimate"}</span>
             : <span className="cm-src none" title="Not linked to Stripe and no gross set">not set</span>}
         </td>
+        <td>{r.salesperson ?? <span className="cx-none">—</span>}</td>
         <td>{r.accountManager ?? <span className="cx-none">—</span>}</td>
         <td><span className={`cm-status ${tone}`}>{r.statusLabel}</span></td>
         <td className="num"><b className={r.due ? "cx-strong" : "cx-none"}>{money(r.due, true)}</b></td>
       </tr>
       {open ? (
         <tr className="cm-lines cx-static">
-          <td colSpan={6}>
-            {r.lines.length ? (
-              <table>
-                <thead><tr><th>Billed</th><th>Payment</th><th>Source</th><th>Kind</th><th className="num">Rate</th><th className="num">Commission</th></tr></thead>
-                <tbody>
-                  {r.lines.map((l, i) => (
-                    <tr key={i}>
-                      <td>{day(l.date, true)}</td><td>{money(l.amount, true)}</td><td>{l.source === "stripe" ? "Stripe · paid" : "Estimate"}</td>
-                      <td>{l.kind === "month1" ? "Month 1" : "Residual"}</td><td className="num">{pct(l.rate)}</td><td className="num">{money(l.commission, true)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : <span className="cm-note">No payment falls on this run.</span>}
-            <span className="cm-note">Earned to date on this client: <b>{money(r.lifetime, true)}</b>{r.lastPayment ? ` · last payment ${day(r.lastPayment, true)}` : ""}{!r.stripeLinked ? " · not linked to Stripe" : ""}</span>
+          <td colSpan={7}>
+            {r.earnings.map((e) => (
+              <div key={e.key} style={{ marginBottom: 10 }}>
+                <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {pct(e.rates.monthOne)} month 1, {pct(e.rates.residual)} residual</span>
+                {e.lines.length ? (
+                  <table>
+                    <thead><tr><th>Billed</th><th>Payment</th><th>Source</th><th>Kind</th><th className="num">Rate</th><th className="num">Commission</th></tr></thead>
+                    <tbody>
+                      {e.lines.map((l, i) => (
+                        <tr key={i}>
+                          <td>{day(l.date, true)}</td><td>{money(l.amount, true)}</td><td>{l.source === "stripe" ? "Stripe · paid" : "Estimate"}</td>
+                          <td>{l.kind === "month1" ? "Month 1" : "Residual"}</td><td className="num">{pct(l.rate)}</td><td className="num">{money(l.commission, true)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : <span className="cm-note" style={{ display: "block" }}>No payment falls on this run.</span>}
+                <span className="cm-note">Earned to date on this client: <b>{money(e.lifetime, true)}</b></span>
+              </div>
+            ))}
+            <span className="cm-note">{r.lastPayment ? `Last payment ${day(r.lastPayment, true)}` : "No payment yet"}{!r.stripeLinked ? " · not linked to Stripe" : ""}</span>
           </td>
         </tr>
       ) : null}
@@ -274,34 +289,37 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
   );
 }
 
-/* Admin: give a client its account manager (and, if it has no Stripe link, a gross). */
+/* Admin: give a client its salesperson and account manager (and, if it has no Stripe link, a gross). */
 function Assign({ data, onChanged }: { data: CommissionsView; onChanged: () => void }) {
   const [clientId, setClientId] = useState("");
+  const [sp, setSp] = useState("");
   const [am, setAm] = useState("");
   const [gross, setGross] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
   const row = data.rows.find((r) => r.id === clientId);
   const choices = [
-    ...data.unassigned.map((c) => ({ id: c.id, name: c.name, note: "no account manager" })),
-    ...data.rows.map((r) => ({ id: r.id, name: r.name, note: r.accountManager ?? "" })),
+    ...data.unassigned.filter((u) => !data.rows.some((r) => r.id === u.id))
+      .map((c) => ({ id: c.id, name: c.name, note: `no ${c.missing.map((m) => ROLE[m].toLowerCase()).join(" or ")}` })),
+    ...data.rows.map((r) => ({ id: r.id, name: r.name, note: [r.salesperson, r.accountManager].filter(Boolean).join(" · ") })),
   ].sort((a, b) => a.name.localeCompare(b.name));
 
   useEffect(() => {
+    setSp(row?.salesperson ?? "");
     setAm(row?.accountManager ?? "");
     setGross(row?.manualGross != null ? String(row.manualGross) : "");
-  }, [clientId, row?.accountManager, row?.manualGross]);
+  }, [clientId, row?.salesperson, row?.accountManager, row?.manualGross]);
 
   async function submit() {
     if (!clientId) return;
     setSaving(true); setMsg(null);
     try {
-      const body: Record<string, unknown> = { kind: "assign", clientId, accountManager: am };
+      const body: Record<string, unknown> = { kind: "assign", clientId, salesperson: sp, accountManager: am };
       if (data.settingsAvailable) body.monthlyGross = gross.trim() === "" ? null : Number(gross);
       const res = await fetch("/api/workspace/commissions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const out = await res.json().catch(() => null);
       if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
-      setMsg({ text: `Saved — ${choices.find((c) => c.id === clientId)?.name ?? "client"} ${am ? `is managed by ${am}` : "has no account manager"}.` });
+      setMsg({ text: `Saved — ${choices.find((c) => c.id === clientId)?.name ?? "client"}: salesperson ${sp || "none"}, account manager ${am || "none"}.` });
       onChanged();
     } catch (e) { setMsg({ text: e instanceof Error ? e.message : "Could not save", bad: true }); } finally { setSaving(false); }
   }
@@ -314,9 +332,13 @@ function Assign({ data, onChanged }: { data: CommissionsView; onChanged: () => v
           <option value="">Choose a client…</option>
           {choices.map((c) => <option key={c.id} value={c.id}>{c.name}{c.note ? ` — ${c.note}` : ""}</option>)}
         </select>
+        <select className="cm-select" value={sp} onChange={(e) => setSp(e.target.value)} aria-label="Salesperson" disabled={!clientId}>
+          <option value="">No salesperson</option>
+          {sp && !data.salespeople.includes(sp) ? <option value={sp}>{sp}</option> : null}
+          {data.salespeople.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
         <select className="cm-select" value={am} onChange={(e) => setAm(e.target.value)} aria-label="Account manager" disabled={!clientId}>
           <option value="">No account manager</option>
-          {/* A client with several account managers keeps them unless a single one is picked. */}
           {am && !data.team.includes(am) ? <option value={am}>{am}</option> : null}
           {data.team.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
@@ -326,7 +348,7 @@ function Assign({ data, onChanged }: { data: CommissionsView; onChanged: () => v
         <button type="button" className="rx-btn solid" disabled={!clientId || saving} onClick={() => void submit()}>{saving ? "Saving…" : "Assign"}</button>
       </div>
       <p className="cm-note" style={{ margin: "8px 0 0" }}>
-        Clients are created once, on <a href="/roster">Clients</a>. Account managers are Team access members; the choice here is the same field as on the client&rsquo;s record.
+        Clients are created once, on <a href="/roster">Clients</a>. Salespeople and account managers are people on Team access with that role; the choices here are the same fields as on the client&rsquo;s record.
         {msg ? <span className={msg.bad ? "cm-bad" : "cm-ok"}> {msg.text}</span> : null}
       </p>
     </section>

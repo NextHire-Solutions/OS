@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { isAdmin } from "@/lib/identity/admin";
+import { isAdminUser } from "@/lib/identity/admin-db";
 import { corpusStatus, startCorpusRebuild } from "@/lib/tools/master-inbox/ai/corpus-job";
 
 /*
@@ -24,7 +24,7 @@ async function requireAdmin(request: Request) {
   if (!secret) return { error: NextResponse.json({ error: "Not configured." }, { status: 503 }) };
   const session = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
   if (!session) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  if (!isAdmin(session.email)) {
+  if (!(await isAdminUser(session.email))) {
     return {
       error: NextResponse.json(
         { error: "Forbidden", detail: "Only workspace admins can rebuild the reply corpus." },
