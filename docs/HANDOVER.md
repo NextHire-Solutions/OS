@@ -319,6 +319,31 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
 - Amy was added to Team access, and the sheet's remaining 30 Account Manager
   rows were imported.
 
+**Counting rules and the last status gaps (30 Sep, the user's decisions).**
+- The user's rules: Demo Portal is kept but is not counted as a client; a
+  client with several portals counts once; Test FUB is deleted.
+- **Test FUB was deleted** from Master Inbox and Analytics. It held no threads,
+  campaigns or other data. Its test portal was switched off first, because
+  Master Inbox refuses to delete a row whose portal is live.
+- **Every status change now also writes Master Inbox's `clients.status`**
+  (`lib/clients/mi-status-mirror.ts`). It writes only that column, never
+  `portal_enabled` or a token.
+  - It covers the client's own row and any second-portal row that carries its
+    name or an alias.
+  - Analytics' second-portal rows follow their client the same way.
+  - The 16 stale Master Inbox values were brought in line once; no portal
+    moved.
+- **Result:** statuses agree 50/50 across every tool, with 0 conflicts, 0
+  coverage gaps and 0 status ↔ portal mismatches. Client Health, the Database
+  and Onboarding each hold exactly the 50 clients.
+- **Still open:**
+  - The standalone Analytics app counts rows, so it shows 34 active out of 53:
+    Demo Portal and the two second-portal rows are marked active. The OS shows
+    50 · 31. Changing that needs the user's decision, because it is a live
+    tool's data or code.
+  - Analytics does not know the alias "Douglas Elliman LA". It was not added,
+    because of possible word-matching overlap with "Douglas Elliman Las Vegas".
+
 **Speed (`e06c255`, `a1bec34`).** Measured on production
 before and after, from India (network floor ~255ms a request):
 
