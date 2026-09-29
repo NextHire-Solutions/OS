@@ -336,13 +336,22 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
 - **Result:** statuses agree 50/50 across every tool, with 0 conflicts, 0
   coverage gaps and 0 status ↔ portal mismatches. Client Health, the Database
   and Onboarding each hold exactly the 50 clients.
-- **Still open:**
-  - The standalone Analytics app counts rows, so it shows 34 active out of 53:
-    Demo Portal and the two second-portal rows are marked active. The OS shows
-    50 · 31. Changing that needs the user's decision, because it is a live
-    tool's data or code.
-  - Analytics does not know the alias "Douglas Elliman LA". It was not added,
-    because of possible word-matching overlap with "Douglas Elliman Las Vegas".
+- **Closed the same day, on the user's instruction:**
+  - **The standalone Analytics app now counts clients, not rows.** Its header
+    reads "50 clients · 31 active · 19 paused/churned".
+    - Demo Portal and the two second-portal rows are still listed. They are
+      named in the header and tagged in the table.
+    - The change is display only: no data, matching or attribution changes.
+    - Code: `src/lib/clients/roster-count.ts` in `Corofy/Analytics
+      Dashboard`, deployed with `railway up --service analytics-web`.
+  - **The "Douglas Elliman LA" alias was synced to Analytics.** It was first
+    checked by running the real matcher over all 595 campaigns with and
+    without the alias: 0 changed.
+  - **"New client portal" was deleted** from Master Inbox. It was an empty
+    placeholder, and its placeholder portal was switched off first.
+  - **The consistency check is clean:** statuses agree 50/50, with 0 gaps,
+    0 link errors, 0 duplicates and 0 alias findings. All 34 open portals
+    serve and match their status.
 
 **Speed (`e06c255`, `a1bec34`).** Measured on production
 before and after, from India (network floor ~255ms a request):
