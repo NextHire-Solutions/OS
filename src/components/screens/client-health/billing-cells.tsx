@@ -76,6 +76,27 @@ export function CarryBadge({ cycle }: { cycle: CycleState }) {
   );
 }
 
+/**
+ * "+N ahead" — intros delivered beyond what this billing cycle requires
+ * (its target plus anything carried in). The client's ask, 30 Sep: over-
+ * delivery pays a shortfall down but banks no credit, so the team needs to
+ * SEE when a client is already ahead and ease off. Display only — it does
+ * not change what the next cycle requires.
+ */
+export function AheadBadge({ cycle }: { cycle: CycleState }) {
+  const ahead = cycle.delivered - cycle.required;
+  if (cycle.target <= 0 || ahead <= 0) return null;
+  return (
+    <span
+      className="ds-ahead"
+      title={`${ahead} more intro${ahead === 1 ? "" : "s"} than this cycle requires (${cycle.delivered} delivered, ${cycle.required} required). Extra intros do not carry into the next cycle.`}
+      aria-label={`${ahead} intros ahead of this cycle's requirement`}
+    >
+      +{ahead} ahead
+    </span>
+  );
+}
+
 /** Green when met, amber from half, red below — the tool's bw-done / bw-mid / bw-short. */
 function cycleTone(cy: CycleState): "green" | "amber" | "red" {
   if (cy.remaining === 0) return "green";
@@ -97,6 +118,7 @@ export function IntrosBillingCell({ snap, onSetBilling }: { snap: BillingSnapsho
       </b>
       <span className="ds-ib-due">due</span>
       <CarryBadge cycle={cy} />
+      <AheadBadge cycle={cy} />
     </span>
   );
 }

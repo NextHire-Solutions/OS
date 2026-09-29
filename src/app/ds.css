@@ -514,3 +514,8 @@ tr.has-carry > td:first-child { box-shadow: inset 3px 0 0 var(--ds-red); }
 .ds-countline-main em { font-style: normal; color: var(--ds-faint); font-size: 12px; margin-left: auto; }
 .ds-countline-why { color: var(--ds-muted); font-size: 12.5px; }
 .ds-countline-why a { color: var(--ds-brand); text-decoration: none; }
+
+/* "+N ahead" — delivered beyond this cycle's requirement (billing-cells.tsx AheadBadge). */
+.ds-ahead { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; font-size: 11px;
+  font-weight: 600; background: var(--ds-green-soft); color: var(--ds-green); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-green) 25%, transparent);
+  white-space: nowrap; cursor: default; }

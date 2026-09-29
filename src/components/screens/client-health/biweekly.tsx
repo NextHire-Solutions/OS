@@ -15,7 +15,7 @@ import {
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
-import { CarryBadge, fmtMDY, isBehind } from "./billing-cells";
+import { AheadBadge, CarryBadge, fmtMDY, isBehind } from "./billing-cells";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
@@ -225,7 +225,7 @@ function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
         ) : (
           <span className="ds-ib">
             <b className={tone}>{intros} / {required}</b>
-            {snap ? <CarryBadge cycle={snap.cycle} /> : null}
+            {snap ? <><CarryBadge cycle={snap.cycle} /><AheadBadge cycle={snap.cycle} /></> : null}
           </span>
         )}
       </td>
