@@ -86,7 +86,11 @@ export function TeamAccessScreen() {
     let cancelled = false;
     fetch("/api/admin/users")
       .then(async (res) => {
-        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? `HTTP ${res.status}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          // "Forbidden" alone says nothing; the route explains who may see this.
+          throw new Error(res.status === 403 ? "Team access is for admins only." : body?.detail ?? body?.error ?? `HTTP ${res.status}`);
+        }
         return res.json() as Promise<TeamPayload>;
       })
       .then((payload) => {

@@ -196,7 +196,8 @@ export function Workspace({
     }
   }, [screens, router]);
 
-  const active = reachable.find((d) => d.id === activeId);
+  // The page's own name even when the menu hides it (an admin page opened by URL).
+  const active = reachable.find((d) => d.id === activeId) ?? all.find((d) => d.id === activeId);
   // Pages outside the rail (Account) still deserve their own name up top.
   const crumbs = active
     ? [active.group, active.label]
