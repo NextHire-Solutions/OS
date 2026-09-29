@@ -416,6 +416,27 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   rule change, pending the client. Syncing billing dates from Stripe is also
   open; the client called it not a necessity.
 
+**Stripe links from the client's "Subscriptions" sheet (30 Sep).**
+- All 51 rows were checked against Stripe. Every subscription belongs to the
+  customer the sheet names.
+- 7 were linked through the edit route:
+  - 54 Realty (the "54 Realty LLC" subscription, the one still collecting).
+  - The Wurst Team ("A Better Way").
+  - For history, all cancelled: RE Home Group, Spotlight, Karp, Maltos and
+    Rise Antelope.
+- Commissions now reads 32 clients from Stripe.
+- **Open, needs the user:**
+  - Raintown has 2 active subscriptions ($750, and $500 labelled "(JPAR)" —
+    is that JPAR Iron Horse's?).
+  - Douglas Elliman Las Vegas has 2 active ($250 + $500 — is one Los
+    Angeles?).
+  - Kelly + Co has 3, all cancelled.
+  - Cain, Toll and Military Veteran are not on the sheet.
+- **Stripe billing is paused while the client is Active in the OS:** Oz
+  Group, BHGRE Base Camp, Discover Phx Team, and The Wurst Team.
+- The sheet also lists 5 cancelled clients who are not in the OS: Anderson
+  RE, Polzl ×2, DiGiulio and Orland.
+
 **Onboarding / churn dates and Performance (30 Sep, `821e2aa`, `2fe5388`).**
 - **Migration 0023** adds `os_clients.onboarding_date` and `churn_date`.
   - Both are editable on the client's record.
