@@ -21,9 +21,10 @@ ALTER TABLE public.os_users ADD COLUMN IF NOT EXISTS is_account_manager boolean 
 -- Today's account managers, as the client data sheet names them.
 UPDATE public.os_users SET is_account_manager = true WHERE lower(name) IN ('amy', 'eddy');
 
--- Eddy also sells: link his salesperson record to his sign-in.
+-- Eddy also sells: link his salesperson record (renamed "Eddy Boccara" on
+-- 30 Sep) to his sign-in, so his Team access row shows both roles.
 UPDATE public.os_salespeople s SET email = u.email
   FROM public.os_users u
- WHERE lower(u.name) = 'eddy' AND lower(s.name::text) = 'eddy' AND s.email IS NULL;
+ WHERE lower(u.name) = 'eddy' AND lower(s.name::text) IN ('eddy', 'eddy boccara') AND s.email IS NULL;
 
 COMMIT;
