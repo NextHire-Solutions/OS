@@ -250,6 +250,48 @@ surfaces, and every page header carries its mark.
 Sender 0/50, Account Manager 0/50, Markets 0/50, Salesperson 2/50,
 Onboarding date 0/50.
 
+**Salespeople, several Account Managers, and the client's data sheet.**
+- **Team access → Salespeople** (`os_salespeople`, migration 0020, which has
+  been run). It is the client's list, "just for our records": add, rename,
+  deactivate, an optional sign-in email, and a residual of 15% or 25%.
+  - A rename is carried to every client that names the person and to
+    Onboarding's person row.
+  - Code: `lib/identity/salespeople.ts`, `/api/admin/salespeople` (admins
+    only), and `/api/workspace/salespeople` (names only).
+- **The client record's Salesperson** is a dropdown from that list, and a save
+  is refused for anyone not on it. Onboarding shows the Salesperson read-only
+  and links to the record; its API refuses `salespersonName`.
+- **Account Manager takes one or more Team access members, in order.** They
+  are stored as "Amy, Eddy" in the one column (`splitManagers` /
+  `joinManagers` in `team-match.ts`). Onboarding's row holds one person: the
+  first.
+- **Commissions is still paid by Account Manager**, while the client confirms
+  whether it should be Salesperson. Until then, a client with several managers
+  is earned once, by the first one named, and the page says so. Switching to
+  Salesperson means changing `earnerOf` in `lib/commissions/load.ts` and
+  reading the rates from `os_salespeople`.
+- **Cain Realty Group was paused** (the client's decision), through the
+  status route:
+  - Client Health, Analytics and the portal all changed. The portal is off.
+  - All 5 campaigns were already stopped.
+  - Billing was skipped, because Cain has no Stripe link.
+- **The sheet ("Client Data – Sheet1", 40 clients) was imported** through the
+  edit and markets routes. The before values are in the session's
+  `import-plan.json`.
+  - Sender Nicole ×40.
+  - Salesperson ×39 (Ryan Jagdeo 24, Scott Craigue 10, Eddy 6).
+  - Account Manager for the 10 clients managed by Eddy alone. **The 30 rows
+    that name Amy wait until Amy is on Team access.**
+  - Brokerage filled on 11 blanks. Douglas Elliman LA was left as "Douglas
+    Elliman LA"; the sheet says "Los Angeles".
+  - 58 market rows. The sheet does not pair MLS codes with areas, so each
+    client has one row per MLS code, with the sheet's area text as the market.
+  - Onboarding's MLS now comes from those rows (34 clients). Five codes match
+    no board and were not sent: ECOAR, realMLS, CHMLS, SEFMLS, REcolorado.
+- **Adding a market rewrites Onboarding's MLS from the markets**
+  (`markets-mls-sync.ts`). Each market's MLS must be ONE code: "BRIGHT, CVR"
+  on a single row matches no board and would clear the codes.
+
 **Speed (`e06c255`, `a1bec34`).** Measured on production
 before and after, from India (network floor ~255ms a request):
 
