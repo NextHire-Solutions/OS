@@ -9,6 +9,7 @@ import { billingEnabled, syncBillingForClient } from "./stripe-billing-live";
 import type { ClientStatus } from "./client-status";
 import type { OsClient } from "./os-clients";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
+import { analyticsSecondRows, miRowsFor, writeMiStatusMirror } from "./mi-status-mirror";
 
 /*
  * CHANGE ONCE -> UPDATE EVERYWHERE, for a client's status.
@@ -49,7 +50,7 @@ import { getOnboardingDb } from "@/lib/tools/onboarding/db";
  * Every leg returns its own outcome and the caller shows them.
  */
 
-export type PropagationTool = "client_health" | "database" | "analytics" | "portal" | "campaigns" | "billing";
+export type PropagationTool = "client_health" | "database" | "analytics" | "master_inbox" | "portal" | "campaigns" | "billing";
 
 export interface PropagationLeg {
   tool: PropagationTool;
@@ -70,6 +71,7 @@ const LABELS: Record<PropagationTool, string> = {
   client_health: "Client Health",
   database: "Database",
   analytics: "Analytics",
+  master_inbox: "Master Inbox",
   portal: "Client portal",
   campaigns: "Campaigns",
   billing: "Billing",
@@ -159,6 +161,10 @@ export async function propagateStatus(
       // Straight into Analytics' database (analytics-direct.ts) — the same
       // write the standalone app's PATCH /api/clients/:id made.
       await updateAnalyticsClient(anClientId, { status });
+      // A second portal's row (e.g. "SERHANT. PA 15M+") follows its client.
+      for (const id of await analyticsSecondRows({ id: client.id, name: client.name, aliases: client.aliases, anClientId })) {
+        await updateAnalyticsClient(id, { status });
+      }
       legs.push(leg("analytics"));
     } catch (error) {
       legs.push(
@@ -168,6 +174,23 @@ export async function propagateStatus(
         }),
       );
     }
+  }
+
+  /* ------------------------------------------ 2b. Master Inbox status --- */
+  /*
+   * Master Inbox's own `clients.status` column, which nothing kept current.
+   * Only that column is written — the portal itself follows the nudge below.
+   */
+  try {
+    const ids = await miRowsFor({ id: client.id, name: client.name, aliases: client.aliases, miClientId: client.links.masterInbox });
+    if (!ids.length) {
+      legs.push(leg("master_inbox", { skipped: "No Master Inbox record is linked to this client." }));
+    } else {
+      await writeMiStatusMirror(ids, status);
+      legs.push(leg("master_inbox"));
+    }
+  } catch (error) {
+    legs.push(leg("master_inbox", { ok: false, error: error instanceof Error ? error.message : "Master Inbox write failed" }));
   }
 
   /* --------------------------------------------------- 3. Portal nudge --- */

@@ -142,8 +142,9 @@ export function findStatusConflicts(
       master === "onboarding" && disagreeing.every((r) => r.status === "active");
 
     /*
-     * Rule 4: Master Inbox's `clients.status` is a MIRROR THAT NOTHING
-     * MAINTAINS YET. Migration 0001 added and backfilled it deliberately
+     * Rule 4: Master Inbox's `clients.status` is a MIRROR. Since 30 Sep every
+     * status change writes it (lib/clients/mi-status-mirror.ts); before that
+     * nothing maintained it. The rest of this note is the history. Migration 0001 added and backfilled it deliberately
      * "recorded but not yet enforced", and nothing in that app reads it.
      *
      * It cannot be updated from here either: writing Master Inbox's `clients`
