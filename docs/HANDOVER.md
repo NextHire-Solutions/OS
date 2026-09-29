@@ -437,9 +437,17 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
 - **Commissions** stops accrual at a churn date entered on the record.
 - **Data to enter:** 9 of the 10 churned clients have no churn date, and 5
   clients have no onboarding or start date.
-- **Not yet deployed:** Railway paused all deploys on 30 Sep evening. This
-  work, the Play/Pause fix and the Stripe throttle are all committed; deploy
-  once 0023 is run and Railway resumes.
+- **Deployed 30 Sep, 23:45** after Railway resumed, together with the
+  Play/Pause fix, the Stripe throttle and hiding Date added (`2d96a9e`).
+  Standalone Client Health `web` was also deployed.
+- **Verified on production:**
+  - Performance shows revenue of $38,850 this month, plus churn, net and
+    active at month end.
+  - Commissions reads Stripe for all 29 linked clients.
+  - 54 Realty's ▶ previews both paused campaigns, in the OS and the
+    standalone app.
+  - The dates are editable, and Date added is hidden.
+  - 34/34 pages pass.
 
 **Audit, 30 Sep (evening).**
 - **Clean:**
