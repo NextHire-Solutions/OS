@@ -7,6 +7,7 @@ import type { DatabaseClient, DatabaseClientsView } from "@/lib/tools/database/c
 
 import { Lazy } from "../lazy";
 import { Btn } from "../onboarding/toast";
+import { ClientCountLine } from "@/components/clients/count-line";
 
 /*
  * Database → Clients. §8's Database view, field for field, in its order:
@@ -93,6 +94,7 @@ function ClientsTable({ data }: { data: DatabaseClientsView }) {
 
   return (
     <div className="wrap db-clients">
+      <ClientCountLine tool="onboarding" />
       {!data.statsAvailable ? (
         <div className="anno" style={{ marginBottom: 16 }}>
           <b>Sequencers, Replies and Bounces are not available yet.</b> They are counted by a database

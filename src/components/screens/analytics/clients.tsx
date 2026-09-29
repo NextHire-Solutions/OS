@@ -17,6 +17,7 @@ import {
 import { Box, EmptyRow, LoadError, Search, SortHeader, sortRows, useSort } from "./shared";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn, ConfirmButton, Toast, useToast } from "./toast";
+import { ClientCountLine, rowNote, useClientCounts } from "@/components/clients/count-line";
 
 /*
  * Campaign Analytics — Clients.
@@ -97,6 +98,8 @@ const MATCH_MODES: Array<{ value: MatchMode; label: string; hint: string }> = [
 ];
 
 export function AnalyticsClientsScreen() {
+  // Marks the rows that are not one more client (second portals, non-clients).
+  const counts = useClientCounts();
   const { data, error, loading, reload } = useAnalyticsData<ClientsResponse>(CLIENTS_URL);
   const { toast, show } = useToast();
   const [busy, setBusy] = useState(false);
@@ -137,13 +140,14 @@ export function AnalyticsClientsScreen() {
     <div className="an-screen">
     <StalenessStrip />
     <div className="wrap" style={{ opacity: loading && !data ? 0.6 : 1, transition: "opacity .14s" }}>
+      <ClientCountLine tool="analytics" />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <span className="ds-kicker">Campaign Analytics</span>
           <h1 className="ds-title">Clients</h1>
           <div className="tbl-sub">
             {data
-              ? `${data.clients.length} clients · ${data.excludedCount} campaigns excluded from analytics`
+              ? `${data.clients.length} rows · ${data.excludedCount} campaigns excluded from analytics`
               : "Loading…"}
           </div>
         </div>
@@ -386,6 +390,7 @@ export function AnalyticsClientsScreen() {
                       <td>
                         <div className="cname">{c.name}</div>
                         {!c.active ? <div className="csince">inactive</div> : null}
+                        {rowNote(counts, "analytics", c.name) ? <div className="csince">{rowNote(counts, "analytics", c.name)}</div> : null}
                       </td>
                       <td>
                         {c.aliases.length === 0 ? (

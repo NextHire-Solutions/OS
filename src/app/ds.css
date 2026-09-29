@@ -503,3 +503,14 @@ tr.has-carry > td:first-child { box-shadow: inset 3px 0 0 var(--ds-red); }
 .ds-chip:disabled { opacity: .6; cursor: default; }
 .ds-chip-n { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
   background: var(--ds-brand); color: #fff; font-size: 10px; font-weight: 700; }
+
+/* The one client count, shown on every tool's client screen (count-line.tsx). */
+.ds-countline { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; margin: 0 0 16px;
+  border: 1px solid var(--ds-border); border-radius: var(--ds-radius-sm); background: var(--ds-surface);
+  font-size: 13px; color: var(--ds-ink-2); }
+.ds-countline-main { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+.ds-countline-main b { color: var(--ds-ink); font-size: 14px; }
+.ds-countline-main span { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.ds-countline-main em { font-style: normal; color: var(--ds-faint); font-size: 12px; margin-left: auto; }
+.ds-countline-why { color: var(--ds-muted); font-size: 12.5px; }
+.ds-countline-why a { color: var(--ds-brand); text-decoration: none; }

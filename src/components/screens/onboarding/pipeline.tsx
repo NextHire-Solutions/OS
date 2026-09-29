@@ -11,6 +11,7 @@ import { PIPELINE_URL, setClientStage, useOnboardingData } from "./actions";
 import { Avatar } from "./photo-input";
 import { RepliesPanel } from "./replies-panel";
 import { Btn, Toast, useToast } from "./toast";
+import { ClientCountLine } from "@/components/clients/count-line";
 
 /*
  * Onboarding — the pipeline.
@@ -204,6 +205,7 @@ function PipelineView({ data, reload }: { data: OnboardingPipeline; reload: () =
 
   return (
     <div className="wrap onb-pipeline">
+      <ClientCountLine tool="onboarding" />
       <div style={{ marginBottom: 18 }}>
         <PageHeader icon="onboarding" title="Onboarding" description="Every client from signed to live — stage, owner, payment and launch" />
       </div>

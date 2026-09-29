@@ -31,6 +31,7 @@ import { ToastHost } from "./toast";
 import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
 import { SummaryCards } from "./summary-cards";
 import { setFilters, useClientHealthView } from "./view-state";
+import { ClientCountLine } from "@/components/clients/count-line";
 
 /*
  * Client Health — Weekly.
@@ -133,6 +134,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
 
   return (
     <div className="ds-page">
+      <ClientCountLine tool="client_health" />
       {data.source === "seed" ? (
         <p className="ds-note">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable

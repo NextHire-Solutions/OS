@@ -14,6 +14,7 @@ import { SettingsPageShell } from "@/components/master-inbox/settings/page-shell
 import { ClientsManager } from "@/components/master-inbox/settings/clients-manager";
 import { requireSession } from "@/lib/auth/workspace";
 import { createAdminSupabase } from "@/lib/supabase/admin";
+import { ClientCountLine } from "@/components/clients/count-line";
 
 
 export async function SettingsClients() {
@@ -52,6 +53,7 @@ export async function SettingsClients() {
       title="Clients"
       description="BrokerStaffer's active clients. Each inbound reply gets auto-tagged against one of these by matching the campaign name against the client's name or aliases. Replies that don't match any client land on the 'Unknown' fallback."
     >
+      <ClientCountLine tool="master_inbox" />
       <ClientsManager initial={initial} />
     </SettingsPageShell>
   );
