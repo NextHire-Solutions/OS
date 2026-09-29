@@ -416,6 +416,37 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   rule change, pending the client. Syncing billing dates from Stripe is also
   open; the client called it not a necessity.
 
+**Billing button, admin pages, and a full audit (30 Sep night).**
+- **Pause billing / Resume billing** is on the client's record, under
+  Billing (`lib/clients/billing-control.ts`, `/api/workspace/clients/billing`).
+  - Admins only, for reading as well as changing.
+  - It shows Stripe's live state: collecting or paused, the amount, and the
+    next charge.
+  - There is a confirmation step. Pause uses "void" and never cancels.
+    Resume is refused for a cancelled subscription.
+  - The subscription is always the one on the record.
+- **Admin-only pages:**
+  - Team access and Reply agent: admins only. The menu and the command
+    palette now hide them from everyone else.
+  - Assistant: admins, or anyone holding every tool.
+  - Everything else under Workspace is open to anyone signed in. Commissions
+    shows each person only their own.
+- **Audit results:**
+  - API and security: 57/57, run as the admin, Amy (account manager), Eddy
+    (both roles) and Sankalp (no role). Every refused billing call left Stripe
+    unchanged.
+  - Performance, recomputed independently from the raw rows and raw Stripe
+    invoices: matches exactly. Spotlight's Sep churn comes from the status
+    history.
+  - Chrome as the admin: 14/14. All 50 client records opened cleanly. The
+    Pause billing confirmation was blocked, so nothing was charged.
+  - Chrome as Amy: menu, Commissions scope, no billing control, and Team
+    access refused.
+  - 34/34 pages; consistency 50/50.
+- **Fixed during the audit:**
+  - Someone with no role saw a $0 "Account manager" card in Commissions.
+  - Team access opened by a non-admin said only "Forbidden".
+
 **Stripe links from the client's "Subscriptions" sheet (30 Sep).**
 - All 51 rows were checked against Stripe. Every subscription belongs to the
   customer the sheet names.
