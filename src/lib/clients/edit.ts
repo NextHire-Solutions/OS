@@ -13,6 +13,8 @@ import { planDatabasePeople, writeDatabasePeople } from "./people-sync";
 import type { Resolution } from "./people-link";
 import { stripeKey } from "@/lib/tools/onboarding/stripe";
 import { resolveAccountManager } from "@/lib/identity/team-directory";
+import { joinManagers, splitManagers } from "@/lib/identity/team-match";
+import { listSalespeople, resolveSalesperson } from "@/lib/identity/salespeople";
 
 /**
  * Ask Stripe who owns a subscription. A read — this never changes anything.
@@ -344,20 +346,43 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   if (errors.length) throw new Error(errors.join(" "));
 
   /*
-   * Account Manager is a team member (30 Sep): only an active person on Team
-   * access can hold it, saved under their exact name so the Onboarding sync
-   * and Commissions both find them. Blank still clears it. Refused here —
-   * before anything is written — so a rejected edit changes nothing.
+   * Account Manager is a team member (30 Sep), and a client may have several:
+   * each must be an active person on Team access, saved under their exact
+   * name, in the order given, as "Amy, Eddy" (team-match.ts). Blank clears.
+   *
+   * Salesperson is someone on Team access → Salespeople (0020), saved under
+   * the list's own spelling. Before that list exists, anything typed is kept
+   * as it always was.
+   *
+   * Both are refused here — before anything is written — so a rejected edit
+   * changes nothing.
    */
   if (typeof edit.accountManager === "string" && edit.accountManager.trim()) {
-    const r = await resolveAccountManager(edit.accountManager);
-    if (r.kind === "none") {
-      throw new InvalidEditError(`“${edit.accountManager.trim()}” is not an active member on Team access. Account managers are team members — invite them on Team access first.`);
+    const names: string[] = [];
+    for (const typed of splitManagers(edit.accountManager)) {
+      const r = await resolveAccountManager(typed);
+      if (r.kind === "none") {
+        throw new InvalidEditError(`“${typed}” is not an active member on Team access. Account managers are team members — invite them on Team access first.`);
+      }
+      if (r.kind === "ambiguous") {
+        throw new InvalidEditError(`Two team members are called “${r.name}”. Give one a distinct name on Team access first.`);
+      }
+      if (!names.includes(r.member.name)) names.push(r.member.name);
     }
-    if (r.kind === "ambiguous") {
-      throw new InvalidEditError(`Two team members are called “${r.name}”. Give one a distinct name on Team access first.`);
+    edit = { ...edit, accountManager: joinManagers(names) };
+  }
+  if (typeof edit.salesperson === "string" && edit.salesperson.trim()) {
+    const { available } = await listSalespeople();
+    if (available) {
+      const r = await resolveSalesperson(edit.salesperson);
+      if (r.kind === "none") {
+        throw new InvalidEditError(`“${edit.salesperson.trim()}” is not on the Salespeople list. Add them on Team access → Salespeople first.`);
+      }
+      if (r.kind === "ambiguous") {
+        throw new InvalidEditError(`Two salespeople are called “${r.name}”. Rename one on Team access → Salespeople first.`);
+      }
+      edit = { ...edit, salesperson: r.person.name };
     }
-    edit = { ...edit, accountManager: r.member.name };
   }
 
   const { data, error } = await osTable("os_clients")
@@ -381,7 +406,12 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   // row (people-link.ts). Names resolved now, so an ambiguous one refuses the
   // whole edit before anything is written.
   const peoplePlan = row.orch_client_id
-    ? await planDatabasePeople({ salesperson: edit.salesperson, accountManager: edit.accountManager, sender: edit.sender })
+    ? await planDatabasePeople({
+        salesperson: edit.salesperson,
+        // Onboarding's row holds ONE account manager: the first one named.
+        accountManager: edit.accountManager === undefined ? undefined : splitManagers(edit.accountManager)[0] ?? null,
+        sender: edit.sender,
+      })
     : null;
   if (peoplePlan?.errors.length) throw new InvalidEditError(peoplePlan.errors.join(" "));
 
@@ -410,7 +440,8 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   // "eddy" and "Eddy" never become two people on two screens.
   const canonical = (r: Resolution | undefined, typed: string | null | undefined) =>
     r?.kind === "found" ? r.name : blankToNull(typed);
-  if (edit.accountManager !== undefined) local.account_manager = canonical(peoplePlan?.accountManager, edit.accountManager);
+  // Already every name in Team access's own spelling (resolved above), in order.
+  if (edit.accountManager !== undefined) local.account_manager = blankToNull(edit.accountManager);
   if (edit.salesperson !== undefined) local.salesperson = canonical(peoplePlan?.salesperson, edit.salesperson);
   if (edit.sender !== undefined) local.sender_name = blankToNull(edit.sender);
   /*

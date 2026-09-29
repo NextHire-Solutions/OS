@@ -602,20 +602,18 @@ function StageRibbon({
 
 function SalespersonPicker({
   data,
-  notify,
-  reload,
 }: {
   data: ClientDetail;
   notify: (text: string, bad?: boolean) => void;
   reload: () => Promise<void>;
 }) {
+  /*
+   * Read-only here (30 Sep), like Account manager below. Salesperson is chosen
+   * on the client's record in Clients, from Team access → Salespeople; that
+   * save mirrors the person into this row, which is what is shown.
+   */
   const c = data.client;
-  const [name, setName] = useState(c.salespersonName ?? "");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => setName(c.salespersonName ?? ""), [c.salespersonName]);
-
-  const changed = name.trim() !== (c.salespersonName ?? "") && !!name.trim();
-
+  const masterId = c.masterId;
   return (
     <div>
       <div className="tbl-sub" style={{ fontWeight: 600, color: "var(--ink-2)", marginBottom: 8 }}>
@@ -623,42 +621,15 @@ function SalespersonPicker({
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <Avatar src={c.salespersonPhoto} name={c.salespersonName} size={36} />
-        <input
-          className="inp"
-          list="onb-salespeople"
-          value={name}
-          disabled={busy}
-          placeholder="Type or select a salesperson…"
-          aria-label="Salesperson"
-          onChange={(e) => setName(e.target.value)}
-          style={{ flex: 1, minWidth: 180 }}
-        />
-        <datalist id="onb-salespeople">
-          {data.salespeople.map((s) => (
-            <option key={s.id} value={s.name} />
-          ))}
-        </datalist>
-        <Btn
-          primary
-          disabled={busy || !changed}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await patchClient(c.id, { salespersonName: name.trim() });
-              await reload();
-              notify(`Salesperson set to ${name.trim()}`);
-            } catch (e) {
-              notify(e instanceof Error ? e.message : "Could not assign that salesperson", true);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? "Saving…" : "Assign"}
-        </Btn>
+        <span style={{ flex: 1, minWidth: 180, fontSize: 14, color: c.salespersonName ? "var(--ink)" : "var(--muted)" }}>
+          {c.salespersonName ?? "Not assigned"}
+        </span>
+        <a className="ds-btn sm" href={masterId ? `/roster?client=${masterId}` : "/roster"}>
+          {c.salespersonName ? "Change on the client record →" : "Assign on the client record →"}
+        </a>
       </div>
       <div className="tbl-sub" style={{ marginTop: 6 }}>
-        An existing name assigns it. A new name creates the salesperson, then assigns.
+        Salespeople are listed on Team access and chosen on the client&rsquo;s record in Clients.
       </div>
     </div>
   );

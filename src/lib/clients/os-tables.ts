@@ -36,6 +36,7 @@ export const OS_TABLES = [
   // gross for clients with no Stripe subscription linked.
   "os_commission_reps",
   "os_client_commission",
+  "os_salespeople",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

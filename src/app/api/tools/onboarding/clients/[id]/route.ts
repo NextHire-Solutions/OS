@@ -96,6 +96,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
    * people list — a second editor that could name someone who is not on the
    * team. The master record still mirrors its choice into Onboarding's row.
    */
+  // Salesperson likewise (30 Sep): chosen on the client's record from Team
+  // access → Salespeople, which mirrors it here.
+  if (p.salespersonName !== undefined) {
+    return NextResponse.json(
+      { error: "Salesperson is set on the client's record in Clients — salespeople are on Team access → Salespeople." },
+      { status: 400 },
+    );
+  }
   if (p.accountManagerId !== undefined) {
     return NextResponse.json(
       { error: "Account Manager is set on the client's record in Clients — account managers are Team access members." },

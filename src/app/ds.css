@@ -490,3 +490,16 @@ tr.has-carry > td:first-child { box-shadow: inset 3px 0 0 var(--ds-red); }
 .mi-list-dot.s-active { background: var(--st-active) !important; }
 .mi-list-dot.s-paused { background: var(--st-paused) !important; }
 .mi-list-dot.s-churned { background: var(--st-churned) !important; }
+
+/* Several choices, in order (Field editor kind "multi") — e.g. account managers. */
+.ds-multi { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; flex: 1; }
+.ds-multi-empty { font-size: 12.5px; color: var(--ds-muted); }
+.ds-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px;
+  border: 1px solid var(--ds-border-strong); background: var(--ds-surface); color: var(--ds-ink-2);
+  font: inherit; font-size: 12.5px; cursor: pointer; }
+.ds-chip:hover { background: var(--ds-hover); }
+.ds-chip.on { border-color: var(--ds-brand); background: var(--ds-brand-soft); color: var(--ds-brand-ink); font-weight: 600; }
+.ds-chip:focus-visible { outline: 2px solid var(--ds-brand); outline-offset: 2px; }
+.ds-chip:disabled { opacity: .6; cursor: default; }
+.ds-chip-n { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--ds-brand); color: #fff; font-size: 10px; font-weight: 700; }

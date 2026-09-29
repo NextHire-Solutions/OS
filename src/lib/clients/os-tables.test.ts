@@ -32,6 +32,7 @@ test("the allowlist contains exactly the OS tables", () => {
     // Added 2026-09-30: Commissions (0019) — rep rates and manual gross.
     "os_commission_reps",
     "os_client_commission",
+    "os_salespeople",
   ]);
 });
 

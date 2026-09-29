@@ -253,7 +253,9 @@ export type FieldEditor =
   | { kind: "email" }
   | { kind: "number"; min?: number }
   | { kind: "date" }
-  | { kind: "select"; options: { value: string; label: string }[] };
+  | { kind: "select"; options: { value: string; label: string }[] }
+  /** Pick several, in order; the value is the names joined with ", ". */
+  | { kind: "multi"; options: string[]; empty?: string };
 
 /**
  * A label / value row that edits in place. Click the value (or focus it and
@@ -338,7 +340,10 @@ export function Field({
         {editing && editor ? (
           <>
             <div className="ds-field-edit">
-              {editor.kind === "select" ? (
+              {editor.kind === "multi" ? (
+                <MultiPick options={editor.options} value={draft} disabled={saving} label={label}
+                  empty={editor.empty} onChange={setDraft} onKey={onKey} />
+              ) : editor.kind === "select" ? (
                 <select ref={inputRef} className="ds-input" value={draft} disabled={saving}
                   onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} aria-label={label}>
                   {!editor.options.some((o) => o.value === draft) ? <option value={draft}>{draft || "—"}</option> : null}
@@ -377,6 +382,47 @@ export function Field({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+const splitPicked = (v: string) => {
+  const out: string[] = [];
+  for (const p of v.split(",")) {
+    const n = p.trim();
+    if (n && !out.some((x) => x.toLowerCase() === n.toLowerCase())) out.push(n);
+  }
+  return out;
+};
+
+/**
+ * Several choices as toggles, kept in the order they were picked — the first
+ * one picked is listed first. A saved name that is no longer an option stays
+ * on (and can be switched off) rather than silently disappearing.
+ */
+function MultiPick({ options, value, disabled, label, empty, onChange, onKey }: {
+  options: string[]; value: string; disabled: boolean; label: string; empty?: string;
+  onChange: (v: string) => void; onKey: (e: React.KeyboardEvent) => void;
+}) {
+  const picked = splitPicked(value);
+  const has = (n: string) => picked.some((p) => p.toLowerCase() === n.toLowerCase());
+  const all = [...options, ...picked.filter((p) => !options.some((o) => o.toLowerCase() === p.toLowerCase()))];
+  const toggle = (n: string) =>
+    onChange((has(n) ? picked.filter((p) => p.toLowerCase() !== n.toLowerCase()) : [...picked, n]).join(", "));
+  return (
+    <div className="ds-multi" role="group" aria-label={label} onKeyDown={onKey}>
+      {all.length === 0 ? <span className="ds-multi-empty">{empty ?? "Nothing to choose from yet."}</span> : null}
+      {all.map((n, i) => {
+        const on = has(n);
+        const order = picked.findIndex((p) => p.toLowerCase() === n.toLowerCase());
+        return (
+          <button key={n} type="button" className={`ds-chip${on ? " on" : ""}`} aria-pressed={on} disabled={disabled}
+            autoFocus={i === 0} onClick={() => toggle(n)}>
+            {on && picked.length > 1 ? <span className="ds-chip-n">{order + 1}</span> : null}
+            {n}
+          </button>
+        );
+      })}
     </div>
   );
 }

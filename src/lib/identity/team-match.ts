@@ -26,9 +26,31 @@ export function matchTeamMember(
   return { kind: "none" };
 }
 
-/** The clients a person is Account Manager for: the name on the record is theirs. */
+/*
+ * A client may have more than one Account Manager (the client's decision,
+ * 30 Sep). The master record keeps them in its one text column, in order,
+ * separated by ", " — "Amy, Eddy". Names on Team access cannot contain a
+ * comma (a name with one is refused on save), so the split is exact.
+ */
+export const MANAGER_SEPARATOR = ", ";
+
+/** The names in an Account Manager value, trimmed, blanks and repeats dropped. */
+export function splitManagers(value: string | null | undefined): string[] {
+  const out: string[] = [];
+  for (const part of (value ?? "").split(",")) {
+    const name = part.trim().replace(/\s+/g, " ");
+    if (name && !out.some((n) => norm(n) === norm(name))) out.push(name);
+  }
+  return out;
+}
+
+export const joinManagers = (names: string[]): string | null =>
+  names.length ? names.join(MANAGER_SEPARATOR) : null;
+
+/** The clients a person is Account Manager for: their name is one of the record's. */
 export function isManagedBy(accountManager: string | null | undefined, member: Pick<TeamMember, "name" | "email">): boolean {
-  if (!accountManager) return false;
-  const k = norm(accountManager);
-  return k === norm(member.name) || k === member.email;
+  return splitManagers(accountManager).some((n) => {
+    const k = norm(n);
+    return k === norm(member.name) || k === member.email;
+  });
 }

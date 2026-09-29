@@ -3,6 +3,7 @@
 import { StatusPill } from "@/components/ds";
 import type { MasterClient } from "@/lib/clients/master-list";
 import { TIME_ZONES } from "@/lib/tools/client-health/types";
+import { splitManagers } from "@/lib/identity/team-match";
 
 /*
  * How every field of the master client record reads — ONE renderer for the
@@ -128,7 +129,13 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
       const v = c[k];
       return v === null ? <None title="Master Inbox could not be read" /> : <span className="cx-num">{fmtNum(v)}</span>;
     }
-    case "sender": case "salesperson": case "accountManager": case "campaignSender":
+    case "accountManager": {
+      // One or more, in order (30 Sep): "Amy, Eddy".
+      const names = splitManagers(c.accountManager);
+      if (names.length <= 1) return <Person name={names[0] ?? null} />;
+      return <span className="cx-people">{names.map((n) => <Person key={n} name={n} />)}</span>;
+    }
+    case "sender": case "salesperson": case "campaignSender":
       return <Person name={k === "campaignSender" ? c.sender : c[k]} />;
     case "billingInterval": return c.billingInterval ? <span>{intervalLabel(c.billingInterval, c.billingIntervalDays)}</span> : <None />;
     case "stripeCustomerId": case "stripeSubscriptionId": return <Id value={c[k]} />;

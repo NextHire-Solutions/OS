@@ -176,7 +176,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
         <div className="cm-h2">How payouts are calculated</div>
         <div className="cm-rules">
           <div><span className="k">Month 1</span><p>Earns <b>70%</b> of the client&rsquo;s first month of payments — the first 28 days of billing (two 14-day payments, or one 28-day). Paid on the next payout date after each payment.</p></div>
-          <div><span className="k">Month 2+</span><p>Earns the account manager&rsquo;s residual rate — <b>15%</b> or <b>25%</b> — of every later payment, for as long as the client stays active.</p></div>
+          <div><span className="k">Month 2+</span><p>Earns the account manager&rsquo;s residual rate — <b>15%</b> or <b>25%</b> — of every later payment, for as long as the client stays active. A client with more than one account manager is earned once, by the first one named.</p></div>
           <div><span className="k">On cancellation</span><p>Nothing accrues from the cancellation date. Paused billing collects nothing, so nothing accrues while paused either.</p></div>
         </div>
       </section>
@@ -316,6 +316,8 @@ function Assign({ data, onChanged }: { data: CommissionsView; onChanged: () => v
         </select>
         <select className="cm-select" value={am} onChange={(e) => setAm(e.target.value)} aria-label="Account manager" disabled={!clientId}>
           <option value="">No account manager</option>
+          {/* A client with several account managers keeps them unless a single one is picked. */}
+          {am && !data.team.includes(am) ? <option value={am}>{am}</option> : null}
           {data.team.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
         <input className="cm-input" inputMode="decimal" placeholder={row?.stripeLinked ? "On Stripe — not needed" : "Monthly gross $ (no Stripe)"}

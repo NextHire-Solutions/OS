@@ -199,6 +199,7 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .cx-sub { font-size: 12px; color: var(--x-mute); }
 .cx-sub-block { display: block; font-size: 11.5px; color: var(--x-faint); margin-top: 2px; }
 .cx-person { display: inline-flex; align-items: center; gap: 7px; color: var(--x-ink); }
+.cx-people { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .cx-id { appearance: none; border: 0; background: none; padding: 0; cursor: copy; font-family: var(--mono); font-size: 11.5px;
   color: var(--x-mute); }
 .cx-id:hover { color: var(--x-ink); text-decoration: underline; text-underline-offset: 3px; }

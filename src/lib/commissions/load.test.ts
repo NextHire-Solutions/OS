@@ -102,3 +102,12 @@ test("a churned client earns nothing after its cancellation", () => {
   assert.equal(v.rows[0].due, 0);
   assert.match(v.rows[0].statusLabel, /^Cancelled Sep 10/);
 });
+
+test("a client with two account managers is earned once, by the first named — never paid twice", () => {
+  const two = [client("k", "Keyes Company", "Scott Craigue, Ryan Jagdeo", { stripeSubscriptionId: "sub_k" })];
+  const all = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: two }));
+  assert.deepEqual(all.reps.map((r) => r.name), ["Scott Craigue"]);
+  assert.equal(all.rows.length, 1);
+  const ryan = buildCommissionsView(base({ clients: two }));
+  assert.deepEqual(ryan.rows, [], "the second manager does not also earn on it");
+});

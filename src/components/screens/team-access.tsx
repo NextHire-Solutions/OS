@@ -3,6 +3,7 @@
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModalDialog } from "@/components/ui/modal-dialog";
+import { SalespeopleSection } from "./team-salespeople";
 
 /*
  * Team access — who may open which tool.
@@ -359,6 +360,8 @@ export function TeamAccessScreen() {
       </div>
 
       {preview ? <Preview preview={preview} copied={copied} onCopied={setCopied} /> : null}
+
+      <SalespeopleSection />
     </div>
   );
 }

@@ -64,7 +64,7 @@ async function saveEdit(id: string, patch: Record<string, unknown>): Promise<voi
 }
 
 /** Which fields edit in place, how, and which route key they save to. */
-function editorFor(key: string, team: { salespeople: string[]; accountManagers: string[] }, members: string[]):
+function editorFor(key: string, team: { salespeople: string[]; accountManagers: string[] }, members: string[], sellers: string[] | null):
   { editor: FieldEditor; save: string; transform?: (v: string) => unknown } | null {
   switch (key) {
     case "name": return { editor: { kind: "text", maxLength: 80 }, save: "name", transform: (v) => v };
@@ -72,9 +72,14 @@ function editorFor(key: string, team: { salespeople: string[]; accountManagers: 
     case "startDate": return { editor: { kind: "date" }, save: "startDate" };
     case "timezone": return { editor: { kind: "select", options: TZ_OPTIONS }, save: "timezone" };
     case "sender": case "campaignSender": return { editor: { kind: "text" }, save: "sender" };
-    case "salesperson": return { editor: { kind: "text", list: team.salespeople }, save: "salesperson" };
+    // Salesperson: someone on Team access → Salespeople. Before that list
+    // exists (sellers === null) it stays the free text it always was.
+    case "salesperson": return sellers
+      ? { editor: { kind: "select", options: [{ value: "", label: "— No salesperson —" }, ...sellers.map((n) => ({ value: n, label: n }))] }, save: "salesperson" }
+      : { editor: { kind: "text", list: team.salespeople }, save: "salesperson" };
+    // Account Managers: one or more Team access members, in order (30 Sep).
     case "accountManager": return {
-      editor: { kind: "select", options: [{ value: "", label: "— No account manager —" }, ...members.map((n) => ({ value: n, label: n }))] },
+      editor: { kind: "multi", options: members, empty: "No one on Team access yet — invite people there first." },
       save: "accountManager",
     };
     case "billingAnchorDate": return { editor: { kind: "date" }, save: "billingAnchorDate" };
@@ -136,6 +141,8 @@ export function ClientRecord({
   const [team, setTeam] = useState<{ salespeople: string[]; accountManagers: string[] }>({ salespeople: [], accountManagers: [] });
   // Account Manager = a Team access member (30 Sep): the dropdown offers exactly that list.
   const [members, setMembers] = useState<string[]>([]);
+  // Salesperson = someone on Team access → Salespeople; null until that list is known to exist.
+  const [sellers, setSellers] = useState<string[] | null>(null);
   const tool = view ? TOOL_VIEWS.find((t) => t.id === view) ?? null : null;
 
   useEffect(() => {
@@ -143,6 +150,10 @@ export function ClientRecord({
     fetch("/api/workspace/clients/team", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
       .then((t) => { if (live && t) setTeam({ salespeople: t.salespeople ?? [], accountManagers: t.accountManagers ?? [] }); })
+      .catch(() => {});
+    fetch("/api/workspace/salespeople", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((t) => { if (live && t?.available) setSellers((t.people as { name: string }[]).map((p) => p.name)); })
       .catch(() => {});
     fetch("/api/workspace/team-members", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
@@ -173,7 +184,7 @@ export function ClientRecord({
 
   /** One field row: an in-place editor where the master record owns it, the value otherwise. */
   const row = (key: string, label: string, def?: FieldDef) => {
-    const ed = editorFor(key, team, members);
+    const ed = editorFor(key, team, members, sellers);
     const source = def?.source;
     if (ed) {
       return (

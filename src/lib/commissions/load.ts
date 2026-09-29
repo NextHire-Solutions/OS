@@ -5,7 +5,15 @@ import { getMasterClientList, type MasterClient } from "@/lib/clients/master-lis
 import { dayNumber, dayToDate, scheduleFor } from "@/lib/tools/client-health/billing";
 import type { BillingInterval } from "@/lib/tools/client-health/types";
 import { listTeamMembers, type TeamMember } from "@/lib/identity/team-directory";
-import { isManagedBy } from "@/lib/identity/team-match";
+import { isManagedBy, splitManagers } from "@/lib/identity/team-match";
+
+/*
+ * A client can have several Account Managers (30 Sep). Until the business
+ * says how a commission is split between them, it is earned once, by the
+ * FIRST one named — never paid twice. The page says so.
+ */
+const earnerOf = (c: { accountManager: string | null }) => splitManagers(c.accountManager)[0] ?? null;
+const earnsOn = (c: { accountManager: string | null }, m: Pick<TeamMember, "name" | "email">) => isManagedBy(earnerOf(c), m);
 
 import {
   DEFAULT_RATES, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, nextRun, previousRun,
@@ -163,7 +171,7 @@ export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "viewerEmai
   let scopeMember: TeamMember | null = inp.admin ? null : viewer;
   if (inp.admin && inp.as && inp.as !== "all") scopeMember = inp.team.find((m) => m.email === inp.as!.toLowerCase()) ?? null;
   const assigned = inp.clients.filter((c) => c.accountManager);
-  const inScope = scopeMember ? assigned.filter((c) => isManagedBy(c.accountManager, scopeMember!)) : inp.admin ? assigned : [];
+  const inScope = scopeMember ? assigned.filter((c) => earnsOn(c, scopeMember!)) : inp.admin ? assigned : [];
   return { viewer, scopeMember, assigned, inScope };
 }
 
@@ -173,7 +181,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
   const run = inp.run && /^\d{4}-\d{2}-(01|15)$/.test(inp.run) ? inp.run : runOnOrAfter(today);
   const { viewer, scopeMember, assigned, inScope } = scopeFor(inp);
   const scope = scopeMember ? scopeMember.email : "all";
-  const repOf = (c: MasterClient) => team.find((m) => isManagedBy(c.accountManager, m)) ?? null;
+  const repOf = (c: MasterClient) => team.find((m) => earnsOn(c, m)) ?? null;
   const ratesFor = (m: TeamMember | null) => (m && settings.rates.get(m.email)) || DEFAULT_RATES;
   // Payments are counted up to today only — a run still ahead shows what has been billed so far.
   const horizon = run < today ? run : today;
@@ -210,9 +218,9 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
   }).sort((a, b) => b.due - a.due || a.name.localeCompare(b.name));
 
   // Cards: the person in view, or — for "all" — everyone who actually holds clients.
-  const people = scopeMember ? [scopeMember] : inp.admin ? team.filter((m) => assigned.some((c) => isManagedBy(c.accountManager, m))) : [];
+  const people = scopeMember ? [scopeMember] : inp.admin ? team.filter((m) => assigned.some((c) => earnsOn(c, m))) : [];
   const reps: RepSummary[] = people.map((m) => {
-    const mine = rows.filter((r) => isManagedBy(r.accountManager, m));
+    const mine = rows.filter((r) => earnsOn(r, m));
     return {
       email: m.email, name: m.name, rates: ratesFor(m),
       due: sum(mine.flatMap((r) => r.lines)),
@@ -229,7 +237,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
     unassigned: inp.admin ? inp.clients.filter((c) => !c.accountManager).map((c) => ({ id: c.id, name: c.name, status: c.status })) : [],
     team: inp.admin ? team.filter((m) => m.active).map((m) => m.name).sort() : [],
     people: inp.admin
-      ? team.filter((m) => m.active || assigned.some((c) => isManagedBy(c.accountManager, m)))
+      ? team.filter((m) => m.active || assigned.some((c) => earnsOn(c, m)))
           .map((m) => ({ email: m.email, name: m.name })).sort((a, b) => a.name.localeCompare(b.name))
       : [],
     settingsAvailable: settings.available,
