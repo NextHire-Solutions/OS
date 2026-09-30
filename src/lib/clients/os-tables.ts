@@ -38,6 +38,9 @@ export const OS_TABLES = [
   "os_client_commission",
   "os_salespeople",
   "os_payment_links",
+  // Which portal each campaign's leads go to, for clients with several
+  // portals — see migrations/0025_campaign_portals.sql.
+  "os_campaign_portals",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

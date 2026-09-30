@@ -34,6 +34,8 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_client_commission",
     "os_salespeople",
     "os_payment_links",
+    // Added 2026-10-01: campaign → portal (0025).
+    "os_campaign_portals",
   ]);
 });
 

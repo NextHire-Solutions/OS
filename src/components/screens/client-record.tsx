@@ -11,6 +11,7 @@ import {
   CATEGORIES, CATEGORY_LABEL, FIELD_BY_KEY, TOOL_VIEWS, fieldsIn, shown, type FieldDef, type ToolViewId,
 } from "@/lib/clients/field-registry";
 import type { MasterClient } from "@/lib/clients/master-list";
+import type { CampaignPortalView, CampaignRoute } from "@/lib/clients/campaign-portals";
 import { CLIENT_STATUSES, STATUS_MEANING, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
 import { TIME_ZONES } from "@/lib/tools/client-health/types";
 
@@ -378,26 +379,128 @@ export function ClientRecord({
 
 /* ---------------------------------------------------------------- campaigns --- */
 function Campaigns({ c }: { c: MasterClient }) {
+  const routing = useCampaignPortals(c.id);
+  const multi = routing.view?.multi ?? false;
+  const routeOf = (x: NonNullable<MasterClient["campaigns"]>[number]) =>
+    routing.view?.campaigns.find((r) => r.name === x.name && r.platform === (x.platform === "Instantly" ? "instantly" : "emailbison"));
   return (
     <section className="rx-sec">
       <h3>Campaigns<span>read from Instantly and EmailBison</span></h3>
+      {multi && routing.view ? <PortalsLine view={routing.view} /> : null}
+      {multi && routing.view && !routing.view.ready ? (
+        <p className="rx-hint">Choosing a portal per campaign needs migration 0025 run in the Master Inbox Supabase project.</p>
+      ) : null}
+      {routing.error ? <p className="rx-hint" style={{ color: "var(--x-bad, #b42318)" }}>{routing.error}</p> : null}
       {!c.campaigns ? <p className="rx-hint">Campaigns could not be read.</p>
         : !c.campaigns.length ? <p className="rx-hint">No campaign is linked to {c.name} yet.</p>
         : (
           <div className="rx-camps">
-            {c.campaigns.map((x) => (
-              <div key={`${x.platform}:${x.id}`} className="rx-camp">
-                <span className={`rx-plat ${x.platform === "Instantly" ? "i" : "b"}`}>{x.platform === "Instantly" ? "IN" : "EB"}</span>
-                <div style={{ minWidth: 0 }}>
-                  <b title={x.name}>{x.name}</b>
-                  <small><Id value={x.id} />{x.leads !== null ? <span>{fmtNum(x.leads)} leads</span> : null}</small>
+            {c.campaigns.map((x) => {
+              const r = multi ? routeOf(x) : undefined;
+              return (
+                <div key={`${x.platform}:${x.id}`} className="rx-camp" style={multi ? { gridTemplateColumns: "auto 1fr auto auto" } : undefined}>
+                  <span className={`rx-plat ${x.platform === "Instantly" ? "i" : "b"}`}>{x.platform === "Instantly" ? "IN" : "EB"}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <b title={x.name}>{x.name}</b>
+                    <small><Id value={x.id} />{x.leads !== null ? <span>{fmtNum(x.leads)} leads</span> : null}</small>
+                  </div>
+                  <span className={`rx-cs s-${(x.status ?? "unknown").toLowerCase()}`}><i />{x.status ? x.status.charAt(0).toUpperCase() + x.status.slice(1) : "Unknown"}</span>
+                  {multi && routing.view ? <PortalPicker route={r} view={routing.view} saving={routing.saving} onPick={routing.pick} /> : null}
                 </div>
-                <span className={`rx-cs s-${(x.status ?? "unknown").toLowerCase()}`}><i />{x.status ? x.status.charAt(0).toUpperCase() + x.status.slice(1) : "Unknown"}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
+      {multi ? <p className="rx-hint">Each campaign&apos;s portal is chosen automatically once, from the market in its name, and can be changed here. Only new replies follow a change — leads already in a portal stay there.</p> : null}
     </section>
+  );
+}
+
+/* Which portal each campaign feeds — only for a client with several portals (0025). */
+function useCampaignPortals(clientId: string) {
+  const [view, setView] = useState<CampaignPortalView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/workspace/clients/campaign-portals?clientId=${encodeURIComponent(clientId)}`, { cache: "no-store" })
+      .then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (live) setView(body as CampaignPortalView);
+      })
+      .catch((e) => { if (live) setError(`Portals could not be read: ${e instanceof Error ? e.message : String(e)}`); });
+    return () => { live = false; };
+  }, [clientId]);
+  async function pick(route: CampaignRoute, portalId: string) {
+    if (!route.campaignId) return;
+    const key = `${route.platform}:${route.campaignId}`;
+    setSaving(key); setError(null);
+    try {
+      const res = await fetch("/api/workspace/clients/campaign-portals", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, platform: route.platform, campaignId: route.campaignId, portalId }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      setView(body.view as CampaignPortalView);
+    } catch (e) {
+      setError(`Could not save: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(null);
+    }
+  }
+  return { view, error, saving, pick };
+}
+
+function portalLabel(view: CampaignPortalView, id: string | null | undefined): string {
+  const p = view.portals.find((x) => x.id === id);
+  if (!p) return "—";
+  // "Properties & Estates Florida" → "Florida": the market is what tells them apart.
+  const names = view.portals.map((x) => x.name.split(/\s+/));
+  let common = 0;
+  while (names.every((n) => n.length > common && n[common] === names[0][common])) common++;
+  const short = p.name.split(/\s+/).slice(common).join(" ");
+  return short || p.name;
+}
+
+function PortalsLine({ view }: { view: CampaignPortalView }) {
+  return (
+    <p className="rx-hint" style={{ marginTop: 0 }}>
+      Leads go to one of {view.portals.length} portals:{" "}
+      {view.portals.map((p, i) => (
+        <span key={p.id}>
+          {i ? " · " : ""}
+          {p.url ? <a href={p.url} target="_blank" rel="noreferrer">{portalLabel(view, p.id)}</a> : portalLabel(view, p.id)}
+          {p.main ? " (main)" : ""}{!p.enabled ? " (switched off)" : ""}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function PortalPicker({ route, view, saving, onPick }: {
+  route: CampaignRoute | undefined; view: CampaignPortalView; saving: string | null;
+  onPick: (r: CampaignRoute, portalId: string) => void;
+}) {
+  if (!route) return <span className="rx-cs">—</span>;
+  const current = route.portalId ?? route.suggestion?.portalId ?? "";
+  const busy = saving === `${route.platform}:${route.campaignId}`;
+  const note = !route.campaignId ? "no campaign number yet"
+    : route.source === "manual" ? `chosen${route.decidedBy ? ` by ${route.decidedBy.split("@")[0]}` : ""}`
+    : route.source === "auto" ? "chosen automatically"
+    : "will be chosen automatically";
+  return (
+    <label style={{ display: "grid", gap: 2, justifyItems: "end" }} title={route.suggestion?.reason ? `Automatic choice: ${route.suggestion.reason}` : undefined}>
+      <select className="ds-input" style={{ minWidth: 0, width: 150, padding: "4px 6px", fontSize: 12.5 }}
+        aria-label={`Portal for ${route.name}`} value={current}
+        disabled={!view.ready || !route.campaignId || busy}
+        onChange={(e) => onPick(route, e.target.value)}>
+        {!current ? <option value="">Choose…</option> : null}
+        {view.portals.map((p) => <option key={p.id} value={p.id}>{portalLabel(view, p.id)}</option>)}
+      </select>
+      <small style={{ fontSize: 11, color: "var(--x-mute)" }}>{busy ? "saving…" : note}</small>
+    </label>
   );
 }
 

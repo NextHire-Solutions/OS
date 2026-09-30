@@ -113,6 +113,23 @@ export async function register() {
     await settle();
   };
   setInterval(() => { settleLinks().catch(() => { /* best effort */ }); }, 180_000).unref?.();
+
+  /*
+   * Campaign → portal (0025): for clients with several portals, each new
+   * campaign gets its portal chosen automatically, once, and saved — Master
+   * Inbox reads that choice when the campaign's first reply arrives. Rows
+   * that exist are never changed. Railway only: a local run against the live
+   * database must not write choices.
+   */
+  const assignCampaignPortals = async () => {
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    const { assignAutoRoutes } = await import("./lib/clients/campaign-portals");
+    const r = await assignAutoRoutes();
+    if (r.assigned) console.log(`[campaign-portals] chose a portal for ${r.assigned} new campaign(s)`);
+  };
+  const assignSafely = () => { assignCampaignPortals().catch((e) => console.error("[campaign-portals] auto pass failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(assignSafely, 90_000).unref?.();
+  setInterval(assignSafely, 600_000).unref?.();
   setTimeout(warmShellSafely, 6_000).unref?.();
   setInterval(warmShellSafely, 240_000).unref?.();
 }
