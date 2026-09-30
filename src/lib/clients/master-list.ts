@@ -113,7 +113,8 @@ export interface MasterClient {
     pace: "risk" | "ok" | "done" | "pending" | null;
   };
   onboarding: { present: boolean; stage: string | null; progress: { done: number; total: number; pct: number } | null };
-  portal: { count: number; url: string | null; enabled: boolean | null };
+  /** `url` is the first open portal; `links` is every portal the client has (a client can run several markets). */
+  portal: { count: number; url: string | null; enabled: boolean | null; links: { name: string; url: string; enabled: boolean }[] };
   analytics: { present: boolean; campaigns: number | null; sent: number | null };
   database: { present: boolean };
 }
@@ -385,6 +386,10 @@ async function load(): Promise<MasterClientList> {
         count: mine.length,
         url: publicPortalUrl(liveToken),
         enabled: mine.length ? mine.some((p) => p.portal_enabled !== false) : null,
+        links: mine
+          .filter((p) => p.portal_token)
+          .map((p) => ({ name: p.name, url: publicPortalUrl(p.portal_token) as string, enabled: p.portal_enabled !== false }))
+          .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)),
       },
       analytics: {
         present: !!a,

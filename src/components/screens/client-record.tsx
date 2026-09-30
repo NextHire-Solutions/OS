@@ -6,6 +6,8 @@ import { createPortal } from "react-dom";
 import { Field, StatusPill, type FieldEditor } from "@/components/ds";
 import {
   Cell, Id, avatarStyle, fmtDay, fmtNum, initials, intervalLabel, planLabel, tzLabel,
+  portalShortName,
+  introMissing,
 } from "@/components/clients/cells";
 import {
   CATEGORIES, CATEGORY_LABEL, FIELD_BY_KEY, TOOL_VIEWS, fieldsIn, shown, type FieldDef, type ToolViewId,
@@ -256,7 +258,11 @@ export function ClientRecord({
               </div>
             </div>
             <div className="rx-actions">
-              {c.portal.url ? <a className="rx-btn" href={c.portal.url} target="_blank" rel="noreferrer">Portal ↗</a> : null}
+              {(c.portal.links?.length ?? 0) > 1
+                ? c.portal.links.filter((l) => l.enabled).map((l) => (
+                    <a key={l.url} className="rx-btn" href={l.url} target="_blank" rel="noreferrer" title={l.name}>{portalShortName(l.name, c.portal.links)} ↗</a>
+                  ))
+                : c.portal.url ? <a className="rx-btn" href={c.portal.url} target="_blank" rel="noreferrer">Portal ↗</a> : null}
               {tool ? <a className="rx-btn" href={`/roster?client=${c.id}`}>Full record →</a> : <DeleteClient id={c.id} name={c.name} onDeleted={onDeleted} />}
             </div>
           </div>
@@ -304,6 +310,13 @@ export function ClientRecord({
               </div>
             </div>
 
+            {introMissing(c).length ? (
+              <div className="rx-hint" role="status" style={{ margin: "12px 24px 0", padding: "8px 12px", borderRadius: 8, background: "#FFF4E5", color: "#8A4B0F", border: "1px solid #F8D9C2", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <b>No intro template.</b>
+                <span>The Introduce button cannot be used for {c.name} until its {introMissing(c).join(" and ")} {introMissing(c).length > 1 ? "are" : "is"} added.</span>
+                {!tool ? <button type="button" className="rx-btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setTab("introduce")}>Add them</button> : null}
+              </div>
+            ) : null}
             <nav className="rx-tabs" aria-label="Sections">
               {TABS.map((t) => (
                 <button key={t.id} type="button" className={tab === t.id ? "on" : ""} aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>

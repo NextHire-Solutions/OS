@@ -141,7 +141,7 @@ export async function GET(
     return NextResponse.json<Unavailable>({
       available: false,
       clientName: client.name,
-      reason: `Add ${client.name}'s ${missing} in Clients → Edit to use this.`,
+      reason: `No intro template: add ${client.name}'s ${missing} in Clients → ${client.name} → Introduce to.`,
     });
   }
 

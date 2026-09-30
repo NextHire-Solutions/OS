@@ -1156,6 +1156,23 @@ export function Composer({
               Introduce
             </button>
           ) : null}
+          {/*
+            Visible, not only a tooltip (1 Oct, Eddy: "super important"): when
+            this client has no intro template the operator must see it before
+            reaching for the button.
+          */}
+          {mode === "reply" && introMacro && !introMacro.available ? (
+            <span
+              role="status"
+              title={introMacro.reason}
+              className="h-8 px-2 inline-flex items-center rounded-md border text-[11.5px] font-medium"
+              style={{ background: "#FFF4E5", color: "#8A4B0F", borderColor: "#F8D9C2", maxWidth: 360 }}
+            >
+              <span className="truncate">
+                {/intro template/i.test(introMacro.reason) ? `No intro template${introMacro.clientName ? ` for ${introMacro.clientName}` : ""}` : introMacro.reason}
+              </span>
+            </span>
+          ) : null}
           <TemplatePicker
             substitutionContext={{
               lead: {

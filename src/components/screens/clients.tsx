@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Cell, avatarStyle, initials, textOf } from "@/components/clients/cells";
+import { Cell, avatarStyle, initials, introMissing, textOf } from "@/components/clients/cells";
 import {
   CATEGORIES, CATEGORY_LABEL, FIELDS, FIELD_BY_KEY, TOOL_VIEWS, shown,
   type FieldCategory, type ToolViewId,
@@ -280,7 +280,12 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
                         <span className={`cx-sdot st-${c.status}`} title={statusLabel(c.status)} aria-hidden="true" />
                         <span className="cx-av" style={avatarStyle(c.name)} aria-hidden="true">{initials(c.name)}</span>
                         <span className="cx-client-t">
-                          <b>{c.name}</b>
+                          <b>{c.name}{introMissing(c).length ? (
+                            <span className="cx-chip t-orange" style={{ marginLeft: 8, height: 18, fontSize: 10.5, verticalAlign: 1 }}
+                              title={`The Introduce button cannot be used for ${c.name}: add the ${introMissing(c).join(" and ")} under Introduce to.`}>
+                              No intro template
+                            </span>
+                          ) : null}</b>
                           {c.aliases.length ? <small>{c.aliases.slice(0, 2).join(" · ")}{c.aliases.length > 2 ? " …" : ""}</small> : null}
                         </span>
                         <span className="cx-open" aria-hidden="true">Open</span>

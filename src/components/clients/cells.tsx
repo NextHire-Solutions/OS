@@ -223,11 +223,16 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
     }
     case "portal": {
       if (!c.portal.count) return <None title="No portal" />;
+      const links = c.portal.links ?? [];
       return (
         <span className="cx-inline">
-          {c.portal.url
-            ? <a className="cx-link" href={c.portal.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open portal ↗</a>
-            : <span className="cx-chip">Portal closed</span>}
+          {links.length > 1
+            ? links.map((l) => l.enabled
+                ? <a key={l.url} className="cx-link" href={l.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{portalShortName(l.name, links)} ↗</a>
+                : <span key={l.url} className="cx-chip" title={l.name}>{portalShortName(l.name, links)} closed</span>)
+            : c.portal.url
+              ? <a className="cx-link" href={c.portal.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open portal ↗</a>
+              : <span className="cx-chip">Portal closed</span>}
           <span className="cx-sub">{fmtNum(c.introductions)} introductions</span>
         </span>
       );
@@ -271,4 +276,25 @@ export function textOf(k: string, c: MasterClient): string {
       return String(v);
     }
   }
+}
+
+/** "Properties & Estates Florida" among its siblings → "Florida": the market is what tells them apart. */
+export function portalShortName(name: string, all: { name: string }[]): string {
+  const words = all.map((x) => x.name.split(/\s+/));
+  let common = 0;
+  while (words.length > 1 && words.every((w) => w.length > common && w[common] === words[0][common])) common++;
+  return name.split(/\s+/).slice(common).join(" ") || name;
+}
+
+/**
+ * What the Introduce button needs and this client lacks — the "intro template"
+ * (contact name and role on the record). Empty when it can introduce.
+ */
+export function introMissing(c: { status: string; contact: { name: string | null; role: string | null } }): string[] {
+  // Only clients we introduce to now; paused and churned are not flagged.
+  if (c.status !== "active" && c.status !== "onboarding") return [];
+  const out: string[] = [];
+  if (!c.contact.name?.trim()) out.push("contact name");
+  if (!c.contact.role?.trim()) out.push("role");
+  return out;
 }

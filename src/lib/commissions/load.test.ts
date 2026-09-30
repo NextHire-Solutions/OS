@@ -16,7 +16,7 @@ const client = (id: string, name: string, sp: string | null, am: string | null, 
   sequencers: null, inReview: null, exported: null, pauseDate: null, churnDate: null, reactivationDate: null,
   contact: { name: null, role: null, email: null, brokerage: null, extra: [] },
   health: { present: true, period: null, cycle: null, pace: null }, onboarding: { present: false, stage: null, progress: null },
-  portal: { count: 0, url: null, enabled: null }, analytics: { present: false, campaigns: null, sent: null }, database: { present: false },
+  portal: { count: 0, url: null, enabled: null, links: [] }, analytics: { present: false, campaigns: null, sent: null }, database: { present: false },
   ...extra,
 });
 const member = (name: string, email: string, admin = false): TeamMember => ({ name, email, active: true, admin, accountManager: !admin });
