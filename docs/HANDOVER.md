@@ -444,8 +444,28 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
 - Deployed: OS `e6dae32`, standalone Master Inbox `fe2e342` (deployment
   ac34310a). Verified: 1,450 OS tests and 104 Master Inbox tests pass, and
   7/7 Chrome checks with writes blocked. 33/33 portals serve.
-- Not done yet: an "Add portal" button on the client record. Second portals
-  are still made in Master Inbox → Settings → Clients.
+- **Add portal (1 Oct, `lib/clients/add-portal.ts`):** Clients → client →
+  Campaigns → "+ Add portal" (admins only; Active/Onboarding clients).
+  1. You type the market. A preview shows the name ("<client> <market>")
+     and which campaigns would move. Refused if that portal already exists.
+  2. On create, the name is added to the client's aliases first (undone if
+     the next step fails).
+  3. The portal is created through Master Inbox's own POST /api/clients,
+     exactly as onboarding does, then given the nine standard features.
+  4. AUTOMATIC campaign choices that mention the market move to the new
+     portal (`relinkPlan`, tested). Manual choices never move.
+- **Introduce and the reply-agent handover now find the client from ANY of
+  its portals** (`roster-for-portal.ts`, in both apps): the linked portal,
+  then a campaign → portal choice, then the portal name among the client's
+  names. Before, a lead in P&E's Florida portal read as "not on the
+  workspace roster". P&E still has no contact name/role filled in, so
+  Introduce stays unavailable for it until those are added (Boston too).
+- **Known gap, not fixed:** Client Health counts only the Boston portal's
+  introductions for P&E (30 vs 34 Boston + 12 Florida). The live Client
+  Health sync is a separate service whose code is not in any repo here. A
+  portal added with Add portal is not counted by it either.
+- Also 1 Oct: Master Inbox Back now returns to the client list the thread
+  was opened from (the list links dropped ?list/?f/?page/?q).
 
 **Create a subscription from the OS — payment links (1 Oct).**
 - For a client with no subscription, or a cancelled one, the record's
