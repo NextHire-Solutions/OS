@@ -30,6 +30,9 @@ export function oauthConfigured(): boolean {
   return !!onboardingEnv("GOOGLE_OAUTH_CLIENT_ID") && !!onboardingEnv("GOOGLE_OAUTH_CLIENT_SECRET");
 }
 
+/** Holds the per-attempt OAuth state: set by /auth/google, checked and cleared by its callback. */
+export const OAUTH_STATE_COOKIE = "ob_google_oauth_state";
+
 export function consentUrl(state: string): string {
   const clientId = onboardingEnv("GOOGLE_OAUTH_CLIENT_ID");
   if (!clientId) throw new Error("ONBOARDING_GOOGLE_OAUTH_CLIENT_ID not set");

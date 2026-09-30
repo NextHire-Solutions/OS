@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 
 // One-off cleanup for ANY duplicate messages in the active workspace.
@@ -21,7 +21,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function POST() {
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const admin = createAdminSupabase();
   const wsId = session.activeWorkspace.id;
 

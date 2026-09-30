@@ -216,6 +216,12 @@ export async function PATCH(request: Request) {
     if (person.source !== "db") {
       return NextResponse.json({ error: `${email} signs in through AUTH_USERS; manage that account in Railway.` }, { status: 409 });
     }
+    // An Owner with an os_users row (one who set a password at /account) is
+    // still an Owner: an admin must not deactivate them or take a password
+    // that signs in as them.
+    if (isAdmin(email) && !isAdmin(session.email)) {
+      return NextResponse.json({ error: `${email} is an Owner; only an Owner can do this.` }, { status: 403 });
+    }
     try {
       if (typeof body.active === "boolean") {
         await setUserActive(email, body.active);
@@ -286,6 +292,11 @@ export async function POST(request: Request) {
   // findByEmail hides deactivated people (they cannot sign in), but their row
   // still exists — inviting the same address again hit the primary key with
   // a bare 500. Look at the full list, and say which case it is.
+  // Inviting an Owner's address creates an Owner and hands the inviter its
+  // one-time password, so only an Owner may do it.
+  if (isAdmin(email) && !isAdmin(session.email)) {
+    return NextResponse.json({ error: `${email} is an Owner address; only an Owner can invite it.` }, { status: 403 });
+  }
   const everyone = store instanceof DbGrantStore ? await store.listMerged() : await store.listUsers();
   const existing = everyone.find((u) => u.email === email);
   if (existing) {

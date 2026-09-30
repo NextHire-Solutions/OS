@@ -6,6 +6,7 @@ import { _invalidateClientCache } from "@/lib/clients/derive";
 import { invalidateInboxClientsCache } from "@/lib/inbox/clients";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/portals/flag";
 import { requireAuthedUser, retagUnknownThreads } from "../route";
+import { isAdminUser } from "@/lib/identity/admin-db";
 
 // PATCH  /api/clients/[id]   -> rename + edit aliases
 // DELETE /api/clients/[id]   -> delete the client (threads referencing it
@@ -176,6 +177,16 @@ export async function DELETE(
 ) {
   const auth = await requireAuthedUser();
   if ("error" in auth) return auth.error;
+  // Deleting a client cascades its pipeline, agents, DNC list and team, with
+  // no undo. The portal guard below is one PATCH away from passing (anyone
+  // with the inbox grant can switch a portal off), so the delete itself is
+  // for admins. Everyone else removes clients through Clients → Delete.
+  if (!(await isAdminUser(auth.user.email))) {
+    return NextResponse.json(
+      { error: "Only workspace admins can delete a client here. Use Clients → Delete." },
+      { status: 403 },
+    );
+  }
   const { id } = await context.params;
 
   const admin = createAdminSupabase();

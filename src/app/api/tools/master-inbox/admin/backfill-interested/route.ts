@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { markEmailBisonReplyInterested } from "@/lib/tools/master-inbox/inbox/interest";
@@ -30,7 +30,8 @@ export const maxDuration = 300;
 const CONCURRENCY = 5;
 
 export async function POST() {
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const workspaceId = session.activeWorkspace.id;
   const admin = createAdminSupabase();
 

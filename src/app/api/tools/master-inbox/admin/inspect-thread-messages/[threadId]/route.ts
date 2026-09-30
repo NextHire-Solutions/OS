@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 
 // Dump every message on a thread along with the dedupe keys we use, so we
@@ -12,7 +12,8 @@ export async function GET(
   context: { params: Promise<{ threadId: string }> },
 ) {
   const { threadId } = await context.params;
-  await requireSession();
+  const gate = await requireAdminSession();
+  if (gate instanceof NextResponse) return gate;
   const admin = createAdminSupabase();
 
   const { data: rows, error } = await admin

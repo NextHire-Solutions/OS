@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 
 // Returns the most recent inbound message on a thread along with its
@@ -13,7 +13,8 @@ export async function GET(
   context: { params: Promise<{ threadId: string }> },
 ) {
   const { threadId } = await context.params;
-  await requireSession();
+  const gate = await requireAdminSession();
+  if (gate instanceof NextResponse) return gate;
   const admin = createAdminSupabase();
 
   const { data: row, error } = await admin

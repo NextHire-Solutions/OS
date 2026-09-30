@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 
 // Dump every outbound row with sender=null along with its raw_payload,
@@ -8,7 +8,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const admin = createAdminSupabase();
 
   const { data: rows, error } = await admin

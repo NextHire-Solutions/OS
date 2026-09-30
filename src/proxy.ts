@@ -1,23 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { toolForPath } from "@/lib/workspace/tool-paths";
+import { tokenRouteOpen } from "@/lib/http/token-routes";
 import { PROXY_ALLOWLIST as MASTER_INBOX_PUBLIC } from "@/lib/tools/master-inbox/webhooks/public-paths";
 
 /** Routes an x-admin-token may open without a session. Exact paths, no prefixes. */
 const ONBOARDING_INBOUND_PREFIXES = ["/api/tools/onboarding/webhooks", "/api/tools/onboarding/cron"];
 
-const TOKEN_ROUTES = new Set([
-  "/api/tools/client-health/clients",
-  "/api/tools/client-health/clients/status",
-  "/api/tools/client-health/clients/onboard",
-  "/api/tools/client-health/metrics/weekly",
-  // The OS's own client-status feed, read server-to-server by MasterInbox to
-  // decide which portals are open. It has no browser caller and never will,
-  // so without this entry the proxy 401s it before its own token check can
-  // run. The handler verifies OS_CLIENT_STATUS_TOKEN and fails closed when
-  // that is unset, exactly like the routes above.
-  "/api/workspace/clients/status-feed",
-]);
+// TOKEN_ROUTES lives in lib/http/token-routes.ts, keyed by path AND method.
 
 /*
  * Cron routes that authenticate with `Authorization: Bearer <secret>` rather
@@ -118,7 +108,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (TOKEN_ROUTES.has(pathname) && request.headers.has("x-admin-token")) {
+  if (tokenRouteOpen(pathname, request.method, request.headers.has("x-admin-token"))) {
     return NextResponse.next();
   }
 

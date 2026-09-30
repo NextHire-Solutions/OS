@@ -45,6 +45,12 @@ function authUserEmails(): string[] {
     .filter(Boolean);
 }
 
+/** True for an address that signs in through AUTH_USERS (managed in Railway, not here). */
+export function isEnvAccount(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return authUserEmails().includes(email.trim().toLowerCase());
+}
+
 export function isAdmin(email: string | null | undefined): boolean {
   if (!email) return false;
   const admins = adminEmails();

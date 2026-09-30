@@ -9,6 +9,7 @@ import {
 import { checkReadToken, listClientRows } from "@/lib/tools/client-health/publish";
 import { getSupabase } from "@/lib/tools/client-health/supabase";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
+import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 
 /*
  * Every write the workspace makes to Client Health.
@@ -31,9 +32,11 @@ import { getWeekly } from "@/lib/tools/client-health/weekly";
  * documents what a DELETE actually removes, and the one place this deliberately
  * diverges from the tool (`time_zone` on create, which the tool drops).
  *
- * There is no auth check in this file. Everything under /api/tools/* is behind
- * the workspace's front door — the signed cookie checked in `src/proxy.ts` —
- * so by the time a handler here runs the caller is signed in.
+ * Writes check the session HERE as well as in `src/proxy.ts`. The proxy used to
+ * let any request carrying an `x-admin-token` header reach this path whatever
+ * its method, and these writes trusted it — so a made-up token could create,
+ * edit or delete a client without signing in. The proxy now opens GET only;
+ * this check means a future proxy mistake cannot reopen the writes.
  */
 export const dynamic = "force-dynamic";
 
@@ -66,18 +69,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireSignedIn(request);
+  if (denied) return denied;
   return respond(async (db) => createClientRow(db, await readJson(request)), 201, (v) => ({
     client: v,
   }));
 }
 
 export async function PATCH(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireSignedIn(request);
+  if (denied) return denied;
   return respond(async (db) => updateClientRow(db, await readJson(request)), 200, (v) => ({
     client: v,
   }));
 }
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireSignedIn(request);
+  if (denied) return denied;
   const id = request.nextUrl.searchParams.get("id");
   // Refused here rather than guessed: a DELETE with no id is a bug in the
   // caller, and this one cascades.
@@ -143,4 +152,10 @@ async function respond<T>(
 /** Body parsing that fails as invalid input rather than as an exception. */
 async function readJson(request: NextRequest): Promise<unknown> {
   return request.json().catch(() => null);
+}
+
+/** A write needs a signed-in person; a token alone is never enough. */
+async function requireSignedIn(request: NextRequest): Promise<NextResponse | null> {
+  const session = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
+  return session ? null : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }

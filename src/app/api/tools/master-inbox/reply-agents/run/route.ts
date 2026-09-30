@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { runReplyAgentForThread } from "@/lib/tools/master-inbox/ai/runtime";
 
 /*
@@ -43,7 +43,8 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(

@@ -40,10 +40,13 @@ function ChangePasswordBody() {
     }
     setSubmitting(true);
     try {
-      const res = await fetch("/api/tools/master-inbox/account/change-password", {
+      // The OS sign-in password — the one this person actually uses. The inbox's
+      // own route changed a Master Inbox auth password nobody signs in with, and
+      // did it on the shared service-role client (see that route).
+      const res = await fetch("/api/auth/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ current_password: current, new_password: next }),
+        body: JSON.stringify({ current, next }),
       });
       const body = await res.json();
       if (!res.ok) {

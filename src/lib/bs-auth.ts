@@ -344,7 +344,14 @@ export function readSsoCookie(cookieHeader: string | null | undefined): string |
     const eq = part.indexOf("=");
     if (eq === -1) continue;
     if (part.slice(0, eq).trim() === SSO_COOKIE) {
-      return decodeURIComponent(part.slice(eq + 1).trim());
+      // A malformed %-escape (any *.brokerstaffer.com subdomain can set this
+      // cookie) threw URIError here, before the proxy's public-path check —
+      // a 500 on every page, /login included. Unreadable means signed out.
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return undefined;
+      }
     }
   }
   return undefined;

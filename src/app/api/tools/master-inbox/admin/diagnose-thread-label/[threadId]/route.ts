@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { labelInboundMessage } from "@/lib/tools/master-inbox/ai/run";
 
@@ -15,7 +15,8 @@ export async function POST(
   context: { params: Promise<{ threadId: string }> },
 ) {
   const { threadId } = await context.params;
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const admin = createAdminSupabase();
 
   // Verify the thread belongs to this workspace.

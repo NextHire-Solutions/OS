@@ -3,7 +3,8 @@ import "server-only";
 import { osTable } from "@/lib/clients/os-db";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
 
-import { adminsChanged } from "./admin-db";
+import { isEnvAccount } from "./admin";
+import { adminsChanged, isOwner } from "./admin-db";
 import { cleanName } from "./salesperson-match";
 import { updateSalesperson } from "./salespeople";
 
@@ -121,6 +122,10 @@ export async function changeEmail(from: string, to: string): Promise<void> {
   const a = from.toLowerCase(), b = to.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b)) throw new TeamRoleError("Enter a valid email address.");
   if (a === b) return;
+  // An Owner (ADMIN_EMAILS) or an AUTH_USERS address may have no os_users row
+  // — the Owner here does not. Moving a member onto that address would hand
+  // the member's password the Owner's sign-in and standing.
+  if (isOwner(b) || isEnvAccount(b)) throw new TeamRoleError(`${b} is an Owner or Railway-managed account and cannot be taken.`);
   const { data: clash } = await osTable("os_users").select("email").eq("email", b).maybeSingle();
   if (clash) throw new TeamRoleError(`${b} already has an account.`);
   const { data: me, error: rErr } = await osTable("os_users").select("token_version").eq("email", a).maybeSingle();

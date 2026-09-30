@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { saveAgent, deleteAgent, LiveModeNotEnabledError } from "@/lib/tools/master-inbox/ai/agent";
 import { normaliseUpgradeFields, upgradeFieldsSchema } from "@/lib/tools/master-inbox/ai/agent-schema";
 
@@ -34,7 +34,8 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const body = await request.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -90,7 +91,8 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   try {
     await deleteAgent(session.activeWorkspace.id, id);
     return NextResponse.json({ ok: true });

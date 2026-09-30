@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createEmailBisonClient } from "@/lib/tools/master-inbox/emailbison/client";
 
@@ -15,7 +15,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST() {
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const admin = createAdminSupabase();
 
   // Look up the workspace's EmailBison team id so we can switch context.

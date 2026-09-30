@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth/workspace";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { liveSendingEnabled, LIVE_SEND_ENV_VAR } from "@/lib/tools/master-inbox/ai/live-gate";
 import { releaseHeldReplies } from "@/lib/tools/master-inbox/ai/release";
 import { LIVE_TRANSPORT_WIRED } from "@/lib/tools/master-inbox/ai/send-transport";
@@ -59,7 +60,8 @@ export async function GET() {
 }
 
 export async function POST() {
-  const session = await requireSession();
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const report = await releaseHeldReplies(session.activeWorkspace.id, new Date());
   return NextResponse.json({
     ...report,
