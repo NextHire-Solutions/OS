@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { spintaxOf } from "@/lib/tools/analytics/campaigns/spintax-signal.ts";
@@ -15,7 +15,9 @@ import {
   applyCampaignAction,
 } from "./actions";
 import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
+import type { LiveSequence, LiveStep } from "@/lib/tools/analytics/campaigns/sequence-live.ts";
 import { AssignInboxesDialog } from "./assign-inboxes-dialog";
+import { UnsupportedServersDialog } from "./unsupported-servers-dialog";
 import { BulkDeployPanel, useBulkDeploy } from "./bulk-deploy";
 import { CampaignLeads } from "./campaign-leads";
 import { CopySequenceDialog } from "./copy-sequence-dialog";
@@ -139,6 +141,7 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
   const { toast, show } = useToast();
   const [acting, setActing] = useState(false);
   const [assigningInboxes, setAssigningInboxes] = useState(false);
+  const [removingServers, setRemovingServers] = useState(false);
 
   /*
    * Pause / Resume, on the page that shows the campaign.
@@ -249,6 +252,15 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
               targets={[{ platform, id: String(c.id) }]}
               open={assigningInboxes}
               onOpenChange={setAssigningInboxes}
+              onDone={() => void reload()}
+            />
+            <Btn onClick={() => setRemovingServers(true)}>Remove Unsupported Mail Servers</Btn>
+            <UnsupportedServersDialog
+              campaignId={String(c.id)}
+              campaignName={c.name}
+              platform={platform}
+              open={removingServers}
+              onOpenChange={setRemovingServers}
               onDone={() => void reload()}
             />
           </>
@@ -414,6 +426,40 @@ function Sequence({
 }) {
   const [open, setOpen] = useState<number | null>(steps[0]?.id ?? null);
   const [editing, setEditing] = useState(false);
+  /*
+   * Delete / Turn off / Turn on (1 Oct): read from the platform, not the
+   * synced copy — which has no on/off state — and re-checked by the server on
+   * every action.
+   */
+  const [live, setLive] = useState<LiveSequence | null>(null);
+  const [liveBusy, setLiveBusy] = useState<string | null>(null);
+  const loadLive = useCallback(() => {
+    fetch(`/api/tools/analytics/campaigns/${encodeURIComponent(campaignId)}/sequence/live`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null)).then((v) => setLive(v as LiveSequence | null)).catch(() => setLive(null));
+  }, [campaignId]);
+  useEffect(() => { loadLive(); }, [loadLive, steps.length]);
+  const liveKey = (step: Step, variantIndex: number) =>
+    platform === "emailbison"
+      ? String(variantIndex === 0 ? step.id : step.variants[variantIndex - 1]?.id)
+      : `${step.step_order - 1}:${variantIndex}`;
+  const liveOf = (key: string) => live?.steps.find((x) => x.key === key);
+  async function act(key: string, action: "delete" | "turn-off" | "turn-on", label: string) {
+    setLiveBusy(key);
+    try {
+      const res = await fetch(`/api/tools/analytics/campaigns/${encodeURIComponent(campaignId)}/sequence/live`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, action, confirm: true }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      setLive(body as LiveSequence);
+      show({ text: action === "delete" ? `${label} deleted` : action === "turn-off" ? `${label} turned off — it will not send` : `${label} turned back on` });
+      onChanged();
+    } catch (e) {
+      show({ text: e instanceof Error ? e.message : "Could not change the sequence", bad: true });
+    } finally {
+      setLiveBusy(null);
+    }
+  }
   const [copying, setCopying] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [reCampaigning, setReCampaigning] = useState(false);
@@ -558,6 +604,9 @@ function Sequence({
                 step={s}
                 index={i}
                 previousWait={i > 0 ? steps[i - 1].wait_in_days : null}
+                liveOf={(vi) => liveOf(liveKey(s, vi))}
+                liveBusy={liveBusy}
+                onAct={act}
                 open={open === s.id}
                 onToggle={() => setOpen(open === s.id ? null : s.id)}
               />
@@ -573,12 +622,19 @@ function StepRow({
   step,
   index,
   previousWait,
+  liveOf,
+  liveBusy,
+  onAct,
   open,
   onToggle,
 }: {
   step: Step;
   index: number;
   previousWait: number | null;
+  /** The live row for the step (0) or its variant (1+), when read. */
+  liveOf: (variantIndex: number) => LiveStep | undefined;
+  liveBusy: string | null;
+  onAct: (key: string, action: "delete" | "turn-off" | "turn-on", label: string) => void;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -620,6 +676,7 @@ function StepRow({
             {step.orphanedVariant ? " · orphaned variant" : ""}
           </span>
         </span>
+        {liveOf(0) && !liveOf(0)!.active ? <span className="badge s-paused">Off</span> : null}
         {varied ? <span className="badge s-done">spintax</span> : null}
         {st ? (
           <span className="tnum mut" style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
@@ -630,12 +687,18 @@ function StepRow({
       </button>
       {open ? (
         <div style={{ padding: "0 22px 20px" }}>
+          <StepActions live={liveOf(0)} busy={liveBusy} onAct={onAct} label={`Step ${step.step_order}`} />
           <EmailPanel subject={step.email_subject} body={step.email_body} />
           {step.variants.map((v) => (
             <div key={v.id} style={{ marginTop: 12, paddingLeft: 18, borderLeft: "2px solid var(--line)" }}>
-              <div className="csince" style={{ marginBottom: 6 }}>
-                Variant {String.fromCharCode(65 + step.variants.indexOf(v))}
-                {v.stats ? ` · ${fullNumber(v.stats.sent)} sent · ${fullNumber(v.stats.replies)} replies` : ""}
+              <div className="csince" style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span>
+                  Variant {String.fromCharCode(65 + step.variants.indexOf(v))}
+                  {v.stats ? ` · ${fullNumber(v.stats.sent)} sent · ${fullNumber(v.stats.replies)} replies` : ""}
+                </span>
+                {liveOf(step.variants.indexOf(v) + 1) && !liveOf(step.variants.indexOf(v) + 1)!.active ? <span className="badge s-paused">Off</span> : null}
+                <StepActions live={liveOf(step.variants.indexOf(v) + 1)} busy={liveBusy} onAct={onAct}
+                  label={`Variant ${String.fromCharCode(65 + step.variants.indexOf(v))} of step ${step.step_order}`} inline />
               </div>
               <EmailPanel subject={v.email_subject} body={v.email_body} />
             </div>
@@ -644,6 +707,39 @@ function StepRow({
       ) : null}
     </div>
   );
+}
+
+/* Delete a never-sent step or variant; turn a sent one off or on. Why not, when neither. */
+function StepActions({ live, busy, onAct, label, inline }: {
+  live: LiveStep | undefined;
+  busy: string | null;
+  onAct: (key: string, action: "delete" | "turn-off" | "turn-on", label: string) => void;
+  label: string;
+  inline?: boolean;
+}) {
+  if (!live) return null;
+  const working = busy === live.key;
+  const wrap: React.CSSProperties = inline ? { display: "inline-flex", gap: 8, alignItems: "center" } : { display: "flex", gap: 8, alignItems: "center", margin: "0 0 10px" };
+  if (live.canDelete) {
+    return (
+      <span style={wrap}>
+        <ConfirmButton label={working ? "Deleting…" : "Delete"} armedLabel={`Delete ${label.toLowerCase()}?`}
+          title="It has never sent, so it can be removed." disabled={Boolean(busy)} onConfirm={() => onAct(live.key, "delete", label)} />
+      </span>
+    );
+  }
+  if (live.canToggle) {
+    const off = live.active;
+    return (
+      <span style={wrap}>
+        <ConfirmButton label={working ? "Saving…" : off ? "Turn off" : "Turn on"} armedLabel={off ? `Stop sending ${label.toLowerCase()}?` : `Send ${label.toLowerCase()} again?`}
+          title={off ? "It has sent, so it is turned off rather than deleted — its stats stay." : "Turns it back on."}
+          disabled={Boolean(busy)} onConfirm={() => onAct(live.key, off ? "turn-off" : "turn-on", label)} />
+      </span>
+    );
+  }
+  const why = live.sent ? live.toggleWhy : live.deleteWhy;
+  return why ? <span className="mut" style={{ fontSize: 11.5, ...(inline ? {} : { display: "block", margin: "0 0 10px" }) }}>{why}</span> : null;
 }
 
 function CopyAndOffer({

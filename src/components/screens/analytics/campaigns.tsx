@@ -93,6 +93,8 @@ interface Campaign {
   total_leads: number | null;
   lifetime_emails_sent: number | null;
   max_emails_per_day: number | null;
+  /** Daily send limit / new leads per day (1 Oct). */
+  sendingLimits?: { daily: number | null; newLeads: number | null };
   eb_updated_at: string | null;
   updated_at?: string | null;
   clientName: string | null;
@@ -498,13 +500,14 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
                 <SortHeader label="Replies" sortKey="lifetime_unique_replies" sort={sort} onToggle={toggle} align="right" />
                 <SortHeader label="Leads" sortKey="total_leads" sort={sort} onToggle={toggle} align="right" />
                 <SortHeader label="Progress" sortKey="completion_percentage" sort={sort} onToggle={toggle} width={150} />
+                <th style={{ width: 120, textAlign: "right" }} title="Daily send limit / New leads per day">Sending limits</th>
                 <th style={{ width: 100 }}>Updated</th>
                 <th style={{ width: 44 }} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <EmptyRow colSpan={10}>
+                <EmptyRow colSpan={11}>
                   {data ? (q.trim() ? `No campaigns match “${q.trim()}”` : "No campaigns found") : "Loading…"}
                 </EmptyRow>
               ) : (
@@ -598,6 +601,12 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
                             </span>
                           </div>
                         )}
+                      </td>
+                      <td className="tnum" style={{ textAlign: "right" }}
+                        title={`Daily send limit: ${c.sendingLimits?.daily ?? "not set"} · New leads per day: ${c.sendingLimits?.newLeads ?? "not set"}`}>
+                        {c.sendingLimits && (c.sendingLimits.daily != null || c.sendingLimits.newLeads != null)
+                          ? `${c.sendingLimits.daily != null ? fullNumber(c.sendingLimits.daily) : DASH}/${c.sendingLimits.newLeads != null ? fullNumber(c.sendingLimits.newLeads) : DASH}`
+                          : <span className="mut">{DASH}</span>}
                       </td>
                       <td className="mut" style={{ fontSize: 12.5 }}>
                         {shortStamp(c.eb_updated_at ?? c.updated_at ?? null, Date.now())}
