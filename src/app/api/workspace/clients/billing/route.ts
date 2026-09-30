@@ -76,7 +76,14 @@ export async function POST(request: Request) {
       if ("error" in amount) return NextResponse.json({ error: amount.error }, { status: 400 });
       const every = parseEvery(body?.every);
       if (!every) return NextResponse.json({ error: "Choose how often: every 14 days, every 28 days or monthly." }, { status: 400 });
-      const current = c.sub ? await readBilling(c.sub).catch(() => null) : null;
+      // Fail CLOSED: if Stripe cannot say whether the current subscription is
+      // live, do not risk a second one. `null` would read as "none".
+      let current: Awaited<ReturnType<typeof readBilling>> | null = null;
+      if (c.sub) {
+        try { current = await readBilling(c.sub); } catch (e) {
+          return NextResponse.json({ error: `Stripe could not confirm the current subscription (${e instanceof Error ? e.message : "no answer"}). Try again in a minute.` }, { status: 502 });
+        }
+      }
       const link = await createLink(clientId, amount.cents, every, me, current);
       console.log(`[billing] ${me} created a payment link for ${c.name}: ${link.label}`);
       return NextResponse.json({ ok: true, link });

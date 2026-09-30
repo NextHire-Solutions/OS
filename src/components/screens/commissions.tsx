@@ -297,7 +297,11 @@ function Assign({ data, onChanged }: { data: CommissionsView; onChanged: () => v
   const [gross, setGross] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
-  const row = data.rows.find((r) => r.id === clientId);
+  // A client missing a role is listed from `unassigned` and, when an admin is
+  // viewing one person, may have no row here. Its current salesperson,
+  // manager and gross come from the unassigned entry instead — otherwise
+  // they read as empty and Assign saved "none" over them.
+  const row = data.rows.find((r) => r.id === clientId) ?? data.unassigned.find((u) => u.id === clientId);
   const choices = [
     ...data.unassigned.filter((u) => !data.rows.some((r) => r.id === u.id))
       .map((c) => ({ id: c.id, name: c.name, note: `no ${c.missing.map((m) => ROLE[m].toLowerCase()).join(" or ")}` })),

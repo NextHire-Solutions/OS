@@ -101,7 +101,8 @@ export interface CommissionsView {
   reps: RepSummary[];
   rows: CommissionRow[];
   /** Admin only: clients missing a salesperson or an account manager. */
-  unassigned: { id: string; name: string; status: MasterClient["status"]; missing: EarnerRole[] }[];
+  /** Current values ride along so the Assign form keeps what it doesn't change. */
+  unassigned: { id: string; name: string; status: MasterClient["status"]; missing: EarnerRole[]; salesperson: string | null; accountManager: string | null; manualGross: number | null; stripeLinked: boolean }[];
   /** Admin only: who can be picked, by role. */
   team: string[];
   salespeople: string[];
@@ -312,7 +313,9 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
       ? inp.clients.flatMap((c) => {
           const on = onClient(c).map((e) => e.role);
           const missing = (["salesperson", "account_manager"] as EarnerRole[]).filter((r) => !on.includes(r));
-          return missing.length ? [{ id: c.id, name: c.name, status: c.status, missing }] : [];
+          return missing.length
+            ? [{ id: c.id, name: c.name, status: c.status, missing, salesperson: c.salesperson, accountManager: firstManager(c), manualGross: settings.gross.get(c.id) ?? null, stripeLinked: Boolean(c.stripeSubscriptionId) }]
+            : [];
         })
       : [],
     team: inp.admin ? accountManagerPool(inp.team).map((m) => m.name).sort() : [],

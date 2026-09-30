@@ -62,10 +62,25 @@ export async function createLink(clientId: string, cents: number, every: Every, 
   }).select("*").single();
   if (error) {
     // The link exists in Stripe but could not be remembered: switch it off rather than leave it payable and untracked.
-    await deactivateStripeLink(stripeKey(), link.linkId).catch(() => {});
-    throw new PaymentLinkError(missing(error.message) ? MIGRATION : error.message);
+    const off = await deactivateStripeLink(stripeKey(), link.linkId).then(() => true, () => false);
+    const base = missing(error.message) ? MIGRATION : error.message;
+    throw new PaymentLinkError(off ? base : `${base} The Stripe link ${link.linkId} could NOT be switched off — deactivate it in Stripe.`);
   }
-  return toLink(data as unknown as Row);
+  /*
+   * One open link per client. The check above is read-then-write, so two
+   * clicks (or two admins) at once can both pass it. Whoever finds another
+   * open link created before theirs backs out: switches their own link off
+   * in Stripe and cancels the row, so exactly one link stays payable.
+   */
+  const now = await openLinks(clientId);
+  const mine = data as unknown as Row;
+  const earlier = (now ?? []).filter((l) => l.id !== mine.id && (l.createdAt < mine.created_at || (l.createdAt === mine.created_at && l.id < mine.id)));
+  if (earlier.length) {
+    await deactivateStripeLink(stripeKey(), mine.stripe_payment_link_id).catch(() => {});
+    await osTable("os_payment_links").update({ status: "cancelled" }).eq("id", mine.id).eq("status", "open");
+    throw new PaymentLinkError("A payment link for this client was just created by another request. Use that one.");
+  }
+  return toLink(mine);
 }
 
 export async function cancelLink(clientId: string, id: string): Promise<void> {
@@ -78,17 +93,48 @@ export async function cancelLink(clientId: string, id: string): Promise<void> {
   await osTable("os_payment_links").update({ status: "cancelled" }).eq("id", id).eq("status", "open");
 }
 
-/** If this link has been paid, link the subscription to the client. True when it did. */
+/**
+ * If this link has been paid, link the subscription to the client. True when it did.
+ *
+ * The client record is written FIRST and the row is marked paid only once
+ * that write is confirmed. The other order lost payments: the row left
+ * `open` before the link existed, so a failed or thrown `editClient` (a
+ * Stripe timeout while it checks the subscription, a database error it
+ * reports in `failed`) was never retried — the client paid, and the OS could
+ * neither see the revenue nor pause the subscription. Linking the same
+ * subscription twice is harmless, so a concurrent settle doing it too is fine.
+ */
 async function settleRow(row: Row): Promise<boolean> {
   const paid = await paidSubscription(stripeKey(), row.stripe_payment_link_id);
   if (!paid) return false;
+  const result = await editClient(row.client_id, { stripeCustomerId: paid.customerId, stripeSubscriptionId: paid.subscriptionId });
+  const osFailed = result.failed.find((f) => f.what === "the OS record");
+  if (osFailed) throw new Error(`paid, but the client record could not be linked: ${osFailed.error}`);
   const { data: claimed } = await osTable("os_payment_links")
     .update({ status: "paid", subscription_id: paid.subscriptionId, customer_id: paid.customerId, paid_at: new Date().toISOString() })
     .eq("id", row.id).eq("status", "open").select("id");
-  if (!claimed?.length) return true; // another run settled it
-  await editClient(row.client_id, { stripeCustomerId: paid.customerId, stripeSubscriptionId: paid.subscriptionId });
-  console.log(`[payment-links] ${row.client_id} paid ${row.stripe_payment_link_id} → ${paid.subscriptionId}`);
+  if (claimed?.length) console.log(`[payment-links] ${row.client_id} paid ${row.stripe_payment_link_id} → ${paid.subscriptionId}`);
   return true;
+}
+
+/** Switch off every open link of a client in Stripe (used before the client is deleted). */
+export async function cancelOpenLinks(clientId: string): Promise<{ cancelled: number; failed: string[] }> {
+  const open = await openLinks(clientId);
+  const failed: string[] = [];
+  let cancelled = 0;
+  for (const l of open ?? []) {
+    const { data } = await osTable("os_payment_links").select("stripe_payment_link_id").eq("id", l.id).maybeSingle();
+    const sid = (data as { stripe_payment_link_id?: string } | null)?.stripe_payment_link_id;
+    if (!sid) continue;
+    try {
+      await deactivateStripeLink(stripeKey(), sid);
+      await osTable("os_payment_links").update({ status: "cancelled" }).eq("id", l.id).eq("status", "open");
+      cancelled++;
+    } catch (e) {
+      failed.push(`${sid}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { cancelled, failed };
 }
 
 /** Settle one client's open links, or every open link. Never throws. */

@@ -11,6 +11,7 @@ import { dropsPortal, dropsToolRows, isDestructive, nameKeyShared, needsAcknowle
 import { pauseCampaignsForClient } from "./pause-campaigns";
 import { billingEnabled, previewBillingForClient, syncBillingForClient } from "./stripe-billing-live";
 import { keyOf } from "./roster";
+import { cancelOpenLinks } from "./payment-links";
 
 /*
  * Removing a client, and the limits on doing so.
@@ -611,6 +612,15 @@ export async function deleteClient(
    * precisely the drift this whole feature exists to end.
    */
   if (failed.length === 0) {
+    // An unpaid payment link would stay payable after the row (and its
+    // os_payment_links rows, by cascade) is gone, and a subscription paid
+    // through it could never be seen or paused. Switch them off first.
+    const links = await cancelOpenLinks(id).catch((e) => ({ cancelled: 0, failed: [e instanceof Error ? e.message : String(e)] }));
+    if (links.cancelled) removed.push(`${links.cancelled} unpaid payment link${links.cancelled === 1 ? "" : "s"} (switched off in Stripe)`);
+    if (links.failed.length) {
+      failed.push({ what: "Stripe payment links", error: links.failed.join("; ") });
+      return { name: row.name, scope, removed, failed };
+    }
     await osTable("os_client_onboarding").delete().eq("os_client_id", id);
     const { error } = await osTable("os_clients").delete().eq("id", id);
     if (error) failed.push({ what: "the OS client record", error: error.message });

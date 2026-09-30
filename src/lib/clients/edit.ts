@@ -469,6 +469,17 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     const lookup = subscription ? await lookupSubscription(subscription) : null;
     const decision = decideStripeLink(customer, subscription, lookup);
     if (!decision.ok) throw new InvalidEditError(decision.error);
+    /*
+     * One subscription, one client. Two clients on the same subscription
+     * means churning either pauses the other's live billing, and both earn
+     * commission (and count as revenue) on the same invoices. Clients may
+     * share a CUSTOMER — Discover Flag and Discover Phx do — never a subscription.
+     */
+    if (decision.subscription && decision.subscription !== saved.stripe_subscription_id) {
+      const { data: holders } = await osTable("os_clients").select("name").eq("stripe_subscription_id", decision.subscription).neq("id", id).limit(1);
+      const holder = (holders as { name: string }[] | null)?.[0];
+      if (holder) throw new InvalidEditError(`${decision.subscription} is already linked to ${holder.name}. A subscription belongs to one client.`);
+    }
     local.stripe_customer_id = decision.customer;
     local.stripe_subscription_id = decision.subscription;
   }
