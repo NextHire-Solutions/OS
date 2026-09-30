@@ -11,6 +11,7 @@
  */
 
 import assert from "node:assert/strict";
+import { buildAliasOverride } from "./portal-aliases.ts";
 import { afterEach, test } from "node:test";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -30,6 +31,7 @@ import {
   labelWeeklyUpserts,
   newRunContext,
   normalizeClientName,
+  setAliasOverride,
   runBison,
   runCorofy,
 } from "./runSync.ts";
@@ -273,9 +275,15 @@ test("a week with no stored row takes 0 for the other source", () => {
 
 // -- Corofy bucketing --------------------------------------------------------
 
-test("alias names collapse to the primary client", () => {
-  assert.equal(normalizeClientName("Properties & Estates Florida"), normalizeClientName("Properties & Estates"));
-  assert.notEqual(normalizeClientName("Some Other Client"), normalizeClientName("Properties & Estates"));
+test("a client's other portals collapse to the client", () => {
+  setAliasOverride(buildAliasOverride([
+    { name: "Properties & Estates Boston", campaign_aliases: ["Properties & Estates", "Properties & Estates Florida"] },
+    { name: "SERHANT. PA", campaign_aliases: ["SERHANT. PA 15M+"] },
+  ]));
+  assert.equal(normalizeClientName("Properties & Estates Florida"), normalizeClientName("Properties & Estates Boston"));
+  assert.equal(normalizeClientName("SERHANT. PA 15M+"), normalizeClientName("SERHANT. PA"));
+  assert.notEqual(normalizeClientName("Some Other Client"), normalizeClientName("Properties & Estates Boston"));
+  setAliasOverride(new Map());
 });
 
 test("intros bucket by normalized name and week, clipped to the window but not for all-time", () => {

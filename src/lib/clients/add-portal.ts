@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
+import { getSupabase as getHealthSupabase } from "@/lib/tools/client-health/supabase";
 import { isAdminUser } from "@/lib/identity/admin-db";
 
 import { marketWords, relinkPlan, tokens } from "./campaign-portal-plan";
@@ -21,6 +22,8 @@ import { withStandardFlags } from "./portal-features";
  * "<client> <market>" — "Properties & Estates Orlando" — and that name is
  * added to the client's aliases, which is how the OS knows the portal belongs
  * to the client (miRowsFor), and how Introduce finds the client for its leads.
+ * It is also added to the client's names in Client Health, whose sync counts
+ * a portal's introductions under the client that lists the portal's name.
  *
  * Then campaigns re-link by name: every campaign whose portal was chosen
  * AUTOMATICALLY and whose name mentions the new market moves to the new
@@ -120,6 +123,26 @@ export async function addPortal(osClientId: string, marketInput: unknown, by: st
     if (error) throw new Error(error.message);
   } catch (e) {
     note = `The portal works, but its standard features could not be switched on (${e instanceof Error ? e.message : String(e)}).`;
+  }
+
+  // 4. Client Health counts a portal's introductions under the client whose
+  //    stored names include the portal's name (its sync's alias rule). Never
+  //    fatal: the portal exists; the note says what to add by hand.
+  try {
+    const { data: link } = await osTable("os_clients").select("ch_client_id").eq("id", osClientId).maybeSingle();
+    const chId = (link as { ch_client_id?: string | null } | null)?.ch_client_id;
+    if (chId) {
+      const ch = getHealthSupabase();
+      const { data: chRow, error: rErr } = await ch.from("clients").select("campaign_aliases").eq("id", chId).maybeSingle();
+      if (rErr) throw new Error(rErr.message);
+      const have = ((chRow as { campaign_aliases?: string[] | null } | null)?.campaign_aliases ?? []);
+      if (!have.some((a) => norm(a) === norm(created.name))) {
+        const { error: wErr } = await ch.from("clients").update({ campaign_aliases: [...have, created.name] }).eq("id", chId);
+        if (wErr) throw new Error(wErr.message);
+      }
+    }
+  } catch (e) {
+    note = `${note ? `${note} ` : ""}Client Health was not told about the new portal (${e instanceof Error ? e.message : String(e)}); add “${created.name}” to the client's aliases so its introductions count.`;
   }
 
   getMasterClientList.invalidate?.();

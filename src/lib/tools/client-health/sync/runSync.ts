@@ -24,6 +24,7 @@
 // Environment: CLIENT_HEALTH_* throughout, read through the workspace's
 // `optionalEnv` — see supabase.ts for why the names are namespaced.
 
+import { buildAliasOverride } from "./portal-aliases";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { optionalEnv } from "@/lib/env";
@@ -61,26 +62,29 @@ import { listCorofyPortals } from "./portals";
 import { autoMatchCampaignIds } from "../matchCampaigns";
 import { HISTORICAL_WEEKS } from "../types";
 
-// Corofy client-name aliases — intros/interested/hired rows tagged with any
-// of the alias names get counted under the primary client name here. Use
-// only when Corofy has legitimately-separate portals that BrokerStaffer
-// treats as one client (no equivalent client row on our side).
-const CLIENT_NAME_ALIASES: Record<string, string[]> = {
-  'Properties & Estates': ['Properties & Estates Florida'],
-};
+// A client can own several portals (P&E Boston/Florida, SERHANT. PA/15M+).
+// Corofy labels each intro with the PORTAL's name, so other portals' intros
+// matched no client. Built on every run from each client's stored names
+// (`campaign_aliases`) — see portal-aliases.ts. Level with the standalone
+// sync (shaurs scripts/sync.ts); the hard-coded Florida entry it replaced
+// pointed at a name no client has.
+let _aliasOverride = new Map<string, string>();
 
-// Build a lookup: normalized alias name → normalized primary name.
-const _ALIAS_OVERRIDE = new Map<string, string>();
-for (const [primary, aliases] of Object.entries(CLIENT_NAME_ALIASES)) {
-  const primaryNorm = normalizeName(primary);
-  for (const a of aliases) _ALIAS_OVERRIDE.set(normalizeName(a), primaryNorm);
+/** Test hook and run-start loader: which portal names count for which client. */
+export function setAliasOverride(map: Map<string, string>): void {
+  _aliasOverride = map;
 }
 
-// Wrap normalizeName so alias-name intros collapse to the primary name.
-// Everywhere the sync worker keys intros by name should route through this.
+async function loadAliasOverride(sb: RunContext["db"]): Promise<void> {
+  const { data, error } = await sb.from("clients").select("name, campaign_aliases");
+  if (error) throw new Error(`clients aliases: ${error.message}`);
+  _aliasOverride = buildAliasOverride((data ?? []) as { name: string; campaign_aliases: string[] | null }[]);
+}
+
+// Wrap normalizeName so a portal's intros collapse to its client's name.
 export function normalizeClientName(name: string): string {
   const n = normalizeName(name);
-  return _ALIAS_OVERRIDE.get(n) ?? n;
+  return _aliasOverride.get(n) ?? n;
 }
 
 export interface SyncResult {
@@ -660,7 +664,7 @@ export function corofyConfigured(env: (name: string) => string | undefined = opt
  * Corofy rows bucketed by (normalized client_name, week_key). Normalization
  * collapses punctuation/whitespace drift so "C21 Results - Elite Team"
  * (Corofy) maps to "C21 Results Elite Team" (our clients.name). Alias names
- * collapse to their primary — see CLIENT_NAME_ALIASES.
+ * collapse to their client — see loadAliasOverride.
  *
  * Shared by the Introduction, Interested and Hired passes; each reads the
  * parts it needs.
@@ -856,6 +860,7 @@ export async function runCorofy(ctx: RunContext): Promise<SyncResult['corofy']> 
     .single();
 
   try {
+    await loadAliasOverride(sb);
     const intros = await listCorofyIntros();
     const { mondayKeys } = backfillWindow(ctx.now);
     const validWeekSet = new Set(mondayKeys);
