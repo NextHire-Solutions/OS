@@ -102,16 +102,16 @@ export function ThreadList({
   const allSelected = selected.size > 0 && selected.size === threads.length;
   const scrollRef = useScrollMemory(basePath);
 
-  // Carry the active search (?q=) and list (?list=) onto thread links so
-  // opening a thread from search results keeps the side list filtered to
-  // the same matches.
+  // Carry the active search (?q), list (?list), filter (?f) and page
+  // (?page) onto thread links, so the side list, Back, Prev and Next all
+  // stay on the list the thread was opened from.
   const navParams = useSearchParams();
   const carry = (() => {
     const p = new URLSearchParams();
-    const q = navParams?.get("q");
-    const list = navParams?.get("list");
-    if (q) p.set("q", q);
-    if (list) p.set("list", list);
+    for (const k of ["f", "list", "page", "q"]) {
+      const v = navParams?.get(k);
+      if (v) p.set(k, v);
+    }
     const s = p.toString();
     return s ? `?${s}` : "";
   })();

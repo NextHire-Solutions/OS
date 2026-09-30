@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { LabelRow } from "@/lib/tools/master-inbox/inbox/labels";
 import type { ListRow } from "@/lib/tools/master-inbox/inbox/lists";
 import { InboxLink, useInboxNav } from "@/components/master-inbox/inbox-nav";
@@ -57,6 +58,22 @@ export function MockupThreadList({
   labels?: LabelRow[];
   lists?: ListRow[];
 }) {
+  /*
+   * The thread page's Back, Prev and Next rebuild the list you came from out
+   * of ?list, ?f, ?page and ?q (thread-detail.tsx buildSuffix). This link
+   * dropped all four, so opening a thread from a client list and pressing
+   * Back landed on All Email.
+   */
+  const navParams = useSearchParams();
+  const carry = useMemo(() => {
+    const p = new URLSearchParams();
+    for (const k of ["f", "list", "page", "q"]) {
+      const v = navParams?.get(k);
+      if (v) p.set(k, v);
+    }
+    const s = p.toString();
+    return s ? `?${s}` : "";
+  }, [navParams]);
   // Pager and rows navigate through the screen's transition so the
   // skeleton shows while the server responds — see inbox-nav.tsx.
   const { navigate } = useInboxNav();
@@ -100,7 +117,7 @@ export function MockupThreadList({
           return (
             <InboxLink
               key={t.id}
-              href={`/inbox/${view}/${t.id}`}
+              href={`/inbox/${view}/${t.id}${carry}`}
               className={`mi-row${t.seen ? " read" : ""}`}
               role="listitem"
             >
