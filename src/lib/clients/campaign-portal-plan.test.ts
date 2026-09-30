@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { autoPortal, majority, marketWords } from "./campaign-portal-plan.ts";
+import { autoPortal, majority, marketWords, relinkPlan } from "./campaign-portal-plan.ts";
 
 const PE = ["Properties & Estates", "Properties & Estates Florida", "Properties & Estates Boston"];
 const BOSTON = { id: "b", name: "Properties & Estates Boston" };
@@ -59,4 +59,17 @@ test("majority picks the most common portal, and null for none", () => {
   assert.equal(majority(["b", "f", "b", null]), "b");
   assert.equal(majority([]), null);
   assert.equal(majority([null]), null);
+});
+
+test("adding a portal moves only automatic choices whose name names its market", () => {
+  const ORL = { id: "o", name: "Properties & Estates Orlando" };
+  const routes = [
+    { campaignId: "1", campaignName: "Properties & Estates + Orlando + ZF", portalId: "f", source: "auto" as const },
+    { campaignId: "2", campaignName: "Properties & Estates + Orlando 2", portalId: "b", source: "manual" as const },
+    { campaignId: "3", campaignName: "Properties & Estates Rutenberg + South Florida", portalId: "f", source: "auto" as const },
+    { campaignId: "4", campaignName: "Properties & Estates REMAX + Boston", portalId: "b", source: "auto" as const },
+    { campaignId: "5", campaignName: "Properties & Estates + Orlando + Florida", portalId: "f", source: "auto" as const },
+  ];
+  // 1 moves; 2 was chosen by a person; 3 and 4 name other markets; 5 names two (a tie) and stays.
+  assert.deepEqual(relinkPlan(routes, [BOSTON, FLORIDA, ORL], ["Properties & Estates"], "b", "o"), ["1"]);
 });

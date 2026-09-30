@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
+import { isAdminUser } from "@/lib/identity/admin-db";
 import {
   CampaignPortalError,
   campaignPortalView,
@@ -30,7 +31,10 @@ export async function GET(request: Request) {
   const clientId = new URL(request.url).searchParams.get("clientId") ?? "";
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   try {
-    return NextResponse.json(await campaignPortalView(clientId));
+    // Whether this viewer may add a portal (admins only) — the screen shows the button only then.
+    const session = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
+    const canAddPortal = session ? await isAdminUser(session.email) : false;
+    return NextResponse.json({ ...(await campaignPortalView(clientId)), canAddPortal });
   } catch (e) {
     return fail(e);
   }

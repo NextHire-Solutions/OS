@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-portal";
 
 import { requireSession } from "@/lib/auth/workspace";
 import { osTable } from "@/lib/clients/os-db";
@@ -92,16 +93,17 @@ export async function GET(
    */
   let row: Record<string, unknown> | null = null;
   try {
-    const { data, error } = await osTable("os_clients")
-      .select(
-        "name, contact_name, contact_role, contact_email, " +
-          "contact2_name, contact2_role, contact2_email, " +
-          "contact3_name, contact3_role, contact3_email, brokerage",
-      )
-      .eq("mi_client_id", clientId)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    row = (data as Record<string, unknown> | null) ?? null;
+    // Any of the client's portals, not only the one the record links —
+    // see lib roster-for-portal.
+    const found = await rosterRowForPortal(
+      clientId,
+      (miClient?.name as string | undefined) ?? null,
+      "name, contact_name, contact_role, contact_email, " +
+        "contact2_name, contact2_role, contact2_email, " +
+        "contact3_name, contact3_role, contact3_email, brokerage",
+    );
+    if (found.error) throw new Error(found.error);
+    row = found.row;
   } catch {
     return NextResponse.json<Unavailable>({
       available: false,

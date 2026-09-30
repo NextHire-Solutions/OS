@@ -82,3 +82,20 @@ export function majority(portalIds: (string | null)[]): string | null {
   for (const [id, c] of n) if (c > max) { best = id; max = c; }
   return best;
 }
+
+/**
+ * After a portal is added: which AUTOMATIC choices move to it — those whose
+ * campaign name now points at the new portal. Choices a person made never move.
+ */
+export function relinkPlan(
+  routes: { campaignId: string; campaignName: string | null; portalId: string; source: "auto" | "manual" }[],
+  portals: PortalRef[],
+  clientNames: string[],
+  mainPortalId: string,
+  newPortalId: string,
+): string[] {
+  return routes
+    .filter((r) => r.source === "auto" && r.portalId !== newPortalId)
+    .filter((r) => autoPortal(r.campaignName, portals, clientNames, mainPortalId).portalId === newPortalId)
+    .map((r) => r.campaignId);
+}

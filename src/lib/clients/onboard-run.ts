@@ -144,6 +144,18 @@ async function send(call: PlannedCall): Promise<{ status: number; body: unknown 
   return { status: res.status, body };
 }
 
+/** POST to the live Master Inbox app, the way the onboarding leg does (used by Add portal too). */
+export async function postToMasterInbox(path: string, body: unknown): Promise<{ status: number; body: unknown }> {
+  const { url, headers } = await endpoint("master_inbox", path);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25_000),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
 async function endpoint(_leg: Leg, path: string): Promise<{ url: string; headers: Record<string, string> }> {
   // Only Master Inbox is still reached over HTTP — it stays live (its app
   // serves the customer portals). Analytics, Client Health and the Database

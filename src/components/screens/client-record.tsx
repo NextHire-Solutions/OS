@@ -386,7 +386,9 @@ function Campaigns({ c }: { c: MasterClient }) {
   return (
     <section className="rx-sec">
       <h3>Campaigns<span>read from Instantly and EmailBison</span></h3>
-      {multi && routing.view ? <PortalsLine view={routing.view} /> : null}
+      {routing.view && (multi || routing.view.canAddPortal) ? (
+        <PortalsLine view={routing.view} addPortal={routing.view.canAddPortal ? <AddPortal clientId={c.id} onAdded={routing.replace} /> : null} />
+      ) : null}
       {multi && routing.view && !routing.view.ready ? (
         <p className="rx-hint">Choosing a portal per campaign needs migration 0025 run in the Master Inbox Supabase project.</p>
       ) : null}
@@ -450,7 +452,9 @@ function useCampaignPortals(clientId: string) {
       setSaving(null);
     }
   }
-  return { view, error, saving, pick };
+  // After Add portal: the new view, keeping who-may-add from the first read.
+  const replace = (v: CampaignPortalView) => setView((old) => ({ ...v, canAddPortal: old?.canAddPortal }));
+  return { view, error, saving, pick, replace };
 }
 
 function portalLabel(view: CampaignPortalView, id: string | null | undefined): string {
@@ -464,18 +468,93 @@ function portalLabel(view: CampaignPortalView, id: string | null | undefined): s
   return short || p.name;
 }
 
-function PortalsLine({ view }: { view: CampaignPortalView }) {
+function PortalsLine({ view, addPortal }: { view: CampaignPortalView; addPortal: React.ReactNode }) {
+  const n = view.portals.length;
   return (
-    <p className="rx-hint" style={{ marginTop: 0 }}>
-      Leads go to one of {view.portals.length} portals:{" "}
+    <div className="rx-hint" style={{ marginTop: 0 }}>
+      {n === 0 ? "No portal yet." : n === 1 ? "Leads go to its portal: " : `Leads go to one of ${n} portals: `}
       {view.portals.map((p, i) => (
         <span key={p.id}>
           {i ? " · " : ""}
-          {p.url ? <a href={p.url} target="_blank" rel="noreferrer">{portalLabel(view, p.id)}</a> : portalLabel(view, p.id)}
-          {p.main ? " (main)" : ""}{!p.enabled ? " (switched off)" : ""}
+          {p.url ? <a href={p.url} target="_blank" rel="noreferrer">{n === 1 ? p.name : portalLabel(view, p.id)}</a> : n === 1 ? p.name : portalLabel(view, p.id)}
+          {n > 1 && p.main ? " (main)" : ""}{!p.enabled ? " (switched off)" : ""}
         </span>
       ))}
-    </p>
+      {addPortal}
+    </div>
+  );
+}
+
+/* Admins: give the client another portal, for a new market. */
+function AddPortal({ clientId, onAdded }: { clientId: string; onAdded: (v: CampaignPortalView) => void }) {
+  const [open, setOpen] = useState(false);
+  const [market, setMarket] = useState("");
+  const [preview, setPreview] = useState<{ name: string; moves: string[]; keptManual: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; bad?: boolean; url?: string | null } | null>(null);
+  const reset = () => { setOpen(false); setMarket(""); setPreview(null); };
+
+  async function check() {
+    setBusy(true); setMsg(null); setPreview(null);
+    try {
+      const res = await fetch(`/api/workspace/clients/portals?clientId=${encodeURIComponent(clientId)}&market=${encodeURIComponent(market)}`, { cache: "no-store" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      setPreview(body);
+    } catch (e) { setMsg({ text: e instanceof Error ? e.message : String(e), bad: true }); } finally { setBusy(false); }
+  }
+  async function create() {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch("/api/workspace/clients/portals", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, market }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      onAdded(body.view as CampaignPortalView);
+      setMsg({
+        text: `Created ${body.portal.name}. ${body.relinked ? `${body.relinked} campaign${body.relinked === 1 ? "" : "s"} now send new leads to it.` : "No campaign mentions this market yet — choose its portal on a campaign below, or new campaigns naming it will go there."}${body.note ? ` ${body.note}` : ""}`,
+        url: body.portal.url,
+      });
+      reset();
+    } catch (e) { setMsg({ text: e instanceof Error ? e.message : String(e), bad: true }); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      {" · "}
+      {!open ? <button type="button" className="rx-btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => { setOpen(true); setMsg(null); }}>+ Add portal</button> : null}
+      {open ? (
+        <div className="rx-confirm" style={{ display: "grid", gap: 8, marginTop: 10 }}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span>Market</span>
+            <input className="ds-input" style={{ width: 200 }} placeholder="e.g. Orlando" value={market} maxLength={40}
+              onChange={(e) => { setMarket(e.target.value); setPreview(null); }} disabled={busy}
+              onKeyDown={(e) => { if (e.key === "Enter" && market.trim()) void check(); }} />
+            {!preview ? <button type="button" className="rx-btn solid" disabled={busy || !market.trim()} onClick={() => void check()}>{busy ? "Checking…" : "Continue"}</button> : null}
+            <button type="button" className="rx-btn" disabled={busy} onClick={reset}>Cancel</button>
+          </label>
+          {preview ? (
+            <div style={{ display: "grid", gap: 6 }}>
+              <span>Creates the portal <b>{preview.name}</b> with its own link, set up like every other portal (its team, agents and DNC list start empty).</span>
+              <span>
+                {preview.moves.length
+                  ? <>New leads from these campaigns will go to it: {preview.moves.join(" · ")}.</>
+                  : "No campaign mentions this market yet; new campaigns that do will go to it automatically."}
+                {preview.keptManual.length ? <> Kept where a person chose: {preview.keptManual.join(" · ")}.</> : null}
+                {" "}Leads already in a portal stay where they are.
+              </span>
+              <div><button type="button" className="rx-btn solid" disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create portal"}</button></div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {msg ? (
+        <div style={{ marginTop: 8, color: msg.bad ? "var(--x-bad, #b42318)" : undefined }}>
+          {msg.text}{msg.url ? <> <a href={msg.url} target="_blank" rel="noreferrer">Open the new portal ↗</a></> : null}
+        </div>
+      ) : null}
+    </>
   );
 }
 

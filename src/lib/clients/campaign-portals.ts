@@ -57,6 +57,8 @@ export interface CampaignRoute {
 export interface CampaignPortalView {
   /** False until migrations/0025 has been run. */
   ready: boolean;
+  /** Set by the route: whether the viewer may add a portal (admins). */
+  canAddPortal?: boolean;
   multi: boolean;
   portals: PortalOption[];
   campaigns: CampaignRoute[];
