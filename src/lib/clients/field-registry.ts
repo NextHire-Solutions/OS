@@ -268,7 +268,7 @@ export const TOOL_VIEWS: ToolView[] = [
       { key: "name", label: "Client/team" }, { key: "team", label: "Team" }, { key: "agents", label: "Agents" }, { key: "dnc", label: "DNC list" },
       { key: "portal", label: "Relevant client-facing information" },
     ],
-    openIn: { label: "Open Client Portals", href: "/portals" },
+    openIn: { label: "Open Client Portals", href: "/inbox/portals" },
   },
   {
     id: "onboarding", label: "Onboarding",

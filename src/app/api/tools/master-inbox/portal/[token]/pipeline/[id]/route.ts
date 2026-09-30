@@ -220,7 +220,10 @@ export async function PATCH(
   // Stage → Introduction is a meaningful event for two downstream
   // listeners. Both run inside `after(...)` so the user's request
   // returns immediately and neither integration can break the other.
-  if (data.stage === "introduction") {
+  // Only when the lead MOVES into Introduction. Firing on any PATCH of a lead
+  // already there (assigning a recruiter, fixing a phone number) re-sent the
+  // "new introduction" to n8n and the client every time.
+  if (data.stage === "introduction" && parsed.data.stage !== undefined && priorStage !== "introduction") {
     const entryId = data.id as string;
     // 1. Notify the n8n webhook (every introduction, no dedup —
     //    that's the operator's contract with n8n).

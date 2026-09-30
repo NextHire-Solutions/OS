@@ -264,6 +264,7 @@ export async function POST(request: Request) {
         // include Interested needs its EmailBison interested flag
         // cleared so the lead drops off the Health Dashboard.
         const priorInterestedThreadIds = new Set<string>();
+        const priorIntroThreadIds = new Set<string>();
         {
           const { data: priors } = await supabase
             .from("label_assignments")
@@ -275,6 +276,9 @@ export async function POST(request: Request) {
             const name = (lbl as { name?: string | null } | null)?.name ?? null;
             if (isInterestedLabel(name)) {
               priorInterestedThreadIds.add(row.target_id as string);
+            }
+            if ((name ?? "").trim().toLowerCase() === "introduction") {
+              priorIntroThreadIds.add(row.target_id as string);
             }
           }
         }
@@ -292,11 +296,26 @@ export async function POST(request: Request) {
         const names = (applyLabels ?? []).map(
           (l) => (l.name as string | null)?.trim().toLowerCase() ?? "",
         );
+        /*
+         * Threads that ALREADY carry Introduction are left alone when
+         * Introduction is applied again. The wipe below would otherwise open
+         * the zero-label window on them: the 0033 trigger deletes each portal
+         * entry and 0023 rebuilds it at stage `introduction`, losing its
+         * stage (e.g. Hired), hired_at, FUB push, custom fields and recruiter
+         * — and the client would be announced a lead they already have. The
+         * single-thread path has the same guard (inbox/apply-label.ts).
+         */
+        const targetIds = names.includes("introduction")
+          ? data.thread_ids.filter((tid) => !priorIntroThreadIds.has(tid))
+          : data.thread_ids;
+        if (targetIds.length === 0) {
+          return NextResponse.json({ ok: true, unchanged: data.thread_ids.length });
+        }
         let notesSnapshot: PipelineNotesSnapshot | null = null;
         if (names.includes("introduction")) {
           notesSnapshot = await snapshotPipelineNotes(
             createAdminSupabase(),
-            data.thread_ids,
+            targetIds,
           );
         }
 
@@ -310,7 +329,7 @@ export async function POST(request: Request) {
         // The brief window where threads have zero labels is the same
         // trade-off the single-thread path makes — Supabase REST
         // doesn't support cross-statement transactions.
-        const wipeResults = await chunkedRun(data.thread_ids, (slice) =>
+        const wipeResults = await chunkedRun(targetIds, (slice) =>
           supabase
             .from("label_assignments")
             .delete()
@@ -323,7 +342,7 @@ export async function POST(request: Request) {
         }
         // Build a cross-product (thread × label) and upsert with the unique
         // constraint on (label_id, target_type, target_id).
-        const rows = data.thread_ids.flatMap((tid) =>
+        const rows = targetIds.flatMap((tid) =>
           data.label_ids.map((lid) => ({
             workspace_id: wsId,
             label_id: lid,
@@ -352,7 +371,7 @@ export async function POST(request: Request) {
         // above. Done after the upsert + inside after() so the
         // user-visible response returns immediately.
         if (names.includes("introduction")) {
-          const threadIds = data.thread_ids;
+          const threadIds = targetIds;
           after(() =>
             notifyIntroductionForThreads(threadIds, "inbox_bulk_label"),
           );
@@ -369,7 +388,7 @@ export async function POST(request: Request) {
           }
         }
         if (names.includes("interested")) {
-          const threadIds = data.thread_ids;
+          const threadIds = targetIds;
           after(async () => {
             for (const tid of threadIds) {
               await markEmailBisonReplyInterested(tid, true);
@@ -377,7 +396,7 @@ export async function POST(request: Request) {
           });
         }
         if (names.includes("not interested")) {
-          const threadIds = data.thread_ids;
+          const threadIds = targetIds;
           after(async () => {
             for (const tid of threadIds) {
               await markEmailBisonReplyInterested(tid, false);
@@ -390,7 +409,7 @@ export async function POST(request: Request) {
         // (the prior-Interested-and-new-Interested case is a no-op
         // round trip we don't need to make).
         if (!names.includes("interested") && priorInterestedThreadIds.size > 0) {
-          const transitioning = data.thread_ids.filter((tid) =>
+          const transitioning = targetIds.filter((tid) =>
             priorInterestedThreadIds.has(tid),
           );
           if (transitioning.length > 0) {

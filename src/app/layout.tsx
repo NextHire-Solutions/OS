@@ -9,6 +9,7 @@ import "./globals.css";
  * unlayered, which is the bug that note describes.
  */
 import "./shell.css";
+import { Toaster } from "sonner";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -36,7 +37,16 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${geist.variable} ${geistMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/*
+          The inbox reports through `sonner` (composer send failures, "the
+          Introduction label didn't stick", draft replaced, snooze, moves…),
+          and nothing had ever mounted a Toaster, so every one of those
+          messages went nowhere and a failed send looked like nothing happened.
+        */}
+        <Toaster position="bottom-right" richColors closeButton />
+      </body>
     </html>
   );
 }

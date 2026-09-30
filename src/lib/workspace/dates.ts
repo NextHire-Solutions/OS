@@ -49,6 +49,16 @@ export function hourInET(now: Date): number {
   return Number(HOUR.format(now));
 }
 
+/**
+ * A bare calendar day ("2026-09-29") names that day, not an instant. `new Date`
+ * reads it as midnight UTC, which is 8pm the day BEFORE in Eastern — so every
+ * chart point and week label showed one day early. Read it as noon UTC, which
+ * is the same calendar day in every US zone.
+ */
+function instant(iso: string): Date {
+  return new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso);
+}
+
 /** A time for today, a date for anything older. `now` must come from the server. */
 export function shortStamp(iso: string | null | undefined, now: number): string {
   if (!iso) return "";
@@ -72,13 +82,13 @@ export function fullStamp(iso: string | null | undefined): string {
  */
 export function dateStamp(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const d = new Date(iso);
+  const d = instant(iso);
   return Number.isNaN(d.getTime()) ? "—" : DAY_YEAR.format(d);
 }
 
 /** Just the calendar day. */
 export function dayStamp(iso: string | null | undefined): string {
   if (!iso) return "";
-  const d = new Date(iso);
+  const d = instant(iso);
   return Number.isNaN(d.getTime()) ? "" : DAY.format(d);
 }

@@ -716,6 +716,13 @@ export function Composer({
       toast.error("Write something to reply.");
       return;
     }
+    // A forward with no usable To used to go out anyway: the reply route
+    // defaults an empty To to the LEAD, so an internal "can you take this
+    // one?" note plus the quoted thread was sent to the prospect.
+    if (isForward && !parseRecipients(to)?.length) {
+      toast.error("Add who to forward this to — a full email address in To.");
+      return;
+    }
     setSending(true);
     try {
       // bodyHtml is already real HTML from the rich-text editor. Forward

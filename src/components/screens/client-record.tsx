@@ -263,7 +263,7 @@ export function ClientRecord({
 
         {tool ? (
           /* ------------------------------- a tool's part of the record, only */
-          <div className="rx-body">
+          <div className="rx-body" key={c.id}>
             <section className="rx-sec">
               <h3>{tool.label}<span>the fields §8 lists for this tool</span></h3>
               {tool.columns.filter((col) => col.key !== "name" && shown(col.key)).map((col) => row(col.key, col.label, FIELD_BY_KEY[col.key]))}
@@ -313,7 +313,12 @@ export function ClientRecord({
               ))}
             </nav>
 
-            <div className="rx-body">
+            {/* Keyed by client: every draft, pending confirmation and in-flight
+                read below belongs to ONE client. Without the key, moving to the
+                next client kept a "Change to Churned?" or "Pause billing?" box
+                (or a half-edited field) on screen, and confirming it acted on
+                the client now showing. The tab above is deliberately kept. */}
+            <div className="rx-body" key={c.id}>
               {tab === "record" ? (
                 <>
                   <section className="rx-sec">

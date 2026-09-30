@@ -244,6 +244,10 @@ export async function GET(
   ];
 
   return NextResponse.json({
+    // The Instantly branch always said which platform it is; this one didn't,
+    // so the detail page's Pause/Resume read every EmailBison campaign as
+    // "platform unknown" and stayed disabled.
+    platform: "emailbison",
     sentStepIds,
     campaign: {
       ...campaign.data,

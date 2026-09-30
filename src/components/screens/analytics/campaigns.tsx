@@ -359,6 +359,20 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
                 />
               );
             }
+            // Archive cannot be undone from here and Duplicate creates N new
+            // campaigns in EmailBison, so both take a second click, like Resume.
+            if (action === "archive" || action === "duplicate") {
+              return (
+                <ConfirmButton
+                  key={action}
+                  label={`${action[0].toUpperCase() + action.slice(1)} (${n})`}
+                  armedLabel={action === "archive" ? `Archive ${n} campaign${n === 1 ? "" : "s"}?` : `Create ${n} cop${n === 1 ? "y" : "ies"}?`}
+                  title={n === 0 && chosen.length ? whyNot(action, chosen[0].status) ?? "" : action === "archive" ? "Archiving cannot be undone from here." : "Creates a new EmailBison campaign for each one selected."}
+                  disabled={busy || n === 0}
+                  onConfirm={() => void apply(action, eligible(action))}
+                />
+              );
+            }
             return (
               <Btn
                 key={action}
@@ -892,6 +906,18 @@ function RowMenu({
                         }`
                       : reason
                   }
+                  disabled={busy || !allowed}
+                  onConfirm={() => { close(); onAction(action); }}
+                />
+              );
+            }
+            if (action === "archive") {
+              return (
+                <ConfirmButton
+                  key={action}
+                  label={ACTION_LABEL[action]}
+                  armedLabel="Confirm archive"
+                  title={allowed ? "Archiving cannot be undone from here." : reason}
                   disabled={busy || !allowed}
                   onConfirm={() => { close(); onAction(action); }}
                 />

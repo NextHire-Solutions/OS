@@ -127,6 +127,11 @@ export function ReCampaignDialog({
                 emailed elsewhere, bounced, or unsubscribed.
               </p>
             ) : null}
+            {result.error ? (
+              // 207: the draft exists but was not fully populated (e.g. leads
+              // failed to attach). The counts above are what DID happen.
+              <Fail>Not everything completed: {result.error}</Fail>
+            ) : null}
             <Warn>
               {/* The most important line in the dialog. The campaign exists
                   and is loaded, and does nothing at all until someone starts

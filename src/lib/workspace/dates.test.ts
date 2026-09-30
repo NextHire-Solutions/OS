@@ -86,3 +86,11 @@ test("a missing or unparseable timestamp is empty, never a fabricated date", () 
     assert.equal(dayStamp(bad), "");
   }
 });
+
+test("a bare calendar day is that day in Eastern, not the evening before", async () => {
+  const { dayStamp, dateStamp } = await import("./dates.ts");
+  assert.equal(dayStamp("2026-09-29"), "Sep 29");
+  assert.equal(dateStamp("2026-01-01"), "Jan 1, 2026");
+  // A real instant keeps its Eastern reading: 01:00Z on the 30th is the 29th in New York.
+  assert.equal(dayStamp("2026-09-30T01:00:00Z"), "Sep 29");
+});

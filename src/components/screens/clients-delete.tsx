@@ -95,9 +95,17 @@ function DeleteBody({
     let live = true;
     setPlan(null);
     fetch(`/api/workspace/clients/delete?id=${encodeURIComponent(id)}&scope=${scope}`)
-      .then((r) => r.json())
-      .then((p) => { if (live) setPlan(p as Plan); })
-      .catch(() => { if (live) setError("Could not read what this would remove."); });
+      // An error body ({error}) is not a plan — storing it as one crashed the
+      // whole page on `plan.willDelete.map`.
+      .then(async (r) => {
+        const p = await r.json().catch(() => null);
+        if (!r.ok || !p || !Array.isArray((p as Plan).willDelete)) {
+          throw new Error((p as { error?: string } | null)?.error ?? `HTTP ${r.status}`);
+        }
+        return p as Plan;
+      })
+      .then((p) => { if (live) setPlan(p); })
+      .catch((e) => { if (live) setError(`Could not read what this would remove: ${e instanceof Error ? e.message : String(e)}`); });
     return () => { live = false; };
   }, [id, scope]);
 
@@ -110,11 +118,13 @@ function DeleteBody({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, scope, confirm, acceptDataLoss: acceptLoss }),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      if (body.failed?.length) {
+      const body = await res.json().catch(() => null);
+      // A half-done delete answers 502 with `failed[]` and no `error` — say
+      // which part failed rather than a bare "HTTP 502".
+      if (body?.failed?.length) {
         throw new Error(body.failed.map((f: { what: string; error: string }) => `${f.what}: ${f.error}`).join("; "));
       }
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       onDeleted();
       onClose();
     } catch (e) {

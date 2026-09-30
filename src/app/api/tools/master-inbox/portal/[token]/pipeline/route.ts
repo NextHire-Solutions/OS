@@ -214,7 +214,9 @@ export async function PATCH(
     }
 
     if (newStage === "introduction" && updated && updated.length > 0) {
-      const entryIds = (updated as { id: string }[]).map((r) => r.id);
+      // Only leads that MOVED into Introduction; ones already there were
+      // announced when they arrived.
+      const entryIds = (updated as { id: string }[]).map((r) => r.id).filter((eid) => priorStageById.get(eid) !== "introduction");
       // 1. n8n webhook — fires for every entry in the batch.
       after(() => notifyIntroduction(entryIds, "portal_stage_change"));
       // 2. Follow Up Boss auto-push — same gate as the single PATCH:
