@@ -416,6 +416,37 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   rule change, pending the client. Syncing billing dates from Stripe is also
   open; the client called it not a necessity.
 
+**Which portal each campaign's leads go to (1 Oct).**
+- Problem: Master Inbox sorted a reply into a portal by guessing from the
+  campaign NAME. Properties & Estates has two portals (Boston, Florida), and
+  the guess sent the Florida campaigns' replies to Boston — including the
+  active "Rutenberg 1 + South Florida" (#295).
+- Now, for a client with more than one portal, each campaign's portal is
+  chosen automatically ONCE and saved in `os_campaign_portals` (migration
+  0025). The rule (`lib/clients/campaign-portal-plan.ts`, tested), in order:
+  1. a market word in the campaign name ("… South Florida …" → Florida);
+  2. else the portal the campaign's replies already go to;
+  3. else today's name guess, if it is one of the client's portals;
+  4. else the main portal (the one `os_clients.mi_client_id` links).
+- The OS saves the choice in a background pass every 10 minutes, on Railway
+  only. It never changes a saved row.
+- Change it on the client's record → Campaigns → "Leads go to". A choice
+  made there is marked "chosen by <person>".
+- Only NEW replies follow a choice. Leads already in a portal stay there
+  (user decision). Move old ones by hand in the inbox if needed.
+- Master Inbox's `derive.ts` reads the saved choice first, in BOTH the OS
+  and the standalone app (which receives the webhooks today). With no row,
+  or if the table can't be read, it guesses exactly as before. Single-portal
+  clients have no rows, so they are unchanged.
+- Preview before go-live: only P&E changed — its 5 Florida campaigns go to
+  Florida. SERHANT. PA (its "BRIGHT 10M+" campaign feeds the 15M+ portal)
+  and the 48 single-portal clients stay as they were.
+- Deployed: OS `e6dae32`, standalone Master Inbox `fe2e342` (deployment
+  ac34310a). Verified: 1,450 OS tests and 104 Master Inbox tests pass, and
+  7/7 Chrome checks with writes blocked. 33/33 portals serve.
+- Not done yet: an "Add portal" button on the client record. Second portals
+  are still made in Master Inbox → Settings → Clients.
+
 **Create a subscription from the OS — payment links (1 Oct).**
 - For a client with no subscription, or a cancelled one, the record's
   Billing section offers **Create subscription**. Admins only.
