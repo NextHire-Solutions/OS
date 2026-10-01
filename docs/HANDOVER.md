@@ -416,6 +416,45 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   rule change, pending the client. Syncing billing dates from Stripe is also
   open; the client called it not a necessity.
 
+**Analytics (OS + standalone), Client Health portals, intro visibility (1 Oct).**
+- **Sending limits column** on Campaigns: "daily send limit / new leads per
+  day", e.g. 1,000/500. EmailBison values come from `campaigns`; Instantly's
+  (`daily_limit`/`daily_max_leads`) are read live for the page's campaigns.
+- **Sequence: Delete / Turn off / Turn on** (`sequence-rules.ts`, tested;
+  `sequence-live.ts`). Verified behaviour:
+  - Delete is offered only for a step or variant that has NEVER sent.
+    EmailBison refuses sent steps and the last step. A main step's
+    variants must be deleted first.
+  - Turn off / Turn on is for steps that HAVE sent. EmailBison allows it
+    ONLY while the campaign is paused, and the screen says so.
+  - Instantly edits the whole sequence and uses `v_disabled` for off.
+  - Everything is re-read live and re-checked on the server.
+- **Remove Unsupported Mail Servers** button on the campaign header
+  (`mail-servers.ts`, `unsupported-servers.ts`):
+  - EmailBison tags every lead with its mail server. The rule removes
+    Proofpoint, Mimecast, Barracuda, Zoho and Custom Mail Server; Sophos
+    and Outlook Gov stay (user decision).
+  - Instantly gives 1 Google, 2 Microsoft, 3 Zoho and 999 for everything
+    else, so 3 and 999 are removed.
+  - Preview first, then confirm, then a recount. Leads are removed from
+    the campaign only, never deleted.
+  - Verified with one test lead per server on draft test campaigns in both
+    platforms. The test campaigns and leads were then deleted.
+  - An inbox-less test campaign is auto-archived by EmailBison within
+    minutes of being paused.
+- **Client Health counts every portal's introductions** (shaurs
+  `scripts/sync.ts` + `lib/portal-aliases.ts`, and the OS copy). The
+  portal → client map is built each run from `clients.campaign_aliases`.
+  The old hard-coded Florida entry pointed at a name no client has. Result:
+  P&E 30 → 40, SERHANT. PA 39 → 42, no other client changed (dry run, then
+  confirmed live). Add portal now also adds the new portal's name to the
+  client's Client Health aliases.
+- **Eddy's asks:**
+  - The record header links every portal (P&E: Boston ↗, Florida ↗).
+  - "No intro template" is visible in three places: a tag in the Clients
+    list (active/onboarding only), a warning on the record with "Add
+    them", and a tag beside the composer's Introduce button.
+
 **Which portal each campaign's leads go to (1 Oct).**
 - Problem: Master Inbox sorted a reply into a portal by guessing from the
   campaign NAME. Properties & Estates has two portals (Boston, Florida), and
