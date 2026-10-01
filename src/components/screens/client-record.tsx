@@ -900,10 +900,15 @@ const INTRO_FIELDS: { token: string; label: string }[] = [
 const FIELD_LABEL = new Map(INTRO_FIELDS.map((f) => [f.token.replace(/\s/g, ""), f.label]));
 
 /* The text as it will read, with each field shown as a labelled chip. */
-function IntroText({ text }: { text: string }) {
+function IntroText({ text, onEdit }: { text: string; onEdit?: () => void }) {
   const parts = text.split(/(\{\{\s*[\w.]+\s*\}\})/g);
   return (
-    <div className="rx-intro-text" style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, padding: "12px 14px", border: "1px solid var(--ds-line, #e4e4e7)", borderRadius: 8, background: "var(--ds-subtle, #fafafa)", fontSize: 13.5 }}>
+    <div className={`rx-intro-text${onEdit ? " editable" : ""}`}
+      {...(onEdit ? {
+        role: "button", tabIndex: 0, title: "Click to edit the introduction", "aria-label": "Edit the introduction",
+        onClick: onEdit, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); onEdit(); } },
+      } : {})}
+      style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, padding: "12px 14px", border: "1px solid var(--ds-line, #e4e4e7)", borderRadius: 8, background: "var(--ds-subtle, #fafafa)", fontSize: 13.5 }}>
       {parts.map((p, i) => {
         if (!/^\{\{/.test(p)) return <span key={i}>{p}</span>;
         const label = FIELD_LABEL.get(p.replace(/\s/g, "")) ?? p.replace(/[{}\s]/g, "");
@@ -952,7 +957,7 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
       setView(body.view as IntroView);
       setEditing(false); setConfirmReset(false);
       setMsg({
-        text: `${custom ? "Custom introduction saved" : "Back to the standard introduction"}.${body.template === "failed" ? " The Templates copy could not be updated; the Introduce button uses the new text regardless." : ""}`,
+        text: `${custom ? "Saved — the Introduce button and the reply agent now send this introduction" : "Back to the standard introduction"}.${body.template === "failed" ? " The Templates copy could not be updated; the Introduce button uses the new text regardless." : ""}`,
       });
       onChanged();
     } catch (e) {
@@ -984,6 +989,18 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
   if (!view) return <div className="rx-hint">Loading the introduction…</div>;
 
   const current = view.custom ?? view.standard;
+  // Editing starts from exactly what is sent today (Eddy, 2 Oct: "I just need to be able to edit this field").
+  const startEdit = () => { setDraft(view.custom ?? view.standard ?? ""); setEditing(true); setMsg(null); setConfirmReset(false); };
+  const saveDraft = () => {
+    const t = draft.trim();
+    // Unchanged standard wording is not a custom intro: keep (or go back to) the standard one.
+    if (t === (view.standard ?? "").trim()) {
+      if (view.custom) void save(null);
+      else { setEditing(false); setMsg({ text: "No changes." }); }
+      return;
+    }
+    void save(draft);
+  };
   const badge = (on: boolean, text: string) => (
     <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".02em", padding: "2px 8px", borderRadius: 999, background: on ? "#EDE7FB" : "#EAF5EE", color: on ? "#5B33B5" : "#1E7A45" }}>{text}</span>
   );
@@ -997,10 +1014,10 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
           <button type="button" className="rx-btn" onClick={() => void copy(current)}>{copied ? "Copied" : "Copy"}</button>
         ) : null}
         {!editing ? (
-          <button type="button" className="rx-btn" disabled={!view.canSaveCustom}
-            title={view.canSaveCustom ? undefined : "Custom introductions need database migration 0026 first."}
-            onClick={() => { setDraft(view.custom ?? ""); setEditing(true); setMsg(null); setConfirmReset(false); }}>
-            {view.custom ? "Edit custom intro" : "Use a custom intro"}
+          <button type="button" className="rx-btn solid" disabled={!view.canSaveCustom}
+            title={view.canSaveCustom ? undefined : "Editing the introduction needs database migration 0026 first."}
+            onClick={startEdit}>
+            Edit intro
           </button>
         ) : null}
         {view.custom && !editing && !confirmReset ? (
@@ -1020,7 +1037,7 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
 
       {editing ? (
         <div style={{ display: "grid", gap: 8 }}>
-          <textarea ref={setArea} className="ds-input" aria-label="Custom introduction" rows={10} value={draft}
+          <textarea ref={setArea} className="ds-input" aria-label="Introduction" rows={14} value={draft}
             placeholder={"Paste the introduction here.\n\nHi {{lead.first_name}}, I'd like to introduce you to…"}
             style={{ width: "100%", minWidth: 0, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, padding: 10 }}
             onChange={(e) => setDraft(e.target.value)} disabled={busy} autoFocus />
@@ -1031,9 +1048,6 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
                 title={f.token} disabled={busy} onClick={() => insert(f.token)}>{f.label}</button>
             ))}
           </div>
-          {!draft && view.standard ? (
-            <div><button type="button" className="rx-btn" style={{ fontSize: 12 }} onClick={() => setDraft(view.standard ?? "")}>Start from the standard introduction</button></div>
-          ) : null}
           {draft.trim() ? (
             <>
               <span style={{ fontSize: 12, color: "var(--ds-muted)" }}>How it will read</span>
@@ -1041,12 +1055,12 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
             </>
           ) : null}
           <div style={{ display: "flex", gap: 6 }}>
-            <button type="button" className="ds-btn primary sm" disabled={busy || !draft.trim()} onClick={() => void save(draft)}>{busy ? "Saving…" : "Save custom intro"}</button>
+            <button type="button" className="ds-btn primary sm" disabled={busy || !draft.trim()} onClick={saveDraft}>{busy ? "Saving…" : "Save"}</button>
             <button type="button" className="ds-btn ghost sm" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </div>
       ) : current ? (
-        <IntroText text={current} />
+        <IntroText text={current} onEdit={view.canSaveCustom ? startEdit : undefined} />
       ) : (
         <div className="rx-hint" style={{ marginTop: 0 }}>
           No introduction yet. Add the first contact&apos;s {view.missing.join(" and ")} below, or paste a custom intro.
@@ -1055,7 +1069,7 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
 
       {!editing && current ? (
         <div className="rx-hint" style={{ marginTop: 0 }}>
-          The highlighted parts are filled in for each lead when it is sent.
+          {view.canSaveCustom ? "Click the text to edit it. " : ""}The highlighted parts are filled in for each lead when it is sent.
           {view.custom ? " The contacts below are still copied in (Cc)." : " It is written from the contacts below."}
         </div>
       ) : null}

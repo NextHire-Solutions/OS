@@ -369,3 +369,8 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
   background: linear-gradient(180deg, #1C73FF 0%, #0158DB 100%); color: #fff; }
 .cx-head-ico svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ds-field-src { font-style: normal; }
+
+/* The introduction on Introduce to: click the text to edit it (Eddy, 2 Oct). */
+.rx-intro-text.editable { cursor: text; transition: border-color .12s, box-shadow .12s; }
+.rx-intro-text.editable:hover { border-color: var(--ds-brand, #0165FE) !important; }
+.rx-intro-text.editable:focus-visible { outline: none; border-color: var(--ds-brand, #0165FE) !important; box-shadow: 0 0 0 3px var(--ds-brand-soft, #EDF3FF); }
