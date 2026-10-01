@@ -10,7 +10,7 @@ import { isSoldBy, type Salesperson } from "@/lib/identity/salesperson-match";
 import { listSalespeople } from "@/lib/identity/salespeople";
 
 import {
-  ACCOUNT_MANAGER_RATE, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, netPer28, nextRun,
+  ACCOUNT_MANAGER_RATE, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, monthTwoStarts, netPer28, nextRun,
   previousRun, runOnOrAfter, sum, type Line, type Payment, type StatusChange,
 } from "./schedule";
 import { stripeGross, stripePayments } from "./stripe-payments";
@@ -19,8 +19,8 @@ import { stripeGross, stripePayments } from "./stripe-payments";
  * COMMISSIONS — who earns what, on which payout run.
  *
  *   who     BOTH people on a client (the client, 30 Sep): its Salesperson at
- *           their rate (20% or 10%) and its Account Manager at 5% — of every
- *           payment after Stripe's fee (Eddy, 1 Oct). A salesperson is someone
+ *           their rate (20% or 10%) on every payment, and its Account Manager
+ *           at 5% from Month 2 on — after Stripe's fee (Eddy, 1 Oct). A salesperson is someone
  *           with the Salesperson role (os_salespeople); an account manager,
  *           someone with the Account manager role on Team access. ACTIVE
  *           clients only. Someone with both roles is one person on the page.
@@ -164,14 +164,16 @@ function scheduleDates(c: MasterClient, until: string): { dates: string[]; cycle
   return { dates, cycleDays };
 }
 
-function label(c: MasterClient, changes: StatusChange[], lines: Line[], hasSource: boolean): string {
+function label(c: MasterClient, changes: StatusChange[], lines: Line[], hasSource: boolean, monthTwo: string | null, run: string): string {
   if (c.status === "churned") {
     const d = cancellationDay(changes, c.status);
     return d ? `Cancelled ${new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}` : "Cancelled";
   }
   if (c.status === "paused") return "Paused";
   if (!hasSource) return "No billing data";
-  return lines.length ? "Active" : "Not billed yet";
+  if (!lines.length) return "Not billed yet";
+  // Month 1 while any payment on this run falls in the first 28 days: the account manager earns nothing on those.
+  return monthTwo && linesForRun(lines, run).some((l) => l.date < monthTwo) ? "Month 1" : "Active";
 }
 
 export interface BuildInputs {
@@ -282,7 +284,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
       grossSource = "manual";
     }
     const earnings: Earning[] = onClient(c).filter((e) => keys.has(e.key)).map((e) => {
-      const lines = commissionLines(payments, changes, c.status, e.rate);
+      const lines = commissionLines(payments, changes, c.status, e.rate, { fromMonthTwo: e.role === "account_manager" });
       const runLines = linesForRun(lines, run);
       return { key: e.key, role: e.role, name: e.name, rate: e.rate, due: sum(runLines), lines: runLines, lifetime: sum(lines) };
     });
@@ -291,7 +293,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
       id: c.id, name: c.name, plan: c.plan, status: c.status,
       salesperson: c.salesperson, accountManager: firstManager(c),
       gross, net: gross !== null ? netPer28(gross, cycle) : null, grossSource, manualGross: manual, stripeLinked: linked,
-      statusLabel: label(c, changes, all, payments.length > 0 || gross !== null),
+      statusLabel: label(c, changes, all, payments.length > 0 || gross !== null, monthTwoStarts(payments), run),
       earnings,
       due: sum(earnings.flatMap((e) => e.lines)),
       lastPayment: payments.length ? payments[payments.length - 1].date : null,

@@ -81,7 +81,7 @@ test("an admin sees everyone, can view one person, and gets what is missing on e
   assert.deepEqual(eddy.rows.map((r) => r.name).sort(), ["Coastal Realty", "NYC Co"], "viewing Eddy shows both his roles");
 });
 
-test("both people on a client earn: the salesperson 20% or 10%, the account manager 5%, of the net", () => {
+test("both people on a client earn: the salesperson 20% or 10% from the start, the account manager 5% from Month 2, of the net", () => {
   const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true }));
   const keyes = v.rows.find((r) => r.name === "Keyes Company")!;
   const by = Object.fromEntries(keyes.earnings.map((e) => [e.name, e.due]));
@@ -90,8 +90,9 @@ test("both people on a client earn: the salesperson 20% or 10%, the account mana
   assert.equal(keyes.due, 218.43);
   assert.equal(keyes.net, 2912.4, "monthly net: $3,000 less two charges' fees");
   const coastal = v.rows.find((r) => r.name === "Coastal Realty")!;
-  assert.deepEqual(coastal.earnings.map((e) => e.due), [174.72, 43.68], "first payment, same rates — no Month 1");
-  assert.equal(coastal.statusLabel, "Active");
+  assert.deepEqual(coastal.earnings.map((e) => e.due), [174.72, 0], "Month 1: the salesperson earns 20%, the account manager nothing yet");
+  assert.equal(coastal.statusLabel, "Month 1");
+  assert.equal(keyes.statusLabel, "Active");
   assert.equal(v.reps.find((r) => r.key === "p:ryan@x.com")!.due, 174.72);
 });
 

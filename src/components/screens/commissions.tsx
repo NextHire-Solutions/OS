@@ -89,7 +89,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
         <div className="cx-head-t">
           <span className="cx-kicker">Workspace</span>
           <h1>Commissions</h1>
-          <p>Sales payouts on active clients — the salesperson earns 20% or 10% and the account manager 5% of each payment after Stripe&rsquo;s fee. Payouts run on the 1st and 15th.</p>
+          <p>Sales payouts on active clients — the salesperson earns 20% or 10% of each payment after Stripe&rsquo;s fee, and the account manager 5% from the client&rsquo;s second month. Payouts run on the 1st and 15th.</p>
         </div>
         <div className="cm-run">
           <span className="cx-kicker">{data.runOpen ? "Next payout run" : "Payout run"}</span>
@@ -220,7 +220,7 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
                   <option value={0.2}>20%</option>
                   <option value={0.1}>10%</option>
                 </select>
-              ) : pct(r.rate)}{" "}{both ? (r.role === "salesperson" ? "AS SALESPERSON" : "AS ACCOUNT MANAGER") : "OF NET"}
+              ) : pct(r.rate)}{" "}{both ? (r.role === "salesperson" ? "AS SALESPERSON" : "AS ACCOUNT MANAGER · MONTH 2+") : r.role === "account_manager" ? "OF NET · MONTH 2+" : "OF NET"}
             </span>
           ))}
         </span>
@@ -241,7 +241,7 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
 }
 
 function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle: () => void }) {
-  const tone = r.status === "churned" ? "cancelled" : r.status === "paused" ? "paused" : "active";
+  const tone = r.status === "churned" ? "cancelled" : r.statusLabel === "Month 1" ? "month1" : r.status === "paused" ? "paused" : "active";
   return (
     <>
       <tr onClick={onToggle} className={open ? "on" : undefined} aria-expanded={open}>
@@ -263,7 +263,7 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
           <td colSpan={8}>
             {r.earnings.map((e) => (
               <div key={e.key} style={{ marginBottom: 10 }}>
-                <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {pct(e.rate)} of each payment after Stripe&rsquo;s fee</span>
+                <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {pct(e.rate)} of each payment after Stripe&rsquo;s fee{e.role === "account_manager" ? ", from Month 2" : ""}</span>
                 {e.lines.length ? (
                   <table>
                     <thead><tr><th>Billed</th><th>Payment</th><th>Stripe fee</th><th>Net</th><th>Source</th><th className="num">Rate</th><th className="num">Commission</th></tr></thead>
@@ -276,7 +276,7 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
                       ))}
                     </tbody>
                   </table>
-                ) : <span className="cm-note" style={{ display: "block" }}>No payment falls on this run.</span>}
+                ) : <span className="cm-note" style={{ display: "block" }}>{e.role === "account_manager" && r.statusLabel === "Month 1" ? "Month 1 — the account manager earns from Month 2." : "No payment falls on this run."}</span>}
                 <span className="cm-note">Earned to date on this client: <b>{money(e.lifetime, true)}</b></span>
               </div>
             ))}

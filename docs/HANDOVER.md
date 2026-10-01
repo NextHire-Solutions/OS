@@ -504,7 +504,8 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   of the amount after Stripe's fee (2.9% + $0.30 per charge): the
   salesperson 20% or 10% (one setting per salesperson, on their card;
   stored in `os_salespeople.residual_rate`, the old 15%/25% read as 20%),
-  the account manager a fixed 5% (`os_commission_reps` is no longer read).
+  the account manager a fixed 5% ONLY from Month 2 (nothing on the first
+  28 days of billing; `os_commission_reps` is no longer read).
   ACTIVE clients only — paused/churned/onboarding are neither listed nor
   paid (user decision, even when a payment was due). Someone with both roles
   (Eddy) is one card, `p:<email>`. New "Monthly (net)" column; the

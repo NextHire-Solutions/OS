@@ -5,8 +5,10 @@
  *
  *   Every payment   earns a flat rate of what is left after Stripe's fee
  *                   (2.9% + $0.30 per successful card charge): the client's
- *                   salesperson 20% or 10% (set per salesperson), its account
- *                   manager 5%. No first-month rate.
+ *                   salesperson 20% or 10% (set per salesperson) from the
+ *                   first payment; its account manager 5%, but ONLY from
+ *                   Month 2 — nothing on the client's first 28 days of
+ *                   billing. No special first-month rate.
  *   Active only     only clients that are active now are paid (and shown).
  *   On cancellation nothing accrues from the cancellation date.
  *   Payout runs     the 1st and the 15th. A payment is paid out on the first
@@ -141,8 +143,17 @@ export interface Line {
   commission: number;
 }
 
+/** The first day after a client's Month 1: 28 days from its first payment. */
+export function monthTwoStarts(payments: Payment[]): string | null {
+  const first = payments.reduce<string | null>((m, p) => (m === null || p.date < m ? p.date : m), null);
+  return first ? addDays(first, MONTH_DAYS) : null;
+}
+
 /**
  * Every payment that earns commission, with its fee, rate and amount.
+ *
+ * `fromMonthTwo` (account managers): payments in the client's first 28 days
+ * of billing earn nothing.
  *
  * A payment on a day the client was churned earns nothing — "nothing accrues
  * from the cancellation date". Estimated payments also earn nothing while
@@ -154,10 +165,13 @@ export function commissionLines(
   changes: StatusChange[],
   current: LifecycleStatus,
   rate: number,
+  opts: { fromMonthTwo?: boolean } = {},
 ): Line[] {
   const sorted = [...payments].sort((a, b) => a.date.localeCompare(b.date));
+  const monthTwo = monthTwoStarts(sorted);
   const out: Line[] = [];
   for (const p of sorted) {
+    if (opts.fromMonthTwo && monthTwo && p.date < monthTwo) continue;
     const s = statusAt(changes, current, p.date);
     if (s === "churned") continue;
     if (p.source === "estimate" && s === "paused") continue;

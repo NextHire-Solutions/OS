@@ -33,6 +33,13 @@ test("every payment earns a flat rate of what is left after Stripe's fee — no 
   assert.deepEqual(commissionLines([pay("2026-08-03", 1500)], [], "active", 0.1).map((l) => l.commission), [145.62], "salesperson 10%");
 });
 
+test("account manager: nothing on the first 28 days of billing, 5% from Month 2", () => {
+  const pays = [pay("2026-08-03", 1500), pay("2026-08-17", 1500), pay("2026-08-31", 1500), pay("2026-09-14", 1500)];
+  assert.deepEqual(commissionLines(pays, [], "active", 0.05, { fromMonthTwo: true }).map((l) => [l.date, l.commission]),
+    [["2026-08-31", 72.81], ["2026-09-14", 72.81]], "Aug 3 and Aug 17 are Month 1 (until Aug 31)");
+  assert.equal(commissionLines(pays, [], "active", 0.2).length, 4, "the salesperson earns from the first payment");
+});
+
 test("Stripe's fee is 2.9% + $0.30 per charge; the monthly net counts one fee per charge", () => {
   assert.equal(stripeFee(1500), 43.8);
   assert.equal(stripeFee(0), 0);
