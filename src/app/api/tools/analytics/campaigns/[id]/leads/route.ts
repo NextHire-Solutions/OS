@@ -162,6 +162,9 @@ export async function GET(
       rows: list.map((r) => ({
         leadId: r.lead_id,
         email: r.email,
+        // The table reads one `name` (as EmailBison rows give it); without it an
+        // Instantly lead showed only its email, and the Lead sort (by name) looked wrong.
+        name: [r.first_name, r.last_name].filter(Boolean).join(" ") || null,
         firstName: r.first_name,
         lastName: r.last_name,
         company: r.company,
