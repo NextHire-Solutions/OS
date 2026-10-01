@@ -3,6 +3,7 @@ import "server-only";
 import { updateAnalyticsClient } from "./analytics-direct";
 import { osTable } from "./os-db";
 import { syncIntroTemplate } from "./intro-template-sync";
+import { readIntroOverride } from "./intro-override";
 import { CLIENT_STATUSES, type ClientStatus } from "./client-status";
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -520,7 +521,8 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
       brokerage: edit.brokerage !== undefined ? blankToNull(edit.brokerage) : row.brokerage,
     };
     try {
-      const outcome = await syncIntroTemplate(after);
+      // A custom introduction (0026) stays the template's body; contacts still set the Cc.
+      const outcome = await syncIntroTemplate({ ...after, introOverride: await readIntroOverride(id) });
       if (outcome === "updated") updated.push("the stored introduction template");
       else if (outcome === "created") updated.push("the stored introduction template (created)");
       else if (outcome === "no-details") {

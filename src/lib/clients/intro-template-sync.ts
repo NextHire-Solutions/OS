@@ -3,10 +3,10 @@ import "server-only";
 import { env } from "@/lib/tools/master-inbox/env";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import {
-  hasIntroDetails,
   introContactEmails,
+  introReady,
   introTemplateName,
-  renderIntroMacroTemplate,
+  introText,
   type IntroMacroClient,
 } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
@@ -55,15 +55,16 @@ export async function syncIntroTemplate(
   client: IntroTemplateSyncInput,
 ): Promise<IntroTemplateOutcome> {
   // Nothing worth writing: a macro without a contact and a role is a sentence
-  // with holes in it.
-  if (!hasIntroDetails(client)) return "no-details";
+  // with holes in it. A client's own pasted introduction is enough on its own.
+  if (!introReady(client)) return "no-details";
 
   const workspaceId = env.WORKSPACE_ID;
   if (!workspaceId) return "no-workspace";
 
   const db = getMasterInboxSupabase();
   const name = introTemplateName(client.name);
-  const body = renderIntroMacroTemplate(client);
+  // The client's custom introduction when set (0026), else the standard wording.
+  const body = introText(client);
   // Every contact who has an address, in the order they are named in the body.
   const cc = introContactEmails(client).join(", ") || null;
 

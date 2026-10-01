@@ -8,7 +8,7 @@ import { buildCommissionsView, type BuildInputs } from "./load.ts";
 import type { Payment } from "./schedule.ts";
 
 const client = (id: string, name: string, sp: string | null, am: string | null, extra: Partial<MasterClient> = {}): MasterClient => ({
-  id, name, aliases: [], status: "active", statusSince: null, plan: "production", startDate: "2026-06-01", onboardingDate: null,
+  id, name, aliases: [], status: "active", statusSince: null, introCustom: false, plan: "production", startDate: "2026-06-01", onboardingDate: null,
   dateAdded: null, markets: { markets: null, mls: [], areas: [] }, timezone: null, team: null, agents: null, dnc: null, sender: null, salesperson: sp,
   accountManager: am, firstBillingDate: null, billingAnchorDate: "2026-06-03", billingInterval: "biweekly", billingIntervalDays: null,
   nextBillingDate: null, stripeCustomerId: null, stripeSubscriptionId: null, campaigns: [], campaignAliases: [], campaignLocation: null,

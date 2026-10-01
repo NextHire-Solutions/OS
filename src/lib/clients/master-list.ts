@@ -103,6 +103,8 @@ export interface MasterClient {
   reactivationDate: string | null;
   /** Who introductions are addressed to, and the brokerage named (os_clients). */
   contact: OsClient["contact"];
+  /** The client has its own pasted introduction (os_clients.intro_override, 0026). */
+  introCustom: boolean;
   /* What each tool adds for its own view (§8). */
   health: {
     present: boolean;
@@ -247,6 +249,13 @@ async function readAnalytics(): Promise<Row[]> {
   return rows as Row[];
 }
 
+/* Clients with their own introduction. Empty before migration 0026. */
+async function readIntroCustom(): Promise<Set<string>> {
+  const { data, error } = await osTable("os_clients").select("id").not("intro_override", "is", null).neq("intro_override", "");
+  if (error) return new Set();
+  return new Set(((data ?? []) as { id: string }[]).map((r) => r.id));
+}
+
 async function load(): Promise<MasterClientList> {
   const names = [
     "Master record", "Status history", "Markets", "Client Health", "Client Health campaigns",
@@ -258,6 +267,7 @@ async function load(): Promise<MasterClientList> {
     readPortals(), portalPeopleByMiId(), loadCombinedIntroSummaryByClient(), loadDatabaseClients(),
     getOnboardingPipeline(), readAnalytics(),
     listClientDates().then((m) => { if (!m) throw new Error("migration 0023"); return m; }),
+    readIntroCustom(),
   ]);
   const unavailable: string[] = [];
   const get = <T,>(i: number): T | null => {
@@ -279,6 +289,8 @@ async function load(): Promise<MasterClientList> {
   const db = get<Awaited<ReturnType<typeof loadDatabaseClients>>>(8);
   const pipeline = get<Awaited<ReturnType<typeof getOnboardingPipeline>>>(9);
   const analytics = get<Row[]>(10);
+  // Never reported as unavailable: before 0026 nobody has a custom intro.
+  const introCustom = settled[12].status === "fulfilled" ? (settled[12].value as Set<string>) : new Set<string>();
 
   const pickHealth = matcher(healthRows ?? [], (r) => str(r.id), (r) => str(r.name));
   const pickDb = matcher(db?.clients ?? [], (r) => r.id, (r) => r.name);
@@ -371,6 +383,7 @@ async function load(): Promise<MasterClientList> {
       reactivationDate: life.reactivationDate,
 
       contact: c.contact,
+      introCustom: introCustom.has(c.id),
       health: {
         present: !!h,
         period: snap && snap.period.target > 0 ? { delivered: snap.period.delivered, target: snap.period.target } : null,

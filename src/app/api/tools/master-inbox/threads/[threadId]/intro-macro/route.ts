@@ -5,10 +5,10 @@ import { requireSession } from "@/lib/auth/workspace";
 import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
-  hasIntroDetails,
+  introReady,
+  introText,
   introContactEmails,
   missingIntroFields,
-  renderIntroMacroTemplate,
 } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 /*
@@ -100,7 +100,7 @@ export async function GET(
       (miClient?.name as string | undefined) ?? null,
       "name, contact_name, contact_role, contact_email, " +
         "contact2_name, contact2_role, contact2_email, " +
-        "contact3_name, contact3_role, contact3_email, brokerage",
+        "contact3_name, contact3_role, contact3_email, brokerage, intro_override",
     );
     if (found.error) throw new Error(found.error);
     row = found.row;
@@ -134,9 +134,11 @@ export async function GET(
       email: str(`contact${n}_email`),
     })),
     brokerage: str("brokerage"),
+    // The client's own pasted introduction, when set (OS migration 0026).
+    introOverride: str("intro_override"),
   };
 
-  if (!hasIntroDetails(client)) {
+  if (!introReady(client)) {
     const missing = missingIntroFields(client).join(" and ");
     return NextResponse.json<Unavailable>({
       available: false,
@@ -155,7 +157,7 @@ export async function GET(
   return NextResponse.json<Available>({
     available: true,
     clientName: client.name,
-    body: renderIntroMacroTemplate(client),
+    body: introText(client),
     cc: introContactEmails(client).join(", ") || null,
     introductionLabelId: (introLabel?.id as string | undefined) ?? null,
   });

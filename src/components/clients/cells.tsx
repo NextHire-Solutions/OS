@@ -290,9 +290,11 @@ export function portalShortName(name: string, all: { name: string }[]): string {
  * What the Introduce button needs and this client lacks — the "intro template"
  * (contact name and role on the record). Empty when it can introduce.
  */
-export function introMissing(c: { status: string; contact: { name: string | null; role: string | null } }): string[] {
+export function introMissing(c: { status: string; contact: { name: string | null; role: string | null }; introCustom?: boolean }): string[] {
   // Only clients we introduce to now; paused and churned are not flagged.
   if (c.status !== "active" && c.status !== "onboarding") return [];
+  // A client's own pasted introduction is enough on its own.
+  if (c.introCustom) return [];
   const out: string[] = [];
   if (!c.contact.name?.trim()) out.push("contact name");
   if (!c.contact.role?.trim()) out.push("role");

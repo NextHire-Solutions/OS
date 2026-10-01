@@ -14,6 +14,7 @@ import {
 } from "@/lib/clients/field-registry";
 import type { MasterClient } from "@/lib/clients/master-list";
 import type { CampaignPortalView, CampaignRoute } from "@/lib/clients/campaign-portals";
+import type { IntroView } from "@/lib/clients/intro-override";
 import { CLIENT_STATUSES, STATUS_MEANING, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
 import { TIME_ZONES } from "@/lib/tools/client-health/types";
 
@@ -362,6 +363,11 @@ export function ClientRecord({
                 </section>
               ) : null}
               {tab === "introduce" ? (
+                <>
+                <section className="rx-sec">
+                  <h3>The introduction<span>what the Introduce button and the reply agent send</span></h3>
+                  <IntroPreview clientId={c.id} refreshKey={JSON.stringify(c.contact)} onChanged={onChanged} />
+                </section>
                 <section className="rx-sec">
                   <h3>Introduce to<span>used by the Introduce button in Master Inbox</span></h3>
                   <div className="rx-row">
@@ -379,6 +385,7 @@ export function ClientRecord({
                     );
                   })}
                 </section>
+                </>
               ) : null}
               {tab === "tools" ? <Tools c={c} /> : null}
             </div>
@@ -868,6 +875,185 @@ function BillingControl({ clientId }: { clientId: string }) {
  * TOGETHER. The server refuses a name without a role (the sentence reads
  * "<name>, <role>"). Clearing the name and role removes the person.
  */
+/* ------------------------------------------------------------- introduction --- */
+/* The fields an introduction may use, filled in for each conversation. */
+const INTRO_FIELDS: { token: string; label: string }[] = [
+  { token: "{{lead.first_name}}", label: "Lead's first name" },
+  { token: "{{lead.name}}", label: "Lead's full name" },
+  { token: "{{lead.phone_number}}", label: "Lead's phone" },
+  { token: "{{lead.email}}", label: "Lead's email" },
+  { token: "{{lead.company}}", label: "Lead's brokerage" },
+  { token: "{{lead.title}}", label: "Lead's title" },
+  { token: "{{sender.name}}", label: "Sender's name" },
+  { token: "{{sender.first_name}}", label: "Sender's first name" },
+];
+const FIELD_LABEL = new Map(INTRO_FIELDS.map((f) => [f.token.replace(/\s/g, ""), f.label]));
+
+/* The text as it will read, with each field shown as a labelled chip. */
+function IntroText({ text }: { text: string }) {
+  const parts = text.split(/(\{\{\s*[\w.]+\s*\}\})/g);
+  return (
+    <div className="rx-intro-text" style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, padding: "12px 14px", border: "1px solid var(--ds-line, #e4e4e7)", borderRadius: 8, background: "var(--ds-subtle, #fafafa)", fontSize: 13.5 }}>
+      {parts.map((p, i) => {
+        if (!/^\{\{/.test(p)) return <span key={i}>{p}</span>;
+        const label = FIELD_LABEL.get(p.replace(/\s/g, "")) ?? p.replace(/[{}\s]/g, "");
+        return (
+          <span key={i} title={p} style={{ display: "inline-block", padding: "0 6px", margin: "0 1px", borderRadius: 4, background: "#E8F0FE", color: "#1A4FB5", fontSize: 12, lineHeight: "18px", whiteSpace: "nowrap" }}>
+            {label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; refreshKey: string; onChanged: () => void }) {
+  const [view, setView] = useState<IntroView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [area, setArea] = useState<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setLoadError(null);
+    fetch(`/api/workspace/clients/intro?clientId=${encodeURIComponent(clientId)}`, { cache: "no-store" })
+      .then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (live) setView(body as IntroView);
+      })
+      .catch((e) => { if (live) setLoadError(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [clientId, refreshKey]);
+
+  async function save(custom: string | null) {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch("/api/workspace/clients/intro", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, custom }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      setView(body.view as IntroView);
+      setEditing(false); setConfirmReset(false);
+      setMsg({
+        text: `${custom ? "Custom introduction saved" : "Back to the standard introduction"}.${body.template === "failed" ? " The Templates copy could not be updated; the Introduce button uses the new text regardless." : ""}`,
+      });
+      onChanged();
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : String(e), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function insert(token: string) {
+    if (!area) { setDraft((d) => d + token); return; }
+    const { selectionStart: a, selectionEnd: b } = area;
+    const next = draft.slice(0, a) + token + draft.slice(b);
+    setDraft(next);
+    requestAnimationFrame(() => { area.focus(); area.setSelectionRange(a + token.length, a + token.length); });
+  }
+
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setMsg({ text: "Could not copy — select the text and copy it instead.", bad: true });
+    }
+  }
+
+  if (loadError) return <div className="rx-hint" role="alert">The introduction could not be read: {loadError}</div>;
+  if (!view) return <div className="rx-hint">Loading the introduction…</div>;
+
+  const current = view.custom ?? view.standard;
+  const badge = (on: boolean, text: string) => (
+    <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".02em", padding: "2px 8px", borderRadius: 999, background: on ? "#EDE7FB" : "#EAF5EE", color: on ? "#5B33B5" : "#1E7A45" }}>{text}</span>
+  );
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {view.custom ? badge(true, "Custom introduction") : view.standard ? badge(false, "Standard introduction") : null}
+        <span style={{ flex: 1 }} />
+        {current && !editing ? (
+          <button type="button" className="rx-btn" onClick={() => void copy(current)}>{copied ? "Copied" : "Copy"}</button>
+        ) : null}
+        {!editing ? (
+          <button type="button" className="rx-btn" disabled={!view.canSaveCustom}
+            title={view.canSaveCustom ? undefined : "Custom introductions need database migration 0026 first."}
+            onClick={() => { setDraft(view.custom ?? ""); setEditing(true); setMsg(null); setConfirmReset(false); }}>
+            {view.custom ? "Edit custom intro" : "Use a custom intro"}
+          </button>
+        ) : null}
+        {view.custom && !editing && !confirmReset ? (
+          <button type="button" className="rx-btn" onClick={() => setConfirmReset(true)}>Back to standard</button>
+        ) : null}
+      </div>
+
+      {confirmReset ? (
+        <div className="rx-confirm" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span>Remove the custom introduction and send the standard one again?</span>
+          <button type="button" className="rx-btn solid" disabled={busy || !view.standard}
+            title={view.standard ? undefined : "Add the first contact's name and role below first."}
+            onClick={() => void save(null)}>{busy ? "Saving…" : "Use standard"}</button>
+          <button type="button" className="rx-btn" disabled={busy} onClick={() => setConfirmReset(false)}>Cancel</button>
+        </div>
+      ) : null}
+
+      {editing ? (
+        <div style={{ display: "grid", gap: 8 }}>
+          <textarea ref={setArea} className="ds-input" aria-label="Custom introduction" rows={10} value={draft}
+            placeholder={"Paste the introduction here.\n\nHi {{lead.first_name}}, I'd like to introduce you to…"}
+            style={{ width: "100%", minWidth: 0, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, padding: 10 }}
+            onChange={(e) => setDraft(e.target.value)} disabled={busy} autoFocus />
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+            <span style={{ color: "var(--ds-muted)" }}>Insert a field:</span>
+            {INTRO_FIELDS.map((f) => (
+              <button key={f.token} type="button" className="rx-btn" style={{ padding: "1px 7px", fontSize: 12 }}
+                title={f.token} disabled={busy} onClick={() => insert(f.token)}>{f.label}</button>
+            ))}
+          </div>
+          {!draft && view.standard ? (
+            <div><button type="button" className="rx-btn" style={{ fontSize: 12 }} onClick={() => setDraft(view.standard ?? "")}>Start from the standard introduction</button></div>
+          ) : null}
+          {draft.trim() ? (
+            <>
+              <span style={{ fontSize: 12, color: "var(--ds-muted)" }}>How it will read</span>
+              <IntroText text={draft.trim()} />
+            </>
+          ) : null}
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" className="ds-btn primary sm" disabled={busy || !draft.trim()} onClick={() => void save(draft)}>{busy ? "Saving…" : "Save custom intro"}</button>
+            <button type="button" className="ds-btn ghost sm" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : current ? (
+        <IntroText text={current} />
+      ) : (
+        <div className="rx-hint" style={{ marginTop: 0 }}>
+          No introduction yet. Add the first contact&apos;s {view.missing.join(" and ")} below, or paste a custom intro.
+        </div>
+      )}
+
+      {!editing && current ? (
+        <div className="rx-hint" style={{ marginTop: 0 }}>
+          The highlighted parts are filled in for each lead when it is sent.
+          {view.custom ? " The contacts below are still copied in (Cc)." : " It is written from the contacts below."}
+        </div>
+      ) : null}
+      {msg ? <div role="status" style={{ fontSize: 13, color: msg.bad ? "var(--x-bad, #b42318)" : undefined }}>{msg.text}</div> : null}
+    </div>
+  );
+}
+
 function ContactEditor({
   ordinal, value, onSave,
 }: {

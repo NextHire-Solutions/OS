@@ -31,6 +31,8 @@ import {
   hasIntroDetails,
   introContactEmails,
   renderIntroMacroTemplate,
+  introReady,
+  introText,
   type IntroMacroClient,
 } from "../inbox/intro-macro.ts";
 import { substituteVariables, type SubstitutionContext } from "../inbox/template-variables.ts";
@@ -279,7 +281,7 @@ export function planHandover(handover: AgentHandover, ctx: HandoverContext): Han
       detail: ctx.unavailableReason ?? "this conversation is not assigned to a client",
     };
   }
-  if (!hasIntroDetails(ctx.client)) {
+  if (!introReady(ctx.client)) {
     return {
       kind: "stop",
       reason: "no_introduction_details",
@@ -290,7 +292,8 @@ export function planHandover(handover: AgentHandover, ctx: HandoverContext): Han
   }
 
   const override = handover.message.trim();
-  const template = override.length > 0 ? override : renderIntroMacroTemplate(ctx.client);
+  // The per-agent message wins, then the client's custom intro, then the standard wording.
+  const template = override.length > 0 ? override : introText(ctx.client);
 
   return {
     kind: "introduce",

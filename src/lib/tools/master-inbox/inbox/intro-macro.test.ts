@@ -80,3 +80,15 @@ test("missing fields are named, and brokerage is not one of them", () => {
 test("the stored template's name is how it is found again", () => {
   assert.equal(introTemplateName("54 Realty"), "Intro Macro - 54 Realty");
 });
+
+test("a custom intro replaces the standard wording, and is enough on its own", async () => {
+  const m = await import("./intro-macro.ts");
+  const base = { name: "OpsLabs", brokerage: "OpsLabs", contactName: null, contactRole: null, contactEmail: null };
+  assert.equal(m.introReady(base), false);
+  const custom = { ...base, introOverride: "  Hi {{lead.first_name}}, meet the OpsLabs team.  " };
+  assert.equal(m.introReady(custom), true);
+  assert.equal(m.introText(custom), "Hi {{lead.first_name}}, meet the OpsLabs team.");
+  const blank = { ...base, contactName: "Chris Silvia", contactRole: "Director", introOverride: "   " };
+  assert.equal(m.customIntro(blank), null);
+  assert.equal(m.introText(blank), m.renderIntroMacroTemplate(blank));
+});
