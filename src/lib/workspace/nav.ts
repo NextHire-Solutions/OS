@@ -65,13 +65,6 @@ export const NAV: NavSection[] = [
       { kind: "page", id: "home", label: "Home", route: "/" },
       { kind: "page", id: "performance", label: "Performance", route: "/performance" },
       { kind: "page", id: "roster", label: "Clients", route: "/roster" },
-      /*
-       * Consistency was routed here until a refactor on 2026-09-11 dropped the
-       * import, and the screen has been unreachable since — including the
-       * status-conflict, coverage and link-integrity checks added to it later.
-       * A screen nobody can open cannot report anything.
-       */
-      { kind: "page", id: "consistency", label: "Consistency", route: "/consistency" },
       // Sales payouts by account manager — each person sees only their own.
       { kind: "page", id: "commissions", label: "Commissions", route: "/commissions" },
     ],
@@ -189,6 +182,8 @@ export const NAV: NavSection[] = [
     label: "Admin",
     items: [
       { kind: "page", id: "assistant", label: "Assistant", route: "/assistant" },
+      // Admins only (Eddy, 2 Oct) — moved here from Workspace.
+      { kind: "page", id: "consistency", label: "Consistency", route: "/consistency" },
       { kind: "page", id: "team-access", label: "Team access", route: "/admin/team" },
       { kind: "page", id: "reply-agent", label: "Reply agent", route: "/reply-agent" },
     ],
@@ -337,11 +332,27 @@ export function idForPath(pathname: string): string {
  * Pages only admins can use (30 Sep). Their data is refused to everyone else
  * at the API; hiding them from the menu stops a non-admin clicking into an
  * error. The Assistant also opens for someone who holds every tool.
+ * Consistency joined them on 2 Oct (Eddy).
  */
-export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent"]);
+export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consistency"]);
 
-export function canSeePage(id: string, admin: boolean, grants: string[], allTools: readonly string[]): boolean {
+/** A person's sales roles, for the pages below. Admins see everything regardless. */
+export interface RoleFlags {
+  accountManager?: boolean;
+  salesperson?: boolean;
+}
+
+/*
+ * By role (Eddy, 2 Oct):
+ *   Account managers  no Performance, no Consistency
+ *   Salespeople       no Performance, no Clients, no Consistency
+ * Someone who is both keeps Clients — they manage accounts on it.
+ */
+export function canSeePage(id: string, admin: boolean, grants: string[], allTools: readonly string[], roles: RoleFlags = {}): boolean {
   if (ADMIN_ONLY_PAGES.has(id)) return admin;
   if (id === "assistant") return admin || allTools.every((t) => grants.includes(t));
+  if (admin) return true;
+  if (id === "performance") return !roles.accountManager && !roles.salesperson;
+  if (id === "roster") return !(roles.salesperson && !roles.accountManager);
   return true;
 }

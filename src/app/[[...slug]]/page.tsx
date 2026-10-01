@@ -56,9 +56,10 @@ import { AnalyticsVolumeScreen } from "@/components/screens/analytics/volume";
 import { CampaignDetailScreen } from "@/components/screens/analytics/campaign-detail";
 import { AnalyticsScheduleScreen } from "@/components/screens/analytics/schedule";
 import { AnalyticsClientsScreen } from "@/components/screens/analytics/clients";
-import { idForPath, products } from "@/lib/workspace/nav";
+import { canSeePage, idForPath, products } from "@/lib/workspace/nav";
+import { redirect } from "next/navigation";
 import { ALL_TOOLS } from "@/lib/bs-auth";
-import { isAdminUser } from "@/lib/identity/admin-db";
+import { viewerRoles } from "@/lib/identity/viewer-roles";
 
 /*
  * The workspace, at every address.
@@ -261,8 +262,13 @@ export default async function WorkspacePage({
     loadRailBadges(),
   ]);
   const summary = aggregate(snapshots.map((s) => s.state));
-  // Owners and marked admins see the admin-only pages in the menu.
-  const admin = await isAdminUser(email);
+  // Owners and marked admins see the admin-only pages in the menu; account
+  // managers and salespeople see fewer (Eddy, 2 Oct). A typed URL to a page
+  // the person may not see lands on Home.
+  const viewer = await viewerRoles(email);
+  const admin = viewer.admin;
+  const roles = { accountManager: viewer.accountManager, salesperson: viewer.salesperson };
+  if (!initialId.includes(":") && !canSeePage(initialId, admin, grants, ALL_TOOLS, roles)) redirect("/");
 
   const toolUrls: Record<string, string> = {};
   for (const product of products()) {
@@ -282,8 +288,9 @@ export default async function WorkspacePage({
   const shellHost =
     requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "";
 
+  // The name on Team access ("Sam Smith" → "Sam"), else the email's first part.
   const local = email ? (email.split("@")[0] ?? "there") : "there";
-  const firstName = local.charAt(0).toUpperCase() + local.slice(1);
+  const firstName = viewer.name ? viewer.name.split(/\s+/)[0] : local.charAt(0).toUpperCase() + local.slice(1);
 
   return (
     <Workspace
@@ -291,7 +298,8 @@ export default async function WorkspacePage({
       grants={grants}
       admin={admin}
       badges={railBadges}
-      user={{ name: firstName, email }}
+      user={{ name: viewer.name ?? firstName, email }}
+      roles={roles}
       toolUrls={toolUrls}
       shellHost={shellHost}
       /*

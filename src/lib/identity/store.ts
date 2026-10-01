@@ -278,6 +278,21 @@ export async function setUserActive(email: string, active: boolean): Promise<voi
   if (upd) throw new Error(upd.message);
 }
 
+/**
+ * Delete an invited person (Eddy, 2 Oct: "need to be able to delete team
+ * members"). Their tool grants and their sign-in go; they cannot sign in
+ * again, and their session ends at its next refresh. Their salesperson
+ * record (os_salespeople) is kept — clients and commission history name it.
+ */
+export async function deleteUser(email: string): Promise<void> {
+  const key = email.trim().toLowerCase();
+  const { error: g } = await osTable("os_tool_grants").delete().eq("email", key);
+  if (g && !/does not exist|schema cache/i.test(g.message)) throw new Error(g.message);
+  const { data, error } = await osTable("os_users").delete().eq("email", key).select("email");
+  if (error) throw new Error(error.message);
+  if (!data || !(data as unknown[]).length) throw new Error(`${key} is not an invited user.`);
+}
+
 /** Replace the password (a fresh temporary one) and invalidate live sessions. */
 export async function resetUserPassword(email: string, passwordHash: string): Promise<void> {
   const key = email.trim().toLowerCase();

@@ -149,6 +149,28 @@ export function TeamAccessScreen() {
     }
   }, [reload]);
 
+  // Delete asks first, in the row: "Delete Sam Smith?" → Delete / Cancel.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const removePerson = useCallback(async (email: string) => {
+    setSaveError(null);
+    setSaving(`${email}:person`);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
+      setConfirmDelete(null);
+      await reload();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Could not delete");
+    } finally {
+      setSaving(null);
+    }
+  }, [reload]);
+
   const toggle = useCallback((email: string, tool: string) => {
     setPreview(null);
     setCopied(false);
@@ -347,6 +369,30 @@ export function TeamAccessScreen() {
                         >
                           {user.isActive ? "Deactivate" : "Reactivate"}
                         </button>
+                        {!user.isOwner && confirmDelete !== user.email ? (
+                          <button
+                            type="button"
+                            style={{ ...LINK_BUTTON, fontSize: 12.5, color: "var(--red)" }}
+                            disabled={saving === `${user.email}:person`}
+                            onClick={() => setConfirmDelete(user.email)}
+                          >
+                            Delete
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {confirmDelete === user.email ? (
+                      <div role="alertdialog" aria-label={`Delete ${user.name ?? user.email}?`}
+                        style={{ marginTop: 8, padding: "10px 12px", borderRadius: 10, background: "#FEEFEE", border: "1px solid #F9D2CF", fontSize: 12.5, lineHeight: 1.5, maxWidth: 420 }}>
+                        <b>Delete {user.name ?? user.email}?</b> They can no longer sign in and their tool access is removed. This cannot be undone.
+                        {user.accountManager || user.salesperson ? " Clients that name them keep their name; they stop earning commission as account manager." : ""}
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button type="button" className="ds-btn sm" style={{ background: "var(--red)", borderColor: "var(--red)", color: "#fff" }}
+                            disabled={saving === `${user.email}:person`} onClick={() => void removePerson(user.email)}>
+                            {saving === `${user.email}:person` ? "Deleting…" : "Delete"}
+                          </button>
+                          <button type="button" className="ds-btn sm" disabled={saving === `${user.email}:person`} onClick={() => setConfirmDelete(null)}>Cancel</button>
+                        </div>
                       </div>
                     ) : null}
                   </td>

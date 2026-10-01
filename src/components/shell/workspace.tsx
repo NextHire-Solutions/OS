@@ -11,7 +11,7 @@ import { Topbar } from "./topbar";
 import { Palette } from "./palette";
 import { ToolPane } from "./tool-pane";
 import { NAV, destinations, idForPath, pathForId, type Destination } from "@/lib/workspace/nav";
-import { canSeePage } from "@/lib/workspace/nav";
+import { canSeePage, type RoleFlags } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 
 /*
@@ -44,6 +44,8 @@ export interface WorkspaceProps {
   screens: Partial<Record<string, React.ReactNode>>;
   /** Resolved from the URL on the server, so a pasted link lands correctly. */
   initialId?: string;
+  /** Account manager / salesperson: fewer pages (Eddy, 2 Oct). */
+  roles?: RoleFlags;
 }
 
 export function Workspace({
@@ -55,6 +57,7 @@ export function Workspace({
   badges,
   screens,
   initialId = "home",
+  roles = {},
 }: WorkspaceProps) {
   const [activeId, setActiveId] = useState(initialId);
   const [collapsed, setCollapsed] = useState(false);
@@ -75,8 +78,8 @@ export function Workspace({
   const all = useMemo(() => destinations(), []);
   const reachable = useMemo(
     // The command palette offers exactly what the menu does.
-    () => all.filter((d) => (!d.tool || grants.includes(d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS)),
-    [all, grants, admin],
+    () => all.filter((d) => (!d.tool || grants.includes(d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS, roles)),
+    [all, grants, admin, roles],
   );
 
   const router = useRouter();
@@ -229,6 +232,7 @@ export function Workspace({
         <Rail
           grants={grants}
           admin={admin}
+          roles={roles}
           activeId={activeId}
           onNavigate={navigate}
           onPrefetch={prefetch}

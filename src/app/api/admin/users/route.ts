@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { createUser, DbGrantStore, grantStore, resetUserPassword, setUserActive, writeGrant } from "@/lib/identity/store";
+import { createUser, DbGrantStore, deleteUser, grantStore, resetUserPassword, setUserActive, writeGrant } from "@/lib/identity/store";
 import { generateTemporaryPassword } from "@/lib/identity/user-table";
 import { sha256Hex } from "@/lib/bs-auth";
 import { coerceTools, describeAdmins, GRANTABLE_TOOLS, isAdmin } from "@/lib/identity/admin";
@@ -250,6 +250,40 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Could not save." }, { status: 500 });
   }
   return NextResponse.json({ ok: true, email, grants });
+}
+
+/*
+ * Delete a person (Eddy, 2 Oct). Invited people only: not yourself, not an
+ * Owner (ADMIN_EMAILS), not an AUTH_USERS account — the same lines as
+ * Deactivate. Their sign-in and grants go; their salesperson record stays.
+ */
+export async function DELETE(request: Request) {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) return NextResponse.json({ error: "Not configured." }, { status: 503 });
+  const session = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!(await isAdminUser(session.email))) {
+    return NextResponse.json({ error: "Forbidden", detail: "Only workspace admins can delete people." }, { status: 403 });
+  }
+  const body = (await request.json().catch(() => null)) as { email?: unknown } | null;
+  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (!email) return NextResponse.json({ error: "email is required" }, { status: 400 });
+  if (email === session.email) return NextResponse.json({ error: "You cannot delete your own account." }, { status: 400 });
+  if (isAdmin(email)) return NextResponse.json({ error: `${email} is an Owner and cannot be deleted.` }, { status: 409 });
+  const store = grantStore();
+  const people = store instanceof DbGrantStore ? await store.listMerged() : [];
+  const person = people.find((p) => p.email === email);
+  if (!person) return NextResponse.json({ error: `${email} is not a workspace user.` }, { status: 404 });
+  if (person.source !== "db") {
+    return NextResponse.json({ error: `${email} signs in through AUTH_USERS; manage that account in Railway.` }, { status: 409 });
+  }
+  try {
+    await deleteUser(email);
+    console.log(`[admin/users] ${session.email} deleted ${email}`);
+    return NextResponse.json({ ok: true, email, deleted: true });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Could not delete." }, { status: 500 });
+  }
 }
 
 /*

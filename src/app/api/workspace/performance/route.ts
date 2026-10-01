@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getPerformance } from "@/lib/workspace/performance";
+import { pageGuard } from "@/lib/identity/viewer-roles";
 
 /*
  * Data for one screen, so the other screens do not pay for it.
@@ -15,7 +16,10 @@ import { getPerformance } from "@/lib/workspace/performance";
  */
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  // Behind a page some roles may not see (Eddy, 2 Oct) — see viewer-roles.ts.
+  const refused = await pageGuard(request, "performance");
+  if (refused) return refused;
   try {
     return NextResponse.json(await getPerformance());
   } catch (error) {

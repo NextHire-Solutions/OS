@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { diffRosters } from "@/lib/reconcile/names";
 import { fetchRosters, type Roster } from "@/lib/reconcile/rosters";
 import { canonicaliseRosters } from "@/lib/reconcile/canonicalise";
+import { pageGuard } from "@/lib/identity/viewer-roles";
 import {
   gatherAliasDriftReport,
   gatherCountReport,
@@ -24,7 +25,10 @@ export const dynamic = "force-dynamic";
  * Database app both join clients by normalised name, which is exactly why the
  * lists drift in the first place.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  // Behind a page some roles may not see (Eddy, 2 Oct) — see viewer-roles.ts.
+  const refused = await pageGuard(request, "consistency");
+  if (refused) return refused;
   /*
    * Two halves of the same question, gathered together:
    *   rosters  — WHICH clients each tool knows about (membership)

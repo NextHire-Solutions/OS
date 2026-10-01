@@ -189,6 +189,7 @@ export type SsoFailure =
   | "malformed"
   | "bad-signature"
   | "expired"
+  | "before-cutoff"
   | "bad-payload";
 
 export type SsoResult =
@@ -229,7 +230,25 @@ export async function verifySsoDetailed(
 
   if (session.exp + CLOCK_SKEW_MS <= now) return { ok: false, reason: "expired" };
 
+  /*
+   * "Log everyone out" (2 Oct, after the admin password was changed): a
+   * session minted before SSO_SESSIONS_NOT_BEFORE (an ISO time, set on the OS
+   * service) is refused at once, instead of living out its 30 minutes. The
+   * apps that verify this cookie without the variable still stop within 30
+   * minutes, because their refresh comes back here.
+   */
+  const cutoff = sessionsNotBefore();
+  if (cutoff !== null && session.iat < cutoff) return { ok: false, reason: "before-cutoff" };
+
   return { ok: true, session };
+}
+
+/** SSO_SESSIONS_NOT_BEFORE as epoch ms, or null when unset or unreadable. */
+export function sessionsNotBefore(): number | null {
+  const raw = typeof process !== "undefined" ? process.env?.SSO_SESSIONS_NOT_BEFORE : undefined;
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : null;
 }
 
 /** The common case: a session, or null. */

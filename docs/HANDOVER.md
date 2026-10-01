@@ -499,6 +499,22 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **Security and roles (2 Oct, Eddy — someone was let go who knew the admin
+  password).** admin@outreachify.io has a new generated password: its hash is
+  in os_users (wins at sign-in) AND in the os service's AUTH_USERS (the
+  fallback), so the old one works nowhere on the OS. Everyone was logged out:
+  every os_users token_version was bumped, and `SSO_SESSIONS_NOT_BEFORE`
+  (ISO time, os service) makes bs-auth refuse any session minted before it —
+  instantly, not after 30 minutes. Standalone apps that read the cookie still
+  honour old cookies until they expire (≤30 min); their refresh comes back to
+  the OS and is refused. Analytics and Client Health keep their OWN sign-in
+  lists — not checked (their Railway tokens were rejected on 2 Oct).
+  Roles (nav.ts `canSeePage`, viewer-roles.ts): Consistency is admin-only and
+  sits under Admin; account managers lose Performance; salespeople lose
+  Performance and Clients (both roles keep Clients). Typed URLs redirect Home
+  and the Performance/Consistency APIs answer 403 (`pageGuard`). Home greets
+  by the Team access name. Team access has Delete (invited people only; not
+  self, not an Owner, not AUTH_USERS; salesperson records are kept).
 - **Client profile fields and Stripe figures (1 Oct, Eddy).** Clients now has
   Sign up date, Website, Zillow profile, POC name, POC email (os_clients,
   **migration 0027**; `client-profile.ts`, read on their own so the list
