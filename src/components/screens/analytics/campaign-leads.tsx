@@ -10,6 +10,8 @@ import {
   LEAD_COLUMN_PREFS_VERSION,
   LEAD_DEFAULT_VISIBLE,
   LEAD_STATUS_LABELS,
+  INSTANTLY_SORTS,
+  LEAD_NAME_SORT,
   type LeadRow,
 } from "@/lib/tools/analytics/lead-columns.ts";
 import { CAMPAIGN_LEADS_URL, selectAllLeadIds, useAnalyticsData } from "./actions";
@@ -90,6 +92,8 @@ export function CampaignLeads({
     LEAD_DEFAULT_VISIBLE,
   );
   const { sort, toggle } = useSort();
+  // The platform comes from the id's shape: an Instantly id is a uuid.
+  const isInstantly = /^[0-9a-f]{8}-/i.test(campaignId);
 
   /*
    * Selection is by lead id, not by row index, so it survives paging, sorting
@@ -284,11 +288,23 @@ export function CampaignLeads({
                         aria-label={allOnPageSelected ? "Deselect this page" : "Select this page"}
                         style={{ accentColor: "var(--blue)", cursor: "pointer" }}
                       />
-                      Lead
+                      <button
+                        type="button"
+                        onClick={() => toggle(LEAD_NAME_SORT)}
+                        title="Sort by lead name"
+                        aria-label="Sort by lead name"
+                        style={{ border: 0, background: "none", font: "inherit", padding: 0, cursor: "pointer", color: sort?.key === LEAD_NAME_SORT ? "var(--ink)" : "inherit", fontWeight: sort?.key === LEAD_NAME_SORT ? 600 : 500, display: "inline-flex", alignItems: "center", gap: 4 }}
+                      >
+                        Lead
+                        <span aria-hidden="true" style={{ opacity: sort?.key === LEAD_NAME_SORT ? 1 : 0.35 }}>
+                          {sort?.key === LEAD_NAME_SORT ? (sort.dir === "asc" ? "↑" : "↓") : "↕"}
+                        </span>
+                      </button>
                     </span>
                   </th>
                   {columns.map((c) =>
-                    c.sortKey ? (
+                    // Instantly's rows carry fewer fields; a column it cannot sort keeps a plain header.
+                    c.sortKey && (!isInstantly || INSTANTLY_SORTS.has(c.sortKey)) ? (
                       <SortHeader
                         key={c.key}
                         label={c.label}

@@ -113,14 +113,23 @@ export async function GET(
    * when the truth is "Instantly does not report it".
    */
   if (platform === "instantly") {
-    const { data, error } = await sb.rpc("analytics_instantly_lead_rows", {
+    const base = {
       p_team_id: teamId,
       p_campaign_id: campaignId,
       p_search: search,
       p_status: status.length ? status : null,
       p_limit: PAGE_SIZE,
       p_offset: (page - 1) * PAGE_SIZE,
-    });
+    };
+    /*
+     * Sorting needs analytics migration 094 (p_sort / p_dir). Before it runs
+     * the function has no such parameters, so a sorted request is retried
+     * unsorted rather than failing the page.
+     */
+    let { data, error } = await sb.rpc("analytics_instantly_lead_rows", sort ? { ...base, p_sort: sort, p_dir: dir } : base);
+    if (error && sort && /analytics_instantly_lead_rows|function|parameter/i.test(error.message)) {
+      ({ data, error } = await sb.rpc("analytics_instantly_lead_rows", base));
+    }
     if (error) {
       console.error("[api/campaigns/leads:instantly]", error);
       return NextResponse.json({ error: error.message }, { status: 500 });

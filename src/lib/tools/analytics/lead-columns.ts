@@ -59,9 +59,16 @@ export interface LeadColumnDef {
   align?: "left" | "right";
   render: (row: LeadRow) => string;
   /** Present ⇒ sortable. The key the RPC understands, not a local accessor —
-   *  this list is server-paginated, so the sort has to happen in SQL. */
+   *  this list is server-paginated, so the sort has to happen in SQL. Every
+   *  column has one since analytics migration 094 (2 Oct). */
   sortKey?: string;
 }
+
+/** The Lead column (name, else email) — pinned, so it is not in the registry. */
+export const LEAD_NAME_SORT = "name";
+
+/** What an Instantly campaign can sort by — its lead rows carry only these (094). */
+export const INSTANTLY_SORTS = new Set(["name", "email", "domain", "company", "status", "replies", "opens", "last_sent_at"]);
 
 /*
  * THE ONE BEHAVIOURAL FIX IN AN OTHERWISE VERBATIM FILE.
@@ -78,6 +85,11 @@ export interface LeadColumnDef {
  * is bucketed against everywhere else.
  */
 const date = (value: string | null) => (value ? dayStamp(value) : DASH);
+
+/** Attributes that are amounts or counts — sorted as numbers ("$2,300,000" → 2300000), not as text. */
+const NUMERIC_ATTRIBUTES = new Set([
+  "sales volume", "estimated gci", "closed transactions", "average sales price", "closed rentals", "buy-side", "list-side",
+]);
 
 /** The twelve custom variables this workspace actually carries. */
 const ATTRIBUTES: Array<[string, string]> = [
@@ -102,7 +114,7 @@ export const LEAD_COLUMNS: LeadColumnDef[] = [
   { key: "title", label: "Title", group: "Lead", defaultVisible: false, align: "left",
     render: (r) => r.title || DASH, sortKey: "title" },
   { key: "domain", label: "Domain", group: "Lead", defaultVisible: false, align: "left",
-    render: (r) => r.email?.split("@")[1] || DASH },
+    render: (r) => r.email?.split("@")[1] || DASH, sortKey: "domain" },
   { key: "status", label: "Status", group: "Lead", defaultVisible: true, align: "left",
     render: (r) => r.status, sortKey: "status" },
 
@@ -115,7 +127,7 @@ export const LEAD_COLUMNS: LeadColumnDef[] = [
   { key: "lastSentAt", label: "Last contacted", group: "Sequence", defaultVisible: true,
     render: (r) => date(r.lastSentAt), sortKey: "last_sent_at" },
   { key: "senderEmail", label: "Sent from", group: "Sequence", defaultVisible: false, align: "left",
-    render: (r) => r.senderEmail || DASH },
+    render: (r) => r.senderEmail || DASH, sortKey: "sender_email" },
 
   { key: "opens", label: "Opens", group: "Engagement", defaultVisible: true,
     render: (r) => fullNumber(r.opens), sortKey: "opens" },
@@ -129,11 +141,11 @@ export const LEAD_COLUMNS: LeadColumnDef[] = [
    * count here therefore agrees with the Replies tab and the KPI band.
    */
   { key: "replies", label: "Replies", group: "Engagement", defaultVisible: true,
-    render: (r) => fullNumber(r.replies) },
+    render: (r) => fullNumber(r.replies), sortKey: "replies" },
   { key: "positive", label: "Positive", group: "Engagement", defaultVisible: false,
-    render: (r) => fullNumber(r.positive) },
+    render: (r) => fullNumber(r.positive), sortKey: "positive" },
   { key: "bounces", label: "Bounces", group: "Engagement", defaultVisible: false,
-    render: (r) => fullNumber(r.bounces) },
+    render: (r) => fullNumber(r.bounces), sortKey: "bounces" },
 
   ...ATTRIBUTES.map(([name, label]): LeadColumnDef => ({
     key: `attr:${name}`,
@@ -142,6 +154,7 @@ export const LEAD_COLUMNS: LeadColumnDef[] = [
     defaultVisible: name === "phone number",
     align: "left",
     render: (r) => r.attributes?.[name] || DASH,
+    sortKey: `${NUMERIC_ATTRIBUTES.has(name) ? "attrn" : "attr"}:${name}`,
   })),
 ];
 
