@@ -499,6 +499,15 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **Campaign Leads: every column sorts (2 Oct), both apps.** Analytics
+  migration 094 (run by the user; file in the Analytics repo) adds sort keys
+  `name`, `domain`, `sender_email`, `replies`/`positive`/`bounces`,
+  `attr:<name>` (text) and `attrn:<name>` (amounts as numbers) to
+  `analytics_campaign_lead_rows`, and p_sort/p_dir to
+  `analytics_instantly_lead_rows` (dropped + recreated, same grants). It also
+  fixed an old bug: pages came back re-sorted by last_sent_at, so any other
+  sort was out of order within a page. Instantly rows now carry `name`.
+  Verified on both production apps, every column, both directions.
 - **Security and roles (2 Oct, Eddy — someone was let go who knew the admin
   password).** admin@outreachify.io has a new generated password: its hash is
   in os_users (wins at sign-in) AND in the os service's AUTH_USERS (the
