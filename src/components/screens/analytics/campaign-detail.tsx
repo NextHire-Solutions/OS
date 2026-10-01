@@ -593,7 +593,7 @@ function Sequence({
       ) : null}
       <div style={{ marginBottom: 14 }}>{tools}</div>
       {dialogs}
-      <Box title="The sequence" note={`${steps.length} step${steps.length === 1 ? "" : "s"}`}>
+      <Box title="The sequence" note={`${steps.length} step${steps.length === 1 ? "" : "s"} · open a step to delete it, or turn it off if it has sent`}>
         <div style={{ padding: "6px 0" }}>
           {steps.length === 0 ? (
             <div className="mut" style={{ padding: 22 }}>No steps in the cache for this campaign.</div>
@@ -709,7 +709,12 @@ function StepRow({
   );
 }
 
-/* Delete a never-sent step or variant; turn a sent one off or on. Why not, when neither. */
+/*
+ * Delete a never-sent step or variant; turn a sent one off or on. The button
+ * is always shown for a sent step — greyed out with the reason when it can't
+ * be used right now (EmailBison: only while the campaign is paused) — so it is
+ * never hidden behind a note nobody notices.
+ */
 function StepActions({ live, busy, onAct, label, inline }: {
   live: LiveStep | undefined;
   busy: string | null;
@@ -719,27 +724,28 @@ function StepActions({ live, busy, onAct, label, inline }: {
 }) {
   if (!live) return null;
   const working = busy === live.key;
-  const wrap: React.CSSProperties = inline ? { display: "inline-flex", gap: 8, alignItems: "center" } : { display: "flex", gap: 8, alignItems: "center", margin: "0 0 10px" };
-  if (live.canDelete) {
-    return (
-      <span style={wrap}>
-        <ConfirmButton label={working ? "Deleting…" : "Delete"} armedLabel={`Delete ${label.toLowerCase()}?`}
-          title="It has never sent, so it can be removed." disabled={Boolean(busy)} onConfirm={() => onAct(live.key, "delete", label)} />
-      </span>
-    );
-  }
-  if (live.canToggle) {
+  const wrap: React.CSSProperties = inline ? { display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" } : { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "0 0 10px" };
+  const note = (t: string | null) => (t ? <span className="mut" style={{ fontSize: 11.5 }}>{t}</span> : null);
+  const sent = (live.sent ?? 0) > 0;
+  if (sent) {
     const off = live.active;
     return (
       <span style={wrap}>
         <ConfirmButton label={working ? "Saving…" : off ? "Turn off" : "Turn on"} armedLabel={off ? `Stop sending ${label.toLowerCase()}?` : `Send ${label.toLowerCase()} again?`}
-          title={off ? "It has sent, so it is turned off rather than deleted — its stats stay." : "Turns it back on."}
-          disabled={Boolean(busy)} onConfirm={() => onAct(live.key, off ? "turn-off" : "turn-on", label)} />
+          title={live.canToggle ? (off ? "It has sent, so it is turned off rather than deleted — its stats stay." : "Turns it back on.") : live.toggleWhy ?? ""}
+          disabled={Boolean(busy) || !live.canToggle} onConfirm={() => onAct(live.key, off ? "turn-off" : "turn-on", label)} />
+        {live.canToggle ? null : note(live.toggleWhy)}
       </span>
     );
   }
-  const why = live.sent ? live.toggleWhy : live.deleteWhy;
-  return why ? <span className="mut" style={{ fontSize: 11.5, ...(inline ? {} : { display: "block", margin: "0 0 10px" }) }}>{why}</span> : null;
+  return (
+    <span style={wrap}>
+      <ConfirmButton label={working ? "Deleting…" : "Delete"} armedLabel={`Delete ${label.toLowerCase()}?`}
+        title={live.canDelete ? "It has never sent, so it can be removed." : live.deleteWhy ?? ""}
+        disabled={Boolean(busy) || !live.canDelete} onConfirm={() => onAct(live.key, "delete", label)} />
+      {live.canDelete ? null : note(live.deleteWhy)}
+    </span>
+  );
 }
 
 function CopyAndOffer({

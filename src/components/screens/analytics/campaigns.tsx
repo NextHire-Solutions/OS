@@ -170,6 +170,11 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
   const rows = useMemo(
     () =>
       sortRows(data?.items ?? [], sort, (r, key) => {
+        // Daily send limit first, then new leads per day.
+        if (key === "sendingLimits") {
+          const l = r.sendingLimits;
+          return l && (l.daily != null || l.newLeads != null) ? (l.daily ?? 0) * 1_000_000 + (l.newLeads ?? 0) : null;
+        }
         if (key === "replyRate") {
           return r.lifetime_emails_sent && r.lifetime_unique_replies
             ? r.lifetime_unique_replies / r.lifetime_emails_sent
@@ -500,7 +505,7 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
                 <SortHeader label="Replies" sortKey="lifetime_unique_replies" sort={sort} onToggle={toggle} align="right" />
                 <SortHeader label="Leads" sortKey="total_leads" sort={sort} onToggle={toggle} align="right" />
                 <SortHeader label="Progress" sortKey="completion_percentage" sort={sort} onToggle={toggle} width={150} />
-                <th style={{ width: 120, textAlign: "right" }} title="Daily send limit / New leads per day">Sending limits</th>
+                <SortHeader label="Sending limits" sortKey="sendingLimits" sort={sort} onToggle={toggle} align="right" />
                 <th style={{ width: 100 }}>Updated</th>
                 <th style={{ width: 44 }} aria-label="Actions" />
               </tr>
