@@ -499,6 +499,19 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **The introduction is shown, and can be replaced (1 Oct, Eddy's ask).**
+  Clients → a client → Introduce to now opens with "The introduction": the
+  exact text the Introduce button and the reply agent send, lead fields shown
+  as labelled chips, a Copy button, and **Use a custom intro** — paste the
+  client's own wording (fields can be inserted), Save, or **Back to standard**.
+  Stored in `os_clients.intro_override` (**migration 0026**). When set it
+  wins everywhere: the Introduce button in both apps, the agent handover
+  (an agent's own handover message still wins over it), and the stored
+  "Intro Macro - <client>" template. The contacts still set the Cc. Rules in
+  `intro-macro.ts` (`customIntro`, `introText`, `introReady`, tested); a
+  custom intro alone makes a client "ready", so the "No intro template" chip
+  goes away. Before 0026 runs every read falls back without the column and
+  the custom button is disabled with that reason.
 - **Known gap, not fixed:** Client Health counts only the Boston portal's
   introductions for P&E (30 vs 34 Boston + 12 Florida). The live Client
   Health sync is a separate service whose code is not in any repo here. A
