@@ -1037,9 +1037,12 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
 
       {editing ? (
         <div style={{ display: "grid", gap: 8 }}>
-          <textarea ref={setArea} className="ds-input" aria-label="Introduction" rows={14} value={draft}
+          {/* .ds-input fixes inputs at 34px; a textarea sizes by its rows instead,
+              growing with the text (one row per line, plus room for wrapping). */}
+          <textarea ref={setArea} className="ds-input" aria-label="Introduction" value={draft}
+            rows={Math.min(32, Math.max(12, draft.split("\n").length + Math.ceil(draft.length / 90)))}
             placeholder={"Paste the introduction here.\n\nHi {{lead.first_name}}, I'd like to introduce you to…"}
-            style={{ width: "100%", minWidth: 0, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, padding: 10 }}
+            style={{ width: "100%", minWidth: 0, height: "auto", minHeight: 260, maxHeight: "70vh", overflowY: "auto", resize: "vertical", fontFamily: "inherit", fontSize: 13.5, lineHeight: 1.55, padding: "12px 14px" }}
             onChange={(e) => setDraft(e.target.value)} disabled={busy} autoFocus />
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
             <span style={{ color: "var(--ds-muted)" }}>Insert a field:</span>
