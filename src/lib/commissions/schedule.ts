@@ -1,15 +1,13 @@
 /*
  * COMMISSIONS — the arithmetic, pure and tested.
  *
- * The rules are the ones on the page ("How payouts are calculated"):
+ * The rules (Eddy, 1 Oct — replacing the 70% Month 1 / 15–25% residual ones):
  *
- *   Month 1         the account manager earns their month-one rate (70%) of the
- *                   client's first month of payments — the first 28 days of
- *                   billing, BrokerStaffer's month (clients are billed every 14
- *                   or 28 days, so a "month" is two 14-day payments or one
- *                   28-day payment).
- *   Month 2+        every later payment earns their residual rate (15% or 25%)
- *                   for as long as the client stays active.
+ *   Every payment   earns a flat rate of what is left after Stripe's fee
+ *                   (2.9% + $0.30 per successful card charge): the client's
+ *                   salesperson 20% or 10% (set per salesperson), its account
+ *                   manager 5%. No first-month rate.
+ *   Active only     only clients that are active now are paid (and shown).
  *   On cancellation nothing accrues from the cancellation date.
  *   Payout runs     the 1st and the 15th. A payment is paid out on the first
  *                   run AFTER the day it was billed.
@@ -34,13 +32,33 @@ export interface Payment {
 export interface StatusChange { from: string | null; to: string; at: string }
 
 export interface Rates {
-  /** 0.70 = 70% of the first month. */
-  monthOne: number;
-  /** 0.15 or 0.25 of every later payment. */
-  residual: number;
+  /** 0.20 = 20% of every payment, after Stripe's fee. */
+  rate: number;
 }
 
-export const DEFAULT_RATES: Rates = { monthOne: 0.7, residual: 0.15 };
+/** A salesperson earns one of these (Eddy, 1 Oct); 20% until someone picks. */
+export const SALESPERSON_RATES = [0.2, 0.1];
+export const DEFAULT_SALESPERSON_RATE = 0.2;
+/** Every account manager, on every client. */
+export const ACCOUNT_MANAGER_RATE = 0.05;
+
+/** A stored salesperson rate, or the default when it is not one of the allowed ones (the old 15% / 25%). */
+export const salespersonRate = (stored: number | null | undefined) =>
+  SALESPERSON_RATES.includes(Number(stored)) ? Number(stored) : DEFAULT_SALESPERSON_RATE;
+
+/** Stripe's fee on one successful card charge: 2.9% + $0.30. */
+export const stripeFee = (amount: number) => (amount > 0 ? round2(amount * 0.029 + 0.3) : 0);
+
+/**
+ * A gross per 28 days, net of Stripe's fee: one charge per billing cycle
+ * (two a month for a 14-day client, one for 28-day or monthly billing).
+ */
+export function netPer28(gross: number, cycleDays: number | null): number {
+  const charges = cycleDays && cycleDays > 0 ? MONTH_DAYS / cycleDays : 1;
+  const each = gross / charges;
+  return round2(gross - stripeFee(each) * charges);
+}
+
 export const MONTH_DAYS = 28;
 
 const DAY = 86_400_000;
@@ -113,38 +131,39 @@ export function cancellationDay(changes: StatusChange[], current: LifecycleStatu
 
 export interface Line {
   date: string;
+  /** The payment, before Stripe's fee. */
   amount: number;
+  fee: number;
+  /** What the commission is a percentage of. */
+  net: number;
   source: Payment["source"];
-  kind: "month1" | "residual";
   rate: number;
   commission: number;
 }
 
 /**
- * Every payment that earns commission, with its kind, rate and amount.
+ * Every payment that earns commission, with its fee, rate and amount.
  *
- * Month 1 is the first 28 days from the client's first payment. A payment on
- * a day the client was churned earns nothing — "residual stops as of the
- * cancellation date". Estimated payments also earn nothing while paused: an
- * estimate is only a stand-in for a Stripe charge, and billing is paused then.
+ * A payment on a day the client was churned earns nothing — "nothing accrues
+ * from the cancellation date". Estimated payments also earn nothing while
+ * paused: an estimate is only a stand-in for a Stripe charge, and billing is
+ * paused then.
  */
 export function commissionLines(
   payments: Payment[],
   changes: StatusChange[],
   current: LifecycleStatus,
-  rates: Rates,
+  rate: number,
 ): Line[] {
   const sorted = [...payments].sort((a, b) => a.date.localeCompare(b.date));
-  if (!sorted.length) return [];
-  const monthOneEnds = addDays(sorted[0].date, MONTH_DAYS);
   const out: Line[] = [];
   for (const p of sorted) {
     const s = statusAt(changes, current, p.date);
     if (s === "churned") continue;
     if (p.source === "estimate" && s === "paused") continue;
-    const kind = p.date < monthOneEnds ? "month1" : "residual";
-    const rate = kind === "month1" ? rates.monthOne : rates.residual;
-    out.push({ date: p.date, amount: p.amount, source: p.source, kind, rate, commission: round2(p.amount * rate) });
+    const fee = stripeFee(p.amount);
+    const net = round2(p.amount - fee);
+    out.push({ date: p.date, amount: p.amount, fee, net, source: p.source, rate, commission: round2(net * rate) });
   }
   return out;
 }
@@ -153,7 +172,7 @@ export function commissionLines(
 export const linesForRun = (lines: Line[], run: string) => lines.filter((l) => runForPayment(l.date) === run);
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
-export const sum = (lines: Line[], k: "commission" | "amount" = "commission") => round2(lines.reduce((t, l) => t + l[k], 0));
+export const sum = (lines: Line[], k: "commission" | "amount" | "net" = "commission") => round2(lines.reduce((t, l) => t + l[k], 0));
 
 /**
  * Payments estimated on a billing schedule, for a client with no Stripe link:

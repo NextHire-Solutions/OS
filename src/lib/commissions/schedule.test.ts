@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  DEFAULT_RATES, commissionLines, easternDay, estimatedPayments, linesForRun, nextRun, previousRun,
-  runForPayment, runOnOrAfter, statusAt, sum, type Payment,
+  commissionLines, easternDay, estimatedPayments, linesForRun, netPer28, nextRun, previousRun,
+  runForPayment, runOnOrAfter, salespersonRate, statusAt, stripeFee, sum, type Payment,
 } from "./schedule.ts";
 
 const pay = (date: string, amount: number, source: Payment["source"] = "stripe"): Payment => ({ date, amount, source });
@@ -26,23 +26,32 @@ test("Eastern day: a late-evening Eastern charge is that Eastern day, not tomorr
   assert.equal(easternDay("2026-09-15T16:00:00Z"), "2026-09-15");
 });
 
-test("14-day client: the first two payments are Month 1 at 70%, later ones residual at the rep's rate", () => {
-  const lines = commissionLines(
-    [pay("2026-08-03", 1500), pay("2026-08-17", 1500), pay("2026-08-31", 1500), pay("2026-09-14", 1500)],
-    [], "active", { monthOne: 0.7, residual: 0.25 },
-  );
-  assert.deepEqual(lines.map((l) => [l.kind, l.commission]), [["month1", 1050], ["month1", 1050], ["residual", 375], ["residual", 375]]);
+test("every payment earns a flat rate of what is left after Stripe's fee — no Month 1 rate", () => {
+  const lines = commissionLines([pay("2026-08-03", 1500), pay("2026-08-17", 1500), pay("2026-09-14", 1500)], [], "active", 0.2);
+  assert.deepEqual(lines.map((l) => [l.fee, l.net, l.commission]), [[43.8, 1456.2, 291.24], [43.8, 1456.2, 291.24], [43.8, 1456.2, 291.24]]);
+  assert.deepEqual(commissionLines([pay("2026-08-03", 1500)], [], "active", 0.05).map((l) => l.commission), [72.81], "account manager 5%");
+  assert.deepEqual(commissionLines([pay("2026-08-03", 1500)], [], "active", 0.1).map((l) => l.commission), [145.62], "salesperson 10%");
 });
 
-test("28-day client: one Month 1 payment, then residual", () => {
-  const lines = commissionLines([pay("2026-07-01", 1000), pay("2026-07-29", 1000)], [], "active", DEFAULT_RATES);
-  assert.deepEqual(lines.map((l) => [l.kind, l.commission]), [["month1", 700], ["residual", 150]]);
+test("Stripe's fee is 2.9% + $0.30 per charge; the monthly net counts one fee per charge", () => {
+  assert.equal(stripeFee(1500), 43.8);
+  assert.equal(stripeFee(0), 0);
+  assert.equal(netPer28(3000, 14), 2912.4, "14-day billing: two charges of $1,500");
+  assert.equal(netPer28(1000, 28), 970.7);
+  assert.equal(netPer28(1000, null), 970.7, "monthly billing: one charge");
+});
+
+test("a salesperson is on 20% or 10%; anything else stored (the old 15% / 25%) reads as 20%", () => {
+  assert.equal(salespersonRate(0.1), 0.1);
+  assert.equal(salespersonRate(0.2), 0.2);
+  assert.equal(salespersonRate(0.15), 0.2);
+  assert.equal(salespersonRate(null), 0.2);
 });
 
 test("cancellation: nothing accrues from the churn day on; earlier payments still count", () => {
   const changes = [{ from: "active", to: "churned", at: "2026-09-03T15:00:00Z" }];
   const lines = commissionLines(
-    [pay("2026-08-20", 800), pay("2026-09-03", 800), pay("2026-09-17", 800)], changes, "churned", DEFAULT_RATES,
+    [pay("2026-08-20", 800), pay("2026-09-03", 800), pay("2026-09-17", 800)], changes, "churned", 0.2,
   );
   assert.deepEqual(lines.map((l) => l.date), ["2026-08-20"]);
 });
@@ -54,13 +63,13 @@ test("estimates earn nothing while paused; a paused Stripe client simply has no 
   ];
   const est = estimatedPayments(["2026-08-18", "2026-09-01", "2026-09-15", "2026-09-29"], 1500, 14);
   assert.deepEqual(est.map((p) => p.amount), [750, 750, 750, 750], "gross per 28 days, split over two 14-day payments");
-  const lines = commissionLines(est, changes, "active", DEFAULT_RATES);
+  const lines = commissionLines(est, changes, "active", 0.2);
   assert.deepEqual(lines.map((l) => l.date), ["2026-08-18", "2026-09-29"]);
 });
 
 test("a client already churned when history began still earns on what it paid before then", () => {
   const seeded = [{ from: null, to: "churned", at: "2026-09-13T12:00:00Z" }];
-  const lines = commissionLines([pay("2026-08-01", 1000), pay("2026-09-20", 1000)], seeded, "churned", DEFAULT_RATES);
+  const lines = commissionLines([pay("2026-08-01", 1000), pay("2026-09-20", 1000)], seeded, "churned", 0.2);
   assert.deepEqual(lines.map((l) => l.date), ["2026-08-01"], "paid before the record counts; after the churn record does not");
 });
 
@@ -77,10 +86,10 @@ test("status history: before the first record the client was being served", () =
 test("a run pays exactly the payments billed since the previous run", () => {
   const lines = commissionLines(
     [pay("2026-09-01", 1000), pay("2026-09-15", 1000), pay("2026-09-29", 1000), pay("2026-10-13", 1000)],
-    [], "active", DEFAULT_RATES,
+    [], "active", 0.2,
   );
   assert.deepEqual(linesForRun(lines, "2026-09-15").map((l) => l.date), ["2026-09-01"]);
   assert.deepEqual(linesForRun(lines, "2026-10-01").map((l) => l.date), ["2026-09-15", "2026-09-29"]);
-  assert.equal(sum(linesForRun(lines, "2026-10-01")), 850, "one Month 1 (700) + one residual (150)");
-  assert.equal(sum(linesForRun(lines, "2026-10-15")), 150);
+  assert.equal(sum(linesForRun(lines, "2026-10-01")), 388.28, "two payments: 20% of ($1,000 − $29.30) each");
+  assert.equal(sum(linesForRun(lines, "2026-10-15")), 194.14);
 });

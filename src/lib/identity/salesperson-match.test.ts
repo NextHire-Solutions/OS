@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { isSoldBy, matchSalesperson, salespersonProblems, type Salesperson } from "./salesperson-match.ts";
 import { isManagedBy, joinManagers, splitManagers } from "./team-match.ts";
 
-const sp = (name: string, active = true): Salesperson => ({ id: name, name, email: null, active, rates: { monthOne: 0.7, residual: 0.15 } });
+const sp = (name: string, active = true): Salesperson => ({ id: name, name, email: null, active, rates: { rate: 0.2 } });
 
 test("a salesperson is matched by exact name, ignoring case and spacing — never by a first name", () => {
   const people = [sp("Ryan Jagdeo"), sp("Scott Craigue"), sp("Eddy")];

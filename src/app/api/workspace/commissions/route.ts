@@ -6,8 +6,8 @@ import { getMasterClientList } from "@/lib/clients/master-list";
 import { osTable } from "@/lib/clients/os-db";
 import { loadCommissions } from "@/lib/commissions/load";
 import { isAdminUser } from "@/lib/identity/admin-db";
-import { listTeamMembers } from "@/lib/identity/team-directory";
-import { RESIDUAL_RATES, SalespersonError, updateSalesperson } from "@/lib/identity/salespeople";
+import { SALESPERSON_RATES } from "@/lib/commissions/schedule";
+import { SalespersonError, updateSalesperson } from "@/lib/identity/salespeople";
 
 /*
  * Commissions.
@@ -24,7 +24,8 @@ import { RESIDUAL_RATES, SalespersonError, updateSalesperson } from "@/lib/ident
  *           salesperson / accountManager go through the master record's own
  *           edit (role holders only); monthlyGross is the stand-in for a
  *           client with no Stripe link (null removes it).
- *         { kind: "rates", key, residualRate }
+ *         { kind: "rates", key: "sp:<id>", rate: 0.2 | 0.1 }  a salesperson's rate
+ *           (account managers are always 5%)
  */
 export const dynamic = "force-dynamic";
 
@@ -95,24 +96,14 @@ export async function POST(request: Request) {
 
     if (body.kind === "rates") {
       const key = typeof body.key === "string" ? body.key : "";
-      const residual = Number(body.residualRate);
-      if (!RESIDUAL_RATES.includes(residual)) return NextResponse.json({ error: "The residual rate is 15% or 25%." }, { status: 400 });
-      if (key.startsWith("sp:")) {
-        // A salesperson's rates live on their record.
-        await updateSalesperson(key.slice(3), { residualRate: residual }, me.email);
-        return NextResponse.json({ ok: true });
+      const rate = Number(body.rate);
+      if (!key.startsWith("sp:")) {
+        return NextResponse.json({ error: "Only a salesperson's rate can be changed; account managers earn 5%." }, { status: 400 });
       }
-      if (key.startsWith("am:")) {
-        const email = key.slice(3).toLowerCase();
-        if (!(await listTeamMembers()).some((m) => m.email === email)) {
-          return NextResponse.json({ error: "That person is not on Team access." }, { status: 400 });
-        }
-        const { error } = await osTable("os_commission_reps")
-          .upsert({ email, residual_rate: residual, month_one_rate: 0.7, updated_at: now, updated_by: me.email });
-        if (error) throw new Error(migrationHint(error.message));
-        return NextResponse.json({ ok: true });
-      }
-      return NextResponse.json({ error: "Unknown person." }, { status: 400 });
+      if (!SALESPERSON_RATES.includes(rate)) return NextResponse.json({ error: "A salesperson's rate is 20% or 10%." }, { status: 400 });
+      // A salesperson's rate lives on their record.
+      await updateSalesperson(key.slice(3), { rate }, me.email);
+      return NextResponse.json({ ok: true });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

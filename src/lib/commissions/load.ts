@@ -10,19 +10,20 @@ import { isSoldBy, type Salesperson } from "@/lib/identity/salesperson-match";
 import { listSalespeople } from "@/lib/identity/salespeople";
 
 import {
-  DEFAULT_RATES, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, nextRun, previousRun,
-  runOnOrAfter, sum, type Line, type Payment, type Rates, type StatusChange,
+  ACCOUNT_MANAGER_RATE, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, netPer28, nextRun,
+  previousRun, runOnOrAfter, sum, type Line, type Payment, type StatusChange,
 } from "./schedule";
 import { stripeGross, stripePayments } from "./stripe-payments";
 
 /*
  * COMMISSIONS — who earns what, on which payout run.
  *
- *   who     BOTH people on a client (the client, 30 Sep): its Salesperson and
- *           its Account Manager, each at their own rates — 70% of the first
- *           month, then their residual (15% or 25%). A salesperson is someone
+ *   who     BOTH people on a client (the client, 30 Sep): its Salesperson at
+ *           their rate (20% or 10%) and its Account Manager at 5% — of every
+ *           payment after Stripe's fee (Eddy, 1 Oct). A salesperson is someone
  *           with the Salesperson role (os_salespeople); an account manager,
- *           someone with the Account manager role on Team access.
+ *           someone with the Account manager role on Team access. ACTIVE
+ *           clients only. Someone with both roles is one person on the page.
  *   what    paid Stripe invoices on the client's subscription; for a client
  *           with no Stripe link, an admin-entered gross ESTIMATED on its
  *           billing schedule (and labelled as an estimate)
@@ -42,14 +43,17 @@ export interface Earner {
   role: EarnerRole;
   name: string;
   email: string | null;
-  rates: Rates;
+  rate: number;
 }
+
+/** One person on the page: "p:<email>", or the earner key for someone with no sign-in. */
+export const personKey = (e: Pick<Earner, "key" | "email">) => (e.email ? `p:${e.email}` : e.key);
 
 export interface Earning {
   key: string;
   role: EarnerRole;
   name: string;
-  rates: Rates;
+  rate: number;
   due: number;
   lines: Line[];
   lifetime: number;
@@ -64,6 +68,8 @@ export interface CommissionRow {
   accountManager: string | null;
   /** Gross per 28 days, and where it came from. */
   gross: number | null;
+  /** The gross less Stripe's fee (2.9% + $0.30 per charge) — what commission is paid on. */
+  net: number | null;
   grossSource: "stripe" | "manual" | null;
   /** A manual gross an admin set (shown in the editor even when Stripe wins). */
   manualGross: number | null;
@@ -76,16 +82,15 @@ export interface CommissionRow {
   lastPayment: string | null;
 }
 
+/** One person's card: every role they earn in, added up. */
 export interface RepSummary {
   key: string;
-  role: EarnerRole;
   name: string;
   email: string | null;
-  rates: Rates;
+  roles: { key: string; role: EarnerRole; rate: number; due: number; clients: number }[];
   due: number;
+  /** Clients they earn on, counted once even when they hold both roles on one. */
   clients: number;
-  month1: number;
-  residual: number;
 }
 
 export interface CommissionsView {
@@ -106,28 +111,25 @@ export interface CommissionsView {
   /** Admin only: who can be picked, by role. */
   team: string[];
   salespeople: string[];
-  /** Admin only: everyone who can be viewed. */
-  people: { key: string; name: string; role: EarnerRole }[];
+  /** Admin only: everyone who can be viewed, once each. */
+  people: { key: string; name: string; roles: EarnerRole[] }[];
   settingsAvailable: boolean;
   unavailable: string[];
 }
 
-export type Settings = { rates: Map<string, Rates>; gross: Map<string, number>; available: boolean };
+/*
+ * Account managers are all on 5% now, so os_commission_reps (their old
+ * per-person rates) is no longer read; only the manual gross is.
+ */
+export type Settings = { gross: Map<string, number>; available: boolean };
 
 async function readSettings(): Promise<Settings> {
-  const [r, g] = await Promise.all([
-    osTable("os_commission_reps").select("email, month_one_rate, residual_rate"),
-    osTable("os_client_commission").select("client_id, monthly_gross"),
-  ]);
-  // Before migration 0019 the tables do not exist: defaults, nothing stored.
-  if (r.error || g.error) return { rates: new Map(), gross: new Map(), available: false };
-  const rates = new Map<string, Rates>();
-  for (const row of (r.data ?? []) as unknown as { email: string; month_one_rate: number; residual_rate: number }[]) {
-    rates.set(row.email.toLowerCase(), { monthOne: Number(row.month_one_rate), residual: Number(row.residual_rate) });
-  }
+  const g = await osTable("os_client_commission").select("client_id, monthly_gross");
+  // Before migration 0019 the table does not exist: nothing stored.
+  if (g.error) return { gross: new Map(), available: false };
   const gross = new Map<string, number>();
   for (const row of (g.data ?? []) as unknown as { client_id: string; monthly_gross: number }[]) gross.set(row.client_id, Number(row.monthly_gross));
-  return { rates, gross, available: true };
+  return { gross, available: true };
 }
 
 async function readHistory(): Promise<Map<string, StatusChange[]>> {
@@ -162,16 +164,14 @@ function scheduleDates(c: MasterClient, until: string): { dates: string[]; cycle
   return { dates, cycleDays };
 }
 
-function label(c: MasterClient, changes: StatusChange[], lines: Line[], runLines: Line[], hasSource: boolean): string {
+function label(c: MasterClient, changes: StatusChange[], lines: Line[], hasSource: boolean): string {
   if (c.status === "churned") {
     const d = cancellationDay(changes, c.status);
     return d ? `Cancelled ${new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}` : "Cancelled";
   }
   if (c.status === "paused") return "Paused";
   if (!hasSource) return "No billing data";
-  if (runLines.some((l) => l.kind === "month1")) return "Month 1";
-  if (!lines.length) return c.status === "onboarding" ? "Onboarding" : "Not billed yet";
-  return lines[lines.length - 1].kind === "month1" ? "Month 1" : "Active · residual";
+  return lines.length ? "Active" : "Not billed yet";
 }
 
 export interface BuildInputs {
@@ -181,8 +181,8 @@ export interface BuildInputs {
   salespeople: Salesperson[];
   settings: Settings;
   history: Map<string, StatusChange[]>;
-  /** Per client id: its Stripe payments and gross, or null when Stripe could not be read. */
-  stripe: Map<string, { payments: Payment[]; gross: number | null } | null>;
+  /** Per client id: its Stripe payments, gross and billing cycle, or null when Stripe could not be read. */
+  stripe: Map<string, { payments: Payment[]; gross: number | null; cycleDays?: number | null } | null>;
   viewerEmail: string;
   admin: boolean;
   as?: string | null;
@@ -201,7 +201,7 @@ const firstManager = (c: { accountManager: string | null }) => splitManagers(c.a
 export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings">) {
   const earners = new Map<string, Earner>();
   for (const sp of inp.salespeople) {
-    earners.set(`sp:${sp.id}`, { key: `sp:${sp.id}`, role: "salesperson", name: sp.name, email: sp.email, rates: sp.rates });
+    earners.set(`sp:${sp.id}`, { key: `sp:${sp.id}`, role: "salesperson", name: sp.name, email: sp.email, rate: sp.rates.rate });
   }
   // Account managers: people with the role, and anyone a client still names —
   // never every team member (someone with no role saw a $0 card, audit 30 Sep).
@@ -209,7 +209,7 @@ export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeo
   const named = new Set(inp.clients.map(firstManager).filter((n): n is string => !!n));
   for (const m of inp.team) {
     if (!pool.has(m.email) && ![...named].some((n) => isManagedBy(n, m))) continue;
-    earners.set(`am:${m.email}`, { key: `am:${m.email}`, role: "account_manager", name: m.name, email: m.email, rates: inp.settings.rates.get(m.email) ?? DEFAULT_RATES });
+    earners.set(`am:${m.email}`, { key: `am:${m.email}`, role: "account_manager", name: m.name, email: m.email, rate: ACCOUNT_MANAGER_RATE });
   }
   const onClient = (c: MasterClient): Earner[] => {
     const out: Earner[] = [];
@@ -231,10 +231,15 @@ export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeopl
   const mine = [...earners.values()].filter((e) => e.email === viewerEmail).map((e) => e.key);
   let keys: Set<string>;
   let scope: string;
-  if (inp.admin && inp.as && inp.as !== "all" && earners.has(inp.as)) { keys = new Set([inp.as]); scope = inp.as; }
+  // One person: every role they earn in ("p:<email>"), or one earner key.
+  const picked = inp.admin && inp.as && inp.as !== "all"
+    ? [...earners.values()].filter((e) => personKey(e) === inp.as || e.key === inp.as).map((e) => e.key)
+    : [];
+  if (picked.length) { keys = new Set(picked); scope = inp.as!; }
   else if (inp.admin) { keys = new Set(earners.keys()); scope = "all"; }
   else { keys = new Set(mine); scope = "mine"; }
-  const inScope = inp.clients.filter((c) => onClient(c).some((e) => keys.has(e.key)));
+  // Active clients only (Eddy, 1 Oct): paused, churned and onboarding clients earn nothing and are not listed.
+  const inScope = inp.clients.filter((c) => c.status === "active" && onClient(c).some((e) => keys.has(e.key)));
   const member = inp.team.find((m) => m.email === viewerEmail);
   const viewerName = member?.name ?? inp.salespeople.find((p) => p.email === viewerEmail)?.name ?? viewerEmail.split("@")[0];
   return { earners, onClient, keys, scope, inScope, mine, viewerName };
@@ -262,55 +267,63 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
     const st = inp.stripe.get(c.id);
     let payments: Payment[] = [];
     let gross: number | null = null;
+    let cycle: number | null = null;
     let grossSource: CommissionRow["grossSource"] = null;
     if (linked && st) {
       payments = st.payments.filter((p) => p.date <= horizon);
       gross = st.gross;
+      cycle = st.cycleDays ?? null;
       grossSource = gross !== null ? "stripe" : null;
     } else if (!linked && manual !== null) {
       const { dates, cycleDays } = scheduleDates(c, horizon);
       payments = estimatedPayments(dates, manual, cycleDays);
       gross = manual;
+      cycle = cycleDays;
       grossSource = "manual";
     }
     const earnings: Earning[] = onClient(c).filter((e) => keys.has(e.key)).map((e) => {
-      const lines = commissionLines(payments, changes, c.status, e.rates);
+      const lines = commissionLines(payments, changes, c.status, e.rate);
       const runLines = linesForRun(lines, run);
-      return { key: e.key, role: e.role, name: e.name, rates: e.rates, due: sum(runLines), lines: runLines, lifetime: sum(lines) };
+      return { key: e.key, role: e.role, name: e.name, rate: e.rate, due: sum(runLines), lines: runLines, lifetime: sum(lines) };
     });
-    // The status label reads the same whoever earns: from the first earner's lines.
-    const all = commissionLines(payments, changes, c.status, earnings[0]?.rates ?? DEFAULT_RATES);
+    const all = commissionLines(payments, changes, c.status, 0);
     return {
       id: c.id, name: c.name, plan: c.plan, status: c.status,
       salesperson: c.salesperson, accountManager: firstManager(c),
-      gross, grossSource, manualGross: manual, stripeLinked: linked,
-      statusLabel: label(c, changes, all, linesForRun(all, run), payments.length > 0 || gross !== null),
+      gross, net: gross !== null ? netPer28(gross, cycle) : null, grossSource, manualGross: manual, stripeLinked: linked,
+      statusLabel: label(c, changes, all, payments.length > 0 || gross !== null),
       earnings,
       due: sum(earnings.flatMap((e) => e.lines)),
       lastPayment: payments.length ? payments[payments.length - 1].date : null,
     };
   }).sort((a, b) => b.due - a.due || a.name.localeCompare(b.name));
 
-  // Cards: each earner in view who holds a client here.
-  const reps: RepSummary[] = [...keys].map((k) => earners.get(k)!).flatMap((e) => {
-    const mine = rows.flatMap((r) => r.earnings.filter((x) => x.key === e.key));
-    if (!mine.length && scope === "all") return [];
-    return [{
-      key: e.key, role: e.role, name: e.name, email: e.email, rates: e.rates,
-      due: sum(mine.flatMap((x) => x.lines)),
-      clients: mine.length,
-      month1: mine.filter((x) => x.lines.some((l) => l.kind === "month1")).length,
-      residual: mine.filter((x) => x.lines.some((l) => l.kind === "residual")).length,
-    }];
+  // Cards: one per PERSON in view who holds a client here — someone who is
+  // both a salesperson and an account manager (Eddy) is one card, added up.
+  const byPerson = new Map<string, Earner[]>();
+  for (const k of keys) {
+    const e = earners.get(k)!;
+    byPerson.set(personKey(e), [...(byPerson.get(personKey(e)) ?? []), e]);
+  }
+  const reps: RepSummary[] = [...byPerson.entries()].flatMap(([pk, list]) => {
+    const roles = list.map((e) => {
+      const mine = rows.flatMap((r) => r.earnings.filter((x) => x.key === e.key));
+      return { key: e.key, role: e.role, rate: e.rate, due: sum(mine.flatMap((x) => x.lines)), clients: mine.length };
+    }).filter((r) => r.clients > 0 || scope !== "all")
+      .sort((a, b) => a.role.localeCompare(b.role) * -1);
+    if (!roles.length) return [];
+    const clients = new Set(rows.filter((r) => r.earnings.some((x) => list.some((e) => e.key === x.key))).map((r) => r.id)).size;
+    return [{ key: pk, name: list[0].name, email: list[0].email, roles, due: Math.round(roles.reduce((t, r) => t + r.due, 0) * 100) / 100, clients }];
   }).sort((a, b) => b.due - a.due || a.name.localeCompare(b.name));
 
-  const holding = new Set(inp.clients.flatMap((c) => onClient(c).map((e) => e.key)));
+  const active = inp.clients.filter((c) => c.status === "active");
+  const holding = new Set(active.flatMap((c) => onClient(c).map((e) => e.key)));
   return {
     today, run, previousRun: previousRun(run), nextRun: nextRun(run), runOpen: run > today,
     viewer: { email: inp.viewerEmail.toLowerCase(), name: viewerName, admin: inp.admin },
     scope, reps, rows,
     unassigned: inp.admin
-      ? inp.clients.flatMap((c) => {
+      ? active.flatMap((c) => {
           const on = onClient(c).map((e) => e.role);
           const missing = (["salesperson", "account_manager"] as EarnerRole[]).filter((r) => !on.includes(r));
           return missing.length
@@ -321,10 +334,14 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
     team: inp.admin ? accountManagerPool(inp.team).map((m) => m.name).sort() : [],
     salespeople: inp.admin ? inp.salespeople.filter((p) => p.active).map((p) => p.name).sort() : [],
     people: inp.admin
-      ? [...earners.values()]
+      ? [...[...earners.values()]
           .filter((e) => holding.has(e.key) || (e.role === "salesperson" ? inp.salespeople.find((p) => `sp:${p.id}` === e.key)?.active : accountManagerPool(inp.team).some((m) => `am:${m.email}` === e.key)))
-          .map((e) => ({ key: e.key, name: e.name, role: e.role }))
-          .sort((a, b) => a.name.localeCompare(b.name) || a.role.localeCompare(b.role))
+          .reduce((m, e) => {
+            const p = m.get(personKey(e)) ?? { key: personKey(e), name: e.name, roles: [] as EarnerRole[] };
+            p.roles.push(e.role);
+            return m.set(p.key, p);
+          }, new Map<string, { key: string; name: string; roles: EarnerRole[] }>()).values()]
+          .sort((a, b) => a.name.localeCompare(b.name))
       : [],
     settingsAvailable: settings.available,
     unavailable: inp.unavailable,
@@ -338,7 +355,7 @@ export async function loadCommissions(opts: { viewerEmail: string; admin: boolea
     getMasterClientList(),
     listTeamMembers(),
     listSalespeople().catch(() => { unavailable.push("Salespeople"); return { available: false, people: [] as Salesperson[] }; }),
-    readSettings().catch(() => ({ rates: new Map(), gross: new Map(), available: false } as Settings)),
+    readSettings().catch(() => ({ gross: new Map(), available: false } as Settings)),
     readHistory().catch(() => { unavailable.push("Status history"); return new Map<string, StatusChange[]>(); }),
   ]);
   const base = { clients: list.clients, team, salespeople: sp.people, settings };
@@ -349,7 +366,7 @@ export async function loadCommissions(opts: { viewerEmail: string; admin: boolea
   const results = await Promise.all(linked.map(async (c) => {
     try {
       const [payments, g] = await Promise.all([stripePayments(c.stripeSubscriptionId!), stripeGross(c.stripeSubscriptionId!)]);
-      return [c.id, { payments, gross: g?.per28 ?? null }] as const;
+      return [c.id, { payments, gross: g?.per28 ?? null, cycleDays: g?.cycleDays ?? null }] as const;
     } catch {
       return [c.id, null] as const;
     }

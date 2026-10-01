@@ -499,6 +499,19 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **Commissions rules changed (1 Oct, Eddy, before that day's payroll).**
+  No more 70% Month 1 or 15%/25% residual. Every payment earns a flat rate
+  of the amount after Stripe's fee (2.9% + $0.30 per charge): the
+  salesperson 20% or 10% (one setting per salesperson, on their card;
+  stored in `os_salespeople.residual_rate`, the old 15%/25% read as 20%),
+  the account manager a fixed 5% (`os_commission_reps` is no longer read).
+  ACTIVE clients only — paused/churned/onboarding are neither listed nor
+  paid (user decision, even when a payment was due). Someone with both roles
+  (Eddy) is one card, `p:<email>`. New "Monthly (net)" column; the
+  "How payouts are calculated" section is gone. Rules in `schedule.ts`
+  (`stripeFee`, `netPer28`, `salespersonRate`), tested. Five active clients
+  still say "Amy, Eddy" as account manager; "Amy" alone matches nobody, so
+  they pay no account-manager commission until one is chosen.
 - **The introduction is shown, and can be replaced (1 Oct, Eddy's ask).**
   Clients → a client → Introduce to now opens with "The introduction": the
   exact text the Introduce button and the reply agent send, lead fields shown

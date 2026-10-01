@@ -2,7 +2,7 @@ import "server-only";
 
 import { osTable } from "@/lib/clients/os-db";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
-import { DEFAULT_RATES } from "@/lib/commissions/schedule";
+import { SALESPERSON_RATES, salespersonRate } from "@/lib/commissions/schedule";
 
 import { cleanName, matchSalesperson, salespersonProblems, type Salesperson } from "./salesperson-match";
 
@@ -21,7 +21,8 @@ type Row = { id: string; name: string; email: string | null; active: boolean; mo
 
 const toPerson = (r: Row): Salesperson => ({
   id: r.id, name: r.name, email: r.email ? r.email.toLowerCase() : null, active: r.active,
-  rates: { monthOne: Number(r.month_one_rate ?? DEFAULT_RATES.monthOne), residual: Number(r.residual_rate ?? DEFAULT_RATES.residual) },
+  // residual_rate holds the salesperson's rate (20% / 10%); the old 15% / 25% read as the default.
+  rates: { rate: salespersonRate(r.residual_rate) },
 });
 
 export class SalespersonError extends Error {
@@ -65,10 +66,10 @@ export interface SalespersonPatch {
   name?: string;
   email?: string | null;
   active?: boolean;
-  residualRate?: number;
+  /** 0.20 or 0.10 of every payment after Stripe's fee. */
+  rate?: number;
 }
 
-export const RESIDUAL_RATES = [0.15, 0.25];
 
 /**
  * Change one salesperson. A rename is carried to every client that names them
@@ -78,8 +79,8 @@ export const RESIDUAL_RATES = [0.15, 0.25];
 export async function updateSalesperson(id: string, patch: SalespersonPatch, by: string): Promise<{ person: Salesperson; clientsRenamed: number }> {
   const problems = salespersonProblems({ name: patch.name, email: patch.email });
   if (problems.length) throw new SalespersonError(problems.join(" "));
-  if (patch.residualRate !== undefined && !RESIDUAL_RATES.includes(patch.residualRate)) {
-    throw new SalespersonError("The residual rate is 15% or 25%.");
+  if (patch.rate !== undefined && !SALESPERSON_RATES.includes(patch.rate)) {
+    throw new SalespersonError("A salesperson's rate is 20% or 10%.");
   }
   const { data: before, error: readErr } = await osTable("os_salespeople")
     .select("id, name, email, active, month_one_rate, residual_rate").eq("id", id).maybeSingle();
@@ -92,7 +93,7 @@ export async function updateSalesperson(id: string, patch: SalespersonPatch, by:
   if (newName !== undefined && newName !== old.name) row.name = newName;
   if (patch.email !== undefined) row.email = patch.email?.trim().toLowerCase() || null;
   if (patch.active !== undefined) row.active = patch.active;
-  if (patch.residualRate !== undefined) row.residual_rate = patch.residualRate;
+  if (patch.rate !== undefined) row.residual_rate = patch.rate;
 
   const { data, error } = await osTable("os_salespeople").update(row).eq("id", id)
     .select("id, name, email, active, month_one_rate, residual_rate").single();

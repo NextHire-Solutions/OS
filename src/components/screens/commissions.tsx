@@ -12,7 +12,7 @@ import { PlaceholderScreen } from "./lazy";
  *
  * Built from the client's mockup (commissions-mockup.html): the next payout
  * run, the account manager's card with what is due, their clients, an admin
- * section, and the three rules. What changed from the mockup, and why:
+ * section. (The rules section was removed on 1 Oct, Eddy.) What changed from the mockup, and why:
  *
  *   - "Sales rep" is the client's Account Manager — a Team access member —
  *     read from the master record, so assigning here and on Clients is the
@@ -89,7 +89,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
         <div className="cx-head-t">
           <span className="cx-kicker">Workspace</span>
           <h1>Commissions</h1>
-          <p>Sales payouts — a client&rsquo;s salesperson and its account manager each earn on it, at their own rates. Payouts run on the 1st and 15th.</p>
+          <p>Sales payouts on active clients — the salesperson earns 20% or 10% and the account manager 5% of each payment after Stripe&rsquo;s fee. Payouts run on the 1st and 15th.</p>
         </div>
         <div className="cm-run">
           <span className="cx-kicker">{data.runOpen ? "Next payout run" : "Payout run"}</span>
@@ -113,7 +113,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
             <span>Viewing</span>
             <select className="cm-select" value={data.scope} onChange={(e) => onAs(e.target.value)} aria-label="Person to view">
               <option value="all">Everyone</option>
-              {data.people.map((p) => <option key={p.key} value={p.key}>{p.name} — {ROLE[p.role]}</option>)}
+              {data.people.map((p) => <option key={p.key} value={p.key}>{p.name} — {p.roles.map((r) => ROLE[r]).join(" & ")}</option>)}
             </select>
             <span className="cm-note">— each person sees only their own clients and payouts. You are an admin, so you can see everyone.</span>
           </>
@@ -125,7 +125,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
       {data.viewer.admin && !data.settingsAvailable ? (
         <p className="ds-note" style={{ margin: 0 }}>
           <b>Rates and manual gross amounts can&rsquo;t be saved yet.</b> Run <code>migrations/0019_commissions.sql</code> in Supabase once.
-          Until then everyone is on 70% / 15%, and only clients linked to Stripe are counted.
+          Until then only clients linked to Stripe are counted.
         </p>
       ) : null}
       {error ? <p className="ds-note" style={{ margin: 0 }}><b>Could not refresh.</b> {error}</p> : null}
@@ -157,14 +157,16 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
           <table className="cx-table cm-table">
             <thead>
               <tr className="cx-cols">
-                {["Client", "Plan", "Monthly (gross)", "Salesperson", "Account manager", "Status", `Due ${day(data.run)}`].map((h, i) => (
-                  <th key={h} className={i === 0 ? "cx-pin" : i === 2 || i === 6 ? "num" : undefined}><span className="cx-thl">{h}</span></th>
+                {["Client", "Plan", "Monthly (gross)", "Monthly (net)", "Salesperson", "Account manager", "Status", `Due ${day(data.run)}`].map((h, i) => (
+                  <th key={h} className={i === 0 ? "cx-pin" : i === 2 || i === 3 || i === 7 ? "num" : undefined}
+                    title={i === 3 ? "Monthly gross less Stripe's fee: 2.9% + $0.30 per successful card charge. Commission is paid on this." : undefined}>
+                    <span className="cx-thl">{h}</span></th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {data.rows.length === 0 ? (
-                <tr><td colSpan={7} className="cx-empty">{single ? "No clients are assigned to this person yet." : "No client has a salesperson or account manager yet."}</td></tr>
+                <tr><td colSpan={8} className="cx-empty">{single ? "No active clients are assigned to this person." : "No active client has a salesperson or account manager yet."}</td></tr>
               ) : data.rows.map((r) => (
                 <Row key={r.id} r={r} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
               ))}
@@ -176,19 +178,9 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
       {/* ---------------------------------------------------------- admin */}
       {data.viewer.admin ? <Assign data={data} onChanged={onChanged} /> : null}
 
-      {/* ---------------------------------------------------------- rules */}
-      <section>
-        <div className="cm-h2">How payouts are calculated</div>
-        <div className="cm-rules">
-          <div><span className="k">Month 1</span><p>Earns <b>70%</b> of the client&rsquo;s first month of payments — the first 28 days of billing (two 14-day payments, or one 28-day). Paid on the next payout date after each payment.</p></div>
-          <div><span className="k">Month 2+</span><p>Earns the person&rsquo;s residual rate — <b>15%</b> or <b>25%</b> — of every later payment, for as long as the client stays active. The salesperson and the account manager each earn at their own rates.</p></div>
-          <div><span className="k">On cancellation</span><p>Nothing accrues from the cancellation date. Paused billing collects nothing, so nothing accrues while paused either.</p></div>
-        </div>
-      </section>
-
       <footer className="cm-foot">
-        Payouts run on the 1st and 15th of each month · amounts are paid Stripe invoices on the client&rsquo;s subscription · a client
-        not linked to Stripe uses a gross an admin entered, estimated on its billing schedule and marked Estimate.
+        Active clients only · payouts run on the 1st and 15th of each month · amounts are paid Stripe invoices on the client&rsquo;s subscription,
+        less Stripe&rsquo;s fee (2.9% + $0.30 per charge) · a client not linked to Stripe uses a gross an admin entered, estimated on its billing schedule and marked Estimate.
       </footer>
     </div>
   );
@@ -199,41 +191,47 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
 }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  async function setResidual(v: number) {
+  async function setRate(key: string, v: number) {
     setSaving(true); setErr(null);
     try {
       const res = await fetch("/api/workspace/commissions", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: "rates", key: rep.key, residualRate: v }),
+        body: JSON.stringify({ kind: "rates", key, rate: v }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       onChanged();
     } catch (e) { setErr(e instanceof Error ? e.message : "Could not save"); } finally { setSaving(false); }
   }
-  const parts = [rep.residual ? `${rep.residual} residual` : null, rep.month1 ? `${rep.month1} first-month` : null].filter(Boolean).join(", ");
+  const both = rep.roles.length > 1;
   return (
     <div className="cm-rep">
       <div className="cm-rep-top">
         <span>
           {onPick ? <button type="button" className="cm-rep-name link" onClick={onPick}>{rep.name}</button> : <span className="cm-rep-name">{rep.name}</span>}
-          <small className="cm-note" style={{ display: "block" }}>{ROLE[rep.role]}</small>
+          <small className="cm-note" style={{ display: "block" }}>{rep.roles.map((r) => ROLE[r.role]).join(" & ")}</small>
         </span>
-        <span className="cm-rate">
-          {pct(rep.rates.monthOne)} MONTH 1 ·{" "}
-          {admin && canSave ? (
-            <select className="cm-rate-sel" value={rep.rates.residual} disabled={saving} aria-label={`${rep.name}'s residual rate`}
-              onChange={(e) => void setResidual(Number(e.target.value))}>
-              <option value={0.15}>15%</option>
-              <option value={0.25}>25%</option>
-            </select>
-          ) : pct(rep.rates.residual)}{" "}RESIDUAL
+        <span className="cm-rate" style={{ display: "grid", justifyItems: "end", gap: 2 }}>
+          {rep.roles.map((r) => (
+            <span key={r.key}>
+              {r.role === "salesperson" && admin && canSave ? (
+                <select className="cm-rate-sel" value={r.rate} disabled={saving} aria-label={`${rep.name}'s salesperson rate`}
+                  onChange={(e) => void setRate(r.key, Number(e.target.value))}>
+                  <option value={0.2}>20%</option>
+                  <option value={0.1}>10%</option>
+                </select>
+              ) : pct(r.rate)}{" "}{both ? (r.role === "salesperson" ? "AS SALESPERSON" : "AS ACCOUNT MANAGER") : "OF NET"}
+            </span>
+          ))}
         </span>
       </div>
       <div className="cm-due">
         <div>
           <span className="k">Due {day(run)}</span>
-          <small>{rep.clients} client{rep.clients === 1 ? "" : "s"}{parts ? ` · ${parts}` : ""}</small>
+          <small>
+            {rep.clients} client{rep.clients === 1 ? "" : "s"}
+            {both ? ` · ${rep.roles.map((r) => `${ROLE[r.role].toLowerCase()} ${money(r.due, true)}`).join(" + ")}` : ""}
+          </small>
         </div>
         <b>{money(rep.due, true)}</b>
       </div>
@@ -243,7 +241,7 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
 }
 
 function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle: () => void }) {
-  const tone = r.status === "churned" ? "cancelled" : r.statusLabel === "Month 1" ? "month1" : r.status === "paused" ? "paused" : "active";
+  const tone = r.status === "churned" ? "cancelled" : r.status === "paused" ? "paused" : "active";
   return (
     <>
       <tr onClick={onToggle} className={open ? "on" : undefined} aria-expanded={open}>
@@ -254,6 +252,7 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
           {r.grossSource ? <span className={`cm-src ${r.grossSource}`}>{r.grossSource === "stripe" ? "Stripe" : "Estimate"}</span>
             : <span className="cm-src none" title="Not linked to Stripe and no gross set">not set</span>}
         </td>
+        <td className="num">{money(r.net)}</td>
         <td>{r.salesperson ?? <span className="cx-none">—</span>}</td>
         <td>{r.accountManager ?? <span className="cx-none">—</span>}</td>
         <td><span className={`cm-status ${tone}`}>{r.statusLabel}</span></td>
@@ -261,18 +260,18 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
       </tr>
       {open ? (
         <tr className="cm-lines cx-static">
-          <td colSpan={7}>
+          <td colSpan={8}>
             {r.earnings.map((e) => (
               <div key={e.key} style={{ marginBottom: 10 }}>
-                <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {pct(e.rates.monthOne)} month 1, {pct(e.rates.residual)} residual</span>
+                <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {pct(e.rate)} of each payment after Stripe&rsquo;s fee</span>
                 {e.lines.length ? (
                   <table>
-                    <thead><tr><th>Billed</th><th>Payment</th><th>Source</th><th>Kind</th><th className="num">Rate</th><th className="num">Commission</th></tr></thead>
+                    <thead><tr><th>Billed</th><th>Payment</th><th>Stripe fee</th><th>Net</th><th>Source</th><th className="num">Rate</th><th className="num">Commission</th></tr></thead>
                     <tbody>
                       {e.lines.map((l, i) => (
                         <tr key={i}>
-                          <td>{day(l.date, true)}</td><td>{money(l.amount, true)}</td><td>{l.source === "stripe" ? "Stripe · paid" : "Estimate"}</td>
-                          <td>{l.kind === "month1" ? "Month 1" : "Residual"}</td><td className="num">{pct(l.rate)}</td><td className="num">{money(l.commission, true)}</td>
+                          <td>{day(l.date, true)}</td><td>{money(l.amount, true)}</td><td>−{money(l.fee, true)}</td><td>{money(l.net, true)}</td>
+                          <td>{l.source === "stripe" ? "Stripe · paid" : "Estimate"}</td><td className="num">{pct(l.rate)}</td><td className="num">{money(l.commission, true)}</td>
                         </tr>
                       ))}
                     </tbody>

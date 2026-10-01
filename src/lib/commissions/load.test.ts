@@ -20,11 +20,11 @@ const client = (id: string, name: string, sp: string | null, am: string | null, 
   ...extra,
 });
 const member = (name: string, email: string, admin = false): TeamMember => ({ name, email, active: true, admin, accountManager: !admin });
-const seller = (id: string, name: string, email: string | null, residual = 0.15): Salesperson => ({ id, name, email, active: true, rates: { monthOne: 0.7, residual } });
+const seller = (id: string, name: string, email: string | null, rate = 0.2): Salesperson => ({ id, name, email, active: true, rates: { rate } });
 const pay = (date: string, amount: number): Payment => ({ date, amount, source: "stripe" });
 
 const team = [member("Amy", "amy@x.com"), member("Eddy", "eddy@x.com"), member("admin", "admin@x.com", true)];
-const salespeople = [seller("r", "Ryan Jagdeo", "ryan@x.com", 0.15), seller("s", "Scott Craigue", null, 0.25), seller("e", "Eddy", "eddy@x.com", 0.15)];
+const salespeople = [seller("r", "Ryan Jagdeo", "ryan@x.com", 0.2), seller("s", "Scott Craigue", null, 0.1), seller("e", "Eddy", "eddy@x.com", 0.2)];
 const clients = [
   client("k", "Keyes Company", "Scott Craigue", "Amy", { stripeSubscriptionId: "sub_k" }),
   client("c", "Coastal Realty", "Ryan Jagdeo", "Eddy", { stripeSubscriptionId: "sub_c" }),
@@ -33,10 +33,10 @@ const clients = [
 ];
 const base = (over: Partial<BuildInputs>): BuildInputs => ({
   clients, team, salespeople, history: new Map(), unavailable: [], today: "2026-09-30", run: "2026-10-01",
-  settings: { rates: new Map([["amy@x.com", { monthOne: 0.7, residual: 0.25 }]]), gross: new Map(), available: true },
+  settings: { gross: new Map(), available: true },
   stripe: new Map([
-    ["k", { payments: [pay("2026-06-24", 1500), pay("2026-07-08", 1500), pay("2026-09-16", 1500)], gross: 3000 }],
-    ["c", { payments: [pay("2026-09-20", 600)], gross: 1200 }],
+    ["k", { payments: [pay("2026-06-24", 1500), pay("2026-07-08", 1500), pay("2026-09-16", 1500)], gross: 3000, cycleDays: 14 }],
+    ["c", { payments: [pay("2026-09-20", 900)], gross: 1800, cycleDays: 14 }],
     ["n", { payments: [pay("2026-08-01", 1000), pay("2026-09-26", 1000)], gross: 1000 }],
   ]),
   viewerEmail: "amy@x.com", admin: false, ...over,
@@ -47,15 +47,18 @@ test("a person sees ONLY their own earnings — even when asking for someone els
   assert.equal(v.scope, "mine");
   assert.deepEqual(v.rows.map((r) => r.name).sort(), ["Keyes Company", "NYC Co"], "Amy's two clients as account manager");
   assert.ok(v.rows.every((r) => r.earnings.every((e) => e.key === "am:amy@x.com")), "no one else's earnings on her rows");
-  assert.deepEqual(v.reps.map((r) => r.key), ["am:amy@x.com"]);
+  assert.deepEqual(v.reps.map((r) => r.key), ["p:amy@x.com"]);
   assert.deepEqual(v.unassigned, []);
   assert.deepEqual(v.people, []);
   assert.equal(JSON.stringify(v).includes("Coastal Realty"), false, "nothing about a client she does not earn on");
 });
 
-test("someone who is both a salesperson and an account manager sees both, and only those", () => {
+test("someone who is both a salesperson and an account manager is ONE card with both roles", () => {
   const v = buildCommissionsView(base({ viewerEmail: "eddy@x.com" }));
-  assert.deepEqual(v.reps.map((r) => `${r.name}/${r.role}`).sort(), ["Eddy/account_manager", "Eddy/salesperson"]);
+  assert.deepEqual(v.reps.map((r) => r.name), ["Eddy"]);
+  assert.deepEqual(v.reps[0].roles.map((r) => r.role), ["salesperson", "account_manager"]);
+  assert.equal(v.reps[0].clients, 2);
+  assert.equal(v.reps[0].due, Math.round((v.reps[0].roles[0].due + v.reps[0].roles[1].due) * 100) / 100);
   assert.deepEqual(v.rows.map((r) => r.name).sort(), ["Coastal Realty", "NYC Co"]);
   assert.deepEqual(v.rows.find((r) => r.name === "NYC Co")!.earnings.map((e) => e.role), ["salesperson"], "Amy's share of NYC Co is not shown to Eddy");
 });
@@ -73,21 +76,23 @@ test("an admin sees everyone, can view one person, and gets what is missing on e
   const one = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, as: "sp:s" }));
   assert.deepEqual(one.rows.map((r) => r.name), ["Keyes Company"]);
   assert.ok(one.people.length >= 4, "the switcher still lists everyone");
+  assert.equal(all.people.filter((p) => p.name === "Eddy").length, 1, "Eddy is listed once");
+  const eddy = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, as: "p:eddy@x.com" }));
+  assert.deepEqual(eddy.rows.map((r) => r.name).sort(), ["Coastal Realty", "NYC Co"], "viewing Eddy shows both his roles");
 });
 
-test("both people on a client earn, each at their own rates", () => {
+test("both people on a client earn: the salesperson 20% or 10%, the account manager 5%, of the net", () => {
   const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true }));
   const keyes = v.rows.find((r) => r.name === "Keyes Company")!;
   const by = Object.fromEntries(keyes.earnings.map((e) => [e.name, e.due]));
-  assert.equal(by["Scott Craigue"], 375, "Scott's residual is 25% of $1,500 (Sep 16)");
-  assert.equal(by["Amy"], 375, "Amy's residual is 25% too");
-  assert.equal(keyes.due, 750);
+  assert.equal(by["Scott Craigue"], 145.62, "10% of $1,456.20 ($1,500 less $43.80)");
+  assert.equal(by["Amy"], 72.81, "5%");
+  assert.equal(keyes.due, 218.43);
+  assert.equal(keyes.net, 2912.4, "monthly net: $3,000 less two charges' fees");
   const coastal = v.rows.find((r) => r.name === "Coastal Realty")!;
-  assert.deepEqual(coastal.earnings.map((e) => e.due), [420, 420], "Month 1: 70% of $600 each");
-  assert.equal(coastal.statusLabel, "Month 1");
-  const ryan = v.reps.find((r) => r.key === "sp:r")!;
-  assert.equal(ryan.due, 420);
-  assert.equal(ryan.month1, 1);
+  assert.deepEqual(coastal.earnings.map((e) => e.due), [174.72, 43.68], "first payment, same rates — no Month 1");
+  assert.equal(coastal.statusLabel, "Active");
+  assert.equal(v.reps.find((r) => r.key === "p:ryan@x.com")!.due, 174.72);
 });
 
 test("a client with no Stripe link and no gross is shown, owes nothing, and says why", () => {
@@ -100,22 +105,23 @@ test("a client with no Stripe link and no gross is shown, owes nothing, and says
 test("a manual gross is estimated on the billing schedule and labelled as an estimate", () => {
   const v = buildCommissionsView(base({
     viewerEmail: "admin@x.com", admin: true, clients: [client("m", "Manual Co", "Ryan Jagdeo", null)],
-    settings: { rates: new Map(), gross: new Map([["m", 2000]]), available: true },
+    settings: { gross: new Map([["m", 2000]]), available: true },
   }));
   const lines = v.rows[0].earnings[0].lines;
   assert.equal(v.rows[0].grossSource, "manual");
   assert.ok(lines.every((l) => l.source === "estimate" && l.amount === 1000), "per 28 days, split over 14-day payments");
   assert.ok(lines.length >= 1);
+  assert.equal(v.rows[0].net, 1941.4, "estimates pay Stripe's fee too");
 });
 
-test("a churned client earns nothing after its cancellation", () => {
-  const churned = client("k", "Keyes Company", "Scott Craigue", "Amy", { stripeSubscriptionId: "sub_k", status: "churned" });
-  const v = buildCommissionsView(base({
-    clients: [churned],
-    history: new Map([["k", [{ from: "active", to: "churned", at: "2026-09-10T15:00:00Z" }]]]),
-  }));
-  assert.equal(v.rows[0].due, 0);
-  assert.match(v.rows[0].statusLabel, /^Cancelled Sep 10/);
+test("only ACTIVE clients are listed and paid — paused, churned and onboarding are not", () => {
+  const others = [
+    client("k", "Keyes Company", "Scott Craigue", "Amy", { stripeSubscriptionId: "sub_k", status: "churned" }),
+    client("c", "Coastal Realty", "Ryan Jagdeo", "Eddy", { stripeSubscriptionId: "sub_c", status: "paused" }),
+    client("u", "Unassigned Co", null, null, { status: "onboarding" }),
+  ];
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: others }));
+  assert.deepEqual([v.rows.length, v.reps.length, v.unassigned.length], [0, 0, 0]);
 });
 
 test("older data naming two account managers pays the first only — never twice", () => {
@@ -123,14 +129,6 @@ test("older data naming two account managers pays the first only — never twice
   const all = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: two }));
   assert.deepEqual(all.rows[0].earnings.map((e) => e.name), ["Eddy"]);
   assert.deepEqual(buildCommissionsView(base({ clients: two })).rows, [], "Amy does not also earn on it");
-});
-
-test("a churn date entered on the record stops accrual from that day, with no status history", () => {
-  const churned = client("k", "Keyes Company", "Scott Craigue", "Amy", { stripeSubscriptionId: "sub_k", status: "churned", churnDate: "2026-07-01" });
-  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: [churned], run: "2026-07-15" }));
-  assert.deepEqual(v.rows[0].earnings.map((e) => e.lines.map((l) => l.date)), [[], []], "the Jul 8 payment falls after the churn date");
-  const earlier = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: [churned], run: "2026-07-01" }));
-  assert.ok(earlier.rows[0].earnings.every((e) => e.lines.length === 1), "Jun 24, before the churn date, still pays");
 });
 
 test("someone on the team with no role gets no card at all", () => {
