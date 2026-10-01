@@ -3,6 +3,8 @@ import "server-only";
 import { updateAnalyticsClient } from "./analytics-direct";
 import { osTable } from "./os-db";
 import { syncIntroTemplate } from "./intro-template-sync";
+import { setClientProfile } from "./client-profile";
+import { isEmail, normalizeWebUrl } from "./profile-rules";
 import { readIntroOverride } from "./intro-override";
 import { CLIENT_STATUSES, type ClientStatus } from "./client-status";
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
@@ -160,6 +162,15 @@ export interface ClientEdit {
   onboardingDate?: string | null;
   /** §12 Churn date, entered on the record (os_clients.churn_date, 0023). */
   churnDate?: string | null;
+  /*
+   * Profile (0027, Eddy 1 Oct). Sign up date overrides Stripe's customer-
+   * created day; the web addresses are stored as https URLs. Blank clears.
+   */
+  signupDate?: string | null;
+  website?: string | null;
+  zillowUrl?: string | null;
+  pocName?: string | null;
+  pocEmail?: string | null;
   billingInterval?: (typeof BILLING_INTERVALS)[number];
   billingAnchorDate?: string | null;
   /** Introductions promised per month. §6 field; Client Health owns the column. */
@@ -240,7 +251,7 @@ export function validateEdit(edit: ClientEdit): string[] {
     errors.push("Weekly target must be a whole number of 0 or more.");
   }
   for (const [label, v] of [["Start date", edit.startDate], ["Billing anchor date", edit.billingAnchorDate],
-    ["Onboarding date", edit.onboardingDate], ["Churn date", edit.churnDate]] as const) {
+    ["Onboarding date", edit.onboardingDate], ["Churn date", edit.churnDate], ["Sign up date", edit.signupDate]] as const) {
     if (v && !ISO_DATE.test(v)) errors.push(`${label} must be YYYY-MM-DD.`);
   }
   if (edit.billingInterval !== undefined && !BILLING_INTERVALS.includes(edit.billingInterval)) {
@@ -259,6 +270,12 @@ export function validateEdit(edit: ClientEdit): string[] {
   // Format only here; whether Stripe agrees is checked in editClient, which is
   // the only place that can see the saved half of a partially-edited pair.
   errors.push(...stripeIdErrors(edit.stripeCustomerId, edit.stripeSubscriptionId));
+  for (const [label, v] of [["Website", edit.website], ["Zillow profile", edit.zillowUrl]] as const) {
+    const e = normalizeWebUrl(v, label).error;
+    if (e) errors.push(e);
+  }
+  if (edit.pocEmail && !isEmail(edit.pocEmail)) errors.push("POC email must be one email address.");
+  if (edit.pocName && edit.pocName.trim().length > 120) errors.push("POC name is too long.");
   if (edit.timezone) {
     try {
       new Intl.DateTimeFormat("en-US", { timeZone: edit.timezone });
@@ -488,6 +505,22 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     const { error: e } = await osTable("os_clients").update(local).eq("id", id);
     if (e) failed.push({ what: "the OS record", error: e.message });
     else updated.push("the OS record");
+  }
+  // Profile fields: their own columns (0027), written on their own for the same reason.
+  if ([edit.signupDate, edit.website, edit.zillowUrl, edit.pocName, edit.pocEmail].some((v) => v !== undefined)) {
+    const clean = (v: string | null | undefined) => (v === undefined ? undefined : (v ?? "").trim() || null);
+    try {
+      await setClientProfile(id, {
+        signupDate: clean(edit.signupDate),
+        website: edit.website === undefined ? undefined : normalizeWebUrl(edit.website, "Website").value,
+        zillowUrl: edit.zillowUrl === undefined ? undefined : normalizeWebUrl(edit.zillowUrl, "Zillow profile").value,
+        pocName: clean(edit.pocName),
+        pocEmail: clean(edit.pocEmail)?.toLowerCase() ?? (edit.pocEmail === undefined ? undefined : null),
+      });
+      updated.push("the client profile");
+    } catch (err) {
+      failed.push({ what: "the client profile", error: err instanceof Error ? err.message : String(err) });
+    }
   }
   // Onboarding and churn dates: their own columns (0023), written on their own
   // so a database without the migration still saves every other field.

@@ -433,12 +433,33 @@ export function ClientsScreen({ initial, only }: { initial: MasterClientList | n
 
   useEffect(() => { if (!initial) void refresh(false); }, [initial, refresh]);
 
+  const [stripe, setStripe] = useState<StripeFigures | "failed">(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/workspace/clients/stripe-summary", { cache: "no-store" })
+      .then(async (r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((b) => { if (live) setStripe(b as StripeFigures); })
+      .catch(() => { if (live) setStripe("failed"); });
+    return () => { live = false; };
+  }, []);
+
   if (!data) {
     return error ? (
       <div className="cx-page"><p className="ds-note"><b>The client list could not be loaded.</b> {error}</p></div>
     ) : <PlaceholderScreen cards={5} />;
   }
-  return <ClientsView data={data} only={only} onChanged={() => void refresh(true)} />;
+  return <ClientsView data={withStripe(data, stripe)} only={only} onChanged={() => void refresh(true)} />;
+}
+
+/* Total spend, MRR and Stripe's sign-up day, added once Stripe answers (it never holds the list up). */
+type StripeFigures = { byId: Record<string, NonNullable<MasterClient["stripe"]>>; failed: string[] } | null;
+function withStripe(data: MasterClientList, s: StripeFigures | "failed"): MasterClientList {
+  if (s === null) return data;
+  return {
+    ...data,
+    clients: data.clients.map((c) => ({ ...c, stripe: s === "failed" ? null : s.byId[c.id] ?? null })),
+    unavailable: s === "failed" ? [...data.unavailable, "Stripe"] : s.failed.length ? [...data.unavailable, `Stripe (${s.failed.length})`] : data.unavailable,
+  };
 }
 
 /** A tool's own §8 view of the client record, mounted inside that tool. */

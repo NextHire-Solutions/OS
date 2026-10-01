@@ -42,7 +42,7 @@ export type Source =
   | "Stripe"
   | "Derived";
 
-export type FieldKind = "id" | "text" | "status" | "plan" | "date" | "number" | "person" | "list" | "tz" | "interval" | "count";
+export type FieldKind = "id" | "text" | "status" | "plan" | "date" | "number" | "person" | "list" | "tz" | "interval" | "count" | "url" | "email" | "money";
 
 export interface FieldDef {
   key: string;
@@ -126,6 +126,21 @@ export const FIELDS: FieldDef[] = [
   { key: "accountManager", label: "Account Manager", category: "client", kind: "person",
     definition: "Who runs the account day to day.", sourceOfTruth: MASTER, source: "Master record",
     editIn: "Clients", editable: true, tools: ["Onboarding", "Health", "CSM"], sync: "Yes" },
+  { key: "signupDate", label: "Sign up date", category: "client", kind: "date",
+    definition: "When the client signed up. The day its Stripe customer was created, unless one is entered.", sourceOfTruth: MASTER, source: "Master record",
+    editIn: "Clients", editable: true, tools: ["Sales", "Billing"], sync: "No — a recorded moment" },
+  { key: "website", label: "Website", category: "client", kind: "url",
+    definition: "The client's website.", sourceOfTruth: MASTER, source: "Master record",
+    editIn: "Clients", editable: true, tools: ["Sales", "CSM"], sync: "No" },
+  { key: "zillowUrl", label: "Zillow profile", category: "client", kind: "url",
+    definition: "The client's Zillow profile.", sourceOfTruth: MASTER, source: "Master record",
+    editIn: "Clients", editable: true, tools: ["Sales", "CSM"], sync: "No" },
+  { key: "pocName", label: "POC name", category: "client", kind: "text",
+    definition: "The client's point of contact for the business — not necessarily who leads are introduced to.", sourceOfTruth: MASTER, source: "Master record",
+    editIn: "Clients", editable: true, tools: ["CSM", "Billing"], sync: "No" },
+  { key: "pocEmail", label: "POC email", category: "client", kind: "email",
+    definition: "The point of contact's email address.", sourceOfTruth: MASTER, source: "Master record",
+    editIn: "Clients", editable: true, tools: ["CSM", "Billing"], sync: "No" },
 
   /* ----------------------------------------------- §6 Billing Information --- */
   { key: "firstBillingDate", label: "First billing date", category: "billing", kind: "date",
@@ -146,6 +161,12 @@ export const FIELDS: FieldDef[] = [
   { key: "stripeSubscriptionId", label: "Stripe Subscription ID", category: "billing", kind: "id",
     definition: "The subscription Stripe bills the client on.", sourceOfTruth: MASTER, source: "Master record",
     editIn: "Clients", editable: true, tools: ["Billing"], sync: "Yes — paused and resumed with the status" },
+  { key: "totalSpend", label: "Total spend", category: "billing", kind: "money",
+    definition: "Everything the client has paid: every successful Stripe charge, less refunds — as the Stripe customer page shows it.", sourceOfTruth: "Stripe", source: "Stripe",
+    editIn: "Nobody — read from Stripe", editable: false, tools: ["Billing", "Commissions"], sync: "No — read live" },
+  { key: "mrr", label: "MRR", category: "billing", kind: "money",
+    definition: "Monthly recurring revenue: the client's live subscriptions as a monthly amount, Stripe's way ($750 every 14 days = $1,630.58).", sourceOfTruth: "Stripe", source: "Stripe",
+    editIn: "Nobody — read from Stripe", editable: false, tools: ["Billing", "Commissions"], sync: "No — read live" },
 
   /* ---------------------------------------------- §6 Campaign Information --- */
   { key: "campaignId", label: "Campaign ID", category: "campaign", kind: "list",

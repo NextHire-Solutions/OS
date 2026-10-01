@@ -28,7 +28,7 @@ async function slot(): Promise<() => void> {
   return () => { inFlight--; waiting.shift()?.(); };
 }
 
-async function stripeGet(url: string): Promise<Response> {
+export async function stripeGet(url: string): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     const release = await slot();
     let res: Response;

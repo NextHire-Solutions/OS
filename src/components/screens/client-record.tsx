@@ -76,6 +76,11 @@ function editorFor(key: string, team: { salespeople: string[]; accountManagers: 
     case "startDate": return { editor: { kind: "date" }, save: "startDate" };
     case "onboardingDate": return { editor: { kind: "date" }, save: "onboardingDate" };
     case "churnDate": return { editor: { kind: "date" }, save: "churnDate" };
+    case "signupDate": return { editor: { kind: "date" }, save: "signupDate" };
+    case "website": return { editor: { kind: "text", placeholder: "example.com" }, save: "website" };
+    case "zillowUrl": return { editor: { kind: "text", placeholder: "zillow.com/profile/…" }, save: "zillowUrl" };
+    case "pocName": return { editor: { kind: "text", maxLength: 120 }, save: "pocName" };
+    case "pocEmail": return { editor: { kind: "text", placeholder: "name@company.com" }, save: "pocEmail" };
     case "timezone": return { editor: { kind: "select", options: TZ_OPTIONS }, save: "timezone" };
     case "sender": case "campaignSender": return { editor: { kind: "text" }, save: "sender" };
     // Salesperson: someone on Team access → Salespeople. Before that list
@@ -107,6 +112,8 @@ function rawOf(key: string, c: MasterClient): string | number | null {
   if (key === "campaignSender") return c.sender;
   // A derived date can be a timestamp; the date editor wants YYYY-MM-DD.
   if (key === "onboardingDate" || key === "churnDate") return c[key] ? c[key]!.slice(0, 10) : null;
+  // The editor starts from what is shown: the entered day, else Stripe's.
+  if (key === "signupDate") return (c.signupDate ?? c.stripe?.signupDate ?? null)?.slice(0, 10) ?? null;
   const v = (c as unknown as Record<string, unknown>)[key];
   return typeof v === "string" || typeof v === "number" ? v : null;
 }
@@ -120,6 +127,9 @@ function displayFor(key: string, c: MasterClient): React.ReactNode {
     case "billingInterval": return intervalLabel(c.billingInterval, c.billingIntervalDays);
     case "campaignAliases": return c.campaignAliases.length ? c.campaignAliases.join(", ") : null;
     case "monthlyTarget": return c.monthlyTarget === null ? null : `${c.monthlyTarget} per 28 days`;
+    // Empty reads "Not set", like every other editable field.
+    case "signupDate": return c.signupDate || c.stripe?.signupDate ? <Cell k={key} c={c} /> : null;
+    case "website": case "zillowUrl": case "pocEmail": return c[key] ? <Cell k={key} c={c} /> : null;
     default: return undefined;
   }
 }

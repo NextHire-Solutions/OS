@@ -22,6 +22,8 @@ import { keyOf } from "./roster";
 import { EMPTY_COVERAGE, type Coverage } from "./coverage";
 import { listCoverage } from "./coverage-db";
 import { listClientDates, type ClientDates } from "./client-dates";
+import { listClientProfiles, type ClientProfile } from "./client-profile";
+import type { StripeSummary } from "./stripe-summary";
 
 /*
  * THE MASTER CLIENT LIST — every §6 field for every client, in one read.
@@ -105,6 +107,18 @@ export interface MasterClient {
   contact: OsClient["contact"];
   /** The client has its own pasted introduction (os_clients.intro_override, 0026). */
   introCustom: boolean;
+  /* Profile (0027, Eddy 1 Oct). signupDate is what was ENTERED; the screen falls back to Stripe's day. */
+  signupDate: string | null;
+  website: string | null;
+  zillowUrl: string | null;
+  pocName: string | null;
+  pocEmail: string | null;
+  /**
+   * Total spend, MRR and Stripe's customer-created day. Never filled by the
+   * server list — the Clients screen reads /api/workspace/clients/stripe-summary
+   * after the list and adds it: undefined while loading, null when not on Stripe.
+   */
+  stripe?: StripeSummary | null;
   /* What each tool adds for its own view (§8). */
   health: {
     present: boolean;
@@ -268,6 +282,7 @@ async function load(): Promise<MasterClientList> {
     getOnboardingPipeline(), readAnalytics(),
     listClientDates().then((m) => { if (!m) throw new Error("migration 0023"); return m; }),
     readIntroCustom(),
+    listClientProfiles(),
   ]);
   const unavailable: string[] = [];
   const get = <T,>(i: number): T | null => {
@@ -291,6 +306,8 @@ async function load(): Promise<MasterClientList> {
   const analytics = get<Row[]>(10);
   // Never reported as unavailable: before 0026 nobody has a custom intro.
   const introCustom = settled[12].status === "fulfilled" ? (settled[12].value as Set<string>) : new Set<string>();
+  // Null before 0027 runs: the fields read as empty, never "unavailable".
+  const profiles = settled[13].status === "fulfilled" ? (settled[13].value as Map<string, ClientProfile> | null) : null;
 
   const pickHealth = matcher(healthRows ?? [], (r) => str(r.id), (r) => str(r.name));
   const pickDb = matcher(db?.clients ?? [], (r) => r.id, (r) => r.name);
@@ -384,6 +401,11 @@ async function load(): Promise<MasterClientList> {
 
       contact: c.contact,
       introCustom: introCustom.has(c.id),
+      signupDate: profiles?.get(c.id)?.signupDate ?? null,
+      website: profiles?.get(c.id)?.website ?? null,
+      zillowUrl: profiles?.get(c.id)?.zillowUrl ?? null,
+      pocName: profiles?.get(c.id)?.pocName ?? null,
+      pocEmail: profiles?.get(c.id)?.pocEmail ?? null,
       health: {
         present: !!h,
         period: snap && snap.period.target > 0 ? { delivered: snap.period.delivered, target: snap.period.target } : null,

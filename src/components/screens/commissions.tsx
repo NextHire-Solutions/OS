@@ -81,6 +81,10 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
   const single = data.scope !== "all";
   const shown = single ? data.reps[0] ?? null : null;
   const total = useMemo(() => data.rows.reduce((t, r) => t + r.due, 0), [data.rows]);
+  // Every column sorts (Eddy, 1 Oct). Starts on what is due, largest first — the server's order.
+  const [sort, setSort] = useState<{ k: SortKey; dir: 1 | -1 }>({ k: "due", dir: -1 });
+  const onSort = (k: SortKey) => setSort((s) => ({ k, dir: s.k === k ? (s.dir === 1 ? -1 : 1) : NUMERIC.has(k) ? -1 : 1 }));
+  const rows = useMemo(() => sortRows(data.rows, sort.k, sort.dir), [data.rows, sort]);
 
   return (
     <div className="cx-page" aria-busy={busy}>
@@ -157,17 +161,25 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
           <table className="cx-table cm-table">
             <thead>
               <tr className="cx-cols">
-                {["Client", "Plan", "Monthly (gross)", "Monthly (net)", "Salesperson", "Account manager", "Status", `Due ${day(data.run)}`].map((h, i) => (
-                  <th key={h} className={i === 0 ? "cx-pin" : i === 2 || i === 3 || i === 7 ? "num" : undefined}
-                    title={i === 3 ? "Monthly gross less Stripe's fee: 2.9% + $0.30 per successful card charge. Commission is paid on this." : undefined}>
-                    <span className="cx-thl">{h}</span></th>
-                ))}
+                {COLUMNS.map(([k, h], i) => {
+                  const on = sort.k === k;
+                  return (
+                    <th key={k} className={i === 0 ? "cx-pin" : NUMERIC.has(k) ? "num" : undefined}
+                      aria-sort={on ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+                      title={k === "net" ? "Monthly gross less Stripe's fee: 2.9% + $0.30 per successful card charge. Commission is paid on this." : undefined}>
+                      <button type="button" onClick={() => onSort(k)}>
+                        {k === "due" ? `Due ${day(data.run)}` : h}
+                        <span className={`cx-arrow${on ? " on" : ""}`} aria-hidden="true">{on ? (sort.dir === 1 ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
               {data.rows.length === 0 ? (
                 <tr><td colSpan={8} className="cx-empty">{single ? "No active clients are assigned to this person." : "No active client has a salesperson or account manager yet."}</td></tr>
-              ) : data.rows.map((r) => (
+              ) : rows.map((r) => (
                 <Row key={r.id} r={r} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
               ))}
             </tbody>
@@ -184,6 +196,38 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
       </footer>
     </div>
   );
+}
+
+type SortKey = "name" | "plan" | "gross" | "net" | "salesperson" | "accountManager" | "status" | "due";
+const COLUMNS: [SortKey, string][] = [
+  ["name", "Client"], ["plan", "Plan"], ["gross", "Monthly (gross)"], ["net", "Monthly (net)"],
+  ["salesperson", "Salesperson"], ["accountManager", "Account manager"], ["status", "Status"], ["due", "Due"],
+];
+const NUMERIC = new Set<SortKey>(["gross", "net", "due"]);
+const PLAN_ORDER: Record<string, number> = { minimum: 1, production: 2, partner: 3 };
+
+/** Sorted by one column; empty values always last, ties by client name. */
+function sortRows(rows: CommissionRow[], k: SortKey, dir: 1 | -1): CommissionRow[] {
+  const val = (r: CommissionRow): string | number | null => {
+    switch (k) {
+      case "name": return r.name.toLowerCase();
+      case "plan": return r.plan ? PLAN_ORDER[r.plan] ?? 9 : null;
+      case "gross": return r.gross;
+      case "net": return r.net;
+      case "salesperson": return r.salesperson?.toLowerCase() || null;
+      case "accountManager": return r.accountManager?.toLowerCase() || null;
+      case "status": return r.statusLabel.toLowerCase();
+      case "due": return r.due;
+    }
+  };
+  return [...rows].sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x === null && y === null) return a.name.localeCompare(b.name);
+    if (x === null) return 1;
+    if (y === null) return -1;
+    const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
+    return c ? c * dir : a.name.localeCompare(b.name);
+  });
 }
 
 function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {

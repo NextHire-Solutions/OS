@@ -143,6 +143,33 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
     case "sender": case "salesperson": case "campaignSender":
       return <Person name={k === "campaignSender" ? c.sender : c[k]} />;
     case "billingInterval": return c.billingInterval ? <span>{intervalLabel(c.billingInterval, c.billingIntervalDays)}</span> : <None />;
+    /* ---- profile (0027) and Stripe figures ---- */
+    case "signupDate": {
+      const v = fmtDay(c.signupDate ?? c.stripe?.signupDate);
+      if (!v) return c.stripe === undefined && !c.signupDate ? <None title="Reading Stripe…" /> : <None />;
+      return <span className="cx-date" title={c.signupDate ? "Entered on the record" : "When the Stripe customer was created"}>
+        {v}{c.signupDate ? null : <span className="cx-sub"> · Stripe</span>}</span>;
+    }
+    case "website": case "zillowUrl": {
+      const u = c[k];
+      if (!u) return <None />;
+      const label = k === "zillowUrl" ? "Zillow ↗" : u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+      return <a className="cx-link cx-clip" href={u} target="_blank" rel="noreferrer" title={u} onClick={(e) => e.stopPropagation()}>{label}</a>;
+    }
+    case "pocName": return c.pocName ? <span>{c.pocName}</span> : <None />;
+    case "pocEmail": return c.pocEmail
+      ? <a className="cx-link" href={`mailto:${c.pocEmail}`} onClick={(e) => e.stopPropagation()}>{c.pocEmail}</a> : <None />;
+    case "totalSpend": case "mrr": {
+      if (c.stripe === undefined) return <None title="Reading Stripe…" />;
+      if (c.stripe === null) return <None title={c.stripeCustomerId || c.stripeSubscriptionId ? "Stripe could not be read" : "Not linked to Stripe"} />;
+      const v = k === "mrr" ? c.stripe.mrr : c.stripe.totalSpend;
+      return (
+        <span className="cx-num" title={k === "totalSpend" ? `${c.stripe.transactions} transactions` : "Monthly recurring revenue, as Stripe works it out"}>
+          {v.toLocaleString("en-US", { style: "currency", currency: "USD" })}
+          {k === "totalSpend" ? <span className="cx-sub"> · {c.stripe.transactions} txn</span> : null}
+        </span>
+      );
+    }
     case "stripeCustomerId": case "stripeSubscriptionId": return <Id value={c[k]} />;
     case "campaigns": {
       const n = c.campaigns?.length ?? c.analytics.campaigns;
@@ -269,6 +296,9 @@ export function textOf(k: string, c: MasterClient): string {
     case "campaignStatus": return (c.campaigns ?? []).map((x) => `${x.name}: ${x.status ?? "?"}`).join("; ");
     case "campaignAliases": return c.campaignAliases.join("; ");
     case "campaignSender": return c.sender ?? "";
+    case "signupDate": return (c.signupDate ?? c.stripe?.signupDate ?? "").slice(0, 10);
+    case "totalSpend": return c.stripe ? c.stripe.totalSpend.toFixed(2) : "";
+    case "mrr": return c.stripe ? c.stripe.mrr.toFixed(2) : "";
     default: {
       const v = (c as unknown as Record<string, unknown>)[k];
       if (v === null || v === undefined) return "";

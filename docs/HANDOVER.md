@@ -499,6 +499,17 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **Client profile fields and Stripe figures (1 Oct, Eddy).** Clients now has
+  Sign up date, Website, Zillow profile, POC name, POC email (os_clients,
+  **migration 0027**; `client-profile.ts`, read on their own so the list
+  works before 0027), and Total spend + MRR in Billing. Sign up date shows
+  the Stripe customer's created day unless one is entered ("· Stripe"
+  marks the fallback). Total spend = successful charges less refunds; MRR =
+  live, unpaused subscriptions normalized Stripe's way (30.4375-day month:
+  $750/14 days = $1,630.58) — both match Stripe exactly for The Rafeh Group.
+  Read by `stripe-summary.ts` (10-min cache) through
+  `/api/workspace/clients/stripe-summary`, fetched AFTER the list so Stripe
+  never slows it. Commissions: every column sorts.
 - **Commissions rules changed (1 Oct, Eddy, before that day's payroll).**
   No more 70% Month 1 or 15%/25% residual. Every payment earns a flat rate
   of the amount after Stripe's fee (2.9% + $0.30 per charge): the
