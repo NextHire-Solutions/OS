@@ -520,6 +520,19 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   first three are filled, Remove per person. Everyone is named in the standard
   introduction and copied in; a client with a CUSTOM intro gets them in Cc
   only — its text is the client's own.
+- **Assistant full test (6 Oct).** All 44 tools run through the real engine
+  on production data (scripted model, read-only), key figures checked against
+  independent queries; 62 real questions on production, twice, 62/62 both
+  times (median 4 s); access 33/33 (signed out 401; Amy, Gabriel, Sankalp 403
+  on every route and redirected off /assistant; admins cannot read or delete
+  each other's chats); the page in Chrome 13/13. Fixed on the way:
+  recent_introductions counted only the newest 60 (said 60 for a fortnight of
+  150; now counts every row, paged); campaign_detail now finds loosely named
+  campaigns ("Jeff Cook Greenville"); list_clients returns the matching
+  clients' own status counts (Amy's "30 active" was the business-wide count;
+  22); reminders, find_lead and "Jeff Cook is a client, not a lead" wording;
+  the **Ask button never sent** (Btn defaults to type="button" — only Enter
+  worked since 21 Sep); 15 phase-8 tools had no display label.
 - **Introduce by territory (6 Oct, Jeff Cook).** Each person may list the
   places they cover ("Charleston, Summerville"). A lead is introduced to the
   people whose place appears in its campaign name (whole words; case, accents
