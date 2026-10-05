@@ -375,7 +375,8 @@ export function AssistantScreen() {
             }}
             disabled={busy}
           />
-          <Btn disabled={busy || !question.trim()}>{busy ? "Asking…" : "Ask"}</Btn>
+          {/* type="submit": Btn defaults to a plain button, so clicking Ask did nothing — only Enter sent (found 6 Oct). */}
+          <Btn type="submit" disabled={busy || !question.trim()}>{busy ? "Asking…" : "Ask"}</Btn>
         </form>
       </main>
     </div>
