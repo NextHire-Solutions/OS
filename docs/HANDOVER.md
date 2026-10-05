@@ -499,6 +499,18 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **The Assistant ("MCP") now covers the whole OS (5 Oct).** Ten read-only
+  tools in `tools-phase7.ts`, keyed on the MASTER client (one client, several
+  portals): client_record, list_clients, client_billing + billing_overview
+  (Stripe MRR, spend, unpaid/past-due invoices; a shared Stripe customer names
+  both clients), commissions, team, client_introduction, client_portals,
+  portal_pipeline, find_lead. campaigns_for_client now carries daily send /
+  new-lead limits. The prompt no longer says "no revenue is stored"; status
+  lists come from list_clients, never onboarding_pipeline. find_client says
+  when several portals are ONE client. MAX_ROUNDS 4→5. Before: 4/14 test
+  questions right ("no paused clients" when there were 8); after: 24/24 plus
+  7 harder mixed ones. Welcome screen: suggestions grouped Clients / Money /
+  Performance / Pipeline & leads. Still admin-only.
 - **Portal links open straight on Welcome (5 Oct), standalone Master Inbox.**
   `/portal/<token>` is still the Recruiting Pipeline. The first PAGE LOAD of it
   each browser session now redirects to `/welcome` on the server (before any

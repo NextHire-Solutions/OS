@@ -1390,7 +1390,11 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
 .asst-welcome h1 { margin: 0 0 10px; font-size: 25px; font-weight: 650; letter-spacing: -.02em; }
 .asst-welcome p { margin: 0; font-size: 14px; line-height: 1.65; max-width: 62ch; }
 
-.asst-suggest { display: flex; flex-direction: column; gap: 8px; margin-top: 26px; }
+.asst-suggest-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 16px; margin-top: 26px; }
+@media (max-width: 760px) { .asst-suggest-groups { grid-template-columns: 1fr; } }
+.asst-suggest { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.asst-suggest h2 { margin: 0 0 2px; font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px; font-weight: 500;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--muted, #71717A); }
 .asst-suggest button {
   padding: 12px 14px;
   border: 1px solid var(--line);

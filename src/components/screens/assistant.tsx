@@ -48,12 +48,12 @@ interface Turn {
   error?: string | null;
 }
 
-const SUGGESTIONS = [
-  "Which clients are furthest behind their intro target?",
-  "How is The Keyes Company doing?",
-  "Which clients have gone quiet?",
-  "What did we scrape recently?",
-  "How many interested replies did we get this month?",
+/* Grouped so the breadth shows: it answers money, people and portals too (5 Oct). */
+const SUGGESTIONS: { area: string; questions: string[] }[] = [
+  { area: "Clients", questions: ["Which clients are paused, and since when?", "Give me a full picture of The Keyes Company"] },
+  { area: "Money", questions: ["What is our total MRR, and who owes us money?", "How much commission is due on the next payout?"] },
+  { area: "Performance", questions: ["Which clients are furthest behind their intro target?", "Which clients have the best reply rate?"] },
+  { area: "Pipeline & leads", questions: ["How many introduced agents were hired in the last 90 days?", "What did we scrape recently?"] },
 ];
 
 /** Today / Yesterday / Previous 7 days / Older — the grouping a sidebar needs. */
@@ -92,6 +92,16 @@ const TOOL_LABEL: Record<string, string> = {
   outcomes: "Reading the hiring funnel",
   mls_coverage: "Checking MLS coverage",
   reminders: "Checking reminders",
+  client_record: "Reading the client record",
+  list_clients: "Listing clients",
+  client_billing: "Reading Stripe billing",
+  billing_overview: "Adding up revenue in Stripe",
+  commissions: "Working out commissions",
+  team: "Reading the team",
+  client_introduction: "Reading the introduction",
+  client_portals: "Reading the portals",
+  portal_pipeline: "Reading the portal pipeline",
+  find_lead: "Finding the lead",
 };
 
 export function AssistantScreen() {
@@ -290,12 +300,18 @@ export function AssistantScreen() {
             <div className="asst-welcome">
               <h1>Ask about the business</h1>
               <p className="mut">
-                Every client, campaign, inbox and scrape — in one place. Answers cite the product
-                they came from, and say so when something is not tracked rather than reporting zero.
+                Every client, campaign, inbox, portal and scrape — plus billing, commissions and the
+                team — in one place. Answers cite where each figure came from, and say so when
+                something is not tracked rather than reporting zero.
               </p>
-              <div className="asst-suggest">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s} onClick={() => void ask(s)}>{s}</button>
+              <div className="asst-suggest-groups">
+                {SUGGESTIONS.map((g) => (
+                  <section key={g.area} className="asst-suggest">
+                    <h2>{g.area}</h2>
+                    {g.questions.map((q) => (
+                      <button key={q} onClick={() => void ask(q)}>{q}</button>
+                    ))}
+                  </section>
                 ))}
               </div>
             </div>

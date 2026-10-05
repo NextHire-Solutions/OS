@@ -1,3 +1,7 @@
+import {
+  billingOverviewTool, clientBillingTool, clientIntroductionTool, clientPortalsTool, clientRecordTool, commissionsTool,
+  findLeadTool, listClientsTool, portalPipelineTool, teamTool,
+} from "./tools-phase7.ts";
 import "server-only";
 
 import { clientOverviewTool, clientRankingsTool, findClientTool } from "./tools.ts";
@@ -132,7 +136,7 @@ export const TOOL_SCHEMA = [
       name: "campaigns_for_client",
       description:
         "List a client's campaigns across both platforms, with status, leads, emails sent, replies and reply rate. " +
-        "Use activeOnly for what is running right now. If the client is not linked to Campaign Analytics the reply says " +
+        "Includes each campaign's DAILY SEND LIMIT and daily new-lead limit — use this for any sending-limit question. Use activeOnly for what is running right now. If the client is not linked to Campaign Analytics the reply says " +
         "so — that is not the same as having no campaigns.",
       parameters: {
         type: "object",
@@ -313,9 +317,9 @@ export const TOOL_SCHEMA = [
     function: {
       name: "client_commercials",
       description:
-        "A client's plan, campaign size, billing interval and anchor date, start date and targets. " +
-        "NO PRICE OR REVENUE IS STORED in any of these systems — if asked what a client is worth, say that plainly " +
-        "rather than inferring a figure from the plan name.",
+        "A client's plan, campaign size, billing interval and anchor date, start date and targets, from Client Health. " +
+        "For what a client PAYS (MRR, total spend, invoices) use client_billing — never infer money from the plan name. " +
+        "Sending limits are per campaign: campaigns_for_client.",
       parameters: { type: "object", properties: { client: { type: "string" } }, required: ["client"] },
     },
   },
@@ -353,11 +357,103 @@ export const TOOL_SCHEMA = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "client_record",
+      description:
+        "The client's MASTER RECORD \u2014 the source of truth for: status (active/onboarding/paused/churned) and since when; plan; sign-up, start, onboarding, pause and churn dates; salesperson, account manager and sender; point of contact; website and Zillow profile; markets (MLS and areas); billing schedule; targets and this billing cycle; its portals; who introductions are addressed to. Use for ANY question about who runs, sold or owns a client, its status or its dates. A client can have several portals \u2014 this is ONE client.",
+      parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "list_clients",
+      description:
+        "List clients from the master record, filtered by status ('active','onboarding','paused','churned'), account manager, salesperson, plan or market (MLS/area), with counts by status. Use THIS for 'which clients are paused/churned/active', 'how many active clients', 'which clients does Amy manage', 'who did Ryan sell' \u2014 NOT onboarding_pipeline, which is a different list.",
+      parameters: {"type": "object", "properties": {"status": {"type": "string"}, "accountManager": {"type": "string"}, "salesperson": {"type": "string"}, "plan": {"type": "string"}, "market": {"type": "string"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "client_billing",
+      description:
+        "One client's money, from Stripe: MRR, total spend (all successful charges less refunds), subscription status and next charge, unpaid / past-due invoices, and recent invoices. Answers 'what does X pay', 'has X paid', 'is X behind on payment'.",
+      parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "billing_overview",
+      description:
+        "Revenue across the business, from Stripe: total MRR, clients ranked by MRR, all unpaid and past-due invoices with amounts, and which clients are not linked to Stripe. Answers 'what is our MRR', 'who owes us money', 'which invoices are past due'.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "commissions",
+      description:
+        "Commission payouts: who is owed what on a payout run (the 1st and 15th), per person and per client, with the rules. Omit `run` for the next/current run; pass YYYY-MM-01 or YYYY-MM-15 for another. Optionally one person by name.",
+      parameters: {"type": "object", "properties": {"run": {"type": "string", "description": "YYYY-MM-01 or YYYY-MM-15"}, "person": {"type": "string"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "team",
+      description:
+        "The team: who is an admin or account manager (and how many active clients each manages), and the salespeople with their commission rate and active clients sold.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "client_introduction",
+      description:
+        "The INTRODUCTION email for a client \u2014 the message the Introduce button and the reply agent send when handing a lead to the client: its text (custom or standard), who is copied in, and the address it is sent from. Not the campaign's cold email (that is campaign_copy).",
+      parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "client_portals",
+      description:
+        "A client's portals (a client can have one per market) and which campaign sends its new leads to which portal, with whether that was chosen automatically or by a person.",
+      parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "portal_pipeline",
+      description:
+        "What the client's portal pipeline shows today across all its portals: how many introduced agents are at each stage (introduction, phone screen, interview, hired, keep warm, no show, rejected), all time. Pass `stage` to list the agents in that stage.",
+      parameters: {"type": "object", "properties": {"client": {"type": "string"}, "stage": {"type": "string"}}, "required": ["client"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "find_lead",
+      description:
+        "Find a lead (agent) by email or name across Master Inbox: their conversations, which portal they were introduced into and their stage there.",
+      parameters: {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    },
+  },
 ];
 
 export const SYSTEM_PROMPT = `You answer questions about a lead-generation business from its own data.
 
-There are five products: Master Inbox (email threads, client portals, the reply agent), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents).
+There are five products: Master Inbox (email threads, client portals, the reply agent), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
+
+A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
 How to answer:
 - When a question names a client, resolve it with find_client first. If it returns candidates, ASK which one — never pick.
@@ -380,10 +476,9 @@ about your tools, never a fact about the business. Asked about courted accounts 
 the system does not store them — it does; you simply cannot read it. Phrase such an answer as not
 having a way to look it up, in your own words, and point at the product that holds it.
 
-The one genuine absence is PRICE and REVENUE — no figure exists in any of these systems, and a plan
-name is not a number. Everything else the five products hold, a tool reaches.
-The one genuine absence is PRICE and REVENUE — no figure exists in any of these systems, and a plan
-name is not a number.`;
+Money IS available: MRR, total spend and invoices come from Stripe (client_billing, billing_overview) and
+payouts from commissions. A plan name is still not a price — never infer one from it.
+Status lists come from list_clients (the master record), never from onboarding_pipeline.`;
 
 const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   find_client: (a) => findClientTool(String(a.query ?? "")),
@@ -433,6 +528,25 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }),
   mls_coverage: () => mlsCoverageTool(),
   reminders: (a) => remindersTool({ includeDone: a.includeDone === true }),
+  client_record: (a) => clientRecordTool(String(a.client ?? "")),
+  list_clients: (a) => listClientsTool({
+    status: typeof a.status === "string" && a.status ? a.status : undefined,
+    accountManager: typeof a.accountManager === "string" && a.accountManager ? a.accountManager : undefined,
+    salesperson: typeof a.salesperson === "string" && a.salesperson ? a.salesperson : undefined,
+    plan: typeof a.plan === "string" && a.plan ? a.plan : undefined,
+    market: typeof a.market === "string" && a.market ? a.market : undefined,
+  }),
+  client_billing: (a) => clientBillingTool(String(a.client ?? "")),
+  billing_overview: () => billingOverviewTool(),
+  commissions: (a) => commissionsTool({
+    run: typeof a.run === "string" && /^\d{4}-\d{2}-(01|15)$/.test(a.run) ? a.run : undefined,
+    person: typeof a.person === "string" && a.person ? a.person : undefined,
+  }),
+  team: () => teamTool(),
+  client_introduction: (a) => clientIntroductionTool(String(a.client ?? "")),
+  client_portals: (a) => clientPortalsTool(String(a.client ?? "")),
+  portal_pipeline: (a) => portalPipelineTool(String(a.client ?? ""), typeof a.stage === "string" && a.stage ? a.stage : undefined),
+  find_lead: (a) => findLeadTool(String(a.query ?? "")),
   client_rankings: (a) =>
     clientRankingsTool({
       signal: a.signal as "behind_target" | "gone_quiet" | "stagnant_intros" | undefined,
@@ -444,12 +558,12 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
 /*
  * How many times the model may call tools before it has to answer.
  *
- * Four covers the realistic chains — resolve a client, look it up, compare
+ * Five covers the realistic chains — resolve a client, read its record, its billing, compare
  * against a ranking — with room to recover from one bad call. It is a stop,
  * not a target: without it a model that keeps re-calling the same tool spends
  * the user's money in a loop with nothing on screen.
  */
-const MAX_ROUNDS = 4;
+const MAX_ROUNDS = 5;
 
 export async function runTurn(
   history: Array<{ role: "user" | "assistant"; content: string }>,

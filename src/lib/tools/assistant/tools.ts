@@ -1,3 +1,4 @@
+import { matchMasterClient } from "./tools-phase7.ts";
 import "server-only";
 
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -5,7 +6,7 @@ import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-health/supabase";
 import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/supabase";
 
-import { findClient, resolveAll, type ProductKey, type ResolvedClient } from "./identity.ts";
+import { findClient, resolveAll, type ProductKey, type ResolvedClient, normaliseName } from "./identity.ts";
 import { readOnly } from "./read-only.ts";
 
 /*
@@ -83,6 +84,25 @@ export interface FindClientResult {
  */
 export async function findClientTool(query: string): Promise<FindClientResult> {
   const { match, candidates } = await findClient(query);
+  /*
+   * Several PORTALS of one client (Properties & Estates: Boston, Florida)
+   * used to come back as an ambiguity to ask about. They are one client:
+   * say so, and name the portals, so a client-level question is answered.
+   */
+  if (!match && candidates.length > 1) {
+    const master = await matchMasterClient(query);
+    if (master.match) {
+      const portals = (master.match.portal.links ?? []).map((l) => l.name);
+      const own = candidates.filter((c) => portals.some((p) => normaliseName(p) === normaliseName(c.name)));
+      if (own.length === candidates.length) {
+        return {
+          match: null,
+          candidates: candidates.map((c) => ({ id: c.id, name: c.name })),
+          note: `These are the ${candidates.length} portals of ONE client, "${master.match.name}". For client-level questions (status, people, billing, commissions, introductions, portals, pipeline) use the client tools with "${master.match.name}"; for one portal's inbox figures, use that portal's name.`,
+        };
+      }
+    }
+  }
   if (match) {
     return {
       match: { id: match.id, name: match.name, missing: match.missing },

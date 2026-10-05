@@ -103,5 +103,5 @@ test("a model that only ever calls tools is stopped, with an explanation", async
   const { fn } = scripted([calls("find_client", { query: "x" })]);
   const r = await runTurn([], "q", fn);
   assert.match(r.answer, /without reaching an answer/i);
-  assert.equal(r.toolCalls.length, 4, "stops after MAX_ROUNDS, not forever");
+  assert.equal(r.toolCalls.length, 5, "stops after MAX_ROUNDS (5), not forever");
 });

@@ -37,6 +37,10 @@ export interface CampaignRow {
   emailsSent: number | null;
   replies: number | null;
   replyRate: number | null;
+  /** EmailBison/Instantly daily cap as Campaign Analytics stores it; null when not stored. */
+  dailySendLimit: number | null;
+  /** EmailBison's new-leads-per-day cap; null for Instantly. */
+  dailyNewLeadLimit: number | null;
 }
 
 export async function campaignsForClientTool(clientQuery: string, options: { activeOnly?: boolean } = {}) {
@@ -68,8 +72,15 @@ export async function campaignsForClientTool(clientQuery: string, options: { act
 
   const { data } = await an
     .from("campaigns_unified")
-    .select("name, platform, status, total_leads, lifetime_emails_sent, lifetime_unique_replies")
+    .select("id, name, platform, status, total_leads, lifetime_emails_sent, lifetime_unique_replies, max_emails_per_day")
     .in("id", ids);
+  // New-lead caps live on EmailBison's own campaign rows (5 Oct: "what is the sending limit").
+  const ebIds = ((data ?? []) as Array<Record<string, unknown>>).filter((r) => r.platform === "emailbison").map((r) => Number(r.id)).filter(Number.isFinite);
+  const caps = new Map<string, number | null>();
+  if (ebIds.length) {
+    const { data: lim } = await an.from("campaigns").select("id, max_new_leads_per_day").in("id", ebIds);
+    for (const r of (lim ?? []) as Array<{ id: number; max_new_leads_per_day: number | null }>) caps.set(String(r.id), r.max_new_leads_per_day ?? null);
+  }
 
   let rows = ((data ?? []) as Array<Record<string, unknown>>).map((r): CampaignRow => {
     const sent = (r.lifetime_emails_sent as number) ?? null;
@@ -82,6 +93,8 @@ export async function campaignsForClientTool(clientQuery: string, options: { act
       emailsSent: sent,
       replies,
       replyRate: sent && sent > 0 && replies != null ? Number((replies / sent).toFixed(4)) : null,
+      dailySendLimit: (r.max_emails_per_day as number | null) ?? null,
+      dailyNewLeadLimit: caps.get(String(r.id)) ?? null,
     };
   });
 
