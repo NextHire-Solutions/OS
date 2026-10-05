@@ -102,6 +102,21 @@ const TOOL_LABEL: Record<string, string> = {
   client_portals: "Reading the portals",
   portal_pipeline: "Reading the portal pipeline",
   find_lead: "Finding the lead",
+  workspace_home: "Reading the Home page",
+  business_performance: "Reading Performance",
+  data_consistency: "Checking data consistency",
+  billing_cycles: "Reading billing cycles",
+  client_success: "Reading account health",
+  campaign_kpis: "Reading campaign KPIs",
+  attribution: "Reading attribution",
+  offer_performance: "Comparing offers",
+  send_schedule: "Reading the send schedule",
+  campaign_detail: "Reading the campaign",
+  onboarding_client: "Reading onboarding",
+  find_agent: "Searching the agent database",
+  search_conversations: "Searching conversations",
+  reply_templates: "Reading reply templates",
+  recent_introductions: "Reading recent introductions",
 };
 
 export function AssistantScreen() {
