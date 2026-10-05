@@ -5,30 +5,22 @@ import { canSeePage } from "./nav.ts";
 
 const ALL = ["inbox", "clients", "analytics", "search", "onboarding"] as const;
 
-test("admin-only pages: Team access and Reply agent for admins only; Assistant for admins or anyone holding every tool", () => {
-  assert.equal(canSeePage("team-access", false, [...ALL], ALL), false, "every tool is not enough for Team access");
-  assert.equal(canSeePage("team-access", true, [], ALL), true);
-  assert.equal(canSeePage("reply-agent", false, [...ALL], ALL), false);
-  assert.equal(canSeePage("assistant", false, ["inbox"], ALL), false);
-  assert.equal(canSeePage("assistant", false, [...ALL], ALL), true);
-  assert.equal(canSeePage("assistant", true, [], ALL), true);
-  // Consistency became admin-only on 2 Oct (Eddy); the rest stay open to anyone with no sales role.
-  for (const id of ["home", "performance", "roster", "commissions"]) {
-    assert.equal(canSeePage(id, false, [], ALL), true, `${id} is for everyone signed in`);
+test("admin-only pages (5 Oct): Team access, Reply agent, Consistency, Performance, Assistant — even with every tool", () => {
+  for (const id of ["team-access", "reply-agent", "consistency", "performance", "assistant"]) {
+    assert.equal(canSeePage(id, false, [...ALL], ALL), false, `${id}: a teammate with every tool`);
+    assert.equal(canSeePage(id, false, [...ALL], ALL, { accountManager: true, salesperson: true }), false, `${id}: account manager + salesperson`);
+    assert.equal(canSeePage(id, true, [], ALL), true, `${id}: admin`);
   }
 });
 
-test("by role (Eddy, 2 Oct): account managers lose Performance and Consistency; salespeople also lose Clients", () => {
-  const am = { accountManager: true }, sp = { salesperson: true }, both = { accountManager: true, salesperson: true };
-  assert.equal(canSeePage("consistency", false, [...ALL], ALL), false, "Consistency is admin-only now");
-  assert.equal(canSeePage("consistency", true, [], ALL), true);
-  assert.equal(canSeePage("performance", false, [], ALL, am), false);
+test("by role: Clients for account managers, Commissions for account managers and salespeople, Home for everyone", () => {
+  const am = { accountManager: true }, sp = { salesperson: true }, none = {};
   assert.equal(canSeePage("roster", false, [], ALL, am), true);
-  assert.equal(canSeePage("commissions", false, [], ALL, am), true);
-  assert.equal(canSeePage("performance", false, [], ALL, sp), false);
   assert.equal(canSeePage("roster", false, [], ALL, sp), false);
+  assert.equal(canSeePage("roster", false, [...ALL], ALL, none), false, "a teammate with no role does not see Clients");
+  assert.equal(canSeePage("commissions", false, [], ALL, am), true);
   assert.equal(canSeePage("commissions", false, [], ALL, sp), true);
-  assert.equal(canSeePage("roster", false, [], ALL, both), true, "an account manager who also sells keeps Clients");
-  assert.equal(canSeePage("performance", true, [], ALL, both), true, "admins see everything");
-  assert.equal(canSeePage("performance", false, [], ALL), true, "no sales role: unchanged");
+  assert.equal(canSeePage("commissions", false, [...ALL], ALL, none), false, "no role, no payouts to show");
+  for (const r of [am, sp, none]) assert.equal(canSeePage("home", false, [], ALL, r), true);
+  assert.equal(canSeePage("roster", true, [], ALL, none), true, "admins see everything");
 });

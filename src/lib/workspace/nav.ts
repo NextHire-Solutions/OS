@@ -329,12 +329,13 @@ export function idForPath(pathname: string): string {
 }
 
 /*
- * Pages only admins can use (30 Sep). Their data is refused to everyone else
- * at the API; hiding them from the menu stops a non-admin clicking into an
- * error. The Assistant also opens for someone who holds every tool.
- * Consistency joined them on 2 Oct (Eddy).
+ * Pages only admins can use. Their data is refused to everyone else at the
+ * API; hiding them from the menu stops a teammate clicking into an error.
+ * 30 Sep: Team access, Reply agent. 2 Oct: Consistency. 5 Oct (Eddy:
+ * "teammates can still see performance"): Performance and the Assistant —
+ * a teammate holding every tool is still a teammate.
  */
-export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consistency"]);
+export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consistency", "performance", "assistant"]);
 
 /** A person's sales roles, for the pages below. Admins see everything regardless. */
 export interface RoleFlags {
@@ -343,16 +344,15 @@ export interface RoleFlags {
 }
 
 /*
- * By role (Eddy, 2 Oct):
- *   Account managers  no Performance, no Consistency
- *   Salespeople       no Performance, no Clients, no Consistency
- * Someone who is both keeps Clients — they manage accounts on it.
+ * Everyone else, by role (Eddy, 2 and 5 Oct):
+ *   Clients      account managers — they run accounts on it
+ *   Commissions  account managers and salespeople — it shows their own payouts
+ *   Home and the tools they are granted on Team access: everyone
  */
-export function canSeePage(id: string, admin: boolean, grants: string[], allTools: readonly string[], roles: RoleFlags = {}): boolean {
-  if (ADMIN_ONLY_PAGES.has(id)) return admin;
-  if (id === "assistant") return admin || allTools.every((t) => grants.includes(t));
+export function canSeePage(id: string, admin: boolean, _grants: string[], _allTools: readonly string[], roles: RoleFlags = {}): boolean {
   if (admin) return true;
-  if (id === "performance") return !roles.accountManager && !roles.salesperson;
-  if (id === "roster") return !(roles.salesperson && !roles.accountManager);
+  if (ADMIN_ONLY_PAGES.has(id)) return false;
+  if (id === "roster") return !!roles.accountManager;
+  if (id === "commissions") return !!(roles.accountManager || roles.salesperson);
   return true;
 }

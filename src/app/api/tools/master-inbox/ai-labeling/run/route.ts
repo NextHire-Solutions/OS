@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { requireSession } from "@/lib/auth/workspace";
 import { backfillLabelsForWorkspace } from "@/lib/tools/master-inbox/ai/run";
 import { env } from "@/lib/env";
@@ -38,7 +39,9 @@ export async function POST(request: Request) {
       );
     }
   } else {
-    const session = await requireSession();
+    // Workspace setup: admins only (5 Oct). The service-role token path above is unchanged.
+    const session = await requireAdminSession();
+    if (session instanceof NextResponse) return session;
     workspaceId = session.activeWorkspace.id;
   }
 

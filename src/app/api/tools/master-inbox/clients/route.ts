@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { hasGrant, readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { NextResponse } from "next/server";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { renderIntroMacroTemplate, introTemplateName } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -137,7 +138,9 @@ export async function POST(request: Request) {
   } else {
     // requireSession gives both the user AND the active workspace so
     // we can auto-create the matching sidebar list below.
-    const session = await requireSession();
+    // Workspace setup: admins only (5 Oct). The service-role token path above is unchanged.
+    const session = await requireAdminSession();
+    if (session instanceof NextResponse) return session;
     workspaceId = session.activeWorkspace.id;
     ownerUserId = session.user.id;
   }

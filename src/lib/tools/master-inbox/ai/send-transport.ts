@@ -1,5 +1,6 @@
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { plainTextToHtml } from "@/lib/tools/master-inbox/inbox/plain-text-html";
+import { introSenderFor } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import { sendOutboundReply } from "@/lib/tools/master-inbox/inbox/send-reply";
 
 import { LIVE_SEND_ENV_VAR, liveSendingEnabled } from "./live-gate.ts";
@@ -161,8 +162,22 @@ export async function dispatch(reply: OutboundAgentReply): Promise<TransportResu
     .map((email_address) => ({ email_address }));
 
   try {
+    const admin = createAdminSupabase();
+    /*
+     * The handover IS an introduction, so it goes out from Nicole like the
+     * Introduce button's (Eddy, 5 Oct). No usable mailbox on this platform:
+     * it goes from the campaign mailbox as before, and the log says why.
+     */
+    let senderChannelId: string | undefined;
+    if (reply.isHandover) {
+      const { data: t } = await admin.from("threads").select("source_provider").eq("id", reply.threadId).maybeSingle();
+      const sender = await introSenderFor(admin, reply.workspaceId, (t?.source_provider as string | null) ?? "emailbison");
+      if (sender.channelId) senderChannelId = sender.channelId;
+      else console.warn(`[agent-send] handover thread=${reply.threadId}: ${sender.problem}`);
+    }
     const result = await sendOutboundReply({
-      admin: createAdminSupabase(),
+      admin,
+      senderChannelId,
       workspaceId: reply.workspaceId,
       threadId: reply.threadId,
       body: { kind: "html", html: agentBodyHtml(reply.body) },

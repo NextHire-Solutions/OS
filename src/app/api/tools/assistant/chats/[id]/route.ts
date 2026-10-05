@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
+import { isAdminUser } from "@/lib/identity/admin-db";
 import { canUseAssistant, assistantForbiddenMessage } from "@/lib/tools/assistant/access";
 import { deleteChat, getChat, renameChat } from "@/lib/tools/assistant/store";
 
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 async function guard(request: NextRequest) {
   const me = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
   if (!me?.email) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  if (!canUseAssistant(me)) {
+  if (!canUseAssistant(me, await isAdminUser(me?.email))) {
     return {
       error: NextResponse.json({ error: "Forbidden", detail: assistantForbiddenMessage() }, { status: 403 }),
     };

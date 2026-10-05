@@ -462,7 +462,7 @@ export default async function WorkspacePage({
           </div>
         ),
         "inbox:reminders": <RemindersScreen />,
-        "inbox:settings": <MasterInboxSettingsScreen tab={(slug ?? [])[2]} />,
+        "inbox:settings": <MasterInboxSettingsScreen tab={(slug ?? [])[2]} admin={admin} />,
         /*
          * /inbox/portals lists the 47 client portals; /inbox/portals/<id> is
          * the staff drill-down into one of them. The list linked at that

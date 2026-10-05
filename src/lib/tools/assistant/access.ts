@@ -1,7 +1,6 @@
 import "server-only";
 
-import { ALL_TOOLS, type SsoSession } from "@/lib/bs-auth";
-import { isAdmin } from "@/lib/identity/admin";
+import type { SsoSession } from "@/lib/bs-auth";
 
 /*
  * Who may use the assistant.
@@ -18,17 +17,18 @@ import { isAdmin } from "@/lib/identity/admin";
  * is refused, or worse, the other way round.
  */
 
-export function canUseAssistant(session: SsoSession | null): boolean {
-  if (!session?.email) return false;
-  // Owners. An admin marked on Team access holds every tool, so passes below.
-  if (isAdmin(session.email)) return true;
-  const held = new Set(session.grants ?? []);
-  return ALL_TOOLS.every((tool) => held.has(tool));
+/*
+ * Admins only (Eddy, 5 Oct: teammates must not reach restricted areas). It
+ * used to admit anyone holding every tool; a teammate with every tool is
+ * still a teammate. `admin` is isAdminUser(session.email), decided by the
+ * caller so this stays pure.
+ */
+export function canUseAssistant(session: SsoSession | null, admin: boolean): boolean {
+  return !!session?.email && admin;
 }
 
 export function assistantForbiddenMessage(): string {
   return (
-    "The assistant reads across every product, so it is limited to the owner " +
-    "and to people who already have access to all the tools."
+    "The assistant reads across every product, so it is limited to workspace admins."
   );
 }

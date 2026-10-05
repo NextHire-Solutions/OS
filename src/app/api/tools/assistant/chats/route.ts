@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
+import { isAdminUser } from "@/lib/identity/admin-db";
 import { canUseAssistant, assistantForbiddenMessage } from "@/lib/tools/assistant/access";
 import { createChat, listChats } from "@/lib/tools/assistant/store";
 
@@ -14,7 +15,7 @@ async function session(request: NextRequest) {
 export async function GET(request: NextRequest) {
   const me = await session(request);
   if (!me?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canUseAssistant(me)) {
+  if (!canUseAssistant(me, await isAdminUser(me?.email))) {
     return NextResponse.json({ error: "Forbidden", detail: assistantForbiddenMessage() }, { status: 403 });
   }
   return NextResponse.json({ chats: await listChats(me.email) });
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const me = await session(request);
   if (!me?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canUseAssistant(me)) {
+  if (!canUseAssistant(me, await isAdminUser(me?.email))) {
     return NextResponse.json({ error: "Forbidden", detail: assistantForbiddenMessage() }, { status: 403 });
   }
   return NextResponse.json({ chat: await createChat(me.email) }, { status: 201 });

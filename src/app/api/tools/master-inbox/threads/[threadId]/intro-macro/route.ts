@@ -4,6 +4,7 @@ import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-
 import { requireSession } from "@/lib/auth/workspace";
 import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
+import { introSenderFor } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import {
   introReady,
   introText,
@@ -48,6 +49,12 @@ type Available = {
    * deliberately not set it up.
    */
   introductionLabelId: string | null;
+  /*
+   * Introductions go out from Nicole (Eddy, 5 Oct): the mailbox to put in
+   * From for this conversation, or null with the reason when there is none
+   * this platform can send from. See intro-sender.ts.
+   */
+  sender: { email: string; channelId: string | null; problem: string | null };
 };
 
 export async function GET(
@@ -60,7 +67,7 @@ export async function GET(
 
   const { data: thread, error: threadErr } = await admin
     .from("threads")
-    .select("id, workspace_id, client_id")
+    .select("id, workspace_id, client_id, source_provider")
     .eq("id", threadId)
     .maybeSingle();
   if (threadErr) {
@@ -160,5 +167,6 @@ export async function GET(
     body: introText(client),
     cc: introContactEmails(client).join(", ") || null,
     introductionLabelId: (introLabel?.id as string | undefined) ?? null,
+    sender: await introSenderFor(admin, session.activeWorkspace.id, (thread.source_provider as string | null) ?? "emailbison"),
   });
 }

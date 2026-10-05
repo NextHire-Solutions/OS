@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth/workspace";
 import { loadAiConfig, saveAiConfig } from "@/lib/tools/master-inbox/ai/config";
@@ -26,7 +27,9 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const session = await requireSession();
+  // Changing AI labeling is workspace setup: admins only (5 Oct).
+  const session = await requireAdminSession();
+  if (session instanceof NextResponse) return session;
   const body = await request.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {

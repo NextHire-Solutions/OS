@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { env } from "@/lib/tools/master-inbox/env";
+import { isAdminUser } from "@/lib/identity/admin-db";
 import { canUseAssistant, assistantForbiddenMessage } from "@/lib/tools/assistant/access";
 import { runTurn } from "@/lib/tools/assistant/engine";
 import { loadAssistantKey, openAiModel } from "@/lib/tools/assistant/openai";
@@ -27,7 +28,7 @@ const Ask = z.object({ question: z.string().min(1).max(2000) });
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const me = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
   if (!me?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canUseAssistant(me)) {
+  if (!canUseAssistant(me, await isAdminUser(me?.email))) {
     return NextResponse.json({ error: "Forbidden", detail: assistantForbiddenMessage() }, { status: 403 });
   }
 

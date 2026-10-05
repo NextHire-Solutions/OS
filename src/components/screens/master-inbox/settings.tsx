@@ -57,8 +57,16 @@ export function isSettingsTab(value: string | undefined): value is SettingsTab {
   return SETTINGS_TABS.some((t) => t.id === value);
 }
 
-export async function MasterInboxSettingsScreen({ tab = "labels" }: { tab?: string }) {
-  const active: SettingsTab = isSettingsTab(tab) ? tab : "labels";
+/*
+ * Workspace setup is for admins (5 Oct): Reply Agents, AI Labeling, Clients
+ * (portals) and Members. Teammates keep Labels, Templates and Personal. The
+ * APIs behind these tabs refuse a teammate too — hiding a tab is not the gate.
+ */
+const ADMIN_TABS = new Set<SettingsTab>(["reply-agents", "ai-labeling", "clients", "members"]);
+
+export async function MasterInboxSettingsScreen({ tab = "labels", admin = false }: { tab?: string; admin?: boolean }) {
+  const tabs = SETTINGS_TABS.filter((t) => admin || !ADMIN_TABS.has(t.id));
+  const active: SettingsTab = isSettingsTab(tab) && tabs.some((t) => t.id === tab) ? tab : "labels";
 
   return (
     <div className="mi-theme">
@@ -68,7 +76,7 @@ export async function MasterInboxSettingsScreen({ tab = "labels" }: { tab?: stri
         should look like them. The panels inside are the tool's.
       */}
       <div className="mi-settings-tabs">
-        {SETTINGS_TABS.map((t) => (
+        {tabs.map((t) => (
           <a key={t.id} href={`/inbox/settings/${t.id}`} className={`fp${t.id === active ? " on" : ""}`}>
             {t.label}
           </a>
