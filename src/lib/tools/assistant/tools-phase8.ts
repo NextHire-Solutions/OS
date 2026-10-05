@@ -129,7 +129,18 @@ export async function attributionTool(a: { period?: string; from?: string; to?: 
 }
 
 export async function offerPerformanceTool(a: { period?: string; from?: string; to?: string }) {
-  return trim(await callGet(offersGET as RouteGet, "/api/tools/analytics/offers", period(a)));
+  const body = await callGet(offersGET as RouteGet, "/api/tools/analytics/offers", period(a));
+  /*
+   * "Which offer is best right now" got a 7-day window with nothing sent in it
+   * and answered "no data" (5 Oct). When the window asked for is empty and no
+   * explicit dates were given, widen it to 30 days and say so.
+   */
+  const sent = JSON.stringify(body).match(/"(?:sent|emailsSent|emails_sent)":\s*([1-9]\d*)/);
+  if (!sent && !a.from && a.period !== "30d" && a.period !== "90d") {
+    const wider = await callGet(offersGET as RouteGet, "/api/tools/analytics/offers", { preset: "30d" });
+    return trim({ note: `Nothing was sent in the ${a.period ?? "requested"} window, so this is the last 30 days.`, ...(wider as object) });
+  }
+  return trim(body);
 }
 
 export async function sendScheduleTool() {
