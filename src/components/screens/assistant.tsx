@@ -74,7 +74,7 @@ function bucketOf(iso: string): string {
 
 const TOOL_LABEL: Record<string, string> = {
   find_client: "Looking up the client",
-  client_overview: "Reading all four products",
+  client_overview: "Reading a cross-product snapshot",
   client_rankings: "Ranking clients by performance",
   campaigns_for_client: "Listing campaigns",
   scrape_activity: "Checking recent scrapes",
@@ -102,6 +102,7 @@ const TOOL_LABEL: Record<string, string> = {
   client_portals: "Reading the portals",
   portal_pipeline: "Reading the portal pipeline",
   find_lead: "Finding the lead",
+  client_report: "Reading every product for this client",
   workspace_home: "Reading the Home page",
   business_performance: "Reading Performance",
   data_consistency: "Checking data consistency",

@@ -10,6 +10,7 @@ import {
 import "server-only";
 
 import { clientOverviewTool, clientRankingsTool, findClientTool } from "./tools.ts";
+import { clientReportTool } from "./tools-report.ts";
 import {
   campaignsForClientTool,
   inboxActivityTool,
@@ -102,10 +103,27 @@ export const TOOL_SCHEMA = [
   {
     type: "function" as const,
     function: {
+      name: "client_report",
+      description:
+        "THE tool for 'how is <client> doing', 'give me a (full) report on <client>', 'account review', 'health of <client>'. " +
+        "One call reads every product for that client — master record, Stripe, Campaign Analytics (last 30 days vs the 30 before " +
+        "and vs the business average), the portal pipeline, Client Health (billing cycle, weekly volume, health score), reply labels, " +
+        "the introduction setup and scrapes — and returns a verdict, attention items and strengths already computed. Write it up " +
+        "in the CLIENT REPORT format; never recompute its numbers.",
+      parameters: {
+        type: "object",
+        properties: { client: { type: "string", description: "Client name." } },
+        required: ["client"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "client_overview",
       description:
-        "Everything known about one client across all four products: inbox threads and portal pipeline, campaigns and reply rate, " +
-        "Client Health targets and intros, and scraping. " +
+        "A quick cross-product SNAPSHOT of one client (lifetime inbox, campaign and Client Health counts, scraping). For 'how is X doing' " +
+        "or any report use client_report instead. " +
         "IMPORTANT: a null figure means that product is NOT LINKED to this client — it does not mean zero. The `missing` array " +
         "names those products. Say so plainly rather than reporting 0.",
       parameters: {
@@ -502,8 +520,8 @@ export const TOOL_SCHEMA = [
     function: {
       name: "campaign_kpis",
       description:
-        "Campaign Analytics' KPI band for a period: emails sent, replies, positive replies, bounces and the rates, with comparison. Use for 'how did campaigns do last 30 days'.",
-      parameters: {"type": "object", "properties": {"period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
+        "Campaign Analytics' KPI band for a period \u2014 for the whole business or, with `client`, ONE client: emails sent, replies, positive replies, bounces and the rates, with the previous period of equal length alongside. Use for 'how did campaigns do last 30 days' and 'how are Raintown's campaigns doing'.",
+      parameters: {"type": "object", "properties": {"client": {"type": "string", "description": "One client's KPIs; omit for the whole business"}, "period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
     },
   },
   {
@@ -621,7 +639,40 @@ having a way to look it up, in your own words, and point at the product that hol
 
 Money IS available: MRR, total spend and invoices come from Stripe (client_billing, billing_overview) and
 payouts from commissions. A plan name is still not a price — never infer one from it.
-Status lists come from list_clients (the master record), never from onboarding_pipeline.`;
+Status lists come from list_clients (the master record), never from onboarding_pipeline.
+
+CLIENT REPORT. For "how is X doing", "full report", "account review" or "health of X": call client_report ONCE, straight away with the name as given — it finds the client itself (no find_client first; if it returns candidates, ask which). Write it up exactly in this shape — a readable report, not a list of fields:
+
+## <Client> — <verdict>
+At most three sentences a manager can act on: why the verdict, then the two or three decisive numbers WITH their comparison (introductions this billing cycle delivered vs required; last 30 days vs the 30 before; reply rate vs the business average), then money in a few words.
+
+### Introductions & results
+A table: Metric | Value | Context — introductions this billing cycle (delivered / required, next billing date), last 30 days (vs previous 30), all time, hires (all time, last 90 days), last introduction.
+
+### Pipeline
+A table from pipelineAllTime (Stage | Agents | Share), as given; one sentence on what it shows.
+
+### Campaigns — last 30 days
+A table: Metric | Client | Business average — sent and replies (business average "—"), then reply rate, positive rate, bounce rate (leave out a row whose value is null). Then the active campaigns as a table: Campaign | Sent (lifetime) | Reply rate | Daily limit.
+
+### Weekly trend
+A table of every week given (Week of | Emails | Replies | Intros | Reply rate), marking the running week "(so far)".
+
+### Replies — last 30 days
+One line with the label counts, largest first.
+
+### Account
+Bullets: status (since), plan, client since, account manager, salesperson, MRR, total spend, next charge, who introductions go to.
+
+### Needs attention
+Every item of "attention", high first, as "**Area** — issue. *Next:* nextStep" (use the tool's nextStep; do not invent a vaguer one). If there are none, say so.
+
+### Going well
+The "strengths".
+
+End with one italic line: the sources and periods, and anything in "unavailable".
+
+Rules for reports: use the tool's numbers exactly; money as $1,234.56, rates as percentages with two decimals, dates as 5 Oct 2026; never print a null as 0 — leave the row out or say "not linked"; do not add sections the data does not support.`;
 
 const periodArgs = (a: Record<string, unknown>) => ({
   period: typeof a.period === "string" ? a.period : undefined,
@@ -632,6 +683,7 @@ const periodArgs = (a: Record<string, unknown>) => ({
 const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   find_client: (a) => findClientTool(String(a.query ?? "")),
   client_overview: (a) => clientOverviewTool(String(a.client ?? "")),
+  client_report: (a) => clientReportTool(String(a.client ?? "")),
   campaigns_for_client: (a) =>
     campaignsForClientTool(String(a.client ?? ""), { activeOnly: a.activeOnly === true }),
   scrape_activity: (a) =>
@@ -682,7 +734,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   data_consistency: () => dataConsistencyTool(),
   billing_cycles: (a) => billingCyclesTool({ withinDays: typeof a.withinDays === "number" ? a.withinDays : undefined }),
   client_success: () => clientSuccessTool(),
-  campaign_kpis: (a) => campaignKpisTool(periodArgs(a)),
+  campaign_kpis: (a) => campaignKpisTool({ ...periodArgs(a), client: typeof a.client === "string" && a.client ? a.client : undefined }),
   attribution: (a) => attributionTool(periodArgs(a)),
   offer_performance: (a) => offerPerformanceTool(periodArgs(a)),
   send_schedule: () => sendScheduleTool(),

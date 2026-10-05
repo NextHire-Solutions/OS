@@ -120,8 +120,32 @@ export async function clientSuccessTool() {
   };
 }
 
-export async function campaignKpisTool(a: { period?: string; from?: string; to?: string }) {
-  return trim(await callGet(kpisGET as RouteGet, "/api/tools/analytics/kpis", period(a)));
+/** A master client's Campaign Analytics client id (os_clients.an_client_id), or why there is none. */
+export async function analyticsClientFor(client: string): Promise<{ name: string; id: string } | { note: string }> {
+  const { match, candidates } = await matchMasterClient(client);
+  if (!match) return { note: candidates.length ? `Several clients match: ${candidates.join(", ")}. Ask which one.` : `No client matches "${client}".` };
+  const id = (await listOsClients()).find((c) => c.id === match.id)?.links.analytics ?? null;
+  return id ? { name: match.name, id } : { note: `${match.name} is not linked to Campaign Analytics, so its campaign KPIs are unknown (not zero).` };
+}
+
+/**
+ * The KPI band, for the business or — with `client` — one client (6 Oct: a
+ * client's own sends, replies, positives and bounces were never asked for,
+ * so "how is X doing" had no Analytics figures beyond lifetime totals).
+ * Always with the previous period of equal length alongside.
+ */
+export async function campaignKpisTool(a: { period?: string; from?: string; to?: string; client?: string; platform?: "emailbison" | "instantly" }) {
+  // One platform only when asked: positives and bounces exist for EmailBison alone, so they go null with Instantly in scope.
+  const params: Record<string, string | undefined> = { ...period(a), compare: "1", platforms: a.platform };
+  let client: string | undefined;
+  if (a.client) {
+    const r = await analyticsClientFor(a.client);
+    if ("note" in r) return { note: r.note };
+    params.client_ids = r.id;
+    client = r.name;
+  }
+  const body = trim(await callGet(kpisGET as RouteGet, "/api/tools/analytics/kpis", params));
+  return client ? { client, ...(body as object) } : body;
 }
 
 export async function attributionTool(a: { period?: string; from?: string; to?: string }) {
