@@ -382,5 +382,6 @@ export async function findLeadTool(query: string) {
       inPortal: ((entries.data ?? []) as Array<Record<string, unknown>>).filter((e) => e.lead_id === l.id)
         .map((e) => ({ portal: portalName.get(e.client_id as string) ?? null, stage: e.stage, introduced: String(e.introduced_at ?? "").slice(0, 10) })),
     })),
+    note: "inPortal lists the client portals this lead was INTRODUCED into, with their stage there. Empty means not introduced to any client yet — the lead is only a conversation in that portal's inbox, so there is no pipeline stage.",
   };
 }

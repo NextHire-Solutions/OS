@@ -215,7 +215,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "reminders",
       description:
-        "Follow-up reminders set on inbox threads, split into overdue and upcoming. Answers 'what have I missed'.",
+        "The inbox's follow-up reminders \u2014 set on Master Inbox conversations and shared by the whole team (not per person) \u2014 split into overdue and upcoming. Answers 'do I have any overdue reminders', 'which follow-ups are due', 'what have I missed'.",
       parameters: {
         type: "object",
         properties: { includeDone: { type: "boolean", description: "Include completed reminders." } },
@@ -376,7 +376,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "list_clients",
       description:
-        "List clients from the master record, filtered by status ('active','onboarding','paused','churned'), account manager, salesperson, plan or market (MLS/area), with counts by status. Use THIS for 'which clients are paused/churned/active', 'how many active clients', 'which clients does Amy manage', 'who did Ryan sell' \u2014 NOT onboarding_pipeline, which is a different list.",
+        "List clients from the master record, filtered by status ('active','onboarding','paused','churned'), account manager, salesperson, plan or market (MLS/area), with counts by status. Use THIS for 'which clients are paused/churned/active', 'how many active clients', 'which clients does Amy manage', 'who did Ryan sell' \u2014 NOT onboarding_pipeline, which is a different list. For ONE person's clients always pass their name as accountManager or salesperson: `total` is then their count. Status alone counts everyone.",
       parameters: {"type": "object", "properties": {"status": {"type": "string"}, "accountManager": {"type": "string"}, "salesperson": {"type": "string"}, "plan": {"type": "string"}, "market": {"type": "string"}}},
     },
   },
@@ -448,7 +448,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "find_lead",
       description:
-        "Find a lead (agent) by email or name across Master Inbox: their conversations, which portal they were introduced into and their stage there.",
+        "Find a lead \u2014 an AGENT we emailed, never a client \u2014 by email or name across Master Inbox: their conversations, which portal they were introduced into and their stage there.",
       parameters: {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     },
   },
@@ -599,6 +599,7 @@ A CLIENT can have several PORTALS (one per market — Properties & Estates has B
 
 How to answer:
 - When a question names a client, resolve it with find_client first. If it returns candidates, ASK which one — never pick.
+- Client names often look like a person's name: "Jeff Cook" is the client Jeff Cook Real Estate, not a lead. When a name could be a client, try find_client before find_lead. Who a client's leads are introduced to — including by territory or campaign — is client_introduction.
 - Give the figures you were given. Do not estimate, extrapolate, or fill a gap with a plausible number.
 - A null is not a zero. Null means the product is not linked to that client and the number is unknown; say that plainly.
 - Say which product and period a figure came from, so it can be checked.
