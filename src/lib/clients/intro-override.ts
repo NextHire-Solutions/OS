@@ -1,6 +1,7 @@
 import "server-only";
 
 import { osTable } from "@/lib/clients/os-db";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 import { syncIntroTemplate, type IntroTemplateOutcome } from "@/lib/clients/intro-template-sync";
 import {
   customIntro,
@@ -8,6 +9,8 @@ import {
   moreContactsFrom,
   missingIntroFields,
   renderIntroMacroTemplate,
+  routeIntro,
+  slotTerritories,
   type IntroMacroClient,
 } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
@@ -50,21 +53,30 @@ async function readMore(clientId: string) {
   return error ? [] : moreContactsFrom((data as { more_contacts?: unknown } | null)?.more_contacts);
 }
 
+/** People 1-3's territories (0029); {} before the migration. */
+async function readTerritories(clientId: string): Promise<unknown> {
+  const { data, error } = await osTable("os_clients").select("contact_territories").eq("id", clientId).maybeSingle();
+  return error ? {} : (data as { contact_territories?: unknown } | null)?.contact_territories ?? {};
+}
+
 async function macroClient(clientId: string): Promise<IntroMacroClient> {
   const { data, error } = await osTable("os_clients").select(CLIENT_COLS).eq("id", clientId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new IntroOverrideError("No such client.");
   const row = data as unknown as Record<string, string | null>;
+  const territories = await readTerritories(clientId);
   return {
     name: row.name ?? "",
     contactName: row.contact_name,
     contactRole: row.contact_role,
     contactEmail: row.contact_email,
+    contactTerritories: slotTerritories(territories, 1),
     extraContacts: [
-      ...[2, 3].map((n) => ({
+      ...([2, 3] as const).map((n) => ({
         name: row[`contact${n}_name`],
         role: row[`contact${n}_role`],
         email: row[`contact${n}_email`],
+        territories: slotTerritories(territories, n),
       })),
       ...(await readMore(clientId)),
     ],
@@ -84,18 +96,79 @@ export interface IntroView {
   ready: boolean;
   /** False until migration 0026 has run: a custom intro cannot be saved yet. */
   canSaveCustom: boolean;
+  /**
+   * When the client's people have territories (0029): each of the client's
+   * campaigns, newest reply first, with who its leads are introduced to.
+   * Null when nobody has a territory — everyone is on every introduction.
+   */
+  routes: IntroRouteRow[] | null;
+}
+
+export interface IntroRouteRow {
+  campaign: string;
+  /** The places in the campaign name that picked the people. */
+  matched: string[];
+  /** Who its leads are introduced to. */
+  people: string[];
+  /** The campaign names no territory: everyone is introduced. */
+  fallback: boolean;
+  /** Conversations from this campaign, and the newest one's date. */
+  conversations: number;
+  lastAt: string | null;
+}
+
+/**
+ * The client's campaigns, from its conversations in Master Inbox (any of its
+ * portals), newest first. Best effort: [] when they cannot be read.
+ */
+async function clientCampaigns(clientId: string): Promise<Array<{ campaign: string; conversations: number; lastAt: string | null }>> {
+  try {
+    const { data: rec } = await osTable("os_clients").select("mi_client_id").eq("id", clientId).maybeSingle();
+    const portals = new Set<string>();
+    const linked = (rec as { mi_client_id?: string | null } | null)?.mi_client_id;
+    if (linked) portals.add(linked);
+    const { data: routed } = await osTable("os_campaign_portals").select("mi_client_id").eq("os_client_id", clientId);
+    for (const r of (routed ?? []) as Array<{ mi_client_id?: string }>) if (r.mi_client_id) portals.add(r.mi_client_id);
+    if (!portals.size) return [];
+    const { data } = await createAdminSupabase()
+      .from("threads")
+      .select("campaign_name, last_message_at")
+      .in("client_id", [...portals])
+      .not("campaign_name", "is", null)
+      .order("last_message_at", { ascending: false })
+      .limit(5000);
+    const by = new Map<string, { campaign: string; conversations: number; lastAt: string | null }>();
+    for (const t of (data ?? []) as Array<{ campaign_name: string; last_message_at: string | null }>) {
+      const name = t.campaign_name.trim();
+      if (!name) continue;
+      const cur = by.get(name) ?? { campaign: name, conversations: 0, lastAt: t.last_message_at };
+      cur.conversations++;
+      by.set(name, cur);
+    }
+    return [...by.values()];
+  } catch {
+    return [];
+  }
 }
 
 export async function introView(clientId: string): Promise<IntroView> {
   const client = await macroClient(clientId);
   const missing = missingIntroFields(client);
   const probe = await osTable("os_clients").select("intro_override").limit(1);
+  let routes: IntroRouteRow[] | null = null;
+  if (routeIntro(client, null).route.byTerritory) {
+    routes = (await clientCampaigns(clientId)).slice(0, 40).map((c) => {
+      const { route } = routeIntro(client, c.campaign);
+      return { ...c, matched: route.matched, people: route.people, fallback: route.fallback };
+    });
+  }
   return {
     standard: missing.length ? null : renderIntroMacroTemplate(client),
     missing,
     custom: customIntro(client),
     ready: introReady(client),
     canSaveCustom: !probe.error,
+    routes,
   };
 }
 

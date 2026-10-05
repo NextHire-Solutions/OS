@@ -1,4 +1,4 @@
-import { moreContactsFrom } from "@/lib/tools/master-inbox/inbox/intro-macro";
+import { moreContactsFrom, slotTerritories } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import "server-only";
 
 import { osTable } from "./os-db";
@@ -45,7 +45,12 @@ export interface OsClient {
      * edit form can render three fixed slots without counting.
      * See migrations/0007_os_client_contacts_2_3.sql.
      */
-    extra: Array<{ name: string | null; role: string | null; email: string | null }>;
+    extra: Array<{ name: string | null; role: string | null; email: string | null; territories?: string[] }>;
+    /*
+     * The first person's territories (migration 0029); people 2+ carry their
+     * own in `extra`. Matched against a lead's campaign name — see routeIntro.
+     */
+    territories?: string[];
   };
   /*
    * The §6 master-record fields that had no home anywhere.
@@ -122,6 +127,8 @@ const RECORD_COLUMNS =
 let hasRecordColumns: boolean | null = null;
 /* People 4+ (0028), behind the same before/after-migration fallback. */
 let hasMoreContacts: boolean | null = null;
+/* Each person's territories (0029), likewise. */
+let hasTerritories: boolean | null = null;
 /*
  * "Missing" is not remembered forever: once a migration runs, the running
  * server must start reading the column without a restart (5 Oct — 0028 ran
@@ -133,18 +140,22 @@ let missingSince = 0;
 const RECHECK_MS = 10 * 60_000;
 
 function selectList(): string {
-  if ((hasRecordColumns === false || hasMoreContacts === false) && Date.now() - missingSince > RECHECK_MS) {
+  if ((hasRecordColumns === false || hasMoreContacts === false || hasTerritories === false) && Date.now() - missingSince > RECHECK_MS) {
     if (hasRecordColumns === false) hasRecordColumns = null;
     if (hasMoreContacts === false) hasMoreContacts = null;
+    if (hasTerritories === false) hasTerritories = null;
   }
-  const base = hasRecordColumns === false ? BASE_SELECT : `${BASE_SELECT}, ${RECORD_COLUMNS}`;
-  return hasMoreContacts === false ? base : `${base}, more_contacts`;
+  let list = hasRecordColumns === false ? BASE_SELECT : `${BASE_SELECT}, ${RECORD_COLUMNS}`;
+  if (hasMoreContacts !== false) list += ", more_contacts";
+  if (hasTerritories !== false) list += ", contact_territories";
+  return list;
 }
 
 /** Note which optional column is missing, so the next select leaves it out. Returns true when one was. */
 function dropMissing(error: { code?: string; message?: string } | null): boolean {
   if (!error || !isMissingColumn(error)) return false;
   if (/more_contacts/.test(error.message ?? "") && hasMoreContacts !== false) { hasMoreContacts = false; missingSince = Date.now(); return true; }
+  if (/contact_territories/.test(error.message ?? "") && hasTerritories !== false) { hasTerritories = false; missingSince = Date.now(); return true; }
   if (hasRecordColumns !== false) { hasRecordColumns = false; missingSince = Date.now(); return true; }
   return false;
 }
@@ -179,13 +190,15 @@ function toClient(row: Row): OsClient {
       brokerage: (row.brokerage as string | null) ?? null,
       // People 2 and 3 always (two slots, maybe empty), then 4+ from more_contacts (0028).
       extra: [
-        ...[2, 3].map((n) => ({
+        ...([2, 3] as const).map((n) => ({
           name: (row[`contact${n}_name`] as string | null) ?? null,
           role: (row[`contact${n}_role`] as string | null) ?? null,
           email: (row[`contact${n}_email`] as string | null) ?? null,
+          territories: slotTerritories(row.contact_territories, n),
         })),
-        ...moreContactsFrom(row.more_contacts).map((c) => ({ name: c.name, role: c.role, email: c.email ?? null })),
+        ...moreContactsFrom(row.more_contacts).map((c) => ({ name: c.name, role: c.role, email: c.email ?? null, territories: c.territories ?? [] })),
       ],
+      territories: slotTerritories(row.contact_territories, 1),
     },
     record: {
       stripeCustomerId: (row.stripe_customer_id as string | null) ?? null,
@@ -214,7 +227,7 @@ function toClient(row: Row): OsClient {
 export async function listOsClients(): Promise<OsClient[]> {
   let { data, error } = await osTable("os_clients").select(selectList()).order("name");
   // A migration (0015/0016, 0028) not run here yet: remember which, and serve the rest.
-  for (let i = 0; i < 2 && error && dropMissing(error); i++) {
+  for (let i = 0; i < 3 && error && dropMissing(error); i++) {
     ({ data, error } = await osTable("os_clients").select(selectList()).order("name"));
   }
   if (error) throw new Error(`os_clients unavailable: ${error.message}`);
@@ -247,7 +260,7 @@ export async function setClientStatus(id: string, status: ClientStatus): Promise
   let { data, error } = await write();
   // A column a migration has not added yet fails the whole statement (nothing
   // is written), so asking again without it is safe.
-  for (let i = 0; i < 2 && error && dropMissing(error); i++) ({ data, error } = await write());
+  for (let i = 0; i < 3 && error && dropMissing(error); i++) ({ data, error } = await write());
   if (error) throw new Error(`Could not update status: ${error.message}`);
   return toClient(data as unknown as Row);
 }

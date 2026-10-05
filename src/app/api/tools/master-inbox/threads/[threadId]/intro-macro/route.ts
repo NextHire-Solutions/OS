@@ -1,4 +1,3 @@
-import { moreContactsFrom } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { NextResponse } from "next/server";
 import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-portal";
 
@@ -7,10 +6,14 @@ import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { introSenderFor } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import {
+  INTRO_ROW_COLUMNS,
+  introClientFromRow,
   introReady,
   introText,
   introContactEmails,
   missingIntroFields,
+  routeIntro,
+  type IntroRoute,
 } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 /*
@@ -56,6 +59,11 @@ type Available = {
    * this platform can send from. See intro-sender.ts.
    */
   sender: { email: string; channelId: string | null; problem: string | null };
+  /*
+   * Who this lead is introduced to when the client's people have territories
+   * (6 Oct): picked by the lead's campaign name. See routeIntro.
+   */
+  route: IntroRoute;
 };
 
 export async function GET(
@@ -68,7 +76,7 @@ export async function GET(
 
   const { data: thread, error: threadErr } = await admin
     .from("threads")
-    .select("id, workspace_id, client_id, source_provider")
+    .select("id, workspace_id, client_id, source_provider, campaign_name")
     .eq("id", threadId)
     .maybeSingle();
   if (threadErr) {
@@ -106,9 +114,7 @@ export async function GET(
     const found = await rosterRowForPortal(
       clientId,
       (miClient?.name as string | undefined) ?? null,
-      "name, contact_name, contact_role, contact_email, " +
-        "contact2_name, contact2_role, contact2_email, " +
-        "contact3_name, contact3_role, contact3_email, brokerage, intro_override, more_contacts",
+      INTRO_ROW_COLUMNS,
     );
     if (found.error) throw new Error(found.error);
     row = found.row;
@@ -128,27 +134,11 @@ export async function GET(
     });
   }
 
-  const str = (k: string) => (row?.[k] as string | null) ?? null;
-  const client = {
-    name: (row.name as string | null) ?? clientName,
-    contactName: str("contact_name"),
-    contactRole: str("contact_role"),
-    contactEmail: str("contact_email"),
-    // The second and third people, when this client has them. Anyone without
-    // both a name and a role is ignored by the macro.
-    // People 2-3 from their columns, then 4+ from more_contacts (OS migration 0028).
-    extraContacts: [
-      ...[2, 3].map((n) => ({
-        name: str(`contact${n}_name`),
-        role: str(`contact${n}_role`),
-        email: str(`contact${n}_email`),
-      })),
-      ...moreContactsFrom(row?.more_contacts),
-    ],
-    brokerage: str("brokerage"),
-    // The client's own pasted introduction, when set (OS migration 0026).
-    introOverride: str("intro_override"),
-  };
+  // Only the people for this lead's territory, when the client has territories.
+  const { client, route } = routeIntro(
+    introClientFromRow(row, clientName),
+    (thread.campaign_name as string | null) ?? null,
+  );
 
   if (!introReady(client)) {
     const missing = missingIntroFields(client).join(" and ");
@@ -173,5 +163,6 @@ export async function GET(
     cc: introContactEmails(client).join(", ") || null,
     introductionLabelId: (introLabel?.id as string | undefined) ?? null,
     sender: await introSenderFor(admin, session.activeWorkspace.id, (thread.source_provider as string | null) ?? "emailbison"),
+    route,
   });
 }

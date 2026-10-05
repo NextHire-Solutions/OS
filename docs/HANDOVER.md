@@ -520,6 +520,20 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   first three are filled, Remove per person. Everyone is named in the standard
   introduction and copied in; a client with a CUSTOM intro gets them in Cc
   only — its text is the client's own.
+- **Introduce by territory (6 Oct, Jeff Cook).** Each person may list the
+  places they cover ("Charleston, Summerville"). A lead is introduced to the
+  people whose place appears in its campaign name (whole words; case, accents
+  and dashes ignored), plus anyone with no territory; a campaign naming no
+  territory goes to everyone, and the composer warns. `routeIntro` in
+  intro-macro.ts (both apps, identical tail) returns a client holding just
+  those people, so the wording, the Cc and the reply agent's handover need no
+  change of their own; the thread's `campaign_name` picks. Storage: people 1–3
+  in `os_clients.contact_territories` ({"1": [...], "2": [...], "3": [...]},
+  **migration 0029**), 4+ inside their `more_contacts` entry. Every reader
+  tolerates 0029 being absent. Record → Introduce to: a Territory field per
+  person and "Who each campaign's leads are introduced to" (from the client's
+  conversations, newest first). The stored "Intro Macro" template still names
+  everyone — it is what the Templates picker inserts by hand.
 - **Assistant phase 8 — every OS screen (5 Oct).** Fifteen more read-only
   tools (`tools-phase8.ts`): workspace_home, business_performance,
   data_consistency (runReconcileCheck, send:false), billing_cycles and

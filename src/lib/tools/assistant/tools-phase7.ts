@@ -286,9 +286,17 @@ export async function clientIntroductionTool(query: string) {
     whatIsSent: v.custom ? "the client's custom introduction" : v.standard ? "the standard introduction" : "nothing — the introduction is not set up",
     text: v.custom ?? v.standard,
     missingForStandard: v.missing,
-    copiedIn: cc,
+    copiedIn: v.routes ? "only the people for the lead's territory — see byTerritory" : cc,
     sentFrom: introSenderEmail(),
-    note: "This is the introduction email the Introduce button and the reply agent send — NOT the campaign's cold email (that is campaign_copy). {{lead.*}} and {{sender.*}} are filled in per lead when it is sent.",
+    // Territories (6 Oct): each person may cover places; a lead goes to the
+    // people whose place is in its campaign name, plus anyone with none.
+    territories: [
+      { person: c.contact.name, covers: c.contact.territories ?? [] },
+      ...c.contact.extra.filter((p) => p.name).map((p) => ({ person: p.name, covers: p.territories ?? [] })),
+    ].filter((p) => p.person),
+    byTerritory: v.routes?.map((x) => ({ campaign: x.campaign, introducedTo: x.fallback ? "everyone (the campaign names no territory)" : x.people })) ?? null,
+    note: "This is the introduction email the Introduce button and the reply agent send — NOT the campaign's cold email (that is campaign_copy). {{lead.*}} and {{sender.*}} are filled in per lead when it is sent." +
+      (v.routes ? " This client introduces BY TERRITORY: the text shown names everyone, but each lead's introduction names and copies in only the people whose territory appears in the lead's campaign name (plus anyone with no territory); a campaign naming no territory goes to everyone." : ""),
   };
 }
 

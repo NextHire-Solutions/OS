@@ -6,7 +6,7 @@ import { syncIntroTemplate } from "./intro-template-sync";
 import { setClientProfile } from "./client-profile";
 import { isEmail, normalizeWebUrl } from "./profile-rules";
 import { readIntroOverride } from "./intro-override";
-import { MAX_INTRO_CONTACTS, moreContactsFrom } from "@/lib/tools/master-inbox/inbox/intro-macro";
+import { MAX_INTRO_CONTACTS, MAX_TERRITORIES, moreContactsFrom, territoriesFrom } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { CLIENT_STATUSES, type ClientStatus } from "./client-status";
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -135,7 +135,15 @@ export interface ClientEdit {
    * People 4 and up (os_clients.more_contacts, 0028), in order. The whole
    * list is replaced; [] removes them all. Each needs a name and a role.
    */
-  moreContacts?: Array<{ name: string | null; role: string | null; email: string | null }> | null;
+  moreContacts?: Array<{ name: string | null; role: string | null; email: string | null; territories?: string[] | null }> | null;
+  /**
+   * The places people 1-3 cover (os_clients.contact_territories, 0029); people
+   * 4+ carry theirs in `moreContacts`. A lead is introduced to the people whose
+   * territory appears in its campaign name — see routeIntro. [] clears.
+   */
+  contactTerritories?: string[] | null;
+  contact2Territories?: string[] | null;
+  contact3Territories?: string[] | null;
   /*
    * The §6 master-record fields (migration 0015). Recorded here because the
    * OS is the master record and because, before this, there was nowhere in
@@ -314,6 +322,16 @@ export function validateEdit(edit: ClientEdit): string[] {
         if (email && !EMAIL.test(email)) errors.push(`Contact ${n}'s email must be a valid email address.`);
       });
     }
+  }
+  const territoryLists: Array<[string, unknown]> = [
+    ["First contact", edit.contactTerritories], ["Second contact", edit.contact2Territories], ["Third contact", edit.contact3Territories],
+    ...(Array.isArray(edit.moreContacts) ? edit.moreContacts.map((p, i) => [`Contact ${i + 4}`, p?.territories] as [string, unknown]) : []),
+  ];
+  for (const [who, list] of territoryLists) {
+    if (list === undefined || list === null) continue;
+    if (!Array.isArray(list) || list.some((t) => typeof t !== "string")) { errors.push(`${who}'s territories must be a list of places.`); continue; }
+    if (list.length > MAX_TERRITORIES) errors.push(`${who} can cover at most ${MAX_TERRITORIES} places.`);
+    if (list.some((t) => t.trim().length > 60)) errors.push(`${who}'s territory names must be 60 characters or fewer.`);
   }
   for (const slot of CONTACT_SLOTS) {
     // An empty string clears the address; anything else has to be one.
@@ -528,10 +546,11 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   }
   // People 4+ (0028): their own column, written on its own so a database
   // without the migration still saves every other field.
-  let morePeople: Array<{ name: string | null; role: string | null; email: string | null }> | null = null;
+  let morePeople: Array<{ name: string | null; role: string | null; email: string | null; territories?: string[] }> | null = null;
   if (edit.moreContacts !== undefined) {
     morePeople = (edit.moreContacts ?? []).map((p) => ({
       name: (p.name ?? "").trim() || null, role: (p.role ?? "").trim() || null, email: (p.email ?? "").trim().toLowerCase() || null,
+      territories: territoriesFrom(p.territories),
     }));
     const { error: mErr } = await osTable("os_clients").update({ more_contacts: morePeople }).eq("id", id);
     if (mErr) {
@@ -541,6 +560,28 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
       });
       morePeople = null;
     } else updated.push("the people to introduce to");
+  }
+  // Territories of people 1-3 (0029): one jsonb column, merged by slot, written
+  // on its own so a database without the migration still saves everything else.
+  const slotEdits: Array<[string, string[] | null | undefined]> = [
+    ["1", edit.contactTerritories], ["2", edit.contact2Territories], ["3", edit.contact3Territories],
+  ];
+  if (slotEdits.some(([, v]) => v !== undefined)) {
+    const { data: cur, error: rErr } = await osTable("os_clients").select("contact_territories").eq("id", id).maybeSingle();
+    const merged: Record<string, string[]> = {};
+    const stored = (cur as { contact_territories?: unknown } | null)?.contact_territories;
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      for (const [k, v] of Object.entries(stored as Record<string, unknown>)) merged[k] = territoriesFrom(v);
+    }
+    for (const [k, v] of slotEdits) if (v !== undefined) merged[k] = territoriesFrom(v);
+    for (const k of Object.keys(merged)) if (!merged[k].length) delete merged[k];
+    const { error: tErr } = rErr ? { error: rErr } : await osTable("os_clients").update({ contact_territories: merged }).eq("id", id);
+    if (tErr) {
+      failed.push({
+        what: "the territories",
+        error: /contact_territories/.test(tErr.message) ? "Territories need migrations/0029_intro_territories.sql run first." : tErr.message,
+      });
+    } else updated.push("the territories");
   }
   // Profile fields: their own columns (0027), written on their own for the same reason.
   if ([edit.signupDate, edit.website, edit.zillowUrl, edit.pocName, edit.pocEmail].some((v) => v !== undefined)) {

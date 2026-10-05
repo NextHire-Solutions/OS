@@ -385,12 +385,18 @@ export function ClientRecord({
                       editor={{ kind: "text" }} onSave={save("brokerage")} />
                   </div>
                   {[0, 1, 2].map((i) => {
-                    const v = i === 0 ? { name: c.contact.name, role: c.contact.role, email: c.contact.email } : c.contact.extra[i - 1] ?? { name: null, role: null, email: null };
+                    const v = i === 0 ? { name: c.contact.name, role: c.contact.role, email: c.contact.email, territories: c.contact.territories ?? [] } : c.contact.extra[i - 1] ?? { name: null, role: null, email: null };
                     const p = i === 0 ? "contact" : `contact${i + 1}`;
                     return (
                       <div key={i} className="rx-row">
                         <ContactEditor ordinal={i} value={v}
-                          onSave={async (d) => { await saveEdit(c.id, { [`${p}Name`]: d.name, [`${p}Role`]: d.role, [`${p}Email`]: d.email }); onChanged(); }} />
+                          onSave={async (d) => {
+                            const patch: Record<string, unknown> = { [`${p}Name`]: d.name, [`${p}Role`]: d.role, [`${p}Email`]: d.email };
+                            // Sent only when changed, so saving a name never touches territories.
+                            if ((d.territories ?? []).join("|") !== (v.territories ?? []).join("|")) patch[`${p}Territories`] = d.territories ?? [];
+                            await saveEdit(c.id, patch);
+                            onChanged();
+                          }} />
                       </div>
                     );
                   })}
@@ -1074,10 +1080,58 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
       {!editing && current ? (
         <div className="rx-hint" style={{ marginTop: 0 }}>
           {view.canSaveCustom ? "Click the text to edit it. " : ""}The highlighted parts are filled in for each lead when it is sent.
-          {view.custom ? " The contacts below are still copied in (Cc)." : " It is written from the contacts below."}
+          {view.custom
+            ? view.routes ? " The people below for each lead's territory are still copied in (Cc)." : " The contacts below are still copied in (Cc)."
+            : view.routes ? " It is written from the contacts below; each lead's names only the people for its territory." : " It is written from the contacts below."}
         </div>
       ) : null}
+      {!editing && view.routes ? <IntroRoutes routes={view.routes} /> : null}
       {msg ? <div role="status" style={{ fontSize: 13, color: msg.bad ? "var(--x-bad, #b42318)" : undefined }}>{msg.text}</div> : null}
+    </div>
+  );
+}
+
+/*
+ * Who each campaign's leads are introduced to, when the client's people have
+ * territories (Jeff Cook, 6 Oct). Read-only: it follows from the Territory on
+ * each person below, matched against the campaign's name.
+ */
+function IntroRoutes({ routes }: { routes: NonNullable<IntroView["routes"]> }) {
+  const unmatched = routes.filter((r) => r.fallback).length;
+  return (
+    <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 600 }}>Who each campaign&apos;s leads are introduced to</div>
+      {routes.length ? (
+        <div className="rx-camps">
+          {routes.map((r) => (
+            <div key={r.campaign} className="rx-camp" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}>
+              <div style={{ minWidth: 0 }}>
+                <b title={r.campaign}>{r.campaign}</b>
+                <small>
+                  {r.conversations} conversation{r.conversations === 1 ? "" : "s"}
+                  {r.lastAt ? ` · last ${new Date(r.lastAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}
+                  {r.matched.length ? ` · ${r.matched.join(", ")}` : ""}
+                </small>
+              </div>
+              {r.fallback ? (
+                <span title="This campaign's name contains none of the territories below, so its leads are introduced to everyone."
+                  style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "#FEF3C7", color: "#92400E", whiteSpace: "nowrap" }}>
+                  No territory · everyone
+                </span>
+              ) : (
+                <span style={{ fontSize: 12.5, textAlign: "right" }}>{r.people.join(", ")}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rx-hint" style={{ marginTop: 0 }}>No conversations yet, so no campaigns to show.</div>
+      )}
+      {unmatched ? (
+        <div className="rx-hint" style={{ marginTop: 0 }}>
+          {unmatched} campaign{unmatched === 1 ? " names" : "s name"} no territory. Add the place to someone&apos;s Territory below to send those leads to them.
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1088,8 +1142,8 @@ function ContactEditor({
   ordinal, value, onSave, startEditing = false, onCancel, onRemove,
 }: {
   ordinal: number;
-  value: { name: string | null; role: string | null; email: string | null };
-  onSave: (v: { name: string | null; role: string | null; email: string | null }) => Promise<void>;
+  value: Person;
+  onSave: (v: Person) => Promise<void>;
   /** A person being added: open straight in the editor. */
   startEditing?: boolean;
   /** Called when a new person's editor is cancelled. */
@@ -1098,7 +1152,7 @@ function ContactEditor({
   onRemove?: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(startEditing);
-  const [draft, setDraft] = useState({ name: "", role: "", email: "" });
+  const [draft, setDraft] = useState({ name: "", role: "", email: "", territories: "" });
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1108,7 +1162,10 @@ function ContactEditor({
     setSaving(true);
     setError(null);
     try {
-      await onSave({ name: draft.name.trim() || null, role: draft.role.trim() || null, email: draft.email.trim() || null });
+      await onSave({
+        name: draft.name.trim() || null, role: draft.role.trim() || null, email: draft.email.trim() || null,
+        territories: draft.territories.split(",").map((t) => t.trim()).filter(Boolean),
+      });
       setEditing(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save");
@@ -1132,6 +1189,12 @@ function ContactEditor({
             <input className="ds-input" type="email" placeholder="Email (optional)" aria-label={`${label} email`} value={draft.email}
               onChange={(e) => setDraft({ ...draft, email: e.target.value })}
               onKeyDown={(e) => { if (e.key === "Enter") void commit(); if (e.key === "Escape") setEditing(false); }} />
+            <input className="ds-input" placeholder="Territory (optional), e.g. Charleston, Summerville" aria-label={`${label} territory`} value={draft.territories}
+              onChange={(e) => setDraft({ ...draft, territories: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") void commit(); if (e.key === "Escape") setEditing(false); }} />
+            <span style={{ fontSize: 12, color: "var(--ds-muted)" }}>
+              Places this person covers, separated by commas. A lead is introduced to them when one of these is in its campaign name. Leave empty for every lead.
+            </span>
             <div style={{ display: "flex", gap: 6 }}>
               <button type="button" className="ds-btn primary sm" disabled={saving} onClick={() => void commit()}>{saving ? "Saving…" : "Save"}</button>
               <button type="button" className="ds-btn ghost sm" disabled={saving} onClick={() => { setEditing(false); onCancel?.(); }}>Cancel</button>
@@ -1140,12 +1203,15 @@ function ContactEditor({
           </div>
         ) : (
           <button type="button" className="ds-value" aria-label={`Edit ${label}`}
-            onClick={() => { setDraft({ name: value.name ?? "", role: value.role ?? "", email: value.email ?? "" }); setError(null); setEditing(true); }}>
+            onClick={() => { setDraft({ name: value.name ?? "", role: value.role ?? "", email: value.email ?? "", territories: (value.territories ?? []).join(", ") }); setError(null); setEditing(true); }}>
             <span style={{ minWidth: 0 }}>
               {value.name ? (
                 <>
                   {value.name}{value.role ? <span style={{ color: "var(--ds-muted)" }}>, {value.role}</span> : null}
                   {value.email ? <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>{value.email}</span> : null}
+                  {value.territories?.length ? (
+                    <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>Territory: {value.territories.join(", ")}</span>
+                  ) : null}
                 </>
               ) : <span className="empty">{ordinal === 0 ? "Not set" : "Add a person"}</span>}
             </span>
@@ -1179,7 +1245,7 @@ function ContactEditor({
  * their own editors above; 4 and up are one list (os_clients.more_contacts,
  * migration 0028), saved whole. Up to 10 in all.
  */
-type Person = { name: string | null; role: string | null; email: string | null };
+type Person = { name: string | null; role: string | null; email: string | null; territories?: string[] };
 const MAX_PEOPLE = 10;
 
 function MorePeople({ clientId, contact, onChanged }: {
@@ -1191,6 +1257,7 @@ function MorePeople({ clientId, contact, onChanged }: {
   const [adding, setAdding] = useState(false);
   const firstThreeFilled = !!contact.name && !!contact.extra[0]?.name && !!contact.extra[1]?.name;
   const total = 3 + more.length;
+  const byTerritory = [contact.territories ?? [], ...contact.extra.map((p) => p.territories ?? [])].some((t) => t.length);
 
   // The edit route's own rules apply (name + role each, valid email, at most 10);
   // a leg that fails — e.g. migration 0028 not run — comes back as the error.
@@ -1223,6 +1290,7 @@ function MorePeople({ clientId, contact, onChanged }: {
         ) : null}
         <span>
           {total >= MAX_PEOPLE ? `${MAX_PEOPLE} people is the most an introduction can name.` :
+            byTerritory ? `Each lead is introduced to the people whose territory is in its campaign name, plus anyone with no territory. Up to ${MAX_PEOPLE} people.` :
             firstThreeFilled ? `Everyone here is named in the introduction and copied in. Up to ${MAX_PEOPLE} people.` :
             "Fill in the first three people to add more."}
         </span>

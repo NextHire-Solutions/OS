@@ -99,3 +99,13 @@ test("people 4+: each needs a name and a role, emails must be real, at most 10 p
   assert.ok(validateEdit({ moreContacts: eight }).some((e) => /At most 10 people/.test(e)));
   assert.deepEqual(validateEdit({ moreContacts: [] }), [], "an empty list removes them all");
 });
+
+test("territories (0029): lists of places, capped, for people 1-3 and 4+", () => {
+  assert.deepEqual(validateEdit({ contactTerritories: ["Myrtle Beach", "Greenville"] }), []);
+  assert.deepEqual(validateEdit({ contact2Territories: [] }), [], "an empty list clears");
+  assert.ok(validateEdit({ contact3Territories: "Columbia" as unknown as string[] }).some((e) => /Third contact's territories must be a list/.test(e)));
+  assert.ok(validateEdit({ contactTerritories: Array.from({ length: 11 }, (_, i) => `P${i}`) }).some((e) => /at most 10 places/.test(e)));
+  assert.ok(validateEdit({ contactTerritories: ["x".repeat(61)] }).some((e) => /60 characters/.test(e)));
+  assert.deepEqual(validateEdit({ moreContacts: [{ name: "Stewart", role: "Management Team", email: null, territories: ["Columbia"] }] }), []);
+  assert.ok(validateEdit({ moreContacts: [{ name: "S", role: "R", email: null, territories: [5 as unknown as string] }] }).some((e) => /Contact 4's territories/.test(e)));
+});
