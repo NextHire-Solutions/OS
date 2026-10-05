@@ -1,4 +1,6 @@
 import { matchMasterClient } from "./tools-phase7.ts";
+import { getMasterClientList } from "@/lib/clients/master-list";
+import { isKnownNonClient } from "@/lib/clients/roster";
 import "server-only";
 
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -112,6 +114,27 @@ export async function findClientTool(query: string): Promise<FindClientResult> {
         : undefined,
     };
   }
+  if (!candidates.length) {
+    /*
+     * "Jeff Cook Greenville" is a client plus a market — a campaign, not a
+     * client name — and came back "no such client" (6 Oct). When the first two
+     * words of a client's name are in the query, offer that client and say
+     * the rest is probably a market or a campaign.
+     */
+    const words = new Set(normaliseWords(query));
+    const { clients: all } = await getMasterClientList();
+    const hits = all.filter((c) => !isKnownNonClient(c.name)).filter((c) => {
+      const lead = normaliseWords(c.name).filter((w) => w !== "the").slice(0, 2);
+      return lead.length === 2 && lead.every((w) => words.has(w));
+    });
+    if (hits.length) {
+      return {
+        match: null,
+        candidates: hits.slice(0, 6).map((c) => ({ id: c.id, name: c.name })),
+        note: `No client is called "${query}", but ${hits.map((c) => `"${c.name}"`).join(", ")} ${hits.length === 1 ? "is" : "are"} in it — the other words are probably a market or a campaign. For a campaign, use campaign_detail with the words as given; for the client, use its full name. Ask only if several clients fit.`,
+      };
+    }
+  }
   return {
     match: null,
     candidates: candidates.map((c) => ({ id: c.id, name: c.name })),
@@ -119,6 +142,11 @@ export async function findClientTool(query: string): Promise<FindClientResult> {
       ? "Several clients match. Ask which one before answering — do not pick."
       : "No client matches that name.",
   };
+}
+
+/** Lower-case words of a name, punctuation dropped. */
+function normaliseWords(value: string): string[] {
+  return value.toLowerCase().replace(/[^a-z0-9& ]+/g, " ").split(/\s+/).filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
