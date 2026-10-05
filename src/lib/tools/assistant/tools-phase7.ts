@@ -119,12 +119,18 @@ export async function listClientsTool(f: { status?: string; accountManager?: str
     has(c.accountManager, f.accountManager) && has(c.salesperson, f.salesperson) && has(c.plan, f.plan) &&
     (!f.market || [...(c.markets?.mls ?? []), ...(c.markets?.areas ?? [])].some((m) => norm(m).includes(norm(f.market!)))),
   );
-  const byStatus = all.reduce<Record<string, number>>((m, c) => ((m[c.status] = (m[c.status] ?? 0) + 1), m), {});
+  const tally = (list: typeof all) => list.reduce<Record<string, number>>((m, c) => ((m[c.status] = (m[c.status] ?? 0) + 1), m), {});
+  /*
+   * The matching clients' own status counts come first (6 Oct): with only the
+   * business-wide counts beside them, "how many active clients does Amy
+   * manage" was answered from those (30) or by counting the list (19) — 22.
+   */
   return {
     filters: f,
     total: rows.length,
-    allClientsByStatus: byStatus,
-    note: "From the master client record. Demo Portal and test rows are never counted. A client with several portals is ONE client.",
+    matchingByStatus: tally(rows),
+    wholeBusinessByStatus: tally(all),
+    note: "From the master client record. `total` and `matchingByStatus` are the clients matching the filters — use them for any count; wholeBusinessByStatus ignores the filters. Demo Portal and test rows are never counted. A client with several portals is ONE client.",
     clients: rows
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((c) => ({ name: c.name, status: c.status, statusSince: c.statusSince, pausedOn: c.pauseDate, churnedOn: c.churnDate, plan: c.plan, accountManager: c.accountManager, salesperson: c.salesperson, start: c.startDate, portals: c.portal.count })),
