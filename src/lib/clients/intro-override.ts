@@ -5,6 +5,7 @@ import { syncIntroTemplate, type IntroTemplateOutcome } from "@/lib/clients/intr
 import {
   customIntro,
   introReady,
+  moreContactsFrom,
   missingIntroFields,
   renderIntroMacroTemplate,
   type IntroMacroClient,
@@ -43,6 +44,12 @@ const CLIENT_COLS =
   "contact2_name, contact2_role, contact2_email, " +
   "contact3_name, contact3_role, contact3_email, brokerage";
 
+/** People 4+ (0028); none before the migration. */
+async function readMore(clientId: string) {
+  const { data, error } = await osTable("os_clients").select("more_contacts").eq("id", clientId).maybeSingle();
+  return error ? [] : moreContactsFrom((data as { more_contacts?: unknown } | null)?.more_contacts);
+}
+
 async function macroClient(clientId: string): Promise<IntroMacroClient> {
   const { data, error } = await osTable("os_clients").select(CLIENT_COLS).eq("id", clientId).maybeSingle();
   if (error) throw new Error(error.message);
@@ -53,11 +60,14 @@ async function macroClient(clientId: string): Promise<IntroMacroClient> {
     contactName: row.contact_name,
     contactRole: row.contact_role,
     contactEmail: row.contact_email,
-    extraContacts: [2, 3].map((n) => ({
-      name: row[`contact${n}_name`],
-      role: row[`contact${n}_role`],
-      email: row[`contact${n}_email`],
-    })),
+    extraContacts: [
+      ...[2, 3].map((n) => ({
+        name: row[`contact${n}_name`],
+        role: row[`contact${n}_role`],
+        email: row[`contact${n}_email`],
+      })),
+      ...(await readMore(clientId)),
+    ],
     brokerage: row.brokerage,
     introOverride: await readIntroOverride(clientId),
   };

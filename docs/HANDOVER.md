@@ -511,6 +511,15 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   questions right ("no paused clients" when there were 8); after: 24/24 plus
   7 harder mixed ones. Welcome screen: suggestions grouped Clients / Money /
   Performance / Pipeline & leads. Still admin-only.
+- **More than three "Introduce to" people (5 Oct, client ask).** People 1–3
+  keep their columns; 4+ live in `os_clients.more_contacts` (jsonb list,
+  **migration 0028**), up to 10 in all. `moreContactsFrom` (intro-macro.ts,
+  both apps) reads it; os-clients/edit/intro-override/roster-for-portal all
+  tolerate the column being absent. The edit API takes `moreContacts` (whole
+  list; each needs name + role). Introduce to tab: "+ Add a person" once the
+  first three are filled, Remove per person. Everyone is named in the standard
+  introduction and copied in; a client with a CUSTOM intro gets them in Cc
+  only — its text is the client's own.
 - **Assistant phase 8 — every OS screen (5 Oct).** Fifteen more read-only
   tools (`tools-phase8.ts`): workspace_home, business_performance,
   data_consistency (runReconcileCheck, send:false), billing_cycles and

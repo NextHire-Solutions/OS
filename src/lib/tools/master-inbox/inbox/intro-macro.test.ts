@@ -92,3 +92,21 @@ test("a custom intro replaces the standard wording, and is enough on its own", a
   assert.equal(m.customIntro(blank), null);
   assert.equal(m.introText(blank), m.renderIntroMacroTemplate(blank));
 });
+
+test("more than three people: all named on one line and all copied in; people 4+ come from more_contacts", async () => {
+  const m = await import("./intro-macro.ts");
+  const more = m.moreContactsFrom([
+    { name: "Dana Fourth", role: "Recruiter", email: "dana@x.com" },
+    { name: "Eli Fifth", role: "Broker", email: "" },
+    "junk", null, { name: "  ", role: " " },
+  ]);
+  assert.deepEqual(more.map((p) => p.name), ["Dana Fourth", "Eli Fifth"], "malformed and empty entries dropped");
+  const client = {
+    name: "Oz Group", brokerage: "Oz Group", contactName: "Ann First", contactRole: "Owner", contactEmail: "ann@x.com",
+    extraContacts: [{ name: "Bob Second", role: "Team Leader", email: "bob@x.com" }, { name: "Cy Third", role: "Managing Broker", email: null }, ...more],
+  };
+  const text = m.renderIntroMacroTemplate(client);
+  assert.match(text, /Ann First, Owner, Bob Second, Team Leader, Cy Third, Managing Broker, Dana Fourth, Recruiter, and Eli Fifth, Broker at Oz Group/);
+  assert.deepEqual(m.introContactEmails(client), ["ann@x.com", "bob@x.com", "dana@x.com"]);
+  assert.equal(m.moreContactsFrom(Array.from({ length: 12 }, (_, i) => ({ name: `P${i}`, role: "R" }))).length, m.MAX_INTRO_CONTACTS - 3, "capped at 10 people in all");
+});

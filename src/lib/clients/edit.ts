@@ -6,6 +6,7 @@ import { syncIntroTemplate } from "./intro-template-sync";
 import { setClientProfile } from "./client-profile";
 import { isEmail, normalizeWebUrl } from "./profile-rules";
 import { readIntroOverride } from "./intro-override";
+import { MAX_INTRO_CONTACTS, moreContactsFrom } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { CLIENT_STATUSES, type ClientStatus } from "./client-status";
 import { updateClientRow } from "@/lib/tools/client-health/clientWrites";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -130,6 +131,11 @@ export interface ClientEdit {
   contact3Name?: string | null;
   contact3Role?: string | null;
   contact3Email?: string | null;
+  /**
+   * People 4 and up (os_clients.more_contacts, 0028), in order. The whole
+   * list is replaced; [] removes them all. Each needs a name and a role.
+   */
+  moreContacts?: Array<{ name: string | null; role: string | null; email: string | null }> | null;
   /*
    * The §6 master-record fields (migration 0015). Recorded here because the
    * OS is the master record and because, before this, there was nowhere in
@@ -218,7 +224,7 @@ const INTRO_KEYS = [
   "contactName", "contactRole", "contactEmail",
   "contact2Name", "contact2Role", "contact2Email",
   "contact3Name", "contact3Role", "contact3Email",
-  "brokerage",
+  "brokerage", "moreContacts",
 ] as const;
 
 /** The three contact slots, so validation and saving can walk them. */
@@ -293,6 +299,20 @@ export function validateEdit(edit: ClientEdit): string[] {
   for (const [label, v, max] of lengths) {
     if (typeof v === "string" && v.length > max) {
       errors.push(`${label} is ${v.length} characters; the introduction template allows ${max}.`);
+    }
+  }
+  if (edit.moreContacts !== undefined && edit.moreContacts !== null) {
+    if (!Array.isArray(edit.moreContacts)) errors.push("moreContacts must be a list.");
+    else {
+      if (edit.moreContacts.length > MAX_INTRO_CONTACTS - 3) errors.push(`At most ${MAX_INTRO_CONTACTS} people in all can be introduced to.`);
+      edit.moreContacts.forEach((p, i) => {
+        const n = i + 4;
+        const name = (p?.name ?? "").trim(), role = (p?.role ?? "").trim(), email = (p?.email ?? "").trim();
+        if (!name || !role) errors.push(`Contact ${n} needs both a name and a role.`);
+        if (name.length > 160) errors.push(`Contact ${n}'s name is too long.`);
+        if (role.length > 120) errors.push(`Contact ${n}'s role is too long.`);
+        if (email && !EMAIL.test(email)) errors.push(`Contact ${n}'s email must be a valid email address.`);
+      });
     }
   }
   for (const slot of CONTACT_SLOTS) {
@@ -506,6 +526,22 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     if (e) failed.push({ what: "the OS record", error: e.message });
     else updated.push("the OS record");
   }
+  // People 4+ (0028): their own column, written on its own so a database
+  // without the migration still saves every other field.
+  let morePeople: Array<{ name: string | null; role: string | null; email: string | null }> | null = null;
+  if (edit.moreContacts !== undefined) {
+    morePeople = (edit.moreContacts ?? []).map((p) => ({
+      name: (p.name ?? "").trim() || null, role: (p.role ?? "").trim() || null, email: (p.email ?? "").trim().toLowerCase() || null,
+    }));
+    const { error: mErr } = await osTable("os_clients").update({ more_contacts: morePeople }).eq("id", id);
+    if (mErr) {
+      failed.push({
+        what: "the people beyond the third",
+        error: /more_contacts/.test(mErr.message) ? "More than three people needs migrations/0028_more_intro_contacts.sql run first." : mErr.message,
+      });
+      morePeople = null;
+    } else updated.push("the people to introduce to");
+  }
   // Profile fields: their own columns (0027), written on their own for the same reason.
   if ([edit.signupDate, edit.website, edit.zillowUrl, edit.pocName, edit.pocEmail].some((v) => v !== undefined)) {
     const clean = (v: string | null | undefined) => (v === undefined ? undefined : (v ?? "").trim() || null);
@@ -550,7 +586,8 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
       contactName: settled[0].name,
       contactRole: settled[0].role,
       contactEmail: settled[0].email,
-      extraContacts: settled.slice(1),
+      // People 2-3, then 4+ — as just saved, else as stored.
+      extraContacts: [...settled.slice(1), ...(morePeople ?? (await readMoreContacts(id)))],
       brokerage: edit.brokerage !== undefined ? blankToNull(edit.brokerage) : row.brokerage,
     };
     try {
@@ -699,4 +736,11 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
   }
 
   return { updated, failed, untouched };
+}
+
+/** People 4+ as stored (0028); empty before the migration. */
+async function readMoreContacts(id: string): Promise<Array<{ name: string | null; role: string | null; email: string | null }>> {
+  const { data, error } = await osTable("os_clients").select("more_contacts").eq("id", id).maybeSingle();
+  if (error) return [];
+  return moreContactsFrom((data as { more_contacts?: unknown } | null)?.more_contacts).map((c) => ({ name: c.name, role: c.role, email: c.email ?? null }));
 }

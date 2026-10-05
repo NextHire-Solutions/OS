@@ -394,6 +394,7 @@ export function ClientRecord({
                       </div>
                     );
                   })}
+                  <MorePeople clientId={c.id} contact={c.contact} onChanged={onChanged} />
                 </section>
                 </>
               ) : null}
@@ -1081,18 +1082,27 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
   );
 }
 
+const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
+
 function ContactEditor({
-  ordinal, value, onSave,
+  ordinal, value, onSave, startEditing = false, onCancel, onRemove,
 }: {
   ordinal: number;
   value: { name: string | null; role: string | null; email: string | null };
   onSave: (v: { name: string | null; role: string | null; email: string | null }) => Promise<void>;
+  /** A person being added: open straight in the editor. */
+  startEditing?: boolean;
+  /** Called when a new person's editor is cancelled. */
+  onCancel?: () => void;
+  /** People 4+: removable (asks first). */
+  onRemove?: () => Promise<void>;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(startEditing);
   const [draft, setDraft] = useState({ name: "", role: "", email: "" });
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const label = ordinal === 0 ? "First contact" : ordinal === 1 ? "Second contact" : "Third contact";
+  const label = `${ORDINALS[ordinal] ?? `Contact ${ordinal + 1}`} contact`;
 
   async function commit() {
     setSaving(true);
@@ -1124,7 +1134,7 @@ function ContactEditor({
               onKeyDown={(e) => { if (e.key === "Enter") void commit(); if (e.key === "Escape") setEditing(false); }} />
             <div style={{ display: "flex", gap: 6 }}>
               <button type="button" className="ds-btn primary sm" disabled={saving} onClick={() => void commit()}>{saving ? "Saving…" : "Save"}</button>
-              <button type="button" className="ds-btn ghost sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+              <button type="button" className="ds-btn ghost sm" disabled={saving} onClick={() => { setEditing(false); onCancel?.(); }}>Cancel</button>
             </div>
             {error ? <div className="ds-field-err" role="alert">{error}</div> : null}
           </div>
@@ -1142,7 +1152,81 @@ function ContactEditor({
             <span className="pen" aria-hidden="true">Edit</span>
           </button>
         )}
+        {onRemove && !editing ? (
+          confirmRemove ? (
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", marginTop: 6, fontSize: 12.5 }}>
+              <span>Remove {value.name ?? "this person"}?</span>
+              <button type="button" className="ds-btn sm" disabled={saving} style={{ color: "var(--x-bad, #b42318)" }}
+                onClick={async () => { setSaving(true); setError(null); try { await onRemove(); } catch (e) { setError(e instanceof Error ? e.message : "Could not remove"); } finally { setSaving(false); setConfirmRemove(false); } }}>
+                {saving ? "Removing…" : "Remove"}
+              </button>
+              <button type="button" className="ds-btn ghost sm" disabled={saving} onClick={() => setConfirmRemove(false)}>Cancel</button>
+            </span>
+          ) : (
+            <button type="button" className="ds-btn ghost sm" style={{ marginTop: 4, fontSize: 12 }} onClick={() => setConfirmRemove(true)}
+              aria-label={`Remove ${value.name ?? "this person"}`}>Remove</button>
+          )
+        ) : null}
+        {!editing && error ? <div className="ds-field-err" role="alert">{error}</div> : null}
       </div>
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------- people 4+ --- */
+/*
+ * More than three people to introduce to (client ask, 5 Oct). People 1-3 keep
+ * their own editors above; 4 and up are one list (os_clients.more_contacts,
+ * migration 0028), saved whole. Up to 10 in all.
+ */
+type Person = { name: string | null; role: string | null; email: string | null };
+const MAX_PEOPLE = 10;
+
+function MorePeople({ clientId, contact, onChanged }: {
+  clientId: string;
+  contact: MasterClient["contact"];
+  onChanged: () => void;
+}) {
+  const more: Person[] = contact.extra.slice(2).filter((p) => p.name || p.role || p.email);
+  const [adding, setAdding] = useState(false);
+  const firstThreeFilled = !!contact.name && !!contact.extra[0]?.name && !!contact.extra[1]?.name;
+  const total = 3 + more.length;
+
+  // The edit route's own rules apply (name + role each, valid email, at most 10);
+  // a leg that fails — e.g. migration 0028 not run — comes back as the error.
+  async function saveList(next: Person[]) {
+    await saveEdit(clientId, { moreContacts: next });
+    onChanged();
+  }
+
+  return (
+    <>
+      {more.map((p, i) => (
+        <div key={`${i}-${p.name}`} className="rx-row">
+          <ContactEditor ordinal={3 + i} value={p}
+            onSave={(d) => saveList(more.map((x, j) => (j === i ? d : x)))}
+            onRemove={() => saveList(more.filter((_, j) => j !== i))} />
+        </div>
+      ))}
+      {adding ? (
+        <div className="rx-row">
+          <ContactEditor ordinal={total} value={{ name: null, role: null, email: null }} startEditing
+            onCancel={() => setAdding(false)}
+            onSave={async (d) => { await saveList([...more, d]); setAdding(false); }} />
+        </div>
+      ) : null}
+      <div className="rx-hint" style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        {!adding && total < MAX_PEOPLE ? (
+          <button type="button" className="rx-btn" disabled={!firstThreeFilled}
+            title={firstThreeFilled ? undefined : "Fill in the first three people, then add more."}
+            onClick={() => setAdding(true)}>+ Add a person</button>
+        ) : null}
+        <span>
+          {total >= MAX_PEOPLE ? `${MAX_PEOPLE} people is the most an introduction can name.` :
+            firstThreeFilled ? `Everyone here is named in the introduction and copied in. Up to ${MAX_PEOPLE} people.` :
+            "Fill in the first three people to add more."}
+        </span>
+      </div>
+    </>
   );
 }

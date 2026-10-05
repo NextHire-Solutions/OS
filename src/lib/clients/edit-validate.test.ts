@@ -89,3 +89,13 @@ test("the new fields do not disturb the existing ones", () => {
     [],
   );
 });
+
+test("people 4+: each needs a name and a role, emails must be real, at most 10 people in all", () => {
+  const ok = validateEdit({ moreContacts: [{ name: "Dana", role: "Recruiter", email: "dana@x.com" }] });
+  assert.deepEqual(ok, []);
+  assert.ok(validateEdit({ moreContacts: [{ name: "Dana", role: "", email: null }] }).some((e) => /Contact 4 needs both a name and a role/.test(e)));
+  assert.ok(validateEdit({ moreContacts: [{ name: "Dana", role: "R", email: "not-an-email" }] }).some((e) => /Contact 4's email/.test(e)));
+  const eight = Array.from({ length: 8 }, (_, i) => ({ name: `P${i}`, role: "R", email: null }));
+  assert.ok(validateEdit({ moreContacts: eight }).some((e) => /At most 10 people/.test(e)));
+  assert.deepEqual(validateEdit({ moreContacts: [] }), [], "an empty list removes them all");
+});

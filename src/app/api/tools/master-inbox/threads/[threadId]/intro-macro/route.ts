@@ -1,3 +1,4 @@
+import { moreContactsFrom } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { NextResponse } from "next/server";
 import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-portal";
 
@@ -107,7 +108,7 @@ export async function GET(
       (miClient?.name as string | undefined) ?? null,
       "name, contact_name, contact_role, contact_email, " +
         "contact2_name, contact2_role, contact2_email, " +
-        "contact3_name, contact3_role, contact3_email, brokerage, intro_override",
+        "contact3_name, contact3_role, contact3_email, brokerage, intro_override, more_contacts",
     );
     if (found.error) throw new Error(found.error);
     row = found.row;
@@ -135,11 +136,15 @@ export async function GET(
     contactEmail: str("contact_email"),
     // The second and third people, when this client has them. Anyone without
     // both a name and a role is ignored by the macro.
-    extraContacts: [2, 3].map((n) => ({
-      name: str(`contact${n}_name`),
-      role: str(`contact${n}_role`),
-      email: str(`contact${n}_email`),
-    })),
+    // People 2-3 from their columns, then 4+ from more_contacts (OS migration 0028).
+    extraContacts: [
+      ...[2, 3].map((n) => ({
+        name: str(`contact${n}_name`),
+        role: str(`contact${n}_role`),
+        email: str(`contact${n}_email`),
+      })),
+      ...moreContactsFrom(row?.more_contacts),
+    ],
     brokerage: str("brokerage"),
     // The client's own pasted introduction, when set (OS migration 0026).
     introOverride: str("intro_override"),

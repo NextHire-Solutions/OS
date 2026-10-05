@@ -1,3 +1,4 @@
+import { moreContactsFrom } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import "server-only";
 
 import { osTable } from "./os-db";
@@ -119,9 +120,20 @@ const RECORD_COLUMNS =
  * change, and the failure mode of forgetting is exactly the outage above.
  */
 let hasRecordColumns: boolean | null = null;
+/* People 4+ (0028), behind the same before/after-migration fallback. */
+let hasMoreContacts: boolean | null = null;
 
 function selectList(): string {
-  return hasRecordColumns === false ? BASE_SELECT : `${BASE_SELECT}, ${RECORD_COLUMNS}`;
+  const base = hasRecordColumns === false ? BASE_SELECT : `${BASE_SELECT}, ${RECORD_COLUMNS}`;
+  return hasMoreContacts === false ? base : `${base}, more_contacts`;
+}
+
+/** Note which optional column is missing, so the next select leaves it out. Returns true when one was. */
+function dropMissing(error: { code?: string; message?: string } | null): boolean {
+  if (!error || !isMissingColumn(error)) return false;
+  if (/more_contacts/.test(error.message ?? "") && hasMoreContacts !== false) { hasMoreContacts = false; return true; }
+  if (hasRecordColumns !== false) { hasRecordColumns = false; return true; }
+  return false;
 }
 
 /** True when the failure is "that column is not there", not something real. */
@@ -152,11 +164,15 @@ function toClient(row: Row): OsClient {
       role: (row.contact_role as string | null) ?? null,
       email: (row.contact_email as string | null) ?? null,
       brokerage: (row.brokerage as string | null) ?? null,
-      extra: [2, 3].map((n) => ({
-        name: (row[`contact${n}_name`] as string | null) ?? null,
-        role: (row[`contact${n}_role`] as string | null) ?? null,
-        email: (row[`contact${n}_email`] as string | null) ?? null,
-      })),
+      // People 2 and 3 always (two slots, maybe empty), then 4+ from more_contacts (0028).
+      extra: [
+        ...[2, 3].map((n) => ({
+          name: (row[`contact${n}_name`] as string | null) ?? null,
+          role: (row[`contact${n}_role`] as string | null) ?? null,
+          email: (row[`contact${n}_email`] as string | null) ?? null,
+        })),
+        ...moreContactsFrom(row.more_contacts).map((c) => ({ name: c.name, role: c.role, email: c.email ?? null })),
+      ],
     },
     record: {
       stripeCustomerId: (row.stripe_customer_id as string | null) ?? null,
@@ -184,13 +200,13 @@ function toClient(row: Row): OsClient {
  */
 export async function listOsClients(): Promise<OsClient[]> {
   let { data, error } = await osTable("os_clients").select(selectList()).order("name");
-  if (error && isMissingColumn(error) && hasRecordColumns !== false) {
-    // Migration 0015 has not been run here. Remember, and serve the rest.
-    hasRecordColumns = false;
-    ({ data, error } = await osTable("os_clients").select(BASE_SELECT).order("name"));
+  // A migration (0015/0016, 0028) not run here yet: remember which, and serve the rest.
+  for (let i = 0; i < 2 && error && dropMissing(error); i++) {
+    ({ data, error } = await osTable("os_clients").select(selectList()).order("name"));
   }
   if (error) throw new Error(`os_clients unavailable: ${error.message}`);
   if (hasRecordColumns === null) hasRecordColumns = true;
+  if (hasMoreContacts === null) hasMoreContacts = true;
   return (data ?? []).map((r) => toClient(r as unknown as Row));
 }
 
@@ -210,11 +226,15 @@ export async function isSeeded(): Promise<boolean> {
  */
 export async function setClientStatus(id: string, status: ClientStatus): Promise<OsClient> {
   if (!CLIENT_STATUSES.includes(status)) throw new Error(`Unknown status: ${status}`);
-  const { data, error } = await osTable("os_clients")
+  const write = () => osTable("os_clients")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("id", id)
     .select(selectList())
     .single();
+  let { data, error } = await write();
+  // A column a migration has not added yet fails the whole statement (nothing
+  // is written), so asking again without it is safe.
+  for (let i = 0; i < 2 && error && dropMissing(error); i++) ({ data, error } = await write());
   if (error) throw new Error(`Could not update status: ${error.message}`);
   return toClient(data as unknown as Row);
 }
