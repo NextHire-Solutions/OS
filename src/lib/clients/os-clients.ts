@@ -122,8 +122,21 @@ const RECORD_COLUMNS =
 let hasRecordColumns: boolean | null = null;
 /* People 4+ (0028), behind the same before/after-migration fallback. */
 let hasMoreContacts: boolean | null = null;
+/*
+ * "Missing" is not remembered forever: once a migration runs, the running
+ * server must start reading the column without a restart (5 Oct — 0028 ran
+ * while the OS had already noted the column as absent). Re-checked every
+ * ten minutes; the cost is one failed query per ten minutes while it is
+ * genuinely still missing.
+ */
+let missingSince = 0;
+const RECHECK_MS = 10 * 60_000;
 
 function selectList(): string {
+  if ((hasRecordColumns === false || hasMoreContacts === false) && Date.now() - missingSince > RECHECK_MS) {
+    if (hasRecordColumns === false) hasRecordColumns = null;
+    if (hasMoreContacts === false) hasMoreContacts = null;
+  }
   const base = hasRecordColumns === false ? BASE_SELECT : `${BASE_SELECT}, ${RECORD_COLUMNS}`;
   return hasMoreContacts === false ? base : `${base}, more_contacts`;
 }
@@ -131,8 +144,8 @@ function selectList(): string {
 /** Note which optional column is missing, so the next select leaves it out. Returns true when one was. */
 function dropMissing(error: { code?: string; message?: string } | null): boolean {
   if (!error || !isMissingColumn(error)) return false;
-  if (/more_contacts/.test(error.message ?? "") && hasMoreContacts !== false) { hasMoreContacts = false; return true; }
-  if (hasRecordColumns !== false) { hasRecordColumns = false; return true; }
+  if (/more_contacts/.test(error.message ?? "") && hasMoreContacts !== false) { hasMoreContacts = false; missingSince = Date.now(); return true; }
+  if (hasRecordColumns !== false) { hasRecordColumns = false; missingSince = Date.now(); return true; }
   return false;
 }
 
