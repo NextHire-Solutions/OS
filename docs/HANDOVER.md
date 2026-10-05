@@ -499,6 +499,21 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **Introductions from Nicole; teammate permissions (5 Oct, Eddy), both inbox
+  apps.** Introduce and the agent's handover switch From to
+  nicole.c@brokerstaffer.com's live mailbox for the conversation's platform
+  (`intro-sender.ts`; override `MASTER_INBOX_INTRO_SENDER_EMAIL`). Her live
+  one is EmailBison sender 1873 = channel 148aacc2 (daily limit 0 in
+  EmailBison — replies have gone out fine). Her Instantly mailbox (dead since
+  26 Sep) and EmailBison #611 (deleted) were marked `status=disconnected`;
+  disconnected channels are hidden from From and refused on send. The From
+  button shows the address (hundreds of mailboxes are named "Nicole
+  Collins"). Permissions (`canSeePage`): Performance, Consistency, Assistant,
+  Team access, Reply agent admin-only; Clients = account managers;
+  Commissions = AMs + salespeople; inbox Settings for teammates = Labels,
+  Templates, Personal, with creating clients and AI labeling refused by the
+  server. Known and left: the "sync-external-intros" cron 401s — its feed on
+  Client Health was removed in June.
 - **Campaign Leads: every column sorts (2 Oct), both apps.** Analytics
   migration 094 (run by the user; file in the Analytics repo) adds sort keys
   `name`, `domain`, `sender_email`, `replies`/`positive`/`bounces`,
