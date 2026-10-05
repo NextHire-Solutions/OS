@@ -499,6 +499,15 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   names. Before, a lead in P&E's Florida portal read as "not on the
   workspace roster". P&E still has no contact name/role filled in, so
   Introduce stays unavailable for it until those are added (Boston too).
+- **Portal links open straight on Welcome (5 Oct), standalone Master Inbox.**
+  `/portal/<token>` is still the Recruiting Pipeline. The first PAGE LOAD of it
+  each browser session now redirects to `/welcome` on the server (before any
+  pipeline data is read); `/welcome` sets a session cookie
+  `portal_welcomed_<token>` scoped to that portal (proxy.ts), after which the
+  base URL opens the pipeline. In-portal navigation (RSC requests) is never
+  redirected, so the pipeline stays reachable even without cookies. The old
+  client-side `WelcomeRedirect` (sessionStorage) is gone. Unknown portals still
+  404 with "Portal not found". `lib/portals/welcome.ts`. No URL changed.
 - **Introductions from Nicole; teammate permissions (5 Oct, Eddy), both inbox
   apps.** Introduce and the agent's handover switch From to
   nicole.c@brokerstaffer.com's live mailbox for the conversation's platform
