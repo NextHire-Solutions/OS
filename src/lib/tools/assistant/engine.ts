@@ -672,6 +672,7 @@ The "strengths".
 
 End with one italic line: the sources and periods, and anything in "unavailable".
 
+A paused or churned client's verdict is its status; its report is about whether campaigns and billing are stopped to match, so keep it short: skip the billing-cycle row, and if campaignsLast30Days has a "note", print the note instead of its rates.
 Rules for reports: use the tool's numbers exactly; money as $1,234.56, rates as percentages with two decimals, dates as 5 Oct 2026; never print a null as 0 — leave the row out or say "not linked"; do not add sections the data does not support.`;
 
 const periodArgs = (a: Record<string, unknown>) => ({

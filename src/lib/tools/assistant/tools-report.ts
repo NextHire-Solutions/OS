@@ -173,43 +173,51 @@ export async function clientReportTool(query: string) {
   const strengths: string[] = [];
   const am = people.accountManager ?? match.accountManager ?? "the account manager";
   const status = String(rec?.status ?? match.status);
-  if (status === "paused" || status === "churned") flags.push({ severity: "high", area: "Account", issue: `Client is ${status} (since ${day(String(rec?.statusSince ?? "")) ?? "unknown"}).`, nextStep: `Confirm with ${am} that this is intended, and that its campaigns and Stripe billing are paused to match.` });
+  const stopped = status === "paused" || status === "churned";
+  const charging = bill?.subscription?.status === "active" && !bill.subscription.collectionPaused;
+  if (stopped) {
+    // A paused or churned client should send nothing and be charged nothing (paused, never cancelled).
+    if (active.length) flags.push({ severity: "high", area: "Campaigns", issue: `${active.length} campaign(s) still active although the client is ${status}.`, nextStep: "Pause them in Campaign Analytics." });
+    if (charging) flags.push({ severity: "high", area: "Billing", issue: `Stripe is still charging although the client is ${status}.`, nextStep: "Pause collection on the subscription in Stripe — pause, do not cancel." });
+    if (!active.length && !charging) strengths.push(`Campaigns and Stripe billing are stopped to match the ${status} status.`);
+  }
   if (bill?.outstanding && (bill.outstanding.pastDue > 0 || bill.outstanding.amount > 0)) {
     flags.push({ severity: "high", area: "Billing", issue: `$${bill.outstanding.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })} outstanding across ${bill.outstanding.invoices} invoice(s), ${bill.outstanding.pastDue} past due.`, nextStep: "Chase the open invoice(s) in Stripe before the next charge." });
   } else if (bill?.subscription?.status === "active") strengths.push("Billing is clean: subscription active and nothing outstanding.");
   if (bill?.subscription?.collectionPaused && status === "active") flags.push({ severity: "medium", area: "Billing", issue: "Stripe collection is paused although the client is active.", nextStep: "Resume collection in Stripe, or pause the client if that is the intent." });
   if (status === "active" && camps.length && !active.length) flags.push({ severity: "high", area: "Campaigns", issue: "No active campaign — nothing is being sent for this client.", nextStep: "Launch or resume a campaign for this client in Campaign Analytics." });
   if (status === "active" && lastFullWeek && lastFullWeek.emails === 0) flags.push({ severity: "high", area: "Campaigns", issue: `No emails sent in the week of ${day(lastFullWeek.week)}.`, nextStep: "Check the campaign's status, daily limit and connected inboxes in Campaign Analytics." });
-  if (cycle && cycle.delivered < cycle.required) {
+  if (!stopped && cycle && cycle.delivered != null && cycle.delivered < cycle.required) {
     flags.push({ severity: daysToBilling != null && daysToBilling <= 3 ? "high" : "medium", area: "Introductions", issue: `${cycle.delivered} of ${cycle.required} introductions owed this billing cycle are delivered${daysToBilling != null ? `, ${daysToBilling} day(s) before billing on ${day(schedule?.nextBillingDate)}` : ""}.`, nextStep: "Work this client's Interested and Keep Warm replies in Master Inbox first until the cycle is covered." });
-  } else if (cycle && cycle.required > 0) strengths.push(`This billing cycle is covered: ${cycle.delivered} introductions delivered of ${cycle.required} required.`);
+  } else if (!stopped && cycle && cycle.delivered != null && cycle.required > 0) strengths.push(`This billing cycle is covered: ${cycle.delivered} introductions delivered of ${cycle.required} required.`);
   const introTrend = change(intros.last30, intros.previous30);
-  if (introTrend != null && intros.previous30 >= 4 && introTrend <= -40) flags.push({ severity: "medium", area: "Introductions", issue: `Introductions fell ${Math.abs(introTrend)}%: ${intros.last30} in the last 30 days vs ${intros.previous30} in the 30 before.`, nextStep: "Compare sends and reply rate with last month in Campaign Analytics — fewer sends or fewer positive replies?" });
+  if (!stopped && introTrend != null && intros.previous30 >= 4 && introTrend <= -40) flags.push({ severity: "medium", area: "Introductions", issue: `Introductions fell ${Math.abs(introTrend)}%: ${intros.last30} in the last 30 days vs ${intros.previous30} in the 30 before.`, nextStep: "Compare sends and reply rate with last month in Campaign Analytics — fewer sends or fewer positive replies?" });
   else if (introTrend != null && intros.previous30 >= 3 && introTrend >= 25) strengths.push(`Introductions up ${introTrend}%: ${intros.last30} in the last 30 days vs ${intros.previous30} before.`);
   const posRate = kc?.current?.positiveRate ?? null, posBiz = kb?.positiveRate ?? null;
-  if (vsBusiness != null && (kc?.current?.sent ?? 0) >= 1000) {
+  if (!stopped && vsBusiness != null && (kc?.current?.sent ?? 0) >= 1000) {
     if (vsBusiness < 0.7) flags.push({ severity: "medium", area: "Campaigns", issue: `Reply rate ${pct(clientRate)}% over the last 30 days — ${Math.round((1 - vsBusiness) * 100)}% below the business average of ${pct(businessRate)}%.`, nextStep: "Review the copy and offer (Campaign Analytics → Copy & Offer) and the lead list for this market." });
     if (vsBusiness >= 1.3) strengths.push(`Reply rate ${pct(clientRate)}% over the last 30 days — ${Math.round((vsBusiness - 1) * 100)}% above the business average of ${pct(businessRate)}%.`);
   }
-  if (posRate != null && posBiz && (kc?.current?.replies ?? 0) >= 50 && posRate < posBiz * 0.7) {
+  if (!stopped && posRate != null && posBiz && (kc?.current?.replies ?? 0) >= 50 && posRate < posBiz * 0.7) {
     flags.push({ severity: "medium", area: "Campaigns", issue: `Positive rate ${pct(posRate)}% of replies — below the business average of ${pct(posBiz)}%: people reply, but fewer are interested.`, nextStep: "Look at the Not Interested and Objection replies for a pattern, and test a stronger offer." });
   }
   const bounceRate = kc?.current?.bounceRate ?? null;
-  if (bounceRate != null && bounceRate > 0.02 && (kc?.current?.sent ?? 0) >= 1000) flags.push({ severity: "medium", area: "Deliverability", issue: `Bounce rate ${pct(bounceRate)}% over the last 30 days.`, nextStep: "Check the lead list's email verification and the sending inboxes (Infrastructure)." });
+  if (!stopped && bounceRate != null && bounceRate > 0.02 && (kc?.current?.sent ?? 0) >= 1000) flags.push({ severity: "medium", area: "Deliverability", issue: `Bounce rate ${pct(bounceRate)}% over the last 30 days.`, nextStep: "Check the lead list's email verification and the sending inboxes (Infrastructure)." });
   const noShow = byStage.no_show ?? 0;
-  if (rows.length >= 20 && noShow / rows.length > 0.4) flags.push({ severity: "medium", area: "Pipeline", issue: `${noShow} of ${rows.length} introduced agents (${Math.round((noShow / rows.length) * 100)}%) are marked no-show.`, nextStep: `Have ${am} review the no-shows with the client: are introduced agents being called within a day of the introduction?` });
-  if (rows.length >= 30 && hires.allTime === 0) flags.push({ severity: "medium", area: "Results", issue: `No hires recorded from ${rows.length} introductions.`, nextStep: `Ask ${am} to confirm with the client whether any introduced agents joined and the portal simply was not updated.` });
+  if (!stopped && rows.length >= 20 && noShow / rows.length > 0.4) flags.push({ severity: "medium", area: "Pipeline", issue: `${noShow} of ${rows.length} introduced agents (${Math.round((noShow / rows.length) * 100)}%) are marked no-show.`, nextStep: `Have ${am} review the no-shows with the client: are introduced agents being called within a day of the introduction?` });
+  if (!stopped && rows.length >= 30 && hires.allTime === 0) flags.push({ severity: "medium", area: "Results", issue: `No hires recorded from ${rows.length} introductions.`, nextStep: `Ask ${am} to confirm with the client whether any introduced agents joined and the portal simply was not updated.` });
   if (hires.last90 > 0) strengths.push(`${hires.last90} hire(s) in the last 90 days.`);
-  if (health?.healthScore != null && health.healthScore < 4) flags.push({ severity: "medium", area: "Account health", issue: `Client Health score ${health.healthScore} out of 10.`, nextStep: `Review the account with ${am} — the score falls with no hires, stalled introductions and slow pace.` });
+  if (!stopped && health?.healthScore != null && health.healthScore < 4) flags.push({ severity: "medium", area: "Account health", issue: `Client Health score ${health.healthScore} out of 10.`, nextStep: `Review the account with ${am} — the score falls with no hires, stalled introductions and slow pace.` });
   // Client Health's cycle and Stripe's charge must agree — the cycle's "owed by" date rests on it.
   const stripeNext = bill?.subscription?.nextCharge ?? null;
-  if (schedule?.nextBillingDate && stripeNext && Math.abs(Date.parse(schedule.nextBillingDate) - Date.parse(stripeNext)) > 1.5 * DAY) {
+  if (!stopped && charging && stripeNext && Date.parse(stripeNext) > now && schedule?.nextBillingDate && Math.abs(Date.parse(schedule.nextBillingDate) - Date.parse(stripeNext)) > 1.5 * DAY) {
     flags.push({ severity: "medium", area: "Data", issue: `The billing cycle on the client record ends ${day(schedule.nextBillingDate)}, but Stripe next charges on ${day(stripeNext)} — the introductions-owed deadline above uses the record's date.`, nextStep: "Correct the billing anchor date on the client record (Clients → Record) to match Stripe." });
   }
   for (const c of active) {
     if ((c.dailySendLimit ?? 1) === 0) flags.push({ severity: "medium", area: "Campaigns", issue: `Active campaign "${c.name}" has a daily send limit of 0.`, nextStep: "Raise the daily send limit in the campaign's settings." });
   }
-  const verdict = flags.some((f) => f.severity === "high") ? "At risk" : flags.length ? "Needs attention" : "On track";
+  const verdict = status === "churned" ? "Churned" : status === "paused" ? "Paused"
+    : flags.some((f) => f.severity === "high") ? "At risk" : flags.length ? "Needs attention" : "On track";
 
   return {
     client: name,
@@ -228,12 +236,13 @@ export async function clientReportTool(query: string) {
     },
     money: bill?.linkedToStripe === false ? { linkedToStripe: false, note: "Not linked to Stripe — MRR and spend unknown, not zero." } : bill ? {
       mrr: bill.mrr, totalSpend: bill.totalSpend, subscription: bill.subscription?.status ?? null,
-      nextCharge: day(bill.subscription?.nextCharge), outstanding: bill.outstanding ?? null,
+      nextCharge: bill.subscription?.nextCharge && Date.parse(bill.subscription.nextCharge) > now ? day(bill.subscription.nextCharge) : null,
+      collectionPaused: bill.subscription?.collectionPaused ?? null, outstanding: bill.outstanding ?? null,
     } : null,
     introductions: {
       ...intros,
       changeVsPrevious30Pct: introTrend,
-      thisBillingCycle: cycle ? { ...cycle, interval: schedule?.interval ?? null, nextBilling: day(schedule?.nextBillingDate), daysToBilling } : null,
+      thisBillingCycle: !stopped && cycle && cycle.delivered != null ? { ...cycle, interval: schedule?.interval ?? null, nextBilling: day(schedule?.nextBillingDate), daysToBilling } : null,
       targets,
     },
     results: {
@@ -248,6 +257,7 @@ export async function clientReportTool(query: string) {
       previous30: kc.previous ? { sent: kc.previous.sent, replies: kc.previous.replies, replyRatePct: pct(kc.previous.replyRate) } : null,
       businessAverage: kb ? { replyRatePct: pct(businessRate), positiveRatePct: pct(kb.positiveRate), bounceRatePct: pct(kb.bounceRate) } : null,
       replyRateVsBusiness: vsBusiness,
+      note: (kc.current.sent ?? 0) < 500 ? `Only ${kc.current.sent ?? 0} emails in the period — too few for its rates to mean anything; do not compare them with the business.` : undefined,
     } : null,
     activeCampaigns: active.map((c) => ({ name: c.name, platform: c.platform, lifetimeSent: c.emailsSent, lifetimeReplyRatePct: pct(c.replyRate), leads: c.leads, dailySendLimit: c.dailySendLimit, dailyNewLeadLimit: c.dailyNewLeadLimit })),
     weeklyTrend: weeks.map((w) => ({ weekOf: day(w.week), emails: w.emails, replies: w.replies, intros: w.intros, replyRatePct: pct(w.replyRate), partial: w.partial ?? false })),
