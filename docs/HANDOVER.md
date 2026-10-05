@@ -511,6 +511,16 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   questions right ("no paused clients" when there were 8); after: 24/24 plus
   7 harder mixed ones. Welcome screen: suggestions grouped Clients / Money /
   Performance / Pipeline & leads. Still admin-only.
+- **Assistant phase 8 — every OS screen (5 Oct).** Fifteen more read-only
+  tools (`tools-phase8.ts`): workspace_home, business_performance,
+  data_consistency (runReconcileCheck, send:false), billing_cycles and
+  client_success (Client Health views), campaign_kpis, attribution,
+  offer_performance, send_schedule, campaign_detail (these call the Analytics
+  routes' own GET handlers — no session check inside them, no copy),
+  onboarding_client (+ open payment links), find_agent (scraped agents),
+  search_conversations (message text), reply_templates, recent_introductions.
+  45 tools in all. Setup screens (stage/template editors, Settings) are left
+  out on purpose. Probe: 15/15 new + 24/24 earlier questions right.
 - **Portal links open straight on Welcome (5 Oct), standalone Master Inbox.**
   `/portal/<token>` is still the Recruiting Pipeline. The first PAGE LOAD of it
   each browser session now redirects to `/welcome` on the server (before any

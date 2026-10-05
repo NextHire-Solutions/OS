@@ -1,4 +1,9 @@
 import {
+  attributionTool, billingCyclesTool, businessPerformanceTool, campaignDetailTool, campaignKpisTool, clientSuccessTool,
+  dataConsistencyTool, findAgentTool, offerPerformanceTool, onboardingClientTool, recentIntroductionsTool, replyTemplatesTool,
+  searchConversationsTool, sendScheduleTool, workspaceHomeTool,
+} from "./tools-phase8.ts";
+import {
   billingOverviewTool, clientBillingTool, clientIntroductionTool, clientPortalsTool, clientRecordTool, commissionsTool,
   findLeadTool, listClientsTool, portalPipelineTool, teamTool,
 } from "./tools-phase7.ts";
@@ -447,11 +452,148 @@ export const TOOL_SCHEMA = [
       parameters: {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "workspace_home",
+      description:
+        "The OS Home page: headline numbers for the recent window (emails sent, replies, reply rate, response time, with change vs the previous window) and whether each product is up. Answers 'how are we doing overall', 'is everything working'.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "business_performance",
+      description:
+        "The Performance page: the client base and its movement \u2014 clients by status, added and churned in the last 90 days, by plan, month by month (new, churned, revenue collected from Stripe), and revenue collected this month. Answers 'how many clients did we add / lose', 'revenue by month'.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "data_consistency",
+      description:
+        "The Consistency check: where the products disagree about clients (missing from a tool, status mismatches, broken links), with severity. Answers 'is our data in sync', 'what's out of step'. Report only.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "billing_cycles",
+      description:
+        "Client Health Bi-Weekly: who bills next and how many introductions each still owes in its current billing cycle (carry included). Pass withinDays to see only clients billing in that many days. Answers 'who bills this week and are they on track'.",
+      parameters: {"type": "object", "properties": {"withinDays": {"type": "number"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "client_success",
+      description:
+        "Client Health's Client Success view: each client's account-health score (0\u201310), total hires and last hire date, weakest first. Answers 'which accounts are unhealthy', 'who has hired the most'.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "campaign_kpis",
+      description:
+        "Campaign Analytics' KPI band for a period: emails sent, replies, positive replies, bounces and the rates, with comparison. Use for 'how did campaigns do last 30 days'.",
+      parameters: {"type": "object", "properties": {"period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "attribution",
+      description:
+        "Campaign Analytics' Attribution: what the sending produced and how much can be credited \u2014 introductions and later outcomes traced back to campaigns, for a period.",
+      parameters: {"type": "object", "properties": {"period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "offer_performance",
+      description:
+        "Campaign Analytics' Copy & Offer: which OFFERS (and their campaigns) perform best \u2014 sends, replies and positive rates per offer, for a period.",
+      parameters: {"type": "object", "properties": {"period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "send_schedule",
+      description:
+        "Campaign Analytics' Schedule: what is due to go out over the next three days, per campaign/day. Answers 'how much are we sending tomorrow'.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "campaign_detail",
+      description:
+        "One campaign in full by its name (or part of it): status, settings and limits, the sequence steps with how each step is doing, and recent activity.",
+      parameters: {"type": "object", "properties": {"campaign": {"type": "string"}}, "required": ["campaign"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "onboarding_client",
+      description:
+        "One client's Onboarding: its stage, which onboarding steps are done or pending, lead count, deliveries and replies, whether onboarding was paid, and any open Stripe payment links.",
+      parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "find_agent",
+      description:
+        "Look an agent up in the scraped agent database (Agent Search) by name, email or licence number: brokerage/office, location, sales volume, transactions, experience.",
+      parameters: {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "search_conversations",
+      description:
+        "Search the text of inbox messages (replies from leads and our emails) for words or a phrase, newest first, with an excerpt and which portal the conversation belongs to. Answers 'did anyone mention X', 'find the email where\u2026'.",
+      parameters: {"type": "object", "properties": {"text": {"type": "string"}, "days": {"type": "number", "description": "How far back, default 90, max 365"}}, "required": ["text"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "reply_templates",
+      description:
+        "The inbox's saved reply templates (names, categories, a preview). Pass `query` to read matching templates in full (matches name, category or subject). Each client's introduction template is named \"Intro Macro - <client>\"; for what an introduction actually says, prefer client_introduction.",
+      parameters: {"type": "object", "properties": {"query": {"type": "string"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "recent_introductions",
+      description:
+        "Agents recently introduced to clients (the portal pipeline): who, to which client/portal, when, and the stage they are at now, plus counts per portal. Default the last 14 days; optionally one client.",
+      parameters: {"type": "object", "properties": {"days": {"type": "number"}, "client": {"type": "string"}}},
+    },
+  },
 ];
 
 export const SYSTEM_PROMPT = `You answer questions about a lead-generation business from its own data.
 
 There are five products: Master Inbox (email threads, client portals, the reply agent), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
+
+Every OS screen has a tool: Home (workspace_home), Performance (business_performance), Consistency (data_consistency), Client Health's Bi-Weekly and Client Success (billing_cycles, client_success), Campaign Analytics' KPIs, Attribution, Copy & Offer, Schedule and one campaign (campaign_kpis, attribution, offer_performance, send_schedule, campaign_detail), Onboarding per client (onboarding_client), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
 
 A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
@@ -479,6 +621,12 @@ having a way to look it up, in your own words, and point at the product that hol
 Money IS available: MRR, total spend and invoices come from Stripe (client_billing, billing_overview) and
 payouts from commissions. A plan name is still not a price — never infer one from it.
 Status lists come from list_clients (the master record), never from onboarding_pipeline.`;
+
+const periodArgs = (a: Record<string, unknown>) => ({
+  period: typeof a.period === "string" ? a.period : undefined,
+  from: typeof a.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(a.from) ? a.from : undefined,
+  to: typeof a.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(a.to) ? a.to : undefined,
+});
 
 const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   find_client: (a) => findClientTool(String(a.query ?? "")),
@@ -528,6 +676,21 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }),
   mls_coverage: () => mlsCoverageTool(),
   reminders: (a) => remindersTool({ includeDone: a.includeDone === true }),
+  workspace_home: () => workspaceHomeTool(),
+  business_performance: () => businessPerformanceTool(),
+  data_consistency: () => dataConsistencyTool(),
+  billing_cycles: (a) => billingCyclesTool({ withinDays: typeof a.withinDays === "number" ? a.withinDays : undefined }),
+  client_success: () => clientSuccessTool(),
+  campaign_kpis: (a) => campaignKpisTool(periodArgs(a)),
+  attribution: (a) => attributionTool(periodArgs(a)),
+  offer_performance: (a) => offerPerformanceTool(periodArgs(a)),
+  send_schedule: () => sendScheduleTool(),
+  campaign_detail: (a) => campaignDetailTool(String(a.campaign ?? "")),
+  onboarding_client: (a) => onboardingClientTool(String(a.client ?? "")),
+  find_agent: (a) => findAgentTool(String(a.query ?? "")),
+  search_conversations: (a) => searchConversationsTool({ text: String(a.text ?? ""), days: typeof a.days === "number" ? a.days : undefined }),
+  reply_templates: (a) => replyTemplatesTool(typeof a.query === "string" && a.query ? a.query : undefined),
+  recent_introductions: (a) => recentIntroductionsTool({ days: typeof a.days === "number" ? a.days : undefined, client: typeof a.client === "string" && a.client ? a.client : undefined }),
   client_record: (a) => clientRecordTool(String(a.client ?? "")),
   list_clients: (a) => listClientsTool({
     status: typeof a.status === "string" && a.status ? a.status : undefined,
