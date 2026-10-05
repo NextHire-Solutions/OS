@@ -149,15 +149,33 @@ export async function sendScheduleTool() {
 
 export async function campaignDetailTool(query: string) {
   const an = readOnly(getAnalyticsSupabase());
+  type Hit = { id: string | number; name: string; platform: string; status: string };
   const { data } = await an.from("campaigns_unified").select("id, name, platform, status").ilike("name", `%${query.trim()}%`).limit(6);
-  const hits = (data ?? []) as Array<{ id: string | number; name: string; platform: string; status: string }>;
+  let hits = (data ?? []) as Hit[];
+  /*
+   * People name a campaign loosely — "the Jeff Cook Greenville campaign" for
+   * "Jeff Cook Real Estate + Greenville, SC + ZF NS1 (EST)" — so when the
+   * phrase itself is not in any name, every word of it must be (6 Oct).
+   */
+  if (!hits.length) {
+    const words = query.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2 && !["the", "campaign", "campaigns"].includes(w));
+    if (words.length) {
+      let q = an.from("campaigns_unified").select("id, name, platform, status");
+      for (const w of words) q = q.ilike("name", `%${w}%`);
+      hits = ((await q.limit(10)).data ?? []) as Hit[];
+    }
+  }
   if (!hits.length) return { note: `No campaign name contains "${query}".` };
-  if (hits.length > 1 && !hits.some((h) => h.name.toLowerCase() === query.trim().toLowerCase())) {
+  const exact = hits.find((h) => h.name.toLowerCase() === query.trim().toLowerCase());
+  // Several matches but only one still sending: that is the one meant; the rest are listed.
+  const live = hits.filter((h) => ["active", "running", "in_progress"].includes(String(h.status).toLowerCase()));
+  if (hits.length > 1 && !exact && live.length !== 1) {
     return { candidates: hits.map((h) => `${h.name} (${h.platform}, ${h.status})`), note: "Several campaigns match — ask which one." };
   }
-  const c = hits.find((h) => h.name.toLowerCase() === query.trim().toLowerCase()) ?? hits[0];
+  const c = exact ?? (hits.length > 1 ? live[0] : hits[0]);
   const body = await callGet(campaignGET as unknown as RouteGet, `/api/tools/analytics/campaigns/${c.id}`, {}, { params: Promise.resolve({ id: String(c.id) }) });
-  return trim(body, 0, 15);
+  const others = hits.filter((h) => h !== c).map((h) => `${h.name} (${h.platform}, ${h.status})`);
+  return others.length ? { ...(trim(body, 0, 15) as object), otherMatchingCampaigns: others } : trim(body, 0, 15);
 }
 
 export async function onboardingClientTool(query: string) {
@@ -250,14 +268,36 @@ export async function recentIntroductionsTool(a: { days?: number; client?: strin
     ids = portals.filter((p) => want.includes(p.name.toLowerCase())).map((p) => p.id);
     if (!ids.length) return { note: `No portal found for "${a.client}".` };
   }
-  let q = db.from("client_pipeline_entries").select("client_id, lead_name, lead_email, current_brokerage, stage, introduced_at").gte("introduced_at", since).order("introduced_at", { ascending: false }).limit(60);
-  if (ids) q = q.in("client_id", ids);
-  const { data } = await q;
+  /*
+   * Counted in full, listed in part (6 Oct): it read only the newest 60, so
+   * "the last 14 days" reported 60 introductions — and per-portal counts to
+   * match — when there were 150. The count and per-portal tally now read
+   * every row in the window (client ids only); the list stays the newest 30.
+   */
+  const scope = <T,>(q: T): T => (ids ? (q as unknown as { in: (c: string, v: string[]) => T }).in("client_id", ids) : q);
+  // Paged: the database hands back at most 1,000 rows a request.
+  const readAll = async () => {
+    const out: Array<{ client_id: string | null }> = [];
+    let count: number | null = null;
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data: page, count: c } = await scope(db.from("client_pipeline_entries").select("client_id", { count: "exact" })
+        .gte("introduced_at", since).order("introduced_at", { ascending: false }).range(from, from + 999));
+      count ??= c ?? null;
+      out.push(...((page ?? []) as Array<{ client_id: string | null }>));
+      if ((page ?? []).length < 1000) break;
+    }
+    return { data: out, count };
+  };
+  const [{ data: all, count }, { data }] = await Promise.all([
+    readAll(),
+    scope(db.from("client_pipeline_entries").select("client_id, lead_name, lead_email, current_brokerage, stage, introduced_at").gte("introduced_at", since).order("introduced_at", { ascending: false }).limit(30)),
+  ]);
   const rows = (data ?? []) as Array<Record<string, string | null>>;
-  const byClient = rows.reduce<Record<string, number>>((m, r) => { const n = name.get(r.client_id ?? "") ?? "?"; m[n] = (m[n] ?? 0) + 1; return m; }, {});
+  const byClient = ((all ?? []) as Array<{ client_id: string | null }>).reduce<Record<string, number>>((m, r) => { const n = name.get(r.client_id ?? "") ?? "?"; m[n] = (m[n] ?? 0) + 1; return m; }, {});
+  const sorted = Object.fromEntries(Object.entries(byClient).sort((a, b) => b[1] - a[1]));
   return {
-    days, total: rows.length, byPortal: byClient,
-    introductions: rows.slice(0, 30).map((r) => ({ date: r.introduced_at?.slice(0, 10), portal: name.get(r.client_id ?? ""), agent: r.lead_name, email: r.lead_email, brokerage: r.current_brokerage, stageNow: r.stage })),
-    note: rows.length === 60 ? "At least 60 in this window — only the newest 60 were read." : undefined,
+    days, total: count ?? (all ?? []).length, byPortal: sorted,
+    introductions: rows.map((r) => ({ date: r.introduced_at?.slice(0, 10), portal: name.get(r.client_id ?? ""), agent: r.lead_name, email: r.lead_email, brokerage: r.current_brokerage, stageNow: r.stage })),
+    note: (count ?? 0) > rows.length ? `All ${count} are counted in total and byPortal; only the newest ${rows.length} are listed.` : undefined,
   };
 }
