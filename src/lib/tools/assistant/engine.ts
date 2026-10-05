@@ -394,7 +394,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "list_clients",
       description:
-        "List clients from the master record, filtered by status ('active','onboarding','paused','churned'), account manager, salesperson, plan or market (MLS/area), with counts by status. Use THIS for 'which clients are paused/churned/active', 'how many active clients', 'which clients does Amy manage', 'who did Ryan sell' \u2014 NOT onboarding_pipeline, which is a different list. For ONE person's clients always pass their name as accountManager or salesperson: `total` is then their count. Status alone counts everyone.",
+        "List clients from the master record, filtered by status ('active','onboarding','paused','churned'), account manager, salesperson, plan or market (MLS/area), with counts by status. Use THIS for 'which clients are paused/churned/active', 'how many active clients', 'which clients does <account manager> manage', 'who did <salesperson> sell' \u2014 NOT onboarding_pipeline, which is a different list. For ONE person's clients always pass their name as accountManager or salesperson: `total` is then their count. Status alone counts everyone.",
       parameters: {"type": "object", "properties": {"status": {"type": "string"}, "accountManager": {"type": "string"}, "salesperson": {"type": "string"}, "plan": {"type": "string"}, "market": {"type": "string"}}},
     },
   },
@@ -520,7 +520,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "campaign_kpis",
       description:
-        "Campaign Analytics' KPI band for a period \u2014 for the whole business or, with `client`, ONE client: emails sent, replies, positive replies, bounces and the rates, with the previous period of equal length alongside. Use for 'how did campaigns do last 30 days' and 'how are Raintown's campaigns doing'.",
+        "Campaign Analytics' KPI band for a period \u2014 for the whole business or, with `client`, ONE client: emails sent, replies, positive replies, bounces and the rates, with the previous period of equal length alongside. Use for 'how did campaigns do last 30 days' and 'how are <client>'s campaigns doing'.",
       parameters: {"type": "object", "properties": {"client": {"type": "string", "description": "One client's KPIs; omit for the whole business"}, "period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
     },
   },
@@ -619,6 +619,7 @@ How to answer:
 - When a question names a client, resolve it with find_client first. If it returns candidates, ASK which one — never pick.
 - Client names often look like a person's name: "Jeff Cook" is the client Jeff Cook Real Estate, not a lead. When a name could be a client, try find_client before find_lead. Who a client's leads are introduced to — including by territory or campaign — is client_introduction.
 - Give the figures you were given. Do not estimate, extrapolate, or fill a gap with a plausible number.
+- Every fact about the business — a name, a figure, a date, a status — must come from a tool result in THIS turn or from an earlier answer in this conversation. A follow-up asking for something not already shown ("and who is their account manager?") needs the tool again. Never answer from memory or from the examples in these instructions; they are illustrations, not data.
 - A null is not a zero. Null means the product is not linked to that client and the number is unknown; say that plainly.
 - Say which product and period a figure came from, so it can be checked.
 - Be brief and concrete. Lead with the answer, then the supporting numbers. Tables for more than three rows.
