@@ -10,6 +10,7 @@ import { getOnboardingDb } from "@/lib/tools/onboarding/db";
 import { dropsPortal, dropsToolRows, isDestructive, nameKeyShared, needsAcknowledgement, portalHasContent, subscriptionShared } from "./delete-rule";
 import { pauseCampaignsForClient } from "./pause-campaigns";
 import { billingEnabled, previewBillingForClient, syncBillingForClient } from "./stripe-billing-live";
+import { otherCollectingSubscriptions } from "./billing-account";
 import { keyOf } from "./roster";
 import { cancelOpenLinks } from "./payment-links";
 
@@ -197,7 +198,7 @@ async function load(id: string): Promise<Row> {
  */
 interface PausePlan {
   campaigns: { count: number; skipped: string | null; error: string | null };
-  billing: { pause: boolean; skipped: string | null; error: string | null };
+  billing: { pause: boolean; skipped: string | null; error: string | null; others?: number };
 }
 
 async function planPauses(row: Row): Promise<PausePlan> {
@@ -229,6 +230,10 @@ async function planPauses(row: Row): Promise<PausePlan> {
     else if (pre.decision.action === "pause") billing.pause = true;
     else billing.skipped = pre.decision.reason; // e.g. "Already paused."
   }
+  // Its other subscriptions still collecting (6 Oct) — paused with it.
+  if (billingEnabled()) {
+    try { billing.others = (await otherCollectingSubscriptions(row.id, sub ?? null)).length; } catch { /* read again at execution */ }
+  }
   return { campaigns, billing };
 }
 
@@ -248,6 +253,9 @@ function describePauses(p: PausePlan): { willPause: string[]; warnings: string[]
     willPause.push("its Stripe subscription — collection paused, not cancelled");
   } else if (p.billing.skipped && !/no Stripe subscription/.test(p.billing.skipped)) {
     warnings.push(`Billing will not be changed: ${p.billing.skipped}`);
+  }
+  if (p.billing.others) {
+    willPause.push(`its ${p.billing.others} other Stripe subscription${p.billing.others === 1 ? "" : "s"} still collecting — paused, not cancelled`);
   }
   return { willPause, warnings };
 }
@@ -483,6 +491,18 @@ export async function deleteClient(
     const b = await syncBillingForClient(row.stripe_subscription_id, "churned");
     if (!b.ok) failed.push({ what: "Pausing billing", error: b.error ?? b.decision.reason });
     else if (b.changed) removed.push("paused its Stripe billing");
+  }
+  // Its other subscriptions still collecting are paused too (6 Oct) — never cancelled.
+  if (!failed.length && billingEnabled()) {
+    try {
+      for (const sid of await otherCollectingSubscriptions(row.id, row.stripe_subscription_id ?? null)) {
+        const b = await syncBillingForClient(sid, "churned");
+        if (!b.ok) failed.push({ what: `Pausing subscription ${sid}`, error: b.error ?? b.decision.reason });
+        else if (b.changed) removed.push(`paused subscription ${sid}`);
+      }
+    } catch (e) {
+      failed.push({ what: "Pausing its other subscriptions", error: e instanceof Error ? e.message : "could not be read" });
+    }
   }
   if (failed.length) {
     failed.push({ what: "the delete", error: "stopped before removing anything, so nothing is left running unmanaged" });

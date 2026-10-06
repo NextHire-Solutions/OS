@@ -119,6 +119,12 @@ export interface MasterClient {
    * after the list and adds it: undefined while loading, null when not on Stripe.
    */
   stripe?: StripeSummary | null;
+  /**
+   * Its Database saved views (saved-views-match.ts, 6 Oct). Like `stripe`, read
+   * by the Clients screen after the list: undefined while loading, null when
+   * the Database could not be read.
+   */
+  savedViews?: import("./saved-views-match").ClientView[] | null;
   /* What each tool adds for its own view (§8). */
   health: {
     present: boolean;

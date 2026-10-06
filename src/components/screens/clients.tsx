@@ -8,6 +8,8 @@ import {
   type FieldCategory, type ToolViewId,
 } from "@/lib/clients/field-registry";
 import type { MasterClient, MasterClientList } from "@/lib/clients/master-list";
+import type { ClientView } from "@/lib/clients/saved-views-match";
+import { completeness } from "@/lib/clients/completeness";
 import { CLIENT_STATUSES, STATUS_MEANING, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
 
 import { ClientRecord } from "./client-record";
@@ -50,6 +52,8 @@ function sortValue(k: string, c: MasterClient): string | number {
   if (k === "performance" || k === "health") return c.health.period ? c.health.period.delivered / Math.max(1, c.health.period.target) : -1;
   if (k === "campaigns") return c.campaigns?.length ?? -1;
   if (k === "portal") return c.portal.count;
+  if (k === "completeness") return completeness(c).pct;
+  if (k === "savedViews") return c.savedViews?.length ?? -1;
   if (k === "campaignMetrics") return c.analytics.sent ?? -1;
   if (k === "onboardingProgress" || k === "onboardingStatus") return c.onboarding.progress?.pct ?? -1;
   return textOf(k, c).toLowerCase() || "￿";
@@ -463,8 +467,24 @@ export function ClientsScreen({ initial, only }: { initial: MasterClientList | n
   }, []);
   useEffect(() => loadStripe(), [loadStripe]);
 
+  // Each client's Database saved views (6 Oct), added once the Database answers — never holds the list up.
+  const [views, setViews] = useState<Record<string, ClientView[]> | "failed" | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/workspace/clients/saved-views", { cache: "no-store" })
+      .then(async (r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((b) => { if (live) setViews((b?.byClient ?? {}) as Record<string, ClientView[]>); })
+      .catch(() => { if (live) setViews("failed"); });
+    return () => { live = false; };
+  }, []);
+
   // A saved change shows at once; the refresh that follows confirms it.
   const patch = useCallback((id: string, p: ClientPatch) => {
+    // Saved views live in their own map (merged in below), so a link or exclusion is patched there.
+    if (p.savedViews !== undefined) {
+      const sv = p.savedViews ?? [];
+      setViews((v) => (v && v !== "failed" ? { ...v, [id]: sv } : v));
+    }
     setData((d) => (d ? { ...d, clients: d.clients.map((c) => (c.id === id ? applyPatch(c, p) : c)) } : d));
   }, []);
 
@@ -481,7 +501,7 @@ export function ClientsScreen({ initial, only }: { initial: MasterClientList | n
           <button type="button" className="ds-btn sm" onClick={() => void refresh(true)}>Retry</button>
         </div>
       ) : null}
-      <ClientsView data={withStripe(data, stripe)} only={only} onPatch={patch}
+      <ClientsView data={withViews(withStripe(data, stripe), views)} only={only} onPatch={patch}
         onChanged={(kind) => { void refresh(true); if (kind === "stripe") loadStripe(); }} />
     </>
   );
@@ -493,6 +513,11 @@ export type ClientPatch = Omit<Partial<MasterClient>, "contact"> & { contact?: P
 function applyPatch(c: MasterClient, p: ClientPatch): MasterClient {
   const { contact, ...rest } = p;
   return { ...c, ...rest, contact: contact ? { ...c.contact, ...contact } : c.contact };
+}
+
+function withViews(data: MasterClientList, v: Record<string, ClientView[]> | "failed" | null): MasterClientList {
+  if (v === null) return data;
+  return { ...data, clients: data.clients.map((c) => ({ ...c, savedViews: v === "failed" ? null : v[c.id] ?? [] })) };
 }
 
 /* Total spend, MRR and Stripe's sign-up day, added once Stripe answers (it never holds the list up). */

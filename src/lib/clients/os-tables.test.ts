@@ -36,6 +36,10 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_payment_links",
     // Added 2026-10-01: campaign → portal (0025).
     "os_campaign_portals",
+    "os_client_stripe_links",
+    "os_notifications",
+    "os_portal_blocks",
+    "os_client_saved_views",
   ]);
 });
 

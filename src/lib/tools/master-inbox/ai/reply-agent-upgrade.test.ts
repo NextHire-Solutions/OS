@@ -20,7 +20,7 @@ import {
   type HandoverContext,
   type QualificationState,
 } from "./qualification.ts";
-import { renderIntroMacroTemplate } from "../inbox/intro-macro.ts";
+import { renderIntroMacroTemplate, fitIntroToLead, introBrokerage } from "../inbox/intro-macro.ts";
 import { substituteVariables } from "../inbox/template-variables.ts";
 import {
   evaluate,
@@ -587,7 +587,7 @@ test("a whitespace-only override is the same as none", () => {
   assert.equal(plan.kind === "introduce" && plan.source, "macro");
 });
 
-test("a lead with no phone or company still gets a sentence, with the gaps emptied as the button does", () => {
+test("a lead with no phone or company gets the sentence rewritten, not blanks — as the button does (6 Oct)", () => {
   const plan = planHandover(noExtras, {
     client: ONE,
     unavailableReason: null,
@@ -595,14 +595,12 @@ test("a lead with no phone or company still gets a sentence, with the gaps empti
   });
   assert.equal(plan.kind, "introduce");
   if (plan.kind !== "introduce") return;
-  assert.equal(
-    plan.body,
-    substituteVariables(renderIntroMacroTemplate(ONE), {
-      ...variables,
-      lead: { name: "Gisele Abrantes Trautman", email: "g@example.com" },
-    }),
-  );
+  const lead = { name: "Gisele Abrantes Trautman", email: "g@example.com" };
+  assert.equal(plan.body, substituteVariables(fitIntroToLead(renderIntroMacroTemplate(ONE), lead), { ...variables, lead }));
   assert.equal(plan.body.includes("{{"), false);
+  assert.equal(plan.body.includes("reached directly at"), false, "no 'reached directly at .'");
+  assert.match(plan.body, /I recently connected with Gisele\.\n/);
+  assert.equal(plan.subject, `Intro: Gisele & ${introBrokerage(ONE)}`);
 });
 
 test("mergeCc keeps the first spelling, drops blanks, and never repeats a mailbox", () => {

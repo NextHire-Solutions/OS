@@ -8,6 +8,7 @@ import {
   Cell, Id, avatarStyle, fmtDay, fmtNum, initials, intervalLabel, planLabel, tzLabel,
   portalShortName,
   introMissing,
+  effectiveSignup,
 } from "@/components/clients/cells";
 import {
   CATEGORIES, CATEGORY_LABEL, FIELD_BY_KEY, TOOL_VIEWS, fieldsIn, shown, type FieldDef, type ToolViewId,
@@ -22,6 +23,9 @@ import { ClientPeople } from "./clients-people";
 import { DeleteClient } from "./clients-delete";
 import { MarketsPanel } from "./markets-panel";
 import type { ChangeKind, ClientPatch } from "./clients";
+import type { ClientBilling } from "@/lib/clients/billing-model";
+import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
+import type { ClientView } from "@/lib/clients/saved-views-match";
 
 /*
  * ONE CLIENT.
@@ -114,7 +118,7 @@ function rawOf(key: string, c: MasterClient): string | number | null {
   // A derived date can be a timestamp; the date editor wants YYYY-MM-DD.
   if (key === "onboardingDate" || key === "churnDate") return c[key] ? c[key]!.slice(0, 10) : null;
   // The editor starts from what is shown: the entered day, else Stripe's.
-  if (key === "signupDate") return (c.signupDate ?? c.stripe?.signupDate ?? null)?.slice(0, 10) ?? null;
+  if (key === "signupDate") return effectiveSignup(c).date;
   const v = (c as unknown as Record<string, unknown>)[key];
   return typeof v === "string" || typeof v === "number" ? v : null;
 }
@@ -129,7 +133,7 @@ function displayFor(key: string, c: MasterClient): React.ReactNode {
     case "campaignAliases": return c.campaignAliases.length ? c.campaignAliases.join(", ") : null;
     case "monthlyTarget": return c.monthlyTarget === null ? null : `${c.monthlyTarget} per 28 days`;
     // Empty reads "Not set", like every other editable field.
-    case "signupDate": return c.signupDate || c.stripe?.signupDate ? <Cell k={key} c={c} /> : null;
+    case "signupDate": return effectiveSignup(c).date ? <Cell k={key} c={c} /> : null;
     case "website": case "zillowUrl": case "pocEmail": return c[key] ? <Cell k={key} c={c} /> : null;
     default: return undefined;
   }
@@ -212,11 +216,13 @@ export function ClientRecord({
 
   /** One field row: an in-place editor where the master record owns it, the value otherwise. */
   const row = (key: string, label: string, def?: FieldDef) => {
-    const ed = editorFor(key, team, members, sellers);
+    // Sign-up date: Stripe's first $1 charge decides it when there is one (6 Oct) — shown, not edited.
+    const fromStripe = key === "signupDate" && effectiveSignup(c).source === "first $1 charge";
+    const ed = fromStripe ? null : editorFor(key, team, members, sellers);
     const source = def?.source;
     if (ed) {
       return (
-        <div key={key} className="rx-row" title={def?.definition}>
+        <div key={key} id={`rx-f-${key}`} className="rx-row" title={def?.definition}>
           <Field label={label} source={source} value={rawOf(key, c)} display={displayFor(key, c)}
             editor={ed.editor} onSave={save(ed.save, ed.transform, key)} />
         </div>
@@ -224,7 +230,7 @@ export function ClientRecord({
     }
     const managed = !tool ? MANAGED_IN[key] : undefined;
     return (
-      <div key={key} className="rx-row" title={def?.definition}>
+      <div key={key} id={`rx-f-${key}`} className="rx-row" title={def?.definition}>
         <div className="ds-field">
           <div className="ds-field-l"><span>{label}</span>{source ? <em className="ds-field-src">{source}</em> : null}</div>
           <div className="ds-field-v">
@@ -238,6 +244,21 @@ export function ClientRecord({
         </div>
       </div>
     );
+  };
+
+  /* Profile completeness (6 Oct): the score, the gaps, and a Fix → that goes to each one. */
+  const comp = completeness(c);
+  const signup = effectiveSignup(c);
+  const fixIt = (k: ProfileCheck) => {
+    setTab(k.tab);
+    setTimeout(() => {
+      const el = document.getElementById(k.field ? `rx-f-${k.field}` : `rx-t-${k.key}`);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("rx-flash");
+      setTimeout(() => el.classList.remove("rx-flash"), 1800);
+      (el.querySelector("button.ds-value") as HTMLButtonElement | null)?.click();
+    }, 80);
   };
 
   const period = c.health.period;
@@ -274,6 +295,13 @@ export function ClientRecord({
               <div className="rx-tags">
                 <StatusPill status={c.status} size="sm" />
                 {c.plan ? <span className="rx-tag">{planLabel(c.plan)}</span> : null}
+                {!tool ? (
+                  <button type="button" className={`rx-comp ${comp.pct >= 90 ? "good" : comp.pct >= 70 ? "warn" : "bad"}`}
+                    title={comp.missing.length ? `Missing: ${comp.missing.map((m) => m.label).join(", ")}` : "Every profile check is done"}
+                    onClick={() => { setTab("record"); setTimeout(() => document.getElementById("rx-missing")?.scrollIntoView({ block: "start", behavior: "smooth" }), 60); }}>
+                    Profile {comp.pct}%{comp.missing.length ? ` · ${comp.missing.length} missing` : " · complete"}
+                  </button>
+                ) : null}
                 {c.statusSince ? <span className="rx-meta">since {fmtDay(c.statusSince)}</span> : null}
                 <span className="rx-meta">ID <Id value={c.id} /></span>
               </div>
@@ -356,6 +384,25 @@ export function ClientRecord({
             <div className="rx-body" key={c.id}>
               {tab === "record" ? (
                 <>
+                  {!tool && (comp.missing.length || signup.afterOnboarding) ? (
+                    <section className="rx-sec rx-missing" id="rx-missing">
+                      <h3>Complete the profile<span>{comp.done} of {comp.total} done{comp.pending ? ` · ${comp.pending} still loading` : ""}</span></h3>
+                      <ul>
+                        {signup.afterOnboarding ? (
+                          <li className="flag">
+                            <span><b>Sign-up date is after onboarding</b> — signed up {fmtDay(signup.date)}, onboarding began {fmtDay(c.onboardingDate)}. Check the onboarding date (the same day is fine).</span>
+                            <button type="button" className="rx-btn" onClick={() => fixIt({ key: "onboardingDate", label: "Onboarding date", ok: false, tab: "record", field: "onboardingDate", how: "" })}>Check →</button>
+                          </li>
+                        ) : null}
+                        {comp.missing.map((m) => (
+                          <li key={m.key}>
+                            <span><b>{m.label}</b> — {m.how}</span>
+                            <button type="button" className="rx-btn" onClick={() => fixIt(m)}>Fix →</button>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
                   <section className="rx-sec">
                     <h3>Status<span>changes every tool, the portal, campaigns and billing</span></h3>
                     <StatusField id={c.id} status={c.status} onChanged={onChanged} onPatch={onPatch} />
@@ -369,7 +416,12 @@ export function ClientRecord({
                   ))}
                 </>
               ) : null}
-              {tab === "campaigns" ? <Campaigns c={c} onChanged={() => onChanged()} /> : null}
+              {tab === "campaigns" ? (
+                <>
+                  <SavedViews clientId={c.id} views={c.savedViews} onPatch={onPatch} assignedLeads={c.assignedLeads} />
+                  <Campaigns c={c} onChanged={() => onChanged()} />
+                </>
+              ) : null}
               {tab === "people" ? (
                 <section className="rx-sec">
                   <h3>Team · Agents · DNC<span>held by Master Inbox · shared with the portal</span></h3>
@@ -742,7 +794,12 @@ interface BillingNow { status: string; paused: boolean; behavior: string | null;
 interface OpenLink { id: string; url: string; label: string; createdAt: string }
 
 function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
-  const [state, setState] = useState<{ hidden?: true; linked?: boolean; billing?: BillingNow; links?: OpenLink[] | null; canCreateLinks?: boolean; error?: string } | null>(null);
+  const [state, setState] = useState<{
+    hidden?: true; linked?: boolean; billing?: BillingNow; links?: OpenLink[] | null; canCreateLinks?: boolean; error?: string;
+    /** Every subscription and card the client owns (billing-model.ts, 6 Oct). */
+    account?: ClientBilling | null; linksReady?: boolean; accountError?: string | null;
+    portalBlock?: { block: { mode: string; since: string; reason: string | null } | null; enabled: boolean; afterAttempts: number };
+  } | null>(null);
   const [pending, setPending] = useState<"pause" | "resume" | null>(null);
   const [creating, setCreating] = useState(false);
   const [amount, setAmount] = useState("");
@@ -895,8 +952,141 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
               </span>
             </div>
           ) : null}
+          {state.portalBlock?.block ? (
+            <div className="rx-bill-fail" role="alert">
+              <b>{state.portalBlock.block.mode === "blocked" ? "Portal paused for an unpaid invoice" : "Portal would be paused (dry run)"}</b>
+              <span>
+                {state.portalBlock.block.reason ?? "Unpaid invoice"} — since {fmtDay(state.portalBlock.block.since)}.{" "}
+                {state.portalBlock.block.mode === "blocked"
+                  ? "The client sees a payment notice with a link to pay; the portal reopens by itself once the invoice is paid."
+                  : `Blocking is switched off, so the portal is open. It would pause after ${state.portalBlock.afterAttempts} failed attempts.`}
+              </span>
+            </div>
+          ) : null}
+          {state.account ? (
+            <BillingAccount account={state.account} linksReady={state.linksReady === true} saving={saving}
+              act={async (body) => {
+                const out = await post(body);
+                if (out) {
+                  if (out.account !== undefined) setState((s) => ({ ...s, account: out.account, linksReady: out.linksReady ?? s?.linksReady }));
+                  else await load();
+                  onChanged?.();
+                }
+                return !!out;
+              }} />
+          ) : state.accountError ? <span className="ds-field-err">Stripe could not be read for the full picture: {state.accountError}</span> : null}
           {error ? <div className="ds-field-err" role="alert">{error}</div> : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/*
+ * Every subscription and card the client owns (client feedback, 6 Oct):
+ * totals across them, the current one marked, failed payments, and which
+ * Stripe customers count as this client's — with "Not this client" for an
+ * automatic name match and a box to link another customer or subscription.
+ */
+function BillingAccount({ account: a, linksReady, saving, act }: {
+  account: ClientBilling;
+  linksReady: boolean;
+  saving: boolean;
+  act: (body: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const [confirm, setConfirm] = useState<{ id: string; action: "pause" | "resume" } | null>(null);
+  const [linkId, setLinkId] = useState("");
+  const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  const live = a.subscriptions.filter((s) => !["canceled", "incomplete_expired"].includes(s.status));
+  return (
+    <div className="rx-bill">
+      <div className="rx-bill-sum">
+        <span><b>{money(a.mrr)}</b> MRR</span>
+        <span><b>{money(a.totalSpend)}</b> total spend · {a.transactions} payment{a.transactions === 1 ? "" : "s"}</span>
+        <span>{a.subscriptions.length} subscription{a.subscriptions.length === 1 ? "" : "s"}{live.length !== a.subscriptions.length ? ` (${live.length} not cancelled)` : ""}</span>
+      </div>
+
+      {a.failedInvoices.length ? (
+        <div className="rx-bill-fail" role="alert">
+          <b>Failed payment{a.failedInvoices.length === 1 ? "" : "s"}</b>
+          {a.failedInvoices.map((i) => (
+            <span key={i.id}>
+              Invoice {i.number ?? i.id} · {money(i.amountRemaining)} unpaid · Stripe has tried {i.attemptCount} time{i.attemptCount === 1 ? "" : "s"}
+              {i.nextAttempt ? `, next try ${fmtDay(new Date(i.nextAttempt * 1000).toISOString())}` : ", no more automatic tries"}
+              {i.url ? <> · <a href={i.url} target="_blank" rel="noreferrer">Open invoice ↗</a></> : null}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <table className="rx-bill-subs">
+        <thead><tr><th>Subscription</th><th>Status</th><th>Next charge</th><th /></tr></thead>
+        <tbody>
+          {a.subscriptions.map((s) => {
+            const ended = ["canceled", "incomplete_expired"].includes(s.status);
+            return (
+              <tr key={s.id} className={s.current ? "current" : undefined}>
+                <td>
+                  {money(s.amount)} {s.every}
+                  {s.current ? <span className="rx-bill-tag">current</span> : null}
+                  <small title={s.id}>since {fmtDay(s.created)} · {s.source}</small>
+                </td>
+                <td>{ended ? `Cancelled ${s.canceled ? fmtDay(s.canceled) : ""}` : s.collectionPaused ? "Paused" : s.status === "past_due" ? "Past due" : "Collecting"}</td>
+                <td>{s.nextCharge ? fmtDay(s.nextCharge) : "—"}</td>
+                <td>
+                  {!ended ? (
+                    <button type="button" className="rx-btn" disabled={saving || !!confirm}
+                      onClick={() => setConfirm({ id: s.id, action: s.collectionPaused ? "resume" : "pause" })}>
+                      {s.collectionPaused ? "Resume" : "Pause"}
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {confirm ? (
+        <div className="rx-confirm" role="alert">
+          <span>
+            <b>{confirm.action === "pause" ? "Pause this subscription?" : "Resume this subscription?"}</b>{" "}
+            {confirm.action === "pause"
+              ? "Stripe stops charging it and voids invoices while paused. It is kept, never cancelled, and can be resumed. The client's status does not change."
+              : "Stripe charges it again from its next billing date. The client's status does not change."}
+          </span>
+          <span style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="rx-btn solid" disabled={saving}
+              onClick={async () => { if (await act({ action: confirm.action, subscriptionId: confirm.id })) setConfirm(null); }}>
+              {saving ? "Saving…" : confirm.action === "pause" ? "Pause it" : "Resume it"}
+            </button>
+            <button type="button" className="rx-btn" disabled={saving} onClick={() => setConfirm(null)}>Cancel</button>
+          </span>
+        </div>
+      ) : null}
+
+      <div className="rx-bill-cust">
+        <span className="rx-bill-h">Stripe customers counted for this client</span>
+        {a.customers.map((cu) => (
+          <span key={cu.id} className="rx-bill-row">
+            <span>{cu.name ?? cu.id}{cu.shared ? <em> · shared with another client</em> : null} <small>{cu.source}</small></span>
+            {cu.source !== "record" && linksReady ? (
+              <button type="button" className="rx-btn" disabled={saving}
+                onClick={() => void act({ action: cu.source === "linked" ? "unlink" : "exclude", customerId: cu.id })}>
+                Not this client
+              </button>
+            ) : null}
+          </span>
+        ))}
+        {linksReady ? (
+          <span className="rx-bill-row">
+            <input className="ds-input" placeholder="Link another: cus_… or sub_…" aria-label="Stripe customer or subscription id"
+              value={linkId} onChange={(e) => setLinkId(e.target.value.trim())} style={{ maxWidth: 260 }} />
+            <button type="button" className="rx-btn" disabled={saving || !/^(cus|sub)_/.test(linkId)}
+              onClick={async () => { if (await act({ action: "link", stripeId: linkId })) setLinkId(""); }}>Link</button>
+          </span>
+        ) : (
+          <small className="rx-hint" style={{ marginTop: 0 }}>Linking or excluding a customer needs migrations/0030_billing_profile.sql run first.</small>
+        )}
       </div>
     </div>
   );
@@ -1101,6 +1291,7 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
         </div>
       ) : null}
       {!editing && view.routes ? <IntroRoutes routes={view.routes} /> : null}
+      {!editing ? <IntroVariants clientId={clientId} view={view} onSaved={(v) => { setView(v); onChanged(); }} /> : null}
       {msg ? <div role="status" style={{ fontSize: 13, color: msg.bad ? "var(--x-bad, #b42318)" : undefined }}>{msg.text}</div> : null}
     </div>
   );
@@ -1115,7 +1306,7 @@ function IntroRoutes({ routes }: { routes: NonNullable<IntroView["routes"]> }) {
   const unmatched = routes.filter((r) => r.fallback).length;
   return (
     <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 600 }}>Who each campaign&apos;s leads are introduced to</div>
+      <div style={{ fontSize: 12.5, fontWeight: 600 }}>Each campaign: its portal, who its leads are introduced to, and the wording</div>
       {routes.length ? (
         <div className="rx-camps">
           {routes.map((r) => (
@@ -1123,6 +1314,7 @@ function IntroRoutes({ routes }: { routes: NonNullable<IntroView["routes"]> }) {
               <div style={{ minWidth: 0 }}>
                 <b title={r.campaign}>{r.campaign}</b>
                 <small>
+                  {r.portal ? `${r.portal} portal · ` : ""}
                   {r.conversations} conversation{r.conversations === 1 ? "" : "s"}
                   {r.lastAt ? ` · last ${new Date(r.lastAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}
                   {r.matched.length ? ` · ${r.matched.join(", ")}` : ""}
@@ -1134,7 +1326,10 @@ function IntroRoutes({ routes }: { routes: NonNullable<IntroView["routes"]> }) {
                   No territory · everyone
                 </span>
               ) : (
-                <span style={{ fontSize: 12.5, textAlign: "right" }}>{r.people.join(", ")}</span>
+                <span style={{ fontSize: 12.5, textAlign: "right" }}>
+                  {r.people.length ? r.people.join(", ") : <span style={{ color: "var(--x-mute, #8a8f98)" }}>Nobody yet — add people below</span>}
+                  {r.variant ? <small style={{ display: "block", color: "#5B33B5" }}>&ldquo;{r.variant}&rdquo; wording</small> : null}
+                </span>
               )}
             </div>
           ))}
@@ -1148,6 +1343,200 @@ function IntroRoutes({ routes }: { routes: NonNullable<IntroView["routes"]> }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/*
+ * Wording by market or person (client feedback, 6 Oct — Jeff Cook, P&E): for a
+ * lead whose campaign names one of the places, or who is routed to one of the
+ * people, this introduction is sent instead of the usual one. First fit wins.
+ */
+type VariantDraft = { id: string; label: string; places: string; people: string[]; text: string };
+const toDraft = (v: IntroView["variants"][number]): VariantDraft => ({ id: v.id, label: v.label ?? "", places: v.places.join(", "), people: v.people, text: v.text });
+const fromDraft = (d: VariantDraft) => ({
+  id: d.id, label: d.label.trim() || null, text: d.text,
+  places: d.places.split(/[,;\n]/).map((p) => p.trim()).filter(Boolean), people: d.people,
+});
+
+function IntroVariants({ clientId, view, onSaved }: { clientId: string; view: IntroView; onSaved: (v: IntroView) => void }) {
+  const [edit, setEdit] = useState<{ index: number; d: VariantDraft } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
+  const list = view.variants;
+
+  async function put(next: Array<ReturnType<typeof fromDraft>>, done: string) {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch("/api/workspace/clients/intro", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, variants: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      onSaved(body.view as IntroView);
+      setEdit(null);
+      setMsg({ text: done });
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : String(e), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const all = () => list.map((v) => fromDraft(toDraft(v)));
+  const saveEdit = () => {
+    if (!edit) return;
+    const next = all();
+    if (edit.index < 0) next.push(fromDraft(edit.d)); else next[edit.index] = fromDraft(edit.d);
+    void put(next, "Saved — leads it fits get this wording from the Introduce button and the reply agent.");
+  };
+  const remove = (i: number) => void put(all().filter((_, j) => j !== i), "Removed.");
+  const up = (i: number) => { const n = all(); [n[i - 1], n[i]] = [n[i], n[i - 1]]; void put(n, "Order saved — the first that fits wins."); };
+  const startNew = () => setEdit({ index: -1, d: { id: "", label: "", places: "", people: [], text: view.custom ?? view.standard ?? "" } });
+
+  return (
+    <div style={{ display: "grid", gap: 8, marginTop: 10 }} id="rx-t-variants">
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600 }}>Different wording by market or person</div>
+        <span style={{ flex: 1 }} />
+        {view.canSaveVariants && !edit ? <button type="button" className="rx-btn" disabled={busy || list.length >= 20} onClick={startNew}>Add wording</button> : null}
+      </div>
+      {!view.canSaveVariants ? (
+        <div className="rx-hint" style={{ marginTop: 0 }}>Needs database migration 0030 first.</div>
+      ) : !list.length && !edit ? (
+        <div className="rx-hint" style={{ marginTop: 0 }}>
+          None — every lead gets the introduction above. Add wording for a market (a place in the campaign name, like &ldquo;Charleston&rdquo;) or for a person{view.people.length ? ` (${view.people.join(", ")})` : ""}.
+        </div>
+      ) : null}
+      {list.map((v, i) => edit?.index === i ? null : (
+        <div key={v.id} className="rx-camp" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}>
+          <div style={{ minWidth: 0 }}>
+            <b>{v.label ?? ([...v.places, ...v.people].join(", ") || "Wording")}</b>
+            <small>
+              {v.places.length ? `Campaigns naming ${v.places.join(" / ")}` : ""}
+              {v.places.length && v.people.length ? " · or " : ""}
+              {v.people.length ? `leads routed to ${v.people.join(" / ")}` : ""}
+              {` · “${v.text.split("\n").find((l) => l.trim())?.slice(0, 60) ?? ""}…”`}
+            </small>
+          </div>
+          <span style={{ display: "flex", gap: 4 }}>
+            {i > 0 ? <button type="button" className="rx-btn" disabled={busy || !!edit} title="Try this one earlier" onClick={() => up(i)}>↑</button> : null}
+            <button type="button" className="rx-btn" disabled={busy || !!edit} onClick={() => setEdit({ index: i, d: toDraft(v) })}>Edit</button>
+            <button type="button" className="rx-btn" disabled={busy || !!edit} onClick={() => remove(i)}>Remove</button>
+          </span>
+        </div>
+      ))}
+      {edit ? (
+        <div style={{ display: "grid", gap: 8, padding: 12, border: "1px solid var(--ds-line, #e4e4e7)", borderRadius: 8 }}>
+          <label className="rx-hint" style={{ marginTop: 0 }}>Name (optional)
+            <input className="ds-input" style={{ width: "100%", minWidth: 0 }} value={edit.d.label} placeholder="Charleston" disabled={busy}
+              onChange={(e) => setEdit({ ...edit, d: { ...edit.d, label: e.target.value } })} />
+          </label>
+          <label className="rx-hint" style={{ marginTop: 0 }}>Markets — places in the campaign name, separated by commas
+            <input className="ds-input" style={{ width: "100%", minWidth: 0 }} value={edit.d.places} placeholder="Charleston, Summerville" disabled={busy}
+              onChange={(e) => setEdit({ ...edit, d: { ...edit.d, places: e.target.value } })} />
+          </label>
+          {view.people.length ? (
+            <div className="rx-hint" style={{ marginTop: 0 }}>Or for leads routed to
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+                {view.people.map((p) => (
+                  <label key={p} style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "var(--ds-ink, inherit)" }}>
+                    <input type="checkbox" checked={edit.d.people.includes(p)} disabled={busy}
+                      onChange={(e) => setEdit({ ...edit, d: { ...edit.d, people: e.target.checked ? [...edit.d.people, p] : edit.d.people.filter((x) => x !== p) } })} />
+                    {p}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <textarea className="ds-input" aria-label="Introduction for this market or person" value={edit.d.text} disabled={busy}
+            rows={Math.min(24, Math.max(10, edit.d.text.split("\n").length + 2))}
+            style={{ width: "100%", minWidth: 0, height: "auto", resize: "vertical", fontFamily: "inherit", fontSize: 13.5, lineHeight: 1.55, padding: "10px 12px" }}
+            onChange={(e) => setEdit({ ...edit, d: { ...edit.d, text: e.target.value } })} />
+          <div className="rx-hint" style={{ marginTop: 0 }}>Fields like {"{{lead.first_name}}"} and {"{{lead.phone_number}}"} are filled in for each lead, as above.</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" className="ds-btn primary sm" disabled={busy || !edit.d.text.trim() || (!edit.d.places.trim() && !edit.d.people.length)}
+              title={!edit.d.places.trim() && !edit.d.people.length ? "Add a market or pick a person" : undefined} onClick={saveEdit}>{busy ? "Saving…" : "Save"}</button>
+            <button type="button" className="ds-btn ghost sm" disabled={busy} onClick={() => setEdit(null)}>Cancel</button>
+          </div>
+        </div>
+      ) : null}
+      {msg ? <div role="status" style={{ fontSize: 13, color: msg.bad ? "var(--x-bad, #b42318)" : undefined }}>{msg.text}</div> : null}
+    </div>
+  );
+}
+
+/*
+ * The client's Database saved views (client feedback, 6 Oct) — and its leads.
+ * Views are matched by name or the view's Client filter; "Not this client"
+ * removes a wrong match and "Link" adds a view named otherwise (0030).
+ */
+function SavedViews({ clientId, views, onPatch, assignedLeads }: {
+  clientId: string;
+  views: ClientView[] | null | undefined;
+  onPatch?: (p: ClientPatch) => void;
+  assignedLeads: number | null;
+}) {
+  const [all, setAll] = useState<Array<{ id: string; name: string }> | null>(null);
+  const [ready, setReady] = useState<boolean | null>(null);
+  const [pick, setPick] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/workspace/clients/saved-views", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null))
+      .then((b) => { if (live && b) { setAll(b.views ?? []); setReady(b.linksReady === true); } }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const act = async (viewId: string, action: "link" | "unlink" | "exclude") => {
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch("/api/workspace/clients/saved-views", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, viewId, action }) });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error ?? `HTTP ${r.status}`);
+      onPatch?.({ savedViews: b.views ?? [] });
+      setPick("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const mine = views ?? [];
+  const others = (all ?? []).filter((v) => !mine.some((m) => m.id === v.id));
+  return (
+    <section className="rx-sec" id="rx-t-savedViews">
+      <h3>Saved views<span>the client&rsquo;s agent searches in the Database</span></h3>
+      {views === undefined ? <p className="rx-hint" style={{ marginTop: 0 }}>Reading the Database…</p>
+        : views === null ? <p className="rx-hint" style={{ marginTop: 0 }}>The Database could not be read.</p>
+        : !mine.length ? <p className="rx-hint" style={{ marginTop: 0 }}><b>No saved view.</b> Save one in the Database named after the client, or link an existing view below.</p>
+        : (
+          <ul className="rx-views">
+            {mine.map((v) => (
+              <li key={v.id}>
+                <span><b>{v.name}</b>{v.agents !== null ? <small> · {v.agents.toLocaleString("en-US")} agents</small> : null}<small> · {v.source === "linked" ? "linked" : v.source === "client filter" ? "its Client filter" : "matched by name"}</small></span>
+                {ready === true ? (
+                  <button type="button" className="rx-btn" disabled={busy} onClick={() => void act(v.id, v.source === "linked" ? "unlink" : "exclude")}>
+                    {v.source === "linked" ? "Unlink" : "Not this client"}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      {ready === true && all ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <select className="ds-input" style={{ maxWidth: 320 }} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Link a saved view">
+            <option value="">Link a saved view…</option>
+            {others.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+          <button type="button" className="rx-btn" disabled={busy || !pick} onClick={() => void act(pick, "link")}>Link</button>
+        </div>
+      ) : ready === false ? <p className="rx-hint">Linking views needs migrations/0030_billing_profile.sql run first.</p> : null}
+      <p className="rx-hint" id="rx-t-leads">
+        <b>Leads assigned:</b> {assignedLeads === null ? "unknown (the Database could not be read)" : assignedLeads.toLocaleString("en-US")}
+        {assignedLeads === 0 ? " — leads are built in the Database / Onboarding for the client's campaigns." : ""}
+      </p>
+      {error ? <div className="ds-field-err" role="alert">{error}</div> : null}
+    </section>
   );
 }
 

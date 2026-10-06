@@ -141,4 +141,22 @@ export async function register() {
   setInterval(assignSafely, 600_000).unref?.();
   setTimeout(warmShellSafely, 6_000).unref?.();
   setInterval(warmShellSafely, 240_000).unref?.();
+
+  /*
+   * Failed payments → the bell, and the portal block (0030, 6 Oct). Reads the
+   * Stripe snapshot; writes only os_notifications / os_portal_blocks. Blocks
+   * are dry runs unless OS_PORTAL_BLOCK_ENABLED=1. Railway only, every 15
+   * minutes; OS_BILLING_WATCH_ENABLED=0 switches it off. The first pass also
+   * warms the Stripe snapshot, so Clients and Performance open fast.
+   */
+  const watchBilling = async () => {
+    if (process.env.OS_BILLING_WATCH_ENABLED === "0") return;
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    const { runBillingWatch } = await import("./lib/clients/billing-watch");
+    const r = await runBillingWatch();
+    if (r.notified || r.blocked || r.lifted) console.log(`[billing-watch] ${r.notified} notified · ${r.blocked} blocked · ${r.lifted} lifted`);
+  };
+  const watchSafely = () => { watchBilling().catch((e) => console.error("[billing-watch] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(watchSafely, 45_000).unref?.();
+  setInterval(watchSafely, 15 * 60_000).unref?.();
 }

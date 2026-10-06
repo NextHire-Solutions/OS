@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { IntroOverrideError, introView, saveIntroOverride } from "@/lib/clients/intro-override";
+import { IntroOverrideError, introView, saveIntroOverride, saveIntroVariants } from "@/lib/clients/intro-override";
 import { clientsChanged } from "@/lib/clients/after-change";
 
 /*
@@ -11,6 +11,7 @@ import { clientsChanged } from "@/lib/clients/after-change";
  *                              and whether there is anything to send.
  * PUT { clientId, custom }  → save the client's own introduction; null or
  *                              blank goes back to the standard wording.
+ * PUT { clientId, variants } → save the wording by market or person (0030).
  */
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,16 @@ export async function PUT(request: Request) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const clientId = typeof body?.clientId === "string" ? body.clientId : "";
+  if (clientId && body && "variants" in body) {
+    try {
+      const view = await saveIntroVariants(clientId, body.variants);
+      clientsChanged();
+      console.log(`[clients/intro] ${session.email} saved ${view.variants.length} intro variant(s) for ${clientId}`);
+      return NextResponse.json({ ok: true, view });
+    } catch (e) {
+      return fail(e);
+    }
+  }
   const custom = body?.custom === null ? null : typeof body?.custom === "string" ? body.custom : undefined;
   if (!clientId || custom === undefined) {
     return NextResponse.json({ error: "clientId and custom (text or null) are required." }, { status: 400 });

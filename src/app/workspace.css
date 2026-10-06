@@ -1686,3 +1686,24 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
 .mk-num { width: 110px; }
 .mk-x { border: 0; background: none; color: inherit; font: inherit; padding: 0 0 0 2px; cursor: pointer; opacity: .7; }
 .mk-x:hover { opacity: 1; }
+
+/* The notification bell (6 Oct): failed payments and portal blocks, admins only. */
+.nb{position:relative;margin-right:10px}
+.nb-btn{position:relative;width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;cursor:pointer;color:var(--ink-2)}
+.nb-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nb-count{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--red);color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center}
+.nb-panel{position:absolute;right:0;top:44px;width:380px;max-height:70vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-raise);z-index:80}
+.nb-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line-soft);font-size:14px}
+.nb-link{border:0;background:none;color:var(--blue);font:inherit;font-size:12.5px;cursor:pointer}
+.nb-panel ul{list-style:none;margin:0;padding:0}
+.nb-item{display:flex;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line-soft);font-size:13px;color:var(--ink-2)}
+.nb-item b{display:block;color:var(--ink);font-weight:600}
+.nb-item small{display:block;color:var(--muted);font-size:11.5px;margin-top:3px}
+.nb-body{display:block;margin-top:2px;line-height:1.45}
+.nb-dot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--line)}
+.nb-item.unread{background:#F8FAFF}
+.nb-item.sev-warning .nb-dot{background:var(--amber)}
+.nb-item.sev-critical .nb-dot{background:var(--red)}
+.nb-item.sev-info .nb-dot{background:var(--green)}
+.nb-empty{padding:16px 14px;font-size:13px;color:var(--muted);margin:0}
+@media (max-width:600px){.nb-panel{width:calc(100vw - 32px);right:-60px}}

@@ -16,7 +16,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
  *   3. the one record whose name or aliases equal the portal's name.
  * A read error on step 1 is returned as an error; steps 2 and 3 are best effort.
  */
-const OPTIONAL_COLUMNS = ["intro_override", "more_contacts", "contact_territories"];
+const OPTIONAL_COLUMNS = ["intro_override", "more_contacts", "contact_territories", "intro_variants"];
 const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export async function rosterRowForPortal(
@@ -27,7 +27,7 @@ export async function rosterRowForPortal(
   const admin = createAdminSupabase();
 
   // Columns a migration may not have added yet — intro_override (0026),
-  // more_contacts (0028), contact_territories (0029): ask again without
+  // more_contacts (0028), contact_territories (0029), intro_variants (0030): ask again without
   // whichever one the error names, until none is missing.
   let cols = columns;
   let linked = await admin.from("os_clients").select(cols).eq("mi_client_id", portalId).maybeSingle();

@@ -379,3 +379,44 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .cx-refresh-err { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60;
   display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px;
   background: #FFF7ED; color: #9A3412; border: 1px solid #FED7AA; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.08); }
+/* Sign-up date after onboarding (client rule, 6 Oct) — a data check, not an error. */
+.cx-flag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: #FEF3C7; color: #92400E; white-space: nowrap; }
+
+/* Billing across a client's subscriptions (6 Oct). */
+.rx-bill { display: grid; gap: 10px; margin-top: 4px; }
+.rx-bill-sum { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--x-mute); }
+.rx-bill-sum b { color: var(--x-ink); font-variant-numeric: tabular-nums; }
+.rx-bill-fail { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; background: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; font-size: 12.5px; }
+.rx-bill-fail a { color: inherit; text-decoration: underline; }
+.rx-bill-subs { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.rx-bill-subs th { text-align: left; font-weight: 600; color: var(--x-mute); padding: 4px 6px; border-bottom: 1px solid var(--x-line); }
+.rx-bill-subs td { padding: 6px; border-bottom: 1px solid var(--x-line-2, var(--x-line)); vertical-align: top; font-variant-numeric: tabular-nums; }
+.rx-bill-subs td small { display: block; color: var(--x-faint); font-size: 11.5px; }
+.rx-bill-subs tr.current td:first-child { font-weight: 600; }
+.rx-bill-tag { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: #E8F0FF; color: #0B4FC4; font-size: 11px; font-weight: 600; }
+.rx-bill-cust { display: grid; gap: 6px; font-size: 12.5px; }
+.rx-bill-h { font-weight: 600; color: var(--x-mute); }
+.rx-bill-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.rx-bill-row small { color: var(--x-faint); }
+.rx-bill-row em { font-style: normal; color: var(--x-mute); }
+/* Profile completeness (6 Oct). */
+.cx-pct { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12.5px; }
+.cx-pct-bar { width: 46px; height: 6px; border-radius: 999px; background: var(--x-line); overflow: hidden; }
+.cx-pct-bar i { display: block; height: 100%; border-radius: 999px; }
+.cx-pct.good { color: #15803D; } .cx-pct.good i { background: #16A34A; }
+.cx-pct.warn { color: #B45309; } .cx-pct.warn i { background: #F59E0B; }
+.cx-pct.bad { color: #B91C1C; } .cx-pct.bad i { background: #EF4444; }
+/* Profile completeness on the record (6 Oct). */
+.rx-comp { border: 0; border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.rx-comp.good { background: #DCFCE7; color: #15803D; }
+.rx-comp.warn { background: #FEF3C7; color: #92400E; }
+.rx-comp.bad { background: #FEE2E2; color: #B91C1C; }
+.rx-missing ul, .rx-views { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.rx-missing li, .rx-views li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px;
+  border: 1px solid var(--x-line); border-radius: 10px; font-size: 13px; }
+.rx-missing li.flag { background: #FFFBEB; border-color: #FDE68A; }
+.rx-views small { color: var(--x-mute); }
+.rx-flash { animation: rx-flash 1.6s ease-out; border-radius: 8px; }
+@keyframes rx-flash { 0% { box-shadow: 0 0 0 3px #93C5FD; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .rx-flash { animation: none; outline: 2px solid #93C5FD; } }

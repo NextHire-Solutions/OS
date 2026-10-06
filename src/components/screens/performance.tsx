@@ -42,7 +42,8 @@ function PerformanceView({ performance }: { performance: Performance }) {
 
       <div className="wrap">
         <div className="cards" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-          <Card label="Total clients" value={totals.clients} sub={`${totals.active} active · ${totals.paused} paused · ${totals.churned} churned`} />
+          <Card label="Total clients" value={totals.clients}
+            sub={`${totals.active} active · ${totals.paused} paused · ${totals.churned} churned${totals.onboarding ? ` · ${totals.onboarding} onboarding` : ""}`} />
           <Card
             label="Clients added"
             value={totals.addedLast90}
@@ -63,6 +64,7 @@ function PerformanceView({ performance }: { performance: Performance }) {
           />
         </div>
 
+        <BillingCards performance={performance} />
         <div className="cards" style={{ gridTemplateColumns: `repeat(${Math.max(1, plans.length)}, 1fr)` }}>
           {plans.map((plan) => (
             <Card
@@ -137,10 +139,76 @@ function PerformanceView({ performance }: { performance: Performance }) {
           <b>Churned</b> is each churned client&rsquo;s churn date. Both are on the client&rsquo;s record in{" "}
           <a href="/roster">Clients</a> — the churn date is set automatically when a client is marked Churned.{" "}
           <b>Active at month end</b> counts clients onboarded by then and not yet churned.{" "}
-          <b>Revenue</b> is what Stripe collected that month from the {totals.stripeLinked} clients linked to a subscription.
+          <b>Revenue</b> is everything Stripe collected that month, less refunds — every subscription and card, not just the one on each record.
         </p>
+        <BillingCalendar performance={performance} />
       </div>
     </>
+  );
+}
+
+/*
+ * Billing across every subscription (client feedback, 6 Oct): total billed,
+ * MRR, ARR, live and paused subscriptions, and growth. Growth compares this
+ * month so far with the SAME days of last month, so a week-old month is not
+ * set against a whole one.
+ */
+function BillingCards({ performance }: { performance: Performance }) {
+  const b = performance.billing;
+  if (!b) {
+    return performance.billingError ? <p className="ds-note">Billing figures are unavailable — Stripe could not be read ({performance.billingError}).</p> : null;
+  }
+  const t = b.totals;
+  const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+  return (
+    <div className="cards" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
+      <Card label="Total billed" value={Math.round(t.totalBilled)} prefix="$"
+        sub={t.unattributed > 0 ? `all time, less refunds · ${usd(t.unattributed)} not tied to a client` : "all time, less refunds"} />
+      <Card label="MRR" value={Math.round(t.mrr)} prefix="$" tone="n-blue"
+        sub={`+${usd(t.newMrr30)} new · −${usd(t.lostMrr30)} lost, 30 days`} />
+      <Card label="ARR" value={Math.round(t.arr)} prefix="$" sub="MRR × 12" />
+      <Card label="Active subscriptions" value={t.activeSubscriptions} tone="n-green" sub="collecting now" />
+      <Card label="Paused subscriptions" value={t.pausedSubscriptions} sub="collection paused, not cancelled" />
+      <Card label="Growth" value={t.growthPct === null ? null : Math.round(t.growthPct * 10) / 10}
+        prefix={t.growthPct !== null && t.growthPct > 0 ? "+" : ""} suffix="%"
+        tone={t.growthPct === null ? undefined : t.growthPct >= 0 ? "n-green" : "n-red"}
+        sub={`collected: ${usd(t.collectedThisMonth)} this month vs ${usd(t.collectedLastMonthToDate)} same days last month`} />
+    </div>
+  );
+}
+
+/** The billing calendar: who is charged what, day by day, for the next 30 days. */
+function BillingCalendar({ performance }: { performance: Performance }) {
+  const b = performance.billing;
+  if (!b) return null;
+  const days = new Map<string, typeof b.upcoming>();
+  for (const u of b.upcoming) days.set(u.date, [...(days.get(u.date) ?? []), u]);
+  const total = b.upcoming.reduce((t, u) => t + u.amount, 0);
+  const fmt = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  return (
+    <div className="tbl-wrap" style={{ marginTop: 22 }}>
+      <div className="tbl-head">
+        <div>
+          <div className="tbl-title">Upcoming billing</div>
+          <div className="tbl-sub">Next 30 days · {b.upcoming.length} charges · ${Math.round(total).toLocaleString("en-US")} expected, from each live subscription&rsquo;s next charge date in Stripe</div>
+        </div>
+      </div>
+      <div className="tbl-scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Client</th><th>Amount</th><th>Cycle</th></tr></thead>
+          <tbody>
+            {[...days.entries()].map(([date, list]) => list.map((u, i) => (
+              <tr key={`${date}-${i}`}>
+                <td className="tnum">{i === 0 ? <b>{fmt(date)}</b> : null}</td>
+                <td>{u.client ?? <span className="mut">Not tied to a client</span>}</td>
+                <td className="tnum">${u.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td>
+                <td className="mut">{u.every}</td>
+              </tr>
+            )))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -184,12 +252,14 @@ function Card({
   sub,
   tone,
   prefix = "",
+  suffix = "",
 }: {
   label: string;
   value: number | null;
   sub: string;
   tone?: string;
   prefix?: string;
+  suffix?: string;
 }) {
   const missing = value === null;
   return (
@@ -199,7 +269,7 @@ function Card({
         className={`card-n tnum${tone && !missing ? ` ${tone}` : ""}`}
         style={missing ? { color: MISSING } : undefined}
       >
-        {missing ? "—" : `${prefix}${value.toLocaleString("en-US")}`}
+        {missing ? "—" : `${prefix}${value.toLocaleString("en-US")}${suffix}`}
       </div>
       <div className="card-s" style={missing ? { color: MISSING } : undefined}>
         {sub}

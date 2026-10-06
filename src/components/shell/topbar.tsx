@@ -1,7 +1,9 @@
 "use client";
 
+import { NotificationBell } from "./notification-bell";
+
 /*
- * The top bar: sidebar toggle, breadcrumb, command palette.
+ * The top bar: sidebar toggle, breadcrumb, notifications (admins), command palette.
  *
  * The toggle lives HERE rather than inside the rail, which is the design's
  * choice and a good one — a control that travels when you press it is a
@@ -58,6 +60,8 @@ export function Topbar({ crumbs, collapsed, onToggleRail, onOpenPalette }: Topba
       </span>
 
       <span className="spacer" />
+
+      <NotificationBell />
 
       <button className="search-btn" onClick={onOpenPalette} aria-haspopup="dialog">
         <svg className="ico" style={{ opacity: 0.6 }} viewBox="0 0 24 24">

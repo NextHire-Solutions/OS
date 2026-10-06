@@ -7,6 +7,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { introSenderFor } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import {
   INTRO_ROW_COLUMNS,
+  introBrokerage,
   introClientFromRow,
   introReady,
   introText,
@@ -39,6 +40,8 @@ type Available = {
   clientName: string;
   /** The macro, client details filled in, `{{lead.*}}` still to resolve. */
   body: string;
+  /** The brokerage the subject names: "Intro: {lead first name} & {brokerage}" (6 Oct). */
+  brokerage: string;
   /**
    * Every named contact's address, comma-separated, to merge into Cc. Null
    * when none of them has one.
@@ -160,6 +163,7 @@ export async function GET(
     available: true,
     clientName: client.name,
     body: introText(client),
+    brokerage: introBrokerage(client),
     cc: introContactEmails(client).join(", ") || null,
     introductionLabelId: (introLabel?.id as string | undefined) ?? null,
     sender: await introSenderFor(admin, session.activeWorkspace.id, (thread.source_provider as string | null) ?? "emailbison"),

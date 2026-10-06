@@ -412,7 +412,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "billing_overview",
       description:
-        "Revenue across the business, from Stripe: total MRR, clients ranked by MRR, all unpaid and past-due invoices with amounts, and which clients are not linked to Stripe. Answers 'what is our MRR', 'who owes us money', 'which invoices are past due'.",
+        "Revenue across the business, from Stripe: total billed (all time), MRR, ARR, active and paused subscriptions, growth (this month vs the same days last month), new and lost MRR, the next 30 days' billing, clients ranked by MRR, all unpaid and past-due invoices with amounts, and which clients are not linked to Stripe. Answers 'what is our MRR', 'who owes us money', 'which invoices are past due'.",
       parameters: {"type": "object", "properties": {}},
     },
   },

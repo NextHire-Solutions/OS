@@ -5,13 +5,18 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { syncIntroTemplate, type IntroTemplateOutcome } from "@/lib/clients/intro-template-sync";
 import {
   customIntro,
+  introContacts,
   introReady,
+  introVariantsFrom,
+  MAX_INTRO_VARIANT_TEXT,
+  MAX_INTRO_VARIANTS,
   moreContactsFrom,
   missingIntroFields,
   renderIntroMacroTemplate,
   routeIntro,
   slotTerritories,
   type IntroMacroClient,
+  type IntroVariant,
 } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 /*
@@ -59,6 +64,13 @@ async function readTerritories(clientId: string): Promise<unknown> {
   return error ? {} : (data as { contact_territories?: unknown } | null)?.contact_territories ?? {};
 }
 
+/** Wording by market or person (0030); none before the migration. */
+async function readVariants(clientId: string): Promise<{ variants: IntroVariant[]; ready: boolean }> {
+  const { data, error } = await osTable("os_clients").select("intro_variants").eq("id", clientId).maybeSingle();
+  if (error) return { variants: [], ready: false };
+  return { variants: introVariantsFrom((data as { intro_variants?: unknown } | null)?.intro_variants), ready: true };
+}
+
 async function macroClient(clientId: string): Promise<IntroMacroClient> {
   const { data, error } = await osTable("os_clients").select(CLIENT_COLS).eq("id", clientId).maybeSingle();
   if (error) throw new Error(error.message);
@@ -82,6 +94,7 @@ async function macroClient(clientId: string): Promise<IntroMacroClient> {
     ],
     brokerage: row.brokerage,
     introOverride: await readIntroOverride(clientId),
+    introVariants: (await readVariants(clientId)).variants,
   };
 }
 
@@ -102,6 +115,12 @@ export interface IntroView {
    * Null when nobody has a territory — everyone is on every introduction.
    */
   routes: IntroRouteRow[] | null;
+  /** Wording by market or person (0030), in the order they are tried. */
+  variants: IntroVariant[];
+  /** False until migration 0030 has run. */
+  canSaveVariants: boolean;
+  /** The client's people by name — what a variant can be for. */
+  people: string[];
 }
 
 export interface IntroRouteRow {
@@ -112,6 +131,10 @@ export interface IntroRouteRow {
   people: string[];
   /** The campaign names no territory: everyone is introduced. */
   fallback: boolean;
+  /** The wording variant its leads get, or null for the usual introduction. */
+  variant: string | null;
+  /** The portal its leads land in (the newest conversation's). */
+  portal: string | null;
   /** Conversations from this campaign, and the newest one's date. */
   conversations: number;
   lastAt: string | null;
@@ -121,7 +144,7 @@ export interface IntroRouteRow {
  * The client's campaigns, from its conversations in Master Inbox (any of its
  * portals), newest first. Best effort: [] when they cannot be read.
  */
-async function clientCampaigns(clientId: string): Promise<Array<{ campaign: string; conversations: number; lastAt: string | null }>> {
+async function clientCampaigns(clientId: string): Promise<{ portals: number; campaigns: Array<{ campaign: string; portal: string | null; conversations: number; lastAt: string | null }> }> {
   try {
     const { data: rec } = await osTable("os_clients").select("mi_client_id").eq("id", clientId).maybeSingle();
     const portals = new Set<string>();
@@ -129,25 +152,28 @@ async function clientCampaigns(clientId: string): Promise<Array<{ campaign: stri
     if (linked) portals.add(linked);
     const { data: routed } = await osTable("os_campaign_portals").select("mi_client_id").eq("os_client_id", clientId);
     for (const r of (routed ?? []) as Array<{ mi_client_id?: string }>) if (r.mi_client_id) portals.add(r.mi_client_id);
-    if (!portals.size) return [];
-    const { data } = await createAdminSupabase()
+    if (!portals.size) return { portals: 0, campaigns: [] };
+    const admin = createAdminSupabase();
+    const { data: names } = await admin.from("clients").select("id, name").in("id", [...portals]);
+    const portalName = new Map(((names ?? []) as Array<{ id: string; name: string }>).map((p) => [p.id, p.name]));
+    const { data } = await admin
       .from("threads")
-      .select("campaign_name, last_message_at")
+      .select("campaign_name, last_message_at, client_id")
       .in("client_id", [...portals])
       .not("campaign_name", "is", null)
       .order("last_message_at", { ascending: false })
       .limit(5000);
-    const by = new Map<string, { campaign: string; conversations: number; lastAt: string | null }>();
-    for (const t of (data ?? []) as Array<{ campaign_name: string; last_message_at: string | null }>) {
+    const by = new Map<string, { campaign: string; portal: string | null; conversations: number; lastAt: string | null }>();
+    for (const t of (data ?? []) as Array<{ campaign_name: string; last_message_at: string | null; client_id: string | null }>) {
       const name = t.campaign_name.trim();
       if (!name) continue;
-      const cur = by.get(name) ?? { campaign: name, conversations: 0, lastAt: t.last_message_at };
+      const cur = by.get(name) ?? { campaign: name, portal: (t.client_id && portalName.get(t.client_id)) || null, conversations: 0, lastAt: t.last_message_at };
       cur.conversations++;
       by.set(name, cur);
     }
-    return [...by.values()];
+    return { portals: portals.size, campaigns: [...by.values()] };
   } catch {
-    return [];
+    return { portals: 0, campaigns: [] };
   }
 }
 
@@ -155,11 +181,17 @@ export async function introView(clientId: string): Promise<IntroView> {
   const client = await macroClient(clientId);
   const missing = missingIntroFields(client);
   const probe = await osTable("os_clients").select("intro_override").limit(1);
+  const { ready: canSaveVariants } = await readVariants(clientId);
+  /*
+   * The per-campaign table (6 Oct): shown whenever a lead's campaign changes
+   * something — territories, wording variants, or more than one portal (P&E).
+   */
   let routes: IntroRouteRow[] | null = null;
-  if (routeIntro(client, null).route.byTerritory) {
-    routes = (await clientCampaigns(clientId)).slice(0, 40).map((c) => {
+  const camps = await clientCampaigns(clientId);
+  if (routeIntro(client, null).route.byTerritory || (client.introVariants ?? []).length || camps.portals > 1) {
+    routes = camps.campaigns.slice(0, 40).map((c) => {
       const { route } = routeIntro(client, c.campaign);
-      return { ...c, matched: route.matched, people: route.people, fallback: route.fallback };
+      return { ...c, matched: route.matched, people: route.people, fallback: route.byTerritory && route.fallback, variant: route.variant ?? null };
     });
   }
   return {
@@ -169,7 +201,37 @@ export async function introView(clientId: string): Promise<IntroView> {
     ready: introReady(client),
     canSaveCustom: !probe.error,
     routes,
+    variants: client.introVariants ?? [],
+    canSaveVariants,
+    people: introContacts(client).map((p) => (p.name ?? "").trim()).filter(Boolean),
   };
+}
+
+/**
+ * Save the client's wording variants (0030), replacing the list. Each needs
+ * text and a place or a person; anything else is refused with which one, so
+ * nothing the operator typed is silently dropped.
+ */
+export async function saveIntroVariants(clientId: string, raw: unknown): Promise<IntroView> {
+  if (!Array.isArray(raw)) throw new IntroOverrideError("variants must be a list.");
+  if (raw.length > MAX_INTRO_VARIANTS) throw new IntroOverrideError(`At most ${MAX_INTRO_VARIANTS} variants.`);
+  raw.forEach((x, i) => {
+    const r = (x ?? {}) as Record<string, unknown>;
+    const text = typeof r.text === "string" ? r.text.trim() : "";
+    const has = (v: unknown) => Array.isArray(v) && v.some((p) => typeof p === "string" && p.trim());
+    if (!text) throw new IntroOverrideError(`Variant ${i + 1} has no introduction text.`);
+    if (text.length > MAX_INTRO_VARIANT_TEXT) throw new IntroOverrideError(`Variant ${i + 1} is too long (the limit is ${MAX_INTRO_VARIANT_TEXT} characters).`);
+    if (!has(r.places) && !has(r.people)) throw new IntroOverrideError(`Variant ${i + 1} needs a market (a place in the campaign name) or a person.`);
+  });
+  const variants = introVariantsFrom(raw.map((x, i) => ({ ...(x as object), id: (x as { id?: unknown })?.id || `v${Date.now().toString(36)}${i}` })));
+  const { error } = await osTable("os_clients")
+    .update({ intro_variants: variants, updated_at: new Date().toISOString() })
+    .eq("id", clientId);
+  if (error) {
+    if (/intro_variants/.test(error.message)) throw new IntroOverrideError("Wording by market or person needs database migration 0030 first.");
+    throw new Error(error.message);
+  }
+  return introView(clientId);
 }
 
 /**

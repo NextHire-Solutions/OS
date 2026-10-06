@@ -41,6 +41,12 @@ export const OS_TABLES = [
   // Which portal each campaign's leads go to, for clients with several
   // portals — see migrations/0025_campaign_portals.sql.
   "os_campaign_portals",
+  // Billing across subscriptions, notifications, portal billing blocks and
+  // saved views per client — see migrations/0030_billing_profile.sql.
+  "os_client_stripe_links",
+  "os_notifications",
+  "os_portal_blocks",
+  "os_client_saved_views",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

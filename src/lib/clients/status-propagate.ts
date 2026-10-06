@@ -6,6 +6,7 @@ import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supa
 import { pushPortalStatus } from "@/lib/portals/status-push";
 import { pauseCampaignsForClient } from "./pause-campaigns";
 import { billingEnabled, syncBillingForClient } from "./stripe-billing-live";
+import { otherCollectingSubscriptions } from "./billing-account";
 import type { ClientStatus } from "./client-status";
 import type { OsClient } from "./os-clients";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
@@ -299,9 +300,27 @@ export async function propagateStatus(
     const subscriptionId = client.record?.stripeSubscriptionId ?? null;
     try {
       const out = await syncBillingForClient(subscriptionId, status);
-      if (!out.ok) {
-        legs.push(leg("billing", { ok: false, error: out.error ?? out.decision.reason }));
-      } else if (!out.changed) {
+      /*
+       * Paused or churned: every OTHER subscription the client owns that is
+       * still collecting is paused too (6 Oct — 54 Realty pays through two).
+       * Never on the way back to active: only the record's resumes.
+       */
+      const extra: string[] = [];
+      const extraFailed: string[] = [];
+      if (status === "paused" || status === "churned") {
+        try {
+          for (const sid of await otherCollectingSubscriptions(client.id, subscriptionId)) {
+            const r = await syncBillingForClient(sid, status);
+            if (!r.ok) extraFailed.push(`${sid}: ${r.error ?? r.decision.reason}`);
+            else if (r.changed) extra.push(sid);
+          }
+        } catch (e) {
+          extraFailed.push(e instanceof Error ? e.message : "the client's other subscriptions could not be read");
+        }
+      }
+      if (!out.ok || extraFailed.length) {
+        legs.push(leg("billing", { ok: false, error: [out.ok ? null : out.error ?? out.decision.reason, ...extraFailed].filter(Boolean).join("; ") }));
+      } else if (!out.changed && !extra.length) {
         legs.push(leg("billing", { skipped: out.decision.reason }));
       } else {
         legs.push(leg("billing"));

@@ -144,11 +144,32 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
       return <Person name={k === "campaignSender" ? c.sender : c[k]} />;
     case "billingInterval": return c.billingInterval ? <span>{intervalLabel(c.billingInterval, c.billingIntervalDays)}</span> : <None />;
     /* ---- profile (0027) and Stripe figures ---- */
+    case "completeness": {
+      const r = completeness(c);
+      const tone = r.pct >= 90 ? "good" : r.pct >= 70 ? "warn" : "bad";
+      return (
+        <span className={`cx-pct ${tone}`} title={r.missing.length ? `Missing: ${r.missing.map((m) => m.label).join(", ")}${r.pending ? " (still reading Stripe / the Database)" : ""}` : "Complete"}>
+          <span className="cx-pct-bar"><i style={{ width: `${r.pct}%` }} /></span>{r.pct}%
+        </span>
+      );
+    }
+    case "savedViews": {
+      if (c.savedViews === undefined) return <None title="Reading the Database…" />;
+      if (c.savedViews === null) return <None title="The Database could not be read" />;
+      if (!c.savedViews.length) return <span className="cx-flag" title="No saved view in the Database for this client">none</span>;
+      return <span title={c.savedViews.map((v) => `${v.name}${v.agents !== null ? ` — ${v.agents.toLocaleString("en-US")} agents` : ""}`).join("\n")}>
+        {c.savedViews.length} view{c.savedViews.length === 1 ? "" : "s"}</span>;
+    }
     case "signupDate": {
-      const v = fmtDay(c.signupDate ?? c.stripe?.signupDate);
-      if (!v) return c.stripe === undefined && !c.signupDate ? <None title="Reading Stripe…" /> : <None />;
-      return <span className="cx-date" title={c.signupDate ? "Entered on the record" : "When the Stripe customer was created"}>
-        {v}{c.signupDate ? null : <span className="cx-sub"> · Stripe</span>}</span>;
+      const s = effectiveSignup(c);
+      if (!s.date) return c.stripe === undefined && !c.signupDate ? <None title="Reading Stripe…" /> : <None />;
+      return (
+        <span className="cx-date" title={SIGNUP_TITLE[s.source ?? "entered"]}>
+          {fmtDay(s.date)}
+          <span className="cx-sub"> · {s.source === "first $1 charge" ? "first $1" : s.source}</span>
+          {s.afterOnboarding ? <span className="cx-flag" title={`Signed up ${fmtDay(s.date)}, after onboarding began ${fmtDay(c.onboardingDate)} — check the dates`}>after onboarding</span> : null}
+        </span>
+      );
     }
     case "website": case "zillowUrl": {
       const u = c[k];
@@ -296,7 +317,9 @@ export function textOf(k: string, c: MasterClient): string {
     case "campaignStatus": return (c.campaigns ?? []).map((x) => `${x.name}: ${x.status ?? "?"}`).join("; ");
     case "campaignAliases": return c.campaignAliases.join("; ");
     case "campaignSender": return c.sender ?? "";
-    case "signupDate": return (c.signupDate ?? c.stripe?.signupDate ?? "").slice(0, 10);
+    case "signupDate": return effectiveSignup(c).date ?? "";
+    case "completeness": return `${completeness(c).pct}%`;
+    case "savedViews": return (c.savedViews ?? []).map((v) => v.name).join("; ");
     case "totalSpend": return c.stripe ? c.stripe.totalSpend.toFixed(2) : "";
     case "mrr": return c.stripe ? c.stripe.mrr.toFixed(2) : "";
     default: {
@@ -330,3 +353,13 @@ export function introMissing(c: { status: string; contact: { name: string | null
   if (!c.contact.role?.trim()) out.push("role");
   return out;
 }
+
+export { effectiveSignup } from "@/lib/clients/signup";
+import { completeness } from "@/lib/clients/completeness";
+import { effectiveSignup } from "@/lib/clients/signup";
+
+const SIGNUP_TITLE: Record<string, string> = {
+  "first $1 charge": "The first $1 charge in Stripe (the card check at sign-up), across every card — replacing a card does not change it",
+  entered: "Entered on the record (Stripe has no $1 sign-up charge for this client)",
+  "first charge": "The client's first Stripe charge (no $1 sign-up charge, and none entered)",
+};

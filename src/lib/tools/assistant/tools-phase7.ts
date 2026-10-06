@@ -5,6 +5,7 @@ import { isKnownNonClient } from "@/lib/clients/roster";
 import { campaignPortalView } from "@/lib/clients/campaign-portals";
 import { introView } from "@/lib/clients/intro-override";
 import { stripeSummaries } from "@/lib/clients/stripe-summary";
+import { getAccountBilling } from "@/lib/clients/billing-account";
 import { introContactEmails } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { introSenderEmail } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import { loadCommissions } from "@/lib/commissions/load";
@@ -197,18 +198,22 @@ export async function clientBillingTool(query: string) {
     invoices = all.map(invRow);
   }
   const open = invoices.filter((i) => i.status === "open" || i.status === "past_due");
+  // Every subscription and card the client owns (billing-model.ts, 6 Oct).
+  const acct = await getAccountBilling().then((a) => a.byClient.get(c.id) ?? null).catch(() => null);
   return {
     client: c.name,
     linkedToStripe: true,
     mrr: s?.mrr ?? null,
     totalSpend: s?.totalSpend ?? null,
     successfulCharges: s?.transactions ?? null,
-    stripeCustomerSince: s?.signupDate ?? null,
+    signUp: s?.signupDate ? { date: s.signupDate, source: s.signupSource } : null,
     subscription,
+    allSubscriptions: acct?.subscriptions.map((x) => ({ amount: x.amount, every: x.every, status: x.collectionPaused ? "paused" : x.status, nextCharge: x.nextCharge, current: x.current, since: x.created })) ?? null,
+    failedPayments: acct?.failedInvoices.map((i) => ({ invoice: i.number, unpaid: i.amountRemaining, attempts: i.attemptCount, nextTry: i.nextAttempt ? easternDay(i.nextAttempt * 1000) : null })) ?? null,
     outstanding: { invoices: open.length, amount: money(open.reduce((t, i) => t + (i.outstanding ?? 0), 0)), pastDue: open.filter((i) => i.status === "past_due").length },
     recentInvoices: invoices.slice(0, 8),
     note: failed.length ? "Stripe could not be read for this client just now." :
-      "MRR is Stripe's monthly figure for live subscriptions (a paused or cancelled one counts 0). Total spend = successful charges less refunds.",
+      "MRR and total spend cover EVERY subscription and card the client owns (allSubscriptions), not only the current one; a shared Stripe customer is split by subscription. MRR counts live subscriptions only (paused or cancelled count 0). Total spend = successful charges less refunds. Sign-up = the first $1 charge in Stripe (signUp.source says if it came from elsewhere).",
   };
 }
 
@@ -229,9 +234,18 @@ export async function billingOverviewTool() {
   const bySub = new Map(linked.filter((c) => c.stripeSubscriptionId).map((c) => [c.stripeSubscriptionId!, c]));
   const unpaid = open.map((i) => ({ client: (invSub(i) && bySub.get(invSub(i)!)?.name) ?? customerLabel(i.customer), ...invRow(i) }))
     .sort((a, b) => (a.status === b.status ? (b.outstanding ?? 0) - (a.outstanding ?? 0) : a.status === "past_due" ? -1 : 1));
+  // The business across every subscription (billing-model.ts, 6 Oct): no double counting of shared cards.
+  const acct = await getAccountBilling().catch(() => null);
   return {
     totalMrr: money(mrrRows.reduce((t, r) => t + (r.mrr ?? 0), 0)),
     totalSpendAllTime: money(mrrRows.reduce((t, r) => t + (r.totalSpend ?? 0), 0)),
+    business: acct ? {
+      totalBilledAllTime: acct.totals.totalBilled, notTiedToAClient: acct.totals.unattributed, mrr: acct.totals.mrr, arr: acct.totals.arr,
+      activeSubscriptions: acct.totals.activeSubscriptions, pausedSubscriptions: acct.totals.pausedSubscriptions,
+      collectedThisMonth: acct.totals.collectedThisMonth, collectedSameDaysLastMonth: acct.totals.collectedLastMonthToDate, growthPct: acct.totals.growthPct,
+      newMrrLast30Days: acct.totals.newMrr30, lostMrrLast30Days: acct.totals.lostMrr30,
+    } : null,
+    upcomingBillingNext30Days: acct ? { charges: acct.upcoming.length, amount: money(acct.upcoming.reduce((t, u) => t + u.amount, 0)) } : null,
     clientsOnStripe: linked.length,
     clientsNotOnStripe: all.filter((c) => !c.stripeCustomerId && !c.stripeSubscriptionId).map((c) => c.name),
     byMrr: mrrRows.filter((r) => r.mrr != null).sort((a, b) => (b.mrr ?? 0) - (a.mrr ?? 0)),

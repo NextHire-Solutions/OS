@@ -46,3 +46,8 @@ test("this month, a churned client is not active even before its churn date is e
   assert.equal(p.months.find((m) => m.month === "2026-09")!.activeAtEnd, 1);
   assert.equal(p.months.find((m) => m.month === "2026-08")!.activeAtEnd, 2, "earlier months cannot know without the date");
 });
+
+test("this month counts only clients that are active now — paused and onboarding are not", () => {
+  const p = performanceFrom([c("active", "2026-06-01"), c("paused", "2026-06-01"), c("onboarding", "2026-09-20")], new Map(), null, 0, TODAY);
+  assert.equal(p.months.find((m) => m.month === "2026-09")!.activeAtEnd, 1);
+});
