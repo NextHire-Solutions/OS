@@ -64,7 +64,7 @@ function ListField({ label, values, onChange, placeholder, listId, disabled }: {
   );
 }
 
-export function MarketsPanel({ clientId }: { clientId: string }) {
+export function MarketsPanel({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
   const [data, setData] = useState<Payload | null>(null);
   const [markets, setMarkets] = useState("");
   const [mls, setMls] = useState<string[]>([]);
@@ -110,6 +110,8 @@ export function MarketsPanel({ clientId }: { clientId: string }) {
       if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
       await load();
       setSaved(true);
+      // The list's Markets / MLS / Area columns and the tab's count follow (6 Oct).
+      onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save");
     } finally {

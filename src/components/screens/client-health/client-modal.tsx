@@ -134,17 +134,10 @@ export function ClientModal({
           />
         </Field>
 
-        <Field label="Start Date">
-          <input
-            className="inp tnum"
-            style={input}
-            type="date"
-            value={form.startDate}
-            onChange={(e) => set("startDate", e.target.value)}
-          />
-        </Field>
+        {/* No Start Date field (removed 6 Oct). The stored value is kept and saved back
+            unchanged — Client Health still uses it when no billing anchor is set. */}
 
-        <Field label="Billing Anchor Date" help="A known billing date. Empty falls back to the start date.">
+        <Field label="Billing Anchor Date" help="A known billing date the cycle is counted from.">
           <input
             className="inp tnum"
             style={input}

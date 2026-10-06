@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { IntroOverrideError, introView, saveIntroOverride } from "@/lib/clients/intro-override";
+import { clientsChanged } from "@/lib/clients/after-change";
 
 /*
  * A client's introduction, as the Introduce to tab shows it (1 Oct).
@@ -39,6 +40,7 @@ export async function PUT(request: Request) {
   }
   try {
     const result = await saveIntroOverride(clientId, custom);
+    clientsChanged();
     console.log(`[clients/intro] ${session.email} ${result.view.custom ? "set a custom" : "restored the standard"} introduction for ${clientId}`);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

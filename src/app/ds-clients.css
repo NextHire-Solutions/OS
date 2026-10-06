@@ -374,3 +374,8 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx-intro-text.editable { cursor: text; transition: border-color .12s, box-shadow .12s; }
 .rx-intro-text.editable:hover { border-color: var(--ds-brand, #0165FE) !important; }
 .rx-intro-text.editable:focus-visible { outline: none; border-color: var(--ds-brand, #0165FE) !important; box-shadow: 0 0 0 3px var(--ds-brand-soft, #EDF3FF); }
+
+/* A save landed but the list's refresh failed: say so instead of silently showing stale data (6 Oct). */
+.cx-refresh-err { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60;
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px;
+  background: #FFF7ED; color: #9A3412; border: 1px solid #FED7AA; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.08); }

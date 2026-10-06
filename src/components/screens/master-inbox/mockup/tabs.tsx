@@ -13,12 +13,20 @@ import type { LabelRow } from "@/lib/tools/master-inbox/inbox/labels-shared";
  * chips with the design's `.lc-*` classes.
  */
 
-/** Label chips reuse the design's own colour classes rather than inline styles. */
+/**
+ * Label chips reuse the design's own colour classes rather than inline styles.
+ *
+ * All seven label colours, as the standalone Master Inbox draws them
+ * (components/inbox/label-chip.tsx). Blue used to fall through to grey, so
+ * "Introduction" (blue) looked exactly like "Not Interested" (stone) — the
+ * client's complaint, 6 Oct. One mapping, shared with Settings' chipClass.
+ */
 export function labelClass(color: string | null | undefined): string {
   const c = (color ?? "").toLowerCase();
   if (c.includes("green")) return "lc lc-green";
   if (c.includes("red")) return "lc lc-red";
   if (c.includes("amber") || c.includes("yellow")) return "lc lc-amber";
+  if (c.includes("blue")) return "lc lc-blue";
   if (c.includes("pink") || c.includes("purple")) return "lc lc-pink";
   if (c.includes("stone")) return "lc lc-stone";
   return "lc lc-zinc";

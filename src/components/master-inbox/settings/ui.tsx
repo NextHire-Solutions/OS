@@ -1,5 +1,6 @@
 "use client";
 
+import { labelClass } from "@/components/screens/master-inbox/mockup/tabs";
 import {
   createContext,
   useCallback,
@@ -96,25 +97,8 @@ export function IconBtn({
 
 /* ───────────────────────────────────────────────────────────────── chips */
 
-/**
- * A label's colour, as the design draws it.
- *
- * `mockup/tabs.tsx` has the same mapping for the inbox row, and this is
- * deliberately NOT an import of it: that one folds blue into zinc, which is
- * harmless where a row shows one chip and wrong here, where the whole point of
- * the screen is choosing between all seven. `.lc-blue` is added by
- * `mi-settings.css` for the same reason.
- */
-export function chipClass(color: string | null | undefined): string {
-  const c = (color ?? "").toLowerCase();
-  if (c.includes("green")) return "lc lc-green";
-  if (c.includes("red")) return "lc lc-red";
-  if (c.includes("amber") || c.includes("yellow")) return "lc lc-amber";
-  if (c.includes("blue")) return "lc lc-blue";
-  if (c.includes("pink") || c.includes("purple")) return "lc lc-pink";
-  if (c.includes("stone")) return "lc lc-stone";
-  return "lc lc-zinc";
-}
+/** A label's colour, as the design draws it — the inbox row's mapping, so the two always agree. */
+export const chipClass = labelClass;
 
 /** A label chip in the design's own vocabulary. */
 export function Chip({ name, color }: { name: string; color?: string | null }) {

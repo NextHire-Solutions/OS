@@ -181,7 +181,7 @@ function DateFilter({
       ? `${value.dateFrom ?? "…"} → ${value.dateTo ?? "…"}`
       : value.datePreset
         ? PRESET_LABEL[value.datePreset]
-        : "Start date";
+        : "Onboarded";
 
   const applyPreset = (p: DatePreset) => {
     const { from, to } = presetRange(p, now);

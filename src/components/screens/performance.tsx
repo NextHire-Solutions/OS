@@ -133,7 +133,7 @@ function PerformanceView({ performance }: { performance: Performance }) {
          */}
         <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 14, lineHeight: 1.7, maxWidth: "80ch" }}>
           <b>Added</b> is each client&rsquo;s onboarding date
-          {totals.byStartDate > 0 ? ` (${totals.byStartDate} use their start date because no onboarding date is recorded)` : ""};{" "}
+          {totals.bySignupDate > 0 ? ` (${totals.bySignupDate} use their sign-up date because no onboarding date is recorded)` : ""};{" "}
           <b>Churned</b> is each churned client&rsquo;s churn date. Both are on the client&rsquo;s record in{" "}
           <a href="/roster">Clients</a> — the churn date is set automatically when a client is marked Churned.{" "}
           <b>Active at month end</b> counts clients onboarded by then and not yet churned.{" "}

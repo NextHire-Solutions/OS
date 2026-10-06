@@ -16,7 +16,8 @@ import { decideStripeLink, stripeIdErrors, type StripeLookup } from "./stripe-li
 import { planDatabasePeople, writeDatabasePeople } from "./people-sync";
 import type { Resolution } from "./people-link";
 import { stripeKey } from "@/lib/tools/onboarding/stripe";
-import { resolveAccountManager } from "@/lib/identity/team-directory";
+import { listTeamMembers, resolveAccountManager } from "@/lib/identity/team-directory";
+import { matchTeamMember } from "@/lib/identity/team-match";
 import { joinManagers, splitManagers } from "@/lib/identity/team-match";
 import { listSalespeople, resolveSalesperson } from "@/lib/identity/salespeople";
 import { setClientDates } from "./client-dates";
@@ -428,7 +429,11 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     for (const typed of splitManagers(edit.accountManager)) {
       const r = await resolveAccountManager(typed);
       if (r.kind === "none") {
-        throw new InvalidEditError(`“${typed}” is not an active member on Team access. Account managers are team members — invite them on Team access first.`);
+        // Say which is missing: the person, or only their Account manager role (Eddy, 6 Oct).
+        const member = matchTeamMember(typed, (await listTeamMembers()).filter((m) => m.active));
+        throw new InvalidEditError(member.kind === "found"
+          ? `${member.member.name} is on Team access but is not an Account manager. Turn on “Account manager” for them on Team access, then choose them here.`
+          : `“${typed}” is not an active member on Team access. Account managers are team members — invite them on Team access first.`);
       }
       if (r.kind === "ambiguous") {
         throw new InvalidEditError(`Two team members are called “${r.name}”. Give one a distinct name on Team access first.`);
@@ -683,6 +688,13 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
     edit.billingAnchorDate !== undefined || edit.monthlyTarget !== undefined ||
     edit.timezone !== undefined || edit.aliases !== undefined;
 
+  // Not linked to Client Health: say so instead of answering "Saved" for a change that went nowhere (6 Oct).
+  if (touchesHealth && !row.ch_client_id) {
+    failed.push({
+      what: "Client Health",
+      error: "This client is not linked to Client Health, so plan, billing dates, interval, timezone and targets cannot be saved here. Link it first (Consistency screen).",
+    });
+  }
   if (touchesHealth && row.ch_client_id) {
     try {
       // Only what was asked for. `updateClientRow` applies present keys and

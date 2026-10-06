@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/clients/client-status";
 
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
@@ -99,6 +99,11 @@ function CampaignBody() {
   const { filters, toQueryString } = useAnalyticsFilters();
   const qs = toQueryString();
   const [view, setView] = useState<SubView>("charts");
+  // A link may name the sub-view (Client Health → "this client's campaigns" opens on Campaigns).
+  useEffect(() => {
+    if (filters.view && filters.view !== "charts") setView(filters.view);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.view]);
 
   const kpis = useAnalyticsData<KpiResponse>(KPIS_URL(qs));
 

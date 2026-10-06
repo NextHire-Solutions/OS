@@ -64,7 +64,8 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [plan, setPlan] = useState<Plan>(DEFAULTS.plan);
   const [aliases, setAliases] = useState("");
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  // Not asked for any more (6 Oct): Client Health's start date is the onboarding day.
+  const [startDate] = useState(new Date().toISOString().slice(0, 10));
   const [billingInterval, setBillingInterval] = useState<BillingInterval>(DEFAULTS.billingInterval);
   const [billingIntervalDays, setBillingIntervalDays] = useState("");
   // Optional: link billing at creation (§2 "connect their Stripe subscription").
@@ -248,11 +249,8 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
               {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </label>
-          <label style={FIELD}>
-            <span style={LABEL}>Start date</span>
-            <input className="inp" type="date" value={startDate}
-              onChange={(e) => setStartDate(e.target.value)} />
-          </label>
+          {/* No "Start date" field (removed 6 Oct): Client Health still gets the
+              onboarding day as its start date, which is what this field defaulted to. */}
           <label style={FIELD}>
             <span style={LABEL}>Billing interval</span>
             <select className="inp" value={billingInterval}

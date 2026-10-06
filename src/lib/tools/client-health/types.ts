@@ -129,6 +129,10 @@ export interface WeeklyMetric {
 }
 
 export interface DashboardClient extends Client {
+  /** Campaign Analytics' id for this client (os_clients.an_client_id), for "this client's campaigns" links. */
+  analytics_client_id?: string | null;
+  /** The master record's onboarding date — shown and filtered on instead of start_date (6 Oct). */
+  onboarding_date?: string | null;
   campaigns: InstantlyCampaign[];
   bisonCampaigns: BisonCampaign[];
   // All weekly metrics this client has, keyed by ISO Monday (YYYY-MM-DD).

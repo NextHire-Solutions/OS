@@ -173,6 +173,8 @@ export async function loadDashboardClients(): Promise<{
       toggle_paused_campaigns: c.toggle_paused_campaigns ?? [],
       // The OS's own markets, joined through os_clients.ch_client_id (R1).
       markets: masters ? masters.get(c.id)?.markets ?? { markets: null, mls: [], areas: [] } : null,
+      analytics_client_id: masters?.get(c.id)?.links.analytics ?? null,
+      onboarding_date: masters?.get(c.id)?.onboardingDate ?? null,
       billing_interval_days: c.billing_interval_days ?? null,
       emails_today: c.emails_today ?? 0,
       emails_today_date: c.emails_today_date ?? null,

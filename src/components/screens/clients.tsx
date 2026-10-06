@@ -55,7 +55,16 @@ function sortValue(k: string, c: MasterClient): string | number {
   return textOf(k, c).toLowerCase() || "￿";
 }
 
-function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChanged: () => void; only?: ToolViewId }) {
+/** What a save tells the list: just refresh, or also re-read Stripe (a Stripe id changed). */
+export type ChangeKind = "stripe" | undefined;
+
+function ClientsView({ data, onChanged, onPatch, only }: {
+  data: MasterClientList;
+  onChanged: (kind?: ChangeKind) => void;
+  /** Show a saved change at once, before the list's refresh lands. */
+  onPatch: (id: string, patch: ClientPatch) => void;
+  only?: ToolViewId;
+}) {
   const [lens, setLens] = useState<Lens>(only ?? "master");
   const [status, setStatus] = useState<ClientStatus | "all">("all");
   const [q, setQ] = useState("");
@@ -313,6 +322,7 @@ function ClientsView({ data, onChanged, only }: { data: MasterClientList; onChan
           view={only ?? (view ? view.id : undefined)}
           onClose={close}
           onChanged={onChanged}
+          onPatch={(patch) => onPatch(open.id, patch)}
           onDeleted={() => { close(); onChanged(); }}
           onPrev={openIdx > 0 ? () => setOpenId(rows[openIdx - 1].id) : undefined}
           onNext={openIdx >= 0 && openIdx < rows.length - 1 ? () => setOpenId(rows[openIdx + 1].id) : undefined}
@@ -419,22 +429,31 @@ function DictGroup({ cat, clients }: { cat: FieldCategory; clients: MasterClient
 export function ClientsScreen({ initial, only }: { initial: MasterClientList | null; only?: ToolViewId }) {
   const [data, setData] = useState<MasterClientList | null>(initial);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * Only the newest refresh may replace the list (6 Oct). Two quick saves
+   * start two rebuilds; if the older one landed last it put the first save's
+   * world back on screen and the second change looked lost.
+   */
+  const seq = useRef(0);
 
   const refresh = useCallback(async (fresh: boolean) => {
+    const mine = ++seq.current;
     const url = fresh ? `${DATA_URL}?fresh=1` : DATA_URL;
     invalidate(url);
     try {
-      setData(await loadOnce<MasterClientList>(url));
+      const next = await loadOnce<MasterClientList>(url);
+      if (mine !== seq.current) return;
+      setData(next);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the client list");
+      if (mine === seq.current) setError(e instanceof Error ? e.message : "Could not load the client list");
     }
   }, []);
 
   useEffect(() => { if (!initial) void refresh(false); }, [initial, refresh]);
 
   const [stripe, setStripe] = useState<StripeFigures | "failed">(null);
-  useEffect(() => {
+  const loadStripe = useCallback(() => {
     let live = true;
     fetch("/api/workspace/clients/stripe-summary", { cache: "no-store" })
       .then(async (r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
@@ -442,13 +461,38 @@ export function ClientsScreen({ initial, only }: { initial: MasterClientList | n
       .catch(() => { if (live) setStripe("failed"); });
     return () => { live = false; };
   }, []);
+  useEffect(() => loadStripe(), [loadStripe]);
+
+  // A saved change shows at once; the refresh that follows confirms it.
+  const patch = useCallback((id: string, p: ClientPatch) => {
+    setData((d) => (d ? { ...d, clients: d.clients.map((c) => (c.id === id ? applyPatch(c, p) : c)) } : d));
+  }, []);
 
   if (!data) {
     return error ? (
       <div className="cx-page"><p className="ds-note"><b>The client list could not be loaded.</b> {error}</p></div>
     ) : <PlaceholderScreen cards={5} />;
   }
-  return <ClientsView data={withStripe(data, stripe)} only={only} onChanged={() => void refresh(true)} />;
+  return (
+    <>
+      {error ? (
+        <div className="cx-refresh-err" role="alert">
+          <span>Saved — but the list could not refresh: {error}</span>
+          <button type="button" className="ds-btn sm" onClick={() => void refresh(true)}>Retry</button>
+        </div>
+      ) : null}
+      <ClientsView data={withStripe(data, stripe)} only={only} onPatch={patch}
+        onChanged={(kind) => { void refresh(true); if (kind === "stripe") loadStripe(); }} />
+    </>
+  );
+}
+
+/** A change to show before the server confirms it. `contact` merges, so one person's fields can be patched. */
+export type ClientPatch = Omit<Partial<MasterClient>, "contact"> & { contact?: Partial<MasterClient["contact"]> };
+
+function applyPatch(c: MasterClient, p: ClientPatch): MasterClient {
+  const { contact, ...rest } = p;
+  return { ...c, ...rest, contact: contact ? { ...c.contact, ...contact } : c.contact };
 }
 
 /* Total spend, MRR and Stripe's sign-up day, added once Stripe answers (it never holds the list up). */

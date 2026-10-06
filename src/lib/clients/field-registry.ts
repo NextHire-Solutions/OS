@@ -87,9 +87,15 @@ export const FIELDS: FieldDef[] = [
   { key: "plan", label: "Plan", category: "client", kind: "plan",
     definition: "Minimum, Production or Partner.", sourceOfTruth: MASTER, source: "Client Health",
     editIn: "Clients", editable: true, tools: ["Health", "Billing", "Portal"], sync: "Yes" },
-  { key: "startDate", label: "Start date", category: "client", kind: "date",
-    definition: "When the service began.", sourceOfTruth: MASTER, source: "Client Health",
-    editIn: "Clients", editable: true, tools: ["Health"], sync: "Yes" },
+  /*
+   * Removed from every screen at the client's request (6 Oct): a client's dates
+   * are its sign-up date (first $1 charge) and its onboarding date. Client
+   * Health still keeps start_date as a fallback for its billing-cycle maths, so
+   * the value is not deleted — only no longer shown or edited.
+   */
+  { key: "startDate", label: "Start date", category: "client", kind: "date", hidden: true,
+    definition: "Client Health's own service start, kept only as its billing-cycle fallback. Not shown — use Sign up date and Onboarding date.", sourceOfTruth: MASTER, source: "Client Health",
+    editIn: "Nobody — removed from screens", editable: false, tools: ["Health"], sync: "No" },
   { key: "onboardingDate", label: "Onboarding date", category: "client", kind: "date",
     definition: "When onboarding began.", sourceOfTruth: MASTER, source: "Master record",
     editIn: "Clients — set to the day a client is added; editable", editable: true, tools: ["Onboarding", "Performance"], sync: "No — a recorded moment" },
@@ -144,8 +150,8 @@ export const FIELDS: FieldDef[] = [
 
   /* ----------------------------------------------- §6 Billing Information --- */
   { key: "firstBillingDate", label: "First billing date", category: "billing", kind: "date",
-    definition: "The first date the client was billed: the first cycle date on or after the start date.", sourceOfTruth: "Billing / Master Client Record", source: "Derived",
-    editIn: "Follows the start date and billing anchor", editable: false, tools: ["Health", "Billing"], sync: "Recomputed when the anchor changes" },
+    definition: "The first date the client was billed: the first cycle date of its billing schedule.", sourceOfTruth: "Billing / Master Client Record", source: "Derived",
+    editIn: "Follows the billing anchor", editable: false, tools: ["Health", "Billing"], sync: "Recomputed when the anchor changes" },
   { key: "billingAnchorDate", label: "Billing anchor date", category: "billing", kind: "date",
     definition: "A billing date the cycle is counted from.", sourceOfTruth: "Billing / Master Client Record", source: "Client Health",
     editIn: "Clients", editable: true, tools: ["Health", "Billing"], sync: "Yes" },
@@ -266,7 +272,7 @@ export const TOOL_VIEWS: ToolView[] = [
     columns: [
       { key: "name", label: "Client" }, { key: "plan", label: "Plan" }, { key: "status", label: "Status" },
       { key: "weeklyTarget", label: "Weekly introduction target" }, { key: "monthlyTarget", label: "Monthly introduction target" },
-      { key: "startDate", label: "Start date" }, { key: "billingAnchorDate", label: "Billing anchor date" },
+      { key: "onboardingDate", label: "Onboarding date" }, { key: "billingAnchorDate", label: "Billing anchor date" },
       { key: "billingInterval", label: "Billing interval" }, { key: "timezone", label: "Timezone" },
       { key: "campaignName", label: "Campaign" }, { key: "campaignAliases", label: "Aliases" },
       { key: "performance", label: "Performance" }, { key: "health", label: "Health indicators" },

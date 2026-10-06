@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { CoverageError, getCoverage, listCoverage, setCoverage } from "@/lib/clients/coverage-db";
-import { getMasterClientList } from "@/lib/clients/master-list";
+import { clientsChanged } from "@/lib/clients/after-change";
 import { deriveCodesFromList } from "@/lib/clients/markets-mls";
 import { syncDatabaseMls } from "@/lib/clients/markets-mls-sync";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
@@ -59,7 +59,7 @@ export async function PUT(request: Request) {
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   try {
     const coverage = await setCoverage(clientId, { markets: body.markets, mls: body.mls, areas: body.areas });
-    getMasterClientList.invalidate();
+    clientsChanged();
     let leadBuilding: unknown = null;
     if (body.mls !== undefined) {
       try {

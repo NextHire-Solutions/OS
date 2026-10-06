@@ -228,7 +228,8 @@ export async function clientReportTool(query: string) {
       status,
       statusSince: day(String(rec?.statusSince ?? "")),
       plan: rec?.plan ?? match.plan ?? null,
-      clientSince: day((rec?.dates as { start?: string } | undefined)?.start ?? match.startDate ?? null),
+      // Onboarding date, else sign-up date (Start date was removed from screens, 6 Oct).
+      clientSince: day((rec?.dates as { onboarding?: string } | undefined)?.onboarding ?? match.onboardingDate ?? match.signupDate ?? null),
       accountManager: people.accountManager ?? match.accountManager ?? null,
       salesperson: people.salesperson ?? match.salesperson ?? null,
       markets: rec?.markets ?? null,

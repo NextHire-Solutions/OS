@@ -3,8 +3,8 @@ import { test } from "node:test";
 
 import { performanceFrom, type PerfClient } from "./performance-model.ts";
 
-const c = (status: string, onboardingDate: string | null, churnDate: string | null = null, startDate: string | null = null, plan = "production"): PerfClient =>
-  ({ status, plan, weeklyTarget: 2, onboardingDate, startDate, churnDate });
+const c = (status: string, onboardingDate: string | null, churnDate: string | null = null, signupDate: string | null = null, plan = "production"): PerfClient =>
+  ({ status, plan, weeklyTarget: 2, onboardingDate, signupDate, churnDate });
 
 const TODAY = new Date("2026-09-30T12:00:00Z");
 
@@ -12,7 +12,7 @@ test("added, churned, net and active at month end come from the two dates", () =
   const p = performanceFrom([
     c("active", "2026-07-10"),
     c("churned", "2026-07-20", "2026-08-15"),
-    c("active", null, null, "2026-08-02"),       // no onboarding date: placed by start date
+    c("active", null, null, "2026-08-02"),       // no onboarding date: placed by sign-up date
     c("churned", "2026-06-01", null),              // churned, no churn date: not placed as churn
     c("paused", null),                             // no date at all: undated
   ], new Map([["2026-08", 3000], ["2026-09", 1500]]), null, 3, TODAY);
@@ -23,7 +23,7 @@ test("added, churned, net and active at month end come from the two dates", () =
   assert.equal(by["2026-09"].revenue, 1500);
   assert.equal(p.months[0].month, "2026-09", "newest first, and months with no movement are still listed");
   assert.equal(p.totals.undated, 1);
-  assert.equal(p.totals.byStartDate, 1);
+  assert.equal(p.totals.bySignupDate, 1);
   assert.equal(p.totals.churnUndated, 1);
   assert.equal(p.totals.revenueThisMonth, 1500);
   assert.equal(p.totals.churnedLast90, 1);

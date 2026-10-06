@@ -313,11 +313,10 @@ export async function clientCommercialsTool(clientQuery: string) {
       intervalDays: (r.billing_interval_days as number) ?? null,
       anchorDate: (r.billing_anchor_date as string) ?? null,
     },
-    startDate: (r.start_date as string) ?? null,
     weeklyTarget: (r.weekly_target as number) ?? null,
     monthlyTarget: (r.monthly_target as number) ?? null,
     paused: (r.client_paused as boolean) ?? null,
     timeZone: (r.time_zone as string) ?? null,
-    note: "No price or revenue is stored anywhere in these systems — the plan name is not a figure.",
+    note: "The plan name is not a price. For what the client pays (MRR, spend, invoices) use client_billing. Dates: use client_record (sign-up and onboarding).",
   };
 }

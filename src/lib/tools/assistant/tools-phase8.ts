@@ -78,7 +78,7 @@ export async function workspaceHomeTool() {
   const [overview, snaps] = await Promise.all([getOverview(), getAllSnapshots()]);
   return trim({
     overview: (overview as { metrics?: unknown }).metrics,
-    replySplit: (overview as { split?: unknown }).split,
+    clients: (overview as { clients?: unknown }).clients,
     tools: (snaps as Array<{ tool?: string; id?: string; state?: unknown }>).map((s) => ({ tool: s.tool ?? s.id, state: s.state })),
     note: "Home's figures: the windows and deltas are as the Home page shows them.",
   });

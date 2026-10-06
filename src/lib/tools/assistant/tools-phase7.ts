@@ -83,7 +83,6 @@ export async function clientRecordTool(query: string) {
     plan: c.plan,
     dates: {
       signUp: c.signupDate ?? "(not entered — the Stripe customer's created day is used on screen; see client_billing)",
-      start: c.startDate,
       onboarding: c.onboardingDate,
       pause: c.pauseDate,
       churn: c.churnDate,

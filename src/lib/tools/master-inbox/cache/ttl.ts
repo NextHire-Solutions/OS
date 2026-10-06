@@ -93,8 +93,16 @@ export function ttlCache<TArgs extends unknown[], TResult>(
   const refresh = (k: string, args: TArgs, previous: TResult | undefined, staleUntil: number | undefined): Promise<TResult> => {
     const promise = fn(...args).then(
       (data) => {
-        const now = Date.now();
-        store.set(k, { data, expiresAt: now + ttlMs, staleUntil: now + ttlMs + staleMs });
+        /*
+         * Store only if this load is still the current one (6 Oct). If an edit
+         * invalidated the cache while it ran, this answer may predate the
+         * edit; storing it would serve the old value as fresh for a full TTL.
+         * The caller awaiting it still gets it — it is simply not kept.
+         */
+        if (store.get(k)?.promise === promise) {
+          const now = Date.now();
+          store.set(k, { data, expiresAt: now + ttlMs, staleUntil: now + ttlMs + staleMs });
+        }
         return data;
       },
       (err) => {

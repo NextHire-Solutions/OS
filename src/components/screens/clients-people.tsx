@@ -55,7 +55,7 @@ const LABEL: Record<Resource, string> = { team: "Team", agents: "Agents", dnc: "
 const LABEL_STYLE: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--muted)" };
 const HINT: React.CSSProperties = { fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 };
 
-export function ClientPeople({ clientId }: { clientId: string }) {
+export function ClientPeople({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
   const [people, setPeople] = useState<People | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [portalId, setPortalId] = useState<string>("");
@@ -122,6 +122,8 @@ export function ClientPeople({ clientId }: { clientId: string }) {
       setEmail("");
       setExtra("");
       await load();
+      // The record's Team / Agents / DNC counts follow (6 Oct).
+      onChanged?.();
     } finally {
       setBusy(false);
     }
@@ -146,6 +148,7 @@ export function ClientPeople({ clientId }: { clientId: string }) {
       }
       if (out.note) setNote(out.note);
       await load();
+      onChanged?.();
     } finally {
       setBusy(false);
     }

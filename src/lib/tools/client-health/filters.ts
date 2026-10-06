@@ -83,7 +83,7 @@ export interface FilterState {
   tz?: string;
   /** Only clients whose NEXT billing date falls within this many days. */
   billingWindow?: BillingWindow;
-  /** Inclusive bounds on `start_date`, as YYYY-MM-DD. */
+  /** Inclusive bounds on the onboarding date, as YYYY-MM-DD. */
   dateFrom?: string | null;
   dateTo?: string | null;
 }
@@ -144,15 +144,17 @@ export function applyFilters(rows: WeeklyRow[], o: FilterState, now: Date = new 
   }
 
   /*
-   * The date range filters on START DATE — when the client came on, not
-   * anything about this week. A client with no start date has no answer, so it
-   * drops out rather than being kept on a technicality.
+   * The date range filters on the ONBOARDING date — when the client came on,
+   * not anything about this week (it was start_date until Start date was
+   * removed from screens, 6 Oct). A client with no onboarding date has no
+   * answer, so it drops out rather than being kept on a technicality.
    */
   if (o.dateFrom || o.dateTo) {
     list = list.filter(({ client: c }) => {
-      if (!c.start_date) return false;
-      if (o.dateFrom && c.start_date < o.dateFrom) return false;
-      if (o.dateTo && c.start_date > o.dateTo) return false;
+      const d = c.onboarding_date?.slice(0, 10) ?? null;
+      if (!d) return false;
+      if (o.dateFrom && d < o.dateFrom) return false;
+      if (o.dateTo && d > o.dateTo) return false;
       return true;
     });
   }

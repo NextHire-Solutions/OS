@@ -48,6 +48,8 @@ let inflight: Promise<ClientHealthWeeklyData> | null = null;
  * you switch to Bi-Weekly rather than silently reverting.
  */
 let current: ClientHealthWeeklyData | null = null;
+/** The server render `current` was last seeded from — a new one replaces it. */
+let seededFrom: ClientHealthWeeklyData | null = null;
 
 export function loadClientHealth(): Promise<ClientHealthWeeklyData> {
   if (inflight) return inflight;
@@ -162,7 +164,15 @@ export function useClientHealth(initial: ClientHealthWeeklyData | null): ScreenD
    * store has nothing in it and the first edit would find no list to change.
    * Seeding it here is what makes the modal work on a direct link.
    */
-  if (initial && !current) current = initial;
+  /*
+   * Reseeded whenever the server sends a NEW `initial` (6 Oct). It used to seed
+   * only when empty, so a store left from an earlier visit outlived the fresh
+   * server render and the next edit published the stale list plus the patch.
+   */
+  if (initial && initial !== seededFrom) {
+    current = initial;
+    seededFrom = initial;
+  }
 
   // Stay subscribed for the screen's whole life, not just until it has data:
   // a sync must update a screen that loaded long ago.

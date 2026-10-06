@@ -22,6 +22,7 @@ import { ToastHost } from "./toast";
 import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
 import { SummaryCards } from "./summary-cards";
 import { setFilters, useClientHealthView } from "./view-state";
+import { ClientCampaignsName } from "./campaigns-link";
 
 /*
  * Client Health — Client Success.
@@ -48,7 +49,7 @@ const COLUMNS: { col: CsSortCol; label: string; title: string; num?: boolean }[]
   { col: "plan", label: "Plan", title: "Sort by plan" },
   { col: "score", label: "Score", title: "Eight-week delivery score, 0–10", num: true },
   { col: "tz", label: "Time Zone", title: "Sort by time zone" },
-  { col: "launch", label: "Launch Date", title: "Sort by launch date" },
+  { col: "launch", label: "Onboarded", title: "Sort by onboarding date (the master record's; Start date was removed 6 Oct)" },
   { col: "portal", label: "Portal Updated", title: "Last lead activity in the client portal" },
   { col: "stage", label: "Stagnant Intros", title: "Introductions never touched since they arrived", num: true },
   { col: "hired", label: "Hired", title: "Total hires recorded", num: true },
@@ -227,7 +228,7 @@ function Row({ row, now, onEdit }: { row: SuccessRow; now: number; onEdit: () =>
 
   return (
     <tr>
-      <td><span className="ds-primary">{c.name}</span></td>
+      <td><ClientCampaignsName client={c} className="ds-primary" /></td>
 
       <td>
         <Badge tone={PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
@@ -245,7 +246,7 @@ function Row({ row, now, onEdit }: { row: SuccessRow; now: number; onEdit: () =>
 
       <td>{tzShort ? <Badge tone="outline">{tzShort}</Badge> : <button type="button" className="ds-link" onClick={onEdit}>Set</button>}</td>
 
-      <td className="num">{c.start_date ? fmtDateShort(c.start_date) : <button type="button" className="ds-link" onClick={onEdit}>Set date</button>}</td>
+      <td className="num">{c.onboarding_date ? fmtDateShort(c.onboarding_date) : <span className="ds-none" title="Set it on the client's record in Clients">—</span>}</td>
 
       <td>{c.last_lead_activity_at ? humanizeAgo(c.last_lead_activity_at, now) : none}</td>
 

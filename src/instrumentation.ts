@@ -19,6 +19,15 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  /*
+   * One switch for a local server pointed at production data (6 Oct): no
+   * schedulers, no payment-link settling, no warm-ups — it serves pages and
+   * nothing else. Never set in production.
+   */
+  if (process.env.OS_BACKGROUND_DISABLED === "1") {
+    console.log("[instrumentation] OS_BACKGROUND_DISABLED=1 — no background jobs in this process");
+    return;
+  }
 
   const { ensureScheduler } = await import("./lib/tools/analytics/sync/scheduler");
   ensureScheduler();

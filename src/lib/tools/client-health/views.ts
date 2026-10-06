@@ -203,7 +203,8 @@ export function sortSuccess(
         return mul * (b.score - a.score) || byName(a, b);
       }
       case "tz": return strCmp(a.tzShort, b.tzShort) || byName(a, b);
-      case "launch": return dateCmp(a.client.start_date, b.client.start_date) || byName(a, b);
+      // The onboarding date now (Start date removed from screens, 6 Oct).
+      case "launch": return dateCmp(a.client.onboarding_date ?? null, b.client.onboarding_date ?? null) || byName(a, b);
       case "portal": return dateCmp(a.client.last_lead_activity_at, b.client.last_lead_activity_at) || byName(a, b);
       case "stage": return numCmp(a.client.stagnant_intros_count, b.client.stagnant_intros_count) || byName(a, b);
       case "hired": return numCmp(a.hiredTotal, b.hiredTotal) || byName(a, b);

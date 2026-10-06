@@ -95,3 +95,15 @@ test("shared: two copies of a cache under one name are one cache — a warm, a r
   const alone = ttlCache(async () => "own", { ttlMs: 60_000 });
   assert.equal(await alone(), "own", "without a name nothing is shared");
 });
+
+test("a load that was invalidated while running is not stored (an edit must not be overwritten by the read before it)", async () => {
+  let version = 1;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  const fn = ttlCache(async () => { const v = version; await gate; return v; }, { ttlMs: 60_000 });
+  const first = fn();                // starts loading version 1
+  version = 2; fn.invalidate();      // an edit lands while it runs
+  release();
+  assert.equal(await first, 1, "the caller that asked still gets its answer");
+  assert.equal(await fn(), 2, "but the next read loads again instead of serving the pre-edit value");
+});

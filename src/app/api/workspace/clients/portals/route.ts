@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { AddPortalError, addPortal, previewPortal } from "@/lib/clients/add-portal";
+import { clientsChanged } from "@/lib/clients/after-change";
 import { campaignPortalView } from "@/lib/clients/campaign-portals";
 
 /*
@@ -37,6 +38,7 @@ export async function POST(request: Request) {
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   try {
     const out = await addPortal(clientId, body?.market, session.email);
+    clientsChanged();
     return NextResponse.json({ ok: true, ...out, view: await campaignPortalView(clientId) });
   } catch (e) {
     return fail(e);

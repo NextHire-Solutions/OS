@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { isAdminUser } from "@/lib/identity/admin-db";
+import { clientsChanged } from "@/lib/clients/after-change";
 import {
   CampaignPortalError,
   campaignPortalView,
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
   try {
     await setCampaignPortal(clientId, platform, campaignId, portalId, session.email);
     console.log(`[campaign-portals] ${session.email} sent ${platform} campaign ${campaignId} of ${clientId} to portal ${portalId}`);
+    clientsChanged();
     return NextResponse.json({ ok: true, view: await campaignPortalView(clientId) });
   } catch (e) {
     return fail(e);

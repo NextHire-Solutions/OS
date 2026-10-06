@@ -33,10 +33,10 @@ export interface Performance {
     onboarding: number | null;
     addedLast90: number | null;
     churnedLast90: number | null;
-    /** No onboarding date and no start date: not placed in any month. */
+    /** No onboarding date and no sign-up date: not placed in any month. */
     undated: number;
-    /** Of those added, how many are placed by their start date (no onboarding date recorded). */
-    byStartDate: number;
+    /** Of those added, how many are placed by their sign-up date (no onboarding date recorded). */
+    bySignupDate: number;
     /** Churned clients with no churn date: not placed in any month. */
     churnUndated: number;
     /** Paid Stripe invoices this calendar month so far; null when unreadable. */
@@ -54,7 +54,8 @@ export interface PerfClient {
   plan: string | null;
   weeklyTarget: number | null;
   onboardingDate: string | null;
-  startDate: string | null;
+  /** The fallback when no onboarding date is recorded (was Start date until 6 Oct). */
+  signupDate: string | null;
   churnDate: string | null;
 }
 
@@ -76,7 +77,7 @@ export function performanceFrom(
   today: Date = new Date(),
 ): Performance {
   const count = (s: string) => clients.filter((c) => c.status === s).length;
-  const addedOn = (c: PerfClient) => (c.onboardingDate ?? c.startDate)?.slice(0, 10) ?? null;
+  const addedOn = (c: PerfClient) => (c.onboardingDate ?? c.signupDate)?.slice(0, 10) ?? null;
   const churnedOn = (c: PerfClient) => (c.status === "churned" && c.churnDate ? c.churnDate.slice(0, 10) : null);
 
   const ninety = new Date(today);
@@ -132,7 +133,7 @@ export function performanceFrom(
       addedLast90: clients.filter((c) => (addedOn(c) ?? "") >= cutoff).length,
       churnedLast90: clients.filter((c) => (churnedOn(c) ?? "") >= cutoff).length,
       undated: clients.filter((c) => !addedOn(c)).length,
-      byStartDate: clients.filter((c) => !c.onboardingDate && c.startDate).length,
+      bySignupDate: clients.filter((c) => !c.onboardingDate && c.signupDate).length,
       churnUndated: clients.filter((c) => c.status === "churned" && !c.churnDate).length,
       revenueThisMonth: revenue ? Math.round((revenue.get(thisMonth) ?? 0) * 100) / 100 : null,
       stripeLinked,

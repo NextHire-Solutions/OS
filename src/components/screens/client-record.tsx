@@ -21,6 +21,7 @@ import { TIME_ZONES } from "@/lib/tools/client-health/types";
 import { ClientPeople } from "./clients-people";
 import { DeleteClient } from "./clients-delete";
 import { MarketsPanel } from "./markets-panel";
+import type { ChangeKind, ClientPatch } from "./clients";
 
 /*
  * ONE CLIENT.
@@ -142,13 +143,19 @@ const MANAGED_IN: Record<string, Tab> = {
 };
 
 export function ClientRecord({
-  client: c, view, onClose, onChanged, onDeleted, onPrev, onNext, position,
+  client: c, view, onClose, onChanged, onPatch, onDeleted, onPrev, onNext, position,
 }: {
   client: MasterClient;
   /** Opened from a tool's Client view: show only that tool's §8 fields. */
   view?: ToolViewId;
   onClose: () => void;
-  onChanged: () => void;
+  /** Refresh the list; "stripe" when a Stripe id changed, so Stripe's figures are read again. */
+  onChanged: (kind?: ChangeKind) => void;
+  /**
+   * Show a saved change at once (6 Oct). Without it the field closed showing
+   * the OLD value for the 12–15s the list took to rebuild.
+   */
+  onPatch?: (patch: ClientPatch) => void;
   onDeleted: () => void;
   onPrev?: () => void;
   onNext?: () => void;
@@ -195,9 +202,12 @@ export function ClientRecord({
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
   }, [onClose, onPrev, onNext]);
 
-  const save = (key: string, transform: (v: string) => unknown = (v) => v || null) => async (v: string) => {
-    await saveEdit(c.id, { [key]: transform(v) });
-    onChanged();
+  /** Save one field, show it at once, then refresh. `regKey` is the field's own key (what the list reads). */
+  const save = (key: string, transform: (v: string) => unknown = (v) => v || null, regKey: string = key) => async (v: string) => {
+    const value = transform(v);
+    await saveEdit(c.id, { [key]: value });
+    onPatch?.(patchFor(regKey, value));
+    onChanged(regKey.startsWith("stripe") ? "stripe" : undefined);
   };
 
   /** One field row: an in-place editor where the master record owns it, the value otherwise. */
@@ -208,7 +218,7 @@ export function ClientRecord({
       return (
         <div key={key} className="rx-row" title={def?.definition}>
           <Field label={label} source={source} value={rawOf(key, c)} display={displayFor(key, c)}
-            editor={ed.editor} onSave={save(ed.save, ed.transform)} />
+            editor={ed.editor} onSave={save(ed.save, ed.transform, key)} />
         </div>
       );
     }
@@ -289,7 +299,7 @@ export function ClientRecord({
             {view === "portal" ? (
               <section className="rx-sec">
                 <h3>Team · Agents · DNC<span>shared with the client&rsquo;s portal</span></h3>
-                <ClientPeople clientId={c.id} />
+                <ClientPeople clientId={c.id} onChanged={() => onChanged()} />
               </section>
             ) : null}
             {view === "database" ? <Campaigns c={c} /> : null}
@@ -348,28 +358,28 @@ export function ClientRecord({
                 <>
                   <section className="rx-sec">
                     <h3>Status<span>changes every tool, the portal, campaigns and billing</span></h3>
-                    <StatusField id={c.id} status={c.status} onChanged={onChanged} />
+                    <StatusField id={c.id} status={c.status} onChanged={onChanged} onPatch={onPatch} />
                   </section>
                   {CATEGORIES.map((cat) => (
                     <section key={cat} className={`rx-sec cat-${cat}`}>
                       <h3><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</h3>
-                      {cat === "billing" ? <BillingControl clientId={c.id} /> : null}
+                      {cat === "billing" ? <BillingControl clientId={c.id} onChanged={() => onChanged("stripe")} /> : null}
                       {fieldsIn(cat).filter((f) => f.key !== "status").map((f) => row(f.key, f.label, f))}
                     </section>
                   ))}
                 </>
               ) : null}
-              {tab === "campaigns" ? <Campaigns c={c} /> : null}
+              {tab === "campaigns" ? <Campaigns c={c} onChanged={() => onChanged()} /> : null}
               {tab === "people" ? (
                 <section className="rx-sec">
                   <h3>Team · Agents · DNC<span>held by Master Inbox · shared with the portal</span></h3>
-                  <ClientPeople clientId={c.id} />
+                  <ClientPeople clientId={c.id} onChanged={() => onChanged()} />
                 </section>
               ) : null}
               {tab === "markets" ? (
                 <section className="rx-sec">
                   <h3>Market · MLS · Area<span>a client may cover several</span></h3>
-                  <MarketsPanel clientId={c.id} />
+                  <MarketsPanel clientId={c.id} onChanged={() => onChanged()} />
                 </section>
               ) : null}
               {tab === "introduce" ? (
@@ -382,7 +392,7 @@ export function ClientRecord({
                   <h3>Introduce to<span>used by the Introduce button in Master Inbox</span></h3>
                   <div className="rx-row">
                     <Field label="Brokerage" source="Master record" value={c.contact.brokerage}
-                      editor={{ kind: "text" }} onSave={save("brokerage")} />
+                      editor={{ kind: "text" }} onSave={async (v) => { await save("brokerage")(v); onPatch?.({ contact: { brokerage: v || null } }); }} />
                   </div>
                   {[0, 1, 2].map((i) => {
                     const v = i === 0 ? { name: c.contact.name, role: c.contact.role, email: c.contact.email, territories: c.contact.territories ?? [] } : c.contact.extra[i - 1] ?? { name: null, role: null, email: null };
@@ -395,12 +405,16 @@ export function ClientRecord({
                             // Sent only when changed, so saving a name never touches territories.
                             if ((d.territories ?? []).join("|") !== (v.territories ?? []).join("|")) patch[`${p}Territories`] = d.territories ?? [];
                             await saveEdit(c.id, patch);
+                            const person = { name: d.name, role: d.role, email: d.email, territories: d.territories ?? v.territories ?? [] };
+                            onPatch?.({ contact: i === 0
+                              ? { name: person.name, role: person.role, email: person.email, territories: person.territories }
+                              : { extra: c.contact.extra.map((x, j) => (j === i - 1 ? person : x)) } });
                             onChanged();
                           }} />
                       </div>
                     );
                   })}
-                  <MorePeople clientId={c.id} contact={c.contact} onChanged={onChanged} />
+                  <MorePeople clientId={c.id} contact={c.contact} onChanged={onChanged} onPatch={onPatch} />
                 </section>
                 </>
               ) : null}
@@ -415,7 +429,7 @@ export function ClientRecord({
 }
 
 /* ---------------------------------------------------------------- campaigns --- */
-function Campaigns({ c }: { c: MasterClient }) {
+function Campaigns({ c, onChanged }: { c: MasterClient; onChanged?: () => void }) {
   const routing = useCampaignPortals(c.id);
   const multi = routing.view?.multi ?? false;
   const routeOf = (x: NonNullable<MasterClient["campaigns"]>[number]) =>
@@ -424,7 +438,7 @@ function Campaigns({ c }: { c: MasterClient }) {
     <section className="rx-sec">
       <h3>Campaigns<span>read from Instantly and EmailBison</span></h3>
       {routing.view && (multi || routing.view.canAddPortal) ? (
-        <PortalsLine view={routing.view} addPortal={routing.view.canAddPortal ? <AddPortal clientId={c.id} onAdded={routing.replace} /> : null} />
+        <PortalsLine view={routing.view} addPortal={routing.view.canAddPortal ? <AddPortal clientId={c.id} onAdded={(v) => { routing.replace(v); onChanged?.(); }} /> : null} />
       ) : null}
       {multi && routing.view && !routing.view.ready ? (
         <p className="rx-hint">Choosing a portal per campaign needs migration 0025 run in the Master Inbox Supabase project.</p>
@@ -653,7 +667,7 @@ function Tools({ c }: { c: MasterClient }) {
  * reopens the portal (campaigns stay paused — restarting them is a person's
  * decision).
  */
-function StatusField({ id, status, onChanged }: { id: string; status: ClientStatus; onChanged: () => void }) {
+function StatusField({ id, status, onChanged, onPatch }: { id: string; status: ClientStatus; onChanged: () => void; onPatch?: (p: ClientPatch) => void }) {
   const [pending, setPending] = useState<ClientStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -678,6 +692,7 @@ function StatusField({ id, status, onChanged }: { id: string; status: ClientStat
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       setPending(null);
+      onPatch?.({ status: pending });
       onChanged();
       // The status is saved; a tool that did not take it must still be named.
       const failed = ((body?.propagation?.legs ?? []) as { label: string; ok: boolean; error?: string }[]).filter((l) => !l.ok);
@@ -726,7 +741,7 @@ function StatusField({ id, status, onChanged }: { id: string; status: ClientStat
 interface BillingNow { status: string; paused: boolean; behavior: string | null; amount: number | null; every: string | null; nextBilling: string | null }
 interface OpenLink { id: string; url: string; label: string; createdAt: string }
 
-function BillingControl({ clientId }: { clientId: string }) {
+function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
   const [state, setState] = useState<{ hidden?: true; linked?: boolean; billing?: BillingNow; links?: OpenLink[] | null; canCreateLinks?: boolean; error?: string } | null>(null);
   const [pending, setPending] = useState<"pause" | "resume" | null>(null);
   const [creating, setCreating] = useState(false);
@@ -777,7 +792,7 @@ function BillingControl({ clientId }: { clientId: string }) {
   async function confirmPause() {
     if (!pending) return;
     const out = await post({ action: pending });
-    if (out) { setPending(null); setState((s) => ({ ...s, linked: true, billing: out.billing })); }
+    if (out) { setPending(null); setState((s) => ({ ...s, linked: true, billing: out.billing })); onChanged?.(); }
   }
   async function createLink() {
     const out = await post({ action: "create_link", amount, every });
@@ -1136,6 +1151,15 @@ function IntroRoutes({ routes }: { routes: NonNullable<IntroView["routes"]> }) {
   );
 }
 
+/** What a saved field looks like on the client, so it shows before the refresh lands. */
+function patchFor(key: string, value: unknown): ClientPatch {
+  switch (key) {
+    case "campaignAliases": return { campaignAliases: (value as string[]) ?? [] };
+    case "campaignSender": return { sender: (value as string | null) ?? null };
+    default: return { [key]: value } as ClientPatch;
+  }
+}
+
 const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
 
 function ContactEditor({
@@ -1248,10 +1272,11 @@ function ContactEditor({
 type Person = { name: string | null; role: string | null; email: string | null; territories?: string[] };
 const MAX_PEOPLE = 10;
 
-function MorePeople({ clientId, contact, onChanged }: {
+function MorePeople({ clientId, contact, onChanged, onPatch }: {
   clientId: string;
   contact: MasterClient["contact"];
   onChanged: () => void;
+  onPatch?: (p: ClientPatch) => void;
 }) {
   const more: Person[] = contact.extra.slice(2).filter((p) => p.name || p.role || p.email);
   const [adding, setAdding] = useState(false);
@@ -1263,6 +1288,8 @@ function MorePeople({ clientId, contact, onChanged }: {
   // a leg that fails — e.g. migration 0028 not run — comes back as the error.
   async function saveList(next: Person[]) {
     await saveEdit(clientId, { moreContacts: next });
+    // People 2-3 stay as they are; 4+ become `next` — on screen at once (6 Oct).
+    onPatch?.({ contact: { extra: [...contact.extra.slice(0, 2), ...next] } });
     onChanged();
   }
 

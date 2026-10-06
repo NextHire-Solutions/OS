@@ -22,6 +22,7 @@ import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
 import { IntrosBillingCell, MonthlyCell, asDate, fmtMDY, isBehind } from "./billing-cells";
 import { CampaignToggleDialog } from "./campaign-toggle-dialog";
+import { ClientCampaignsName } from "./campaigns-link";
 import { CampaignsPopup } from "./campaigns-popup";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
@@ -353,7 +354,7 @@ function Row({
     <tr className={isBehind(snap) ? "has-carry" : undefined} style={c.hidden || c.client_paused ? { opacity: 0.62 } : undefined}>
       <td style={{ minWidth: 220 }}>
         <div className="ds-client-name">
-          <span>{c.name}</span>
+          <ClientCampaignsName client={c} />
           {/* ↗ and Play/Pause in one nowrap group, so they never split on a long name. */}
           <span className="ds-client-icons">
             {c.portal_url ? (
@@ -373,11 +374,10 @@ function Row({
           {lifecycle !== "active" ? <StatusPill status={lifecycle} size="sm" /> : null}
         </div>
 
-        {/* Since … · N markets — one line. Markets are the OS's own record; null = could not be read. */}
-        {c.start_date || markets !== null ? (
+        {/* N markets. Markets are the OS's own record; null = could not be read.
+            ("Since <start date>" was removed with the Start date field, 6 Oct.) */}
+        {markets !== null ? (
           <span className="ds-sub">
-            {c.start_date ? `Since ${formatDate(c.start_date)}` : null}
-            {c.start_date && markets !== null ? " · " : null}
             {markets === null ? null : (
               <span
                 className={`ds-markets${!markets.markets ? " empty" : ""}`}

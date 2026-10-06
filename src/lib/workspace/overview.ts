@@ -4,6 +4,8 @@ import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv } from "@/lib/env";
 import { ttlCache } from "@/lib/cache/ttl";
+import { getMasterClientList } from "@/lib/clients/master-list";
+import { performanceFrom } from "./performance-model";
 
 /*
  * The headline band on Home.
@@ -51,15 +53,34 @@ export interface OverviewSeriesPoint {
   date: string;
   sent: number;
   replies: number;
-  positive: number;
+  /** replies ÷ sent that day; null on a day nothing was sent. */
+  replyRate: number | null;
+  /** Our median first response that day, business hours; null when unknown. */
+  medianSeconds: number | null;
+  /** Today, still running — drawn apart so the line does not "dive" at the end. */
+  partial: boolean;
+}
+
+/** The client base, from the master record — the panel beside the chart. */
+export interface HomeClients {
+  active: number;
+  paused: number;
+  churned: number;
+  onboarding: number;
+  /** This calendar month: added − churned (the Performance page's definition). */
+  net: number;
+  added: number;
+  churnedThisMonth: number;
+  monthLabel: string;
 }
 
 export interface Overview {
   metrics: OverviewMetric[];
   series: OverviewSeriesPoint[];
-  /** Replies split, for the panel beside the chart. */
-  split: { positive: number | null; needsReview: number | null };
+  /** The tiles cover `windowLabel`; the chart covers `seriesLabel`. */
   windowLabel: string;
+  seriesLabel: string;
+  clients: HomeClients | null;
   unavailable: string | null;
 }
 
@@ -91,8 +112,9 @@ async function loadOverview(): Promise<Overview> {
   const empty: Overview = {
     metrics: [],
     series: [],
-    split: { positive: null, needsReview: null },
     windowLabel: "last 7 days",
+    seriesLabel: "last 30 days",
+    clients: null,
     unavailable: null,
   };
 
@@ -112,7 +134,7 @@ async function loadOverview(): Promise<Overview> {
      */
     analyticsRead(`/api/analytics/kpis?from=${isoDaysAgo(13)}&to=${isoDaysAgo(7)}`),
     analyticsRead("/api/analytics/timeseries?preset=30d"),
-    masterInboxMedian(),
+    masterInboxReplyTimes(),
   ]);
 
   const now =
@@ -129,10 +151,10 @@ async function loadOverview(): Promise<Overview> {
       : null;
 
   const replies = num(now.replies);
-  const positive = num(now.positive);
 
   const medianSeconds =
-    followUp.status === "fulfilled" ? followUp.value : null;
+    followUp.status === "fulfilled" ? followUp.value.overall : null;
+  const medianByDay = followUp.status === "fulfilled" ? followUp.value.byDay : new Map<string, number>();
 
   const metrics: OverviewMetric[] = [
     {
@@ -176,43 +198,79 @@ async function loadOverview(): Promise<Overview> {
     series.status === "fulfilled" && series.value.ok
       ? asRecord(series.value.json)?.points
       : null;
+  // "Today" in the business's day (Eastern), which is how the series is bucketed.
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   return {
+    ...empty,
     metrics,
     series: Array.isArray(points)
       ? points.flatMap((raw) => {
           const row = asRecord(raw);
           const date = typeof row?.date === "string" ? row.date : null;
           if (!date) return [];
+          const sent = num(row?.sent) ?? 0;
+          const replyCount = num(row?.replies) ?? 0;
           return [{
             date,
-            sent: num(row?.sent) ?? 0,
-            replies: num(row?.replies) ?? 0,
-            positive: num(row?.positive) ?? 0,
+            sent,
+            replies: replyCount,
+            replyRate: sent > 0 ? replyCount / sent : null,
+            medianSeconds: medianByDay.get(date) ?? null,
+            partial: date >= today,
           }];
         })
       : [],
-    split: {
-      positive,
-      // Everything that replied and was not marked positive still needs a
-      // human decision. Derived, and labelled as such on the card.
-      needsReview: replies !== null && positive !== null ? Math.max(0, replies - positive) : null,
-    },
-    windowLabel: "last 7 days",
-    unavailable: null,
   };
 }
 
-/** Our own median first-response, business hours, from Master Inbox. */
-async function masterInboxMedian(): Promise<number | null> {
-  const to = isoDaysAgo(0);
-  const from = isoDaysAgo(7);
-  const res = await httpProbe(
-    `${baseUrlEnv("MASTER_INBOX_URL")}/api/metrics/follow-up-time?from=${from}&to=${to}`,
-    { timeoutMs: TIMEOUT },
-  );
-  if (!res.ok) return null;
-  return num(asRecord(asRecord(res.json)?.overall)?.median_seconds);
+/**
+ * Our own median first-response, business hours, from Master Inbox: the exact
+ * median over the last 7 days for the tile, and each day's median over the
+ * last 30 for the chart (a median cannot be rebuilt from daily ones, hence two).
+ */
+async function masterInboxReplyTimes(): Promise<{ overall: number | null; byDay: Map<string, number> }> {
+  const base = `${baseUrlEnv("MASTER_INBOX_URL")}/api/metrics/follow-up-time`;
+  const [week, month] = await Promise.all([
+    httpProbe(`${base}?from=${isoDaysAgo(7)}&to=${isoDaysAgo(0)}`, { timeoutMs: TIMEOUT }),
+    httpProbe(`${base}?from=${isoDaysAgo(30)}&to=${isoDaysAgo(0)}`, { timeoutMs: TIMEOUT }),
+  ]);
+  const byDay = new Map<string, number>();
+  const days = month.ok ? asRecord(month.json)?.days : null;
+  if (Array.isArray(days)) {
+    for (const d of days) {
+      const r = asRecord(d);
+      const n = num(r?.median_seconds);
+      if (typeof r?.date === "string" && n !== null && (num(r?.sample_size) ?? 0) > 0) byDay.set(r.date, n);
+    }
+  }
+  return { overall: week.ok ? num(asRecord(asRecord(week.json)?.overall)?.median_seconds) : null, byDay };
+}
+
+/**
+ * Active / Paused / Churned / Net, from the master record (client ask, 6 Oct).
+ * Net is this calendar month's added − churned — the Performance page's own
+ * definition, computed by the same function, so the two screens agree.
+ */
+export async function homeClients(): Promise<HomeClients | null> {
+  try {
+    const { clients } = await getMasterClientList();
+    const p = performanceFrom(clients, null, null);
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const m = p.months.find((x) => x.month === thisMonth);
+    return {
+      active: p.totals.active ?? 0,
+      paused: p.totals.paused ?? 0,
+      churned: p.totals.churned ?? 0,
+      onboarding: p.totals.onboarding ?? 0,
+      net: m?.net ?? 0,
+      added: m?.added ?? 0,
+      churnedThisMonth: m?.churned ?? 0,
+      monthLabel: new Date().toLocaleDateString("en-US", { month: "long", timeZone: "UTC" }),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /*
@@ -228,7 +286,9 @@ async function masterInboxMedian(): Promise<number | null> {
 const overviewCache = ttlCache(loadOverview, { ttlMs: 60_000, staleMs: 10 * 60_000, shared: "home-overview" });
 
 export async function getOverview(): Promise<Overview> {
-  const result = await overviewCache();
+  // The client counts are read apart from the 60s cache, so a status change
+  // shows on Home as soon as the master record has it.
+  const [result, clients] = await Promise.all([overviewCache(), homeClients()]);
   if (result.unavailable) overviewCache.invalidate();
-  return result;
+  return { ...result, clients };
 }

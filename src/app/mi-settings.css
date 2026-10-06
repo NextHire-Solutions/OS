@@ -617,10 +617,7 @@ td.mis-empty-cell {
    because the inbox row only ever shows ONE chip and the difference never
    came up. On this screen you are choosing between all seven at once, so
    blue has to be visibly blue rather than fall through to zinc. */
-.lc-blue {
-  background: var(--blue-pale);
-  color: var(--blue-ink);
-}
+/* .lc-blue now lives with the other chip colours in workspace.css. */
 
 /* ── Toggleable chips (AI candidate labels) ─────────────────────────────── */
 .mis-chips {

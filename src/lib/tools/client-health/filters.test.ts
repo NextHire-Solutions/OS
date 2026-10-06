@@ -144,7 +144,7 @@ function client(
   name: string,
   o: Partial<{
     time_zone: string | null;
-    start_date: string | null;
+    onboarding_date: string | null;
     billing_anchor_date: string | null;
     billing_interval: string;
     billing_interval_days: number | null;
@@ -154,7 +154,7 @@ function client(
   const c = {
     ...base.client,
     time_zone: o.time_zone ?? null,
-    start_date: o.start_date ?? null,
+    onboarding_date: o.onboarding_date ?? null,
     billing_anchor_date: o.billing_anchor_date ?? null,
     billing_interval: o.billing_interval ?? "biweekly",
     billing_interval_days: o.billing_interval_days ?? null,
@@ -203,11 +203,11 @@ test("a client with no billing date is excluded rather than kept by default", ()
   assert.equal(applyFilters(rows, { ...BASE, billingWindow: "all" }, NOW).length, 1);
 });
 
-test("the date range filters on start date, inclusive at both ends", () => {
+test("the date range filters on the onboarding date, inclusive at both ends", () => {
   const rows = [
-    client("Jan", { start_date: "2026-01-15" }),
-    client("Jun", { start_date: "2026-06-01" }),
-    client("Sep", { start_date: "2026-09-01" }),
+    client("Jan", { onboarding_date: "2026-01-15" }),
+    client("Jun", { onboarding_date: "2026-06-01" }),
+    client("Sep", { onboarding_date: "2026-09-01" }),
     client("Undated"),
   ];
 
@@ -220,7 +220,7 @@ test("the date range filters on start date, inclusive at both ends", () => {
   assert.deepEqual(names(applyFilters(rows, { ...BASE, dateTo: "2026-01-31" })), ["Jan"]);
 });
 
-test("a client with no start date drops out of any date range", () => {
+test("a client with no onboarding date drops out of any date range", () => {
   // It has no answer to the question the filter asks, so keeping it would be
   // keeping it on a technicality.
   const rows = [client("Undated")];
@@ -230,9 +230,9 @@ test("a client with no start date drops out of any date range", () => {
 
 test("the filters compose — each narrows what the last one left", () => {
   const rows = [
-    client("Match", { time_zone: "America/New_York", start_date: "2026-06-01" }),
-    client("WrongZone", { time_zone: "America/Denver", start_date: "2026-06-01" }),
-    client("WrongDate", { time_zone: "America/New_York", start_date: "2025-01-01" }),
+    client("Match", { time_zone: "America/New_York", onboarding_date: "2026-06-01" }),
+    client("WrongZone", { time_zone: "America/Denver", onboarding_date: "2026-06-01" }),
+    client("WrongDate", { time_zone: "America/New_York", onboarding_date: "2025-01-01" }),
   ];
 
   assert.deepEqual(

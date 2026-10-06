@@ -23,6 +23,7 @@ import { ToastHost } from "./toast";
 import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
 import { SummaryCards } from "./summary-cards";
 import { setFilters, useClientHealthView } from "./view-state";
+import { ClientCampaignsName } from "./campaigns-link";
 
 /*
  * Client Health — Bi-Weekly.
@@ -195,7 +196,7 @@ function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
   return (
     <tr className={isBehind(snap) ? "has-carry" : undefined}>
       <td>
-        <span className="ds-primary">{c.name}</span>
+        <ClientCampaignsName client={c} className="ds-primary" />
         <span className="ds-sub">
           <Badge tone={PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
             {c.plan.charAt(0).toUpperCase() + c.plan.slice(1)}

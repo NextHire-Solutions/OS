@@ -46,6 +46,8 @@ export interface MasterFacts {
   markets: Coverage;
   /** When the client was added to the master record. */
   createdAt: string | null;
+  /** os_clients.onboarding_date (0023) — the date screens show now that Start date is gone (6 Oct). */
+  onboardingDate: string | null;
   /** When the current status was set (status history), or null. */
   statusSince: string | null;
   links: { masterInbox: string | null; clientHealth: string | null; analytics: string | null; database: string | null };
@@ -62,7 +64,7 @@ async function loadAll(): Promise<MasterFacts[]> {
   const [clients, markets, history] = await Promise.all([
     osTable("os_clients").select(
       "id, name, aliases, status, salesperson, account_manager, sender_name, contact_name, contact_email, " +
-        "brokerage, created_at, mi_client_id, ch_client_id, an_client_id, orch_client_id",
+        "brokerage, created_at, onboarding_date, mi_client_id, ch_client_id, an_client_id, orch_client_id",
     ),
     listCoverage(),
     osTable("os_client_status_history").select("os_client_id, changed_at").order("changed_at", { ascending: false }),
@@ -88,6 +90,7 @@ async function loadAll(): Promise<MasterFacts[]> {
     brokerage: str(r.brokerage),
     markets: byClient.get(String(r.id)) ?? EMPTY_COVERAGE,
     createdAt: str(r.created_at),
+    onboardingDate: str(r.onboarding_date),
     statusSince: since.get(String(r.id)) ?? null,
     links: {
       masterInbox: str(r.mi_client_id),
