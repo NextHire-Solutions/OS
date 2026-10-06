@@ -166,8 +166,9 @@ The client's feedback list (sections 2–8), built and deployed. OS commits
 billing, intros) and `ed4f98b` (assistant); Master Inbox `20f6af9` (intros,
 portal billing hold).
 
-**Migration 0030 (`migrations/0030_billing_profile.sql`) must be run** in the
-Master Inbox Supabase SQL editor. Additive only — four tables
+**Migration 0030 (`migrations/0030_billing_profile.sql`) was run on 7 October**
+(verified: the bell filled with 6 notifications, 2 dry-run block rows, 0 portal
+differences). It is in the Master Inbox Supabase. Additive only — four tables
 (`os_client_stripe_links`, `os_notifications`, `os_portal_blocks`,
 `os_client_saved_views`) and one column (`os_clients.intro_variants`). Every
 reader tolerates it missing: before it runs, linking Stripe customers or saved
@@ -201,7 +202,8 @@ a line holding only "." and Kelly + Co's a double space before the phone;
 Rise Real Estate Tujunga has no saved view of its own (the only "Rise" view is
 the churned Antelope client's) — link it on the record if it is theirs;
 Chestnut Park West ($1,875) and DiGiulio Group ($1,545) have invoices still
-open in Stripe after 9 attempts; Properties & Estates has no introduction
+open in Stripe after 9 attempts (the two dry-run blocks); 54 Realty's open $500 is
+from May on its cancelled subscription and Stripe no longer retries it; Properties & Estates has no introduction
 people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
 Revolution) — add a person per market (territory "Boston" / "Florida").
 
