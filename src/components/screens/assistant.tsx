@@ -93,6 +93,8 @@ const TOOL_LABEL: Record<string, string> = {
   mls_coverage: "Checking MLS coverage",
   reminders: "Checking reminders",
   client_record: "Reading the client record",
+  profile_completeness: "Checking profile completeness",
+  notifications: "Reading the notifications bell",
   list_clients: "Listing clients",
   client_billing: "Reading Stripe billing",
   billing_overview: "Adding up revenue in Stripe",

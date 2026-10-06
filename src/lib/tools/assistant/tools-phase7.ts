@@ -16,6 +16,9 @@ import { listSalespeople } from "@/lib/identity/salespeople";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 
 import { readOnly } from "./read-only.ts";
+import { clientsAsShown, profileOf } from "./tools-phase9.ts";
+import { blockThreshold, blockingEnabled, openPortalBlocks } from "@/lib/clients/billing-watch";
+import { introBrokerage, introSubject } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 /*
  * Phase 7 (5 Oct): the CLIENT-LEVEL record and everything built after the
@@ -71,7 +74,9 @@ async function resolveOrExplain(query: string) {
 export async function clientRecordTool(query: string) {
   const r = await resolveOrExplain(query);
   if (!r.client) return r.error;
-  const c = r.client;
+  // As the Clients screen shows it: Stripe and saved views merged in (6 Oct).
+  const c = (await clientsAsShown().then((x) => x.clients.find((y) => y.id === r.client!.id)).catch(() => null)) ?? r.client;
+  const profile = profileOf(c);
   const contacts = [
     c.contact.name ? { name: c.contact.name, role: c.contact.role, email: c.contact.email } : null,
     ...c.contact.extra.filter((x) => x.name).map((x) => ({ name: x.name, role: x.role, email: x.email })),
@@ -83,7 +88,7 @@ export async function clientRecordTool(query: string) {
     statusSince: c.statusSince,
     plan: c.plan,
     dates: {
-      signUp: c.signupDate ?? "(not entered — the Stripe customer's created day is used on screen; see client_billing)",
+      signUp: profile.signUp ?? "(none: no $1 sign-up charge in Stripe and none entered)",
       onboarding: c.onboardingDate,
       pause: c.pauseDate,
       churn: c.churnDate,
@@ -104,6 +109,8 @@ export async function clientRecordTool(query: string) {
     introductionsAllTime: c.introductions,
     lastIntroduction: c.lastIntroAt,
     customIntroduction: c.introCustom,
+    profile,
+    note: "profile.completeness is the score on the Clients list and record; profile.missing says where each gap is fixed. Sign-up = the client's first $1 charge in Stripe (replacing a card does not change it); afterOnboarding true is flagged on the record.",
   };
 }
 
@@ -211,13 +218,15 @@ export async function clientBillingTool(query: string) {
     allSubscriptions: acct?.subscriptions.map((x) => ({ amount: x.amount, every: x.every, status: x.collectionPaused ? "paused" : x.status, nextCharge: x.nextCharge, current: x.current, since: x.created })) ?? null,
     failedPayments: acct?.failedInvoices.map((i) => ({ invoice: i.number, unpaid: i.amountRemaining, attempts: i.attemptCount, nextTry: i.nextAttempt ? easternDay(i.nextAttempt * 1000) : null })) ?? null,
     outstanding: { invoices: open.length, amount: money(open.reduce((t, i) => t + (i.outstanding ?? 0), 0)), pastDue: open.filter((i) => i.status === "past_due").length },
+    portalBlock: await openPortalBlocks().then((b) => b.filter((x) => x.clientId === c.id).map((x) => ({ mode: x.mode === "blocked" ? "blocked" : "dry run (would be blocked)", since: x.since, reason: x.reason }))).catch(() => []),
+    failedPaymentRule: `After ${blockThreshold()} failed attempts (the first + 3 retries) the portal is blocked until the invoice is paid — ${blockingEnabled() ? "ON" : "dry run only for now"}. Each subscription can be paused or resumed on the client's record (Billing); "delay 7 days" is not available yet.`,
     recentInvoices: invoices.slice(0, 8),
     note: failed.length ? "Stripe could not be read for this client just now." :
       "MRR and total spend cover EVERY subscription and card the client owns (allSubscriptions), not only the current one; a shared Stripe customer is split by subscription. MRR counts live subscriptions only (paused or cancelled count 0). Total spend = successful charges less refunds. Sign-up = the first $1 charge in Stripe (signUp.source says if it came from elsewhere).",
   };
 }
 
-export async function billingOverviewTool() {
+export async function billingOverviewTool(o: { days?: number } = {}) {
   const all = await clients();
   const linked = all.filter((c) => c.stripeCustomerId || c.stripeSubscriptionId);
   const { byId, failed } = await stripeSummaries(linked);
@@ -246,6 +255,16 @@ export async function billingOverviewTool() {
       newMrrLast30Days: acct.totals.newMrr30, lostMrrLast30Days: acct.totals.lostMrr30,
     } : null,
     upcomingBillingNext30Days: acct ? { charges: acct.upcoming.length, amount: money(acct.upcoming.reduce((t, u) => t + u.amount, 0)) } : null,
+    // The billing calendar (Performance): who Stripe charges, by day.
+    billingCalendar: acct ? (() => {
+      const days = Math.min(30, Math.max(1, Math.round(o.days ?? 14)));
+      const until = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+      const rows = acct.upcoming.filter((u) => u.date <= until);
+      return { nextDays: days, charges: rows.length, amount: money(rows.reduce((t, u) => t + u.amount, 0)), entries: rows.map((u) => ({ date: u.date, ...(u.date < new Date().toISOString().slice(0, 10) ? { state: "due — Stripe has not charged it yet" } : {}), client: (u.clientId && all.find((c) => c.id === u.clientId)?.name) || "(not tied to a client)", amount: u.amount, every: u.every })) };
+    })() : null,
+    failedPayments: acct ? all.flatMap((c) => (acct.byClient.get(c.id)?.failedInvoices ?? []).map((i) => ({ client: c.name, invoice: i.number, unpaid: i.amountRemaining, attempts: i.attemptCount, nextTry: i.nextAttempt ? easternDay(i.nextAttempt * 1000) : null }))) : null,
+    portalBlocks: await openPortalBlocks().then((b) => b.map((x) => ({ client: all.find((c) => c.id === x.clientId)?.name ?? x.clientId, mode: x.mode === "blocked" ? "blocked" : "dry run (would be blocked)", since: x.since }))).catch(() => []),
+    failedPaymentRule: `Every failed attempt notifies the OS bell; after ${blockThreshold()} attempts (first + 3 retries) the portal is blocked until paid — ${blockingEnabled() ? "ON" : "dry run only for now"}.`,
     clientsOnStripe: linked.length,
     clientsNotOnStripe: all.filter((c) => !c.stripeCustomerId && !c.stripeSubscriptionId).map((c) => c.name),
     byMrr: mrrRows.filter((r) => r.mrr != null).sort((a, b) => (b.mrr ?? 0) - (a.mrr ?? 0)),
@@ -299,13 +318,14 @@ export async function clientIntroductionTool(query: string) {
   if (!r.client) return r.error;
   const c = r.client;
   const v = await introView(c.id);
+  const byTerritory = (c.contact.territories ?? []).length > 0 || c.contact.extra.some((p) => (p.territories ?? []).length > 0);
   const cc = introContactEmails({ name: c.name, contactName: c.contact.name, contactRole: c.contact.role, contactEmail: c.contact.email, brokerage: c.contact.brokerage, extraContacts: c.contact.extra });
   return {
     client: c.name,
     whatIsSent: v.custom ? "the client's custom introduction" : v.standard ? "the standard introduction" : "nothing — the introduction is not set up",
     text: v.custom ?? v.standard,
     missingForStandard: v.missing,
-    copiedIn: v.routes ? "only the people for the lead's territory — see byTerritory" : cc,
+    copiedIn: byTerritory ? "only the people for the lead's territory — see byCampaign" : cc,
     sentFrom: introSenderEmail(),
     // Territories (6 Oct): each person may cover places; a lead goes to the
     // people whose place is in its campaign name, plus anyone with none.
@@ -313,9 +333,14 @@ export async function clientIntroductionTool(query: string) {
       { person: c.contact.name, covers: c.contact.territories ?? [] },
       ...c.contact.extra.filter((p) => p.name).map((p) => ({ person: p.name, covers: p.territories ?? [] })),
     ].filter((p) => p.person),
-    byTerritory: v.routes?.map((x) => ({ campaign: x.campaign, introducedTo: x.fallback ? "everyone (the campaign names no territory)" : x.people })) ?? null,
-    note: "This is the introduction email the Introduce button and the reply agent send — NOT the campaign's cold email (that is campaign_copy). {{lead.*}} and {{sender.*}} are filled in per lead when it is sent." +
-      (v.routes ? " This client introduces BY TERRITORY: the text shown names everyone, but each lead's introduction names and copies in only the people whose territory appears in the lead's campaign name (plus anyone with no territory); a campaign naming no territory goes to everyone." : ""),
+    byCampaign: v.routes?.map((x) => ({ campaign: x.campaign, portal: x.portal, introducedTo: x.fallback ? "everyone (the campaign names no territory)" : x.people, wording: x.variant ? `the "${x.variant}" variant` : "the usual introduction" })) ?? null,
+    subject: introSubject(introBrokerage({ brokerage: c.contact.brokerage, name: c.name }), "{lead first name}"),
+    wordingByMarketOrPerson: v.variants.map((x) => ({ name: x.label, forCampaignsNaming: x.places, forLeadsRoutedTo: x.people, text: x.text })),
+    howToSetWording: v.canSaveVariants
+      ? `Different wording for a market or a person is set on Clients → ${c.name} → Introduce to → "Different wording by market or person".${v.variants.length ? "" : " None is set yet."}`
+      : "Different wording by market or person becomes available once database migration 0030 is run.",
+    note: "This is the introduction email the Introduce button and the reply agent send — NOT the campaign's cold email (that is campaign_copy). {{lead.*}} and {{sender.*}} are filled in per lead when it is sent. Its subject is \"Intro: {lead first name} & {brokerage}\" (on EmailBison it goes out as a new email). A lead with no phone or brokerage gets the sentence rewritten, never a blank. wordingByMarketOrPerson replaces the text for leads whose campaign names that place (or who are routed to that person). After Introduce, the operator can add an opening line drawn from the lead's own reply (\"Line from their reply\")." +
+      (byTerritory ? " This client introduces BY TERRITORY: the text shown names everyone, but each lead's introduction names and copies in only the people whose territory appears in the lead's campaign name (plus anyone with no territory); a campaign naming no territory goes to everyone." : ""),
   };
 }
 

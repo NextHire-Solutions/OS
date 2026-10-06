@@ -18,6 +18,7 @@ import {
   scrapeActivityTool,
 } from "./tools-phase2.ts";
 import { infrastructureHealthTool, onboardingPipelineTool } from "./tools-phase3.ts";
+import { notificationsTool, profileCompletenessTool } from "./tools-phase9.ts";
 import {
   campaignCopyTool,
   clientCommercialsTool,
@@ -385,7 +386,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "client_record",
       description:
-        "The client's MASTER RECORD \u2014 the source of truth for: status (active/onboarding/paused/churned) and since when; plan; sign-up, start, onboarding, pause and churn dates; salesperson, account manager and sender; point of contact; website and Zillow profile; markets (MLS and areas); billing schedule; targets and this billing cycle; its portals; who introductions are addressed to. Use for ANY question about who runs, sold or owns a client, its status or its dates. A client can have several portals \u2014 this is ONE client.",
+        "The client's MASTER RECORD \u2014 the source of truth for: status (active/onboarding/paused/churned) and since when; plan; sign-up (the first $1 charge in Stripe), onboarding, pause and churn dates; PROFILE COMPLETENESS (% and what is missing, with where to fix it); saved views in the Database and leads assigned; salesperson, account manager and sender; point of contact; website and Zillow profile; markets (MLS and areas); billing schedule; targets and this billing cycle; its portals; who introductions are addressed to. Use for ANY question about who runs, sold or owns a client, its status or its dates. A client can have several portals \u2014 this is ONE client.",
       parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
     },
   },
@@ -403,7 +404,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "client_billing",
       description:
-        "One client's money, from Stripe: MRR, total spend (all successful charges less refunds), subscription status and next charge, unpaid / past-due invoices, and recent invoices. Answers 'what does X pay', 'has X paid', 'is X behind on payment'.",
+        "One client's money, from Stripe, across EVERY subscription and card it has: MRR, total spend (all successful charges less refunds), each subscription (current = latest, paused or live, next charge), failed payments with attempts, whether its portal is (or in dry run would be) blocked for an unpaid invoice, unpaid / past-due invoices, recent invoices. Answers 'what does X pay', 'has X paid', 'is X behind on payment', 'is X's portal blocked'.",
       parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
     },
   },
@@ -412,8 +413,9 @@ export const TOOL_SCHEMA = [
     function: {
       name: "billing_overview",
       description:
-        "Revenue across the business, from Stripe: total billed (all time), MRR, ARR, active and paused subscriptions, growth (this month vs the same days last month), new and lost MRR, the next 30 days' billing, clients ranked by MRR, all unpaid and past-due invoices with amounts, and which clients are not linked to Stripe. Answers 'what is our MRR', 'who owes us money', 'which invoices are past due'.",
-      parameters: {"type": "object", "properties": {}},
+        "WHO GETS CHARGED WHEN: billingCalendar lists Stripe's upcoming charges for the next `days` (default 14, max 30) — use it for 'who is billed this week / next 7 days'. " +
+        "Revenue across the business, from Stripe: total billed (all time), MRR, ARR, active and paused subscriptions, growth (this month vs the same days last month), new and lost MRR, the billing calendar (next 30 days' charges), clients ranked by MRR, failed payments by client, portals blocked (or in dry run) for unpaid invoices, all unpaid and past-due invoices with amounts, and which clients are not linked to Stripe. Answers 'what is our MRR', 'who owes us money', 'which invoices are past due'.",
+      parameters: {"type": "object", "properties": {"days": {"type": "number", "description": "billing calendar window, 1-30"}}},
     },
   },
   {
@@ -439,7 +441,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "client_introduction",
       description:
-        "The INTRODUCTION email for a client \u2014 the message the Introduce button and the reply agent send when handing a lead to the client: its text (custom or standard), who is copied in, the address it is sent from, and \u2014 for clients whose people have territories \u2014 which person each campaign\u2019s leads go to. Not the campaign's cold email (that is campaign_copy).",
+        "The INTRODUCTION email for a client \u2014 the message the Introduce button and the reply agent send when handing a lead to the client: its text (custom or standard), its subject ('Intro: {lead first name} & {brokerage}'), who is copied in, the address it is sent from, wording that differs by market or person, and \u2014 per campaign \u2014 its portal, which person its leads go to and which wording they get. Not the campaign's cold email (that is campaign_copy).",
       parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
     },
   },
@@ -502,7 +504,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "billing_cycles",
       description:
-        "Client Health Bi-Weekly: who bills next and how many introductions each still owes in its current billing cycle (carry included). Pass withinDays to see only clients billing in that many days. Answers 'who bills this week and are they on track'.",
+        "Client Health Bi-Weekly: INTRODUCTIONS owed per billing cycle \u2014 each client's cycle end and how many introductions it still owes (carry included). Pass withinDays for cycles ending soon. Answers 'are the clients billing this week on track for introductions'. For who Stripe CHARGES and how much, use billing_overview's billingCalendar.",
       parameters: {"type": "object", "properties": {"withinDays": {"type": "number"}}},
     },
   },
@@ -599,6 +601,24 @@ export const TOOL_SCHEMA = [
   {
     type: "function" as const,
     function: {
+      name: "profile_completeness",
+      description:
+        "Profile completeness across clients (the % on the Clients list): each client's score and what is missing, lowest first. Filter by status, by one missing item ('saved view', 'leads', 'account manager', 'MLS', 'Stripe', 'website'...) or by client. Also lists clients whose sign-up date is after their onboarding date. Answers 'which clients have no saved views', 'whose profiles are incomplete', 'what is missing for X'.",
+      parameters: {"type": "object", "properties": {"status": {"type": "string"}, "missing": {"type": "string"}, "client": {"type": "string"}}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "notifications",
+      description:
+        "The OS notifications bell: failed payments (each Stripe attempt) and portal blocks, newest first, plus the rule (portal blocked after the first attempt + 3 retries; dry run until switched on). Answers 'any alerts', 'which payments failed', 'whose portal is blocked'.",
+      parameters: {"type": "object", "properties": {}},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "recent_introductions",
       description:
         "Agents recently introduced to clients (the portal pipeline): who, to which client/portal, when, and the stage they are at now, plus counts per portal. Default the last 14 days; optionally one client.",
@@ -611,13 +631,13 @@ export const SYSTEM_PROMPT = `You answer questions about a lead-generation busin
 
 There are five products: Master Inbox (email threads, client portals, the reply agent), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
 
-Every OS screen has a tool: Home (workspace_home), Performance (business_performance), Consistency (data_consistency), Client Health's Bi-Weekly and Client Success (billing_cycles, client_success), Campaign Analytics' KPIs, Attribution, Copy & Offer, Schedule and one campaign (campaign_kpis, attribution, offer_performance, send_schedule, campaign_detail), Onboarding per client (onboarding_client), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
+Every OS screen has a tool: Home (workspace_home), Performance (business_performance, and billing_overview for its billing cards and calendar), the notifications bell (notifications), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Bi-Weekly and Client Success (billing_cycles, client_success), Campaign Analytics' KPIs, Attribution, Copy & Offer, Schedule and one campaign (campaign_kpis, attribution, offer_performance, send_schedule, campaign_detail), Onboarding per client (onboarding_client), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
 
 A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
 How to answer:
 - When a question names a client, resolve it with find_client first. If it returns candidates, ASK which one — never pick.
-- A question about ONE CAMPAIGN — a client plus a market or city, "the Jeff Cook Greenville campaign" — goes straight to campaign_detail with those words; it finds the campaign itself.
+- A question about ONE CAMPAIGN'S NUMBERS — a client plus a market or city, "the Jeff Cook Greenville campaign" — goes straight to campaign_detail with those words; it finds the campaign itself. But WHO a campaign's leads are introduced to (or which wording or portal they get) is client_introduction for the client, never campaign_detail.
 - Client names often look like a person's name: "Jeff Cook" is the client Jeff Cook Real Estate, not a lead. When a name could be a client, try find_client before find_lead. Who a client's leads are introduced to — including by territory or campaign — is client_introduction.
 - Give the figures you were given. Do not estimate, extrapolate, or fill a gap with a plausible number.
 - Every fact about the business — a name, a figure, a date, a status — must come from a tool result in THIS turn or from an earlier answer in this conversation. A follow-up asking for something not already shown ("and who is their account manager?") needs the tool again. Never answer from memory or from the examples in these instructions; they are illustrations, not data.
@@ -625,7 +645,7 @@ How to answer:
 - Say which product and period a figure came from, so it can be checked.
 - Be brief and concrete. Lead with the answer, then the supporting numbers. Tables for more than three rows.
 - If the tools cannot answer the question, say what is missing rather than guessing around it.
-- You can only READ. Asked to change anything — pause or resume a campaign, send an email, edit, add or delete a client — say plainly that you cannot make changes, then where in the OS it is done (campaigns: Campaign Analytics → the campaign; clients: Clients → the client's record; emails: Master Inbox). You may add the current state you looked up.
+- You can only READ. Asked to change anything — pause or resume a campaign, send an email, edit, add or delete a client — say plainly that you cannot make changes, then where in the OS it is done (campaigns: Campaign Analytics → the campaign; clients: Clients → the client's record; emails: Master Inbox). You may add the current state you looked up. EXCEPTION: something the OS cannot do at all — delaying a Stripe charge — is "not available in the OS yet"; never send them to a screen for it.
 
 ANSWER THE QUESTION ASKED, OR SAY YOU CANNOT.
 A near-miss is worse than a refusal. If a tool returns something ADJACENT to what was asked, do not
@@ -642,6 +662,7 @@ having a way to look it up, in your own words, and point at the product that hol
 
 Money IS available: MRR, total spend and invoices come from Stripe (client_billing, billing_overview) and
 payouts from commissions. A plan name is still not a price — never infer one from it.
+Built on 6 Oct and real — look them up, never deny them: profile completeness % with what is missing and where to fix it; saved views and leads per client; sign-up date = the first $1 Stripe charge (flagged when after onboarding); billing across every subscription a client has (54 Realty has several); pause/resume per subscription on the record; failed-payment notifications in the OS bell and the portal block after 4 failed attempts in total — Stripe's first attempt plus 3 recovery retries (a dry run until switched on: nothing is blocked yet); the billing calendar and MRR/ARR/growth on Performance; the introduction subject "Intro: {first name} & {brokerage}", wording by market or person, a missing phone or brokerage rewrites the sentence (e.g. "who is currently with Compass." instead of "reached directly at  and"), and the opt-in "Line from their reply". DELAYING a charge (e.g. by 7 days) is NOT available anywhere — not on the record, not in Stripe from the OS; say so plainly and do not point to a place to do it.
 Status lists come from list_clients (the master record), never from onboarding_pipeline.
 
 CLIENT REPORT. For "how is X doing", "full report", "account review" or "health of X": call client_report ONCE, straight away with the name as given — it finds the client itself (no find_client first; if it returns candidates, ask which). Write it up exactly in this shape — a readable report, not a list of fields:
@@ -749,6 +770,12 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   reply_templates: (a) => replyTemplatesTool(typeof a.query === "string" && a.query ? a.query : undefined),
   recent_introductions: (a) => recentIntroductionsTool({ days: typeof a.days === "number" ? a.days : undefined, client: typeof a.client === "string" && a.client ? a.client : undefined }),
   client_record: (a) => clientRecordTool(String(a.client ?? "")),
+  profile_completeness: (a) => profileCompletenessTool({
+    status: typeof a.status === "string" && a.status ? a.status : undefined,
+    missing: typeof a.missing === "string" && a.missing ? a.missing : undefined,
+    client: typeof a.client === "string" && a.client ? a.client : undefined,
+  }),
+  notifications: () => notificationsTool(),
   list_clients: (a) => listClientsTool({
     status: typeof a.status === "string" && a.status ? a.status : undefined,
     accountManager: typeof a.accountManager === "string" && a.accountManager ? a.accountManager : undefined,
@@ -757,7 +784,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     market: typeof a.market === "string" && a.market ? a.market : undefined,
   }),
   client_billing: (a) => clientBillingTool(String(a.client ?? "")),
-  billing_overview: () => billingOverviewTool(),
+  billing_overview: (a) => billingOverviewTool({ days: typeof a.days === "number" ? a.days : undefined }),
   commissions: (a) => commissionsTool({
     run: typeof a.run === "string" && /^\d{4}-\d{2}-(01|15)$/.test(a.run) ? a.run : undefined,
     person: typeof a.person === "string" && a.person ? a.person : undefined,
