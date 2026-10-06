@@ -520,6 +520,20 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   first three are filled, Remove per person. Everyone is named in the standard
   introduction and copied in; a client with a CUSTOM intro gets them in Cc
   only — its text is the client's own.
+- **Client reports (6 Oct).** "How is X doing / full report" goes to
+  `client_report` (tools-report.ts): one call reads the master record,
+  Stripe, Campaign Analytics for the client (last 30 days vs the 30 before,
+  and vs the business on the same platforms — `campaign_kpis` now takes a
+  `client`), the portal pipeline, Client Health (cycle, weekly volume, health
+  score), reply labels, the intro setup and scrapes, and computes the verdict
+  (On track / Needs attention / At risk; Paused / Churned), attention items
+  with concrete next steps naming the account manager, and strengths. The
+  system prompt fixes the report's shape (heading + verdict, tables,
+  Needs attention, Going well, sources). Paused/churned clients are checked
+  for campaigns and Stripe stopped to match. It also flags a billing cycle
+  that disagrees with Stripe (Jeff Cook: record 6 Oct vs Stripe 16 Oct).
+  Facts must come from tools — a follow-up once answered "Amy" from an
+  example in a tool description; examples now use placeholders.
 - **Assistant full test (6 Oct).** All 44 tools run through the real engine
   on production data (scripted model, read-only), key figures checked against
   independent queries; 62 real questions on production, twice, 62/62 both
