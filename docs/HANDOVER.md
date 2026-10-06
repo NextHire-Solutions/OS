@@ -11,6 +11,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
+| **0.2** | [What changed on 6–7 October](#02-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
 | **0.3** | [What changed on 30 September](#03-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
 | **0.4** | [What changed on 29 September](#04-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
 | **0.5** | [What changed on 28 September](#05-what-changed-on-28-september) — the latest work, how it was verified, what is open |
@@ -157,6 +158,52 @@ deliberate, not outstanding: the standalone tools keep their own Add Client
 buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
+
+## 0.2 What changed on 6–7 October
+
+The client's feedback list (sections 2–8), built and deployed. OS commits
+`e5e27c4` (Home, Client Health links, start date, speed), `e97f8d8` (profile,
+billing, intros) and `ed4f98b` (assistant); Master Inbox `20f6af9` (intros,
+portal billing hold).
+
+**Migration 0030 (`migrations/0030_billing_profile.sql`) must be run** in the
+Master Inbox Supabase SQL editor. Additive only — four tables
+(`os_client_stripe_links`, `os_notifications`, `os_portal_blocks`,
+`os_client_saved_views`) and one column (`os_clients.intro_variants`). Every
+reader tolerates it missing: before it runs, linking Stripe customers or saved
+views, the bell and intro variants say "needs 0030", and nothing else changes.
+
+| Item | What was built | Where |
+|---|---|---|
+| Profile completeness | 22 checks → %, on the list (column) and the record (chip + "Complete the profile" with Fix → buttons that open the field) | `lib/clients/completeness.ts` |
+| Saved views and leads | Database `saved_lists` matched to clients by name or the view's Client filter; link / "Not this client" on Campaigns (0030) | `lib/clients/saved-views*.ts` |
+| Billing across subscriptions | every customer and subscription a client has; current = latest; a shared customer is split by subscription; links/exclusions (0030) | `lib/clients/billing-model.ts`, `billing-account.ts` |
+| Pause / Resume per subscription | on the record's Billing; pause, churn and delete pause every collecting subscription. **Delay 7 days: not built — waiting on the client.** | `client-record.tsx`, `status-propagate.ts`, `delete.ts` |
+| Failed payments | every Stripe attempt → a notification in the bell (admins); after 4 attempts (first + 3 retries) a portal block row | `lib/clients/billing-watch.ts`, every 15 min on Railway |
+| Portal block | **dry run** until `OS_PORTAL_BLOCK_ENABLED=1` on the os service; threshold `OS_PORTAL_BLOCK_AFTER_ATTEMPTS` (default 4). Master Inbox shows a "paused — pay the invoice" page for `mode='blocked'` rows only; fails open, remembered 60 s, 1.5 s timeout. Paying lifts it. | MI `lib/portals/billing-hold.ts` |
+| Sign-up date | the first $1 charge (replacing a card does not move it); flagged when after onboarding (same day OK); read-only on the record when it comes from Stripe | `lib/clients/signup.ts` |
+| Performance | Total billed, MRR, ARR, active/paused subscriptions, growth (same days last month), billing calendar (30 days) | `performance.tsx` |
+| Intro subject | "Intro: {lead first name} & {brokerage}" — button and agent handover; on EmailBison a changed subject is a new email (`/replies/new`) | `intro-macro.ts` (both apps, identical) |
+| Missing phone / company | the sentence is rewritten, never left with a blank; covers the standard wording and the four phrasings in clients' own intros | `fitIntroToLead` |
+| Wording by market or person | variants on the Introduce to tab, chosen by the lead's campaign name (or routed person) | `intro_variants`, `pickIntroVariant` |
+| Opening line | opt-in "Line from their reply" after Introduce: one sentence from the lead's latest reply, refused for declines/removals and never a promise | `intro-opener.ts`, read-only route |
+| Assistant | `profile_completeness`, `notifications`; record/billing/intro tools extended; prompt lists what exists (and that delaying a charge does not) | `tools-phase9.ts` |
+
+**Verification.** 1,509 OS and 126 Master Inbox tests. Real Chrome (writes
+blocked): record 17/17 and intros 22/22 on production. Every one of the 57
+portal URLs answered identically before and after the Master Inbox deploy
+(33 open → welcome 200 with the client's name; 24 off → 404). The assistant:
+70/70 earlier questions and 16/16 new ones; 16/16 on production. The intro
+rewrite was checked against all 54 clients' real intros (208 renderings).
+
+**Found while checking, not changed:** Front Range Collective's custom intro has
+a line holding only "." and Kelly + Co's a double space before the phone;
+Rise Real Estate Tujunga has no saved view of its own (the only "Rise" view is
+the churned Antelope client's) — link it on the record if it is theirs;
+Chestnut Park West ($1,875) and DiGiulio Group ($1,545) have invoices still
+open in Stripe after 9 attempts; Properties & Estates has no introduction
+people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
+Revolution) — add a person per market (territory "Boston" / "Florida").
 
 ## 0.3 What changed on 30 September
 
