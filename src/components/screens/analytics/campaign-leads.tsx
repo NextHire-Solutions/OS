@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 
 import { fullNumber } from "@/lib/tools/analytics/format.ts";
 import {
@@ -15,6 +16,7 @@ import {
   type LeadRow,
 } from "@/lib/tools/analytics/lead-columns.ts";
 import { CAMPAIGN_LEADS_URL, selectAllLeadIds, useAnalyticsData } from "./actions";
+import { invalidate } from "../lazy";
 import { RemoveLeadsDialog } from "./remove-leads-dialog";
 import {
   ColumnPicker,
@@ -129,12 +131,59 @@ export function CampaignLeads({
    * Keyed on the campaign alone, so the status counts survive paging, sorting
    * and searching instead of being recomputed with every one of them.
    */
-  const facetQuery = useAnalyticsData<{ facets: Array<{ status: string; leads: number }> }>(
-    CAMPAIGN_LEADS_URL(campaignId, "facets=1&page=1"),
-  );
-  const { data, loading, error, reload } = useAnalyticsData<Response>(
-    CAMPAIGN_LEADS_URL(campaignId, params.toString()),
-  );
+  const facetUrl = CAMPAIGN_LEADS_URL(campaignId, "facets=1&page=1");
+  const rowsUrl = CAMPAIGN_LEADS_URL(campaignId, params.toString());
+
+  /*
+   * KEEP "INTRODUCED" CURRENT (Amy, 8 Oct). Screen data is cached per URL for
+   * the life of the browser tab (lazy.tsx), so the first answer would stand
+   * until a full reload — and someone who applies the Introduction label in
+   * the inbox and comes back here expects to see it. So the tab loads fresh
+   * when it opens, and again whenever they come back to this page or to this
+   * browser window. (The status itself is read live from Master Inbox.)
+   */
+  useState(() => {
+    invalidate(facetUrl);
+    invalidate(rowsUrl);
+    return null;
+  });
+
+  const facetQuery = useAnalyticsData<{ facets: Array<{ status: string; leads: number }> }>(facetUrl);
+  const { data, loading, error, reload } = useAnalyticsData<Response>(rowsUrl);
+
+  const pathname = usePathname();
+  const onPage = !pathname || pathname.includes(`/campaigns/${campaignId}`);
+  const refresh = useRef<() => void>(() => {});
+  refresh.current = () => {
+    void reload();
+    void facetQuery.reload();
+  };
+  const lastRefresh = useRef(0);
+  const wasOnPage = useRef(onPage);
+  useEffect(() => {
+    // Back on this campaign after visiting another screen (screens stay mounted).
+    if (onPage && !wasOnPage.current) {
+      lastRefresh.current = Date.now();
+      refresh.current();
+    }
+    wasOnPage.current = onPage;
+  }, [onPage]);
+  useEffect(() => {
+    // Back in this browser window or tab. Focus and visibility both fire on
+    // return, so one refresh per two seconds.
+    const onReturn = () => {
+      if (document.visibilityState !== "visible" || !wasOnPage.current) return;
+      if (Date.now() - lastRefresh.current < 2000) return;
+      lastRefresh.current = Date.now();
+      refresh.current();
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, []);
 
   const columns = useMemo(() => LEAD_COLUMNS.filter((c) => visible.includes(c.key)), [visible]);
   const rows = data?.rows ?? [];
