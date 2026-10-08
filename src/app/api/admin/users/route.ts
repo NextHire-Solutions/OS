@@ -280,6 +280,16 @@ export async function DELETE(request: Request) {
   try {
     await deleteUser(email);
     console.log(`[admin/users] ${session.email} deleted ${email}`);
+    /*
+     * Removing someone removes their roles too (9 Oct). Their sign-in went with
+     * deleteUser, but a Salesperson record stayed active — so Commissions kept
+     * listing a person the admin had just removed (Sankalp). The record is
+     * switched off, not deleted: clients and past payouts may still name it.
+     * Best effort: the removal itself has already succeeded.
+     */
+    await setSalesperson({ email, name: person.name ?? null }, false, null, session.email).catch((e) =>
+      console.error(`[admin/users] could not switch off ${email}'s salesperson record`, e),
+    );
     return NextResponse.json({ ok: true, email, deleted: true });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Could not delete." }, { status: 500 });
