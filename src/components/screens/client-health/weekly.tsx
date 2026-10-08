@@ -155,7 +155,8 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         flush
       >
         <div className="ds-table-scroll">
-          <table className="ds-table" style={{ minWidth: 2300 }}>
+          {/* ch-tight (9 Oct): headers wrap, so a column is as wide as its values rather than its label. */}
+          <table className="ds-table ch-tight">
             <thead>
               <tr>
                 <SortableTh col="campaigns" sort={sort} onClick={toggleSort} title="Sort by number of active campaigns">Client</SortableTh>
@@ -260,7 +261,7 @@ function SortableTh({
   return (
     <th
       onClick={() => onClick(col)}
-      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+      style={{ cursor: "pointer", userSelect: "none" }}
       title={`${title ?? "Sort"} — click to cycle descending, ascending, then reset`}
       aria-sort={active ? (sort.dir === "desc" ? "descending" : "ascending") : "none"}
     >
