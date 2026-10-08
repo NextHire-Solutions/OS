@@ -417,6 +417,21 @@ export class EmailBisonClient {
     return rows.map((r) => r.id);
   }
 
+  /**
+   * This campaign's leads matching a term — with an email address, the lead
+   * itself if it is on the campaign (checked 9 Oct: 1 hit when attached, 0 once
+   * removed). `total` says whether the search actually narrowed.
+   */
+  async searchCampaignLeads(campaignId: number, term: string): Promise<{ total: number; leadIds: number[] }> {
+    const response = await this.request<{ data?: Array<{ id: number }>; meta?: { total?: number } }>(
+      `/api/campaigns/${campaignId}/leads?search=${encodeURIComponent(term)}`,
+    );
+    return {
+      total: Number(response?.meta?.total ?? response?.data?.length ?? 0),
+      leadIds: (response?.data ?? []).map((r) => Number(r.id)),
+    };
+  }
+
   async getCampaignLeadCount(campaignId: number): Promise<number> {
     const response = await this.request<{ meta?: { total?: number } }>(
       `/api/campaigns/${campaignId}/leads?page=1`,

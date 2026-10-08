@@ -238,6 +238,8 @@ export interface EBLead {
   title?: string | null;
   status?: string | null;
   custom_variables?: Array<{ name?: string; value?: string | null }> | null;
+  /** The campaigns this lead is on now, one entry each (checked 9 Oct: empty once removed). */
+  lead_campaign_data?: Array<{ campaign_id?: number | null; status?: string | null }> | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

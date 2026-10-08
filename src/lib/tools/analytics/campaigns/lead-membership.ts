@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { describeEmailBisonError, invalidIndices } from "@/lib/tools/analytics/emailbison/errors.ts";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
+import { confirmOff, type CampaignSearch, type LeadLookup } from "./confirm-off.ts";
 
 /*
  * Adding and removing a campaign's leads.
@@ -50,6 +51,73 @@ export interface MembershipResult {
   skipped: number;
   chunks: Array<{ size: number; ok: boolean; message?: string; error?: string }>;
   batchId: string;
+  /**
+   * Removal only. Refused by EmailBison as not on the campaign AND confirmed
+   * gone by two more EmailBison checks (confirm-off.ts) — now hidden here too.
+   */
+  alreadyOff?: number;
+  /** Removal only. Refused as not on the campaign but not confirmed — left listed. */
+  unconfirmed?: number;
+}
+
+/** Most refused ids double-checked in one removal; any beyond stay listed and are reported. */
+const MAX_CONFIRM = 300;
+
+/**
+ * Of the ids EmailBison refused as "not on this campaign", the ones it
+ * CONFIRMS are gone — see confirm-off.ts for the two checks and why. Reads
+ * only. Every failure counts as unsure, so nothing is hidden on a guess.
+ */
+async function confirmGone(
+  eb: ReturnType<typeof createEmailBisonClient>,
+  campaignId: number,
+  ids: number[],
+): Promise<{ off: number[]; unsure: number[] }> {
+  const off: number[] = [];
+  const unsure: number[] = ids.slice(MAX_CONFIRM);
+  const toCheck = ids.slice(0, MAX_CONFIRM);
+
+  // Our copy of each lead's email, for a lead EmailBison has deleted outright.
+  const known = new Map<number, string | null>();
+  const sb = getSupabase();
+  for (const part of chunk(toCheck, 500)) {
+    const { data } = await sb.from("leads").select("id, email").in("id", part);
+    for (const l of (data ?? []) as Array<{ id: number; email: string | null }>) known.set(Number(l.id), l.email);
+  }
+
+  // Eight at a time; the client's own gate paces EmailBison underneath.
+  for (const part of chunk(toCheck, 8)) {
+    await Promise.all(
+      part.map(async (id) => {
+        let lead: LeadLookup;
+        try {
+          const found = await eb.getLead(id);
+          lead = found
+            ? {
+                status: "found",
+                campaignIds: (found.lead_campaign_data ?? [])
+                  .map((c) => Number(c.campaign_id))
+                  .filter((n) => Number.isFinite(n)),
+                email: found.email ?? null,
+              }
+            : { status: "deleted" };
+        } catch {
+          lead = { status: "error" };
+        }
+        const email = (lead.status === "found" ? lead.email : null) ?? known.get(id) ?? null;
+        let search: CampaignSearch | null = null;
+        if (email) {
+          try {
+            search = { ok: true, ...(await eb.searchCampaignLeads(campaignId, email)) };
+          } catch {
+            search = { ok: false };
+          }
+        }
+        (confirmOff(campaignId, id, lead, search) === "off" ? off : unsure).push(id);
+      }),
+    );
+  }
+  return { off, unsure };
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -117,6 +185,8 @@ export async function removeLeads(
   // The count before, so `applied` can be measured rather than assumed.
   const before = await eb.getCampaignLeadCount(campaignId);
   const applied: number[] = [];
+  // Ids EmailBison refused as not on this campaign — confirmed or not below.
+  const refused: number[] = [];
 
   for (const part of chunk(leadIds, CHUNK)) {
     /*
@@ -152,9 +222,18 @@ export async function removeLeads(
           // Those ids are not on this campaign, which is the outcome the caller
           // wanted anyway. Drop them and remove the rest.
           const drop = new Set(bad);
+          refused.push(...batch.filter((_, i) => drop.has(i)));
           batch = batch.filter((_, i) => !drop.has(i));
           attempt++;
           continue;
+        }
+        if (attempt === 0 && bad.length === batch.length && bad.every((i) => i < batch.length)) {
+          // EmailBison says NONE of these are on the campaign, so there is
+          // nothing to remove. Not a failure — but not taken on its word
+          // either: confirmGone checks each one before anything is hidden.
+          refused.push(...batch);
+          result.chunks.push({ size: batch.length, ok: true, message: "None of these were on the campaign in EmailBison" });
+          break;
         }
         result.ok = false;
         result.chunks.push({
@@ -173,12 +252,16 @@ export async function removeLeads(
   result.applied = Math.max(0, before - after);
   result.skipped = Math.max(0, result.attempted - result.applied);
 
+  const { off, unsure } = refused.length ? await confirmGone(eb, campaignId, refused) : { off: [], unsure: [] };
+  result.alreadyOff = off.length;
+  result.unconfirmed = unsure.length;
+
   /*
    * Marked only for the ids in chunks EmailBison accepted. Marking the whole
    * selection would claim a removal that did not happen, and the screen would
    * disagree with the campaign.
    */
-  if (applied.length) {
+  if (applied.length || off.length) {
     const sb = getSupabase();
     const stamp = new Date().toISOString();
     for (const part of chunk(applied, 1000)) {
@@ -188,9 +271,24 @@ export async function removeLeads(
         .eq("campaign_id", campaignId)
         .in("lead_id", part);
     }
+    /*
+     * Already off in EmailBison, confirmed three ways — hidden here so the list
+     * matches the campaign and they cannot be picked again. Said so in
+     * removed_by: this person did not remove them, EmailBison already had.
+     */
+    for (const part of chunk(off, 1000)) {
+      await sb
+        .from("campaign_leads")
+        .update({ removed_at: stamp, removed_by: `${actor} (already off in EmailBison)` })
+        .eq("campaign_id", campaignId)
+        .in("lead_id", part);
+    }
   }
 
-  await audit("remove-leads", campaignId, teamId, actor, batchId, result);
+  await audit("remove-leads", campaignId, teamId, actor, batchId, result, {
+    alreadyOff: off.length,
+    unconfirmed: unsure.length,
+  });
   return result;
 }
 

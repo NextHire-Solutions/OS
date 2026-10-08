@@ -111,13 +111,38 @@ export function RemoveLeadsDialog({
             gone — so "asked for 500, removed 480" is a real outcome and
             saying only "done" would be a lie of omission.
           */}
-          {result.skipped > 0 ? (
+          {/*
+            Leads EmailBison had ALREADY taken off the campaign (removed there
+            directly, or dropped as bounced) while this list still showed them.
+            Hidden here only once EmailBison confirmed it three ways — see
+            lib/tools/analytics/campaigns/confirm-off.ts.
+          */}
+          {(result.alreadyOff ?? 0) > 0 ? (
             <p className="tnum mut" style={{ margin: 0 }}>
-              {fullNumber(result.skipped)} of the {fullNumber(result.attempted)} selected{" "}
-              {result.skipped === 1 ? "was" : "were"} already off this campaign, so nothing changed for{" "}
-              {result.skipped === 1 ? "it" : "them"}.
+              {fullNumber(result.alreadyOff!)} of the {fullNumber(result.attempted)} selected{" "}
+              {result.alreadyOff === 1 ? "was" : "were"} already off this campaign in {platformName} (checked
+              three ways), so {result.alreadyOff === 1 ? "it is" : "they are"} now hidden from this list too.
             </p>
           ) : null}
+          {(result.unconfirmed ?? 0) > 0 ? (
+            <Warn>
+              {fullNumber(result.unconfirmed!)} {result.unconfirmed === 1 ? "lead was" : "leads were"} refused by{" "}
+              {platformName} as not on this campaign, but that could not be double-checked just now, so{" "}
+              {result.unconfirmed === 1 ? "it is" : "they are"} still listed. Try removing{" "}
+              {result.unconfirmed === 1 ? "it" : "them"} again in a minute.
+            </Warn>
+          ) : null}
+          {(() => {
+            // Anything not removed and not explained above (or an older server's answer).
+            const other = result.skipped - (result.alreadyOff ?? 0) - (result.unconfirmed ?? 0);
+            return other > 0 ? (
+              <p className="tnum mut" style={{ margin: 0 }}>
+                {fullNumber(other)} of the {fullNumber(result.attempted)} selected{" "}
+                {other === 1 ? "was" : "were"} already off this campaign, so nothing changed for{" "}
+                {other === 1 ? "it" : "them"}.
+              </p>
+            ) : null;
+          })()}
           {(result.chunks ?? []).some((c) => !c.ok) ? (
             <Warn>
               <b>Some of it did not go through:</b>

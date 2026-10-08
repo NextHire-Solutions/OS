@@ -315,6 +315,10 @@ export interface RemoveLeadsResult {
   applied: number;
   skipped: number;
   chunks: Array<{ size: number; ok: boolean; message?: string; error?: string }>;
+  /** Already off the campaign in EmailBison, confirmed three ways — now hidden here too. */
+  alreadyOff?: number;
+  /** EmailBison said not on the campaign, but that could not be confirmed — still listed. */
+  unconfirmed?: number;
 }
 
 /**
