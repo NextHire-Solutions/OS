@@ -56,6 +56,15 @@ export const setAccountManager = (email: string, on: boolean) => setFlag(email, 
  * the same name and no sign-in yet, else a new one. Off: the record goes
  * inactive — their clients keep the name, and turning it back on restores it.
  */
+/** An update that also writes the 0031 column when it exists, and still saves when it does not. */
+async function writeSalespersonRow(id: string, base: Record<string, unknown>, extra: Record<string, unknown>): Promise<void> {
+  const { error } = await osTable("os_salespeople").update({ ...base, ...extra }).eq("id", id);
+  if (!error) return;
+  if (!/inactive_since/i.test(error.message)) throw new TeamRoleError(error.message);
+  const { error: e } = await osTable("os_salespeople").update(base).eq("id", id);
+  if (e) throw new TeamRoleError(e.message);
+}
+
 export async function setSalesperson(person: { email: string; name: string | null }, on: boolean, linkId?: string | null, by = "team-access"): Promise<void> {
   const email = person.email.toLowerCase();
   const { data, error } = await osTable("os_salespeople").select("id, name, email, active");
@@ -64,11 +73,14 @@ export async function setSalesperson(person: { email: string; name: string | nul
   const own = rows.find((r) => r.email?.toLowerCase() === email);
   const now = new Date().toISOString();
   if (!on) {
-    if (own && own.active) await osTable("os_salespeople").update({ active: false, updated_at: now, updated_by: by }).eq("id", own.id);
+    // inactive_since (0031) fixes the day the role ended, which Commissions uses
+    // so payouts already made are never rewritten. Without the column, the
+    // switch-off still saves and updated_at stands in for the date.
+    if (own && own.active) await writeSalespersonRow(own.id, { active: false, updated_at: now, updated_by: by }, { inactive_since: now });
     return;
   }
   if (own) {
-    if (!own.active) await osTable("os_salespeople").update({ active: true, updated_at: now, updated_by: by }).eq("id", own.id);
+    if (!own.active) await writeSalespersonRow(own.id, { active: true, updated_at: now, updated_by: by }, { inactive_since: null });
     return;
   }
   const name = cleanName(person.name ?? email.split("@")[0]);

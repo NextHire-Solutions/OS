@@ -15,6 +15,12 @@ export interface Salesperson {
   email: string | null;
   active: boolean;
   rates: Rates;
+  /**
+   * When the Salesperson role was switched off (Eastern day), for an inactive
+   * record. Payouts up to that day still pay them; later payouts do not.
+   * Null on an inactive record with no known date: they earn nothing.
+   */
+  offSince?: string | null;
 }
 
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();

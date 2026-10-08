@@ -2,7 +2,7 @@ import "server-only";
 
 import { osTable } from "@/lib/clients/os-db";
 import { getOnboardingDb } from "@/lib/tools/onboarding/db";
-import { SALESPERSON_RATES, salespersonRate } from "@/lib/commissions/schedule";
+import { easternDay, SALESPERSON_RATES, salespersonRate } from "@/lib/commissions/schedule";
 
 import { cleanName, matchSalesperson, salespersonProblems, type Salesperson } from "./salesperson-match";
 
@@ -17,13 +17,22 @@ export { matchSalesperson, isSoldBy, type Salesperson } from "./salesperson-matc
  * the picker and leaves their clients as they are.
  */
 
-type Row = { id: string; name: string; email: string | null; active: boolean; month_one_rate: number; residual_rate: number };
+type Row = {
+  id: string; name: string; email: string | null; active: boolean; month_one_rate: number; residual_rate: number;
+  updated_at?: string | null; inactive_since?: string | null;
+};
 
-const toPerson = (r: Row): Salesperson => ({
-  id: r.id, name: r.name, email: r.email ? r.email.toLowerCase() : null, active: r.active,
-  // residual_rate holds the salesperson's rate (20% / 10%); the old 15% / 25% read as the default.
-  rates: { rate: salespersonRate(r.residual_rate) },
-});
+const toPerson = (r: Row): Salesperson => {
+  // When the role was switched off: recorded since 0031; before that, the
+  // record's last change (for the records switched off so far, that change).
+  const off = r.active ? null : r.inactive_since ?? r.updated_at ?? null;
+  return {
+    id: r.id, name: r.name, email: r.email ? r.email.toLowerCase() : null, active: r.active,
+    // residual_rate holds the salesperson's rate (20% / 10%); the old 15% / 25% read as the default.
+    rates: { rate: salespersonRate(r.residual_rate) },
+    offSince: off ? easternDay(off) : null,
+  };
+};
 
 export class SalespersonError extends Error {
   constructor(message: string) { super(message); this.name = "SalespersonError"; }
@@ -31,8 +40,13 @@ export class SalespersonError extends Error {
 
 /** Everyone on the list. `available` is false until migration 0020 has been run. */
 export async function listSalespeople(): Promise<{ available: boolean; people: Salesperson[] }> {
-  const { data, error } = await osTable("os_salespeople")
-    .select("id, name, email, active, month_one_rate, residual_rate").order("name");
+  const full = await osTable("os_salespeople")
+    .select("id, name, email, active, month_one_rate, residual_rate, updated_at, inactive_since").order("name");
+  // Before migration 0031 the column is missing: read without it.
+  const read = full.error && /inactive_since/i.test(full.error.message)
+    ? await osTable("os_salespeople").select("id, name, email, active, month_one_rate, residual_rate, updated_at").order("name")
+    : full;
+  const { data, error } = read as { data: unknown[] | null; error: { message: string } | null };
   if (error) {
     if (/does not exist|schema cache|relation/i.test(error.message)) return { available: false, people: [] };
     throw new Error(`the Salespeople list: ${error.message}`);

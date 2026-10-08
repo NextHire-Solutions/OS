@@ -139,3 +139,29 @@ test("someone on the team with no role gets no card at all", () => {
   const all = buildCommissionsView(base({ team: teamWithOther, viewerEmail: "admin@x.com", admin: true }));
   assert.ok(!all.people.some((p) => p.name === "Sankalp"), "not offered in the admin's switcher either");
 });
+
+test("salesperson role switched off: past payouts stay, from the next payout they earn only in their other roles", () => {
+  // Eddy sold NYC Co, then (8 Oct) became an account manager only.
+  const off = salespeople.map((p) => (p.id === "e" ? { ...p, active: false, offSince: "2026-10-08" } : p));
+  const oct1 = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, salespeople: off, today: "2026-10-08", run: "2026-10-01" }));
+  const nycOct1 = oct1.rows.find((r) => r.name === "NYC Co")!;
+  assert.ok(nycOct1.earnings.some((e) => e.key === "sp:e"), "the 1 Oct payout (before the switch) still pays him as salesperson");
+  assert.equal(nycOct1.salesperson, "Eddy");
+
+  const oct15 = buildCommissionsView(base({
+    viewerEmail: "admin@x.com", admin: true, salespeople: off, today: "2026-10-08", run: "2026-10-15",
+    stripe: new Map([...base({}).stripe, ["n", { payments: [pay("2026-08-01", 1000), pay("2026-09-26", 1000), pay("2026-10-05", 1000)], gross: 1000 }]]),
+  }));
+  const nyc = oct15.rows.find((r) => r.name === "NYC Co")!;
+  assert.equal(nyc.earnings.some((e) => e.key === "sp:e"), false, "no salesperson commission from the 15 Oct payout on");
+  assert.equal(nyc.salesperson, null, "and the table no longer names him as its salesperson");
+  assert.ok(oct15.unassigned.some((u) => u.name === "NYC Co" && u.missing.includes("salesperson")), "the client is listed as needing a salesperson");
+  const eddy = oct15.people.find((p) => p.key === "p:eddy@x.com")!;
+  assert.deepEqual(eddy.roles, ["account_manager"], "the Viewing list shows him as account manager only");
+});
+
+test("a salesperson switched off with no date known earns nothing from then on", () => {
+  const off = salespeople.map((p) => (p.id === "r" ? { ...p, active: false, offSince: null } : p));
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, salespeople: off }));
+  assert.equal(v.rows.find((r) => r.name === "Coastal Realty")!.earnings.some((e) => e.key === "sp:r"), false);
+});

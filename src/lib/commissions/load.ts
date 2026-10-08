@@ -199,8 +199,18 @@ export interface BuildInputs {
  */
 const firstManager = (c: { accountManager: string | null }) => splitManagers(c.accountManager)[0] ?? null;
 
-/** Everyone who can earn, and who earns on each client. */
-export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings">) {
+/**
+ * Does this salesperson earn on this payout? Active: yes. Role switched off
+ * (Team access): only on payouts up to the day it was switched off, so a
+ * payout already made is never rewritten — 8 Oct, Eddy became an account
+ * manager only. With no payout given (deciding which clients to read), yes.
+ */
+const earnsOn = (sp: Salesperson, run: string | undefined) =>
+  sp.active || run === undefined || (!!sp.offSince && run <= sp.offSince);
+
+/** Everyone who can earn, and who earns on each client — on one payout when `run` is given. */
+export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings"> & { run?: string | null }) {
+  const run = inp.run ?? undefined;
   const earners = new Map<string, Earner>();
   for (const sp of inp.salespeople) {
     earners.set(`sp:${sp.id}`, { key: `sp:${sp.id}`, role: "salesperson", name: sp.name, email: sp.email, rate: sp.rates.rate });
@@ -216,7 +226,7 @@ export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeo
   const onClient = (c: MasterClient): Earner[] => {
     const out: Earner[] = [];
     const sp = c.salesperson ? inp.salespeople.find((p) => isSoldBy(c.salesperson, p)) : undefined;
-    if (sp) out.push(earners.get(`sp:${sp.id}`)!);
+    if (sp && earnsOn(sp, run)) out.push(earners.get(`sp:${sp.id}`)!);
     const amName = firstManager(c);
     const am = amName ? inp.team.find((m) => isManagedBy(amName, m)) : undefined;
     if (am && earners.has(`am:${am.email}`)) out.push(earners.get(`am:${am.email}`)!);
@@ -226,7 +236,7 @@ export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeo
 }
 
 /** Which earnings a viewer may see — the one place scope is decided. */
-export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings" | "viewerEmail" | "admin" | "as">) {
+export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings" | "viewerEmail" | "admin" | "as"> & { run?: string | null }) {
   const viewerEmail = inp.viewerEmail.toLowerCase();
   const { earners, onClient } = earnersFor(inp);
   // The viewer's own earner keys: as an account manager, as a salesperson, or both.
@@ -251,7 +261,12 @@ export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeopl
 export function buildCommissionsView(inp: BuildInputs): CommissionsView {
   const { today, settings, history } = inp;
   const run = inp.run && /^\d{4}-\d{2}-(01|15)$/.test(inp.run) ? inp.run : runOnOrAfter(today);
-  const { earners, onClient, keys, scope, inScope, viewerName } = scopeFor(inp);
+  const { earners, onClient, keys, scope, inScope, viewerName } = scopeFor({ ...inp, run });
+  // The salesperson a client names, when their role was off by this payout — shown as none.
+  const offOnRun = (c: MasterClient) => {
+    const sp = c.salesperson ? inp.salespeople.find((p) => isSoldBy(c.salesperson, p)) : undefined;
+    return !!sp && !earnsOn(sp, run);
+  };
   // Payments are counted up to today only — a run still ahead shows what has been billed so far.
   const horizon = run < today ? run : today;
 
@@ -291,7 +306,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
     const all = commissionLines(payments, changes, c.status, 0);
     return {
       id: c.id, name: c.name, plan: c.plan, status: c.status,
-      salesperson: c.salesperson, accountManager: firstManager(c),
+      salesperson: offOnRun(c) ? null : c.salesperson, accountManager: firstManager(c),
       gross, net: gross !== null ? netPer28(gross, cycle) : null, grossSource, manualGross: manual, stripeLinked: linked,
       statusLabel: label(c, changes, all, payments.length > 0 || gross !== null, monthTwoStarts(payments), run),
       earnings,
