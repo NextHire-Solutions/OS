@@ -17,6 +17,7 @@ import {
 } from "@/lib/tools/analytics/lead-columns.ts";
 import { CAMPAIGN_LEADS_URL, selectAllLeadIds, useAnalyticsData } from "./actions";
 import { VolumeFilter } from "./volume-filter";
+import { useRangeSelect } from "./use-range-select";
 import { invalidate } from "../lazy";
 import { RemoveLeadsDialog } from "./remove-leads-dialog";
 import {
@@ -208,12 +209,12 @@ export function CampaignLeads({
   const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const viewingRemoved = status === "removed";
 
-  const toggleOne = (leadId: number | string) =>
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(leadId)) next.delete(leadId); else next.add(leadId);
-      return next;
-    });
+  /*
+   * Ticking a run at once (9 Oct): Shift-click from the last tick, or press on
+   * a tick box and drag over the rows. One tick box on its own still toggles.
+   */
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const range = useRangeSelect(pageIds, selected, setSelected, tableRef);
 
   const togglePage = () =>
     setSelected((current) => {
@@ -274,7 +275,13 @@ export function CampaignLeads({
         {!isInstantly ? <VolumeFilter min={volume.min} max={volume.max} onChange={setVolume} /> : null}
 
         <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
-          {loading ? <span className="mut" style={{ fontSize: 12 }}>Loading…</span> : null}
+          {/*
+            Always in the layout, only shown while loading: appearing and
+            disappearing, it wrapped a full toolbar onto a second line and moved
+            the table between a mouse press and its release — the click was lost
+            (9 Oct, the first click after returning to the window).
+          */}
+          <span className="mut" aria-hidden={!loading} style={{ fontSize: 12, visibility: loading ? "visible" : "hidden" }}>Loading…</span>
           {data && data.introducedLive === false ? (
             <span className="mut" style={{ fontSize: 12 }} title="Who has been introduced is read live from Master Inbox, and could not be read just now. Every other status is shown.">
               Introduced status unavailable right now
@@ -285,15 +292,17 @@ export function CampaignLeads({
       </div>
 
       {/*
-        The selection bar. Rendered only when something is selected rather than
-        reserving space, so the table does not shift under the cursor as rows
-        are ticked.
+        The selection bar. ALWAYS PRESENT, same height either way: rendered only
+        when something was selected, it appeared on the first tick and pushed
+        the table down under the cursor — mid-drag, that ticked the wrong rows
+        (found by the 9 Oct drag test). With nothing ticked it carries the tip.
       */}
       {selected.size > 0 ? (
         <div
           style={{
             display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "10px 18px",
             background: "var(--blue-pale)", borderBottom: "1px solid var(--line-soft)", fontSize: 13,
+            minHeight: 55, boxSizing: "border-box",
           }}
         >
           <span className="tnum" style={{ fontWeight: 600 }}>{fullNumber(selected.size)} selected</span>
@@ -320,7 +329,17 @@ export function CampaignLeads({
             <Btn style={{ color: "var(--red)" }} onClick={() => setConfirming(true)}>Remove from campaign</Btn>
           )}
         </div>
-      ) : null}
+      ) : (
+        <div
+          className="mut"
+          style={{
+            display: "flex", alignItems: "center", padding: "10px 18px", fontSize: 12.5,
+            borderBottom: "1px solid var(--line-soft)", minHeight: 55, boxSizing: "border-box",
+          }}
+        >
+          Tick leads to act on them. Shift-click, or drag down the tick boxes, to select a run.
+        </div>
+      )}
 
       <RemoveLeadsDialog
         campaignId={campaignId}
@@ -339,7 +358,7 @@ export function CampaignLeads({
       ) : (
         <>
           <div className="tbl-scroll" style={{ opacity: loading ? 0.7 : 1, transition: "opacity .14s" }}>
-            <table className="atbl" style={{ minWidth: 780, width: "100%" }}>
+            <table ref={tableRef} className="atbl" style={{ minWidth: 780, width: "100%" }}>
               <thead>
                 <tr>
                   {/* The identity column stays pinned so a row never loses its
@@ -394,19 +413,23 @@ export function CampaignLeads({
                       : "No leads recorded for this campaign yet. Membership is built from the send history, which syncs every three hours."}
                   </EmptyRow>
                 ) : (
-                  rows.map((row) => {
+                  rows.map((row, rowIndex) => {
                     const name = nameOf(row);
                     return (
-                      <tr key={String(row.leadId)}>
+                      <tr key={String(row.leadId)} data-range-index={rowIndex}>
                         <td style={{ position: "sticky", left: 0, zIndex: 1, minWidth: 260, background: "var(--surface)" }}>
                           <span style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                            <input
-                              type="checkbox"
-                              checked={selected.has(row.leadId)}
-                              onChange={() => toggleOne(row.leadId)}
-                              aria-label={`Select ${row.email ?? row.leadId}`}
-                              style={{ accentColor: "var(--blue)", cursor: "pointer", marginTop: 3 }}
-                            />
+                            {/* The press area for a drag is a little larger than the box itself. */}
+                            <span {...range.tickZone(rowIndex)} style={{ display: "inline-flex", padding: "2px 4px", margin: "-2px -4px", cursor: "pointer" }}>
+                              <input
+                                type="checkbox"
+                                checked={selected.has(row.leadId)}
+                                onChange={() => undefined}
+                                onClick={range.onTickClick(rowIndex)}
+                                aria-label={`Select ${row.email ?? row.leadId}`}
+                                style={{ accentColor: "var(--blue)", cursor: "pointer", marginTop: 3 }}
+                              />
+                            </span>
                             <span style={{ minWidth: 0 }}>
                               <span style={{ display: "block", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {name || row.email || `Lead #${row.leadId}`}
