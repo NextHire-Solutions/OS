@@ -201,7 +201,12 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
 
   return (
     <div className="wrap an-screen" style={{ opacity: loading ? 0.7 : 1, transition: "opacity .14s" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+      {/*
+        Header (9 Oct): back on its own line, then the campaign on the left and
+        its actions on the right — the design system's page header (.ds-head).
+        The actions sat in front of the title before and pushed it sideways.
+      */}
+      <div style={{ marginBottom: 12 }}>
         {/*
           A link, always. `onBack` is a callback, and this screen is mounted
           from a server component that cannot pass one — so it was always
@@ -213,59 +218,9 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
         ) : (
           <Link href="/analytics/campaigns" className="btn" style={{ textDecoration: "none" }}>← Campaigns</Link>
         )}
-        {(() => {
-          const st = String(c.status).toLowerCase();
-          const canPause = !["paused", "completed", "archived", "draft"].includes(st);
-          const canResume = st === "paused";
-          const noPlatform = !data.platform;
-          if (canResume) {
-            return (
-              <ConfirmButton
-                primary
-                label="Resume"
-                armedLabel="Confirm resume — starts sending"
-                title={noPlatform ? "Platform unknown for this campaign" : "Resume queues this campaign to SEND. It does not restore a previous status."}
-                disabled={acting || noPlatform}
-                onConfirm={() => void act("resume")}
-              />
-            );
-          }
-          if (canPause) {
-            return (
-              <Btn disabled={acting || noPlatform} title={noPlatform ? "Platform unknown for this campaign" : undefined} onClick={() => void act("pause")}>
-                {acting ? "…" : "Pause"}
-              </Btn>
-            );
-          }
-          return null;
-        })()}
-        {/*
-          Separated from Pause/Resume because it is a different kind of change:
-          those move a campaign through its lifecycle, this decides which
-          mailboxes send for it. It has no eligibility rule — any campaign can
-          be given inboxes — and the tool offers it for both platforms.
-        */}
-        {platform ? (
-          <>
-            <Btn onClick={() => setAssigningInboxes(true)}>Inboxes</Btn>
-            <AssignInboxesDialog
-              targets={[{ platform, id: String(c.id) }]}
-              open={assigningInboxes}
-              onOpenChange={setAssigningInboxes}
-              onDone={() => void reload()}
-            />
-            <Btn onClick={() => setRemovingServers(true)}>Remove Unsupported Mail Servers</Btn>
-            <UnsupportedServersDialog
-              campaignId={String(c.id)}
-              campaignName={c.name}
-              platform={platform}
-              open={removingServers}
-              onOpenChange={setRemovingServers}
-              onDone={() => void reload()}
-            />
-          </>
-        ) : null}
-        <div style={{ flex: 1, minWidth: 0 }}>
+      </div>
+      <div className="ds-head" style={{ marginBottom: 16 }}>
+        <div style={{ flex: "1 1 420px", minWidth: 0 }}>
           <span className="ds-kicker">Campaign Analytics</span>
           <h1 className="ds-title">{c.name}</h1>
           <div className="tbl-sub">
@@ -275,6 +230,60 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
             {c.eb_created_at ? ` · created ${fullStamp(c.eb_created_at)}` : ""}
             {c.excluded ? ` · excluded — ${c.excludeReason ?? "not a client campaign"}` : ""}
           </div>
+        </div>
+        <div className="ds-head-actions">
+          {(() => {
+            const st = String(c.status).toLowerCase();
+            const canPause = !["paused", "completed", "archived", "draft"].includes(st);
+            const canResume = st === "paused";
+            const noPlatform = !data.platform;
+            if (canResume) {
+              return (
+                <ConfirmButton
+                  primary
+                  label="Resume"
+                  armedLabel="Confirm resume — starts sending"
+                  title={noPlatform ? "Platform unknown for this campaign" : "Resume queues this campaign to SEND. It does not restore a previous status."}
+                  disabled={acting || noPlatform}
+                  onConfirm={() => void act("resume")}
+                />
+              );
+            }
+            if (canPause) {
+              return (
+                <Btn disabled={acting || noPlatform} title={noPlatform ? "Platform unknown for this campaign" : undefined} onClick={() => void act("pause")}>
+                  {acting ? "…" : "Pause"}
+                </Btn>
+              );
+            }
+            return null;
+          })()}
+          {/*
+            Separated from Pause/Resume because it is a different kind of change:
+            those move a campaign through its lifecycle, this decides which
+            mailboxes send for it. It has no eligibility rule — any campaign can
+            be given inboxes — and the tool offers it for both platforms.
+          */}
+          {platform ? (
+            <>
+              <Btn onClick={() => setAssigningInboxes(true)}>Inboxes</Btn>
+              <AssignInboxesDialog
+                targets={[{ platform, id: String(c.id) }]}
+                open={assigningInboxes}
+                onOpenChange={setAssigningInboxes}
+                onDone={() => void reload()}
+              />
+              <Btn onClick={() => setRemovingServers(true)}>Remove Unsupported Mail Servers</Btn>
+              <UnsupportedServersDialog
+                campaignId={String(c.id)}
+                campaignName={c.name}
+                platform={platform}
+                open={removingServers}
+                onOpenChange={setRemovingServers}
+                onDone={() => void reload()}
+              />
+            </>
+          ) : null}
         </div>
       </div>
 
