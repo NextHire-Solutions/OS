@@ -7,6 +7,7 @@ import {
   verifySso,
 } from "@/lib/bs-auth";
 import { grantStore } from "@/lib/identity/store";
+import { viewerRoles } from "@/lib/identity/viewer-roles";
 
 export const dynamic = "force-dynamic";
 
@@ -61,7 +62,18 @@ export async function POST(request: Request) {
   });
 
   const isSecure = new URL(request.url).protocol === "https:";
-  const response = NextResponse.json({ ok: true, grants: user.grants });
+  /*
+   * The person's roles as they are NOW (9 Oct). Every open tab calls this every
+   * ten minutes and on coming back to it, so someone made an account manager on
+   * Team access gets the Clients page without refreshing or signing in again —
+   * and loses it the same way. Best effort: a failed read leaves the tab as is.
+   */
+  const viewer = await viewerRoles(user.email).catch(() => null);
+  const response = NextResponse.json({
+    ok: true,
+    grants: user.grants,
+    roles: viewer ? { accountManager: viewer.accountManager, salesperson: viewer.salesperson } : undefined,
+  });
 
   response.cookies.set(
     SSO_COOKIE,

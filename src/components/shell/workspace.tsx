@@ -60,6 +60,19 @@ export function Workspace({
   roles = {},
 }: WorkspaceProps) {
   const [activeId, setActiveId] = useState(initialId);
+  /*
+   * Roles from the page load, then kept current by SessionKeeper: someone made
+   * (or unmade) an account manager on Team access sees the Clients page appear
+   * (or go) in a tab that is already open — no refresh, no new sign-in.
+   */
+  const [liveRoles, setLiveRoles] = useState<RoleFlags>(roles);
+  const onRoles = useCallback((next: RoleFlags) => {
+    setLiveRoles((cur) =>
+      !!cur.accountManager === !!next.accountManager && !!cur.salesperson === !!next.salesperson
+        ? cur
+        : { accountManager: !!next.accountManager, salesperson: !!next.salesperson },
+    );
+  }, []);
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -78,8 +91,8 @@ export function Workspace({
   const all = useMemo(() => destinations(), []);
   const reachable = useMemo(
     // The command palette offers exactly what the menu does.
-    () => all.filter((d) => (!d.tool || grants.includes(d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS, roles)),
-    [all, grants, admin, roles],
+    () => all.filter((d) => (!d.tool || grants.includes(d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS, liveRoles)),
+    [all, grants, admin, liveRoles],
   );
 
   const router = useRouter();
@@ -224,7 +237,7 @@ export function Workspace({
     <>
       {/* Renews the 30-minute sign-in while the workspace is open. Without it
           every session died mid-task and the next click bounced to /login. */}
-      <SessionKeeper />
+      <SessionKeeper onRoles={onRoles} />
       {/* Retries introduction side effects a restart left behind. See the
           component for why this runs from the browser rather than a cron. */}
       <OutboxSweeper />
@@ -232,7 +245,7 @@ export function Workspace({
         <Rail
           grants={grants}
           admin={admin}
-          roles={roles}
+          roles={liveRoles}
           activeId={activeId}
           onNavigate={navigate}
           onPrefetch={prefetch}

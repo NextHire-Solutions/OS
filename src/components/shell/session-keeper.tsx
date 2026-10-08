@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 
+import type { RoleFlags } from "@/lib/workspace/nav";
+
 /*
  * Keeps the sign-in alive while the workspace is open.
  *
@@ -44,9 +46,12 @@ const EVERY_MS = 10 * 60 * 1000;
 /** Ignore a visibility refresh if one just ran — tab switching is frequent. */
 const MIN_GAP_MS = 60 * 1000;
 
-export function SessionKeeper() {
+export function SessionKeeper({ onRoles }: { onRoles?: (roles: RoleFlags) => void } = {}) {
   const last = useRef(0);
   const running = useRef(false);
+  // The latest callback, for the timer, which outlives any one render.
+  const rolesCallback = useRef(onRoles);
+  rolesCallback.current = onRoles;
 
   useEffect(() => {
     let alive = true;
@@ -64,6 +69,12 @@ export function SessionKeeper() {
           method: "POST",
           credentials: "same-origin",
         });
+
+        // Roles as they are now — a change on Team access reaches an open tab here.
+        if (res.ok && alive) {
+          const body = (await res.json().catch(() => null)) as { roles?: RoleFlags } | null;
+          if (body?.roles) rolesCallback.current?.(body.roles);
+        }
 
         if (res.status === 401 && alive) {
           // Genuinely signed out. Carry the current location so signing in
