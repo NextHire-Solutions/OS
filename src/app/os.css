@@ -63,9 +63,9 @@ kbd { font-family: var(--mono) !important; font-weight: 500 !important; border-c
   border-radius: 5px !important; color: var(--x-faint) !important; }
 
 /* ============================================================ page head === */
-.ds-page, .wrap, .an-header, .as { background: none !important; }
+.ds-page, .wrap:not(td), .an-header, .as { background: none !important; }
 .ds-page { padding: 28px var(--ds-gutter) 64px !important; gap: 20px !important; }
-.wrap { padding: 28px var(--ds-gutter) 64px !important; }
+.wrap:not(td) { padding: 28px var(--ds-gutter) 64px !important; }
 .hero { padding: 28px var(--ds-gutter) 0 !important; }
 .hero + .wrap { padding-top: 20px !important; }
 .ds-head { align-items: flex-end !important; }
@@ -76,7 +76,8 @@ kbd { font-family: var(--mono) !important; font-weight: 500 !important; border-c
 .ds-head p, .hero p, .as-hd p, .ds-title + p, .ds-title + .tbl-sub { font-size: 14px !important; color: var(--x-mute) !important; margin: 0 !important; }
 .cx-head-ico, .as-logo { display: none !important; }
 .as-hd { display: flex; align-items: flex-end !important; margin-bottom: 20px !important; }
-.an-header { padding: 28px var(--ds-gutter) 0 !important; }
+/* Tighter since the title row went (9 Oct): the tabs sit near the top, as in the standalone tool. */
+.an-header { padding: 14px var(--ds-gutter) 0 !important; }
 
 /* ================================================================ stats === */
 /* One hairline strip, cells divided by hairlines — the Clients metrics. */

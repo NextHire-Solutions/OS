@@ -104,6 +104,7 @@ export function AnalyticsTabs({ active }: { active: AnalyticsTab }) {
       <StalenessStrip />
       <div className="an-header">
         <PageHeader
+          compact
           icon="analytics"
           title="Campaign Analytics"
           description="EmailBison and Instantly performance — one report, read five ways"
@@ -169,16 +170,20 @@ export function Check({
   onChange,
   label,
   hint,
+  tip,
   disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   hint?: string;
+  /** Shown on hover instead of beside the label, where a row is short of room. */
+  tip?: string;
   disabled?: boolean;
 }) {
   return (
     <label
+      title={tip}
       style={{
         display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13,
         color: "var(--ink-2)", cursor: disabled ? "not-allowed" : "pointer",

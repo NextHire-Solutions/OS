@@ -19,6 +19,11 @@ const KICKER: Record<string, string> = {
   inbox: "Master Inbox", clients: "Client Health", analytics: "Campaign Analytics",
   onboarding: "Onboarding", search: "Agent Search", assistant: "Admin", "team-access": "Admin", "reply-agent": "Admin",
 };
+/** Present for screen readers, invisible on screen. */
+const VISUALLY_HIDDEN: React.CSSProperties = {
+  position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
+};
+
 export function PageHeader({
   title,
   description,
@@ -26,8 +31,18 @@ export function PageHeader({
   children,
   icon,
   kicker,
+  compact,
+  lead,
 }: {
   title: string;
+  /**
+   * No visible title row (9 Oct — the client prefers the standalone tools'
+   * density): the title stays for screen readers, and only the actions, any
+   * `lead` content beside them, and the tabs are drawn.
+   */
+  compact?: boolean;
+  /** Compact only: content on the left of the actions row. */
+  lead?: React.ReactNode;
   description?: React.ReactNode;
   actions?: React.ReactNode;
   /** Tabs or a sub-navigation, drawn under the title row. */
@@ -38,6 +53,20 @@ export function PageHeader({
   kicker?: string;
 }) {
   const k = kicker ?? (icon ? KICKER[icon] : undefined);
+  if (compact) {
+    return (
+      <header style={{ display: "grid", gap: 10 }}>
+        <h1 style={VISUALLY_HIDDEN}>{title}</h1>
+        {actions || lead ? (
+          <div className="ds-head ds-head-compact">
+            {lead ?? <span />}
+            {actions ? <div className="ds-head-actions">{actions}</div> : null}
+          </div>
+        ) : null}
+        {children}
+      </header>
+    );
+  }
   return (
     <header style={{ display: "grid", gap: 14 }}>
       <div className="ds-head">

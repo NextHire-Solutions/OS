@@ -181,17 +181,11 @@ function ChartsView({ qs, compare }: { qs: string; compare: boolean }) {
    */
   return (
     <section className="abox lc-card" style={{ marginBottom: 20 }}>
-      <div className="lc-head">
-        <div style={{ minWidth: 0 }}>
-          <h2 className="lc-title">{chartTitle(series, mode)}</h2>
-          <p className="lc-sub">
-            Drag across the chart to read any day
-            {compare
-              ? " · the dashed line is the previous period, aligned day for day from the most recent end"
-              : ""}
-          </p>
-        </div>
-        <div className="an-lc-tools">
+      {/* One row (9 Oct): title, series and controls together, as in the standalone tool. */}
+      <div className="lc-head" style={{ alignItems: "center", padding: "16px 24px 4px" }}>
+        <h2 className="lc-title" title="Drag across the chart to read any day">{chartTitle(series, mode)}</h2>
+        <SeriesChips selected={series} mode={mode} onChange={setSeries} />
+        <div className="an-lc-tools" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <Seg
             label="Chart mode"
             value={mode}
@@ -213,7 +207,7 @@ function ChartsView({ qs, compare }: { qs: string; compare: boolean }) {
             checked={normalize}
             onChange={setNormalize}
             label="Normalize"
-            hint="each line to its own scale"
+            tip="Each line to its own scale"
           />
           {/*
             A FILTER, not chart state: it goes into the query string as
@@ -228,9 +222,11 @@ function ChartsView({ qs, compare }: { qs: string; compare: boolean }) {
             label="Exclude weekends"
           />
         </div>
-      </div>
-      <div style={{ padding: "10px 24px 0" }}>
-        <SeriesChips selected={series} mode={mode} onChange={setSeries} />
+        {compare ? (
+          <p className="lc-sub" style={{ flexBasis: "100%", margin: 0 }}>
+            The dashed line is the previous period, aligned day for day from the most recent end.
+          </p>
+        ) : null}
       </div>
       <div style={{ opacity: loading ? 0.55 : 1, transition: "opacity .14s" }}>
         {data ? (

@@ -137,7 +137,6 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
 
   return (
     <div className="ds-page">
-      <ClientCountLine tool="client_health" />
       {data.source === "seed" ? (
         <p className="ds-note">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
@@ -145,7 +144,7 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         </p>
       ) : null}
 
-      <ClientHealthToolbar title="Weekly" description="intros, billing cycles and campaigns for every client" week={selected} onAdd={openAdd} sync={data.sync} now={now} />
+      <ClientHealthToolbar title="Weekly" description="intros, billing cycles and campaigns for every client" week={selected} onAdd={openAdd} sync={data.sync} now={now} lead={<ClientCountLine tool="client_health" />} />
 
       <SummaryCards s={s} lifetime={lifetime} week={week} isCurrent={isCurrent} weekKey={key} />
 

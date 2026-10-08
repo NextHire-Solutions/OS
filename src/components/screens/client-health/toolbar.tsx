@@ -44,8 +44,10 @@ export function weekLabel(key: string): string {
 }
 
 export function ClientHealthToolbar({
-  title, description, week, sync, now,
+  title, description, week, sync, now, lead,
 }: {
+  /** Shown on the left of the controls' row — Weekly's client count line. */
+  lead?: React.ReactNode;
   /** The view's name — the page title, as on every other OS screen. */
   title: string;
   /** One line under the title: what this view answers. */
@@ -61,7 +63,10 @@ export function ClientHealthToolbar({
   const { isCurrent, key } = week;
   return (
     <>
+      {/* Compact (9 Oct): no title row, so more of the board fits on one screen, as in the standalone tool. */}
       <PageHeader
+        compact
+        lead={lead}
         icon="clients"
         title={title}
         description={<>{isCurrent ? "This week" : `Week of ${weekLabel(key)}`} · {description}</>}

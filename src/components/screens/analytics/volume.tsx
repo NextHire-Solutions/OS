@@ -163,18 +163,21 @@ export function VolumeView({ qs }: { qs: string }) {
         }
         style={{ opacity: loading ? 0.6 : 1, transition: "opacity .14s" }}
       >
-        <div style={{ padding: "14px 22px 6px", display: "flex", flexDirection: "column", gap: 11 }}>
+        <div style={{ padding: "14px 22px 6px", display: "flex", flexDirection: "column", gap: 8 }}>
           {(data?.rows ?? []).length === 0 ? (
             <div className="mut" style={{ padding: "20px 0" }}>
               {data ? "Nothing sent in this range." : "Loading…"}
             </div>
           ) : (
             (data?.rows ?? []).map((r) => (
-              <div key={`${r.platform}-${r.label}`}>
-                <div style={{ display: "flex", gap: 10, fontSize: 13, marginBottom: 4 }}>
+              /* One line per client (9 Oct): name, bar, count, share — the standalone tool's layout. */
+              <div
+                key={`${r.platform}-${r.label}`}
+                style={{ display: "grid", gridTemplateColumns: "minmax(120px, 230px) minmax(0, 1fr) 72px 52px", alignItems: "center", gap: 14, fontSize: 13 }}
+              >
                   <span
                     title={r.label}
-                    style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                   >
                     {r.label}
                     {/* Named, not colour-coded: a second hue would encode
@@ -183,12 +186,11 @@ export function VolumeView({ qs }: { qs: string }) {
                       <span className="c c-inst" style={{ marginLeft: 7 }}>Instantly</span>
                     ) : null}
                   </span>
-                  <span className="tnum">{Number(r.sent).toLocaleString("en-US")}</span>
-                  <span className="tnum mut" style={{ width: 52, textAlign: "right" }}>
+                  <Bar fraction={Number(r.sent) / max} color={SERIES_COLOR.sent} />
+                  <span className="tnum" style={{ textAlign: "right" }}>{Number(r.sent).toLocaleString("en-US")}</span>
+                  <span className="tnum mut" style={{ textAlign: "right" }}>
                     {percent(r.grand_total > 0 ? Number(r.sent) / Number(r.grand_total) : null, 1)}
                   </span>
-                </div>
-                <Bar fraction={Number(r.sent) / max} color={SERIES_COLOR.sent} />
               </div>
             ))
           )}
