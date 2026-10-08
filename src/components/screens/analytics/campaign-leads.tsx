@@ -16,6 +16,7 @@ import {
   type LeadRow,
 } from "@/lib/tools/analytics/lead-columns.ts";
 import { CAMPAIGN_LEADS_URL, selectAllLeadIds, useAnalyticsData } from "./actions";
+import { VolumeFilter } from "./volume-filter";
 import { invalidate } from "../lazy";
 import { RemoveLeadsDialog } from "./remove-leads-dialog";
 import {
@@ -92,6 +93,8 @@ export function CampaignLeads({
   const [search, setSearch] = useState("");
   const debounced = useDebounced(search.trim());
   const [status, setStatus] = useState<string | null>(null);
+  // Sales volume from / to, in dollars (EmailBison only; Instantly leads carry no attributes).
+  const [volume, setVolume] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
   const [visible, setVisible] = useColumnPrefs(
     LEAD_COLUMN_PREFS_KEY,
     LEAD_COLUMN_PREFS_VERSION,
@@ -115,13 +118,15 @@ export function CampaignLeads({
    * Page derived during render, not reset from an effect: a filter change
    * moves back to page 1 without rendering the stale page once first.
    */
-  const filterKey = `${debounced}|${status}|${sort?.key ?? ""}|${sort?.dir ?? ""}`;
+  const filterKey = `${debounced}|${status}|${sort?.key ?? ""}|${sort?.dir ?? ""}|${volume.min ?? ""}|${volume.max ?? ""}`;
   const [pageState, setPageState] = useState({ key: filterKey, page: 1 });
   const page = pageState.key === filterKey ? pageState.page : 1;
 
   const params = new URLSearchParams({ page: String(page) });
   if (debounced) params.set("q", debounced);
   if (status) params.append("status", status);
+  if (volume.min !== null) params.set("vmin", String(volume.min));
+  if (volume.max !== null) params.set("vmax", String(volume.max));
   if (sort) {
     params.set("sort", sort.key);
     params.set("dir", sort.dir);
@@ -228,7 +233,7 @@ export function CampaignLeads({
     setLoadingAll(true);
     setSelectError(null);
     try {
-      setSelected(new Set(await selectAllLeadIds(campaignId, debounced, status)));
+      setSelected(new Set(await selectAllLeadIds(campaignId, debounced, status, volume)));
     } catch (e) {
       setSelectError(e instanceof Error ? e.message : "Could not load the full selection");
     } finally {
@@ -265,6 +270,8 @@ export function CampaignLeads({
             </button>
           ))}
         </span>
+
+        {!isInstantly ? <VolumeFilter min={volume.min} max={volume.max} onChange={setVolume} /> : null}
 
         <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
           {loading ? <span className="mut" style={{ fontSize: 12 }}>Loading…</span> : null}

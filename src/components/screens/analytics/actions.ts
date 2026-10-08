@@ -342,10 +342,15 @@ export async function selectAllLeadIds(
   id: string,
   q: string,
   status: string | null,
+  volume?: { min: number | null; max: number | null },
 ): Promise<Array<number | string>> {
   const params = new URLSearchParams({ ids: "1" });
   if (q) params.set("q", q);
   if (status) params.append("status", status);
+  // The same Sales volume range as the table, or "select all" would take leads
+  // the screen is not showing.
+  if (volume?.min != null) params.set("vmin", String(volume.min));
+  if (volume?.max != null) params.set("vmax", String(volume.max));
   const { ok, body } = await sendRaw<{ leadIds: Array<number | string> }>(
     CAMPAIGN_LEADS_URL(id, params.toString()),
     { method: "GET" },

@@ -3,6 +3,7 @@ import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tool
 import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
 import { campaignIntroductions } from "@/lib/tools/analytics/campaigns/introduced";
 import type { IntroducedSet } from "@/lib/tools/analytics/campaigns/introduced-match.ts";
+import { VOLUME_ATTRIBUTE } from "@/lib/tools/analytics/campaigns/amount-filter.ts";
 
 /*
  * One page of a campaign's leads (the Leads tab on the campaign page).
@@ -64,6 +65,24 @@ export async function GET(
   const sort = q.get("sort");
   const dir = q.get("dir") === "asc" ? "asc" : "desc";
 
+  /*
+   * "SALES VOLUME FROM / TO" (9 Oct, analytics 096). Whole dollars. EmailBison
+   * only — Instantly leads carry no attributes. If 096 has not run, a filtered
+   * request is refused with a plain message rather than answered unfiltered:
+   * a table that looks filtered and is not is worse than no filter.
+   */
+  const amount = (v: string | null) => {
+    if (v == null || v.trim() === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const volumeMin = platform === "emailbison" ? amount(q.get("vmin")) : null;
+  const volumeMax = platform === "emailbison" ? amount(q.get("vmax")) : null;
+  const filteringVolume = volumeMin !== null || volumeMax !== null;
+  const volumeArgs = filteringVolume ? { p_attr: VOLUME_ATTRIBUTE, p_attr_min: volumeMin, p_attr_max: volumeMax } : {};
+  const volumeUnavailable = () =>
+    NextResponse.json({ error: "The Sales volume filter isn't switched on yet. Clear it to see every lead." }, { status: 503 });
+
   const sb = getSupabase();
   const teamId = TEAM_ID();
 
@@ -113,8 +132,9 @@ export async function GET(
       platform === "instantly" ? "analytics_os_instantly_lead_ids" : "analytics_os_campaign_lead_ids",
       platform === "instantly"
         ? { ...original, p_intro_emails: introEmails }
-        : { ...original, p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails },
+        : { ...original, p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails, ...volumeArgs },
     );
+    if (missingFunction(error) && filteringVolume) return volumeUnavailable();
     if (missingFunction(error)) {
       ({ data, error } = await sb.rpc(
         platform === "instantly" ? "analytics_instantly_lead_ids" : "analytics_campaign_lead_ids",
@@ -246,11 +266,12 @@ export async function GET(
   };
   const introArgs = { p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails };
   let [rows, facets] = await Promise.all([
-    sb.rpc("analytics_os_campaign_lead_rows", { ...rowArgs, ...introArgs }),
+    sb.rpc("analytics_os_campaign_lead_rows", { ...rowArgs, ...introArgs, ...volumeArgs }),
     wantFacets
       ? sb.rpc("analytics_os_campaign_lead_facets", { p_team_id: teamId, p_campaign_id: campaignId, ...introArgs })
       : Promise.resolve({ data: [], error: null }),
   ]);
+  if (missingFunction(rows.error) && filteringVolume) return volumeUnavailable();
   if (missingFunction(rows.error) || missingFunction(facets.error)) {
     introducedLive = false;
     [rows, facets] = await Promise.all([
