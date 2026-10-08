@@ -46,6 +46,8 @@ import { Btn } from "./toast";
  */
 
 const STATUS_TONE: Record<string, string> = {
+  // The inbox's Introduction blue, so "introduced" reads the same in both places.
+  introduced: "s-intro",
   positive: "s-done",
   replied: "s-pending",
   bounced: "s-risk",
@@ -69,6 +71,8 @@ interface Response {
   page: number;
   pageSize: number;
   facets: Array<{ status: string; leads: number }>;
+  /** False when the Introduced status could not be read this time (see the route). */
+  introducedLive?: boolean;
 }
 
 const nameOf = (r: Row) => r.name ?? ([r.firstName, r.lastName].filter(Boolean).join(" ") || null);
@@ -215,6 +219,11 @@ export function CampaignLeads({
 
         <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
           {loading ? <span className="mut" style={{ fontSize: 12 }}>Loading…</span> : null}
+          {data && data.introducedLive === false ? (
+            <span className="mut" style={{ fontSize: 12 }} title="Who has been introduced is read live from Master Inbox, and could not be read just now. Every other status is shown.">
+              Introduced status unavailable right now
+            </span>
+          ) : null}
           <ColumnPicker groups={LEAD_COLUMN_GROUPS} columns={LEAD_COLUMNS} visible={visible} onChange={setVisible} />
         </span>
       </div>

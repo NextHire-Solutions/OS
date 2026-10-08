@@ -164,6 +164,8 @@ export const LEAD_COLUMN_PREFS_VERSION = 1;
 
 /** Plain-language names for the derived per-campaign status. */
 export const LEAD_STATUS_LABELS: Record<string, string> = {
+  // Introduced to the client (8 Oct) — read live from Master Inbox; see campaigns/introduced.ts.
+  introduced: "Introduced",
   contacted: "Contacted",
   completed: "Finished the sequence",
   replied: "Replied",

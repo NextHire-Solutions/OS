@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
+import { campaignIntroductions } from "@/lib/tools/analytics/campaigns/introduced";
+import type { IntroducedSet } from "@/lib/tools/analytics/campaigns/introduced-match.ts";
 
 /*
  * One page of a campaign's leads (the Leads tab on the campaign page).
@@ -23,6 +25,17 @@ const PAGE_SIZE = 50;
 const nullableNumber = (v: unknown): number | null =>
   v === null || v === undefined ? null : Number(v);
 const TEAM_ID = () => analyticsTeamId();
+
+/*
+ * "INTRODUCED" (8 Oct). The analytics_os_* functions (analytics migration 095)
+ * are copies of the originals that also take who has been introduced — read
+ * live from Master Inbox by campaignIntroductions — and give those leads the
+ * status "introduced". Until 095 runs they do not exist: every call falls back
+ * to the original function, so the tab works exactly as before, just without
+ * the new status.
+ */
+const missingFunction = (e: { code?: string; message?: string } | null | undefined) =>
+  !!e && (e.code === "PGRST202" || /could not find the function|function .* does not exist/i.test(e.message ?? ""));
 
 export async function GET(
   request: NextRequest,
@@ -55,6 +68,22 @@ export async function GET(
   const teamId = TEAM_ID();
 
   /*
+   * Who has been introduced from this campaign, from the inbox, now. A failure
+   * here never fails the page: the tab shows every other status and says the
+   * Introduced status could not be read.
+   */
+  let intro: IntroducedSet | null = null;
+  try {
+    intro = await campaignIntroductions(platform, campaignId);
+  } catch (e) {
+    console.error("[api/campaigns/leads:introduced]", e);
+  }
+  const introLeadIds = intro?.leadIds.length ? intro.leadIds : null;
+  const introEmails = intro?.emails.length ? intro.emails : null;
+  // Set to false when 095 has not run and an original function answered.
+  let introducedLive = intro !== null;
+
+  /*
    * The status counts do not depend on the page, the sort or the search — they
    * describe the whole campaign. Recomputing them on every page turn doubled the
    * cost of paging for nothing (measured: 333ms of rows + 319ms of facets on a
@@ -74,22 +103,24 @@ export async function GET(
    * 067 exists to avoid.
    */
   if (q.get("ids") === "1") {
-    const { data, error } = await sb.rpc(
-      platform === "instantly" ? "analytics_instantly_lead_ids" : "analytics_campaign_lead_ids",
-      platform === "instantly"
-        ? {
-            p_team_id: teamId,
-            p_campaign_id: campaignId,
-            p_search: search,
-            p_status: status.length ? status : null,
-          }
-        : {
+    const original = {
       p_team_id: teamId,
       p_campaign_id: campaignId,
       p_search: search,
       p_status: status.length ? status : null,
-    },
+    };
+    let { data, error } = await sb.rpc(
+      platform === "instantly" ? "analytics_os_instantly_lead_ids" : "analytics_os_campaign_lead_ids",
+      platform === "instantly"
+        ? { ...original, p_intro_emails: introEmails }
+        : { ...original, p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails },
     );
+    if (missingFunction(error)) {
+      ({ data, error } = await sb.rpc(
+        platform === "instantly" ? "analytics_instantly_lead_ids" : "analytics_campaign_lead_ids",
+        original,
+      ));
+    }
     if (error) {
       console.error("[api/campaigns/leads:ids]", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -126,9 +157,13 @@ export async function GET(
      * the function has no such parameters, so a sorted request is retried
      * unsorted rather than failing the page.
      */
-    let { data, error } = await sb.rpc("analytics_instantly_lead_rows", sort ? { ...base, p_sort: sort, p_dir: dir } : base);
-    if (error && sort && /analytics_instantly_lead_rows|function|parameter/i.test(error.message)) {
-      ({ data, error } = await sb.rpc("analytics_instantly_lead_rows", base));
+    let { data, error } = await sb.rpc("analytics_os_instantly_lead_rows", { ...base, p_sort: sort, p_dir: dir, p_intro_emails: introEmails });
+    if (missingFunction(error)) {
+      introducedLive = false;
+      ({ data, error } = await sb.rpc("analytics_instantly_lead_rows", sort ? { ...base, p_sort: sort, p_dir: dir } : base));
+      if (error && sort && /analytics_instantly_lead_rows|function|parameter/i.test(error.message)) {
+        ({ data, error } = await sb.rpc("analytics_instantly_lead_rows", base));
+      }
     }
     if (error) {
       console.error("[api/campaigns/leads:instantly]", error);
@@ -150,10 +185,17 @@ export async function GET(
      */
     let facetRows: Array<{ status: string; leads: number }> = [];
     if (wantFacets) {
-      const { data: f } = await sb.rpc("analytics_instantly_lead_facets", {
+      let { data: f, error: fe } = await sb.rpc("analytics_os_instantly_lead_facets", {
         p_team_id: teamId,
         p_campaign_id: campaignId,
+        p_intro_emails: introEmails,
       });
+      if (missingFunction(fe)) {
+        ({ data: f } = await sb.rpc("analytics_instantly_lead_facets", {
+          p_team_id: teamId,
+          p_campaign_id: campaignId,
+        }));
+      }
       facetRows = (f ?? []) as Array<{ status: string; leads: number }>;
     }
 
@@ -188,27 +230,36 @@ export async function GET(
       pageSize: PAGE_SIZE,
       total,
       facets: facetRows,
+      introducedLive,
     });
   }
 
-  const [rows, facets] = await Promise.all([
-    sb.rpc("analytics_campaign_lead_rows", {
-      p_team_id: teamId,
-      p_campaign_id: campaignId,
-      p_search: search,
-      p_status: status.length ? status : null,
-      p_sort: sort,
-      p_dir: dir,
-      p_limit: PAGE_SIZE,
-      p_offset: (page - 1) * PAGE_SIZE,
-    }),
+  const rowArgs = {
+    p_team_id: teamId,
+    p_campaign_id: campaignId,
+    p_search: search,
+    p_status: status.length ? status : null,
+    p_sort: sort,
+    p_dir: dir,
+    p_limit: PAGE_SIZE,
+    p_offset: (page - 1) * PAGE_SIZE,
+  };
+  const introArgs = { p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails };
+  let [rows, facets] = await Promise.all([
+    sb.rpc("analytics_os_campaign_lead_rows", { ...rowArgs, ...introArgs }),
     wantFacets
-      ? sb.rpc("analytics_campaign_lead_facets", {
-          p_team_id: teamId,
-          p_campaign_id: campaignId,
-        })
+      ? sb.rpc("analytics_os_campaign_lead_facets", { p_team_id: teamId, p_campaign_id: campaignId, ...introArgs })
       : Promise.resolve({ data: [], error: null }),
   ]);
+  if (missingFunction(rows.error) || missingFunction(facets.error)) {
+    introducedLive = false;
+    [rows, facets] = await Promise.all([
+      sb.rpc("analytics_campaign_lead_rows", rowArgs),
+      wantFacets
+        ? sb.rpc("analytics_campaign_lead_facets", { p_team_id: teamId, p_campaign_id: campaignId })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+  }
 
   const failed = rows.error ?? facets.error;
   if (failed) {
@@ -278,5 +329,6 @@ export async function GET(
     page,
     pageSize: PAGE_SIZE,
     facets: (facets.data ?? []) as Array<{ status: string; leads: number }>,
+    introducedLive,
   });
 }

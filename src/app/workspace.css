@@ -249,6 +249,8 @@ tbody tr:hover{background:var(--inset)}
 .s-ok{background:var(--yellow-bg);color:var(--yellow)}
 .s-done{background:var(--green-bg);color:var(--green)}
 .s-pending{background:var(--yellow-bg);color:var(--yellow)}
+/* Introduced to the client — the same blue as the inbox's Introduction label (.lc-blue). */
+.s-intro{background:var(--blue-pale);color:var(--blue-ink)}
 
 /* CLIENT LIFECYCLE — the four statuses, one treatment each (spec §11).
    Paused orange and churned red are fixed by the spec, not chosen here.
