@@ -11,7 +11,7 @@ import { listSalespeople } from "@/lib/identity/salespeople";
 
 import {
   ACCOUNT_MANAGER_RATE, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, monthTwoStarts, netPer28, nextRun,
-  previousRun, runOnOrAfter, sum, type Line, type Payment, type StatusChange,
+  previousRun, round2, runOnOrAfter, runsBetween, splitLine, SPLIT_FROM, statusAt, runForPayment, sum, type Line, type Payment, type StatusChange,
 } from "./schedule";
 import { stripeGross, stripePayments } from "./stripe-payments";
 
@@ -65,6 +65,8 @@ export interface CommissionRow {
   plan: string | null;
   status: MasterClient["status"];
   salesperson: string | null;
+  /** The salesperson named here has left (role switched off by this payout): shown, not paid. */
+  salespersonLeft?: boolean;
   accountManager: string | null;
   /** Gross per 28 days, and where it came from. */
   gross: number | null;
@@ -100,6 +102,9 @@ export interface CommissionsView {
   nextRun: string;
   /** The run date is still ahead: its figures are what has been billed so far. */
   runOpen: boolean;
+  /** The first payout paid as half the monthly commission, and whether this payout is one. */
+  splitFrom: string;
+  split: boolean;
   viewer: { email: string; name: string; admin: boolean };
   /** "all" (admins), one earner key, or "mine" — everything the viewer earns. */
   scope: string;
@@ -298,16 +303,38 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
       cycle = cycleDays;
       grossSource = "manual";
     }
+    const net = gross !== null ? netPer28(gross, cycle) : null;
+    const firstPaid = payments.length ? [...payments].sort((a, b) => a.date.localeCompare(b.date))[0].date : null;
+    const monthTwo = monthTwoStarts(payments);
     const earnings: Earning[] = onClient(c).filter((e) => keys.has(e.key)).map((e) => {
       const lines = commissionLines(payments, changes, c.status, e.rate, { fromMonthTwo: e.role === "account_manager" });
-      const runLines = linesForRun(lines, run);
-      return { key: e.key, role: e.role, name: e.name, rate: e.rate, due: sum(runLines), lines: runLines, lifetime: sum(lines) };
+      if (run < SPLIT_FROM) {
+        // Before the split: the payments that arrived in this payout's window, as they were paid.
+        const runLines = linesForRun(lines, run);
+        return { key: e.key, role: e.role, name: e.name, rate: e.rate, due: sum(runLines), lines: runLines, lifetime: sum(lines) };
+      }
+      /*
+       * The split: half the client's monthly commission on every payout from
+       * SPLIT_FROM — while the client is active, once it has paid at all, and
+       * for an account manager from Month 2. Payments in the split's period
+       * make no lines of their own, so nothing is paid twice.
+       */
+      const split = gross !== null && net !== null
+        ? runsBetween(SPLIT_FROM, run)
+            .filter((r) => statusAt(changes, c.status, r) === "active")
+            .filter((r) => !!firstPaid && firstPaid <= r)
+            .filter((r) => e.role !== "account_manager" || (!!monthTwo && monthTwo <= r))
+            .map((r) => splitLine(r, gross!, net, e.rate))
+        : [];
+      const runLines = split.filter((l) => l.date === run);
+      const before = lines.filter((l) => runForPayment(l.date) < SPLIT_FROM);
+      return { key: e.key, role: e.role, name: e.name, rate: e.rate, due: sum(runLines), lines: runLines, lifetime: round2(sum(before) + sum(split)) };
     });
     const all = commissionLines(payments, changes, c.status, 0);
     return {
       id: c.id, name: c.name, plan: c.plan, status: c.status,
-      salesperson: offOnRun(c) ? null : c.salesperson, accountManager: firstManager(c),
-      gross, net: gross !== null ? netPer28(gross, cycle) : null, grossSource, manualGross: manual, stripeLinked: linked,
+      salesperson: c.salesperson, salespersonLeft: offOnRun(c), accountManager: firstManager(c),
+      gross, net, grossSource, manualGross: manual, stripeLinked: linked,
       statusLabel: label(c, changes, all, payments.length > 0 || gross !== null, monthTwoStarts(payments), run),
       earnings,
       due: sum(earnings.flatMap((e) => e.lines)),
@@ -337,11 +364,15 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
   const holding = new Set(active.flatMap((c) => onClient(c).map((e) => e.key)));
   return {
     today, run, previousRun: previousRun(run), nextRun: nextRun(run), runOpen: run > today,
+    splitFrom: SPLIT_FROM, split: run >= SPLIT_FROM,
     viewer: { email: inp.viewerEmail.toLowerCase(), name: viewerName, admin: inp.admin },
     scope, reps, rows,
     unassigned: inp.admin
       ? active.flatMap((c) => {
           const on = onClient(c).map((e) => e.role);
+          // A client whose salesperson has left still HAS its salesperson — the
+          // one who made the deal (Eddy, 9 Oct). Nobody earns it; nothing to fix.
+          if (offOnRun(c)) on.push("salesperson");
           const missing = (["salesperson", "account_manager"] as EarnerRole[]).filter((r) => !on.includes(r));
           return missing.length
             ? [{ id: c.id, name: c.name, status: c.status, missing, salesperson: c.salesperson, accountManager: firstManager(c), manualGross: settings.gross.get(c.id) ?? null, stripeLinked: Boolean(c.stripeSubscriptionId) }]

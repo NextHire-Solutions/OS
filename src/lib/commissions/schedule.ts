@@ -138,9 +138,30 @@ export interface Line {
   fee: number;
   /** What the commission is a percentage of. */
   net: number;
-  source: Payment["source"];
+  /** "split": half a month's commission on a payout (SPLIT_FROM on), not one payment. */
+  source: Payment["source"] | "split";
   rate: number;
   commission: number;
+}
+
+/*
+ * THE SPLIT (Eddy, 9 Oct). From this payout on, each payout pays HALF of each
+ * client's monthly commission — half on the 1st, half on the 15th — whenever
+ * the client's payment arrives. Before it, a payout paid on the payments that
+ * arrived in its window (linesForRun), and those payouts stay as they were.
+ */
+export const SPLIT_FROM = "2026-10-15";
+
+/** Every payout day from `from` to `to`, both included. */
+export function runsBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let r = runOnOrAfter(from); r <= to; r = nextRun(r)) out.push(r);
+  return out;
+}
+
+/** Half of a month's commission, paid on payout day `run`. `gross`/`net` are per month (28 days). */
+export function splitLine(run: string, gross: number, net: number, rate: number): Line {
+  return { date: run, amount: round2(gross), fee: round2(gross - net), net: round2(net), source: "split", rate, commission: round2((net * rate) / 2) };
 }
 
 /** The first day after a client's Month 1: 28 days from its first payment. */

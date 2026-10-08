@@ -154,8 +154,9 @@ test("salesperson role switched off: past payouts stay, from the next payout the
   }));
   const nyc = oct15.rows.find((r) => r.name === "NYC Co")!;
   assert.equal(nyc.earnings.some((e) => e.key === "sp:e"), false, "no salesperson commission from the 15 Oct payout on");
-  assert.equal(nyc.salesperson, null, "and the table no longer names him as its salesperson");
-  assert.ok(oct15.unassigned.some((u) => u.name === "NYC Co" && u.missing.includes("salesperson")), "the client is listed as needing a salesperson");
+  assert.equal(nyc.salesperson, "Eddy", "he stays named — he made the deal");
+  assert.equal(nyc.salespersonLeft, true, "marked as left");
+  assert.equal(oct15.unassigned.some((u) => u.name === "NYC Co" && u.missing.includes("salesperson")), false, "not listed as needing a salesperson");
   const eddy = oct15.people.find((p) => p.key === "p:eddy@x.com")!;
   assert.deepEqual(eddy.roles, ["account_manager"], "the Viewing list shows him as account manager only");
 });
@@ -164,4 +165,44 @@ test("a salesperson switched off with no date known earns nothing from then on",
   const off = salespeople.map((p) => (p.id === "r" ? { ...p, active: false, offSince: null } : p));
   const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, salespeople: off }));
   assert.equal(v.rows.find((r) => r.name === "Coastal Realty")!.earnings.some((e) => e.key === "sp:r"), false);
+});
+
+test("from 15 Oct each payout is HALF the client's monthly commission, whenever the payment arrives", () => {
+  // Keyes: $3,000 a month, billed every 14 days. Coastal: $1,800 a month, first paid 20 Sep (Month 1 until 18 Oct).
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, today: "2026-10-08", run: "2026-10-15" }));
+  assert.equal(v.split, true);
+  const keyes = v.rows.find((r) => r.name === "Keyes Company")!;
+  const by = Object.fromEntries(keyes.earnings.map((e) => [e.name, e]));
+  assert.equal(keyes.net, 2912.4);
+  assert.equal(by["Scott Craigue"].due, 145.62, "half of 10% of $2,912.40");
+  assert.equal(by["Amy"].due, 72.81, "half of 5%");
+  assert.deepEqual(by["Scott Craigue"].lines.map((l) => [l.date, l.source, l.amount, l.net, l.commission]), [["2026-10-15", "split", 3000, 2912.4, 145.62]]);
+  const coastal = v.rows.find((r) => r.name === "Coastal Realty")!;
+  const cBy = Object.fromEntries(coastal.earnings.map((e) => [e.name, e.due]));
+  assert.equal(cBy["Ryan Jagdeo"], 174.72, "the salesperson from the start: half of 20% of $1,747.20");
+  assert.equal(cBy["Eddy"], 0, "the account manager not until Month 2 (18 Oct)");
+  const nov1 = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, today: "2026-10-08", run: "2026-11-01" }));
+  assert.equal(Object.fromEntries(nov1.rows.find((r) => r.name === "Coastal Realty")!.earnings.map((e) => [e.name, e.due]))["Eddy"], 43.68, "from Month 2 the account manager earns his half too");
+});
+
+test("payouts before the split are unchanged, and earned-to-date adds the halves to what came before", () => {
+  const oct1 = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, today: "2026-10-08", run: "2026-10-01" }));
+  assert.equal(oct1.split, false);
+  const keyesOct1 = oct1.rows.find((r) => r.name === "Keyes Company")!;
+  assert.equal(Object.fromEntries(keyesOct1.earnings.map((e) => [e.name, e.due]))["Scott Craigue"], 145.62, "1 Oct: the 16 Sep payment, as it was");
+  const nov1 = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, today: "2026-10-08", run: "2026-11-01" }));
+  const scott = nov1.rows.find((r) => r.name === "Keyes Company")!.earnings.find((e) => e.name === "Scott Craigue")!;
+  // Before the split: three payments (24 Jun, 8 Jul, 16 Sep) at 10% of $1,456.20 = 3 × 145.62; then two halves (15 Oct, 1 Nov).
+  assert.equal(scott.lifetime, 728.1);
+});
+
+test("a paused client earns nothing on the split; a client that has never paid earns nothing yet", () => {
+  const paused = clients.map((c) => (c.id === "k" ? { ...c, status: "paused" as const } : c));
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, clients: paused, today: "2026-10-08", run: "2026-10-15" }));
+  assert.equal(v.rows.some((r) => r.name === "Keyes Company"), false, "paused clients are not listed or paid");
+  const unpaid = buildCommissionsView(base({
+    viewerEmail: "admin@x.com", admin: true, today: "2026-10-08", run: "2026-10-15",
+    stripe: new Map([...base({}).stripe, ["c", { payments: [], gross: 1800, cycleDays: 14 }]]),
+  }));
+  assert.ok(unpaid.rows.find((r) => r.name === "Coastal Realty")!.earnings.every((e) => e.due === 0));
 });

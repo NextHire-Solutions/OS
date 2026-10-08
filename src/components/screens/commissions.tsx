@@ -93,7 +93,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
         <div className="cx-head-t">
           <span className="cx-kicker">Workspace</span>
           <h1>Commissions</h1>
-          <p>Sales payouts on active clients — the salesperson earns 20% or 10% of each payment after Stripe&rsquo;s fee, and the account manager 5% from the client&rsquo;s second month. Payouts run on the 1st and 15th.</p>
+          <p>Sales payouts on active clients — the salesperson earns 20% or 10% of the client&rsquo;s monthly payment after Stripe&rsquo;s fee, and the account manager 5% from the client&rsquo;s second month. Payouts run on the 1st and 15th, half of the month on each (until 1 Oct, each payout followed the payments received).</p>
         </div>
         <div className="cm-run">
           <span className="cx-kicker">{data.runOpen ? "Next payout run" : "Payout run"}</span>
@@ -180,7 +180,7 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
               {data.rows.length === 0 ? (
                 <tr><td colSpan={8} className="cx-empty">{single ? "No active clients are assigned to this person." : "No active client has a salesperson or account manager yet."}</td></tr>
               ) : rows.map((r) => (
-                <Row key={r.id} r={r} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
+                <Row key={r.id} r={r} split={data.split} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
               ))}
             </tbody>
           </table>
@@ -284,7 +284,7 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
   );
 }
 
-function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle: () => void }) {
+function Row({ r, split, open, onToggle }: { r: CommissionRow; split: boolean; open: boolean; onToggle: () => void }) {
   const tone = r.status === "churned" ? "cancelled" : r.statusLabel === "Month 1" ? "month1" : r.status === "paused" ? "paused" : "active";
   return (
     <>
@@ -297,7 +297,11 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
             : <span className="cm-src none" title="Not linked to Stripe and no gross set">not set</span>}
         </td>
         <td className="num">{money(r.net)}</td>
-        <td>{r.salesperson ?? <span className="cx-none">—</span>}</td>
+        <td>
+          {r.salesperson ?? <span className="cx-none">—</span>}
+          {/* Made the deal, has since left: named, not paid (Eddy, 9 Oct). */}
+          {r.salesperson && r.salespersonLeft ? <span className="cx-none" title="Made the deal and has since left — not paid from this payout on"> · left</span> : null}
+        </td>
         <td>{r.accountManager ?? <span className="cx-none">—</span>}</td>
         <td><span className={`cm-status ${tone}`}>{r.statusLabel}</span></td>
         <td className="num"><b className={r.due ? "cx-strong" : "cx-none"}>{money(r.due, true)}</b></td>
@@ -307,20 +311,20 @@ function Row({ r, open, onToggle }: { r: CommissionRow; open: boolean; onToggle:
           <td colSpan={8}>
             {r.earnings.map((e) => (
               <div key={e.key} style={{ marginBottom: 10 }}>
-                <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {pct(e.rate)} of each payment after Stripe&rsquo;s fee{e.role === "account_manager" ? ", from Month 2" : ""}</span>
+                <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {split ? <>{pct(e.rate)} of the monthly payment after Stripe&rsquo;s fee, half on each payout</> : <>{pct(e.rate)} of each payment after Stripe&rsquo;s fee</>}{e.role === "account_manager" ? ", from Month 2" : ""}</span>
                 {e.lines.length ? (
                   <table>
-                    <thead><tr><th>Billed</th><th>Payment</th><th>Stripe fee</th><th>Net</th><th>Source</th><th className="num">Rate</th><th className="num">Commission</th></tr></thead>
+                    <thead><tr><th>{split ? "Payout" : "Billed"}</th><th>{split ? "Monthly" : "Payment"}</th><th>Stripe fee</th><th>Net</th><th>Source</th><th className="num">Rate</th><th className="num">Commission</th></tr></thead>
                     <tbody>
                       {e.lines.map((l, i) => (
                         <tr key={i}>
                           <td>{day(l.date, true)}</td><td>{money(l.amount, true)}</td><td>−{money(l.fee, true)}</td><td>{money(l.net, true)}</td>
-                          <td>{l.source === "stripe" ? "Stripe · paid" : "Estimate"}</td><td className="num">{pct(l.rate)}</td><td className="num">{money(l.commission, true)}</td>
+                          <td>{l.source === "split" ? "Half of the month" : l.source === "stripe" ? "Stripe · paid" : "Estimate"}</td><td className="num">{pct(l.rate)}</td><td className="num">{money(l.commission, true)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                ) : <span className="cm-note" style={{ display: "block" }}>{e.role === "account_manager" && r.statusLabel === "Month 1" ? "Month 1 — the account manager earns from Month 2." : "No payment falls on this run."}</span>}
+                ) : <span className="cm-note" style={{ display: "block" }}>{e.role === "account_manager" && r.statusLabel === "Month 1" ? "Month 1 — the account manager earns from Month 2." : split ? "Nothing on this payout — no payment from this client yet." : "No payment falls on this run."}</span>}
                 <span className="cm-note">Earned to date on this client: <b>{money(e.lifetime, true)}</b></span>
               </div>
             ))}
