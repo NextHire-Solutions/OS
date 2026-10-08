@@ -1,7 +1,8 @@
 import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
-import { isHostileLabel, markThreadLeadDoNotContact } from "@/lib/tools/master-inbox/inbox/dnc";
+import { isHostileLabel, markThreadLeadDoNotContact, stopThreadPerson } from "@/lib/tools/master-inbox/inbox/dnc";
+import { isStopContactLabel } from "@/lib/tools/master-inbox/portals/stop-person-plan";
 import {
   isInterestedLabel,
   isNotInterestedLabel,
@@ -118,6 +119,12 @@ export async function POST(request: Request) {
   // it's "Hostile", blacklist the lead on the source platform.
   if (isHostileLabel(label?.name as string | null)) {
     await markThreadLeadDoNotContact(threadId);
+  }
+  // Hostile, Unsubscribe, Do Not Contact, Add to Blocklist → stop the person
+  // everywhere (both platforms, every conversation). Not awaited: it never
+  // throws and must not slow the label click.
+  if (isStopContactLabel(label?.name as string | null)) {
+    void stopThreadPerson(threadId);
   }
 
   // Introduction → notify n8n + Bison orchestrator + auto-push to

@@ -3,7 +3,8 @@ import "server-only";
 import { after } from "next/server";
 
 import { getMasterInboxSupabase, workspaceId } from "./supabase";
-import { isHostileLabel, markThreadLeadDoNotContact } from "./inbox/dnc";
+import { isHostileLabel, markThreadLeadDoNotContact, stopThreadPerson } from "./inbox/dnc";
+import { isStopContactLabel } from "./portals/stop-person-plan";
 import {
   isInterestedLabel,
   isNotInterestedLabel,
@@ -139,6 +140,12 @@ export async function applyLabel(threadId: string, labelId: string): Promise<Lab
     // Hostile → blacklist the lead on the platform it came from.
     if (isHostileLabel(newLabelName)) {
       await markThreadLeadDoNotContact(threadId);
+    }
+    // Hostile, Unsubscribe, Do Not Contact, Add to Blocklist → stop the
+    // person everywhere (both platforms, every conversation). Not awaited:
+    // it never throws and must not slow the label change.
+    if (isStopContactLabel(newLabelName)) {
+      void stopThreadPerson(threadId);
     }
 
     /*
