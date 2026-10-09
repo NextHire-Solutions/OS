@@ -239,8 +239,14 @@ window.__audit = function () {
      */
     const inSvg = Boolean(e.ownerSVGElement) || e.tagName.toLowerCase() === "svg";
     const leaf = !inSvg && e.children.length === 0 && (e.textContent || "").trim().length > 2;
+    /*
+     * Screen-reader-only text (9 Oct: the compact headers keep their h1 for
+     * screen readers in a 1px clipped box) is hidden ON PURPOSE — not cut off.
+     */
+    const srOnly = c.position === "absolute" && e.clientWidth <= 1 && e.clientHeight <= 1 &&
+      (/^rect\(0/.test(c.clip || "") || /inset\(50%\)/.test(c.clipPath || ""));
     if (
-      leaf &&
+      leaf && !srOnly &&
       e.scrollWidth > e.clientWidth + 1 &&
       c.textOverflow !== "ellipsis" &&
       !/(auto|scroll)/.test(c.overflowX) &&

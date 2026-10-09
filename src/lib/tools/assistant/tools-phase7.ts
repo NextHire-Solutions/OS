@@ -250,6 +250,11 @@ export async function billingOverviewTool(o: { days?: number } = {}) {
     .sort((a, b) => (a.status === b.status ? (b.outstanding ?? 0) - (a.outstanding ?? 0) : a.status === "past_due" ? -1 : 1));
   // The business across every subscription (billing-model.ts, 6 Oct): no double counting of shared cards.
   const acct = await getAccountBilling().catch(() => null);
+  // Stripe payment links made with "Create subscription" and not paid yet — not invoices (9 Oct).
+  const { data: linkRows, error: linkErr } = await mi().from("os_payment_links")
+    .select("client_id, amount_cents, every, created_at, url").eq("status", "open").order("created_at", { ascending: false });
+  const openPaymentLinks = linkErr ? null : ((linkRows ?? []) as Array<{ client_id: string; amount_cents: number; every: string; created_at: string; url: string }>)
+    .map((r) => ({ client: all.find((c) => c.id === r.client_id)?.name ?? "(not on the client list)", amount: money(r.amount_cents / 100), every: r.every, created: easternDay(Date.parse(r.created_at)), url: r.url }));
   return {
     totalMrr: money(mrrRows.reduce((t, r) => t + (r.mrr ?? 0), 0)),
     totalSpendAllTime: money(mrrRows.reduce((t, r) => t + (r.totalSpend ?? 0), 0)),
@@ -270,6 +275,7 @@ export async function billingOverviewTool(o: { days?: number } = {}) {
     failedPayments: acct ? all.flatMap((c) => (acct.byClient.get(c.id)?.failedInvoices ?? []).map((i) => ({ client: c.name, invoice: i.number, unpaid: i.amountRemaining, attempts: i.attemptCount, nextTry: i.nextAttempt ? easternDay(i.nextAttempt * 1000) : null }))) : null,
     portalBlocks: await openPortalBlocks().then((b) => b.map((x) => ({ client: all.find((c) => c.id === x.clientId)?.name ?? x.clientId, mode: x.mode === "blocked" ? "blocked" : "dry run (would be blocked)", since: x.since }))).catch(() => []),
     failedPaymentRule: `Every failed attempt notifies the OS bell; after ${blockThreshold()} attempts (first + 3 retries) the portal is blocked until paid — ${blockingEnabled() ? "ON" : "dry run only for now"}.`,
+    openPaymentLinks,
     clientsOnStripe: linked.length,
     clientsNotOnStripe: all.filter((c) => !c.stripeCustomerId && !c.stripeSubscriptionId).map((c) => c.name),
     byMrr: mrrRows.filter((r) => r.mrr != null).sort((a, b) => (b.mrr ?? 0) - (a.mrr ?? 0)),

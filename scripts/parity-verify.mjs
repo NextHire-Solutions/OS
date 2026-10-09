@@ -57,8 +57,7 @@ const sw = await api("/api/tools/master-inbox/workspaces/switch");
 check("inbox","workspace switch route exists", sw.status !== 404, `HTTP ${sw.status}`);
 await go("/inbox/reminders");
 check("inbox","reminders screen uses the real view tabs (New view control present)", await btn("/new view|new tab/i"));
-await go("/inbox/settings/labels");
-check("inbox","Personal settings tab shows the Workspace section", await has("/workspace/i"));
+// The Personal settings tab (and its Workspace section) was removed on 9 Oct.
 for (const r of ["thread-counts","cleanup-threads","retag-all-clients","backfill-interested","dedupe-outbound","reclassify-directions","sync-workspaces","last-webhook-payload","inspect-null-senders"]) {
   const a = await api(`/api/tools/master-inbox/admin/${r}`);
   check("inbox",`admin route ${r} exists`, a.status !== 404, `HTTP ${a.status}`);
@@ -92,7 +91,7 @@ check("analytics","reply attribute filters on the Replies sub-view (brokerage / 
 await ev(`(()=>{const b=[...document.querySelectorAll('.seg button,[role=radio],button')].find(x=>/^\\s*charts\\s*$/i.test(x.innerText||'')); if(b) b.click();})()`);
 await sleep(1500);
 check("analytics","Exclude weekends control", await has("/exclude weekends/i"));
-check("analytics","Volume is a tab in the analytics tab strip", await ev(`[...document.querySelectorAll('.an-tabs a')].some(a=>/^\\s*volume\\s*$/i.test(a.innerText||''))`));
+check("analytics","Volume is a tab in the analytics tab strip", await ev(`[...document.querySelectorAll('.ds-tabs a, .an-tabs a')].some(a=>/^\\s*volume\\s*$/i.test(a.innerText||''))`));
 check("analytics","Campaign screen sub-views are the tool's four (Charts/Clients/Campaigns/Replies)", await ev(`(()=>{
   const segs=[...document.querySelectorAll('.seg, .segfull, [role=group]')].map(s=>[...s.querySelectorAll('button')].map(b=>(b.innerText||'').trim().toLowerCase()));
   const sub=segs.find(l=>l.includes('charts')&&l.includes('replies'));
@@ -121,7 +120,7 @@ console.log("\nCLIENT HEALTH\n");
 for (const p of ["/clients/biweekly"]) {
   await go(p,11000);
   check("client-health",`${p} has week navigation`, await btn("/this week|today/i") && await ev(`[...document.querySelectorAll('button')].some(b=>/previous week|next week|←|→/i.test(b.innerText||b.getAttribute('aria-label')||''))`));
-  check("client-health",`${p} has + Add Client`, await btn("/add client/i"));
+  // "+ Add Client" left Client Health on purpose: clients are added on the Clients page.
 }
 const ro = await api("/api/tools/client-health/metrics/weekly");
 check("client-health","GET metrics/weekly exists", ro.status!==404, `HTTP ${ro.status}`);
