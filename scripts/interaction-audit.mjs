@@ -82,7 +82,14 @@ const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",") : [
  * The refusal list. Deliberately broad: a false "unsafe" costs coverage, a
  * false "safe" costs money or a customer's data.
  */
-const UNSAFE = /(delete|remove|archive|send|reply|launch|start|stop|run|sync|scan|import|export|push|generate|invite|reset|save|create|add|onboard|enrich|search|apply|confirm|pause|resume|disable|enable|sign out|log ?out|×|✕)/i;
+const UNSAFE = /(delete|remove|archive|send|reply|launch|start|stop|run|sync|scan|import|export|push|generate|invite|reset|save|create|add|onboard|enrich|search|apply|confirm|pause|resume|disable|enable|activate|password|scrape|refresh|grant|revoke|unlink|link|mark|snooze|assign|restore|retry|cancel|approve|reject|publish|upload|duplicate|sign out|log ?out|×|✕)/i;
+/*
+ * 9 Oct: the word list alone was not enough. Run behind a write guard, this
+ * suite pressed "Deactivate" and "New temporary password" on Team access and
+ * "Re-scrape" on Courted accounts — none of which the list knew. So the
+ * browser now also REFUSES every write before it leaves (Fetch below): a
+ * control whose request was refused shows as DEAD, which is the safe failure.
+ */
 
 async function token() {
   const { mintSso, ALL_TOOLS } = await import("../src/lib/bs-auth.ts");
@@ -99,10 +106,17 @@ const t = await (await fetch(`${CDP}/json/new?about:blank`, { method: "PUT" })).
 const ws = new WebSocket(t.webSocketDebuggerUrl);
 let id = 0; const waiting = new Map(); const events = [];
 await new Promise((r) => (ws.onopen = r));
+const refused = [];
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
-  else if (m.method) events.push(m);
+  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); return; }
+  if (m.method === "Fetch.requestPaused") {
+    const { requestId, request } = m.params;
+    if (["GET", "HEAD", "OPTIONS"].includes(request.method)) ws.send(JSON.stringify({ id: ++id, method: "Fetch.continueRequest", params: { requestId } }));
+    else { refused.push(`${request.method} ${request.url}`); ws.send(JSON.stringify({ id: ++id, method: "Fetch.failRequest", params: { requestId, errorReason: "BlockedByClient" } })); }
+    return;
+  }
+  if (m.method) events.push(m);
 };
 const send = (method, params = {}) =>
   new Promise((r) => { const i = ++id; waiting.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
@@ -111,6 +125,7 @@ const ev = async (x) =>
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 await send("Page.enable"); await send("Runtime.enable"); await send("Network.enable");
+await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
 await send("Network.setCookie", {
   name: "bs_sso", value: await token(), domain: new URL(BASE).hostname, path: "/",
   secure: BASE.startsWith("https"),
@@ -277,7 +292,8 @@ for (const route of ROUTES) {
   }
 }
 
-console.log(`\n  ${clicked} controls pressed · ${skipped} skipped as unsafe · ${faults.length} issue(s)`);
+console.log(`\n  ${clicked} controls pressed · ${skipped} skipped as unsafe · ${faults.length} issue(s) · ${refused.length} write(s) refused`);
+for (const r of [...new Set(refused)]) console.log(`    refused  ${r}`);
 const byKind = {};
 for (const f of faults) byKind[f.kind] = (byKind[f.kind] ?? 0) + 1;
 for (const [k, n] of Object.entries(byKind).sort((a, b) => b[1] - a[1])) console.log(`    ${k.padEnd(22)} ${n}`);

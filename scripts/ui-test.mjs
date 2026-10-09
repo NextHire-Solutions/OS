@@ -67,7 +67,7 @@ const SCREENS = [
   { path: "/inbox/reminders",     expect: "section.screen.on *", min: 3, label: "Inbox · Reminders" },
   // 7, not 8: Webhooks was removed from the strip at the user's request. The
   // component and its route stay, so the tool's own copy is unaffected.
-  { path: "/inbox/settings",      expect: ".mi-settings-tabs .fp", min: 7, label: "Inbox · Settings" },
+  { path: "/inbox/settings",      expect: ".mi-settings-tabs .fp", min: 3, label: "Inbox · Settings" }, // Labels, Templates, AI Labeling (9 Oct)
   { path: "/inbox/portals",       expect: "section.screen.on *", min: 20, label: "Inbox · Portals" },
   { path: "/inbox/portals/c370499d-8cc4-4c1f-93b0-f75d363b108d", expect: "section.screen.on *", min: 50, label: "Portal · one client" },
   { path: "/inbox/settings/templates",   expect: 'input[placeholder*="emplate"]', min: 1, label: "Settings · Templates" },
