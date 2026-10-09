@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { NAV, sectionKey, sectionOf, type NavProduct } from "@/lib/workspace/nav";
+import { NAV, sectionKey, sectionOf, type NavPage, type NavProduct } from "@/lib/workspace/nav";
 import { RailBrand } from "./rail-brand";
 import { ToolGlyph } from "./tool-glyph";
 import { canSeePage, type RoleFlags } from "@/lib/workspace/nav";
@@ -97,6 +97,21 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
               <div className="sec-h">{section.label}</div>
 
               {items.map((item) => {
+                if (item.kind === "page" && item.children) {
+                  return (
+                    <PageGroup
+                      key={item.id}
+                      page={item}
+                      leaves={item.children.filter((c) => canSeePage(c.id, admin, grants, ALL_TOOLS, roles))}
+                      open={open === item.id}
+                      activeId={activeId}
+                      onToggle={() => setOpen(open === item.id ? null : item.id)}
+                      onOpen={() => setOpen(item.id)}
+                      onNavigate={onNavigate}
+                      onPrefetch={onPrefetch}
+                    />
+                  );
+                }
                 if (item.kind === "page") {
                   return (
                     <button
@@ -167,6 +182,74 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
         </form>
       </div>
     </aside>
+  );
+}
+
+/*
+ * A workspace page with sub-pages under an arrow (9 Oct: Performance →
+ * Overview, Billing Calendar). Drawn exactly like a product's list. One
+ * difference: from outside the page, clicking its name OPENS it (Overview) as
+ * well as the list — a product's name only toggles, but Performance was a
+ * plain link until now, and its list is hidden when the rail is collapsed.
+ */
+function PageGroup({
+  page,
+  leaves,
+  open,
+  activeId,
+  onToggle,
+  onOpen,
+  onNavigate, onPrefetch,
+}: {
+  page: NavPage;
+  leaves: { id: string; label: string }[];
+  open: boolean;
+  activeId: string;
+  onToggle: () => void;
+  onOpen: () => void;
+  onNavigate: (id: string) => void;
+  onPrefetch?: (id: string) => void;
+}) {
+  const holdsActive = leaves.some((l) => l.id === activeId);
+  return (
+    <div className={`acc${open ? " open" : ""}${holdsActive ? " has-active" : ""}`}>
+      <button
+        className="acc-btn"
+        type="button"
+        aria-expanded={open}
+        data-tip={page.label}
+        onClick={() => {
+          if (holdsActive) return onToggle();
+          onOpen();
+          onNavigate(leaves[0]?.id ?? page.id);
+        }}
+        onMouseEnter={() => onPrefetch?.(leaves[0]?.id ?? page.id)}
+      >
+        <ToolGlyph id={page.id} />
+        <span className="lbl">{page.label}</span>
+        <svg className="chev" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+      </button>
+
+      <div className="acc-body">
+        <div className="acc-inner">
+          <div className="acc-list">
+            {leaves.map((leaf) => (
+              <button
+                key={leaf.id}
+                className={`nav leaf${activeId === leaf.id ? " on" : ""}`}
+                onClick={() => onNavigate(leaf.id)}
+                onMouseEnter={() => onPrefetch?.(leaf.id)}
+                onFocus={() => onPrefetch?.(leaf.id)}
+              >
+                <span className="lbl">{leaf.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

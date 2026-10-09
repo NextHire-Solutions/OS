@@ -177,6 +177,8 @@ export interface ClientEdit {
   onboardingDate?: string | null;
   /** §12 Churn date, entered on the record (os_clients.churn_date, 0023). */
   churnDate?: string | null;
+  /** §12 Pause date, entered for a pause the status history lacks (os_clients.pause_date, 0032). */
+  pauseDate?: string | null;
   /*
    * Profile (0027, Eddy 1 Oct). Sign up date overrides Stripe's customer-
    * created day; the web addresses are stored as https URLs. Blank clears.
@@ -266,7 +268,7 @@ export function validateEdit(edit: ClientEdit): string[] {
     errors.push("Weekly target must be a whole number of 0 or more.");
   }
   for (const [label, v] of [["Start date", edit.startDate], ["Billing anchor date", edit.billingAnchorDate],
-    ["Onboarding date", edit.onboardingDate], ["Churn date", edit.churnDate], ["Sign up date", edit.signupDate]] as const) {
+    ["Onboarding date", edit.onboardingDate], ["Churn date", edit.churnDate], ["Pause date", edit.pauseDate], ["Sign up date", edit.signupDate]] as const) {
     if (v && !ISO_DATE.test(v)) errors.push(`${label} must be YYYY-MM-DD.`);
   }
   if (edit.billingInterval !== undefined && !BILLING_INTERVALS.includes(edit.billingInterval)) {
@@ -615,6 +617,15 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
       updated.push("the onboarding / churn date");
     } catch (err) {
       failed.push({ what: "the onboarding / churn date", error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  // The pause date (0032), alone: before that migration it is the only leg that fails.
+  if (edit.pauseDate !== undefined) {
+    try {
+      await setClientDates(id, { pauseDate: edit.pauseDate || null });
+      updated.push("the pause date");
+    } catch (err) {
+      failed.push({ what: "the pause date", error: err instanceof Error ? err.message : String(err) });
     }
   }
 

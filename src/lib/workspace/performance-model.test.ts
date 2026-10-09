@@ -51,3 +51,33 @@ test("this month counts only clients that are active now — paused and onboardi
   const p = performanceFrom([c("active", "2026-06-01"), c("paused", "2026-06-01"), c("onboarding", "2026-09-20")], new Map(), null, 0, TODAY);
   assert.equal(p.months.find((m) => m.month === "2026-09")!.activeAtEnd, 1);
 });
+
+test("Paused: each client once a month it was paused in, from history and entered dates (9 Oct)", () => {
+  const p = (status: string, pauseDates: string[]): PerfClient => ({ ...c(status, "2026-05-01"), pauseDates });
+  const r = performanceFrom([
+    p("paused", ["2026-07-14"]),                      // entered by hand: before the history began
+    p("active", ["2026-09-03", "2026-09-20"]),        // paused twice in September → once
+    p("churned", ["2026-08-30", "2026-09-02"]),       // paused in August AND September
+    p("paused", []),                                  // paused now, no known pause → undated
+  ], new Map(), null, 0, TODAY);
+  const by = Object.fromEntries(r.months.map((m) => [m.month, m]));
+  assert.equal(by["2026-07"].paused, 1);
+  assert.equal(by["2026-08"].paused, 1);
+  assert.equal(by["2026-09"].paused, 2);
+  assert.equal(by["2026-06"].paused, 0);
+  assert.equal(r.totals.pauseUndated, 1);
+  assert.equal(r.totals.pausedLast90, 3, "anyone paused since 2 Jul");
+  // Paused does not change Net — a paused client is still a client.
+  assert.equal(by["2026-09"].net, by["2026-09"].added - by["2026-09"].churned);
+});
+
+test("Paused is unknown, not zero, when the status history cannot be read", () => {
+  const r = performanceFrom([{ ...c("paused", "2026-05-01"), pauseDates: ["2026-07-14"] }], new Map(), null, 0, TODAY, false);
+  assert.ok(r.months.every((m) => m.paused === null));
+  assert.equal(r.totals.pausedLast90, null);
+});
+
+test("a pause alone can open the month list", () => {
+  const r = performanceFrom([{ ...c("paused", null), pauseDates: ["2026-03-10"] }], null, null, 0, TODAY);
+  assert.equal(r.months.at(-1)!.month, "2026-03");
+});

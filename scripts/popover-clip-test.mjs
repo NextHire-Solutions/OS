@@ -39,7 +39,7 @@ const BASE = process.argv[2] || "http://localhost:3210";
 const CDP = process.env.CDP || "http://localhost:9333";
 
 const ROUTES = [
-  "/", "/performance", "/roster", "/admin/team",
+  "/", "/performance", "/performance/billing", "/roster", "/admin/team",
   "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/portals",
   "/inbox/settings", "/inbox/settings/labels", "/inbox/settings/templates",
   "/inbox/settings/reply-agents", "/inbox/settings/ai-labeling",

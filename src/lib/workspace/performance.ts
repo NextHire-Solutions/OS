@@ -26,8 +26,12 @@ export type Performance = MovementPerformance & { billing: PerformanceBilling | 
  */
 async function load(): Promise<Performance> {
   let clients: MasterClient[];
+  // Without the status history, pauses are unknown — shown as such, not as 0.
+  let pauseHistory = true;
   try {
-    clients = (await getMasterClientList()).clients;
+    const list = await getMasterClientList();
+    clients = list.clients;
+    pauseHistory = !list.unavailable.includes("Status history");
   } catch (error) {
     return { ...performanceFrom([], null, error instanceof Error ? error.message : "The client record is unreachable"), billing: null, billingError: null };
   }
@@ -50,7 +54,7 @@ async function load(): Promise<Performance> {
   } catch (error) {
     billingError = error instanceof Error ? error.message : "Stripe could not be read";
   }
-  return { ...performanceFrom(clients, revenue, null, onStripe), billing, billingError };
+  return { ...performanceFrom(clients, revenue, null, onStripe, new Date(), pauseHistory), billing, billingError };
 }
 
 export const getPerformance = ttlCache(load, { ttlMs: 5 * 60_000, staleMs: 30 * 60_000, shared: "performance" });

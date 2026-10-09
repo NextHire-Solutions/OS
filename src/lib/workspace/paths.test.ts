@@ -126,6 +126,21 @@ test("Client Health's views are called Overview and Delivery, at their old addre
   assert.equal(pathForId("clients:biweekly"), "/clients/biweekly");
 });
 
+test("Performance's sub-pages: Overview at /performance, Billing Calendar at /performance/billing (9 Oct)", () => {
+  assert.equal(pathForId("performance"), "/performance");
+  assert.equal(pathForId("billing-calendar"), "/performance/billing");
+  assert.equal(idForPath("/performance"), "performance");
+  assert.equal(idForPath("/performance/billing"), "billing-calendar");
+  assert.equal(idForPath("/performance/not-a-page"), "performance", "an unknown sub-page opens Overview");
+  const d = Object.fromEntries(destinations().map((x) => [x.id, x]));
+  assert.equal(d["performance"].label, "Overview");
+  assert.equal(d["performance"].group, "Performance");
+  assert.equal(d["billing-calendar"].label, "Billing Calendar");
+  assert.equal(d["billing-calendar"].group, "Performance");
+  assert.equal(sectionOf("performance"), "performance");
+  assert.equal(sectionOf("billing-calendar"), "performance");
+});
+
 test("every tool has its §8 Client view, addressed inside the tool", () => {
   for (const tool of ["inbox", "clients", "analytics", "onboarding", "search"]) {
     const id = `${tool}:client-view`;

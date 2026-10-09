@@ -59,7 +59,7 @@ CDP=http://localhost:9533 ROUTES="/analytics/infrastructure,/analytics/clients,/
 # was ~40 min serialised behind the analytics sweep — the whole run's long pole.
 CDP=http://localhost:9538 ROUTES="/clients,/clients/biweekly" \
   $NODE scripts/filter-audit.mjs https://os.brokerstaffer.com 2>&1 | quiet > "$OUT/filters-d.txt" & FD=$!
-CDP=http://localhost:9534 ROUTES="/onboarding/pipeline,/onboarding/stages,/onboarding/templates,/search/accounts,/search/mls,/inbox/portals,/inbox/trash,/roster,/performance" \
+CDP=http://localhost:9534 ROUTES="/onboarding/pipeline,/onboarding/stages,/onboarding/templates,/search/accounts,/search/mls,/inbox/portals,/inbox/trash,/roster,/performance,/performance/billing" \
   $NODE scripts/filter-audit.mjs https://os.brokerstaffer.com 2>&1 | quiet > "$OUT/filters-c.txt" & FC=$!
 PORT=9535 $NODE scripts/inbox-filters-test.mjs 2>&1 | quiet > "$OUT/filters-inbox.txt" & FI=$!
 # Wait on the five test pipelines ONLY. A bare `wait` also waits on the

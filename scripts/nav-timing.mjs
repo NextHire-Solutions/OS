@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 9494;
 const B = "/Users/sankalpdutt/Desktop/Code/brokerstaffer-os";
 
 const SCREENS = process.env.SCREENS ? process.env.SCREENS.split(",") : [
-  "/roster","/performance",
+  "/roster","/performance","/performance/billing",
   "/inbox/all-email","/inbox/open-responses","/inbox/archive","/inbox/reminders","/inbox/portals",
   "/clients","/clients/biweekly",
   "/analytics/campaign","/analytics/campaigns","/analytics/attribution",

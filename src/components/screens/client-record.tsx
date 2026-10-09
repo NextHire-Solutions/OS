@@ -81,6 +81,8 @@ function editorFor(key: string, team: { salespeople: string[]; accountManagers: 
     case "startDate": return { editor: { kind: "date" }, save: "startDate" };
     case "onboardingDate": return { editor: { kind: "date" }, save: "onboardingDate" };
     case "churnDate": return { editor: { kind: "date" }, save: "churnDate" };
+    // For a pause the status history never saw (before 13 Sep 2026) — 0032.
+    case "pauseDate": return { editor: { kind: "date" }, save: "pauseDate" };
     case "signupDate": return { editor: { kind: "date" }, save: "signupDate" };
     case "website": return { editor: { kind: "text", placeholder: "example.com" }, save: "website" };
     case "zillowUrl": return { editor: { kind: "text", placeholder: "zillow.com/profile/…" }, save: "zillowUrl" };
@@ -116,7 +118,7 @@ function rawOf(key: string, c: MasterClient): string | number | null {
   if (key === "campaignAliases") return c.campaignAliases.join(", ");
   if (key === "campaignSender") return c.sender;
   // A derived date can be a timestamp; the date editor wants YYYY-MM-DD.
-  if (key === "onboardingDate" || key === "churnDate") return c[key] ? c[key]!.slice(0, 10) : null;
+  if (key === "onboardingDate" || key === "churnDate" || key === "pauseDate") return c[key] ? c[key]!.slice(0, 10) : null;
   // The editor starts from what is shown: the entered day, else Stripe's.
   if (key === "signupDate") return effectiveSignup(c).date;
   const v = (c as unknown as Record<string, unknown>)[key];
@@ -128,7 +130,7 @@ function displayFor(key: string, c: MasterClient): React.ReactNode {
   switch (key) {
     case "plan": return planLabel(c.plan);
     case "timezone": return tzLabel(c.timezone);
-    case "startDate": case "billingAnchorDate": case "onboardingDate": case "churnDate": return fmtDay(c[key]);
+    case "startDate": case "billingAnchorDate": case "onboardingDate": case "churnDate": case "pauseDate": return fmtDay(c[key]);
     case "billingInterval": return intervalLabel(c.billingInterval, c.billingIntervalDays);
     case "campaignAliases": return c.campaignAliases.length ? c.campaignAliases.join(", ") : null;
     case "monthlyTarget": return c.monthlyTarget === null ? null : `${c.monthlyTarget} per 28 days`;

@@ -229,8 +229,9 @@ export const FIELDS: FieldDef[] = [
 
   /* ----------------------------------------------------- §12 lifecycle dates --- */
   { key: "pauseDate", label: "Pause date", category: "lifecycle", kind: "date",
-    definition: "When the client was last paused.", sourceOfTruth: MASTER, source: "Master record",
-    editIn: "Recorded automatically on every status change", editable: false, tools: ["Health", "Billing"], sync: "No — a recorded moment" },
+    definition: "When the client was last paused. Pauses since 13 Sep 2026 are recorded automatically when the status changes to Paused; enter an earlier one here so Performance can count it.",
+    sourceOfTruth: MASTER, source: "Master record",
+    editIn: "Clients — recorded automatically on every change to Paused; enter a pause from before 13 Sep 2026 by hand", editable: true, tools: ["Health", "Billing", "Performance"], sync: "No — a recorded moment" },
   { key: "churnDate", label: "Churn date", category: "lifecycle", kind: "date",
     definition: "When the client last churned.", sourceOfTruth: MASTER, source: "Master record",
     editIn: "Clients — set to the day the status changes to Churned; editable", editable: true, tools: ["Health", "Billing", "Performance", "Commissions"], sync: "No — a recorded moment" },

@@ -255,7 +255,7 @@ export async function billingOverviewTool(o: { days?: number } = {}) {
       newMrrLast30Days: acct.totals.newMrr30, lostMrrLast30Days: acct.totals.lostMrr30,
     } : null,
     upcomingBillingNext30Days: acct ? { charges: acct.upcoming.length, amount: money(acct.upcoming.reduce((t, u) => t + u.amount, 0)) } : null,
-    // The billing calendar (Performance): who Stripe charges, by day.
+    // The billing calendar (Performance › Billing Calendar): who Stripe charges, by day.
     billingCalendar: acct ? (() => {
       const days = Math.min(30, Math.max(1, Math.round(o.days ?? 14)));
       const until = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);

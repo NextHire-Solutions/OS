@@ -101,7 +101,8 @@ const SCREENS = [
    * not guessed) and then cut to roughly a third, so the check fails on a
    * blank or broken screen without flaking when a list is short that day.
    */
-  { path: "/performance",             expect: "table tr, [role=row]",  min: 5,  label: "Performance" },
+  { path: "/performance",             expect: "table tr, [role=row]",  min: 5,  label: "Performance · Overview" },
+  { path: "/performance/billing",     expect: "table tr, [role=row]",  min: 2,  label: "Performance · Billing Calendar" },
   { path: "/admin/team",              expect: "section.screen.on *",   min: 40, label: "Team access" },
 
   { path: "/analytics/campaign",      expect: ".card, .kpi, .k",       min: 6,  label: "Analytics · Campaign" },

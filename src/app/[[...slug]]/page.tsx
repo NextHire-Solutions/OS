@@ -44,7 +44,7 @@ import { PortalsAdminScreen } from "@/components/screens/master-inbox/portals";
 import { ClientsScreen, ToolClientView } from "@/components/screens/clients";
 import { CommissionsScreen } from "@/components/screens/commissions";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
-import { PerformanceScreen } from "@/components/screens/performance";
+import { BillingCalendarScreen, PerformanceScreen } from "@/components/screens/performance";
 import { AnalyticsCampaignScreen } from "@/components/screens/analytics/campaign";
 import { AnalyticsInfrastructureScreen } from "@/components/screens/analytics/infrastructure";
 import { AnalyticsAttributionScreen } from "@/components/screens/analytics/attribution";
@@ -205,7 +205,7 @@ export default async function WorkspacePage({
     await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
-    only("performance") ? getPerformance() : Promise.resolve(null),
+    only("performance") || only("billing-calendar") ? getPerformance() : Promise.resolve(null),
     initialId.startsWith("clients:") ? getWeekly() : Promise.resolve(null),
     // The master list is warmed at boot (instrumentation.ts); a failure here
     // falls back to the client fetching it, never to a blank page.
@@ -325,6 +325,7 @@ export default async function WorkspacePage({
           />
         ),
         performance: <PerformanceScreen initial={performance} />,
+        "billing-calendar": <BillingCalendarScreen initial={performance} />,
         roster: <ClientsScreen initial={clientsOverview} />,
         // Reads everything itself on open; nothing to pass from the server.
         consistency: <DiscrepanciesScreen />,

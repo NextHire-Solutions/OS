@@ -61,6 +61,10 @@ export const sectionKey = (p: NavProduct): string => p.key ?? p.id;
  * (`"home"`, `"performance"`) belong to no section and give null.
  */
 export function sectionOf(id: string): string | null {
+  // A workspace page with sub-pages is a section of its own.
+  for (const item of NAV.flatMap((s) => s.items)) {
+    if (item.kind === "page" && item.children?.some((c) => c.id === id)) return item.id;
+  }
   const [tool, leaf] = id.split(":");
   if (!leaf) return null;
   const siblings = products().filter((p) => p.id === tool);
@@ -74,6 +78,18 @@ export interface NavPage {
   label: string;
   /** Rendered by the workspace, not embedded. */
   route: string;
+  /**
+   * Sub-pages under an expand arrow (9 Oct: Performance → Overview and
+   * Billing Calendar). The first is the page itself (same id and route).
+   * Each child is a page of its own for access — canSeePage(child.id).
+   */
+  children?: NavSubPage[];
+}
+
+export interface NavSubPage {
+  id: string;
+  label: string;
+  route: string;
 }
 
 export interface NavSection {
@@ -86,7 +102,18 @@ export const NAV: NavSection[] = [
     label: "Workspace",
     items: [
       { kind: "page", id: "home", label: "Home", route: "/" },
-      { kind: "page", id: "performance", label: "Performance", route: "/performance" },
+      /*
+       * Two sub-pages under an arrow (9 Oct, OS feedback): Overview (the
+       * cards, plans and Client movement) and Billing Calendar (the next 30
+       * days of Stripe charges). Both admin-only, like Performance always was.
+       */
+      {
+        kind: "page", id: "performance", label: "Performance", route: "/performance",
+        children: [
+          { id: "performance", label: "Overview", route: "/performance" },
+          { id: "billing-calendar", label: "Billing Calendar", route: "/performance/billing" },
+        ],
+      },
       { kind: "page", id: "roster", label: "Clients", route: "/roster" },
       // Sales payouts by account manager — each person sees only their own.
       { kind: "page", id: "commissions", label: "Commissions", route: "/commissions" },
@@ -254,13 +281,16 @@ export function destinations(): Destination[] {
   for (const section of NAV) {
     for (const item of section.items) {
       if (item.kind === "page") {
-        out.push({
-          id: item.id,
-          label: item.label,
-          group: section.label,
-          route: item.route,
-          verified: true,
-        });
+        // A page with sub-pages is reached through them: "Performance › Overview".
+        for (const sub of item.children ?? [{ id: item.id, label: item.label, route: item.route }]) {
+          out.push({
+            id: sub.id,
+            label: sub.label,
+            group: item.children ? item.label : section.label,
+            route: sub.route,
+            verified: true,
+          });
+        }
         continue;
       }
       for (const leaf of item.children) {
@@ -292,7 +322,8 @@ export function products(): NavProduct[] {
    one product rather than five:
 
      /                     Home
-     /performance          Performance
+     /performance          Performance › Overview
+     /performance/billing  Performance › Billing Calendar
      /inbox                Master Inbox, its first screen
      /inbox/reminders      a specific screen within it
      /clients              Client Health
@@ -319,6 +350,7 @@ const PRODUCT_SLUG: Record<string, ToolId> = {
 const PAGE_PATH: Record<string, string> = {
   home: "/",
   performance: "/performance",
+  "billing-calendar": "/performance/billing",
   roster: "/roster",
   consistency: "/consistency",
   commissions: "/commissions",
@@ -352,6 +384,12 @@ export function idForPath(pathname: string): string {
   // harnesses address it as /admin/team — a refresh there rendered Home.
   if (first === "admin" && (second === "team" || second === undefined)) return "team-access";
 
+  // A sub-page's two-segment address (/performance/billing) before its parent's one.
+  if (second) {
+    for (const [id, path] of Object.entries(PAGE_PATH)) {
+      if (path === `/${first}/${second}`) return id;
+    }
+  }
   for (const [id, path] of Object.entries(PAGE_PATH)) {
     if (path === `/${first}`) return id;
   }
@@ -384,9 +422,10 @@ export function idForPath(pathname: string): string {
  * API; hiding them from the menu stops a teammate clicking into an error.
  * 30 Sep: Team access, Reply agent. 2 Oct: Consistency. 5 Oct (Eddy:
  * "teammates can still see performance"): Performance and the Assistant —
- * a teammate holding every tool is still a teammate.
+ * a teammate holding every tool is still a teammate. 9 Oct: Performance's
+ * Billing Calendar sub-page too.
  */
-export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consistency", "performance", "assistant"]);
+export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consistency", "performance", "billing-calendar", "assistant"]);
 
 /** A person's sales roles, for the pages below. Admins see everything regardless. */
 export interface RoleFlags {

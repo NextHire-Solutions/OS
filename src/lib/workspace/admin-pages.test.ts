@@ -5,8 +5,8 @@ import { canSeePage } from "./nav.ts";
 
 const ALL = ["inbox", "clients", "analytics", "search", "onboarding"] as const;
 
-test("admin-only pages (5 Oct): Team access, Reply agent, Consistency, Performance, Assistant — even with every tool", () => {
-  for (const id of ["team-access", "reply-agent", "consistency", "performance", "assistant"]) {
+test("admin-only pages (5 Oct): Team access, Reply agent, Consistency, Performance (and its Billing Calendar, 9 Oct), Assistant — even with every tool", () => {
+  for (const id of ["team-access", "reply-agent", "consistency", "performance", "billing-calendar", "assistant"]) {
     assert.equal(canSeePage(id, false, [...ALL], ALL), false, `${id}: a teammate with every tool`);
     assert.equal(canSeePage(id, false, [...ALL], ALL, { accountManager: true, salesperson: true }), false, `${id}: account manager + salesperson`);
     assert.equal(canSeePage(id, true, [], ALL), true, `${id}: admin`);

@@ -33,7 +33,7 @@ const BASE = process.argv.find((a) => a.startsWith("http")) || "http://localhost
 const CDP = process.env.CDP || "http://localhost:9470";
 
 const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",") : [
-  "/roster", "/performance",
+  "/roster", "/performance", "/performance/billing",
   "/inbox/all-email", "/inbox/archive", "/inbox/reminders", "/inbox/portals",
   "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/campaigns", "/analytics/attribution",

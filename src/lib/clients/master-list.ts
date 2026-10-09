@@ -100,7 +100,10 @@ export interface MasterClient {
   inReview: number | boolean | null;
   exported: number | boolean | null;
   /* §12 lifecycle */
+  /** The LAST pause: the later of one entered by hand (0032) and the status history's latest. */
   pauseDate: string | null;
+  /** Every known pause, as YYYY-MM-DD, oldest first: the history's and an entered one (Performance's Paused). */
+  pauseDates: string[];
   churnDate: string | null;
   reactivationDate: string | null;
   /** Who introductions are addressed to, and the brokerage named (os_clients). */
@@ -213,6 +216,25 @@ export function lifecycleDates(changes: StatusChange[]): {
     if (ch.to === "onboarding") onboardingDate = earlier(onboardingDate, ch.at);
   }
   return { pauseDate, churnDate, reactivationDate, onboardingDate };
+}
+
+/**
+ * Every day a client is known to have been paused: each change to Paused in
+ * the status history (seeded rows excluded, as above) plus a pause entered by
+ * hand on the record (0032 — for one before the history began on 13 Sep).
+ */
+export function pauseDays(changes: StatusChange[], entered: string | null | undefined): string[] {
+  const days = new Set<string>();
+  for (const ch of changes) if (ch.from !== null && ch.to === "paused") days.add(ch.at.slice(0, 10));
+  if (entered) days.add(entered.slice(0, 10));
+  return [...days].sort();
+}
+
+/** The later of two dates by DAY; ties keep the history's timestamp, which has the time. */
+export function laterDay(entered: string | null | undefined, recorded: string | null): string | null {
+  if (!entered) return recorded;
+  if (!recorded) return entered;
+  return entered.slice(0, 10) > recorded.slice(0, 10) ? entered : recorded;
 }
 
 async function readHistory(): Promise<Map<string, StatusChange[]>> {
@@ -401,7 +423,8 @@ async function load(): Promise<MasterClientList> {
       inReview: num(onb?.leadsInReview) ?? (d ? d.inReview : null),
       exported: num(onb?.leadsExported) ?? (d ? d.exported : null),
 
-      pauseDate: life.pauseDate,
+      pauseDate: laterDay(dates?.get(c.id)?.pauseDate, life.pauseDate),
+      pauseDates: pauseDays(changes, dates?.get(c.id)?.pauseDate),
       churnDate: dates?.get(c.id)?.churnDate ?? life.churnDate,
       reactivationDate: life.reactivationDate,
 

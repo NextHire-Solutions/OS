@@ -17,6 +17,12 @@ export interface MonthRow {
   label: string;
   added: number;
   churned: number;
+  /**
+   * Clients paused that month (each counted once a month) — from the status
+   * history and pause dates entered on records. Null when the status history
+   * could not be read, so a gap never reads as "nobody paused".
+   */
+  paused: number | null;
   net: number;
   /** Clients onboarded by the month's end and not churned by then. */
   activeAtEnd: number;
@@ -39,6 +45,10 @@ export interface Performance {
     bySignupDate: number;
     /** Churned clients with no churn date: not placed in any month. */
     churnUndated: number;
+    /** Clients paused now with no known pause: not placed in any month. */
+    pauseUndated: number;
+    /** Clients paused in the last 90 days; null when the status history is unreadable. */
+    pausedLast90: number | null;
     /** Paid Stripe invoices this calendar month so far; null when unreadable. */
     revenueThisMonth: number | null;
     /** How many clients are linked to Stripe (the only ones revenue can see). */
@@ -57,6 +67,8 @@ export interface PerfClient {
   /** The fallback when no onboarding date is recorded (was Start date until 6 Oct). */
   signupDate: string | null;
   churnDate: string | null;
+  /** Every known pause, YYYY-MM-DD (master-list.ts pauseDays). */
+  pauseDates?: string[];
 }
 
 const PLAN_LABEL: Record<string, string> = { production: "Production", minimum: "Minimum", partner: "Partner" };
@@ -75,6 +87,8 @@ export function performanceFrom(
   unavailable: string | null,
   stripeLinked = 0,
   today: Date = new Date(),
+  /** False when the status history could not be read: pauses are then unknown, not zero. */
+  pauseHistory = true,
 ): Performance {
   const count = (s: string) => clients.filter((c) => c.status === s).length;
   const addedOn = (c: PerfClient) => (c.onboardingDate ?? c.signupDate)?.slice(0, 10) ?? null;
@@ -104,13 +118,16 @@ export function performanceFrom(
   // Months: from the first dated event to this month, with no gaps.
   const addedMonths = clients.map(addedOn).filter((d): d is string => !!d).map((d) => d.slice(0, 7));
   const churnMonths = clients.map(churnedOn).filter((d): d is string => !!d).map((d) => d.slice(0, 7));
-  const first = [...addedMonths, ...churnMonths, ...(revenue ? [...revenue.keys()] : [])].sort()[0];
+  // Each client once per month it was paused in, however many times that month.
+  const pauseMonths = clients.flatMap((c) => [...new Set((c.pauseDates ?? []).map((d) => d.slice(0, 7)))]);
+  const first = [...addedMonths, ...churnMonths, ...pauseMonths, ...(revenue ? [...revenue.keys()] : [])].sort()[0];
   const months: MonthRow[] = [];
   if (first) {
     for (let m = first; m <= thisMonth; m = nextMonth(m)) {
       const end = `${m}-31`;
       const added = addedMonths.filter((x) => x === m).length;
       const churned = churnMonths.filter((x) => x === m).length;
+      const paused = pauseHistory ? pauseMonths.filter((x) => x === m).length : null;
       const activeAtEnd = clients.filter((c) => {
         const a = addedOn(c);
         const ch = churnedOn(c);
@@ -118,7 +135,7 @@ export function performanceFrom(
         if (m === thisMonth) return c.status === "active";
         return a !== null && a <= end && !(ch !== null && ch <= end);
       }).length;
-      months.push({ month: m, label: monthLabel(m), added, churned, net: added - churned, activeAtEnd,
+      months.push({ month: m, label: monthLabel(m), added, churned, paused, net: added - churned, activeAtEnd,
         revenue: revenue ? Math.round((revenue.get(m) ?? 0) * 100) / 100 : null });
     }
   }
@@ -135,6 +152,8 @@ export function performanceFrom(
       undated: clients.filter((c) => !addedOn(c)).length,
       bySignupDate: clients.filter((c) => !c.onboardingDate && c.signupDate).length,
       churnUndated: clients.filter((c) => c.status === "churned" && !c.churnDate).length,
+      pauseUndated: clients.filter((c) => c.status === "paused" && !(c.pauseDates ?? []).length).length,
+      pausedLast90: pauseHistory ? clients.filter((c) => (c.pauseDates ?? []).some((d) => d >= cutoff)).length : null,
       revenueThisMonth: revenue ? Math.round((revenue.get(thisMonth) ?? 0) * 100) / 100 : null,
       stripeLinked,
     },

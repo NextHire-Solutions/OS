@@ -6,7 +6,8 @@ import type { Performance } from "@/lib/workspace/performance";
 import { Lazy, PlaceholderScreen } from "./lazy";
 
 /*
- * Performance — client base, plans and movement.
+ * Performance — client base, plans and movement (Overview), and the next 30
+ * days of Stripe charges (Billing Calendar, its own sub-page since 9 Oct).
  *
  * Built from the master client record (30 Sep): onboarding and churn dates
  * are stored and editable on each client, and revenue is what Stripe actually
@@ -89,12 +90,15 @@ function PerformanceView({ performance }: { performance: Performance }) {
             <div>
               <div className="tbl-title">Client movement</div>
               <div className="tbl-sub">
-                By onboarding date and churn date
+                By onboarding, churn and pause dates
                 {totals.undated > 0
                   ? ` · ${totals.undated} client${totals.undated === 1 ? " has" : "s have"} no onboarding or start date`
                   : ""}
                 {totals.churnUndated > 0
                   ? ` · ${totals.churnUndated} churned client${totals.churnUndated === 1 ? " has" : "s have"} no churn date`
+                  : ""}
+                {totals.pauseUndated > 0
+                  ? ` · ${totals.pauseUndated} paused client${totals.pauseUndated === 1 ? " has" : "s have"} no pause date`
                   : ""}
               </div>
             </div>
@@ -106,6 +110,7 @@ function PerformanceView({ performance }: { performance: Performance }) {
                   <th>Month</th>
                   <th>Added</th>
                   <th>Churned</th>
+                  <th>Paused</th>
                   <th>Net</th>
                   <th>Active at month end</th>
                   <th>Revenue</th>
@@ -117,6 +122,9 @@ function PerformanceView({ performance }: { performance: Performance }) {
                     <td>{row.label}</td>
                     <td className={`tnum${row.added ? " n-green" : " mut"}`}>{row.added ? `+${row.added}` : "0"}</td>
                     <td className={`tnum${row.churned ? " n-red" : " mut"}`}>{row.churned ? `−${row.churned}` : "0"}</td>
+                    <td className={`tnum${row.paused ? "" : " mut"}`} title={row.paused === null ? "The status history could not be read" : undefined}>
+                      {row.paused === null ? "—" : row.paused}
+                    </td>
                     <td className="tnum">{row.net > 0 ? `+${row.net}` : row.net < 0 ? `−${-row.net}` : "0"}</td>
                     <td className="tnum">{row.activeAtEnd}</td>
                     <td className={`tnum${row.revenue === null ? " mut" : ""}`}>
@@ -138,10 +146,13 @@ function PerformanceView({ performance }: { performance: Performance }) {
           {totals.bySignupDate > 0 ? ` (${totals.bySignupDate} use their sign-up date because no onboarding date is recorded)` : ""};{" "}
           <b>Churned</b> is each churned client&rsquo;s churn date. Both are on the client&rsquo;s record in{" "}
           <a href="/roster">Clients</a> — the churn date is set automatically when a client is marked Churned.{" "}
+          <b>Paused</b> counts each client paused that month, once — from the status history, which records every
+          status change since 13 Sep 2026, and from the <b>pause date</b> on the client&rsquo;s record, entered for a
+          pause before then. A paused client still counts in Net and Active at month end.{" "}
           <b>Active at month end</b> counts clients onboarded by then and not yet churned.{" "}
           <b>Revenue</b> is everything Stripe collected that month, less refunds — every subscription and card, not just the one on each record.
+          The next 30 days of charges are on <a href="/performance/billing">Billing Calendar</a>.
         </p>
-        <BillingCalendar performance={performance} />
       </div>
     </>
   );
@@ -180,13 +191,19 @@ function BillingCards({ performance }: { performance: Performance }) {
 /** The billing calendar: who is charged what, day by day, for the next 30 days. */
 function BillingCalendar({ performance }: { performance: Performance }) {
   const b = performance.billing;
-  if (!b) return null;
+  if (!b) {
+    return (
+      <p className="ds-note">
+        The billing calendar is unavailable — Stripe could not be read{performance.billingError ? ` (${performance.billingError})` : ""}.
+      </p>
+    );
+  }
   const days = new Map<string, typeof b.upcoming>();
   for (const u of b.upcoming) days.set(u.date, [...(days.get(u.date) ?? []), u]);
   const total = b.upcoming.reduce((t, u) => t + u.amount, 0);
   const fmt = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
   return (
-    <div className="tbl-wrap" style={{ marginTop: 22 }}>
+    <div className="tbl-wrap">
       <div className="tbl-head">
         <div>
           <div className="tbl-title">Upcoming billing</div>
@@ -293,6 +310,36 @@ export function PerformanceScreen({ initial }: { initial: Performance | null }) 
       skeleton={<PlaceholderScreen cards={4} />}
     >
       {(d) => <PerformanceView performance={d} />}
+    </Lazy>
+  );
+}
+
+/*
+ * Performance › Billing Calendar (9 Oct, OS feedback): the calendar that sat
+ * at the foot of Overview, on its own page. Same data and the same request as
+ * Overview — `Lazy` shares one fetch per URL — so moving between the two
+ * costs nothing.
+ */
+export function BillingCalendarScreen({ initial }: { initial: Performance | null }) {
+  return (
+    <Lazy<Performance>
+      initial={initial}
+      url="/api/workspace/performance"
+      label="Billing Calendar"
+      skeleton={<PlaceholderScreen cards={0} />}
+    >
+      {(d) => (
+        <>
+          <div className="hero"><PageHeader icon="performance" title="Billing Calendar" description="Every live subscription's charges in the next 30 days, from Stripe" /></div>
+          <div className="wrap">
+            <BillingCalendar performance={d} />
+            <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 14, lineHeight: 1.7, maxWidth: "80ch" }}>
+              Each charge is a live subscription&rsquo;s next charge date in Stripe, and the ones after it on the same
+              cycle. Paused subscriptions are left out. MRR, ARR and growth are on <a href="/performance">Overview</a>.
+            </p>
+          </div>
+        </>
+      )}
     </Lazy>
   );
 }

@@ -181,6 +181,28 @@ The repo's audit scripts (ui-audit, link-audit, interaction-audit, popover,
 filter, nav-timing, full-verify, ui-test, the per-tool UI/API tests) no longer
 visit the removed screens.
 
+**Release 2 — Performance › Overview and Billing Calendar; Paused; Pause date**
+
+- **Performance has an arrow** with Overview (`/performance`, id `performance`)
+  and Billing Calendar (`/performance/billing`, id `billing-calendar`). Both
+  admin-only (`ADMIN_ONLY_PAGES`). `NavPage.children` models it; the rail
+  draws it like a product (`PageGroup`), except that clicking the name from
+  outside Performance OPENS Overview too — it was a plain link before, and a
+  collapsed rail hides sub-lists. `idForPath` matches two-segment page
+  addresses first. One fetch (`/api/workspace/performance`) feeds both pages.
+- **Paused column** in Client movement: each client counted once in each
+  month it was paused. Sources: every change to Paused in
+  `os_client_status_history` (since 13 Sep 2026; seeded rows excluded) plus
+  **`os_clients.pause_date`** (migration **0032**), a pause entered by hand on
+  the client's record for one before the history began. Never set
+  automatically; nothing was backfilled. `MasterClient.pauseDates` (all known
+  pause days) feeds it; `MasterClient.pauseDate` (the record's "Pause date",
+  now editable) is the later of the entered one and the history's last.
+  Shown as "—", not 0, when the status history cannot be read.
+  `pauseUndated` counts clients paused now with no known pause date.
+- Before 0032 runs the OS reads the dates without `pause_date` (no field
+  goes missing); saving a Pause date then says the migration is needed.
+
 ## 0.2 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
@@ -205,7 +227,7 @@ views, the bell and intro variants say "needs 0030", and nothing else changes.
 | Failed payments | every Stripe attempt → a notification in the bell (admins); after 4 attempts (first + 3 retries) a portal block row | `lib/clients/billing-watch.ts`, every 15 min on Railway |
 | Portal block | **dry run** until `OS_PORTAL_BLOCK_ENABLED=1` on the os service; threshold `OS_PORTAL_BLOCK_AFTER_ATTEMPTS` (default 4). Master Inbox shows a "paused — pay the invoice" page for `mode='blocked'` rows only; fails open, remembered 60 s, 1.5 s timeout. Paying lifts it. | MI `lib/portals/billing-hold.ts` |
 | Sign-up date | the first $1 charge (replacing a card does not move it); flagged when after onboarding (same day OK); read-only on the record when it comes from Stripe | `lib/clients/signup.ts` |
-| Performance | Total billed, MRR, ARR, active/paused subscriptions, growth (same days last month), billing calendar (30 days) | `performance.tsx` |
+| Performance | Total billed, MRR, ARR, active/paused subscriptions, growth (same days last month) on Overview; billing calendar (30 days) on Billing Calendar (its own page since 9 Oct) | `performance.tsx` |
 | Intro subject | "Intro: {lead first name} & {brokerage}" — button and agent handover; on EmailBison a changed subject is a new email (`/replies/new`) | `intro-macro.ts` (both apps, identical) |
 | Missing phone / company | the sentence is rewritten, never left with a blank; covers the standard wording and the four phrasings in clients' own intros | `fitIntroToLead` |
 | Wording by market or person | variants on the Introduce to tab, chosen by the lead's campaign name (or routed person) | `intro_variants`, `pickIntroVariant` |
@@ -1495,7 +1517,8 @@ the architecture document made visible.
 | Page | Route | What it does | File |
 |---|---|---|---|
 | **Home** | `/` | Tool cards with live numbers, read from the same status store the API serves — useful before any JavaScript runs. Headline card summarises the estate. | `home.tsx`, `overview-card.tsx` |
-| **Performance** | `/performance` | Client base, plans and movement. Greys out clients who are not contributing, by design. | `performance.tsx` |
+| **Performance › Overview** | `/performance` | Client base, plans and movement (Added, Churned, **Paused**, Net, Active, Revenue by month). Greys out clients who are not contributing, by design. | `performance.tsx` |
+| **Performance › Billing Calendar** | `/performance/billing` | Every live subscription's charges in the next 30 days (9 Oct: its own page) | `performance.tsx` (`BillingCalendarScreen`) |
 | **Clients** (the roster) | `/roster` | **The spine of the whole project.** One row per client; the columns are what each tool knows about them. Status, plan, billing interval and next billing date, links to each tool's row. Add / Edit / Delete / Onboard / People all hang off it. | `clients.tsx` |
 | **Consistency** | `/consistency` | §16 made visible. Opens with **Client counts** — why each tool's total is not 52, as arithmetic that must balance — then status conflicts, coverage gaps with written reasons, duplicates, broken links, alias drift. **Designed to be boring**: it should say "all explained" almost always. | `discrepancies.tsx` |
 

@@ -30,7 +30,7 @@ const WIDTHS = (process.env.WIDTHS || "1512,1280,1100,960,768").split(",").map(N
 // ROUTES=/a,/b,... narrows the sweep to a shard, so several Chromes can split
 // the 42 screens between them; the full list below is the default.
 const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.trim()).filter(Boolean) : [
-  "/", "/performance", "/roster", "/admin/team", "/account",
+  "/", "/performance", "/performance/billing", "/roster", "/admin/team", "/account",
   "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/trash", "/inbox/portals",
   "/inbox/settings", "/inbox/settings/labels", "/inbox/settings/templates",
   "/inbox/settings/reply-agents", "/inbox/settings/ai-labeling",

@@ -33,7 +33,9 @@ const SURFACES = {
   search:     ["/search/search", "/search/mls", "/api/tools/agent-search/status"],
 };
 // Workspace surfaces belong to no tool and must stay reachable for everyone.
-const WORKSPACE = ["/", "/performance", "/roster", "/api/workspace/roster"];
+// (Performance and its Billing Calendar are admin-only since 5 / 9 Oct, so
+// they are not here: a teammate is redirected from them by design.)
+const WORKSPACE = ["/", "/roster", "/api/workspace/roster"];
 
 const hit = async (path, cookie) => {
   try {
