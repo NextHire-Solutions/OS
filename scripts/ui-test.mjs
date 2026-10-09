@@ -72,7 +72,6 @@ const SCREENS = [
   { path: "/inbox/portals/c370499d-8cc4-4c1f-93b0-f75d363b108d", expect: "section.screen.on *", min: 50, label: "Portal · one client" },
   { path: "/inbox/settings/templates",   expect: 'input[placeholder*="emplate"]', min: 1, label: "Settings · Templates" },
   { path: "/inbox/settings/labels",      expect: '.mi-settings-body *', min: 20, label: "Settings · Labels" },
-  { path: "/inbox/settings/reply-agents",expect: '.mi-settings-body *', min: 10, label: "Settings · Agents" },
   { path: "/inbox/settings/ai-labeling", expect: '.mi-settings-body *', min: 10, label: "Settings · AI" },
   /*
    * Client Health lives at /clients — `PRODUCT_SLUG` maps the `clients`

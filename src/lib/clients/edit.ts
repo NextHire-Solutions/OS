@@ -759,8 +759,8 @@ export async function editClient(id: string, edit: ClientEdit): Promise<EditResu
    */
   if (edit.name !== undefined && row.mi_client_id) {
     untouched.push(
-      "Master Inbox keeps its own name — renaming there rewrites the slug that " +
-        "prefixes the live portal URL. Change it in Master Inbox if it needs to match.",
+      "Master Inbox keeps its own name for each portal. Rename it on this record: " +
+        "Campaigns → In Master Inbox → Edit (the portal's link does not change).",
     );
   }
 

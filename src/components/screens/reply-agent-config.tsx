@@ -253,8 +253,8 @@ export function ReplyAgentConfigPanel() {
           <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Loading…</p>
         ) : agents.length === 0 ? (
           <p style={{ fontSize: 13, color: "var(--muted)", margin: 0, lineHeight: 1.7 }}>
-            No reply agents yet. They are created in Master Inbox → Settings → Reply Agents; this
-            screen configures what they do.
+            No reply agents yet. Create one under <b>Agents — model, API key, prompt and tone</b> below;
+            this panel then configures what it does.
           </p>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
@@ -489,7 +489,7 @@ function AgentEditor({
       <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--line-soft)", flex: "none" }}>
         <div style={{ fontWeight: 650, fontSize: 14 }}>{agent.name}</div>
         <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
-          Tone, model and temperature stay in Master Inbox → Settings → Reply Agents. Everything
+          Tone, model and temperature are set under <b>Agents</b> below. Everything
           about what this agent <i>does</i> is here.
         </div>
       </div>

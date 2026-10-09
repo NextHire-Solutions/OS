@@ -33,7 +33,7 @@ const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.t
   "/", "/performance", "/performance/billing", "/roster", "/admin/team", "/account",
   "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/trash", "/inbox/portals",
   "/inbox/settings", "/inbox/settings/labels", "/inbox/settings/templates",
-  "/inbox/settings/reply-agents", "/inbox/settings/ai-labeling",
+  "/inbox/settings/ai-labeling",
   "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/volume", "/analytics/infrastructure", "/analytics/attribution",
   "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",

@@ -58,7 +58,7 @@ export async function POST(
 
   if (!candidate) {
     return NextResponse.json(
-      { error: "No active Reply Agent matches this thread. Create one in Settings → Reply Agents." },
+      { error: "No active Reply Agent matches this thread. Create one in Admin → Reply agent." },
       { status: 400 },
     );
   }

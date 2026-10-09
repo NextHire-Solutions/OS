@@ -1,8 +1,6 @@
 import { SettingsLabels } from "./settings-tabs/labels";
 import { SettingsTemplates } from "./settings-tabs/templates";
-import { SettingsReplyAgents } from "./settings-tabs/reply-agents";
 import { SettingsAiLabeling } from "./settings-tabs/ai-labeling";
-import { SettingsClients } from "./settings-tabs/clients";
 /*
  * Webhooks is not offered in the workspace, at the user's request. The tab and
  * its panel are gone from the strip; the component and its route are left in
@@ -22,20 +20,22 @@ import { SettingsClients } from "./settings-tabs/clients";
  * page you cannot use is worse than no settings page — it looks finished.
  *
  * Each tab below is the tool's own settings page, ported with its editor
- * intact. Adding a label, editing a template, configuring a reply agent and
- * changing AI labelling all work here now.
+ * intact. Adding a label, editing a template and changing AI labelling all
+ * work here now.
  *
  * ---------------------------------------------------------------------------
  * WHY ONE TAB LOADS AT A TIME
  *
- * The tabs together are independent sets of queries — labels, templates,
- * agents, AI config and clients. Rendering them all so that switching feels
+ * The tabs together are independent sets of queries — labels, templates and
+ * AI config. Rendering them all so that switching feels
  * instant would make the first paint pay for panels nobody asked for.
  *
  * 9 Oct (OS feedback): Members (logins for the old standalone inbox — OS
  * logins are on Team access) and Personal (a change-password form — the
- * Account page has the same one) were removed. Their old addresses open
- * Labels.
+ * Account page has the same one) were removed. So were Clients — renaming a
+ * client's inbox row and its spellings moved to the client's record
+ * (Clients → the client → Campaigns → In Master Inbox) — and Reply Agents,
+ * whose editor moved to Admin → Reply agent. Their old addresses open Labels.
  *
  * The tab is a URL segment instead (`/inbox/settings/templates`), so only the
  * active panel loads, each tab is linkable, and the browser's Back button does
@@ -45,9 +45,7 @@ import { SettingsClients } from "./settings-tabs/clients";
 export const SETTINGS_TABS = [
   { id: "labels", label: "Labels" },
   { id: "templates", label: "Templates" },
-  { id: "reply-agents", label: "Reply Agents" },
   { id: "ai-labeling", label: "AI Labeling" },
-  { id: "clients", label: "Clients" },
 ] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -58,11 +56,11 @@ export function isSettingsTab(value: string | undefined): value is SettingsTab {
 }
 
 /*
- * Workspace setup is for admins (5 Oct): Reply Agents, AI Labeling and Clients
- * (portals). Teammates keep Labels and Templates. The
+ * Workspace setup is for admins (5 Oct): AI Labeling. Teammates keep Labels
+ * and Templates. The
  * APIs behind these tabs refuse a teammate too — hiding a tab is not the gate.
  */
-const ADMIN_TABS = new Set<SettingsTab>(["reply-agents", "ai-labeling", "clients"]);
+const ADMIN_TABS = new Set<SettingsTab>(["ai-labeling"]);
 
 export async function MasterInboxSettingsScreen({ tab = "labels", admin = false }: { tab?: string; admin?: boolean }) {
   const tabs = SETTINGS_TABS.filter((t) => admin || !ADMIN_TABS.has(t.id));
@@ -86,9 +84,7 @@ export async function MasterInboxSettingsScreen({ tab = "labels", admin = false 
       <div className="mi-settings-body">
         {active === "labels" ? <SettingsLabels /> : null}
         {active === "templates" ? <SettingsTemplates /> : null}
-        {active === "reply-agents" ? <SettingsReplyAgents /> : null}
         {active === "ai-labeling" ? <SettingsAiLabeling /> : null}
-        {active === "clients" ? <SettingsClients /> : null}
       </div>
     </div>
   );

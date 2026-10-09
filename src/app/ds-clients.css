@@ -323,6 +323,15 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx-confirm { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--x-line); border-radius: 10px; background: var(--x-bg);
   font-size: 13px; color: var(--x-ink-2); line-height: 1.5; }
 
+/* A Master Inbox row's spellings (9 Oct — moved from inbox Settings → Clients). */
+.rx-spells { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.rx-spell { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: 6px;
+  border: 1px solid var(--x-line); background: var(--x-surface); font-size: 12px; color: var(--x-ink-2); max-width: 100%; }
+.rx-spell.none { border-style: dashed; color: var(--x-faint); }
+.rx-spell button { appearance: none; border: 0; background: none; font: inherit; font-size: 14px; line-height: 1; color: var(--x-faint);
+  cursor: pointer; padding: 0 0 0 2px; }
+.rx-spell button:hover { color: var(--x-ink); }
+.rx-inbox-row b { white-space: normal; }
 .rx-camps { display: grid; }
 .rx-camp { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--x-line-2); }
 .rx-camp:last-child { border-bottom: 0; }

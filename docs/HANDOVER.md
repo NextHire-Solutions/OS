@@ -203,6 +203,33 @@ visit the removed screens.
 - Before 0032 runs the OS reads the dates without `pause_date` (no field
   goes missing); saving a Pause date then says the migration is needed.
 
+**Release 3 — inbox Settings → Clients and Reply Agents moved, then removed**
+
+- **A client's Master Inbox rows** (one per portal) are on its record:
+  Clients → the client → Campaigns → **In Master Inbox** — name, spellings
+  (aliases), conversation count, portal link. Admins rename a row and add or
+  remove spellings there (account managers see it read-only):
+  `lib/clients/inbox-row-edit.ts` (pure rules, tested) and
+  `lib/clients/inbox-rows.ts`, via `/api/workspace/clients/inbox-rows`
+  (GET; POST with `dryRun` for the "Review changes" step). Rules: a rename
+  keeps the old name as a spelling (replies keep routing); the new name is
+  added to the client's OS and Client Health spellings when the client does
+  not answer to it (that is how the record finds its portal — Add portal does
+  the same); never another portal's or another client's name or spelling;
+  never the Unknown row; never the portal token. **Portal on/off by status
+  matches names** (standalone `lib/portals/status-sync.ts`), so the dialog says
+  a rename leaves the portal's state alone until Client Health's name matches.
+  The tool's own PATCH `/api/tools/master-inbox/clients/[id]` is untouched
+  (it also carries Client Portals' on/off switch). Demo Portal belongs to no
+  client and is edited in the standalone inbox only.
+- **Reply agents** — create, delete, provider, model, API key, prompt, tone,
+  length, on/off — are edited on **Admin → Reply agent** ("Agents — model,
+  API key, prompt and tone"), the tool's own `ReplyAgentsManager` unchanged,
+  loaded server-side by the page (`has_api_key` only, never a key). The
+  messages that pointed at the tab now point here.
+- Master Inbox → Settings keeps **Labels, Templates, AI Labeling** (the last
+  admin-only). `/inbox/settings/clients` and `/reply-agents` open Labels.
+
 ## 0.2 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
@@ -1558,8 +1585,9 @@ Detail screens (no rail entry):
   `master-inbox/portal-detail.tsx`
 
 Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
-`reply-agents`, `ai-labeling`, `clients` (the last three admin-only), plus
-`webhooks`. Members and Personal were removed on 9 Oct (§0.1).
+`ai-labeling` (admin-only), plus `webhooks` (not offered). Members, Personal,
+Clients and Reply Agents were removed on 9 Oct — §0.1 says where the last two
+went.
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
 
@@ -1660,7 +1688,7 @@ fields), `photo-input.tsx`, `replies-panel.tsx`.
 |---|---|---|---|
 | **Assistant** | `/assistant` | Cross-product assistant with stored chats; can answer questions across all tools | `assistant.tsx`, `assistant-markdown.tsx` |
 | **Team access** | `/admin/team` | Who may open which tool. Backed by `os_users` + `os_tool_grants`; invites show a one-time password and are never emailed | `team-access.tsx` |
-| **Reply agent** | `/reply-agent` | What the agent knows, whether it is working, and its configuration — modes, clients, questions, handover, schedule | `reply-agent.tsx`, `reply-agent-config.tsx` |
+| **Reply agent** | `/reply-agent` | What the agent knows, whether it is working, and its configuration — modes, clients, questions, handover, schedule — plus the agents themselves (create, delete, model, API key, prompt, tone; moved from inbox Settings on 9 Oct) | `reply-agent.tsx`, `reply-agent-config.tsx`, `master-inbox/settings/reply-agents-manager.tsx` |
 
 ### 4.8 Account and Login
 

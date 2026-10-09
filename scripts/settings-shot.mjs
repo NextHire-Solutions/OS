@@ -28,7 +28,7 @@ const cookie = await mintSso(pick("BS_SSO_SECRET") || pick("AUTH_SECRET"), {
 
 const TABS = process.argv[5]
   ? [process.argv[5]]
-  : ["labels", "templates", "reply-agents", "ai-labeling", "clients", "members", "personal", "webhooks"];
+  : ["labels", "templates", "ai-labeling"];
 
 for (const tab of TABS) {
   const t = await (await fetch(`${CDP}/json/new?about:blank`, { method: "PUT" })).json();

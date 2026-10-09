@@ -489,6 +489,7 @@ function Campaigns({ c, onChanged }: { c: MasterClient; onChanged?: () => void }
   const routeOf = (x: NonNullable<MasterClient["campaigns"]>[number]) =>
     routing.view?.campaigns.find((r) => r.name === x.name && r.platform === (x.platform === "Instantly" ? "instantly" : "emailbison"));
   return (
+    <>
     <section className="rx-sec">
       <h3>Campaigns<span>read from Instantly and EmailBison</span></h3>
       {routing.view && (multi || routing.view.canAddPortal) ? (
@@ -520,6 +521,149 @@ function Campaigns({ c, onChanged }: { c: MasterClient; onChanged?: () => void }
         )}
       {multi ? <p className="rx-hint">Each campaign&apos;s portal is chosen automatically once, from the market in its name, and can be changed here. Only new replies follow a change — leads already in a portal stay there.</p> : null}
     </section>
+    <InboxRows clientId={c.id} onChanged={onChanged} />
+    </>
+  );
+}
+
+/* ------------------------------------------------------ in Master Inbox --- */
+type InboxRowView = { id: string; name: string; aliases: string[]; threads: number | null; url: string | null; enabled: boolean; main: boolean };
+type RowPlan = { ok: boolean; errors: string[]; notes: string[]; saved: boolean; warnings: string[]; rows?: InboxRowView[] };
+
+/*
+ * The client's Master Inbox rows — one per portal — with the names and
+ * spellings that route replies to them (9 Oct: moved here from Master Inbox →
+ * Settings → Clients, which was removed). Admins edit; account managers see.
+ */
+function InboxRows({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
+  const [rows, setRows] = useState<InboxRowView[] | null>(null);
+  const [canEdit, setCanEdit] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/workspace/clients/inbox-rows?clientId=${encodeURIComponent(clientId)}`, { cache: "no-store" })
+      .then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (res.status === 403) return;
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (live) { setRows(body.rows as InboxRowView[]); setCanEdit(!!body.canEdit); }
+      })
+      .catch((e) => { if (live) setError(`Master Inbox could not be read: ${e instanceof Error ? e.message : String(e)}`); });
+    return () => { live = false; };
+  }, [clientId]);
+  if (!rows && !error) return null;
+  return (
+    <section className="rx-sec" id="rx-inbox-rows">
+      <h3>In Master Inbox<span>the names replies are matched by — one row per portal</span></h3>
+      {error ? <p className="rx-hint" style={{ color: "var(--x-bad, #b42318)" }}>{error}</p> : null}
+      {rows && !rows.length ? <p className="rx-hint">No Master Inbox row carries this client&apos;s name or spellings.</p> : null}
+      {rows?.length ? (
+        <div className="rx-camps">
+          {rows.map((r) => (
+            <div key={r.id} className="rx-camp rx-inbox-row" style={{ gridTemplateColumns: "1fr auto" }}>
+              <div style={{ minWidth: 0 }}>
+                <b title={r.name}>{r.name}{rows.length > 1 && r.main ? <span className="rx-tag" style={{ marginLeft: 8 }}>main</span> : null}</b>
+                <small>
+                  {r.threads !== null ? <span>{fmtNum(r.threads)} conversation{r.threads === 1 ? "" : "s"}</span> : null}
+                  {r.url ? <a href={r.url} target="_blank" rel="noreferrer">Portal{r.enabled ? "" : " (switched off)"} ↗</a> : <span>No portal</span>}
+                </small>
+                <div className="rx-spells" aria-label="Spellings">
+                  {r.aliases.length ? r.aliases.map((a) => <span key={a} className="rx-spell">{a}</span>) : <span className="rx-spell none">No other spellings</span>}
+                </div>
+                {editing === r.id ? (
+                  <InboxRowEditor clientId={clientId} row={r}
+                    onCancel={() => setEditing(null)}
+                    onSaved={(next) => { setRows(next); setEditing(null); onChanged?.(); }} />
+                ) : null}
+              </div>
+              {canEdit && editing !== r.id ? (
+                <button type="button" className="rx-btn" aria-label={`Edit ${r.name} in Master Inbox`} onClick={() => setEditing(r.id)}>Edit</button>
+              ) : <span />}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <p className="rx-hint">
+        Master Inbox files a reply under the row whose name or spelling matches the campaign&apos;s name. Renaming never
+        changes a portal&apos;s link.{canEdit ? "" : " Admins can rename a row or change its spellings."}
+      </p>
+    </section>
+  );
+}
+
+function InboxRowEditor({ clientId, row, onCancel, onSaved }: {
+  clientId: string; row: InboxRowView; onCancel: () => void; onSaved: (rows: InboxRowView[]) => void;
+}) {
+  const [name, setName] = useState(row.name);
+  const [aliases, setAliases] = useState<string[]>(row.aliases);
+  const [adding, setAdding] = useState("");
+  const [plan, setPlan] = useState<RowPlan | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const touch = () => { setPlan(null); setMsg(null); };
+  const add = () => {
+    const a = adding.trim();
+    if (!a) return;
+    if (!aliases.some((x) => x.toLowerCase() === a.toLowerCase())) setAliases([...aliases, a]);
+    setAdding(""); touch();
+  };
+  async function send(dryRun: boolean) {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch("/api/workspace/clients/inbox-rows", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, rowId: row.id, name, aliases, dryRun }),
+      });
+      const body = (await res.json().catch(() => null)) as (RowPlan & { error?: string }) | null;
+      if (!body) throw new Error(`HTTP ${res.status}`);
+      if (body.error) throw new Error(body.error);
+      if (dryRun || !body.saved) { setPlan(body); return; }
+      if (body.rows) onSaved(body.rows);
+      if (body.warnings?.length) setMsg(body.warnings.join(" "));
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="rx-confirm" style={{ marginTop: 10 }}>
+      <label style={{ display: "grid", gap: 4 }}>
+        <span>Name in Master Inbox</span>
+        <input className="ds-input" value={name} maxLength={80} disabled={busy} onChange={(e) => { setName(e.target.value); touch(); }} aria-label="Name in Master Inbox" />
+      </label>
+      <div style={{ display: "grid", gap: 6 }}>
+        <span>Spellings</span>
+        <div className="rx-spells">
+          {aliases.map((a) => (
+            <span key={a} className="rx-spell">
+              {a}
+              <button type="button" aria-label={`Remove ${a}`} disabled={busy} onClick={() => { setAliases(aliases.filter((x) => x !== a)); touch(); }}>×</button>
+            </span>
+          ))}
+          {!aliases.length ? <span className="rx-spell none">None</span> : null}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <input className="ds-input" style={{ width: 240 }} placeholder="Add a spelling" value={adding} maxLength={120} disabled={busy}
+            onChange={(e) => setAdding(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} aria-label="Add a spelling" />
+          <button type="button" className="rx-btn" disabled={busy || !adding.trim()} onClick={add}>Add</button>
+        </div>
+      </div>
+      {plan ? (
+        <div style={{ display: "grid", gap: 4 }}>
+          {plan.errors.map((e) => <span key={e} style={{ color: "var(--x-bad, #b42318)" }}>{e}</span>)}
+          {plan.ok ? plan.notes.map((n) => <span key={n}>· {n}</span>) : null}
+        </div>
+      ) : null}
+      {msg ? <span style={{ color: "var(--x-bad, #b42318)" }}>{msg}</span> : null}
+      <div style={{ display: "flex", gap: 6 }}>
+        {!plan?.ok
+          ? <button type="button" className="rx-btn solid" disabled={busy} onClick={() => void send(true)}>{busy ? "Checking…" : "Review changes"}</button>
+          : <button type="button" className="rx-btn solid" disabled={busy} onClick={() => void send(false)}>{busy ? "Saving…" : "Save"}</button>}
+        <button type="button" className="rx-btn" disabled={busy} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
   );
 }
 

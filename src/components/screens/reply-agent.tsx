@@ -4,6 +4,8 @@ import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useCallback, useEffect, useState } from "react";
 import { ModalDialog } from "@/components/ui/modal-dialog";
 import { ReplyAgentConfigPanel } from "@/components/screens/reply-agent-config";
+import { ReplyAgentsManager } from "@/components/master-inbox/settings/reply-agents-manager";
+import type { ReplyAgent } from "@/lib/tools/master-inbox/ai/agent";
 
 /*
  * The reply agent's knowledge, and whether it is working.
@@ -108,7 +110,7 @@ function when(iso: string | null): string {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function ReplyAgentScreen() {
+export function ReplyAgentScreen({ agents = null }: { agents?: ReplyAgent[] | null } = {}) {
   const [corpus, setCorpus] = useState<CorpusStatus | null>(null);
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
   const [record, setRecord] = useState<Record_ | null>(null);
@@ -221,7 +223,28 @@ export function ReplyAgentScreen() {
        * config surface can be lifted into the standalone Master Inbox app,
        * which is where the plan puts it.
        */}
-      <ReplyAgentConfigPanel />
+      {/* Re-read when an agent is added or removed below, so its list matches. */}
+      <ReplyAgentConfigPanel key={(agents ?? []).map((a) => a.id).join(",")} />
+
+      {/*
+       * The agents themselves: create, delete, provider, model, API key,
+       * prompt, tone, length and on/off (9 Oct — moved here from Master Inbox →
+       * Settings → Reply Agents, which was removed, so the agent is set up on
+       * one page). The tool's own editor, unchanged; `.mi-theme` gives it the
+       * inbox's look it was built in.
+       */}
+      <Panel
+        title="Agents — model, API key, prompt and tone"
+        sub="Create or delete an agent and choose how it writes. Who it covers, its mode and its schedule are set above."
+      >
+        {agents ? (
+          <div className="mi-theme" style={{ background: "transparent" }}>
+            <ReplyAgentsManager agents={agents} />
+          </div>
+        ) : (
+          <Muted>The agents could not be read just now. Reload the page to try again.</Muted>
+        )}
+      </Panel>
 
       {/* ------------------------------------------------------- 1. the record */}
       <Panel

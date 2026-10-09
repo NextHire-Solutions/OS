@@ -313,7 +313,7 @@ try {
   /* ══════════════════════════════════════════════════ 0 · the tab strip */
   section("0 · Tab strip");
   await p.goto("/inbox/settings/labels");
-  check("0.1", "five tabs render as the design's pills (admin)", (await p.count(".mi-settings-tabs .fp")) === 5);
+  check("0.1", "three tabs render as the design's pills (admin)", (await p.count(".mi-settings-tabs .fp")) === 3);
   check("0.1b", "the active tab carries .on", (await p.text(".mi-settings-tabs .fp.on")) === "Labels");
   const tabHrefs = await p.ev(
     `Array.from(document.querySelectorAll('.mi-settings-tabs .fp')).map(a => a.getAttribute('href')).join(',')`,
@@ -325,9 +325,7 @@ try {
       [
         "labels",
         "templates",
-        "reply-agents",
         "ai-labeling",
-        "clients",
       ]
         .map((t) => `/inbox/settings/${t}`)
         .join(","),
@@ -683,147 +681,7 @@ try {
   check("2.9", "the template is deleted on the server", goneTpl);
   if (goneTpl) created.templates = [];
 
-  /* ═══════════════════════════════════════════════════ 3 · Reply agents */
-  section("3 · Reply agents");
-  await p.goto("/inbox/settings/reply-agents");
-  await p.shoot("05-agents");
-
-  const bullets = await p.count(".mis .anno .mis-bullets li");
-  check("3.3", "the four how-it-works bullets are kept", bullets === 4, `${bullets}`);
-
-  const agentsBefore = await p.count(".mis [data-mis-agent]");
-  if (agentsBefore > 0) {
-    await p.type('.mis-find input[name="agent_search"]', "zzzz-no-such-agent");
-    await sleep(350);
-    check("3.2/3.4", "search filters, and the empty state appears", (await p.body()).includes("No agents match your search."));
-    await p.type('.mis-find input[name="agent_search"]', "");
-    await sleep(350);
-    const kv = await p.text(".mis [data-mis-agent] .mis-kv");
-    check(
-      "3.5-7",
-      "a card shows tone, length, temperature, tokens and key state",
-      ["Tone", "Length", "Temperature", "Max tokens", "API key"].every((k) => kv.includes(k)),
-      kv.replace(/\n/g, " ").slice(0, 90),
-    );
-    check(
-      "3.5b",
-      "and its Active / Paused badge",
-      (await p.count(".mis [data-mis-agent] .badge")) > 0,
-    );
-  } else {
-    check("3.4", "empty state offers a first agent", (await p.body()).includes("No agents yet"));
-  }
-
-  const AGENT = `${RUN}-agent`;
-  await p.click('[data-mis="create-agent"]');
-  await p.waitFor(`document.querySelector('[data-slot="dialog-content"]')`, 8000);
-  check("3.1", "the wizard opens at step 1", (await p.text('[data-slot="dialog-content"] .mis-steps')).includes("General"));
-  check("3.11", "Next is refused without a name", await p.disabled('[data-mis="agent-next"]'));
-
-  await p.type('[data-slot="dialog-content"] input[aria-label="Agent name"]', AGENT);
-  await p.select('[data-slot="dialog-content"] select[aria-label="Tone of voice"]', "friendly");
-  await p.select('[data-slot="dialog-content"] select[aria-label="Response length"]', "short");
-  await p.select('[data-slot="dialog-content"] select[aria-label="Max tokens per reply run"]', "4000");
-  await p.select('[data-slot="dialog-content"] select[aria-label="Channel"]', "email");
-  await p.click('[data-slot="dialog-content"] [aria-label="Active"]');
-  check("3.11b", "Next unlocks once it is named", !(await p.disabled('[data-mis="agent-next"]')));
-
-  await p.click('[data-mis="agent-next"]');
-  await sleep(300);
-  const stepState = await p.ev(
-    `Array.from(document.querySelectorAll('[data-slot="dialog-content"] .mis-step')).map(s => s.className).join(' | ')`,
-  );
-  check("3.10", "step 1 ticks and step 2 becomes current", stepState.includes("done") && stepState.includes("on"), stepState);
-
-  await p.select('[data-slot="dialog-content"] select[aria-label="Provider"]', "anthropic");
-  await sleep(250);
-  const modelAfterProvider = await p.val('[data-slot="dialog-content"] select[aria-label="Model"]');
-  check("3.17", "switching provider resets the model", modelAfterProvider.startsWith("claude"), modelAfterProvider);
-
-  await p.select('[data-slot="dialog-content"] select[aria-label="Model"]', "__custom__");
-  await p.waitFor(`document.querySelector('[data-slot="dialog-content"] input[aria-label="Custom model id"]')`, 6000);
-  check("3.18", "Custom… reveals a free-text model id", true);
-  await p.type('[data-slot="dialog-content"] input[aria-label="Custom model id"]', "zz-test-model");
-  await p.select('[data-slot="dialog-content"] select[aria-label="Model"]', "claude-sonnet-4-6");
-  await sleep(250);
-
-  await p.type('[data-slot="dialog-content"] input[aria-label="Agent API key"]', "sk-zz-test-key");
-  const typeBefore = await p.attr('[data-slot="dialog-content"] input[aria-label="Agent API key"]', "type");
-  await p.click('[data-slot="dialog-content"] [aria-label="Show key"]');
-  const typeAfter = await p.attr('[data-slot="dialog-content"] input[aria-label="Agent API key"]', "type");
-  check("3.19", "the key field hides and reveals", typeBefore === "password" && typeAfter === "text", `${typeBefore} → ${typeAfter}`);
-  /*
-   * Then emptied again, because SAVING a key cannot work here.
-   *
-   * `saveAgent` encrypts the key through the `reply_agent_set_key` RPC using
-   * `APP_ENCRYPTION_KEY`, and that variable is not set in this environment, so
-   * the call throws and the endpoint answers 400. Worse — and this is the
-   * tool's own bug, not the rebuild's — the agent row is INSERTED before the
-   * key is encrypted, so a 400 leaves an orphan agent behind that the browser
-   * never learns about. `scripts/settings-probe.mjs --sweep` exists for that.
-   *
-   * Leaving the field blank exercises exactly the documented behaviour of a
-   * blank key ("leave blank to keep") and lets the rest of the wizard be
-   * proven end to end.
-   */
-  await p.type('[data-slot="dialog-content"] input[aria-label="Agent API key"]', "");
-
-  await p.type('[data-slot="dialog-content"] input[aria-label="Temperature"]', "0.7");
-  await p.textarea('[data-slot="dialog-content"] textarea[aria-label="Custom system prompt"]', "zz test prompt");
-  await p.shoot("06-agent-wizard");
-
-  // Back keeps step 1's answers.
-  await p.click('[data-slot="dialog-footer"] button:first-child');
-  await sleep(300);
-  const backName = await p.val('[data-slot="dialog-content"] input[aria-label="Agent name"]');
-  check("3.22", "Back returns to step 1 with its answers intact", backName === AGENT, backName);
-  await p.click('[data-mis="agent-next"]');
-  await sleep(300);
-
-  await p.click('[data-mis="agent-save"]');
-  await p.waitFor(`!document.querySelector('[data-slot="dialog-content"]')`, 15000);
-  await p.waitFor(`document.querySelector('[data-mis-agent="${AGENT}"]')`, 15000);
-  created.agents.push(AGENT);
-  const agentKv = await p.text(`[data-mis-agent="${AGENT}"] .mis-kv`);
-  const agentBadge = await p.text(`[data-mis-agent="${AGENT}"] .badge`);
-  check(
-    "3.12-3.21",
-    "every wizard field reached the record",
-    agentKv.includes("Friendly") &&
-      agentKv.includes("Short") &&
-      agentKv.includes("0.70") &&
-      agentKv.includes("4,000") &&
-      agentBadge === "Paused",
-    agentKv.replace(/\n/g, " ") + ` · ${agentBadge}`,
-  );
-  check(
-    "3.19b",
-    "a blank key leaves the record without one",
-    agentKv.includes("Not set"),
-    "APP_ENCRYPTION_KEY is unset here, so a key cannot be written — see the note in this file",
-  );
-  check("3.23", "the search box is cleared so the new agent shows", (await p.val('.mis-find input[name="agent_search"]')) === "");
-
-  await p.goto("/inbox/settings/reply-agents");
-  check("3.9a", "the agent survives a reload", await p.exists(`[data-mis-agent="${AGENT}"]`));
-
-  await p.click(`[data-mis-agent="${AGENT}"] button[aria-label^="Edit"]`);
-  await p.waitFor(`document.querySelector('[data-slot="dialog-content"]')`, 8000);
-  const agentPre = await p.val('[data-slot="dialog-content"] input[aria-label="Agent name"]');
-  const tonePre = await p.val('[data-slot="dialog-content"] select[aria-label="Tone of voice"]');
-  check("3.8", "Edit pre-fills the wizard", agentPre === AGENT && tonePre === "friendly", `${agentPre} / ${tonePre}`);
-  await p.click('[data-slot="dialog-footer"] button:first-child');
-  await p.waitFor(`!document.querySelector('[data-slot="dialog-content"]')`, 8000);
-
-  await p.click(`[data-mis-agent="${AGENT}"] button[data-armed]`);
-  const agentArmed = await p.text(`[data-mis-agent="${AGENT}"] button[data-armed="true"]`);
-  check("3.9b", "delete arms first", agentArmed === "Confirm delete", agentArmed);
-  await p.click(`[data-mis-agent="${AGENT}"] button[data-armed="true"]`);
-  await p.waitFor(`!document.querySelector('[data-mis-agent="${AGENT}"]')`, 15000);
-  await p.goto("/inbox/settings/reply-agents");
-  const goneAgent = !(await p.exists(`[data-mis-agent="${AGENT}"]`));
-  check("3.9c", "the agent is gone from the server", goneAgent);
-  if (goneAgent) created.agents = [];
+  /* 3 · Reply agents moved to Admin → Reply agent on 9 Oct (scripts/reply-agent-ui-test.mjs). */
 
   /* ═══════════════════════════════════════════════════ 4 · AI labelling */
   section("4 · AI labelling");
@@ -946,117 +804,7 @@ try {
     JSON.stringify(after),
   );
 
-  /* ════════════════════════════════════════════════════════ 5 · Clients */
-  section("5 · Clients");
-  await p.goto("/inbox/settings/clients");
-  await p.shoot("08-clients");
-
-  const clientSummary = await p.text(".mis-bar .mis-count");
-  check("5.1", "the summary line counts configured clients", /clients? configured/.test(clientSummary), clientSummary);
-  check("5.11", "the alias matching rule is stated", (await p.body()).includes("Aliases catch variations"));
-
-  const sysEditDisabled = await p.ev(`(() => {
-    const rows = document.querySelectorAll('.mis [data-mis-client]');
-    for (const r of rows) {
-      if (/fallback/i.test(r.innerText)) {
-        const btns = r.querySelectorAll('.mis-row-a button');
-        return Array.from(btns).every(b => b.disabled);
-      }
-    }
-    return null;
-  })()`);
-  check("5.6/5.7a", "the fallback client cannot be edited or deleted", sysEditDisabled === true, String(sysEditDisabled));
-
-  const CLIENT = `${RUN}-client`;
-  await p.click('[data-mis="add-client"]');
-  await p.waitFor(`document.querySelector('[data-slot="dialog-content"]')`, 8000);
-  check("5.2", "Add client opens the dialog", (await p.text('[data-slot="dialog-title"]')) === "Add client");
-  check("5.11b", "with the longest-match rule spelled out", (await p.text('[data-slot="dialog-description"]')).includes("Longest match wins"));
-  check("5.9c", "and the no-aliases hint", (await p.body()).includes("No aliases yet"));
-
-  await p.type("#client-name", CLIENT);
-  // Scoped to the dialog: the list BEHIND it draws every client's aliases with
-  // the same chip class, so an unscoped count is the whole page's chips.
-  const TAG = '[data-slot="dialog-content"] .mis-tag';
-  await p.type("#client-alias", `${RUN} alias one`);
-  await p.click('[data-slot="dialog-content"] .mis-inline .btn');
-  await sleep(200);
-  check("5.9", "Add puts the alias on a chip", (await p.count(TAG)) === 1, `${await p.count(TAG)}`);
-  await p.type("#client-alias", `${RUN} alias two`);
-  await p.press("#client-alias", "Enter");
-  check("5.9b", "Enter adds one too", (await p.count(TAG)) === 2, `${await p.count(TAG)}`);
-  await p.type("#client-alias", `${RUN} ALIAS TWO`);
-  await p.press("#client-alias", "Enter");
-  check("5.9d", "a case-insensitive duplicate is ignored", (await p.count(TAG)) === 2, `${await p.count(TAG)}`);
-  await p.clickNth(`${TAG} button`, 1);
-  check("5.10", "the × removes one", (await p.count(TAG)) === 1, `${await p.count(TAG)}`);
-
-  await p.click('[data-mis="save-client"]');
-  await p.waitFor(`!document.querySelector('[data-slot="dialog-content"]')`, 12000);
-  await p.waitFor(`document.querySelector('[data-mis-client="${CLIENT}"]')`, 12000);
-  created.clients.push(CLIENT);
-  check("5.8/5.12", "the client is written with its alias", (await p.text(`[data-mis-client="${CLIENT}"]`)).includes(`${RUN} alias one`));
-  check("5.4", "and shows a thread count", /\d+ threads?/.test(await p.text(`[data-mis-client="${CLIENT}"]`)));
-
-  await p.goto("/inbox/settings/clients");
-  check("5.12b", "it survives a reload", await p.exists(`[data-mis-client="${CLIENT}"]`));
-
-  const CLIENT2 = `${CLIENT}-edited`;
-  await p.click(`[data-mis-client="${CLIENT}"] button[aria-label^="Edit"]`);
-  await p.waitFor(`document.querySelector('[data-slot="dialog-content"]')`, 8000);
-  check("5.6b", "Edit pre-fills", (await p.val("#client-name")) === CLIENT);
-  await p.type("#client-name", CLIENT2);
-  await p.click('[data-mis="save-client"]');
-  await p.waitFor(`document.querySelector('[data-mis-client="${CLIENT2}"]')`, 12000);
-  created.clients[0] = CLIENT2;
-  check("5.12c", "the rename is saved", await p.exists(`[data-mis-client="${CLIENT2}"]`));
-
-  /*
-   * Delete, in two parts, because the endpoint has a guard worth proving.
-   *
-   * Every client is created with a live portal, and DELETE refuses (409) while
-   * one is — deleting the row would dead-link whatever that client has
-   * bookmarked, with nothing to tell them the new address. So the first pass
-   * asserts the REFUSAL and its explanation, which is the behaviour a member of
-   * staff will actually meet; then the portal is switched off through the API
-   * the Portals screen uses, and the same button is driven again to prove the
-   * delete itself works end to end.
-   */
-  await p.click(`[data-mis-client="${CLIENT2}"] button[data-armed]`);
-  const clientArmed = await p.text(`[data-mis-client="${CLIENT2}"] button[data-armed="true"]`);
-  check("5.7b", "delete arms first", clientArmed === "Confirm delete", clientArmed);
-  await p.click(`[data-mis-client="${CLIENT2}"] button[data-armed="true"]`);
-  // Wait for THIS answer, not for "a toast": the rename's confirmation is
-  // still on screen for three seconds and would be read instead.
-  await p.waitFor(
-    `/portal/.test(document.querySelector('[data-mis-toast]')?.innerText ?? '')`,
-    12000,
-    "the portal guard's answer",
-  );
-  const guard = await p.toast();
-  check("5.7c", "a client with a live portal is refused, and told why",
-    guard.includes("live client portal"), guard.slice(0, 90));
-
-  const clientId = await p.ev(`(async () => {
-    const r = await fetch('/api/tools/master-inbox/clients', { cache: 'no-store' });
-    const j = await r.json();
-    return (j.clients ?? []).find(c => c.name === ${JSON.stringify(CLIENT2)})?.id ?? null;
-  })()`);
-  await p.ev(`fetch('/api/tools/master-inbox/clients/' + ${JSON.stringify(clientId)}, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ portal_enabled: false }),
-  }).then(r => r.status)`);
-  await p.goto("/inbox/settings/clients");
-  await p.click(`[data-mis-client="${CLIENT2}"] button[data-armed]`);
-  await p.click(`[data-mis-client="${CLIENT2}"] button[data-armed="true"]`);
-  await p.waitFor(`!document.querySelector('[data-mis-client="${CLIENT2}"]')`, 12000);
-  await p.goto("/inbox/settings/clients");
-  const goneClient = !(await p.exists(`[data-mis-client="${CLIENT2}"]`));
-  check("5.7d", "with the portal off, the same button deletes it", goneClient);
-  if (goneClient) created.clients = [];
-
-  /* 6 · Members and 7 · Personal were removed on 9 Oct (OS feedback). */
+  /* 5 · Clients moved to the client record (Campaigns → In Master Inbox) on 9 Oct. */
 
   /* ═══════════════════════════════════════════════════════ 8 · Webhooks */
   section("8 · Webhooks");

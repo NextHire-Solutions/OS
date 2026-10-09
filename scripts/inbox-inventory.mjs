@@ -30,9 +30,7 @@ const SURFACES = [
   ["portal drill-down",     "app/(app)/portals/[clientId]/page.tsx",      "src/components/screens/master-inbox/portal-detail.tsx"],
   ["settings · labels",     "app/(app)/settings/labels/page.tsx",         "src/components/screens/master-inbox/settings-tabs/labels.tsx"],
   ["settings · templates",  "app/(app)/settings/templates/page.tsx",      "src/components/screens/master-inbox/settings-tabs/templates.tsx"],
-  ["settings · agents",     "app/(app)/settings/reply-agents/page.tsx",   "src/components/screens/master-inbox/settings-tabs/reply-agents.tsx"],
   ["settings · AI labeling","app/(app)/settings/ai-labeling/page.tsx",    "src/components/screens/master-inbox/settings-tabs/ai-labeling.tsx"],
-  ["settings · clients",    "app/(app)/settings/clients/page.tsx",        "src/components/screens/master-inbox/settings-tabs/clients.tsx"],
   ["settings · webhooks",   "app/(app)/settings/webhooks/page.tsx",       "src/components/screens/master-inbox/settings-tabs/webhooks.tsx"],
 ];
 

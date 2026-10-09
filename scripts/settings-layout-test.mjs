@@ -38,9 +38,9 @@ const cookie = await mintSso(pick("BS_SSO_SECRET") || pick("AUTH_SECRET"), {
 const SCREENS = [
   "/inbox/settings/labels",
   "/inbox/settings/templates",
-  "/inbox/settings/reply-agents",
+  
   "/inbox/settings/ai-labeling",
-  "/inbox/settings/clients",
+  
   "/inbox/settings/webhooks",
 ];
 let bad = 0;

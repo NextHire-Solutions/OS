@@ -148,7 +148,7 @@ export const NAV: NavSection[] = [
           // workspace; this page is in scope, they are not.
           { id: "portals", label: "Client Portals", path: "/portals", verified: true },
           { id: "client-view", label: "Client view", verified: true },
-          // Master Inbox's settings are several pages behind a second sidebar.
+          // Master Inbox's settings: Labels, Templates and AI Labeling (9 Oct).
           // One entry here; the tool keeps its own sub-navigation inside, which
           // is the right trade — hoisting rarely-used pages into the rail
           // would cost more than it saves.

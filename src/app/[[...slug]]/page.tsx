@@ -20,6 +20,8 @@ import { loadRailBadges } from "@/lib/workspace/badges";
 import { HomeScreen } from "@/components/screens/home";
 import { TeamAccessScreen } from "@/components/screens/team-access";
 import { ReplyAgentScreen } from "@/components/screens/reply-agent";
+import { loadAgents } from "@/lib/tools/master-inbox/ai/agent";
+import { requireSession } from "@/lib/auth/workspace";
 import { AssistantScreen } from "@/components/screens/assistant";
 import { AccountScreen } from "@/components/screens/account";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
@@ -267,6 +269,16 @@ export default async function WorkspacePage({
   const roles = { accountManager: viewer.accountManager, salesperson: viewer.salesperson };
   if (!initialId.includes(":") && !canSeePage(initialId, admin, grants, ALL_TOOLS, roles)) redirect("/");
 
+  /*
+   * Admin → Reply agent edits the agents themselves (create, delete, model, API
+   * key, prompt, tone, active) since 9 Oct — moved from Master Inbox →
+   * Settings → Reply Agents. Its editor reads them from here and re-reads on
+   * router.refresh(), as it did in the tab. Never the keys: has_api_key only.
+   */
+  const replyAgents = initialId === "reply-agent"
+    ? await requireSession().then((s) => loadAgents(s.activeWorkspace.id)).catch(() => null)
+    : null;
+
   const toolUrls: Record<string, string> = {};
   for (const product of products()) {
     const url = optionalEnv(product.baseUrlEnv);
@@ -501,7 +513,7 @@ export default async function WorkspacePage({
         "team-access": <TeamAccessScreen />,
         // Client-side only: it fetches its own four endpoints, so no loader
         // joins the Promise.all above and no other screen pays for it.
-        "reply-agent": <ReplyAgentScreen />,
+        "reply-agent": <ReplyAgentScreen agents={replyAgents} />,
         assistant: <AssistantScreen />,
         account: <AccountScreen email={email} />,
       })}
