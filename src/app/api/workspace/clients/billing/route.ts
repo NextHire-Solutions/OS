@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { BillingControlError, readBilling, setBilling } from "@/lib/clients/billing-control";
 import { osTable } from "@/lib/clients/os-db";
-import { isAdminUser } from "@/lib/identity/admin-db";
+import { viewerRoles } from "@/lib/identity/viewer-roles";
 import { parseAmount, parseEvery } from "@/lib/clients/payment-link-plan";
 import { cancelLink, createLink, openLinks, PaymentLinkError, settle } from "@/lib/clients/payment-links";
 import { getAccountBilling, getStripeSnapshot } from "@/lib/clients/billing-account";
@@ -11,8 +11,10 @@ import { clientsChanged } from "@/lib/clients/after-change";
 import { blockingEnabled, blockThreshold, openPortalBlocks } from "@/lib/clients/billing-watch";
 
 /*
- * A client's Stripe billing, from its record. ADMINS ONLY — both reading it
- * and changing it: it is money, and the amount is not everyone's business.
+ * A client's Stripe billing, from its record. Admins and account managers
+ * (9 Oct — they hold the Clients screen, so they pause and resume billing):
+ * both see it and pause or resume it. Linking Stripe customers and payment
+ * links — creating money movements — stay with admins.
  *
  *   GET   ?clientId=…                         live state from Stripe, every subscription the client
  *                                             owns (billing-model.ts), and open payment links
@@ -27,14 +29,21 @@ import { blockingEnabled, blockThreshold, openPortalBlocks } from "@/lib/clients
  */
 export const dynamic = "force-dynamic";
 
-async function adminEmail(request: Request): Promise<string | NextResponse> {
+/** Who may use billing: an admin, or an account manager — the people the Clients screen is for. */
+async function billingUser(request: Request): Promise<{ email: string; admin: boolean } | NextResponse> {
   const secret = process.env.AUTH_SECRET;
   if (!secret) return NextResponse.json({ error: "Not configured." }, { status: 503 });
   const s = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
   if (!s?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!(await isAdminUser(s.email))) return NextResponse.json({ error: "Only admins can see or change billing." }, { status: 403 });
-  return s.email.toLowerCase();
+  const v = await viewerRoles(s.email);
+  if (!v.admin && !v.accountManager) {
+    return NextResponse.json({ error: "Only admins and account managers can see or change billing." }, { status: 403 });
+  }
+  return { email: s.email.toLowerCase(), admin: v.admin };
 }
+
+/** Pausing and resuming: admins and account managers. Everything else here: admins. */
+const FOR_ACCOUNT_MANAGERS = new Set(["pause", "resume"]);
 
 async function subscriptionOf(clientId: string): Promise<{ name: string; sub: string | null } | null> {
   const { data } = await osTable("os_clients").select("name, stripe_subscription_id").eq("id", clientId).maybeSingle();
@@ -43,8 +52,10 @@ async function subscriptionOf(clientId: string): Promise<{ name: string; sub: st
 }
 
 export async function GET(request: Request) {
-  const me = await adminEmail(request);
-  if (me instanceof NextResponse) return me;
+  const who = await billingUser(request);
+  if (who instanceof NextResponse) return who;
+  // The admin-only controls (links, payment links) are drawn only for admins.
+  const canManage = who.admin;
   const clientId = new URL(request.url).searchParams.get("clientId") ?? "";
   if (!clientId || !(await subscriptionOf(clientId))) return NextResponse.json({ error: "No such client" }, { status: 404 });
   // A link paid since the last look becomes this client's subscription first.
@@ -63,17 +74,19 @@ export async function GET(request: Request) {
   // Its portal held (or, in dry run, would be) for an unpaid invoice.
   const block = (await openPortalBlocks()).find((b) => b.clientId === clientId) ?? null;
   const portalBlock = { block, enabled: blockingEnabled(), afterAttempts: blockThreshold() };
-  if (!c.sub) return NextResponse.json({ linked: false, links, canCreateLinks: links !== null, account, linksReady, accountError, portalBlock });
+  const canCreateLinks = canManage && links !== null;
+  if (!c.sub) return NextResponse.json({ linked: false, links, canCreateLinks, canManage, account, linksReady, accountError, portalBlock });
   try {
-    return NextResponse.json({ linked: true, billing: await readBilling(c.sub), links, canCreateLinks: links !== null, account, linksReady, accountError, portalBlock });
+    return NextResponse.json({ linked: true, billing: await readBilling(c.sub), links, canCreateLinks, canManage, account, linksReady, accountError, portalBlock });
   } catch (e) {
-    return NextResponse.json({ linked: true, links, account, linksReady, error: e instanceof Error ? e.message : "Stripe could not be read" }, { status: 502 });
+    return NextResponse.json({ linked: true, links, canManage, account, linksReady, error: e instanceof Error ? e.message : "Stripe could not be read" }, { status: 502 });
   }
 }
 
 export async function POST(request: Request) {
-  const me = await adminEmail(request);
-  if (me instanceof NextResponse) return me;
+  const who = await billingUser(request);
+  if (who instanceof NextResponse) return who;
+  const me = who.email;
   const body = (await request.json().catch(() => null)) as {
     clientId?: unknown; action?: unknown; amount?: unknown; every?: unknown; linkId?: unknown;
     subscriptionId?: unknown; customerId?: unknown; stripeId?: unknown;
@@ -82,6 +95,9 @@ export async function POST(request: Request) {
   const act = body?.action;
   if (!clientId || !["pause", "resume", "create_link", "cancel_link", "link", "unlink", "exclude"].includes(String(act))) {
     return NextResponse.json({ error: "clientId and action (pause, resume, create_link, cancel_link, link, unlink or exclude) are required." }, { status: 400 });
+  }
+  if (!who.admin && !FOR_ACCOUNT_MANAGERS.has(String(act))) {
+    return NextResponse.json({ error: "Only admins can link Stripe accounts or create and cancel payment links." }, { status: 403 });
   }
   const c = await subscriptionOf(clientId);
   if (!c) return NextResponse.json({ error: "No such client" }, { status: 404 });

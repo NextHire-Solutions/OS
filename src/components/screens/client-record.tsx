@@ -785,8 +785,10 @@ function StatusField({ id, status, onChanged, onPatch }: { id: string; status: C
 }
 
 /*
- * Pause / resume Stripe billing by hand (30 Sep). Admins only: the route
- * refuses everyone else, and for them this renders nothing. Reads Stripe live,
+ * Pause / resume Stripe billing by hand (30 Sep). Admins and account managers
+ * (9 Oct); payment links and linking Stripe customers are admins' only
+ * (`canManage`). Everyone else is refused by the route, and for them this
+ * renders nothing. Reads Stripe live,
  * so what it shows is what Stripe is doing now — including a pause somebody
  * set in the Stripe dashboard. Pausing never cancels.
  */
@@ -796,6 +798,8 @@ interface OpenLink { id: string; url: string; label: string; createdAt: string }
 function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
   const [state, setState] = useState<{
     hidden?: true; linked?: boolean; billing?: BillingNow; links?: OpenLink[] | null; canCreateLinks?: boolean; error?: string;
+    /** Admin: payment links and linking Stripe customers too. Account managers pause and resume only. */
+    canManage?: boolean;
     /** Every subscription and card the client owns (billing-model.ts, 6 Oct). */
     account?: ClientBilling | null; linksReady?: boolean; accountError?: string | null;
     portalBlock?: { block: { mode: string; since: string; reason: string | null } | null; enabled: boolean; afterAttempts: number };
@@ -868,7 +872,7 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
   return (
     <div className="rx-row">
       <div className="ds-field">
-        <div className="ds-field-l"><span>Stripe billing</span><em className="ds-field-src">Stripe · admins only</em></div>
+        <div className="ds-field-l"><span>Stripe billing</span><em className="ds-field-src">{state.canManage ? "Stripe · admins and account managers" : "Stripe · pause and resume"}</em></div>
         <div className="ds-field-v" style={{ display: "grid", gap: 8 }}>
           {state.error && !b ? <span className="ds-field-err">{state.error}</span> : null}
           {state.linked === false && !links.length ? <span className="cx-none">No Stripe subscription yet</span> : null}
@@ -916,7 +920,9 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
                 <button type="button" className="rx-btn solid" onClick={() => void copy(l.url, l.id)}>{copied === l.id ? "Copied" : "Copy link"}</button>
                 <a className="rx-btn" href={l.url} target="_blank" rel="noreferrer">Open ↗</a>
                 <button type="button" className="rx-btn" disabled={saving} onClick={() => void load()}>Check payment</button>
-                <button type="button" className="rx-btn" disabled={saving} onClick={() => void cancelLink(l.id)}>Cancel link</button>
+                {state.canManage ? (
+                  <button type="button" className="rx-btn" disabled={saving} onClick={() => void cancelLink(l.id)}>Cancel link</button>
+                ) : null}
               </span>
             </div>
           ))}
@@ -964,7 +970,7 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
             </div>
           ) : null}
           {state.account ? (
-            <BillingAccount account={state.account} linksReady={state.linksReady === true} saving={saving}
+            <BillingAccount account={state.account} linksReady={state.linksReady === true} saving={saving} canManage={state.canManage === true}
               act={async (body) => {
                 const out = await post(body);
                 if (out) {
@@ -988,10 +994,12 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
  * Stripe customers count as this client's — with "Not this client" for an
  * automatic name match and a box to link another customer or subscription.
  */
-function BillingAccount({ account: a, linksReady, saving, act }: {
+function BillingAccount({ account: a, linksReady, saving, canManage, act }: {
   account: ClientBilling;
   linksReady: boolean;
   saving: boolean;
+  /** Admin: may link and unlink Stripe customers. Account managers pause and resume only. */
+  canManage: boolean;
   act: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
   const [confirm, setConfirm] = useState<{ id: string; action: "pause" | "resume" } | null>(null);
@@ -1069,7 +1077,7 @@ function BillingAccount({ account: a, linksReady, saving, act }: {
         {a.customers.map((cu) => (
           <span key={cu.id} className="rx-bill-row">
             <span>{cu.name ?? cu.id}{cu.shared ? <em> · shared with another client</em> : null} <small>{cu.source}</small></span>
-            {cu.source !== "record" && linksReady ? (
+            {cu.source !== "record" && linksReady && canManage ? (
               <button type="button" className="rx-btn" disabled={saving}
                 onClick={() => void act({ action: cu.source === "linked" ? "unlink" : "exclude", customerId: cu.id })}>
                 Not this client
@@ -1077,7 +1085,7 @@ function BillingAccount({ account: a, linksReady, saving, act }: {
             ) : null}
           </span>
         ))}
-        {linksReady ? (
+        {!canManage ? null : linksReady ? (
           <span className="rx-bill-row">
             <input className="ds-input" placeholder="Link another: cus_… or sub_…" aria-label="Stripe customer or subscription id"
               value={linkId} onChange={(e) => setLinkId(e.target.value.trim())} style={{ maxWidth: 260 }} />
