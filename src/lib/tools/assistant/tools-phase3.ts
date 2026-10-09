@@ -32,60 +32,7 @@ async function countWhere(
   }
 }
 
-// ---------------------------------------------------------------------------
-// onboarding_pipeline
-// ---------------------------------------------------------------------------
-
-/**
- * Who is mid-onboarding, and who is stuck.
- *
- * `orch_clients.status` is the pipeline: new → assigned → campaign_launched,
- * with paused off to one side. "Stuck" is not a status — it is a client that
- * has sat in a pre-launch status for a while, which is why the age of the row
- * is reported next to it rather than a flag nobody set.
- */
-export async function onboardingPipelineTool(options: { stalledDays?: number } = {}) {
-  const stalledDays = Math.min(Math.max(options.stalledDays ?? 14, 1), 180);
-  const as = db.agentSearch();
-
-  const { data, error } = await as
-    .from("orch_clients")
-    .select("client_name, status, brand, office_name, mls, location, created_at")
-    .limit(1000);
-  if (error) return { error: `Onboarding could not be read: ${describeDbError(error)}` };
-
-  const rows = (data ?? []) as Array<Record<string, unknown>>;
-  const now = Date.now();
-
-  const byStatus: Record<string, number> = {};
-  const stalled: Array<{ client: string; status: string; daysWaiting: number }> = [];
-
-  for (const r of rows) {
-    const status = String(r.status ?? "unknown");
-    byStatus[status] = (byStatus[status] ?? 0) + 1;
-
-    // Launched clients are done, and paused ones are waiting on purpose.
-    if (status === "campaign_launched" || status === "paused") continue;
-    const created = r.created_at ? new Date(String(r.created_at)).getTime() : null;
-    if (!created) continue;
-    const days = Math.floor((now - created) / 86_400_000);
-    if (days >= stalledDays) {
-      stalled.push({ client: String(r.client_name ?? ""), status, daysWaiting: days });
-    }
-  }
-
-  stalled.sort((a, b) => b.daysWaiting - a.daysWaiting);
-
-  return {
-    total: rows.length,
-    byStatus,
-    stalledThresholdDays: stalledDays,
-    stalled: stalled.slice(0, 25),
-    note:
-      "Statuses run new → assigned → campaign_launched. 'Stalled' means a client has sat in a " +
-      "pre-launch status for longer than the threshold; launched and paused clients are excluded.",
-  };
-}
+// onboarding_pipeline was removed with the Onboarding section (9 Oct).
 
 // ---------------------------------------------------------------------------
 // infrastructure_health

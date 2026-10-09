@@ -3,7 +3,7 @@ import { loadAssistantKey, openAiModel } from "../src/lib/tools/assistant/openai
 const { apiKey, model } = await loadAssistantKey(process.env.MASTER_INBOX_WORKSPACE_ID ?? "");
 const ask = openAiModel(apiKey, model);
 for (const q of [
-  "Who is stuck in onboarding?",
+  "Which clients are onboarding right now?",
   "How much can we send per day?",
   "What did we scrape for RE/MAX Pacific?",
 ]) {

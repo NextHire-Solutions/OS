@@ -35,7 +35,6 @@ const ROUTES = [
   "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/infrastructure", "/analytics/attribution",
   "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",
-  "/onboarding/pipeline", "/onboarding/stages", "/onboarding/templates", "/onboarding/settings",
   "/search/search", "/search/accounts", "/search/mls", "/search/import",
 ];
 

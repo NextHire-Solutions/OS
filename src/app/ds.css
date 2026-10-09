@@ -482,7 +482,6 @@ tr.has-carry > td:first-child { box-shadow: inset 3px 0 0 var(--ds-red); }
 .tool-m { gap: 22px; padding-top: 12px; border-top-color: var(--ds-border); }
 .tool-m div b { font-size: 20px; font-weight: 650; }
 /* Onboarding: a client's name on one line, not three. */
-.onb-pipeline tbody td:first-child { white-space: nowrap; }
 
 /* ----------------------------------------------------------- status (§11) --- */
 .st-pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px 0 8px; border-radius: 999px;

@@ -3,13 +3,14 @@ import { masterInboxConnector } from "./master-inbox";
 import { clientHealthConnector } from "./client-health";
 import { analyticsConnector } from "./analytics";
 import { scraperConnector } from "./scraper";
-import { onboardingConnector } from "./onboarding";
 
 /*
  * THE registry. Order here is the order on screen — most-used first, black
  * boxes last, so the cards with real numbers occupy the top row.
  *
- * FIVE tools. The Database app and the individual client portals are out of
+ * FOUR tools since 9 Oct, when the Onboarding section was removed (its
+ * connector file stays for its types; nothing polls it). The Database app
+ * and the individual client portals are out of
  * scope for the workspace, and the design agrees: four products in the rail,
  * and "4 tools" written on the home screen.
  *
@@ -22,7 +23,6 @@ export const CONNECTORS: readonly Connector[] = [
   clientHealthConnector,
   analyticsConnector,
   scraperConnector,
-  onboardingConnector,
 ];
 
 

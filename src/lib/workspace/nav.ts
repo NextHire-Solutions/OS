@@ -217,19 +217,12 @@ export const NAV: NavSection[] = [
           { id: "client-view", label: "Client view", verified: true },
         ],
       },
-      {
-        kind: "product",
-        id: "onboarding",
-        label: "Onboarding",
-        baseUrlEnv: "ONBOARDING_URL",
-        children: [
-          { id: "pipeline", label: "Pipeline", path: "/", verified: true },
-          { id: "stages", label: "Stages", path: "/stages", verified: true },
-          { id: "templates", label: "Templates", path: "/templates", verified: true },
-          { id: "settings", label: "Settings", path: "/settings", verified: true },
-          { id: "client-view", label: "Client view", verified: true },
-        ],
-      },
+      /*
+       * Onboarding was removed on 9 Oct (OS feedback): its screens and its
+       * scheduled jobs. /onboarding addresses open Home. The `onboarding`
+       * grant and tool id stay (sessions carry them); its webhook receivers
+       * and the shared code billing, delete and the Database view use stay.
+       */
       {
         kind: "product",
         id: "search",
@@ -330,7 +323,6 @@ export function products(): NavProduct[] {
      /analytics            Campaign Analytics (and /analytics/campaigns,
                            /schedule, /clients: Campaign Management)
      /search               Agent Search
-     /onboarding           Onboarding
      /team                 Team access
 
    The tool's OWN hostname never appears. It is loaded inside the page, so the
@@ -343,7 +335,6 @@ const PRODUCT_SLUG: Record<string, ToolId> = {
   clients: "clients",
   analytics: "analytics",
   search: "search",
-  onboarding: "onboarding",
 };
 
 /** The workspace's own screens. */

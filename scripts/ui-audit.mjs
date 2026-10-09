@@ -37,7 +37,6 @@ const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.t
   "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/volume", "/analytics/infrastructure", "/analytics/attribution",
   "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",
-  "/onboarding/pipeline", "/onboarding/stages", "/onboarding/templates", "/onboarding/settings",
   "/search/search", "/search/accounts", "/search/mls", "/search/import",
 
   /*
@@ -57,9 +56,6 @@ const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.t
   "/inbox/all-email/4b29f335-4d19-4822-8b01-d30f1a98e6a3",
   "/inbox/portals/c370499d-8cc4-4c1f-93b0-f75d363b108d",
   "/analytics/campaigns/55",
-  "/onboarding/clients/664c71d8-cc22-4a8b-9d53-781132373d89",
-  "/onboarding/clients/664c71d8-cc22-4a8b-9d53-781132373d89/agents",
-  "/onboarding/clients/664c71d8-cc22-4a8b-9d53-781132373d89/team",
 ];
 
 const RULES = fs.readFileSync(path.join(import.meta.dirname, "ui-audit-rules.js"), "utf8");

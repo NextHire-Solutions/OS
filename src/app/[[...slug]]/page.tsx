@@ -4,11 +4,6 @@ import { aggregate } from "@/lib/status/derive";
 import { getOverview } from "@/lib/workspace/overview";
 import { getPerformance } from "@/lib/workspace/performance";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
-import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
-import { getStagesBoard } from "@/lib/tools/onboarding/stages";
-import { getTemplates } from "@/lib/tools/onboarding/templates";
-import { getOnboardingSettings } from "@/lib/tools/onboarding/settings-view";
-import { getClientDetail } from "@/lib/tools/onboarding/client-detail";
 import { getInbox } from "@/lib/tools/master-inbox/inbox-view";
 import { getReminders } from "@/lib/tools/master-inbox/reminders";
 import { getSettings } from "@/lib/tools/master-inbox/settings";
@@ -26,11 +21,6 @@ import { AssistantScreen } from "@/components/screens/assistant";
 import { AccountScreen } from "@/components/screens/account";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
-import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeline";
-import { OnboardingStagesScreen } from "@/components/screens/onboarding/stages";
-import { OnboardingTemplatesScreen } from "@/components/screens/onboarding/templates";
-import { OnboardingSettingsScreen } from "@/components/screens/onboarding/settings";
-import { OnboardingClientScreen } from "@/components/screens/onboarding/client";
 import { AgentSearchSearchScreen } from "@/components/screens/agent-search/search";
 import { AgentSearchAccountsScreen } from "@/components/screens/agent-search/accounts";
 import { AgentSearchMlsScreen } from "@/components/screens/agent-search/mls";
@@ -105,33 +95,11 @@ function threadIdFrom(slug: string[] | undefined): string | null {
 
 
 /*
- * `/onboarding/clients/<id>` and its three tabs.
- *
- * `idForPath` resolves this to `onboarding:pipeline`, because "clients" is not
- * one of the Onboarding product's leaves — which is deliberate and is what
- * keeps the rail highlighted on Pipeline while a client is open, the same way
- * `/inbox/portals/<clientId>` stays on Client Portals.
- *
- * It also meant the detail screen was unreachable: the pipeline's rows linked
- * here, `OnboardingClientScreen` and `getClientDetail()` both existed, and the
- * router rendered the pipeline over the top of them. Thirty-eight clients you
- * could move between stages and still not open — the exact dead end the link
- * was added to fix.
+ * The Onboarding section — pipeline, stages, templates, settings and the
+ * per-client page at /onboarding/clients/<id> — was removed on 9 Oct (OS
+ * feedback). /onboarding addresses now open Home. Its webhook receivers and
+ * shared code stay: see docs/HANDOVER.md §0.1.
  */
-const ONBOARDING_TABS = new Set(["leads", "agents", "team"]);
-
-function onboardingClientFrom(
-  slug: string[] | undefined,
-): { id: string; tab: "profile" | "leads" | "agents" | "team" } | null {
-  const parts = slug ?? [];
-  if (parts[0] !== "onboarding" || parts[1] !== "clients") return null;
-  const id = parts[2];
-  if (!id || !UUID.test(id)) return null;
-  const third = parts[3];
-  const tab = third && ONBOARDING_TABS.has(third) ? (third as "leads" | "agents" | "team") : "profile";
-  return { id, tab };
-}
-
 
 /*
  * Build one screen, keep the shape.
@@ -203,7 +171,7 @@ export default async function WorkspacePage({
    */
   const only = (id: string) => initialId === id;
 
-  const [snapshots, overview, performance, clientHealth, clientsOverview, onboarding, onboardingStages, onboardingTemplates, onboardingSettings, agentSearch, inbox, reminders, inboxSettings, portals, onboardingClient, railBadges] =
+  const [snapshots, overview, performance, clientHealth, clientsOverview, agentSearch, inbox, reminders, inboxSettings, portals, railBadges] =
     await Promise.all([
     getAllSnapshots(),
     only("home") ? getOverview() : Promise.resolve(null),
@@ -212,18 +180,6 @@ export default async function WorkspacePage({
     // The master list is warmed at boot (instrumentation.ts); a failure here
     // falls back to the client fetching it, never to a blank page.
     only("roster") ? getMasterClientList().catch(() => null) : Promise.resolve(null),
-    only("onboarding:pipeline") && !onboardingClientFrom(slug)
-      ? getOnboardingPipeline()
-      : Promise.resolve(null),
-      /*
-       * Each loader runs only for its own screen — the same `only()` gate every
-       * other entry uses. Every Onboarding screen tolerates a null `initial` and
-       * fetches its own route on mount, so a wrong guess about which loader to
-       * run costs one round trip rather than a blank screen.
-       */
-      only("onboarding:stages") ? getStagesBoard() : Promise.resolve(null),
-      only("onboarding:templates") ? getTemplates() : Promise.resolve(null),
-      only("onboarding:settings") ? getOnboardingSettings() : Promise.resolve(null),
     /*
      * Nothing to load for Agent Search.
      *
@@ -244,15 +200,6 @@ export default async function WorkspacePage({
     only("inbox:reminders") ? getReminders() : Promise.resolve(null),
     only("inbox:settings") ? getSettings() : Promise.resolve(null),
     only("inbox:portals") ? getPortals() : Promise.resolve(null),
-    /*
-     * Server-rendered so a pasted client link paints with its data already
-     * there, exactly like every other screen above. The component still
-     * refetches on the client, so this is a first paint, not a cache.
-     */
-    (() => {
-      const c = onboardingClientFrom(slug);
-      return c ? getClientDetail(c.id) : Promise.resolve(null);
-    })(),
     /*
      * Unconditional, unlike every loader above it: the rail is on every screen,
      * so its counts are too. Two `head: true` count queries behind a 60s cache
@@ -360,23 +307,7 @@ export default async function WorkspacePage({
         "clients:client-view": <ToolClientView view="health" />,
         "inbox:client-view": <ToolClientView view="portal" />,
         "analytics:client-view": <ToolClientView view="analytics" />,
-        "onboarding:client-view": <ToolClientView view="onboarding" />,
         "search:client-view": <ToolClientView view="database" />,
-        /*
-         * Onboarding, read from the orchestrator's own database. That service
-         * keeps running untouched — it holds the hub tokens and receives the
-         * Typeform, Stripe, EmailBison and Calendly webhooks, which must keep
-         * arriving on their current URLs.
-         */
-        "onboarding:pipeline": (() => {
-          const c = onboardingClientFrom(slug);
-          return c
-            ? <OnboardingClientScreen clientId={c.id} tab={c.tab} initial={onboardingClient} />
-            : <OnboardingPipelineScreen initial={onboarding} />;
-        })(),
-        "onboarding:stages": <OnboardingStagesScreen initial={onboardingStages} />,
-        "onboarding:templates": <OnboardingTemplatesScreen initial={onboardingTemplates} />,
-        "onboarding:settings": <OnboardingSettingsScreen initial={onboardingSettings} />,
         /*
          * Agent Search. Server-paged out of necessity rather than taste: the
          * table holds 1.17 million agents, so the browser is never sent more

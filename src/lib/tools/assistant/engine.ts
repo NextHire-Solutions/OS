@@ -1,6 +1,6 @@
 import {
   attributionTool, billingCyclesTool, businessPerformanceTool, campaignDetailTool, campaignKpisTool, clientSuccessTool,
-  dataConsistencyTool, findAgentTool, onboardingClientTool, recentIntroductionsTool, replyTemplatesTool,
+  dataConsistencyTool, findAgentTool, recentIntroductionsTool, replyTemplatesTool,
   searchConversationsTool, sendScheduleTool, workspaceHomeTool,
 } from "./tools-phase8.ts";
 import {
@@ -17,7 +17,7 @@ import {
   replyAgentStatusTool,
   scrapeActivityTool,
 } from "./tools-phase2.ts";
-import { infrastructureHealthTool, onboardingPipelineTool } from "./tools-phase3.ts";
+import { infrastructureHealthTool } from "./tools-phase3.ts";
 import { notificationsTool, profileCompletenessTool } from "./tools-phase9.ts";
 import {
   campaignCopyTool,
@@ -350,19 +350,6 @@ export const TOOL_SCHEMA = [
   {
     type: "function" as const,
     function: {
-      name: "onboarding_pipeline",
-      description:
-        "Where clients are in onboarding — new, assigned, campaign_launched, paused — and which have been waiting in a " +
-        "pre-launch status too long. Answers 'who is stuck in onboarding'.",
-      parameters: {
-        type: "object",
-        properties: { stalledDays: { type: "number", description: "Count as stalled after this many days. Default 14." } },
-      },
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
       name: "infrastructure_health",
       description:
         "The sending fleet: how many inboxes exist on each platform, how many are connected or failed, and the total " +
@@ -395,7 +382,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "list_clients",
       description:
-        "List clients from the master record, filtered by status ('active','onboarding','paused','churned'), account manager, salesperson, plan or market (MLS/area), with counts by status. Use THIS for 'which clients are paused/churned/active', 'how many active clients', 'which clients does <account manager> manage', 'who did <salesperson> sell' \u2014 NOT onboarding_pipeline, which is a different list. For ONE person's clients always pass their name as accountManager or salesperson: `total` is then their count. Status alone counts everyone.",
+        "List clients from the master record, filtered by status ('active','onboarding','paused','churned'), account manager, salesperson, plan or market (MLS/area), with counts by status. Use THIS for 'which clients are paused/churned/active', 'how many active clients', 'which clients does <account manager> manage', 'who did <salesperson> sell' \u2014 the master record is the only client list. For ONE person's clients always pass their name as accountManager or salesperson: `total` is then their count. Status alone counts everyone.",
       parameters: {"type": "object", "properties": {"status": {"type": "string"}, "accountManager": {"type": "string"}, "salesperson": {"type": "string"}, "plan": {"type": "string"}, "market": {"type": "string"}}},
     },
   },
@@ -404,7 +391,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "client_billing",
       description:
-        "One client's money, from Stripe, across EVERY subscription and card it has: MRR, total spend (all successful charges less refunds), each subscription (current = latest, paused or live, next charge), failed payments with attempts, whether its portal is (or in dry run would be) blocked for an unpaid invoice, unpaid / past-due invoices, recent invoices. Answers 'what does X pay', 'has X paid', 'is X behind on payment', 'is X's portal blocked'.",
+        "One client's money, from Stripe, across EVERY subscription and card it has: MRR, total spend (all successful charges less refunds), each subscription (current = latest, paused or live, next charge), failed payments with attempts, whether its portal is (or in dry run would be) blocked for an unpaid invoice, unpaid / past-due invoices, recent invoices, and open Stripe payment links (Create subscription on the record) waiting to be paid. Answers 'what does X pay', 'has X paid', 'is X behind on payment', 'is X's portal blocked', 'does X have a payment link open'.",
       parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
     },
   },
@@ -556,15 +543,6 @@ export const TOOL_SCHEMA = [
   {
     type: "function" as const,
     function: {
-      name: "onboarding_client",
-      description:
-        "One client's Onboarding: its stage, which onboarding steps are done or pending, lead count, deliveries and replies, whether onboarding was paid, and any open Stripe payment links.",
-      parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
       name: "find_agent",
       description:
         "Look an agent up in the scraped agent database (Agent Search) by name, email or licence number: brokerage/office, location, sales volume, transactions, experience.",
@@ -622,7 +600,7 @@ export const SYSTEM_PROMPT = `You answer questions about a lead-generation busin
 
 There are five products: Master Inbox (email threads, client portals, the reply agent), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
 
-Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), Onboarding per client (onboarding_client), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
+Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
 
 A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
@@ -654,7 +632,7 @@ having a way to look it up, in your own words, and point at the product that hol
 Money IS available: MRR, total spend and invoices come from Stripe (client_billing, billing_overview) and
 payouts from commissions. A plan name is still not a price — never infer one from it.
 Built on 6 Oct and real — look them up, never deny them: profile completeness % with what is missing and where to fix it; saved views and leads per client; sign-up date = the first $1 Stripe charge (flagged when after onboarding); billing across every subscription a client has (54 Realty has several); pause/resume per subscription on the record; failed-payment notifications in the OS bell and the portal block after 4 failed attempts in total — Stripe's first attempt plus 3 recovery retries (a dry run until switched on: nothing is blocked yet); the billing calendar (Performance \u203a Billing Calendar) and MRR/ARR/growth (Performance \u203a Overview); paused clients per month (Performance \u203a Overview's Client movement, and the editable Pause date on a client's record for pauses before 13 Sep); the introduction subject "Intro: {first name} & {brokerage}", wording by market or person, a missing phone or brokerage rewrites the sentence (e.g. "who is currently with Compass." instead of "reached directly at  and"), and the opt-in "Line from their reply". DELAYING a charge (e.g. by 7 days) is NOT available anywhere — not on the record, not in Stripe from the OS; say so plainly and do not point to a place to do it.
-Status lists come from list_clients (the master record), never from onboarding_pipeline.
+Status lists come from list_clients (the master record). The Onboarding section was removed from the OS on 9 Oct: a client in the 'onboarding' STATUS still exists (list_clients), but there is no onboarding pipeline, stage or steps screen any more — never send anyone to one.
 
 CLIENT REPORT. For "how is X doing", "full report", "account review" or "health of X": call client_report ONCE, straight away with the name as given — it finds the client itself (no find_client first; if it returns candidates, ask which). Write it up exactly in this shape — a readable report, not a list of fields:
 
@@ -709,8 +687,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }),
   inbox_activity: (a) => inboxActivityTool({ days: typeof a.days === "number" ? a.days : undefined }),
   reply_agent_status: () => replyAgentStatusTool(),
-  onboarding_pipeline: (a) =>
-    onboardingPipelineTool({ stalledDays: typeof a.stalledDays === "number" ? a.stalledDays : undefined }),
   infrastructure_health: () => infrastructureHealthTool(),
   campaign_copy: (a) => campaignCopyTool(String(a.client ?? ""), { includeVariants: a.includeVariants === true }),
   recent_replies: (a) =>
@@ -754,7 +730,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   attribution: (a) => attributionTool(periodArgs(a)),
   send_schedule: () => sendScheduleTool(),
   campaign_detail: (a) => campaignDetailTool(String(a.campaign ?? "")),
-  onboarding_client: (a) => onboardingClientTool(String(a.client ?? "")),
   find_agent: (a) => findAgentTool(String(a.query ?? "")),
   search_conversations: (a) => searchConversationsTool({ text: String(a.text ?? ""), days: typeof a.days === "number" ? a.days : undefined }),
   reply_templates: (a) => replyTemplatesTool(typeof a.query === "string" && a.query ? a.query : undefined),

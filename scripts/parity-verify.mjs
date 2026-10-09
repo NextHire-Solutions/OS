@@ -114,24 +114,7 @@ await go("/analytics/infrastructure",12000);
 check("analytics","Infrastructure Provider filter", await ev(`[...document.querySelectorAll('select')].some(s=>/provider/i.test(s.getAttribute('aria-label')||(s.closest('label')||{}).textContent||''))`));
 // Copy & Offer (offer cards) was removed on 9 Oct — OS feedback.
 
-/* ───────────── Onboarding ───────────── */
-console.log("\nONBOARDING\n");
-await go("/onboarding/pipeline",12000);
-const ths = await ev(`[...document.querySelectorAll('thead th')].map(t=>t.innerText.trim().toLowerCase())`);
-for (const col of ["health","profile","salesperson","contact","mls"]) check("onboarding",`pipeline column: ${col}`, (ths||[]).some(h=>h.includes(col)), `columns: ${(ths||[]).join(" | ")}`);
-await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>/^\\s*filter\\s*$/i.test((x.innerText||'').trim())); if(b) b.click();})()`);
-await sleep(1200);
-check("onboarding","per-column filter row (after pressing Filter)", await ev(`document.querySelectorAll('thead input, thead select, .onb-pipeline input').length >= 2`));
-check("onboarding","click-to-sort headers", await ev(`[...document.querySelectorAll('thead th')].some(t=>t.querySelector('button')||t.getAttribute('aria-sort')||/[↕↑↓]/.test(t.innerText))`));
-check("onboarding","Recent client replies panel", await has("/recent client replies|recent replies/i"));
-check("onboarding","Filter / Clear toolbar with count", await btn("/^filter|hide filters|clear/i"));
-const firstClient = await ev(`(document.querySelector('tbody a[href^="/onboarding/clients/"]')||{}).getAttribute?.('href')`);
-if (firstClient) {
-  await go(firstClient, 11000);
-  check("onboarding","Stripe test/live mode badge on the payment box", await has("/test mode|live mode/i"));
-} else {
-  check("onboarding","Stripe test/live mode badge on the payment box", false, "no client link found on the pipeline");
-}
+/* Onboarding was removed on 9 Oct (OS feedback). */
 
 /* ───────────── Client Health ───────────── */
 console.log("\nCLIENT HEALTH\n");

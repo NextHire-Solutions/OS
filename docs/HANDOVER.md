@@ -230,6 +230,35 @@ visit the removed screens.
 - Master Inbox → Settings keeps **Labels, Templates, AI Labeling** (the last
   admin-only). `/inbox/settings/clients` and `/reply-agents` open Labels.
 
+**Release 4 — the Onboarding section removed; its jobs switched off**
+
+- **Gone:** the rail section (Pipeline, Stages, Templates, Settings, Client
+  view), the per-client page `/onboarding/clients/<id>`, `screens/onboarding/*`,
+  `tool-onboarding.css`, the Home card (connector off the registry), the
+  Team access option, the Clients page's Onboarding tool view, and the
+  Assistant's `onboarding_pipeline` / `onboarding_client`. Every `/onboarding…`
+  address opens Home, for everyone (the screen prefix is no longer gated).
+- **Jobs off:** `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` were
+  deleted from the Railway `os` service, so the in-process scheduler never
+  starts and the cron routes answer 503. No more Gmail-broken / ready-to-launch
+  / lost-booking Slack posts. The "Exported" flag on Database records no longer
+  updates by itself (the user accepted this).
+- **Kept on purpose — still live:**
+  - The webhook receivers under `/api/tools/onboarding/webhooks/*`. The OS's
+    own inbox posts every introduction to `…/webhooks/masterinbox`
+    (`MASTER_INBOX_BISON_INTRODUCTION_WEBHOOK_URL`), which records it and
+    **pauses a client's EmailBison campaign when it reaches its weekly
+    introduction target** (`connector-bison.ts maybePauseOnTarget`) — that
+    does not depend on the scheduler or the automation switch.
+  - `lib/tools/onboarding/*` and its API routes: Stripe billing and payment
+    links, commissions, client delete, status sync, Clients → Onboard, the
+    Database view and the master list all use it. `ONBOARDING_STRIPE_*` stays.
+  - The `onboarding` tool id and existing grants (they open nothing).
+- Payment links: the Assistant's `client_billing` now lists a client's open
+  Stripe payment links (it was the Onboarding tool's job).
+- The Database view's client names open the client's record
+  (`/roster?client=<id>`) instead of the Onboarding page.
+
 ## 0.2 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
@@ -1114,7 +1143,7 @@ destination is an OS screen.
 |---|---|---|
 | Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
 | Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
-| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **yes** — `ONBOARDING_CRON_ENABLED=1` |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.1). Webhook receivers still live |
 
 **Switch-off order, per tool — never run two copies of a sync at once:**
 
@@ -1475,7 +1504,7 @@ started once per Node process from `src/instrumentation.ts`:
 | Analytics sync | `ANALYTICS_ENABLE_SCHEDULER` |
 | Client Health sync | `CLIENT_HEALTH_SYNC_ENABLED=1` |
 | Master Inbox cron | `MASTER_INBOX_CRON_ENABLED` |
-| Onboarding | `ONBOARDING_CRON_ENABLED` |
+| Onboarding | `ONBOARDING_CRON_ENABLED` — **deleted 9 Oct (off)** |
 | **Reconcile / drift check** | `OS_RECONCILE_ALERT_ENABLED=1` — **currently OFF** |
 
 They start at boot rather than lazily on first request because a lazy scheduler
@@ -1650,28 +1679,10 @@ Two notes for whoever works here:
   **cached copy** of EmailBison and Instantly. Always show how old it is.
 * `filters.tsx` is the one place this port deliberately deviates from the tool.
 
-### 4.5 Onboarding — 4 destinations + client detail
+### 4.5 Onboarding — removed 9 Oct
 
-The orchestrator keeps running untouched: it receives the Typeform, Stripe and
-Calendly webhooks. These screens read its database.
-
-| Page | Path | What it does | File |
-|---|---|---|---|
-| Pipeline | `/` | The onboarding pipeline | `onboarding/pipeline.tsx` |
-| Stages | `/stages` | The stage board | `onboarding/stages.tsx` |
-| Templates | `/templates` | Message templates | `onboarding/templates.tsx` |
-| Settings | `/settings` | Five panels | `onboarding/settings.tsx` |
-
-**Client detail** — `/onboarding/clients/<id>` with three tabs (`leads`,
-`agents`, `team`) plus the profile. `onboarding/client.tsx`, `client-tabs.tsx`,
-`client-steps.tsx`, `client-fields.tsx` (the MLS they recruit in, and custom
-fields), `photo-input.tsx`, `replies-panel.tsx`.
-
-> This screen was unreachable for a while: `idForPath` resolves
-> `/onboarding/clients/<id>` to `onboarding:pipeline` (deliberately, so the rail
-> stays highlighted on Pipeline), and the router rendered the pipeline over the
-> top of it. Thirty-eight clients you could move between stages and not open.
-> Fixed; the routing exception is in `[[...slug]]/page.tsx`.
+The section and its screens were removed (§0.1, Release 4). Its webhook
+receivers and shared library stay and are live.
 
 ### 4.6 Agent Search — 4 destinations
 
@@ -1734,7 +1745,7 @@ or visible on screen with a reason attached.
 | Client Portals | ✅ managed from the OS — **38 open, 19 closed** |
 | Analytics | ✅ seven views, in two sections: Campaign Analytics and Campaign Management (Copy & Offer removed 9 Oct) |
 | Database / Agent Search | ✅ search, MLS monitor (master list removed 9 Oct) |
-| Onboarding | ✅ pipeline, stages, templates |
+| Onboarding | ✗ section removed from the OS on 9 Oct (its webhooks and shared code stay) |
 | Commission Tracker | ✗ does not exist yet — §18 covers how it would connect |
 | Future CRM / CSM | ✗ do not exist yet |
 

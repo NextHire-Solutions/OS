@@ -229,7 +229,6 @@
 /* Per-tool sheets. Each is owned by one tool and scoped to its own screens. */
 @import "./tool-client-health.css";
 @import "./tool-analytics.css";
-@import "./tool-onboarding.css";
 @import "./tool-agent-search.css";
 /* The ported Master Inbox dialogs, menus and popovers animate with animate-in /
    animate-out, which come from tw-animate-css — installed, and never imported,

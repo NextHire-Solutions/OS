@@ -6,7 +6,7 @@ import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/
 import type { DatabaseClient, DatabaseClientsView } from "@/lib/tools/database/clients";
 
 import { Lazy } from "../lazy";
-import { Btn } from "../onboarding/toast";
+import { Btn } from "../analytics/toast";
 import { ClientCountLine } from "@/components/clients/count-line";
 
 /*
@@ -197,14 +197,19 @@ function ClientRow({ c }: { c: DatabaseClient }) {
   return (
     <tr>
       <td>
-        <a
-          href={`/onboarding/clients/${c.id}`}
-          className="cname"
-          title={`Open ${c.name}`}
-          style={{ textDecoration: "none", color: "var(--ink)" }}
-        >
-          {c.name}
-        </a>
+        {/* The client's record (9 Oct — this linked to the Onboarding page, which was removed). */}
+        {c.masterId ? (
+          <a
+            href={`/roster?client=${c.masterId}`}
+            className="cname"
+            title={`Open ${c.name}'s client record`}
+            style={{ textDecoration: "none", color: "var(--ink)" }}
+          >
+            {c.name}
+          </a>
+        ) : (
+          <span className="cname" style={{ color: "var(--ink)" }}>{c.name}</span>
+        )}
         {!c.masterId ? <div className="cell-sub">no client record</div> : null}
       </td>
 

@@ -25,7 +25,6 @@ test("every screen prefix maps to its tool", () => {
     ["/clients/biweekly", "clients"],
     ["/analytics/campaign", "analytics"],
     ["/analytics/campaigns", "analytics"],
-    ["/onboarding/pipeline", "onboarding"],
     ["/search/search", "search"],
     ["/search/mls", "search"],
   ];
@@ -85,4 +84,10 @@ test("a prefix must match a whole segment, not a substring", () => {
 test("trailing slashes and query-free paths behave the same", () => {
   assert.equal(toolForPath("/analytics/campaign/"), "analytics");
   assert.equal(toolForPath("/clients/"), "clients");
+});
+
+test("removed Onboarding screens are not gated — an old link opens Home; its API still is (9 Oct)", () => {
+  assert.equal(toolForPath("/onboarding/pipeline"), null);
+  assert.equal(toolForPath("/onboarding"), null);
+  assert.equal(toolForPath("/api/tools/onboarding/stages"), "onboarding");
 });

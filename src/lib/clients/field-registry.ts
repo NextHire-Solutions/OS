@@ -257,7 +257,7 @@ export const shown = (key: string) => !FIELD_BY_KEY[key]?.hidden;
  * (§5, §20). `key` names a column the Clients table knows how to render.
  * ==================================================================== */
 
-export type ToolViewId = "health" | "database" | "portal" | "onboarding" | "analytics";
+export type ToolViewId = "health" | "database" | "portal" | "analytics";
 
 export interface ToolViewColumn {
   key: string;
@@ -305,15 +305,7 @@ export const TOOL_VIEWS: ToolView[] = [
     ],
     openIn: { label: "Open Client Portals", href: "/inbox/portals" },
   },
-  {
-    id: "onboarding", label: "Onboarding",
-    columns: [
-      { key: "name", label: "Client" }, { key: "salesperson", label: "Salesperson" }, { key: "accountManager", label: "Account Manager" },
-      { key: "team", label: "Team" }, { key: "agents", label: "Agents" }, { key: "dnc", label: "DNC" }, { key: "sender", label: "Sender" },
-      { key: "dateAdded", label: "Date added" }, { key: "onboardingProgress", label: "Onboarding progress" },
-    ],
-    openIn: { label: "Open Onboarding", href: "/onboarding" },
-  },
+  // The Onboarding view went with the Onboarding section (9 Oct).
   {
     id: "analytics", label: "Analytics",
     columns: [

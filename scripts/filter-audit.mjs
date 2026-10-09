@@ -38,7 +38,6 @@ const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",") : [
   "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/campaigns", "/analytics/attribution",
   "/analytics/clients", "/analytics/schedule", "/analytics/infrastructure",
-  "/onboarding/pipeline", "/onboarding/stages", "/onboarding/templates",
   "/search/accounts", "/search/mls",
 ];
 

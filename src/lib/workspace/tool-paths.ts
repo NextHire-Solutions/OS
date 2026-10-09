@@ -35,7 +35,8 @@ const SCREEN_PREFIX: Record<string, ToolId> = {
   inbox: "inbox",
   clients: "clients",
   analytics: "analytics",
-  onboarding: "onboarding",
+  // Onboarding has no screens since 9 Oct: an old /onboarding link opens Home
+  // for everyone rather than "no access". Its API stays gated (below).
   search: "search",
 };
 

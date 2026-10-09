@@ -34,7 +34,6 @@ test("the addresses are the short, readable ones", () => {
   assert.equal(pathForId("inbox:all-email"), "/inbox");
   assert.equal(pathForId("clients:weekly"), "/clients");
   assert.equal(pathForId("analytics:campaign"), "/analytics");
-  assert.equal(pathForId("onboarding:pipeline"), "/onboarding");
 });
 
 test("a product's first screen is its bare path", () => {
@@ -47,7 +46,10 @@ test("a product's first screen is its bare path", () => {
 test("a bare product path opens its first screen", () => {
   assert.equal(idForPath("/inbox"), "inbox:all-email");
   assert.equal(idForPath("/analytics"), "analytics:campaign");
-  assert.equal(idForPath("/onboarding"), "onboarding:pipeline");
+  // Onboarding was removed (9 Oct): its old addresses open Home.
+  assert.equal(idForPath("/onboarding"), "home");
+  assert.equal(idForPath("/onboarding/clients/0b4c2a3e-0000-4000-8000-000000000000/leads"), "home");
+  assert.equal(destinations().some((d) => d.id.startsWith("onboarding:")), false);
 });
 
 test("trailing slashes and empty segments are tolerated", () => {
@@ -142,7 +144,7 @@ test("Performance's sub-pages: Overview at /performance, Billing Calendar at /pe
 });
 
 test("every tool has its §8 Client view, addressed inside the tool", () => {
-  for (const tool of ["inbox", "clients", "analytics", "onboarding", "search"]) {
+  for (const tool of ["inbox", "clients", "analytics", "search"]) {
     const id = `${tool}:client-view`;
     assert.equal(pathForId(id), `/${tool}/client-view`);
     assert.equal(idForPath(`/${tool}/client-view`), id);

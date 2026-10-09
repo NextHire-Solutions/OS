@@ -90,7 +90,8 @@ export const GRANTABLE_TOOLS: ToolDescriptor[] = [
   // One grant, two menu sections since 9 Oct: Campaign Analytics and Campaign Management.
   { id: "analytics", label: "Campaign Analytics & Management", description: "Campaign performance and attribution, and running campaigns." },
   { id: "search", label: "Agent Search", description: "Sources agent data from Courted, Zillow and Realtor.com." },
-  { id: "onboarding", label: "Onboarding", description: "Client intake and the 30-step onboarding pipeline." },
+  // Onboarding was removed on 9 Oct: no longer offered. The tool id stays valid
+  // (existing grants and sessions carry it) and simply opens nothing.
 ];
 
 /** Narrows arbitrary input to real tool ids. Unknown names grant nothing. */

@@ -25,7 +25,6 @@ const SCREENS = process.env.SCREENS ? process.env.SCREENS.split(",") : [
   "/clients","/clients/biweekly",
   "/analytics/campaign","/analytics/campaigns","/analytics/attribution",
   "/analytics/clients","/analytics/schedule","/analytics/infrastructure",
-  "/onboarding/pipeline","/onboarding/stages","/onboarding/templates",
   "/search/accounts","/search/mls",
 ];
 

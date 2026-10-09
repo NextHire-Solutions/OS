@@ -8,8 +8,6 @@ import { getAllSnapshots } from "@/lib/status/store";
 import { runReconcileCheck } from "@/lib/reconcile/run";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { biweeklyRows, successRows } from "@/lib/tools/client-health/views";
-import { getClientDetail } from "@/lib/tools/onboarding/client-detail";
-import { openLinks } from "@/lib/clients/payment-links";
 import { listOsClients } from "@/lib/clients/os-clients";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/supabase";
@@ -27,10 +25,10 @@ import { matchMasterClient } from "./tools-phase7.ts";
  * Phase 8 (5 Oct, "it should cover every tool"): every remaining OS screen
  * that answers a business question — Home and system status, Performance,
  * Consistency, Client Health's Delivery view and account health, Campaign
- * Analytics' KPIs / Attribution / Schedule / one campaign (Copy & Offer was
- * removed 9 Oct),
- * one client's onboarding and payment links, the scraped agent database,
- * the inbox's conversations and templates, and recent introductions.
+ * Analytics' KPIs / Attribution / Schedule / one campaign (Copy & Offer and
+ * Onboarding were removed 9 Oct; payment links moved to client_billing), the
+ * scraped agent database, the inbox's conversations and templates, and
+ * recent introductions.
  *
  * Where a screen's logic lives in its API route's GET, that handler is
  * called directly (no HTTP, no copy) so the assistant and the screen can
@@ -185,28 +183,6 @@ export async function campaignDetailTool(query: string) {
   const body = await callGet(campaignGET as unknown as RouteGet, `/api/tools/analytics/campaigns/${c.id}`, {}, { params: Promise.resolve({ id: String(c.id) }) });
   const others = hits.filter((h) => h !== c).map((h) => `${h.name} (${h.platform}, ${h.status})`);
   return others.length ? { ...(trim(body, 0, 15) as object), otherMatchingCampaigns: others } : trim(body, 0, 15);
-}
-
-export async function onboardingClientTool(query: string) {
-  const { match, candidates } = await matchMasterClient(query);
-  if (!match) return { candidates, note: candidates.length ? "Several clients match — ask which one." : "No such client." };
-  const os = (await listOsClients()).find((c) => c.id === match.id);
-  const orchId = os?.links.onboarding ?? null;
-  const links = await openLinks(match.id).catch(() => null);
-  if (!orchId) return { client: match.name, note: "Not in Onboarding.", openPaymentLinks: links };
-  const d = await getClientDetail(orchId);
-  if (!d) return { client: match.name, note: "Its Onboarding record could not be read." };
-  return trim({
-    client: match.name,
-    stage: d.stages.find((s) => (s as { id?: string }).id === d.client.stageId) ?? d.client.stageId,
-    progress: d.progress,
-    steps: Object.fromEntries(Object.entries(d.steps).map(([k, v]) => [d.stepLabels[k] ?? k, v])),
-    leadCount: d.leadCount,
-    deliveries: d.deliveries.length,
-    replies: d.replies.length,
-    onboardingPayment: { paid: (d.client as { paid?: boolean }).paid ?? null, paidAt: (d.client as { paidAt?: string | null }).paidAt ?? null },
-    openPaymentLinks: links,
-  });
 }
 
 export async function findAgentTool(query: string) {

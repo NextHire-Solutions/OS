@@ -111,10 +111,6 @@ const SCREENS = [
   { path: "/analytics/schedule",      expect: "section.screen.on *",   min: 50, label: "Analytics · Schedule" },
   { path: "/analytics/clients",       expect: "table tr",              min: 40, label: "Analytics · Clients" },
 
-  { path: "/onboarding/pipeline",     expect: "table tr",              min: 15, label: "Onboarding · Pipeline" },
-  { path: "/onboarding/stages",       expect: "table tr",              min: 5,  label: "Onboarding · Stages" },
-  { path: "/onboarding/templates",    expect: "section.screen.on *",   min: 50, label: "Onboarding · Templates" },
-  { path: "/onboarding/settings",     expect: "table tr",              min: 6,  label: "Onboarding · Settings" },
 
   { path: "/search/search",           expect: "section.screen.on *",   min: 25, label: "Agent Search · Search" },
   { path: "/search/accounts",         expect: "section.screen.on *",   min: 12, label: "Agent Search · Accounts" },

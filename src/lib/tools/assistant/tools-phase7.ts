@@ -18,6 +18,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { readOnly } from "./read-only.ts";
 import { clientsAsShown, profileOf } from "./tools-phase9.ts";
 import { blockThreshold, blockingEnabled, openPortalBlocks } from "@/lib/clients/billing-watch";
+import { openLinks } from "@/lib/clients/payment-links";
 import { introBrokerage, introSubject } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 /*
@@ -186,8 +187,11 @@ export async function clientBillingTool(query: string) {
   const r = await resolveOrExplain(query);
   if (!r.client) return r.error;
   const c = r.client;
+  // Open payment links (Create subscription on the record) — most often for a client not on Stripe yet.
+  // Moved here from the Onboarding tool when that section was removed (9 Oct).
+  const openPaymentLinks = await openLinks(c.id).catch(() => null);
   if (!c.stripeCustomerId && !c.stripeSubscriptionId) {
-    return { client: c.name, linkedToStripe: false, note: "Not linked to Stripe, so there is no billing data. Add its Stripe subscription on the client's record." };
+    return { client: c.name, linkedToStripe: false, openPaymentLinks, note: "Not linked to Stripe, so there is no billing data. Add its Stripe subscription on the client's record." };
   }
   const { byId, failed } = await stripeSummaries([{ id: c.id, name: c.name, stripeCustomerId: c.stripeCustomerId, stripeSubscriptionId: c.stripeSubscriptionId }]);
   const s = byId[c.id] ?? null;
@@ -221,6 +225,7 @@ export async function clientBillingTool(query: string) {
     portalBlock: await openPortalBlocks().then((b) => b.filter((x) => x.clientId === c.id).map((x) => ({ mode: x.mode === "blocked" ? "blocked" : "dry run (would be blocked)", since: x.since, reason: x.reason }))).catch(() => []),
     failedPaymentRule: `After ${blockThreshold()} failed attempts (the first + 3 retries) the portal is blocked until the invoice is paid — ${blockingEnabled() ? "ON" : "dry run only for now"}. Each subscription can be paused or resumed on the client's record (Billing); "delay 7 days" is not available yet.`,
     recentInvoices: invoices.slice(0, 8),
+    openPaymentLinks,
     note: failed.length ? "Stripe could not be read for this client just now." :
       "MRR and total spend cover EVERY subscription and card the client owns (allSubscriptions), not only the current one; a shared Stripe customer is split by subscription. MRR counts live subscriptions only (paused or cancelled count 0). Total spend = successful charges less refunds. Sign-up = the first $1 charge in Stripe (signUp.source says if it came from elsewhere).",
   };

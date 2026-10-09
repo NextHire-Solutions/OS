@@ -49,7 +49,7 @@ const host = (u) => { try { return new URL(u).host; } catch { return null; } };
 const TOOLS = [
   { name: "Client Health", origin: host(env.CLIENT_HEALTH_SUPABASE_URL), screens: ["/clients", "/clients/biweekly"] },
   { name: "Analytics",     origin: host(env.ANALYTICS_SUPABASE_URL),     screens: ["/analytics/campaign", "/analytics/clients"] },
-  { name: "Onboarding",    origin: host(env.AGENT_SEARCH_SUPABASE_URL),  screens: ["/onboarding/pipeline"] },
+  { name: "Database",      origin: host(env.AGENT_SEARCH_SUPABASE_URL),  screens: ["/search/clients"] },
 ];
 
 const t = await (await fetch(`${CDP}/json/new?about:blank`, { method: "PUT" })).json();
