@@ -53,13 +53,13 @@ kill_chrome 9531
 chrome 9532; chrome 9533; chrome 9534; chrome 9535; chrome 9538
 CDP=http://localhost:9532 ROUTES="/analytics/campaign,/analytics/campaigns,/analytics/attribution,/analytics/volume" \
   $NODE scripts/filter-audit.mjs https://os.brokerstaffer.com 2>&1 | quiet > "$OUT/filters-a.txt" & FA=$!
-CDP=http://localhost:9533 ROUTES="/analytics/infrastructure,/analytics/copy,/analytics/clients,/analytics/schedule" \
+CDP=http://localhost:9533 ROUTES="/analytics/infrastructure,/analytics/clients,/analytics/schedule" \
   $NODE scripts/filter-audit.mjs https://os.brokerstaffer.com 2>&1 | quiet > "$OUT/filters-b.txt" & FB=$!
 # Client Health on its own Chrome: three views x 15 filters on a 96-row table
 # was ~40 min serialised behind the analytics sweep — the whole run's long pole.
-CDP=http://localhost:9538 ROUTES="/clients,/clients/biweekly,/clients/success" \
+CDP=http://localhost:9538 ROUTES="/clients,/clients/biweekly" \
   $NODE scripts/filter-audit.mjs https://os.brokerstaffer.com 2>&1 | quiet > "$OUT/filters-d.txt" & FD=$!
-CDP=http://localhost:9534 ROUTES="/onboarding/pipeline,/onboarding/stages,/onboarding/templates,/search/master,/search/accounts,/search/mls,/inbox/portals,/inbox/trash,/roster,/performance" \
+CDP=http://localhost:9534 ROUTES="/onboarding/pipeline,/onboarding/stages,/onboarding/templates,/search/accounts,/search/mls,/inbox/portals,/inbox/trash,/roster,/performance" \
   $NODE scripts/filter-audit.mjs https://os.brokerstaffer.com 2>&1 | quiet > "$OUT/filters-c.txt" & FC=$!
 PORT=9535 $NODE scripts/inbox-filters-test.mjs 2>&1 | quiet > "$OUT/filters-inbox.txt" & FI=$!
 # Wait on the five test pipelines ONLY. A bare `wait` also waits on the

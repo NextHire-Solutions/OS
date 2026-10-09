@@ -50,9 +50,6 @@ export const VOLUME_URL = (qs: string) => `${BASE}/volume?${qs}`;
 export const INFRASTRUCTURE_URL = (qs: string) => `${BASE}/infrastructure?${qs}`;
 export const ATTRIBUTION_URL = (qs: string) => `${BASE}/attribution?${qs}`;
 export const ATTRIBUTION_EVENTS_URL = (qs: string) => `${BASE}/attribution/events?${qs}`;
-export const COPY_URL = (qs: string) => `${BASE}/copy?${qs}`;
-export const OFFERS_URL = (qs: string) => `${BASE}/offers?${qs}`;
-export const OFFER_SUGGESTIONS_URL = (qs: string) => `${BASE}/offers/suggestions?${qs}`;
 export const CAMPAIGNS_URL = (qs: string) => `${BASE}/campaigns?${qs}`;
 export const CAMPAIGN_URL = (id: string) => `${BASE}/campaigns/${id}`;
 export const CLIENTS_URL = `${BASE}/clients`;
@@ -135,29 +132,6 @@ export const assignCampaign = (campaignId: string, clientId: string | null) =>
 export const setReplyDimension = (clientId: string, key: string, active: boolean) =>
   send(`${BASE}/reply-dimensions`, json("PUT", { clientId, key, active }));
 
-/* -------------------------------- offers --------------------------------- */
-
-export const createOffer = (
-  name: string,
-  niche: string | null,
-  sourceCampaignId?: number,
-  campaignIds?: number[],
-) => send(`${BASE}/offers`, json("POST", { name, niche, sourceCampaignId, campaignIds }));
-
-export const updateOffer = (
-  id: string,
-  /** `sourceCampaignId: null` returns the offer to "highest-volume campaign (automatic)". */
-  patch: { name?: string; niche?: string | null; active?: boolean; sourceCampaignId?: number | null },
-) =>
-  send(`${BASE}/offers/${id}`, json("PATCH", patch));
-
-/** Deletes an offer. Its campaigns are only detached — none is changed. */
-export const removeOffer = (id: string) => send(`${BASE}/offers/${id}`, { method: "DELETE" });
-
-/** Attaches this campaign to an offer, or `null` to detach it. */
-export const setCampaignOffer = (campaignId: string, offerId: string | null) =>
-  send(`${BASE}/campaigns/${campaignId}/offer`, json("PUT", { offerId }));
-
 /* ------------------------------- copy tags -------------------------------- */
 
 export const COPY_TAGS_URL = (stepId: number) => `${BASE}/copy/tags?step_id=${stepId}`;
@@ -171,9 +145,6 @@ export const COPY_TAGS_URL = (stepId: number) => `${BASE}/copy/tags?step_id=${st
  */
 export const saveCopyTags = (sequenceStepId: number, tags: Record<string, string | null>) =>
   send(`${BASE}/copy/tags`, json("PUT", { sequenceStepId, tags }));
-
-/** Seeds `subject_line` tags for every untagged first email in the workspace. */
-export const suggestCopyTags = () => send(`${BASE}/copy/suggest`, { method: "POST" });
 
 /* ----------------------------- campaign actions --------------------------- */
 

@@ -3,8 +3,6 @@ import { SettingsTemplates } from "./settings-tabs/templates";
 import { SettingsReplyAgents } from "./settings-tabs/reply-agents";
 import { SettingsAiLabeling } from "./settings-tabs/ai-labeling";
 import { SettingsClients } from "./settings-tabs/clients";
-import { SettingsMembers } from "./settings-tabs/members";
-import { SettingsPersonal } from "./settings-tabs/personal";
 /*
  * Webhooks is not offered in the workspace, at the user's request. The tab and
  * its panel are gone from the strip; the component and its route are left in
@@ -30,10 +28,14 @@ import { SettingsPersonal } from "./settings-tabs/personal";
  * ---------------------------------------------------------------------------
  * WHY ONE TAB LOADS AT A TIME
  *
- * The eight tabs together are eight independent sets of queries — labels,
- * templates, agents, AI config, clients, members, the personal profile and
- * webhooks. Rendering them all so that switching feels instant would make the
- * first paint pay for seven panels nobody asked for.
+ * The tabs together are independent sets of queries — labels, templates,
+ * agents, AI config and clients. Rendering them all so that switching feels
+ * instant would make the first paint pay for panels nobody asked for.
+ *
+ * 9 Oct (OS feedback): Members (logins for the old standalone inbox — OS
+ * logins are on Team access) and Personal (a change-password form — the
+ * Account page has the same one) were removed. Their old addresses open
+ * Labels.
  *
  * The tab is a URL segment instead (`/inbox/settings/templates`), so only the
  * active panel loads, each tab is linkable, and the browser's Back button does
@@ -46,8 +48,6 @@ export const SETTINGS_TABS = [
   { id: "reply-agents", label: "Reply Agents" },
   { id: "ai-labeling", label: "AI Labeling" },
   { id: "clients", label: "Clients" },
-  { id: "members", label: "Members" },
-  { id: "personal", label: "Personal" },
 ] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -58,11 +58,11 @@ export function isSettingsTab(value: string | undefined): value is SettingsTab {
 }
 
 /*
- * Workspace setup is for admins (5 Oct): Reply Agents, AI Labeling, Clients
- * (portals) and Members. Teammates keep Labels, Templates and Personal. The
+ * Workspace setup is for admins (5 Oct): Reply Agents, AI Labeling and Clients
+ * (portals). Teammates keep Labels and Templates. The
  * APIs behind these tabs refuse a teammate too — hiding a tab is not the gate.
  */
-const ADMIN_TABS = new Set<SettingsTab>(["reply-agents", "ai-labeling", "clients", "members"]);
+const ADMIN_TABS = new Set<SettingsTab>(["reply-agents", "ai-labeling", "clients"]);
 
 export async function MasterInboxSettingsScreen({ tab = "labels", admin = false }: { tab?: string; admin?: boolean }) {
   const tabs = SETTINGS_TABS.filter((t) => admin || !ADMIN_TABS.has(t.id));
@@ -89,8 +89,6 @@ export async function MasterInboxSettingsScreen({ tab = "labels", admin = false 
         {active === "reply-agents" ? <SettingsReplyAgents /> : null}
         {active === "ai-labeling" ? <SettingsAiLabeling /> : null}
         {active === "clients" ? <SettingsClients /> : null}
-        {active === "members" ? <SettingsMembers /> : null}
-        {active === "personal" ? <SettingsPersonal /> : null}
       </div>
     </div>
   );

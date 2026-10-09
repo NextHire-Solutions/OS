@@ -74,7 +74,6 @@ const SCREENS = [
   { path: "/inbox/settings/labels",      expect: '.mi-settings-body *', min: 20, label: "Settings · Labels" },
   { path: "/inbox/settings/reply-agents",expect: '.mi-settings-body *', min: 10, label: "Settings · Agents" },
   { path: "/inbox/settings/ai-labeling", expect: '.mi-settings-body *', min: 10, label: "Settings · AI" },
-  { path: "/inbox/settings/members",     expect: '.mi-settings-body *', min: 5,  label: "Settings · Members" },
   /*
    * Client Health lives at /clients — `PRODUCT_SLUG` maps the `clients`
    * product to that slug, and its three views are real addresses here even
@@ -86,8 +85,7 @@ const SCREENS = [
    * The workspace's own roster is /roster.
    */
   { path: "/clients",             expect: "table tr, [role=row]",     min: 5, label: "Client Health · Weekly" },
-  { path: "/clients/biweekly",    expect: "table tr, [role=row]",     min: 5, label: "Client Health · Bi-Weekly" },
-  { path: "/clients/success",     expect: "table tr, [role=row]",     min: 5, label: "Client Health · Success" },
+  { path: "/clients/biweekly",    expect: "table tr, [role=row]",     min: 5, label: "Client Health · Delivery" },
   { path: "/roster",              expect: "table tr, [role=row]",     min: 5, label: "Clients roster" },
 
   /*
@@ -109,7 +107,6 @@ const SCREENS = [
   { path: "/analytics/campaign",      expect: ".card, .kpi, .k",       min: 6,  label: "Analytics · Campaign" },
   { path: "/analytics/infrastructure",expect: "section.screen.on *",   min: 30, label: "Analytics · Infrastructure" },
   { path: "/analytics/attribution",   expect: "table tr",              min: 20, label: "Analytics · Attribution" },
-  { path: "/analytics/copy",          expect: "table tr",              min: 8,  label: "Analytics · Copy & Offer" },
   { path: "/analytics/campaigns",     expect: "table tr",              min: 50, label: "Analytics · Campaigns" },
   { path: "/analytics/schedule",      expect: "section.screen.on *",   min: 50, label: "Analytics · Schedule" },
   { path: "/analytics/clients",       expect: "table tr",              min: 40, label: "Analytics · Clients" },
@@ -120,7 +117,6 @@ const SCREENS = [
   { path: "/onboarding/settings",     expect: "table tr",              min: 6,  label: "Onboarding · Settings" },
 
   { path: "/search/search",           expect: "section.screen.on *",   min: 25, label: "Agent Search · Search" },
-  { path: "/search/master",           expect: "section.screen.on *",   min: 10, label: "Agent Search · Master List" },
   { path: "/search/accounts",         expect: "section.screen.on *",   min: 12, label: "Agent Search · Accounts" },
   { path: "/search/mls",              expect: "section.screen.on *",   min: 40, label: "Agent Search · MLS monitor" },
   { path: "/search/import",           expect: "section.screen.on *",   min: 15, label: "Agent Search · Import" },

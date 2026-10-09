@@ -104,8 +104,6 @@ if (process.argv.includes("--hydration")) {
     "/inbox/settings/reply-agents",
     "/inbox/settings/ai-labeling",
     "/inbox/settings/clients",
-    "/inbox/settings/members",
-    "/inbox/settings/personal",
     "/inbox/settings/webhooks",
     // The stale-bookmark path: an unknown tab renders Labels.
     "/inbox/settings/not-a-real-tab",
@@ -175,8 +173,6 @@ if (process.argv.includes("--hydration-serial")) {
     "/inbox/settings/reply-agents",
     "/inbox/settings/ai-labeling",
     "/inbox/settings/clients",
-    "/inbox/settings/members",
-    "/inbox/settings/personal",
     "/inbox/settings/webhooks",
   ];
   const t = await (await fetch(`${CDP}/json/new?about:blank`, { method: "PUT" })).json();

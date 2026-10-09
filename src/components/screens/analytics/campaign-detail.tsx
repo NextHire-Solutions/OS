@@ -9,7 +9,6 @@ import { fullStamp } from "@/lib/workspace/dates";
 import {
   CAMPAIGN_URL,
   saveCampaignSettings,
-  setCampaignOffer,
   useAnalyticsData,
   type CampaignSettingsPatch,
   applyCampaignAction,
@@ -21,7 +20,6 @@ import { UnsupportedServersDialog } from "./unsupported-servers-dialog";
 import { BulkDeployPanel, useBulkDeploy } from "./bulk-deploy";
 import { CampaignLeads } from "./campaign-leads";
 import { CopySequenceDialog } from "./copy-sequence-dialog";
-import { CopyTagsPanel } from "./copy-tags-panel";
 import { EmailPanel } from "./email-panel";
 import { FanOutDialog } from "./fan-out-dialog";
 import { PushSequenceDialog } from "./push-sequence-dialog";
@@ -39,9 +37,12 @@ import { Btn, ConfirmButton, Toast, useToast } from "./toast";
  * is written up in ANALYTICS-WIRING.md so the owner can decide whether it also
  * deserves an address of its own.
  *
- * The tool's six tabs, all of them:
+ * The tool's tabs:
  *
- *   Overview · Leads · Sequence · Copy & Offer · Settings · Activity
+ *   Overview · Leads · Sequence · Settings · Activity
+ *
+ * (Copy & Offer was removed with offers, 9 Oct — OS feedback. The opening
+ * email's copy tags stay editable in the sequence editor.)
  *
  * Every one WRITES where the tool writes. The sequence editor, the Leads tab
  * with removal, the four bulk dialogs (copy-sequence, push, re-campaign,
@@ -133,7 +134,7 @@ interface DetailResponse {
   sentStepIds: number[];
 }
 
-type Tab = "overview" | "leads" | "sequence" | "copy" | "settings" | "activity";
+type Tab = "overview" | "leads" | "sequence" | "settings" | "activity";
 
 export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () => void }) {
   const { data, error, loading, reload } = useAnalyticsData<DetailResponse>(CAMPAIGN_URL(id));
@@ -193,7 +194,6 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
     { value: "overview", label: "Overview" },
     { value: "leads", label: "Leads" },
     { value: "sequence", label: "Sequence" },
-    { value: "copy", label: "Copy & Offer" },
     ...(isInstantly ? [] : [{ value: "settings" as Tab, label: "Settings" }]),
     { value: "activity", label: "Activity" },
   ];
@@ -221,7 +221,7 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
       </div>
       <div className="ds-head" style={{ marginBottom: 16 }}>
         <div style={{ flex: "1 1 420px", minWidth: 0 }}>
-          <span className="ds-kicker">Campaign Analytics</span>
+          <span className="ds-kicker">Campaign Management</span>
           <h1 className="ds-title">{c.name}</h1>
           <div className="tbl-sub">
             <span className="badge s-done" style={{ marginRight: 8 }}>{c.status}</span>
@@ -305,16 +305,6 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
             sentStepIds={data.sentStepIds ?? []}
             show={show}
             onChanged={() => void reload()}
-          />
-        ) : null}
-        {tab === "copy" ? (
-          <CopyAndOffer
-            campaignId={String(c.id)}
-            offerId={c.offer_id}
-            firstStep={steps.find((s) => !s.is_variant) ?? null}
-            isInstantly={isInstantly}
-            show={show}
-            onSaved={() => void reload()}
           />
         ) : null}
         {tab === "settings" ? (
@@ -754,76 +744,6 @@ function StepActions({ live, busy, onAct, label, inline }: {
         disabled={Boolean(busy) || !live.canDelete} onConfirm={() => onAct(live.key, "delete", label)} />
       {live.canDelete ? null : note(live.deleteWhy)}
     </span>
-  );
-}
-
-function CopyAndOffer({
-  campaignId,
-  offerId,
-  firstStep,
-  isInstantly,
-  show,
-  onSaved,
-}: {
-  campaignId: string;
-  offerId: string | null;
-  firstStep: Step | null;
-  isInstantly: boolean;
-  show: (t: { text: string; bad?: boolean }) => void;
-  onSaved: () => void;
-}) {
-  const offers = useAnalyticsData<{ offers: Array<{ id: string; name: string }> }>(
-    "/api/tools/analytics/offers?preset=30d",
-  );
-  const [busy, setBusy] = useState(false);
-
-  return (
-    <>
-      <Box title="Offer" note="Which offer this campaign is selling. Offers are measured on the Copy & Offer screen.">
-        <div style={{ padding: 22, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          {isInstantly ? (
-            <span className="mut">
-              Offers attach to EmailBison campaigns — the mapping table keys on a bigint campaign
-              id, and an Instantly uuid has nowhere to go in it.
-            </span>
-          ) : (
-            <select
-              className="sel"
-              disabled={busy}
-              value={offerId ?? ""}
-              aria-label="Offer"
-              style={{ minWidth: 280 }}
-              onChange={async (e) => {
-                setBusy(true);
-                try {
-                  await setCampaignOffer(campaignId, e.target.value || null);
-                  onSaved();
-                  show({ text: e.target.value ? "Offer set" : "Offer removed" });
-                } catch (err) {
-                  show({ text: err instanceof Error ? err.message : "Could not save", bad: true });
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              <option value="">No offer</option>
-              {(offers.data?.offers ?? []).map((o) => (
-                <option key={o.id} value={o.id}>{o.name}</option>
-              ))}
-            </select>
-          )}
-        </div>
-      </Box>
-
-      {/*
-        The seven copy dimensions for the opening email — see copy-tags-panel.tsx,
-        which the sequence editor shares. FIRST EMAIL ONLY is measured, and
-        Instantly steps have no `sequence_steps` row for a tag to hang on.
-      */}
-      {firstStep && !isInstantly ? (
-        <CopyTagsPanel stepId={firstStep.id} subject={firstStep.email_subject} show={show} />
-      ) : null}
-    </>
   );
 }
 

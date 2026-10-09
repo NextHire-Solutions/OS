@@ -17,7 +17,6 @@ import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 
 import { GET as kpisGET } from "@/app/api/tools/analytics/kpis/route";
 import { GET as attributionGET } from "@/app/api/tools/analytics/attribution/route";
-import { GET as offersGET } from "@/app/api/tools/analytics/offers/route";
 import { GET as scheduleGET } from "@/app/api/tools/analytics/schedule/route";
 import { GET as campaignGET } from "@/app/api/tools/analytics/campaigns/[id]/route";
 
@@ -27,8 +26,9 @@ import { matchMasterClient } from "./tools-phase7.ts";
 /*
  * Phase 8 (5 Oct, "it should cover every tool"): every remaining OS screen
  * that answers a business question — Home and system status, Performance,
- * Consistency, Client Health's Bi-Weekly and Client Success, Campaign
- * Analytics' KPIs / Attribution / Copy & Offer / Schedule / one campaign,
+ * Consistency, Client Health's Delivery view and account health, Campaign
+ * Analytics' KPIs / Attribution / Schedule / one campaign (Copy & Offer was
+ * removed 9 Oct),
  * one client's onboarding and payment links, the scraped agent database,
  * the inbox's conversations and templates, and recent introductions.
  *
@@ -107,7 +107,7 @@ export async function billingCyclesTool(o: { withinDays?: number }) {
       client: r.client.name, nextBilling: r.billing ? r.billing.toISOString().slice(0, 10) : null, daysUntilBilling: r.days,
       introsThisCycle: r.intros, requiredThisCycle: r.required, stillOwed: r.leftCycle, carriedIn: r.snap?.cycle.carryIn ?? 0,
     })),
-    note: "Client Health's Bi-Weekly view: introductions in the current billing cycle against what is due, carry included. Null required = no target or no billing schedule.",
+    note: "Client Health's Delivery view (Client Health → Delivery): introductions in the current billing cycle against what is due, carry included. Null required = no target or no billing schedule.",
   };
 }
 
@@ -116,7 +116,7 @@ export async function clientSuccessTool() {
   const rows = successRows(w.clients, new Date(w.now)).sort((a, b) => (a.score ?? 99) - (b.score ?? 99));
   return {
     clients: rows.map((r) => ({ client: r.client.name, healthScore: r.score, hiredTotal: r.hiredTotal, lastHire: r.lastHireAt?.slice(0, 10) ?? null })),
-    note: "Client Health's Client Success view: account health 0–10 (null = too new to score), lowest first.",
+    note: "Account health 0–10 from Client Health's data (null = too new to score), lowest first. No OS screen shows this since 9 Oct.",
   };
 }
 
@@ -150,21 +150,6 @@ export async function campaignKpisTool(a: { period?: string; from?: string; to?:
 
 export async function attributionTool(a: { period?: string; from?: string; to?: string }) {
   return trim(await callGet(attributionGET as RouteGet, "/api/tools/analytics/attribution", period(a)));
-}
-
-export async function offerPerformanceTool(a: { period?: string; from?: string; to?: string }) {
-  const body = await callGet(offersGET as RouteGet, "/api/tools/analytics/offers", period(a));
-  /*
-   * "Which offer is best right now" got a 7-day window with nothing sent in it
-   * and answered "no data" (5 Oct). When the window asked for is empty and no
-   * explicit dates were given, widen it to 30 days and say so.
-   */
-  const sent = JSON.stringify(body).match(/"(?:sent|emailsSent|emails_sent)":\s*([1-9]\d*)/);
-  if (!sent && !a.from && a.period !== "30d" && a.period !== "90d") {
-    const wider = await callGet(offersGET as RouteGet, "/api/tools/analytics/offers", { preset: "30d" });
-    return trim({ note: `Nothing was sent in the ${a.period ?? "requested"} window, so this is the last 30 days.`, ...(wider as object) });
-  }
-  return trim(body);
 }
 
 export async function sendScheduleTool() {

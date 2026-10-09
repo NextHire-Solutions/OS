@@ -22,11 +22,11 @@ const B = "/Users/sankalpdutt/Desktop/Code/brokerstaffer-os";
 const SCREENS = process.env.SCREENS ? process.env.SCREENS.split(",") : [
   "/roster","/performance",
   "/inbox/all-email","/inbox/open-responses","/inbox/archive","/inbox/reminders","/inbox/portals",
-  "/clients","/clients/biweekly","/clients/success",
-  "/analytics/campaign","/analytics/campaigns","/analytics/attribution","/analytics/copy",
+  "/clients","/clients/biweekly",
+  "/analytics/campaign","/analytics/campaigns","/analytics/attribution",
   "/analytics/clients","/analytics/schedule","/analytics/infrastructure",
   "/onboarding/pipeline","/onboarding/stages","/onboarding/templates",
-  "/search/master","/search/accounts","/search/mls",
+  "/search/accounts","/search/mls",
 ];
 
 const t = await (await fetch(`http://localhost:${PORT}/json/new?about:blank`,{method:"PUT"})).json();

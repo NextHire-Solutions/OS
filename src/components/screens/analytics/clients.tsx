@@ -143,7 +143,7 @@ export function AnalyticsClientsScreen() {
       <ClientCountLine tool="analytics" />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <span className="ds-kicker">Campaign Analytics</span>
+          <span className="ds-kicker">Campaign Management</span>
           <h1 className="ds-title">Clients</h1>
           <div className="tbl-sub">
             {data

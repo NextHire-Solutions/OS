@@ -87,7 +87,8 @@ export interface ToolDescriptor {
 export const GRANTABLE_TOOLS: ToolDescriptor[] = [
   { id: "inbox", label: "Master Inbox", description: "Unified sales inbox for cold outreach replies." },
   { id: "clients", label: "Client Health", description: "Live client outreach health." },
-  { id: "analytics", label: "Campaign Analytics", description: "Campaign performance and attribution." },
+  // One grant, two menu sections since 9 Oct: Campaign Analytics and Campaign Management.
+  { id: "analytics", label: "Campaign Analytics & Management", description: "Campaign performance and attribution, and running campaigns." },
   { id: "search", label: "Agent Search", description: "Sources agent data from Courted, Zillow and Realtor.com." },
   { id: "onboarding", label: "Onboarding", description: "Client intake and the 30-step onboarding pipeline." },
 ];

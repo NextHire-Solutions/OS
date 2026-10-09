@@ -31,12 +31,12 @@ const ROUTES = [
   "/", "/performance", "/roster", "/admin/team",
   "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/portals",
   "/inbox/settings", "/inbox/settings/labels", "/inbox/settings/templates",
-  "/inbox/settings/reply-agents", "/inbox/settings/ai-labeling", "/inbox/settings/members",
-  "/clients", "/clients/biweekly", "/clients/success",
+  "/inbox/settings/reply-agents", "/inbox/settings/ai-labeling",
+  "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/infrastructure", "/analytics/attribution",
-  "/analytics/copy", "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",
+  "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",
   "/onboarding/pipeline", "/onboarding/stages", "/onboarding/templates", "/onboarding/settings",
-  "/search/search", "/search/master", "/search/accounts", "/search/mls", "/search/import",
+  "/search/search", "/search/accounts", "/search/mls", "/search/import",
 ];
 
 const CDP = process.env.CDP || "http://localhost:9460";

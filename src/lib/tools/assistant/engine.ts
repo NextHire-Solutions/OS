@@ -1,6 +1,6 @@
 import {
   attributionTool, billingCyclesTool, businessPerformanceTool, campaignDetailTool, campaignKpisTool, clientSuccessTool,
-  dataConsistencyTool, findAgentTool, offerPerformanceTool, onboardingClientTool, recentIntroductionsTool, replyTemplatesTool,
+  dataConsistencyTool, findAgentTool, onboardingClientTool, recentIntroductionsTool, replyTemplatesTool,
   searchConversationsTool, sendScheduleTool, workspaceHomeTool,
 } from "./tools-phase8.ts";
 import {
@@ -291,8 +291,8 @@ export const TOOL_SCHEMA = [
     function: {
       name: "campaign_copy",
       description:
-        "What a client's emails actually say — the sequence steps with subject and body — and which offer the campaigns " +
-        "sell. A/B variants are omitted unless asked for. Bodies are truncated.",
+        "What a client's emails actually say — the sequence steps with subject and body. " +
+        "A/B variants are omitted unless asked for. Bodies are truncated.",
       parameters: {
         type: "object",
         properties: {
@@ -504,7 +504,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "billing_cycles",
       description:
-        "Client Health Bi-Weekly: INTRODUCTIONS owed per billing cycle \u2014 each client's cycle end and how many introductions it still owes (carry included). Pass withinDays for cycles ending soon. Answers 'are the clients billing this week on track for introductions'. For who Stripe CHARGES and how much, use billing_overview's billingCalendar.",
+        "Client Health's Delivery view (Client Health \u2192 Delivery; called Bi-Weekly until 9 Oct): INTRODUCTIONS owed per billing cycle \u2014 each client's cycle end and how many introductions it still owes (carry included). Pass withinDays for cycles ending soon. Answers 'are the clients billing this week on track for introductions'. For who Stripe CHARGES and how much, use billing_overview's billingCalendar.",
       parameters: {"type": "object", "properties": {"withinDays": {"type": "number"}}},
     },
   },
@@ -513,7 +513,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "client_success",
       description:
-        "Client Health's Client Success view: each client's account-health score (0\u201310), total hires and last hire date, weakest first. Answers 'which accounts are unhealthy', 'who has hired the most'.",
+        "Each client's account-health score (0\u201310), total hires and last hire date, weakest first, computed from Client Health's data. It has no screen in the OS (the Client Success page was removed on 9 Oct) \u2014 never send anyone to one. Answers 'which accounts are unhealthy', 'who has hired the most'.",
       parameters: {"type": "object", "properties": {}},
     },
   },
@@ -532,15 +532,6 @@ export const TOOL_SCHEMA = [
       name: "attribution",
       description:
         "Campaign Analytics' Attribution: what the sending produced and how much can be credited \u2014 introductions and later outcomes traced back to campaigns, for a period.",
-      parameters: {"type": "object", "properties": {"period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "offer_performance",
-      description:
-        "Campaign Analytics' Copy & Offer: which OFFERS (and their campaigns) perform best \u2014 sends, replies and positive rates per offer, for a period.",
       parameters: {"type": "object", "properties": {"period": {"type": "string", "description": "'7d', '30d' (default) or '90d'"}, "from": {"type": "string", "description": "YYYY-MM-DD, with `to`"}, "to": {"type": "string", "description": "YYYY-MM-DD, with `from`"}}},
     },
   },
@@ -631,7 +622,7 @@ export const SYSTEM_PROMPT = `You answer questions about a lead-generation busin
 
 There are five products: Master Inbox (email threads, client portals, the reply agent), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
 
-Every OS screen has a tool: Home (workspace_home), Performance (business_performance, and billing_overview for its billing cards and calendar), the notifications bell (notifications), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Bi-Weekly and Client Success (billing_cycles, client_success), Campaign Analytics' KPIs, Attribution, Copy & Offer, Schedule and one campaign (campaign_kpis, attribution, offer_performance, send_schedule, campaign_detail), Onboarding per client (onboarding_client), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
+Every OS screen has a tool: Home (workspace_home), Performance (business_performance, and billing_overview for its billing cards and calendar), the notifications bell (notifications), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), Onboarding per client (onboarding_client), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
 
 A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
@@ -761,7 +752,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   client_success: () => clientSuccessTool(),
   campaign_kpis: (a) => campaignKpisTool({ ...periodArgs(a), client: typeof a.client === "string" && a.client ? a.client : undefined }),
   attribution: (a) => attributionTool(periodArgs(a)),
-  offer_performance: (a) => offerPerformanceTool(periodArgs(a)),
   send_schedule: () => sendScheduleTool(),
   campaign_detail: (a) => campaignDetailTool(String(a.campaign ?? "")),
   onboarding_client: (a) => onboardingClientTool(String(a.client ?? "")),

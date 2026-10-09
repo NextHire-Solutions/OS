@@ -57,7 +57,7 @@ const sw = await api("/api/tools/master-inbox/workspaces/switch");
 check("inbox","workspace switch route exists", sw.status !== 404, `HTTP ${sw.status}`);
 await go("/inbox/reminders");
 check("inbox","reminders screen uses the real view tabs (New view control present)", await btn("/new view|new tab/i"));
-await go("/inbox/settings/personal");
+await go("/inbox/settings/labels");
 check("inbox","Personal settings tab shows the Workspace section", await has("/workspace/i"));
 for (const r of ["thread-counts","cleanup-threads","retag-all-clients","backfill-interested","dedupe-outbound","reclassify-directions","sync-workspaces","last-webhook-payload","inspect-null-senders"]) {
   const a = await api(`/api/tools/master-inbox/admin/${r}`);
@@ -112,8 +112,7 @@ check("analytics","Grid view renders campaign cards", await ev(`(()=>{
 })()`));
 await go("/analytics/infrastructure",12000);
 check("analytics","Infrastructure Provider filter", await ev(`[...document.querySelectorAll('select')].some(s=>/provider/i.test(s.getAttribute('aria-label')||(s.closest('label')||{}).textContent||''))`));
-await go("/analytics/copy",12000);
-check("analytics","offer card links to its sequence", await ev(`[...document.querySelectorAll('button,a')].some(b=>/sequence/i.test((b.innerText||'')+(b.getAttribute('aria-label')||'')+(b.getAttribute('title')||'')))`));
+// Copy & Offer (offer cards) was removed on 9 Oct — OS feedback.
 
 /* ───────────── Onboarding ───────────── */
 console.log("\nONBOARDING\n");
@@ -136,7 +135,7 @@ if (firstClient) {
 
 /* ───────────── Client Health ───────────── */
 console.log("\nCLIENT HEALTH\n");
-for (const p of ["/clients/biweekly","/clients/success"]) {
+for (const p of ["/clients/biweekly"]) {
   await go(p,11000);
   check("client-health",`${p} has week navigation`, await btn("/this week|today/i") && await ev(`[...document.querySelectorAll('button')].some(b=>/previous week|next week|←|→/i.test(b.innerText||b.getAttribute('aria-label')||''))`));
   check("client-health",`${p} has + Add Client`, await btn("/add client/i"));

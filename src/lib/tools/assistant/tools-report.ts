@@ -195,7 +195,7 @@ export async function clientReportTool(query: string) {
   else if (introTrend != null && intros.previous30 >= 3 && introTrend >= 25) strengths.push(`Introductions up ${introTrend}%: ${intros.last30} in the last 30 days vs ${intros.previous30} before.`);
   const posRate = kc?.current?.positiveRate ?? null, posBiz = kb?.positiveRate ?? null;
   if (!stopped && vsBusiness != null && (kc?.current?.sent ?? 0) >= 1000) {
-    if (vsBusiness < 0.7) flags.push({ severity: "medium", area: "Campaigns", issue: `Reply rate ${pct(clientRate)}% over the last 30 days — ${Math.round((1 - vsBusiness) * 100)}% below the business average of ${pct(businessRate)}%.`, nextStep: "Review the copy and offer (Campaign Analytics → Copy & Offer) and the lead list for this market." });
+    if (vsBusiness < 0.7) flags.push({ severity: "medium", area: "Campaigns", issue: `Reply rate ${pct(clientRate)}% over the last 30 days — ${Math.round((1 - vsBusiness) * 100)}% below the business average of ${pct(businessRate)}%.`, nextStep: "Review the campaign's sequence (Campaign Analytics → Campaigns → the campaign → Sequence) and the lead list for this market." });
     if (vsBusiness >= 1.3) strengths.push(`Reply rate ${pct(clientRate)}% over the last 30 days — ${Math.round((vsBusiness - 1) * 100)}% above the business average of ${pct(businessRate)}%.`);
   }
   if (!stopped && posRate != null && posBiz && (kc?.current?.replies ?? 0) >= 50 && posRate < posBiz * 0.7) {

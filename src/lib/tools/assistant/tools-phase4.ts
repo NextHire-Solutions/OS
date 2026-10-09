@@ -59,7 +59,8 @@ async function analyticsCampaignIds(
 // ---------------------------------------------------------------------------
 
 /**
- * What a client's emails actually say, and which offer they sell.
+ * What a client's emails actually say. (Which offer they sell was dropped
+ * with the offers feature, 9 Oct — OS feedback "remove Copy & Offer".)
  *
  * VARIANTS ARE EXCLUDED BY DEFAULT. A campaign's sequence is a handful of
  * steps, but each can carry several A/B variants, so "show me the sequence"
@@ -81,24 +82,10 @@ export async function campaignCopyTool(clientQuery: string, options: { includeVa
 
   const ids = await analyticsCampaignIds(match.analyticsClientId);
   if (!ids.emailBison.length && !ids.instantly.length) {
-    return { client: match.name, offers: [], steps: [], note: "No campaigns are linked to this client." };
+    return { client: match.name, steps: [], note: "No campaigns are linked to this client." };
   }
 
   const an = db.analytics();
-
-  // Offers are recorded against EmailBison campaigns only.
-  const { data: offerLinks } = ids.emailBison.length
-    ? await an.from("campaign_offers").select("offer_id").in("campaign_id", ids.emailBison)
-    : { data: [] };
-  const offerIds = [...new Set(((offerLinks ?? []) as Array<{ offer_id: string }>).map((r) => String(r.offer_id)))];
-  let offers: Array<{ name: string; niche: string | null }> = [];
-  if (offerIds.length) {
-    const { data } = await an.from("offers").select("name, niche").in("id", offerIds);
-    offers = ((data ?? []) as Array<Record<string, unknown>>).map((o) => ({
-      name: String(o.name ?? ""),
-      niche: (o.niche as string) ?? null,
-    }));
-  }
 
   const readSteps = async (table: string, campaignIds: string[]) => {
     if (!campaignIds.length) return [];
@@ -133,7 +120,6 @@ export async function campaignCopyTool(clientQuery: string, options: { includeVa
 
   return {
     client: match.name,
-    offers,
     steps,
     note: options.includeVariants ? undefined : "A/B variants are omitted; ask for variants to see them.",
   };

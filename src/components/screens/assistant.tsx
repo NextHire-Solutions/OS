@@ -112,7 +112,6 @@ const TOOL_LABEL: Record<string, string> = {
   client_success: "Reading account health",
   campaign_kpis: "Reading campaign KPIs",
   attribution: "Reading attribution",
-  offer_performance: "Comparing offers",
   send_schedule: "Reading the send schedule",
   campaign_detail: "Reading the campaign",
   onboarding_client: "Reading onboarding",

@@ -11,6 +11,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
+| **0.1** | [Navigation clean-up, 9 October](#01-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
 | **0.2** | [What changed on 6–7 October](#02-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
 | **0.3** | [What changed on 30 September](#03-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
 | **0.4** | [What changed on 29 September](#04-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
@@ -158,6 +159,27 @@ deliberate, not outstanding: the standalone tools keep their own Add Client
 buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
+
+## 0.1 Navigation clean-up, 9 October
+
+From the client's "OS Feedback — Navigation & Cleanup" list. Shipped in four
+releases, each tested in a real Chrome as an admin and as each account
+manager before the next.
+
+**Release 1 — renames and removals (no data touched, no access changed)**
+
+| Change | What it means | Old links |
+|---|---|---|
+| Client Health **Weekly → Overview**, **Bi-Weekly → Delivery** | Labels only; ids `weekly` / `biweekly` and the URLs are unchanged | `/clients`, `/clients/biweekly` as before |
+| Client Health **Client Success removed** | The screen only. `successRows` (views.ts) stays: the Assistant's `client_success` and `client_report` use it | `/clients/success` → Overview |
+| Agent Search **Master List removed** | The screen and rail entry. The `/search/[id]/master` API and `merge.ts` are left, unused | `/search/master` → Search |
+| Master Inbox Settings **Members, Personal removed** | Members managed logins for the old standalone inbox (OS logins are Team access); Personal was a change-password form (the Account page has it) | `/inbox/settings/members` and `/personal` → Labels |
+| **Copy & Offer removed, with offers** | The Analytics tab, the campaign page's Copy & Offer tab (offer picker), the offer and copy-performance APIs (`/offers*`, `/copy`, `/copy/suggest`, `/campaigns/[id]/offer`) and the Assistant's `offer_performance`. The `offers` / `campaign_offers` tables are untouched. `/copy/tags` and `CopyTagsPanel` stay — the sequence editor uses them | `/analytics/copy-offer` → Campaign |
+| **Campaign Management** split from Campaign Analytics | Analytics: Campaign, Volume, Infrastructure, Attribution. Management: Campaigns, Schedule, Clients, Client view. ONE tool and grant (`analytics`) in two rail sections: `NavProduct.key` gives the second its own identity (`campaign-management`), `idForPath` searches every section of a tool, `sectionOf()` says which section holds a screen. Team access calls the grant "Campaign Analytics & Management" | every `/analytics/...` address unchanged |
+
+The repo's audit scripts (ui-audit, link-audit, interaction-audit, popover,
+filter, nav-timing, full-verify, ui-test, the per-tool UI/API tests) no longer
+visit the removed screens.
 
 ## 0.2 What changed on 6–7 October
 
@@ -614,7 +636,7 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   tools (`tools-phase8.ts`): workspace_home, business_performance,
   data_consistency (runReconcileCheck, send:false), billing_cycles and
   client_success (Client Health views), campaign_kpis, attribution,
-  offer_performance, send_schedule, campaign_detail (these call the Analytics
+  offer_performance (removed 9 Oct with Copy & Offer), send_schedule, campaign_detail (these call the Analytics
   routes' own GET handlers — no session check inside them, no copy),
   onboarding_client (+ open payment links), find_agent (scraped agents),
   search_conversations (message text), reply_templates, recent_introductions.
@@ -641,7 +663,7 @@ the Database, 54 with 35 active in Analytics, and 31 active in Health.
   Collins"). Permissions (`canSeePage`): Performance, Consistency, Assistant,
   Team access, Reply agent admin-only; Clients = account managers;
   Commissions = AMs + salespeople; inbox Settings for teammates = Labels,
-  Templates, Personal, with creating clients and AI labeling refused by the
+  Templates (Personal removed 9 Oct), with creating clients and AI labeling refused by the
   server. Known and left: the "sync-external-intros" cron 401s — its feed on
   Client Health was removed in June.
 - **Campaign Leads: every column sorts (2 Oct), both apps.** Analytics
@@ -1512,27 +1534,28 @@ Detail screens (no rail entry):
 * **Portal detail** — the staff drill-down for one client's portal.
   `master-inbox/portal-detail.tsx`
 
-Settings tabs (`master-inbox/settings-tabs/`): `clients`, `labels`, `members`,
-`personal`, `templates`, `ai-labeling`, `reply-agents`, `webhooks`.
+Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
+`reply-agents`, `ai-labeling`, `clients` (the last three admin-only), plus
+`webhooks`. Members and Personal were removed on 9 Oct (§0.1).
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
 
 *Leads* was removed at the user's request: `/roster` is the roster now. Its
 route still resolves, so an old bookmark degrades to All Email rather than 404s.
 
-### 4.3 Client Health — 3 destinations
+### 4.3 Client Health — 2 destinations
 
-In the live tool these are three states of one page with **no URL of their
+In the live tool these are states of one page with **no URL of their
 own**. Here each is a real address, which is what lets the rail link straight to
-Bi-Weekly and the back button work.
+Delivery and the back button work. (Renamed 9 Oct: Weekly → Overview,
+Bi-Weekly → Delivery; Client Success removed — §0.1.)
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
-| **Weekly** | `/` | Are clients on pace for their billing cycle? One billing snapshot per client (`billing.ts`): Monthly (28-day period), Intros / Billing (delivered / due, carry included), carry badge, Play/Pause; 24 summary cards | `client-health/weekly.tsx` |
-| **Bi-Weekly** | `/?view=biweekly` | **Who bills next, and are they owed introductions when it happens?** | `client-health/biweekly.tsx` |
-| **Client Success** | `/?view=success` | The relationship lens, independent of throughput | `client-health/success.tsx` |
+| **Overview** (was Weekly) | `/clients` | Are clients on pace for their billing cycle? One billing snapshot per client (`billing.ts`): Monthly (28-day period), Intros / Billing (delivered / due, carry included), carry badge, Play/Pause; 24 summary cards | `client-health/weekly.tsx` |
+| **Delivery** (was Bi-Weekly) | `/clients/biweekly` | **Who bills next, and are they owed introductions when it happens?** | `client-health/biweekly.tsx` |
 
-Shared: `filter-bar.tsx` (one `visible` list feeds all three, because the tool
+Shared: `filter-bar.tsx` (one `visible` list feeds both, because the tool
 shares it), `toolbar.tsx` (the page header: ← / This Week / →, + Add on Clients page, Sync now),
 `billing-cells.tsx` (carry badge, Intros / Billing, Monthly — shared by Weekly and Bi-Weekly),
 `campaign-toggle-dialog.tsx` (Play/Pause preview → confirm → per-campaign results),
@@ -1542,7 +1565,11 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 *running*, which is the tool's spec), `sync-button.tsx`, `sync-scheduler.tsx`,
 `frame.tsx`, `dialog.tsx`, `toast.tsx`.
 
-### 4.4 Campaign Analytics — 8 destinations + campaign detail
+### 4.4 Campaign Analytics and Campaign Management — 4 + 3 destinations + campaign detail
+
+Two rail sections of ONE tool since 9 Oct (§0.1): Campaign, Volume,
+Infrastructure and Attribution under **Campaign Analytics**; Campaigns,
+Schedule and Clients (and its Client view) under **Campaign Management**.
 
 | Page | Path | What it shows | File |
 |---|---|---|---|
@@ -1550,7 +1577,6 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 | Volume | `/analytics/volume` | How much the estate can send, and where what goes | `analytics/volume.tsx` |
 | Infrastructure | `/analytics/infrastructure` | The sending estate, lifetime | `analytics/infrastructure.tsx` |
 | Attribution | `/analytics/attribution` | What the sending actually produced | `analytics/attribution.tsx` |
-| Copy & Offer | `/analytics/copy-offer` | Which words work, and which offers work | `analytics/copy.tsx` |
 | Campaigns | `/analytics/campaigns` | Every campaign on both platforms | `analytics/campaigns.tsx` |
 | Schedule | `/analytics/schedule` | What goes out next — a different question from "how did it do" | `analytics/schedule.tsx` |
 | **Clients** | `/analytics/clients` | **The most consequential screen in the product to get wrong** — it is where campaigns are attributed to clients | `analytics/clients.tsx` |
@@ -1562,7 +1588,8 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 `bulk-deploy.tsx`, `fan-out-dialog.tsx` (one campaign per client),
 `re-campaign-dialog.tsx` (duplicate and load with the people who never
 answered), `assign-inboxes-dialog.tsx`, `remove-leads-dialog.tsx`,
-`campaign-leads.tsx`, `email-panel.tsx`, `copy-tags-panel.tsx`.
+`campaign-leads.tsx`, `email-panel.tsx`, `copy-tags-panel.tsx` (inside the
+sequence editor; the campaign page's Copy & Offer tab was removed 9 Oct).
 
 Two notes for whoever works here:
 
@@ -1595,12 +1622,11 @@ fields), `photo-input.tsx`, `replies-panel.tsx`.
 > top of it. Thirty-eight clients you could move between stages and not open.
 > Fixed; the routing exception is in `[[...slug]]/page.tsx`.
 
-### 4.6 Agent Search — 5 destinations
+### 4.6 Agent Search — 4 destinations
 
 | Page | What it does | File |
 |---|---|---|
 | Search | The tool's main card plus its three result panels | `agent-search/search.tsx` |
-| Master List | The de-duplicated view across all three sources (`buildMaster`, ported verbatim) | `agent-search/master.tsx` |
 | Courted accounts | Add a login, choose what to import, start the sweep | `agent-search/accounts.tsx` |
 | MLS monitor | Which MLSs each Courted account can see, and what changed | `agent-search/mls.tsx` |
 | Import Profile URLs | The F1 enrichment flow — paste a Google Sheet or CSV of Zillow / Realtor profile URLs | `agent-search/import.tsx` |
@@ -1653,10 +1679,10 @@ or visible on screen with a reason attached.
 | Tool | In the OS |
 |---|---|
 | Master Inbox | ✅ full set of views |
-| Client Health Dashboard | ✅ Weekly, Bi-Weekly, Client Success |
+| Client Health Dashboard | ✅ Overview, Delivery (Client Success removed 9 Oct) |
 | Client Portals | ✅ managed from the OS — **38 open, 19 closed** |
-| Analytics | ✅ eight views |
-| Database / Agent Search | ✅ search, master list, MLS monitor |
+| Analytics | ✅ seven views, in two sections: Campaign Analytics and Campaign Management (Copy & Offer removed 9 Oct) |
+| Database / Agent Search | ✅ search, MLS monitor (master list removed 9 Oct) |
 | Onboarding | ✅ pipeline, stages, templates |
 | Commission Tracker | ✗ does not exist yet — §18 covers how it would connect |
 | Future CRM / CSM | ✗ do not exist yet |

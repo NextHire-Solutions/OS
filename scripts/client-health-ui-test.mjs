@@ -457,7 +457,7 @@ console.log(`\n  Client Health · ${BASE}\n`);
 
 // == BI-WEEKLY ===============================================================
 {
-  console.log("\n  /clients/biweekly — Bi-Weekly");
+  console.log("\n  /clients/biweekly — Delivery");
   const { tab, errors } = await openScreen("/clients/biweekly", auth);
   const shape = await tab.eval(`(() => {
     const q = (s) => Array.from(document.querySelectorAll(s));
@@ -501,51 +501,7 @@ console.log(`\n  Client Health · ${BASE}\n`);
   await tab.close();
 }
 
-// == CLIENT SUCCESS ==========================================================
-{
-  console.log("\n  /clients/success — Client Success");
-  const { tab, errors } = await openScreen("/clients/success", auth);
-  const shape = await tab.eval(`(() => {
-    const q = (s) => Array.from(document.querySelectorAll(s));
-    const text = (el) => (el.textContent || '').trim();
-    return {
-      headers: q('thead th').map((th) => text(th).replace(/[↕↓↑]\\s*$/, '').trim()),
-      rows: q('tbody tr').length,
-      cards: q('.card').length,
-      pills: q('.pills .fp').length,
-      selects: q('.tbl-head select').length,
-    };
-  })()`);
-
-  check("no console errors", errors.length === 0, errors[0] ?? "");
-  check("rows rendered", shape.rows > 0, `${shape.rows} clients`);
-  const CS = ["Client","Plan","Score","Time Zone","Launch Date","Portal Updated",
-    "Stagnant Intros","Hired","Last Hire","DNC","Agents"];
-  check("eleven columns, in the tool's order", JSON.stringify(shape.headers) === JSON.stringify(CS),
-    shape.headers.join("|"));
-  check("shares the filter row, minus the redundant Plan select",
-    shape.pills >= 9 && shape.selects === 2, `${shape.pills} pills · ${shape.selects} selects`);
-
-  const sortCs = await tab.eval(`(async () => {
-    const names = () => Array.from(document.querySelectorAll('tbody tr .cname')).map(e => e.textContent.trim());
-    const th = Array.from(document.querySelectorAll('thead th'))
-      .find(t => t.textContent.replace(/[↕↓↑]/g,'').trim() === 'Score');
-    const base = names().join('|');
-    th.click(); await new Promise(r => setTimeout(r, 220));
-    const desc = names().join('|');
-    th.click(); await new Promise(r => setTimeout(r, 220));
-    const asc = names().join('|');
-    th.click(); await new Promise(r => setTimeout(r, 220));
-    return { changed: desc !== base, reversed: desc !== asc, resets: names().join('|') === base };
-  })()`);
-  check("sorting works and resets", sortCs.changed && sortCs.reversed && sortCs.resets,
-    `changed=${sortCs.changed} reversed=${sortCs.reversed} resets=${sortCs.resets}`);
-
-  const layout = await tab.eval(layoutProbe());
-  check("nothing overflows the viewport", layout.docOverflow <= 1 && layout.count === 0,
-    `doc +${layout.docOverflow}px · ${layout.count} escaping`);
-  await tab.close();
-}
+// Client Success was removed on 9 Oct (OS feedback); /clients/success opens Overview.
 
 console.log(`\n  ${pass} passed · ${fail} failed`);
 if (fail) { console.log("\n  failed:"); for (const f of failures) console.log(`    · ${f}`); }

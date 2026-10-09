@@ -41,8 +41,6 @@ const SCREENS = [
   "/inbox/settings/reply-agents",
   "/inbox/settings/ai-labeling",
   "/inbox/settings/clients",
-  "/inbox/settings/members",
-  "/inbox/settings/personal",
   "/inbox/settings/webhooks",
 ];
 let bad = 0;

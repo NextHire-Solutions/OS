@@ -52,6 +52,13 @@ const PATHS: Record<string, React.ReactNode> = {
       <rect x="17" y="13" width="3" height="5" rx="1" />
     </>
   ),
+  // Campaign Management (9 Oct): a send arrow over a list — running campaigns.
+  "campaign-management": (
+    <>
+      <path d="M4 6h9M4 11h7M4 16h5" />
+      <path d="m14 14 7-4-3 9-1.6-3.4L14 14Z" />
+    </>
+  ),
   search: (
     <>
       <circle cx="11" cy="11" r="8" />

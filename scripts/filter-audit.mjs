@@ -35,11 +35,11 @@ const CDP = process.env.CDP || "http://localhost:9470";
 const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",") : [
   "/roster", "/performance",
   "/inbox/all-email", "/inbox/archive", "/inbox/reminders", "/inbox/portals",
-  "/clients", "/clients/biweekly", "/clients/success",
+  "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/campaigns", "/analytics/attribution",
-  "/analytics/copy", "/analytics/clients", "/analytics/schedule", "/analytics/infrastructure",
+  "/analytics/clients", "/analytics/schedule", "/analytics/infrastructure",
   "/onboarding/pipeline", "/onboarding/stages", "/onboarding/templates",
-  "/search/master", "/search/accounts", "/search/mls",
+  "/search/accounts", "/search/mls",
 ];
 
 async function token() {

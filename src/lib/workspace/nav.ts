@@ -38,11 +38,34 @@ export interface NavLeaf {
 
 export interface NavProduct {
   kind: "product";
+  /** The grant, the screen-id prefix and the URL's first segment. Two rail sections may share one. */
   id: ToolId;
+  /**
+   * The rail section's own identity — its open/closed state, React key and
+   * icon — when it shares `id` with another section (9 Oct: Campaign
+   * Management is a second section of the `analytics` tool). Defaults to `id`.
+   */
+  key?: string;
   label: string;
   /** Which env var holds this tool's base URL. */
   baseUrlEnv: string;
   children: NavLeaf[];
+}
+
+/** A rail section's identity: its `key`, else its tool id. */
+export const sectionKey = (p: NavProduct): string => p.key ?? p.id;
+
+/**
+ * The rail section a destination id sits in — `"analytics:campaigns"` →
+ * `"campaign-management"`, `"inbox:portals"` → `"inbox"`. Workspace pages
+ * (`"home"`, `"performance"`) belong to no section and give null.
+ */
+export function sectionOf(id: string): string | null {
+  const [tool, leaf] = id.split(":");
+  if (!leaf) return null;
+  const siblings = products().filter((p) => p.id === tool);
+  const holder = siblings.find((p) => p.children.some((c) => c.id === leaf)) ?? siblings[0];
+  return holder ? sectionKey(holder) : tool;
 }
 
 export interface NavPage {
@@ -98,11 +121,11 @@ export const NAV: NavSection[] = [
           // workspace; this page is in scope, they are not.
           { id: "portals", label: "Client Portals", path: "/portals", verified: true },
           { id: "client-view", label: "Client view", verified: true },
-          // Master Inbox's settings are eight pages behind a second sidebar.
+          // Master Inbox's settings are several pages behind a second sidebar.
           // One entry here; the tool keeps its own sub-navigation inside, which
-          // is the right trade — hoisting eight rarely-used pages into the rail
+          // is the right trade — hoisting rarely-used pages into the rail
           // would cost more than it saves.
-          { id: "settings", label: "Settings", path: "/settings/clients", verified: true },
+          { id: "settings", label: "Settings", path: "/settings/labels", verified: true },
         ],
       },
       {
@@ -112,17 +135,22 @@ export const NAV: NavSection[] = [
         baseUrlEnv: "CLIENT_HEALTH_URL",
         children: [
           /*
-           * All three are built here, reading Client Health's own database
+           * Both are built here, reading Client Health's own database
            * through the tool's own derive(). The live tool keeps running
            * untouched — it is a background worker now, not something we embed.
            *
-           * In the live tool these are three states of one page with no URL of
+           * In the live tool these are states of one page with no URL of
            * their own. Here each is a real address, which is what lets the rail
-           * link straight to Bi-Weekly and the browser's back button work.
+           * link straight to Delivery and the browser's back button work.
+           *
+           * 9 Oct (OS feedback): Weekly is called Overview and Bi-Weekly is
+           * Delivery — labels only, so /clients and /clients/biweekly (and
+           * every bookmark) are unchanged. Client Success was removed; its
+           * score still feeds the Assistant (views.ts successRows), and
+           * /clients/success now opens Overview.
            */
-          { id: "weekly", label: "Weekly", path: "/", verified: true },
-          { id: "biweekly", label: "Bi-Weekly", path: "/?view=biweekly", verified: true },
-          { id: "success", label: "Client Success", path: "/?view=success", verified: true },
+          { id: "weekly", label: "Overview", path: "/", verified: true },
+          { id: "biweekly", label: "Delivery", path: "/?view=biweekly", verified: true },
           { id: "client-view", label: "Client view", verified: true },
         ],
       },
@@ -137,7 +165,25 @@ export const NAV: NavSection[] = [
           { id: "volume", label: "Volume", path: "/analytics/volume", verified: true },
           { id: "infrastructure", label: "Infrastructure", path: "/analytics/infrastructure", verified: true },
           { id: "attribution", label: "Attribution", path: "/analytics/attribution", verified: true },
-          { id: "copy", label: "Copy & Offer", path: "/analytics/copy-offer", verified: true },
+          // Copy & Offer was removed with offers (9 Oct); /analytics/copy-offer opens Campaign.
+        ],
+      },
+      /*
+       * Running campaigns, split out of Campaign Analytics (9 Oct, OS
+       * feedback) as a section of its own. It is the SAME tool — one grant,
+       * one URL prefix, one set of screen ids — so access, the proxy's checks
+       * and every link (/analytics/campaigns/<id> included) are unchanged.
+       * Leaf ids must stay unique across both sections: they share the
+       * `analytics:` prefix. Campaign Analytics must stay first, so its first
+       * leaf keeps the bare /analytics address.
+       */
+      {
+        kind: "product",
+        id: "analytics",
+        key: "campaign-management",
+        label: "Campaign Management",
+        baseUrlEnv: "ANALYTICS_URL",
+        children: [
           { id: "campaigns", label: "Campaigns", path: "/analytics/campaigns", verified: true },
           { id: "schedule", label: "Schedule", path: "/analytics/schedule", verified: true },
           { id: "clients", label: "Clients", path: "/analytics/clients", verified: true },
@@ -167,7 +213,7 @@ export const NAV: NavSection[] = [
           // items, which needs anchors the app does not have yet — so these are
           // unverified on purpose and every one lands on the same page for now.
           { id: "search", label: "Search", path: "/", verified: true },
-          { id: "master", label: "Master List", path: "/", verified: true },
+          // Master List was removed (9 Oct, OS feedback); /search/master opens Search.
           { id: "accounts", label: "Courted accounts", path: "/", verified: true },
           { id: "mls", label: "MLS monitor", path: "/", verified: true },
           { id: "import", label: "Import Profile URLs", path: "/", verified: true },
@@ -250,7 +296,8 @@ export function products(): NavProduct[] {
      /inbox                Master Inbox, its first screen
      /inbox/reminders      a specific screen within it
      /clients              Client Health
-     /analytics            Campaign Analytics
+     /analytics            Campaign Analytics (and /analytics/campaigns,
+                           /schedule, /clients: Campaign Management)
      /search               Agent Search
      /onboarding           Onboarding
      /team                 Team access
@@ -312,20 +359,24 @@ export function idForPath(pathname: string): string {
   const tool = PRODUCT_SLUG[first];
   if (!tool) return "home";
 
-  const product = products().find((p) => p.id === tool);
-  if (!product) return "home";
+  // Every rail section of this tool (Campaign Analytics and Campaign
+  // Management are both `analytics`) — searching only the first would send
+  // /analytics/campaigns to Campaign.
+  const sections = products().filter((p) => p.id === tool);
+  if (!sections.length) return "home";
+  const first0 = sections[0].children[0]?.id ?? "";
 
-  if (!second) return `${tool}:${product.children[0]?.id ?? ""}`;
+  if (!second) return `${tool}:${first0}`;
   // An unrecognised leaf opens the product's first screen rather than a blank
   // pane — a stale link should degrade to something useful.
-  const leaf = product.children.find(
+  const leaf = sections.flatMap((p) => p.children).find(
       // The id is the workspace's own segment; the declared `path` is the
       // tool's. Accepting both means a link copied from the deployed tool
-      // (/analytics/copy-offer) lands on the same screen as /analytics/copy
-      // instead of falling through to the product's first child.
+      // lands on the same screen instead of falling through to the
+      // product's first child.
       (c) => c.id === second || c.path === `/${tool}/${second}`,
     );
-  return `${tool}:${leaf?.id ?? product.children[0]?.id ?? ""}`;
+  return `${tool}:${leaf?.id ?? first0}`;
 }
 
 /*

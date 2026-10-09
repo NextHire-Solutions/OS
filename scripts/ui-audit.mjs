@@ -31,14 +31,14 @@ const WIDTHS = (process.env.WIDTHS || "1512,1280,1100,960,768").split(",").map(N
 // the 42 screens between them; the full list below is the default.
 const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.trim()).filter(Boolean) : [
   "/", "/performance", "/roster", "/admin/team", "/account",
-  "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/trash", "/inbox/settings/personal", "/inbox/portals",
+  "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/trash", "/inbox/portals",
   "/inbox/settings", "/inbox/settings/labels", "/inbox/settings/templates",
-  "/inbox/settings/reply-agents", "/inbox/settings/ai-labeling", "/inbox/settings/members",
-  "/clients", "/clients/biweekly", "/clients/success",
+  "/inbox/settings/reply-agents", "/inbox/settings/ai-labeling",
+  "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/volume", "/analytics/infrastructure", "/analytics/attribution",
-  "/analytics/copy", "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",
+  "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",
   "/onboarding/pipeline", "/onboarding/stages", "/onboarding/templates", "/onboarding/settings",
-  "/search/search", "/search/master", "/search/accounts", "/search/mls", "/search/import",
+  "/search/search", "/search/accounts", "/search/mls", "/search/import",
 
   /*
    * DETAIL screens.

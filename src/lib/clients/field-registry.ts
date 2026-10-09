@@ -320,6 +320,6 @@ export const TOOL_VIEWS: ToolView[] = [
       { key: "replies", label: "Replies" }, { key: "assignedLeads", label: "Leads" }, { key: "performance", label: "Performance" },
       { key: "campaignMetrics", label: "Other campaign-level metrics" },
     ],
-    openIn: { label: "Open Campaign Analytics", href: "/analytics/clients" },
+    openIn: { label: "Open Campaign Management", href: "/analytics/clients" },
   },
 ];

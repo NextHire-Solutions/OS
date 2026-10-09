@@ -120,25 +120,7 @@ try {
   }
 }
 
-/* ============================== analytics offers ========================= */
-console.log("\n  ── Offers (Analytics) ──");
-let offerId = null;
-try {
-  const name = `ZZ Offer ${stamp}`;
-  const made = await call("/api/tools/analytics/offers", "POST", { name, description: "test offer" });
-  check(made.status < 300, "created", `HTTP ${made.status}`);
-  offerId = made.json?.offer?.id ?? made.json?.id ?? null;
-  const rows = (await call("/api/tools/analytics/offers")).json?.offers ?? [];
-  check(rows.some((o) => o.name === name), "reads back in the list");
-  offerId = offerId ?? rows.find((o) => o.name === name)?.id ?? null;
-} catch (e) {
-  check(false, "offers", e instanceof Error ? e.message : String(e));
-} finally {
-  if (offerId) {
-    const gone = await call(`/api/tools/analytics/offers/${offerId}`, "DELETE");
-    check(gone.status < 300, "removed", `HTTP ${gone.status}`);
-  }
-}
+/* Analytics offers were removed with Copy & Offer on 9 Oct (OS feedback). */
 
 console.log(`\n  ${pass} passed · ${fail} failed`);
 console.log("  Nothing outside these fixtures was touched.\n");

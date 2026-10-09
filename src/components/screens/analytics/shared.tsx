@@ -74,10 +74,11 @@ export function Box({
  * Only the report screens get it. Campaigns, Schedule and Clients are
  * separate destinations and the mockup draws no strip on them either.
  *
- * Five tabs, in the tool's own order (tab-bar.tsx): Volume sits second, between
- * Campaign and Infrastructure. It used to be a fifth sub-view inside the
- * Campaign screen; it is its own screen again because that is what the tool
- * ships.
+ * Four tabs, in the tool's own order (tab-bar.tsx): Volume sits second, between
+ * Campaign and Infrastructure. Volume used to be a sub-view inside the Campaign
+ * screen; it is its own screen again because that is what the tool ships.
+ * (Copy & Offer was a fifth tab until 9 Oct, when it was removed with offers —
+ * OS feedback; /analytics/copy-offer opens Campaign.)
  *
  * The staleness strip rides above the tabs so that every screen with a tab
  * strip carries it without each one having to remember to mount it.
@@ -87,10 +88,9 @@ const AN_TABS: ReadonlyArray<{ id: AnalyticsTab; label: string }> = [
   { id: "volume", label: "Volume" },
   { id: "infrastructure", label: "Infrastructure" },
   { id: "attribution", label: "Attribution" },
-  { id: "copy", label: "Copy & Offer" },
 ];
 
-export type AnalyticsTab = "campaign" | "volume" | "infrastructure" | "attribution" | "copy";
+export type AnalyticsTab = "campaign" | "volume" | "infrastructure" | "attribution";
 
 export function AnalyticsTabs({ active }: { active: AnalyticsTab }) {
   /*
@@ -107,7 +107,7 @@ export function AnalyticsTabs({ active }: { active: AnalyticsTab }) {
           compact
           icon="analytics"
           title="Campaign Analytics"
-          description="EmailBison and Instantly performance — one report, read five ways"
+          description="EmailBison and Instantly performance — one report, read four ways"
         >
           <nav className="ds-tabs" aria-label="Analytics views">
             {AN_TABS.map((t) => (

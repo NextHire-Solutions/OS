@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { destinations, idForPath, pathForId } from "./nav.ts";
+import { destinations, idForPath, pathForId, sectionOf } from "./nav.ts";
 
 test("every destination round-trips through its URL", () => {
   // The one that matters: a link in Slack must open the screen it names.
@@ -84,6 +84,46 @@ test("the tool's own hostname never appears in an address", () => {
     assert.ok(path.startsWith("/"), `${d.id} produced ${path}`);
     assert.equal(/^https?:/.test(path), false, `${d.id} produced an absolute URL`);
   }
+});
+
+test("Campaign Management's screens keep their /analytics addresses (9 Oct split)", () => {
+  // Two rail sections share the analytics tool: every screen in the SECOND
+  // one must still resolve to itself, not to Campaign Analytics' first screen.
+  for (const leaf of ["campaigns", "schedule", "clients", "client-view"]) {
+    assert.equal(idForPath(`/analytics/${leaf}`), `analytics:${leaf}`);
+    assert.equal(pathForId(`analytics:${leaf}`), `/analytics/${leaf}`);
+  }
+  // One campaign's page lives under Campaigns.
+  assert.equal(idForPath("/analytics/campaigns/1234"), "analytics:campaigns");
+  const groups = Object.fromEntries(destinations().filter((d) => d.tool === "analytics").map((d) => [d.id, d.group]));
+  assert.equal(groups["analytics:campaign"], "Campaign Analytics");
+  assert.equal(groups["analytics:campaigns"], "Campaign Management");
+});
+
+test("the rail section of each screen (9 Oct split)", () => {
+  assert.equal(sectionOf("analytics:campaign"), "analytics");
+  assert.equal(sectionOf("analytics:attribution"), "analytics");
+  assert.equal(sectionOf("analytics:campaigns"), "campaign-management");
+  assert.equal(sectionOf("analytics:client-view"), "campaign-management");
+  assert.equal(sectionOf("inbox:portals"), "inbox");
+  assert.equal(sectionOf("home"), null);
+});
+
+test("removed screens' old links land somewhere useful (9 Oct)", () => {
+  assert.equal(idForPath("/analytics/copy-offer"), "analytics:campaign", "Copy & Offer → Campaign");
+  assert.equal(idForPath("/analytics/copy"), "analytics:campaign");
+  assert.equal(idForPath("/clients/success"), "clients:weekly", "Client Success → Overview");
+  assert.equal(idForPath("/search/master"), "search:search", "Master List → Search");
+  for (const gone of ["clients:success", "search:master", "analytics:copy"]) {
+    assert.equal(destinations().some((d) => d.id === gone), false, `${gone} is still in the menu`);
+  }
+});
+
+test("Client Health's views are called Overview and Delivery, at their old addresses", () => {
+  const label = (id: string) => destinations().find((d) => d.id === id)?.label;
+  assert.equal(label("clients:weekly"), "Overview");
+  assert.equal(label("clients:biweekly"), "Delivery");
+  assert.equal(pathForId("clients:biweekly"), "/clients/biweekly");
 });
 
 test("every tool has its §8 Client view, addressed inside the tool", () => {

@@ -24,14 +24,12 @@ import { AssistantScreen } from "@/components/screens/assistant";
 import { AccountScreen } from "@/components/screens/account";
 import { ClientHealthWeekly } from "@/components/screens/client-health/weekly";
 import { ClientHealthBiWeekly } from "@/components/screens/client-health/biweekly";
-import { ClientHealthSuccess } from "@/components/screens/client-health/success";
 import { OnboardingPipelineScreen } from "@/components/screens/onboarding/pipeline";
 import { OnboardingStagesScreen } from "@/components/screens/onboarding/stages";
 import { OnboardingTemplatesScreen } from "@/components/screens/onboarding/templates";
 import { OnboardingSettingsScreen } from "@/components/screens/onboarding/settings";
 import { OnboardingClientScreen } from "@/components/screens/onboarding/client";
 import { AgentSearchSearchScreen } from "@/components/screens/agent-search/search";
-import { AgentSearchMasterScreen } from "@/components/screens/agent-search/master";
 import { AgentSearchAccountsScreen } from "@/components/screens/agent-search/accounts";
 import { AgentSearchMlsScreen } from "@/components/screens/agent-search/mls";
 import { AgentSearchImportScreen } from "@/components/screens/agent-search/import";
@@ -50,7 +48,6 @@ import { PerformanceScreen } from "@/components/screens/performance";
 import { AnalyticsCampaignScreen } from "@/components/screens/analytics/campaign";
 import { AnalyticsInfrastructureScreen } from "@/components/screens/analytics/infrastructure";
 import { AnalyticsAttributionScreen } from "@/components/screens/analytics/attribution";
-import { AnalyticsCopyScreen } from "@/components/screens/analytics/copy";
 import { AnalyticsCampaignsScreen } from "@/components/screens/analytics/campaigns";
 import { AnalyticsVolumeScreen } from "@/components/screens/analytics/volume";
 import { CampaignDetailScreen } from "@/components/screens/analytics/campaign-detail";
@@ -343,7 +340,6 @@ export default async function WorkspacePage({
          */
         "clients:weekly": <ClientHealthWeekly initial={initialId === "clients:weekly" ? clientHealth : null} />,
         "clients:biweekly": <ClientHealthBiWeekly initial={initialId === "clients:biweekly" ? clientHealth : null} />,
-        "clients:success": <ClientHealthSuccess initial={initialId === "clients:success" ? clientHealth : null} />,
         /*
          * §8 — each tool's own view of the master client record: the fields
          * the document lists for that tool, read from the one record.
@@ -385,7 +381,6 @@ export default async function WorkspacePage({
          * so a server-rendered snapshot would be stale before it painted.
          */
         "search:search": <AgentSearchSearchScreen />,
-        "search:master": <AgentSearchMasterScreen />,
         "search:accounts": <AgentSearchAccountsScreen />,
         "search:mls": <AgentSearchMlsScreen />,
         "search:import": <AgentSearchImportScreen />,
@@ -489,7 +484,6 @@ export default async function WorkspacePage({
         "analytics:volume": <AnalyticsVolumeScreen />,
         "analytics:infrastructure": <AnalyticsInfrastructureScreen />,
         "analytics:attribution": <AnalyticsAttributionScreen />,
-        "analytics:copy": <AnalyticsCopyScreen />,
         /*
          * The list, or one campaign. Same shape as `inbox:portals`, and the
          * same lesson: this screen renders on every request, so it must ask

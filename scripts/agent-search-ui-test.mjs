@@ -23,7 +23,7 @@
  * validation refusals fire, and that the free controls work (toggles, options,
  * the MLS baseline picker, CSV detection).
  *
- * These drive the REAL workspace routes — /search, /search/master, and so on —
+ * These drive the REAL workspace routes — /search, /search/accounts, and so on —
  * through the real shell, not a harness. A screen that only works in a
  * purpose-built page is not wired.
  */
@@ -93,10 +93,9 @@ await tab.send("Page.enable");
 await tab.send("Network.enable");
 await tab.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
 await tab.send("Network.setCookie", { name: "bs_sso", value: cookie, domain: "localhost", path: "/" });
-/** The five real workspace addresses. */
+/** The four real workspace addresses. */
 const ROUTE = {
   search: "/search",
-  master: "/search/master",
   accounts: "/search/accounts",
   mls: "/search/mls",
   import: "/search/import",
@@ -195,16 +194,7 @@ await show("search");
     (await count('section.screen.on .as-tog[data-source].on')) === 3);
 }
 
-/* ------------------------------------------------------------- MASTER LIST */
-console.log("\n  Master List");
-await show("master");
-{
-  const body = await text('section.screen.on');
-  check("explains the matching rules", /shared phone|shared email|licence/i.test(body));
-  const disabled = await tab.eval(`[...document.querySelectorAll('section.screen.on .as-btn')].map(b=>b.disabled)`);
-  check("Build and Export are both disabled with no job", disabled.every(Boolean), `→ [${disabled}]`);
-  check("prompts the reader to run a search first", /Run a search/i.test(body));
-}
+/* Master List was removed on 9 Oct (OS feedback). */
 
 /* --------------------------------------------------------- COURTED ACCOUNTS */
 console.log("\n  Courted accounts");

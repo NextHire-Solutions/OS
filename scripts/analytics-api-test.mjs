@@ -49,10 +49,8 @@ const ROUTES = [
   ["Infrastructure inboxes", `${A}/infrastructure?view=inbox&limit=500`, (b) => b.rows?.length > 100],
   ["Attribution", `${A}/attribution?${RANGE}`, (b) => b.coverage?.total > 0 && b.funnel?.length > 0],
   ["Attribution events", `${A}/attribution/events?${RANGE}`, (b) => b.total > 0 && b.rows?.length > 0],
-  ["Copy performance", `${A}/copy?${RANGE}&dimensions=subject_line`, (b) => b.rows?.length > 0 && b.coverage],
   ["Copy tag values", null, null], // filled in below from a real sequence step
-  ["Offers", `${A}/offers?${RANGE}`, (b) => Array.isArray(b.rows)],
-  ["Offer suggestions", `${A}/offers/suggestions?${RANGE}`, (b) => Array.isArray(b.suggestions)],
+  // Copy performance, Offers and Offer suggestions were removed with Copy & Offer (9 Oct).
   ["Reply dimensions", `${A}/reply-dimensions`, (b) => b.dimensions?.length > 0],
   ["Merge tags", `${A}/merge-tags`, (b) => b.tags?.length > 3],
   ["Campaigns list", `${A}/campaigns?status=all`, (b) => b.items?.length > 20 && b.total > 20 && b.clients?.length > 10],
@@ -146,14 +144,8 @@ function summarise(label, b) {
       return `${b.coverage.total} outcomes · ${b.campaigns.length} campaigns · ${b.emailsSent.toLocaleString("en-US")} sent`;
     case "Attribution events":
       return `${b.total} events · ${b.rows.length} on page 1`;
-    case "Copy performance":
-      return `${b.rows.length} groups · coverage ${b.coverage.tagged_sent}/${b.coverage.total_sent}`;
     case "Copy tag values":
       return `step ${b.stepId} · ${Object.keys(b.tags ?? {}).length} tag(s) · ${Object.keys(b.known ?? {}).length} dimensions of known values`;
-    case "Offers":
-      return `${b.rows.length} offers`;
-    case "Offer suggestions":
-      return `${b.suggestions.length} suggestions`;
     case "Reply dimensions":
       return `${b.dimensions.length} dimensions`;
     case "Merge tags":

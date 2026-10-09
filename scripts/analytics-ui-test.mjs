@@ -231,29 +231,7 @@ const SCREENS = [
       },
     ],
   },
-  {
-    path: `${P}/copy`,
-    label: "Copy & Offer",
-    ready: `/of first-email sending is tagged/.test(document.body.innerText) && document.querySelectorAll('.atbl tbody tr').length > 1`,
-    steps: [
-      {
-        name: "the copy table has groups with members",
-        expect: `document.querySelectorAll('.atbl tbody tr').length > 1 ? '' : 'no copy rows'`,
-      },
-      {
-        // The LAST .abox is "How the copy performs". The spintax card above it
-        // is also an .atbl, and its rows do not expand.
-        click: [".abox:last-of-type .atbl tbody tr"],
-        settle: 500,
-        name: "a copy row expands to the emails inside it",
-        expect: `document.querySelectorAll('.atbl .atbl').length ? '' : 'the expanded row drew no member table'`,
-      },
-      {
-        name: "coverage is stated, not implied",
-        expect: `/of first-email sending is tagged/.test(document.body.innerText) ? '' : 'no coverage line'`,
-      },
-    ],
-  },
+  // Copy & Offer was removed on 9 Oct (OS feedback).
   {
     path: `${P}/campaigns`,
     label: "Campaigns",
@@ -298,17 +276,6 @@ const SCREENS = [
         settle: 600,
         name: "the sequence shows the emails as written, spintax included",
         expect: `document.querySelectorAll('pre').length ? '' : 'no email body rendered'`,
-      },
-      {
-        click: [".segfull button", "^Copy & Offer$"],
-        settle: 1200,
-        name: "the seven copy dimensions are editable inputs with known-value lists",
-        expect: `(() => {
-          const root = document.querySelector('section.screen.on');
-          const inputs = root.querySelectorAll('input[list^=known-]').length;
-          const lists = root.querySelectorAll('datalist').length;
-          return inputs === 7 && lists === 7 ? '' : inputs + ' inputs, ' + lists + ' datalists';
-        })()`,
       },
       {
         click: [".segfull button", "^Settings$"],

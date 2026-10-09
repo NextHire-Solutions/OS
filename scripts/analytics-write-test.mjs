@@ -158,25 +158,7 @@ try {
       `${back.length} row(s), active=${back[0]?.active}`);
   }
 
-  /* ===================================================================== */
-  console.log("\n  ── offers ──────────────────────────────────────────────");
-
-  const offer = await api("/offers", json("POST", { name: NAME, niche: "port-test" }));
-  check(offer.status === 201 || offer.status === 200, "POST /offers creates an offer", `status ${offer.status}`);
-  const offerId = offer.body?.offer?.id ?? offer.body?.id;
-  cleanup.push(async () => { if (offerId) await api(`/offers/${offerId}`, { method: "DELETE" }); });
-
-  {
-    const [row] = await sb(`offers?id=eq.${offerId}&select=id,name,niche,active`);
-    check(row?.name === NAME && row.niche === "port-test", "the offer row is in the database",
-      row ? `name=${row.name} niche=${row.niche}` : "no row");
-  }
-  {
-    await api(`/offers/${offerId}`, json("PATCH", { name: `${NAME}_renamed`, niche: null }));
-    const [row] = await sb(`offers?id=eq.${offerId}&select=name,niche`);
-    check(row?.name === `${NAME}_renamed` && row.niche === null,
-      "PATCH /offers/:id renames it and clears the niche", `name=${row?.name} niche=${row?.niche}`);
-  }
+  // Offers were removed with Copy & Offer on 9 Oct (OS feedback).
 
   /* ===================================================================== */
   console.log("\n  ── campaign → client, on a campaign put back exactly ───");
@@ -247,39 +229,6 @@ try {
     check(missing.status === 404,
       "pinning a campaign with no mapping row is a 404, not a silent 'ok'",
       `status ${missing.status}`);
-  }
-
-  /* ===================================================================== */
-  console.log("\n  ── campaign → offer, set then cleared ──────────────────");
-
-  {
-    // A campaign with NO offer today, so clearing afterwards restores the
-    // absence rather than overwriting somebody's choice.
-    const withOffers = await sb("campaign_offers?select=campaign_id");
-    const taken = new Set(withOffers.map((r) => r.campaign_id));
-    const campaigns = await sb("campaigns?select=id,name&team_id=eq.2&order=id&limit=200");
-    const free = campaigns.find((c) => !taken.has(c.id));
-
-    if (!free) {
-      check(false, "found a campaign with no offer", "every campaign already has one");
-    } else {
-      await api(`/campaigns/${free.id}/offer`, json("PUT", { offerId }));
-      const set = await sb(`campaign_offers?campaign_id=eq.${free.id}&select=offer_id,actor`);
-      check(
-        set[0]?.offer_id === offerId,
-        `PUT /campaigns/${free.id}/offer attaches the offer`,
-        `actor recorded as ${set[0]?.actor ?? "(none)"}`,
-      );
-      check(
-        set[0]?.actor === "admin@outreachify.io",
-        "the audit actor is the signed-in person, not 'system'",
-        `actor=${set[0]?.actor}`,
-      );
-
-      await api(`/campaigns/${free.id}/offer`, json("PUT", { offerId: null }));
-      const cleared = await sb(`campaign_offers?campaign_id=eq.${free.id}&select=offer_id`);
-      check(cleared.length === 0, "clearing it removes the row, restoring the campaign", `${cleared.length} row(s) left`);
-    }
   }
 
   /* ===================================================================== */

@@ -25,20 +25,21 @@ const TONE_DOT: Record<SourceId, string> = {
 };
 
 /*
- * The four in-page views the rail used to name with a hash.
+ * The in-page views the rail used to name with a hash.
  *
  * Agent Search began life as one long scrolling page, and its rail entries
- * still describe the other four views as anchors on it — `/search#master`,
- * `/search#accounts`, and so on (see `nav.ts`). They are real, separately
- * routed screens now, at `/search/master` and friends, and nothing was left
+ * still describe the other views as anchors on it — `/search#accounts`,
+ * `/search#mls`, and so on (see `nav.ts`). They are real, separately
+ * routed screens now, at `/search/accounts` and friends, and nothing was left
  * translating between the two: a link anyone had pasted into Slack while the
  * anchors were the address opened the Search screen and silently stayed
  * there, with the rail highlighting the wrong row.
  *
  * Rewriting them here keeps those links working. It is deliberately a
  * `replace`, not a `push`: the hash URL was never a place worth going Back to.
+ * (`#master` is gone with the Master List, 9 Oct: it simply stays on Search.)
  */
-const HASH_VIEWS = new Set(["master", "accounts", "mls", "import"]);
+const HASH_VIEWS = new Set(["accounts", "mls", "import"]);
 
 export function AgentSearchSearchScreen() {
   const router = useRouter();

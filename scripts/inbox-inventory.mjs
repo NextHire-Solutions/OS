@@ -33,8 +33,6 @@ const SURFACES = [
   ["settings · agents",     "app/(app)/settings/reply-agents/page.tsx",   "src/components/screens/master-inbox/settings-tabs/reply-agents.tsx"],
   ["settings · AI labeling","app/(app)/settings/ai-labeling/page.tsx",    "src/components/screens/master-inbox/settings-tabs/ai-labeling.tsx"],
   ["settings · clients",    "app/(app)/settings/clients/page.tsx",        "src/components/screens/master-inbox/settings-tabs/clients.tsx"],
-  ["settings · members",    "app/(app)/settings/members/page.tsx",        "src/components/screens/master-inbox/settings-tabs/members.tsx"],
-  ["settings · personal",   "app/(app)/settings/personal/page.tsx",       "src/components/screens/master-inbox/settings-tabs/personal.tsx"],
   ["settings · webhooks",   "app/(app)/settings/webhooks/page.tsx",       "src/components/screens/master-inbox/settings-tabs/webhooks.tsx"],
 ];
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { NAV, type NavProduct } from "@/lib/workspace/nav";
+import { NAV, sectionKey, sectionOf, type NavProduct } from "@/lib/workspace/nav";
 import { RailBrand } from "./rail-brand";
 import { ToolGlyph } from "./tool-glyph";
 import { canSeePage, type RoleFlags } from "@/lib/workspace/nav";
@@ -37,13 +37,11 @@ export interface RailProps {
 }
 
 /**
- * The product a destination id belongs to — `"inbox:portals"` → `"inbox"`.
- * Workspace pages (`"home"`, `"performance"`) belong to no product and give null.
+ * The rail section a destination id belongs to — `"inbox:portals"` →
+ * `"inbox"`, `"analytics:campaigns"` → `"campaign-management"` (one tool, two
+ * sections since 9 Oct). Workspace pages belong to no section and give null.
  */
-function productOf(activeId: string): string | null {
-  const [product, leaf] = activeId.split(":");
-  return leaf ? product : null;
-}
+const productOf = sectionOf;
 
 export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, user, admin = false, roles = {} }: RailProps) {
   /*
@@ -114,14 +112,15 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
                     </button>
                   );
                 }
+                const key = sectionKey(item);
                 return (
                   <Product
-                    key={item.id}
+                    key={key}
                     product={item}
-                    open={open === item.id}
+                    open={open === key}
                     activeId={activeId}
                     badges={badges}
-                    onToggle={() => setOpen(open === item.id ? null : item.id)}
+                    onToggle={() => setOpen(open === key ? null : key)}
                     onNavigate={onNavigate}
                     onPrefetch={onPrefetch}
                   />
@@ -199,7 +198,7 @@ function Product({
         data-tip={product.label}
         onClick={onToggle}
       >
-        <ToolGlyph id={product.id} />
+        <ToolGlyph id={sectionKey(product)} />
         <span className="lbl">{product.label}</span>
         <svg className="chev" viewBox="0 0 24 24" aria-hidden="true">
           <path d="m9 6 6 6-6 6" />

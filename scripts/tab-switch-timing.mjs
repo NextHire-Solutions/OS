@@ -44,7 +44,7 @@ await send("Network.setCookie",{name:"bs_sso",value:await mintSso(pick("BS_SSO_S
 await send("Emulation.setDeviceMetricsOverride",{width:1512,height:950,deviceScaleFactor:1,mobile:false});
 
 const home = async () => {
-  await send("Page.navigate",{url:BASE+"/analytics/copy"});
+  await send("Page.navigate",{url:BASE+"/analytics/volume"});
   for(let i=0;i<70;i++){ if(await ev(`!!document.querySelector('.rail')`)) break; await sleep(250); }
   await sleep(3000);
 };

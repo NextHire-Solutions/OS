@@ -50,7 +50,6 @@ const SCREENS = [
   [`${P}/campaign`, "Campaign"],
   [`${P}/infrastructure`, "Infrastructure"],
   [`${P}/attribution`, "Attribution"],
-  [`${P}/copy`, "Copy & Offer"],
   [`${P}/campaigns`, "Campaigns"],
   [`${P}/campaigns/55`, "Campaign detail"],
   [`${P}/schedule`, "Schedule"],

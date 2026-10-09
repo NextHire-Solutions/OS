@@ -313,7 +313,7 @@ try {
   /* ══════════════════════════════════════════════════ 0 · the tab strip */
   section("0 · Tab strip");
   await p.goto("/inbox/settings/labels");
-  check("0.1", "eight tabs render as the design's pills", (await p.count(".mi-settings-tabs .fp")) === 8);
+  check("0.1", "five tabs render as the design's pills (admin)", (await p.count(".mi-settings-tabs .fp")) === 5);
   check("0.1b", "the active tab carries .on", (await p.text(".mi-settings-tabs .fp.on")) === "Labels");
   const tabHrefs = await p.ev(
     `Array.from(document.querySelectorAll('.mi-settings-tabs .fp')).map(a => a.getAttribute('href')).join(',')`,
@@ -328,9 +328,6 @@ try {
         "reply-agents",
         "ai-labeling",
         "clients",
-        "members",
-        "personal",
-        "webhooks",
       ]
         .map((t) => `/inbox/settings/${t}`)
         .join(","),
@@ -1059,86 +1056,7 @@ try {
   check("5.7d", "with the portal off, the same button deletes it", goneClient);
   if (goneClient) created.clients = [];
 
-  /* ════════════════════════════════════════════════════════ 6 · Members */
-  section("6 · Members");
-  await p.goto("/inbox/settings/members");
-  await p.shoot("09-members");
-  const isAdminView = await p.exists('[data-mis="add-user"]');
-
-  if (!isAdminView) {
-    check("6.1", "a non-admin gets the refusal, with a way forward", (await p.body()).includes("admin@outreachify.io"));
-  } else {
-    check("6.2-6.4", "the invite form keeps email, name and password",
-      (await p.exists("#member-email")) && (await p.exists("#member-name")) && (await p.exists("#member-password")));
-    check("6.6", "the plaintext note is kept", (await p.body()).includes("Stored hashed in Supabase"));
-    check("6.9a", "Add user is refused while the form is empty", await p.disabled('[data-mis="add-user"]'));
-
-    await p.click('[data-mis="gen-password"]');
-    const generated = await p.val("#member-password");
-    check("6.5", "Generate makes a 13-character password", generated.length === 13 && generated.endsWith("!"), generated.replace(/./g, "•"));
-    await p.click('[data-mis="gen-password"]');
-    check("6.5b", "and a different one each time", (await p.val("#member-password")) !== generated);
-
-    check("6.7", "All workspaces is on by default", (await p.attr('[aria-label="All workspaces"]', "aria-checked")) === "true");
-    await p.click('[aria-label="All workspaces"]');
-    await p.waitFor(`document.querySelector('.mis-picklist')`, 6000, "workspace pick-list");
-    const wsRows = await p.count(".mis-picklist .mis-check");
-    check("6.8", "turning it off reveals the per-workspace list", wsRows > 0, `${wsRows} workspaces`);
-    check("6.9b", "Add user stays refused with no workspace ticked", await p.disabled('[data-mis="add-user"]'));
-
-    await p.type("#member-email", `${RUN}@example.com`);
-    await p.clickNth(".mis-picklist .mis-check [data-slot='checkbox']", 0);
-    await sleep(250);
-    check("6.9c", "and unlocks once email + password + a workspace are set", !(await p.disabled('[data-mis="add-user"]')));
-    // NOT submitted — see the header of this file.
-    await p.click('[aria-label="All workspaces"]');
-
-    const memberRows = await p.count("[data-mis-member]");
-    check("6.10", "the members table lists everyone", memberRows > 0, `${memberRows} members`);
-    const memberCols = await p.ev(
-      `Array.from(document.querySelectorAll('.mis .atbl thead th')).map(t => t.innerText.trim()).join('|')`,
-    );
-    check("6.10b", "with email, role and workspaces", memberCols.startsWith("Email|Role|Workspaces"), memberCols);
-
-    if (await p.exists('[data-mis="reset-password"]')) {
-      await p.click('[data-mis="reset-password"]');
-      await p.waitFor(`document.querySelector('[data-slot="dialog-content"]')`, 8000);
-      check("6.12", "Reset password opens with a generated password", ((await p.val("#reset_pw")) ?? "").length === 13);
-      const firstPw = await p.val("#reset_pw");
-      await p.click('[data-slot="dialog-content"] .mis-inline .btn');
-      check("6.13", "Generate makes another", (await p.val("#reset_pw")) !== firstPw);
-      await p.click('[data-slot="dialog-footer"] button:first-child');
-      await p.waitFor(`!document.querySelector('[data-slot="dialog-content"]')`, 8000);
-      check("6.14", "Cancel closes it without resetting anyone", true, "submit deliberately not fired");
-    } else {
-      check("6.12", "no linked member to reset", true, "skipped");
-    }
-  }
-
-  /* ═══════════════════════════════════════════════════════ 7 · Personal */
-  section("7 · Personal");
-  await p.goto("/inbox/settings/personal");
-  await p.shoot("10-personal");
-  const emailVal = await p.val("#email");
-  check("7.1", "the email field shows the session address, read-only",
-    emailVal.includes("@") && (await p.attr("#email", "readonly")) !== null, emailVal);
-  check("7.2-7.4", "all three password fields are present",
-    (await p.exists("#cur")) && (await p.exists("#new")) && (await p.exists("#conf")));
-
-  await p.type("#cur", "zz-not-a-real-password");
-  await p.type("#new", "zz-abcdefgh");
-  await p.type("#conf", "zz-different");
-  await p.click('[data-mis="update-password"]');
-  await p.waitFor(`document.querySelector('[data-mis-toast]')`, 8000, "mismatch warning");
-  const mismatch = await p.toast();
-  check("7.4b", "a mismatch is refused before any request", mismatch.includes("don't match"), mismatch);
-
-  await p.type("#new", "short");
-  await p.type("#conf", "short");
-  await p.click('[data-mis="update-password"]');
-  await sleep(400);
-  const tooShort = await p.toast();
-  check("7.3b", "and so is a password under 8 characters", tooShort.includes("at least 8"), tooShort);
+  /* 6 · Members and 7 · Personal were removed on 9 Oct (OS feedback). */
 
   /* ═══════════════════════════════════════════════════════ 8 · Webhooks */
   section("8 · Webhooks");

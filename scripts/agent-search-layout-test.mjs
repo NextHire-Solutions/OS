@@ -25,10 +25,9 @@ const cookie = await mintSso(pick("BS_SSO_SECRET") || pick("AUTH_SECRET"), {
   email: "admin@outreachify.io", grants: [...ALL_TOOLS], ver: 1,
 });
 
-/** The five real workspace addresses, measured through the real shell. */
+/** The four real workspace addresses, measured through the real shell. */
 const SCREENS = {
   search: "/search",
-  master: "/search/master",
   accounts: "/search/accounts",
   mls: "/search/mls",
   import: "/search/import",
