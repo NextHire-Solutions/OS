@@ -11,13 +11,14 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
-| **0.1** | [Master Inbox parity, 12 October](#01-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
-| **0.2** | [Navigation clean-up, 9 October](#02-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
-| **0.3** | [What changed on 6–7 October](#03-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
-| **0.4** | [What changed on 30 September](#04-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
-| **0.5** | [What changed on 29 September](#05-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
-| **0.6** | [What changed on 28 September](#06-what-changed-on-28-september) — the latest work, how it was verified, what is open |
-| **0.7** | [Switching off Analytics, Client Health and Onboarding](#07-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
+| **0.1** | [SMS alerts for introductions, 13 October](#01-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
+| **0.2** | [Master Inbox parity, 12 October](#02-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
+| **0.3** | [Navigation clean-up, 9 October](#03-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
+| **0.4** | [What changed on 6–7 October](#04-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
+| **0.5** | [What changed on 30 September](#05-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
+| **0.6** | [What changed on 29 September](#06-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
+| **0.7** | [What changed on 28 September](#07-what-changed-on-28-september) — the latest work, how it was verified, what is open |
+| **0.8** | [Switching off Analytics, Client Health and Onboarding](#08-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -161,7 +162,75 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
-## 0.1 Master Inbox parity, 12 October
+## 0.1 SMS alerts for introductions, 13 October
+
+When a lead is introduced, the client's team can get a text. The standalone
+Master Inbox built this on 8 October (commits `06d8530`, `c4b6b77`, Akeesh);
+the OS did not have it. **Before this change an Introduction made in the OS
+never sent a text** — not even for a client with SMS on.
+
+**The moving parts, and who owns each**
+
+| Part | Where it lives | Changed here? |
+|---|---|---|
+| **LoopMessage notifier** — receives `lead.introduction`, asks each person for a YES once, then texts them; honours STOP; paces sends | Its own Railway service in "Masterinbox + Client Portals" (source: branch `loopmessage-notifier` of `brokerstaffer/Masterinbox`, `services/loopmessage-notifier`) | No. Both apps post to it |
+| **Per-client switch** — is this client texted at all | `clients.feature_flags.team_sms_notifications` (Master Inbox database). Set from the **Client Portals** page, the **SMS** column, in either app | **Yes** — the OS page now has the column |
+| **Per-member switch** — who on the team is texted | `client_team_members.receives_sms` (migration 0077, default true). Set on the **Team** page of the client's own portal | No. The portal is served by the standalone app |
+| **The sender** — decides what is POSTed to the notifier | `webhooks/n8n-introduction.ts` + `portals/team-sms.ts`, one copy in each app | **Yes** — the OS copy now has the rules |
+
+**The rule, identical in both apps.** The notifier is POSTed to only for a
+client with SMS on, with only the members whose switch is on (and active, with
+a phone), and the body carries `"sms_enabled": true`. The notifier texts
+nothing without that mark. SMS off, nobody switched on, or the switches
+unreadable: **no POST at all** — which also means a client's team names and
+numbers no longer leave the OS unless that client has SMS on. Bison's payload
+is never affected. `sms_enabled` and `team_sms_notifications` are the contract
+between the two apps and the notifier; `portals/team-sms.test.ts` pins both.
+
+**The OS files are the standalone's files.** `portals/team-sms.ts`,
+`portals/feature-flags.ts` (`withFeatureFlag`) and `webhooks/n8n-introduction.ts`
+differ from `brokerstaffer/Masterinbox` `main` only in import paths. Keep them
+that way: `diff` them against the standalone before changing either.
+
+**The switch on the OS Client Portals page.** `PATCH
+/api/tools/master-inbox/clients/[id]` accepts `{ sms_alerts }`. It rewrites
+`feature_flags` with that one key changed and writes no other column. Turning
+it **on** asks first (it starts texting real people; a workspace dialog where
+the standalone uses `confirm()`); turning it **off** does not. The "Unknown"
+client is refused. The OS's other writers of `feature_flags`
+(`withStandardFlags`, used by onboarding and add-portal) only ADD absent keys,
+so they can neither drop the flag nor turn it on.
+
+**The page is as wide as its table.** `.mi-portals-wrap` is a centred flex
+item, so it takes the table's natural width (1235px before), not the stage's.
+A tenth column would have pushed it past a 1512px laptop. It is paid for out of
+the six middle columns' padding (50px) and a 360px cap on the Client column,
+which shortens exactly one name ("The RE Home Group of Douglas Realty", full
+text in its tooltip). The table is 4px narrower than before. Below ~1500px the
+page scrolls sideways, as it did before — untouched here.
+
+**What is NOT in the OS, on purpose.** The portal's Team page and its
+per-member switch (`PATCH /api/portal/[token]/team/[id]`): client portals are
+served by the standalone app at portal.brokerstaffer.com. **That app has to
+keep running for the portals to work**, whatever staff use for the inbox.
+
+**How it was verified (before deploying)**
+
+- 28 tests ported or added (`n8n-introduction.test.ts`, `team-sms.test.ts`,
+  `client-sms-switch.test.ts`); each safety rule was then broken on purpose
+  and a test caught every one.
+- The OS's sender and the standalone's sender were run on the same 18 real
+  introductions (9 clients), both pointed at a local catcher: **45 of 45 POSTs
+  identical, field for field.** The OS's old sender on the same input: 54
+  unmarked POSTs, 45 of them for clients with SMS off.
+- The notifier's own code (a local copy, dry run) ignored the old OS body as
+  `sms_not_approved` and routed the new one to the same three people as the
+  standalone's.
+- The page in a real Chrome with every write refused: 21 checks.
+
+---
+
+## 0.2 Master Inbox parity, 12 October
 
 Twelve things the standalone Master Inbox does that the OS inbox did not, from
 the client's side-by-side list. One release. Nothing in the standalone app,
@@ -235,7 +304,7 @@ production after the deploy. Note `scripts/conversation-ui-test.mjs` WRITES
 
 ---
 
-## 0.2 Navigation clean-up, 9 October
+## 0.3 Navigation clean-up, 9 October
 
 From the client's "OS Feedback — Navigation & Cleanup" list. Shipped in four
 releases, each tested in a real Chrome as an admin and as each account
@@ -334,7 +403,7 @@ visit the removed screens.
 - The Database view's client names open the client's record
   (`/roster?client=<id>`) instead of the Onboarding page.
 
-## 0.3 What changed on 6–7 October
+## 0.4 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
 `e5e27c4` (Home, Client Health links, start date, speed), `e97f8d8` (profile,
@@ -382,7 +451,7 @@ from May on its cancelled subscription and Stripe no longer retries it; Properti
 people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
 Revolution) — add a person per market (territory "Boston" / "Florida").
 
-## 0.4 What changed on 30 September
+## 0.5 What changed on 30 September
 
 Deployed to `os` and verified on production (`69288cf` and after).
 
@@ -1104,7 +1173,7 @@ What changed, and why:
 
 ---
 
-## 0.5 What changed on 29 September
+## 0.6 What changed on 29 September
 
 All deployed to `os`, verified on production, pushed (`25c453c`, `a005c4e`).
 
@@ -1170,7 +1239,7 @@ Performance cards, for this week and last week:
 
 ---
 
-## 0.6 What changed on 28 September
+## 0.7 What changed on 28 September
 
 All deployed to `os`, verified on production, pushed (`1e66caa` … `b8cce7c`).
 
@@ -1198,7 +1267,7 @@ server errors; 37/37 open customer portals serving their page.
 
 ---
 
-## 0.7 Switching off Analytics, Client Health and Onboarding
+## 0.8 Switching off Analytics, Client Health and Onboarding
 
 **Stay live:** Master Inbox (its app serves every customer portal) and the
 Database app. **To be switched off once the OS is complete:** Analytics, Client
@@ -1218,7 +1287,7 @@ destination is an OS screen.
 |---|---|---|
 | Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
 | Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
-| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.2). Webhook receivers still live |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.3). Webhook receivers still live |
 
 **Switch-off order, per tool — never run two copies of a sync at once:**
 
@@ -1690,7 +1759,7 @@ Detail screens (no rail entry):
 
 Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
 `ai-labeling` (admin-only), plus `webhooks` (not offered). Members, Personal,
-Clients and Reply Agents were removed on 9 Oct — §0.2 says where the last two
+Clients and Reply Agents were removed on 9 Oct — §0.3 says where the last two
 went.
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
@@ -1703,7 +1772,7 @@ route still resolves, so an old bookmark degrades to All Email rather than 404s.
 In the live tool these are states of one page with **no URL of their
 own**. Here each is a real address, which is what lets the rail link straight to
 Delivery and the back button work. (Renamed 9 Oct: Weekly → Overview,
-Bi-Weekly → Delivery; Client Success removed — §0.2.)
+Bi-Weekly → Delivery; Client Success removed — §0.3.)
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
@@ -1722,7 +1791,7 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 
 ### 4.4 Campaign Analytics and Campaign Management — 4 + 3 destinations + campaign detail
 
-Two rail sections of ONE tool since 9 Oct (§0.2): Campaign, Volume,
+Two rail sections of ONE tool since 9 Oct (§0.3): Campaign, Volume,
 Infrastructure and Attribution under **Campaign Analytics**; Campaigns,
 Schedule and Clients (and its Client view) under **Campaign Management**.
 
@@ -1756,7 +1825,7 @@ Two notes for whoever works here:
 
 ### 4.5 Onboarding — removed 9 Oct
 
-The section and its screens were removed (§0.2, Release 4). Its webhook
+The section and its screens were removed (§0.3, Release 4). Its webhook
 receivers and shared library stay and are live.
 
 ### 4.6 Agent Search — 4 destinations

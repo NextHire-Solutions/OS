@@ -21,6 +21,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { loadCombinedIntroSummaryByClient } from "@/lib/tools/master-inbox/portals/intro-leads";
 import { PortalsAdmin } from "@/components/master-inbox/portals-ui/portals-admin";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/tools/master-inbox/portals/flag";
+import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
+import { TEAM_SMS_FLAG } from "@/lib/tools/master-inbox/portals/team-sms";
 import { PortalsComingSoon } from "@/components/master-inbox/portals-ui/portals-coming-soon";
 
 // Internal admin page — lists every client with its Introduction count and
@@ -33,6 +35,8 @@ export interface PortalClientRow {
   slug: string;
   portal_token: string | null;
   portal_enabled: boolean;
+  /** SMS alerts on for this client (the team_sms_notifications flag). */
+  sms_alerts: boolean;
   intro_count: number;
   last_intro_at: string | null;
   /** The client's lifecycle status from the master record (§11). */
@@ -54,7 +58,7 @@ export async function PortalsAdminScreen() {
   const [{ data: clients }, summary, masterByMi, masterList, people] = await Promise.all([
     admin
       .from("clients")
-      .select("id, name, slug, portal_token, portal_enabled")
+      .select("id, name, slug, portal_token, portal_enabled, feature_flags")
       .neq("slug", "unknown")
       .order("name", { ascending: true }),
     loadCombinedIntroSummaryByClient(),
@@ -72,6 +76,10 @@ export async function PortalsAdminScreen() {
       slug: c.slug as string,
       portal_token: (c.portal_token as string | null) ?? null,
       portal_enabled: (c.portal_enabled as boolean | null) ?? true,
+      sms_alerts: clientHasFeature(
+        { feature_flags: c.feature_flags as Record<string, unknown> | null },
+        TEAM_SMS_FLAG,
+      ),
       intro_count: s?.count ?? 0,
       last_intro_at: s?.lastAt ?? null,
       status: resolveByIdOrName(masterByMi, masterList, c.id as string, c.name as string)?.status ?? null,

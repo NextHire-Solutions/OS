@@ -421,6 +421,37 @@
 }
 .mi-portals tbody tr:last-child td { border-bottom: 0; }
 .mi-portals tbody tr:hover { background: var(--inset); }
+
+/*
+ * The Client Portals list, after the SMS column (13 Oct).
+ *
+ * This page is as wide as its table: `.mi-portals-wrap` is a centred flex
+ * item, so it takes the table's natural width, not the stage's. That width
+ * was 1235px, which fits a 1512px laptop with 3px to spare. A tenth column at
+ * the same padding made it 1303px, and the page — cards, search box, the
+ * "Open live portal" icon — ran off the right edge.
+ *
+ * So the column is paid for where it costs nothing, in two parts (measured):
+ *
+ *   50px  the six middle columns (Status … DNC) hold a badge, a pill, a date
+ *         and three short numbers, and give up 6px of padding a side. (Less
+ *         than the 72px that suggests: three of them are as wide as their
+ *         heading and cannot shrink.)
+ *   22px  the Client column was exactly as wide as ONE name, "The RE Home
+ *         Group of Douglas Realty" (382px); the next longest is 361px. Capped
+ *         at 360px, that one row ellipsises its last three characters — the
+ *         name and the path both carry the full text as a tooltip, and the
+ *         copy-link button copies the real address regardless.
+ *
+ * 72px back for a 68px column: the table ends 4px NARROWER than before.
+ * Live, SMS and Actions keep their full padding — the two switches in
+ * particular must not sit close enough to mis-click, since Live acts at once.
+ */
+.mi-portals table.mi-portals-list thead th:nth-child(n + 2):nth-child(-n + 7),
+.mi-portals table.mi-portals-list tbody td:nth-child(n + 2):nth-child(-n + 7) {
+  padding-inline: 12px;
+}
+.mi-portals table.mi-portals-list .mi-portals-client { max-width: 360px; }
 .mi-portals .tnum { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 
 /* The tool builds its rows out of CSS grid rather than a table. Those keep

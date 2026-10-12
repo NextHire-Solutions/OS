@@ -67,7 +67,35 @@ function clientInitials(name: string): string {
 export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<PortalClientRow | null>(null);
+  /*
+   * The client whose SMS alerts someone is about to turn ON. Turning it on
+   * starts texting real people on that client's team, so it asks first — the
+   * standalone inbox does the same with a browser confirm(); this is that
+   * question in the workspace's own dialog. Turning it OFF never asks.
+   */
+  const [smsConfirm, setSmsConfirm] = useState<PortalClientRow | null>(null);
+  const [smsSaving, setSmsSaving] = useState(false);
   const router = useRouter();
+
+  async function saveSms(row: PortalClientRow, enabled: boolean) {
+    setSmsSaving(true);
+    let ok = false;
+    try {
+      ok = await patchPortal(row.id, { sms_alerts: enabled });
+    } catch {
+      // The request never reached the server (offline, a dropped connection).
+      // Nothing was saved, and the switch still shows what the server holds —
+      // say so rather than leave the dialog spinning on a promise that threw.
+      toast.error("Couldn't reach the server — SMS alerts were not changed");
+    } finally {
+      setSmsSaving(false);
+    }
+    if (ok) {
+      toast.success(enabled ? `SMS alerts on for ${row.name}` : `SMS alerts off for ${row.name}`);
+      setSmsConfirm(null);
+      router.refresh();
+    }
+  }
 
   const filtered =
     search.trim().length === 0
@@ -166,7 +194,10 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
             </div>
           ) : (
             <div className="tbl-scroll">
-              <table>
+              {/* `mi-portals-list`: see mi-portals.css — the SMS column is paid
+                  for out of the middle columns' padding, so the page is no
+                  wider than it was before the column existed. */}
+              <table className="mi-portals-list">
                 <thead>
                   <tr>
                     <th>Client</th>
@@ -177,6 +208,12 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
                     <th className="text-center">Agents</th>
                     <th className="text-center">DNC</th>
                     <th className="text-center">Live</th>
+                    <th
+                      className="text-center"
+                      title="When on, the client's team gets a text for each new introduction"
+                    >
+                      SMS
+                    </th>
                     <th className="text-right">Actions</th>
                   </tr>
                 </thead>
@@ -194,6 +231,10 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
                           }
                         });
                       }}
+                      onToggleSms={(enabled) => {
+                        if (enabled) setSmsConfirm(r);
+                        else void saveSms(r, false);
+                      }}
                     />
                   ))}
                 </tbody>
@@ -209,7 +250,44 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
             Keep the random suffix in each URL so links can&apos;t be guessed.
           </span>
         </p>
+        {/* The standalone inbox's own line, word for word. */}
+        <p className="mt-2 px-1 text-[12.5px] leading-relaxed text-[#7A8394]" data-portal-sms-note>
+          SMS: when on, the client&apos;s team gets a text for each new
+          introduction. Who on the team gets it is chosen with the SMS switches
+          on their portal&apos;s Team page.
+        </p>
       </div>
+
+      <Dialog
+        open={smsConfirm !== null}
+        onOpenChange={(v) => {
+          if (!v && !smsSaving) setSmsConfirm(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md" data-portal-surface data-portal-sms-confirm>
+          <DialogHeader>
+            <DialogTitle>Turn on SMS alerts for {smsConfirm?.name}?</DialogTitle>
+          </DialogHeader>
+          <p className="text-[13.5px] leading-relaxed text-[#5b6472]">
+            From their next introduction, each person switched on in their
+            portal&apos;s Team page gets a text (the first time, a welcome asking
+            them to reply YES).
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSmsConfirm(null)} disabled={smsSaving}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (smsConfirm) void saveSms(smsConfirm, true);
+              }}
+              disabled={smsSaving}
+            >
+              {smsSaving ? <Loader2 className="size-4 animate-spin" /> : "Turn on SMS"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <EditPortalUrlDialog
         row={editing}
@@ -261,10 +339,12 @@ function PortalRow({
   row,
   onEdit,
   onToggle,
+  onToggleSms,
 }: {
   row: PortalClientRow;
   onEdit: () => void;
   onToggle: (enabled: boolean) => void;
+  onToggleSms: (enabled: boolean) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const portalPath = row.portal_token ? `/portal/${row.portal_token}` : null;
@@ -292,7 +372,7 @@ function PortalRow({
       <td>
         <div className="flex min-w-0 items-center gap-3">
           <span className="mi-portals-av">{clientInitials(row.name)}</span>
-          <div className="min-w-0">
+          <div className="min-w-0 mi-portals-client">
             {/*
              * The OS routes every screen through one catch-all, so a client
              * drill-down is /inbox/portals/<id>. This used to link at
@@ -300,12 +380,12 @@ function PortalRow({
              * recognise, so it fell through to Home. The 47-portal list linked
              * at a screen nobody could reach from it.
              */}
-            <Link href={`/inbox/portals/${row.id}`} className="cname group block truncate">
+            <Link href={`/inbox/portals/${row.id}`} className="cname group block truncate" title={row.name}>
               {row.name}
               <ChevronRight className="ml-0.5 inline size-3.5 -translate-y-px text-[#c2c7d0] transition-transform group-hover:translate-x-0.5 group-hover:text-[#1565C0]" />
             </Link>
             {portalPath ? (
-              <div className="csince truncate">{portalPath}</div>
+              <div className="csince truncate" title={portalPath}>{portalPath}</div>
             ) : (
               <div className="text-[11.5px] text-[#c23934]">No portal URL set</div>
             )}
@@ -358,6 +438,21 @@ function PortalRow({
             checked={row.portal_enabled}
             onCheckedChange={(v) => onToggle(Boolean(v))}
             aria-label="Portal enabled"
+          />
+        </div>
+      </td>
+
+      {/* SMS alerts toggle — the team_sms_notifications flag, the same one the
+          standalone inbox's Client Portals page switches. */}
+      <td>
+        <div
+          className="flex justify-center"
+          title={row.sms_alerts ? "Team gets a text for each new introduction" : "No SMS alerts"}
+        >
+          <Switch
+            checked={row.sms_alerts}
+            onCheckedChange={(v) => onToggleSms(Boolean(v))}
+            aria-label={`SMS alerts for ${row.name}`}
           />
         </div>
       </td>
@@ -425,7 +520,7 @@ function IconAction({
 // PATCH helper shared by the toggle + the edit dialog.
 async function patchPortal(
   clientId: string,
-  patch: { portal_token?: string; portal_enabled?: boolean },
+  patch: { portal_token?: string; portal_enabled?: boolean; sms_alerts?: boolean },
 ): Promise<boolean> {
   const res = await fetch(`/api/tools/master-inbox/clients/${clientId}`, {
     method: "PATCH",

@@ -19,11 +19,18 @@
 // Either failing never affects the other; both failing never affects
 // the caller — every fetch is wrapped in try/catch, and callers
 // already invoke this inside next/server `after(...)`.
+//
+// N8N_INTRODUCTION_WEBHOOK_URL now points at the LoopMessage SMS
+// notifier. It is only POSTed to for clients with SMS alerts on (the
+// Client Portals page switch), with only the team members whose Team
+// page SMS switch is on, marked approved; see portals/team-sms.ts.
+// Bison always gets the full team, whatever the SMS settings.
 
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { chunkedRun } from "@/lib/tools/master-inbox/db/chunked-in";
 import { env } from "@/lib/env";
 import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
+import { loadSmsRecipients, smsBodyFor } from "@/lib/tools/master-inbox/portals/team-sms";
 
 export type IntroductionSource =
   | "inbox_label"
@@ -142,6 +149,11 @@ export async function notifyIntroduction(
       }
     }
 
+    // Team-page SMS switches, for flagged clients only. Kept OUT of the
+    // two selects above on purpose: they swallow errors, so a column
+    // they can't find would silently stop every client's webhooks.
+    const smsRecipients = n8nUrl ? await loadSmsRecipients(admin, clientIds) : null;
+
     const occurredAt = new Date().toISOString();
     await Promise.all(
       rows.map(async (row) => {
@@ -200,7 +212,20 @@ export async function notifyIntroduction(
           url: string;
           body: unknown;
         }> = [];
-        if (n8nUrl) targets.push({ label: "n8n", url: n8nUrl, body: n8nPayload });
+        // SMS notifier: only for clients with SMS alerts on, with only the
+        // members switched on, marked approved. No POST otherwise: SMS off,
+        // nobody switched on, or the settings couldn't be read. Bison is
+        // never affected.
+        if (n8nUrl) {
+          const smsBody = smsBodyFor(n8nPayload, row.client_id, smsRecipients);
+          if (smsBody) {
+            targets.push({ label: "n8n", url: n8nUrl, body: smsBody });
+          } else {
+            console.log(
+              `[n8n-introduction] no SMS for entry ${row.id}: SMS alerts off for this client, nobody switched on, or settings unreadable`,
+            );
+          }
+        }
         // Bison / orchestrator ONLY fires when:
         //   (a) source is MasterInbox-originated (inbox_label or
         //       inbox_bulk_label). Portal-driven events

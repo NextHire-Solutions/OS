@@ -5,10 +5,13 @@ import { assertPortalUrlStable, PortalGuardError } from "@/lib/tools/master-inbo
 import { _invalidateClientCache } from "@/lib/clients/derive";
 import { invalidateInboxClientsCache } from "@/lib/inbox/clients";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/portals/flag";
+import { withFeatureFlag } from "@/lib/tools/master-inbox/portals/feature-flags";
+import { TEAM_SMS_FLAG } from "@/lib/tools/master-inbox/portals/team-sms";
 import { requireAuthedUser, retagUnknownThreads } from "../route";
 import { isAdminUser } from "@/lib/identity/admin-db";
 
-// PATCH  /api/clients/[id]   -> rename + edit aliases
+// PATCH  /api/clients/[id]   -> rename + edit aliases, portal URL / on-off,
+//                               SMS alerts on-off (Client Portals page)
 // DELETE /api/clients/[id]   -> delete the client (threads referencing it
 //                               keep client_id NULL via the FK's ON DELETE
 //                               SET NULL — they'll re-tag next webhook).
@@ -32,6 +35,13 @@ const patchSchema = z.object({
     .regex(/^[a-zA-Z0-9_-]+$/, "Only letters, numbers, hyphens and underscores")
     .optional(),
   portal_enabled: z.boolean().optional(),
+  // SMS alerts for this client (Client Portals page "SMS" switch). Stored
+  // as the team_sms_notifications feature flag: on = the portal Team page
+  // shows per-member SMS switches and Introductions are texted to the
+  // members switched on; off = no texts. See portals/team-sms.ts.
+  // The same field, the same flag and the same rules as the standalone
+  // Master Inbox's route (c4b6b77) — both apps write one column.
+  sms_alerts: z.boolean().optional(),
 });
 
 function toSlug(name: string): string {
@@ -63,7 +73,7 @@ export async function PATCH(
   const admin = createAdminSupabase();
   const { data: existing } = await admin
     .from("clients")
-    .select("id, name, slug")
+    .select("id, name, slug, feature_flags")
     .eq("id", id)
     .maybeSingle();
   if (!existing) {
@@ -98,6 +108,23 @@ export async function PATCH(
     }
     if (parsed.data.portal_enabled !== undefined) {
       update.portal_enabled = parsed.data.portal_enabled;
+    }
+    if (parsed.data.sms_alerts !== undefined) {
+      if (existing.slug === "unknown") {
+        return NextResponse.json(
+          { error: "The 'Unknown' fallback client has no portal." },
+          { status: 400 },
+        );
+      }
+      // Rewrites the whole flags map with this one key changed. Every other
+      // writer of this column in the OS merges (withStandardFlags only ADDS
+      // absent keys), so none of them can drop this one; a concurrent edit
+      // losing out here is not a realistic case.
+      update.feature_flags = withFeatureFlag(
+        existing.feature_flags,
+        TEAM_SMS_FLAG,
+        parsed.data.sms_alerts,
+      );
     }
   }
   if (Object.keys(update).length === 0) {
