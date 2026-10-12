@@ -168,6 +168,19 @@ export class FakePostgrest {
     const store = this.tables.get(table) ?? [];
     this.tables.set(table, store);
 
+    /*
+     * `.select("id", { count: "exact", head: true })` — supabase-js sends HEAD
+     * and reads the total from Content-Range. Without this every count in the
+     * code under test read as 0, which is the one answer a delete preview must
+     * never get by accident.
+     */
+    if (method === "HEAD") {
+      const n = store.filter((r) => this.matches(r, url.searchParams)).length;
+      return new Response(null, {
+        status: 200,
+        headers: { "content-range": n > 0 ? `0-${n - 1}/${n}` : "*/0" },
+      });
+    }
     if (method === "GET") {
       let rows = this.order(
         store.filter((r) => this.matches(r, url.searchParams)),

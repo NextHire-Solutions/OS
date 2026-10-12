@@ -33,6 +33,8 @@ import { ALL_TOOLS, type ToolId } from "../bs-auth.ts";
  */
 const SCREEN_PREFIX: Record<string, ToolId> = {
   inbox: "inbox",
+  // Client Portals — its own product and grant since 13 Oct.
+  portals: "portals",
   clients: "clients",
   analytics: "analytics",
   // Onboarding has no screens since 9 Oct: an old /onboarding link opens Home
@@ -78,10 +80,48 @@ export function toolForPath(pathname: string): ToolId | null {
   if (parts[0] === "api") {
     // /api/tools/<segment>/...
     if (parts[1] !== "tools" || !parts[2]) return null;
+    if (parts[2] === "master-inbox" && isPortalsApi(parts)) return "portals";
     return API_SEGMENT[parts[2]] ?? null;
   }
 
+  /*
+   * Client Portals' OLD addresses, from when it was a page of Master Inbox.
+   * They redirect to /portals (app/[[...slug]]/page.tsx), and the redirect must
+   * be guarded by the grant that guards the destination: left on `inbox`,
+   * someone with Client Portals but not Master Inbox would be refused on a
+   * bookmark that should simply have moved.
+   */
+  if (parts[0] === "inbox" && (parts[1] === "portals" || parts[1] === "client-view")) return "portals";
+
   return SCREEN_PREFIX[parts[0]] ?? null;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/*
+ * The Master Inbox routes that belong to Client Portals.
+ *
+ * Client Portals was split out of Master Inbox as a product, but its routes
+ * were not moved — every one of them still lives under
+ * /api/tools/master-inbox, because the standalone tool's route tree is kept
+ * verbatim. So the grant is decided here, route family by route family, and
+ * each was checked against its callers (13 Oct): none is called by an inbox
+ * screen, so moving them takes nothing away from someone with Master Inbox.
+ *
+ *   /portal/<token>/…      one portal's pipeline, notes, stages, stage labels,
+ *                          conversation, CSV and CRM push — the drill-down
+ *   /portals               the read-only list of portals
+ *   /clients/<uuid>        one portal's settings: Live, SMS, its URL, delete
+ *   /clients/<uuid>/…      anything under one portal (the delete preview)
+ *
+ * NOT here, on purpose — the inbox uses them: /clients (the client picker),
+ * /clients/status (the Clients panel's dots), /clients/intro-stats,
+ * /clients/intros and /clients/portals (token-authenticated feeds).
+ */
+function isPortalsApi(parts: string[]): boolean {
+  const [, , , family, next] = parts;
+  if (family === "portal" || family === "portals") return true;
+  return family === "clients" && !!next && UUID.test(next);
 }
 
 /** Every tool id, for tests that must not drift from the source list. */

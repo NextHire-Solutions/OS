@@ -122,7 +122,7 @@ function folderView(
  * The Onboarding section — pipeline, stages, templates, settings and the
  * per-client page at /onboarding/clients/<id> — was removed on 9 Oct (OS
  * feedback). /onboarding addresses now open Home. Its webhook receivers and
- * shared code stay: see docs/HANDOVER.md §0.3.
+ * shared code stay: see docs/HANDOVER.md §0.4.
  */
 
 /*
@@ -160,6 +160,20 @@ export default async function WorkspacePage({
 }) {
   const { slug } = await params;
   const query = await searchParams;
+
+  /*
+   * Client Portals moved out of Master Inbox (13 Oct). Its old addresses —
+   * bookmarks, links in Slack — go to the new ones rather than to All Email,
+   * which is where an unknown /inbox/<leaf> otherwise lands. The proxy has
+   * already checked the `portals` grant for these three (tool-paths.ts), so
+   * this is a move, not a way in.
+   */
+  {
+    const s = slug ?? [];
+    if (s[0] === "inbox" && s[1] === "portals") redirect(s[2] ? `/portals/${s[2]}` : "/portals");
+    if (s[0] === "inbox" && s[1] === "client-view") redirect("/portals/client-view");
+  }
+
   const initialId = idForPath(`/${(slug ?? []).join("/")}`);
 
   const requestHeaders = await headers();
@@ -223,7 +237,7 @@ export default async function WorkspacePage({
       : Promise.resolve(null),
     only("inbox:reminders") ? getReminders() : Promise.resolve(null),
     only("inbox:settings") ? getSettings() : Promise.resolve(null),
-    only("inbox:portals") ? getPortals() : Promise.resolve(null),
+    only("portals:list") ? getPortals() : Promise.resolve(null),
     /*
      * Unconditional, unlike every loader above it: the rail is on every screen,
      * so its counts are too. Two `head: true` count queries behind a 60s cache
@@ -329,7 +343,7 @@ export default async function WorkspacePage({
          * the document lists for that tool, read from the one record.
          */
         "clients:client-view": <ToolClientView view="health" />,
-        "inbox:client-view": <ToolClientView view="portal" />,
+        "portals:client-view": <ToolClientView view="portal" />,
         "analytics:client-view": <ToolClientView view="analytics" />,
         "search:client-view": <ToolClientView view="database" />,
         /*
@@ -423,17 +437,16 @@ export default async function WorkspacePage({
         "inbox:reminders": <RemindersScreen />,
         "inbox:settings": <MasterInboxSettingsScreen tab={(slug ?? [])[2]} admin={admin} />,
         /*
-         * /inbox/portals lists the 47 client portals; /inbox/portals/<id> is
-         * the staff drill-down into one of them. The list linked at that
-         * second URL and it returned 404 — the one screen the tool has that
-         * this workspace was missing.
+         * /portals lists the client portals; /portals/<id> is the staff
+         * drill-down into one of them. (Both were under /inbox until 13 Oct,
+         * when Client Portals became a product of its own.)
          */
-        "inbox:portals": (() => {
-          // Only when the URL really is /inbox/portals/<clientId>. Same lesson
-          // as threadIdFrom above: this screen renders on every request.
+        "portals:list": (() => {
+          // Only when the URL really is /portals/<clientId>. Same lesson as
+          // threadIdFrom above: this screen renders on every request.
           const parts = slug ?? [];
-          const id = parts[0] === "inbox" && parts[1] === "portals" ? parts[2] : undefined;
-          return id && UUID.test(id) ? <PortalDetail clientId={id} /> : <PortalsAdminScreen />;
+          const id = parts[0] === "portals" ? parts[1] : undefined;
+          return id && UUID.test(id) ? <PortalDetail clientId={id} /> : <PortalsAdminScreen admin={admin} />;
         })(),
         /*
          * Campaign Analytics, read and written against the tool's own database

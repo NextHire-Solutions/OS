@@ -15,15 +15,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { CONNECTOR_BY_GRANT, GRANT_BY_CONNECTOR, toConnectorId, toGrantId } from "./tool-ids.ts";
+import { CONNECTOR_BY_GRANT, GRANT_BY_CONNECTOR, SHARES_A_SERVICE, toConnectorId, toGrantId } from "./tool-ids.ts";
 import { ALL_TOOLS } from "../bs-auth.ts";
 
 test("every grant id maps to a connector id and back", () => {
   for (const grant of ALL_TOOLS) {
     const connector = toConnectorId(grant);
     assert.ok(connector, `${grant} has no connector id`);
+    // A grant that shares another product's service maps TO it, not back from it.
+    if (SHARES_A_SERVICE.has(grant)) continue;
     assert.equal(toGrantId(connector), grant, `${grant} did not survive the round trip`);
   }
+});
+
+test("Client Portals has its own grant and Master Inbox's service (13 Oct)", () => {
+  assert.equal(toConnectorId("portals"), "master-inbox");
+  assert.equal(toGrantId("master-inbox"), "inbox", "the service's status still belongs to Master Inbox");
+  assert.deepEqual([...SHARES_A_SERVICE], ["portals"]);
 });
 
 test("every connector id maps to a grant id and back", () => {
@@ -37,7 +45,7 @@ test("every connector id maps to a grant id and back", () => {
 test("the two maps are the same size — neither has an orphan", () => {
   assert.equal(
     Object.keys(GRANT_BY_CONNECTOR).length,
-    Object.keys(CONNECTOR_BY_GRANT).length,
+    Object.keys(CONNECTOR_BY_GRANT).length - SHARES_A_SERVICE.size,
   );
   assert.equal(Object.keys(CONNECTOR_BY_GRANT).length, ALL_TOOLS.length);
 });

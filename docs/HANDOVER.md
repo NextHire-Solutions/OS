@@ -11,14 +11,15 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
-| **0.1** | [SMS alerts for introductions, 13 October](#01-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
-| **0.2** | [Master Inbox parity, 12 October](#02-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
-| **0.3** | [Navigation clean-up, 9 October](#03-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
-| **0.4** | [What changed on 6–7 October](#04-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
-| **0.5** | [What changed on 30 September](#05-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
-| **0.6** | [What changed on 29 September](#06-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
-| **0.7** | [What changed on 28 September](#07-what-changed-on-28-september) — the latest work, how it was verified, what is open |
-| **0.8** | [Switching off Analytics, Client Health and Onboarding](#08-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
+| **0.1** | [Client Portals as its own product, 13 October](#01-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
+| **0.2** | [SMS alerts for introductions, 13 October](#02-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
+| **0.3** | [Master Inbox parity, 12 October](#03-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
+| **0.4** | [Navigation clean-up, 9 October](#04-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
+| **0.5** | [What changed on 6–7 October](#05-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
+| **0.6** | [What changed on 30 September](#06-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
+| **0.7** | [What changed on 29 September](#07-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
+| **0.8** | [What changed on 28 September](#08-what-changed-on-28-september) — the latest work, how it was verified, what is open |
+| **0.9** | [Switching off Analytics, Client Health and Onboarding](#09-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -162,7 +163,114 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
-## 0.1 SMS alerts for introductions, 13 October
+## 0.1 Client Portals as its own product, 13 October
+
+Four pieces of feedback on Client Portals, and what was decided for each:
+
+| Asked for | Decided (by the user, 13 Oct) | Built |
+|---|---|---|
+| "Add the ability to delete client portals" | **Admins only. "Portal only, client stays."** Ask for confirmation first | Delete button per portal; the client is never touched |
+| "Add the missing SMS option" | Already done — §0.2 | — |
+| "Make Client Portals its own standalone product" | **Its own switch on Team access; admins only to start** | Own menu section, own grant `portals`, own address `/portals` |
+| "Client Portals should sync with Consistency" | The count mismatch: the page said 57 clients, Consistency said 54 | The shared count line; the page now counts *portals* |
+
+**Its own product.** `portals` is a sixth tool id (`ALL_TOOLS` in `bs-auth.ts`),
+a product in the menu (`nav.ts`) and a column on Team access (`GRANTABLE_TOOLS`
+in `identity/admin.ts`). `os_tool_grants.tools` is a plain `text[]`, so there
+was **no migration**.
+
+| | Before | Now |
+|---|---|---|
+| The list | `/inbox/portals` | `/portals` |
+| One portal | `/inbox/portals/<id>` | `/portals/<id>` |
+| Client view (§8) | `/inbox/client-view` | `/portals/client-view` |
+| Grant | `inbox` | `portals` |
+
+The old addresses redirect (`app/[[...slug]]/page.tsx`), and are guarded by the
+**new** grant (`tool-paths.ts`), so a bookmark moves for someone who has Client
+Portals and is not a way in for someone who only has Master Inbox.
+
+**Its routes did not move.** They still live under `/api/tools/master-inbox`,
+because that tree is kept the same as the standalone tool's. The grant is
+decided per route family in `isPortalsApi` (`tool-paths.ts`):
+`/portals`, `/portal/<token>/…`, `/clients/<uuid>` and anything under it belong
+to `portals`; `/clients`, `/clients/status`, `/clients/intro-stats`,
+`/clients/intros` and `/clients/portals` stay with `inbox` because inbox
+screens and token feeds call them. `tool-paths.test.ts` pins both lists; move a
+route between them only with its callers in hand.
+
+**Nobody was granted it.** That was the decision: admins hold every tool, so
+they have it; everyone else gets it when an admin switches it on. On the day it
+shipped that meant two people had Client Portals and two who used to reach it
+through Master Inbox did not. A signed-in admin gains the grant at their next
+token refresh (ten minutes at most, or on returning to the tab).
+
+**Deleting one portal.** A portal is a row of Master Inbox's `clients` table.
+`DELETE /api/tools/master-inbox/clients/[id]` with `{ confirm, acceptDataLoss }`;
+the preview is `GET …/[id]/delete-plan`. Rules in
+`lib/clients/delete-portal-rule.ts` (pure, tested), reading and writing in
+`delete-portal.ts`.
+
+| Rule | Why |
+|---|---|
+| Admins only — checked in both routes, not only in the page | The page only decides whether the button is drawn |
+| **Demo Portal** and the **Unknown** bucket are never deletable, on or off | Standing rule: the demo portal backs the live demo |
+| A **live** portal is refused — switch it off first | Somebody outside may be using the link; switching off is the reversible step |
+| The portal's exact name must be typed; if it holds anything, a box ticked too; then a final "Are you sure?" | "Ask for the confirmation too" |
+| Everything is re-read at the moment of deleting | A portal switched back on after the preview must still be refused |
+
+What goes: the row and, by foreign key, its pipeline (with notes), agents,
+do-not-contact list, team, custom stages, its list in the inbox's Clients panel
+and its campaign routing choices (`os_campaign_portals`); plus its
+"Intro Macro - <name>" template, by exact name. Conversations are kept and lose
+the client tag. What the code does by hand, because no foreign key does:
+
+* `os_clients.mi_client_id` — if it pointed at the deleted portal it moves to
+  the client's other portal (lowest id) or is cleared. Never left stale.
+* `os_client_tool_exceptions` (tool `master_inbox`) — written when the client is
+  left with **no** portal, so Consistency shows "explained: its portal was
+  deleted on <date> by <person>" instead of a gap.
+
+**The client record is never deleted or renamed** — `delete-portal.test.ts`
+asserts that no path writes anything to `os_clients` but that one link column.
+
+**One consequence worth knowing before pressing it.** A portal's leads *are*
+the client's introductions on record. Client Health recounts every week and
+billing cycle from them on each sync (`sync/runSync.ts`, `runCorofy`), so
+deleting a portal with 30 leads lowers that client's introduction numbers by
+30, past weeks included. The dialog says so. For a client that should keep its
+history, switch the portal off and leave it.
+
+**The button's place.** A fourth icon would have made the page wider than a
+laptop screen (the page is as wide as its table — `mi-portals.css`). Delete
+takes the slot "Open live portal" leaves empty once a portal is off; the two
+can never both apply.
+
+**The count.** The page listed 57 rows and called them clients. They are
+portals: 54 clients, two second portals (a client with two markets) and the
+demo portal. It now leads with the same line as every other tool's client
+screen (`ClientCountLine`, from the reconciliation Consistency uses), says
+"57 portals" where it said "57 clients", and marks the three rows that are not
+one more client. `omit` on the count line takes Master Inbox's "Unknown" bucket
+off the arithmetic, because this page does not list it.
+
+**Not changed.** The portals clients open (`portal.brokerstaffer.com`) are
+served by the standalone app; no portal address, token, stage or lead was
+touched. Clients → Delete (the whole client, at a chosen scope) is unchanged
+and is still open to any team member — only the portal-only delete is
+admins-only.
+
+**How it was verified.** 1,639 unit tests; each rule broken on purpose and
+caught (22 of 22); a local production build against the real data behind a
+proxy that refuses every write, driven in Chrome as an admin, as a team member
+without the switch, with it, and with Client Portals alone; the access matrix
+for all six tools in both directions. **No real portal was deleted in testing**
+— the final request was sent and refused by the guard, and the database was
+compared before and after.
+
+---
+
+## 0.2 SMS alerts for introductions, 13 October
 
 When a lead is introduced, the client's team can get a text. The standalone
 Master Inbox built this on 8 October (commits `06d8530`, `c4b6b77`, Akeesh);
@@ -230,7 +338,7 @@ keep running for the portals to work**, whatever staff use for the inbox.
 
 ---
 
-## 0.2 Master Inbox parity, 12 October
+## 0.3 Master Inbox parity, 12 October
 
 Twelve things the standalone Master Inbox does that the OS inbox did not, from
 the client's side-by-side list. One release. Nothing in the standalone app,
@@ -304,7 +412,7 @@ production after the deploy. Note `scripts/conversation-ui-test.mjs` WRITES
 
 ---
 
-## 0.3 Navigation clean-up, 9 October
+## 0.4 Navigation clean-up, 9 October
 
 From the client's "OS Feedback — Navigation & Cleanup" list. Shipped in four
 releases, each tested in a real Chrome as an admin and as each account
@@ -403,7 +511,7 @@ visit the removed screens.
 - The Database view's client names open the client's record
   (`/roster?client=<id>`) instead of the Onboarding page.
 
-## 0.4 What changed on 6–7 October
+## 0.5 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
 `e5e27c4` (Home, Client Health links, start date, speed), `e97f8d8` (profile,
@@ -451,7 +559,7 @@ from May on its cancelled subscription and Stripe no longer retries it; Properti
 people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
 Revolution) — add a person per market (territory "Boston" / "Florida").
 
-## 0.5 What changed on 30 September
+## 0.6 What changed on 30 September
 
 Deployed to `os` and verified on production (`69288cf` and after).
 
@@ -1173,7 +1281,7 @@ What changed, and why:
 
 ---
 
-## 0.6 What changed on 29 September
+## 0.7 What changed on 29 September
 
 All deployed to `os`, verified on production, pushed (`25c453c`, `a005c4e`).
 
@@ -1239,7 +1347,7 @@ Performance cards, for this week and last week:
 
 ---
 
-## 0.7 What changed on 28 September
+## 0.8 What changed on 28 September
 
 All deployed to `os`, verified on production, pushed (`1e66caa` … `b8cce7c`).
 
@@ -1267,7 +1375,7 @@ server errors; 37/37 open customer portals serving their page.
 
 ---
 
-## 0.8 Switching off Analytics, Client Health and Onboarding
+## 0.9 Switching off Analytics, Client Health and Onboarding
 
 **Stay live:** Master Inbox (its app serves every customer portal) and the
 Database app. **To be switched off once the OS is complete:** Analytics, Client
@@ -1287,7 +1395,7 @@ destination is an OS screen.
 |---|---|---|
 | Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
 | Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
-| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.3). Webhook receivers still live |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.4). Webhook receivers still live |
 
 **Switch-off order, per tool — never run two copies of a sync at once:**
 
@@ -1736,10 +1844,12 @@ Sub-screens of the roster:
 > and link-integrity checks added to it later. **A screen nobody can open cannot
 > report anything.** It is back in the rail; keep it there.
 
-### 4.2 Master Inbox — 6 rail destinations + 2 detail screens + 8 settings tabs
+### 4.2 Master Inbox — 5 rail destinations + 1 detail screen + settings tabs; Client Portals beside it
 
 The tool's own navigation was an icon rail plus a sidebar plus a second settings
-sidebar. It collapses into six rail entries.
+sidebar. It collapses into five rail entries. **Client Portals is its own
+product since 13 Oct (§0.1)** — own menu section, own grant; it is listed here
+because its screens and routes still live in the Master Inbox folders.
 
 | Page | Path | What it does | File |
 |---|---|---|---|
@@ -1747,19 +1857,19 @@ sidebar. It collapses into six rail entries.
 | Reminders | `/reminders` | The tool's own page — **replaced a hand-written screen that listed reminders and could not dismiss them** | `master-inbox/reminders.tsx` |
 | Archive | `/inbox/archive` | Archived conversations | (full-inbox view) |
 | Trash | `/inbox/trash` | Third folder; without this entry a trashed conversation could only be found by typing the URL | (full-inbox view) |
-| **Client Portals** | `/portals` | The admin table of which clients have a portal. The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
+| **Client Portals** (own product) | `/portals` | The admin table of portals: link, Live, SMS, and — for admins — delete (§0.1). The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
 | Settings | `/settings/clients` | Eight pages behind the tool's own sub-navigation | `master-inbox/settings.tsx` |
 
 Detail screens (no rail entry):
 
 * **Thread detail** — one conversation, ported line-for-line. This is where the
   Introduce macro and the reply agent's drafts appear. `master-inbox/thread-detail.tsx`
-* **Portal detail** — the staff drill-down for one client's portal.
-  `master-inbox/portal-detail.tsx`
+* **Portal detail** — the staff drill-down for one client's portal, at
+  `/portals/<id>`. `master-inbox/portal-detail.tsx`
 
 Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
 `ai-labeling` (admin-only), plus `webhooks` (not offered). Members, Personal,
-Clients and Reply Agents were removed on 9 Oct — §0.3 says where the last two
+Clients and Reply Agents were removed on 9 Oct — §0.4 says where the last two
 went.
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
@@ -1772,7 +1882,7 @@ route still resolves, so an old bookmark degrades to All Email rather than 404s.
 In the live tool these are states of one page with **no URL of their
 own**. Here each is a real address, which is what lets the rail link straight to
 Delivery and the back button work. (Renamed 9 Oct: Weekly → Overview,
-Bi-Weekly → Delivery; Client Success removed — §0.3.)
+Bi-Weekly → Delivery; Client Success removed — §0.4.)
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
@@ -1791,7 +1901,7 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 
 ### 4.4 Campaign Analytics and Campaign Management — 4 + 3 destinations + campaign detail
 
-Two rail sections of ONE tool since 9 Oct (§0.3): Campaign, Volume,
+Two rail sections of ONE tool since 9 Oct (§0.4): Campaign, Volume,
 Infrastructure and Attribution under **Campaign Analytics**; Campaigns,
 Schedule and Clients (and its Client view) under **Campaign Management**.
 
@@ -1825,7 +1935,7 @@ Two notes for whoever works here:
 
 ### 4.5 Onboarding — removed 9 Oct
 
-The section and its screens were removed (§0.3, Release 4). Its webhook
+The section and its screens were removed (§0.4, Release 4). Its webhook
 receivers and shared library stay and are live.
 
 ### 4.6 Agent Search — 4 destinations

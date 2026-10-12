@@ -57,7 +57,7 @@ export const sectionKey = (p: NavProduct): string => p.key ?? p.id;
 
 /**
  * The rail section a destination id sits in — `"analytics:campaigns"` →
- * `"campaign-management"`, `"inbox:portals"` → `"inbox"`. Workspace pages
+ * `"campaign-management"`, `"inbox:archive"` → `"inbox"`. Workspace pages
  * (`"home"`, `"performance"`) belong to no section and give null.
  */
 export function sectionOf(id: string): string | null {
@@ -142,17 +142,41 @@ export const NAV: NavSection[] = [
           // Trash). Without this entry a trashed conversation could only be
           // found, restored or purged by typing the URL.
           { id: "trash", label: "Trash", path: "/inbox/trash", verified: true },
-          // The MASTER portal list — the admin table of which clients have a
-          // portal. The individual client portals it links to live on
-          // portal.brokerstaffer.com and are deliberately outside the
-          // workspace; this page is in scope, they are not.
-          { id: "portals", label: "Client Portals", path: "/portals", verified: true },
-          { id: "client-view", label: "Client view", verified: true },
+          // Client Portals and its Client view were here until 13 Oct; they are
+          // a product of their own now (below). /inbox/portals, /inbox/portals/<id>
+          // and /inbox/client-view redirect to the new addresses.
           // Master Inbox's settings: Labels, Templates and AI Labeling (9 Oct).
           // One entry here; the tool keeps its own sub-navigation inside, which
           // is the right trade — hoisting rarely-used pages into the rail
           // would cost more than it saves.
           { id: "settings", label: "Settings", path: "/settings/labels", verified: true },
+        ],
+      },
+      /*
+       * Client Portals — its own product since 13 Oct (OS feedback: "Make
+       * Client Portals its own standalone product, rather than a sub-section
+       * of another product"), with its own grant, `portals`, and so its own
+       * switch on Team access.
+       *
+       * The MASTER portal list: the admin table of which clients have a
+       * portal, and the staff drill-down into one. The client-facing portals
+       * it links to live on portal.brokerstaffer.com, served by the standalone
+       * Master Inbox app, and are deliberately outside the workspace.
+       *
+       * Its API routes did not move — they are still under
+       * /api/tools/master-inbox — so which of those the `portals` grant guards
+       * is spelled out in tool-paths.ts.
+       */
+      {
+        kind: "product",
+        id: "portals",
+        label: "Client Portals",
+        baseUrlEnv: "MASTER_INBOX_URL",
+        children: [
+          { id: "list", label: "Portals", path: "/portals", verified: true },
+          // §8's Portal view of each client's record — it was Master Inbox's
+          // "Client view", and it is about portals.
+          { id: "client-view", label: "Client view", verified: true },
         ],
       },
       {
@@ -319,6 +343,7 @@ export function products(): NavProduct[] {
      /performance/billing  Performance › Billing Calendar
      /inbox                Master Inbox, its first screen
      /inbox/reminders      a specific screen within it
+     /portals              Client Portals (and /portals/<clientId>, one portal)
      /clients              Client Health
      /analytics            Campaign Analytics (and /analytics/campaigns,
                            /schedule, /clients: Campaign Management)
@@ -332,6 +357,7 @@ export function products(): NavProduct[] {
 /** Slug for each product, used as the first path segment. */
 const PRODUCT_SLUG: Record<string, ToolId> = {
   inbox: "inbox",
+  portals: "portals",
   clients: "clients",
   analytics: "analytics",
   search: "search",

@@ -47,7 +47,12 @@ export interface PortalClientRow {
   dnc: number;
 }
 
-export async function PortalsAdminScreen() {
+/*
+ * `admin` decides one thing: whether a row offers "Delete portal". It is a
+ * convenience for the page, not the permission — the routes check again
+ * (api/tools/master-inbox/clients/[id]).
+ */
+export async function PortalsAdminScreen({ admin: isAdmin = false }: { admin?: boolean } = {}) {
   await requireSession();
 
   // Feature-flagged off → show the placeholder and skip every query that
@@ -89,5 +94,5 @@ export async function PortalsAdminScreen() {
     };
   });
 
-  return <PortalsAdmin rows={rows} />;
+  return <PortalsAdmin rows={rows} admin={isAdmin} />;
 }

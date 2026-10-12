@@ -27,8 +27,17 @@ export const GRANT_BY_CONNECTOR: Record<ConnectorId, GrantId> = {
   onboarding: "onboarding",
 };
 
+/*
+ * Not one-to-one since 13 Oct: Client Portals is its own product and grant,
+ * but it is served by the same upstream service as Master Inbox — there is no
+ * "portals" service to monitor. So two grants point at one connector, and the
+ * way back (GRANT_BY_CONNECTOR) still answers `inbox` for that service.
+ */
+export const SHARES_A_SERVICE: ReadonlySet<GrantId> = new Set<GrantId>(["portals"]);
+
 export const CONNECTOR_BY_GRANT: Record<GrantId, ConnectorId> = {
   inbox: "master-inbox",
+  portals: "master-inbox",
   clients: "client-health",
   analytics: "analytics",
   search: "scraper",

@@ -29,7 +29,7 @@ async function token() {
 
 const ROUTES = [
   "/", "/performance", "/performance/billing", "/roster", "/admin/team",
-  "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/portals",
+  "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/portals",
   "/inbox/settings", "/inbox/settings/labels", "/inbox/settings/templates",
   "/inbox/settings/ai-labeling",
   "/clients", "/clients/biweekly",

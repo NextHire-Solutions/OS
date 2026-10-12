@@ -37,7 +37,7 @@ export interface RailProps {
 }
 
 /**
- * The rail section a destination id belongs to — `"inbox:portals"` →
+ * The rail section a destination id belongs to — `"inbox:archive"` →
  * `"inbox"`, `"analytics:campaigns"` → `"campaign-management"` (one tool, two
  * sections since 9 Oct). Workspace pages belong to no section and give null.
  */

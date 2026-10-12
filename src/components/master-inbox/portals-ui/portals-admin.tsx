@@ -15,6 +15,7 @@ import {
   Sparkles,
   ChevronRight,
   TriangleAlert,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/tools/master-inbox/utils";
@@ -35,6 +36,9 @@ import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
  */
 import type { PortalClientRow } from "@/components/screens/master-inbox/portals";
 import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/clients/client-status";
+import { ClientCountLine, rowNote, useClientCounts } from "@/components/clients/count-line";
+import { blockReason, confirmationMatches, protectedReason } from "@/lib/clients/delete-portal-rule";
+import type { PortalDeletePlan } from "@/lib/clients/delete-portal";
 
 // Absolute date for the "last intro" column — client asked for an
 // explicit date instead of "Xh ago / 1mo ago" so it's easier to spot
@@ -64,9 +68,24 @@ function clientInitials(name: string): string {
   );
 }
 
-export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
+/*
+ * Rows of Master Inbox's table that this page does not list. The page's query
+ * leaves the "Unknown" bucket out (it is not a portal), so the count line must
+ * leave it out of its arithmetic too — screens/master-inbox/portals.tsx.
+ */
+const NOT_LISTED = ["Unknown"] as const;
+
+export function PortalsAdmin({ rows, admin = false }: { rows: PortalClientRow[]; admin?: boolean }) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<PortalClientRow | null>(null);
+  /* The portal an admin has asked to delete — see DeletePortalDialog. */
+  const [deleting, setDeleting] = useState<PortalClientRow | null>(null);
+  /*
+   * The one client count every tool's screen shows, from the reconciliation
+   * the Consistency page is built on. Used here to say which rows are not one
+   * more client: a second portal of a client, or the demo portal.
+   */
+  const counts = useClientCounts();
   /*
    * The client whose SMS alerts someone is about to turn ON. Turning it on
    * starts texting real people on that client's team, so it asks first — the
@@ -140,11 +159,23 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
           </div>
         </div>
 
+        {/*
+          * The same line every tool's client screen leads with (13 Oct: "Client
+          * Portals should sync with Consistency"). This page said "57 clients"
+          * while Consistency and every other screen said 54 — both true, of
+          * different things: this is a list of PORTALS, and two clients have
+          * two, plus the demo portal. So the clients are counted by the shared
+          * line, and everything below it is called what it is: portals.
+          */}
+        <div data-portal-countline>
+          <ClientCountLine tool="master_inbox" noun="portals" omit={NOT_LISTED} />
+        </div>
+
         {/* ---- Summary ---- */}
         <div className="cards">
           <SummaryCard
             icon={Users}
-            label="Clients"
+            label="Portals"
             value={rows.length}
             hint={`${withIntros} with introductions`}
           />
@@ -152,7 +183,7 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
             icon={Globe}
             label="Live portals"
             value={livePortals}
-            hint={`of ${rows.length} clients`}
+            hint={`of ${rows.length} portals`}
           />
           <SummaryCard
             icon={Sparkles}
@@ -170,8 +201,8 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
               <div className="tbl-title">Portals</div>
               <div className="tbl-sub">
                 {filtered.length === rows.length
-                  ? `${rows.length} clients · ${livePortals} live`
-                  : `${filtered.length} of ${rows.length} clients`}
+                  ? `${rows.length} portals · ${livePortals} live`
+                  : `${filtered.length} of ${rows.length} portals`}
               </div>
             </div>
             {/* ---- Search ---- */}
@@ -222,6 +253,8 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
                     <PortalRow
                       key={r.id}
                       row={r}
+                      note={rowNote(counts, "master_inbox", r.name)}
+                      onDelete={admin ? () => setDeleting(r) : undefined}
                       onEdit={() => setEditing(r)}
                       onToggle={(enabled) => {
                         void patchPortal(r.id, { portal_enabled: enabled }).then((ok) => {
@@ -256,7 +289,23 @@ export function PortalsAdmin({ rows }: { rows: PortalClientRow[] }) {
           introduction. Who on the team gets it is chosen with the SMS switches
           on their portal&apos;s Team page.
         </p>
+        {admin ? (
+          <p className="mt-1 px-1 text-[12.5px] leading-relaxed text-[#7A8394]" data-portal-delete-note>
+            Deleting a portal (admins only): switch it off first — the delete
+            button then takes the place of “Open live portal” in its row. The
+            client itself is kept.
+          </p>
+        ) : null}
       </div>
+
+      <DeletePortalDialog
+        row={deleting}
+        onClose={() => setDeleting(null)}
+        onDeleted={() => {
+          setDeleting(null);
+          router.refresh();
+        }}
+      />
 
       <Dialog
         open={smsConfirm !== null}
@@ -337,11 +386,17 @@ function SummaryCard({
 
 function PortalRow({
   row,
+  note,
+  onDelete,
   onEdit,
   onToggle,
   onToggleSms,
 }: {
   row: PortalClientRow;
+  /** Why this row is not one more client, when it is not (count-line's rowNote). */
+  note: string | null;
+  /** Present for admins only. */
+  onDelete?: () => void;
   onEdit: () => void;
   onToggle: (enabled: boolean) => void;
   onToggleSms: (enabled: boolean) => void;
@@ -353,6 +408,20 @@ function PortalRow({
   // URL, NOT the Railway host.
   const portalAbsoluteUrl = publicPortalUrl(row.portal_token);
   const isLive = Boolean(row.portal_enabled && portalAbsoluteUrl);
+  /*
+   * Delete is offered where the delete would be ALLOWED — the same rule the
+   * server applies (delete-portal-rule.ts), so the button never leads to a
+   * refusal: not for the demo portal, and not while the portal is live.
+   */
+  const canDelete =
+    Boolean(onDelete) &&
+    blockReason({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      portalToken: row.portal_token,
+      portalEnabled: row.portal_enabled,
+    }) === null;
 
   function copyLink() {
     if (!portalAbsoluteUrl) return;
@@ -375,12 +444,13 @@ function PortalRow({
           <div className="min-w-0 mi-portals-client">
             {/*
              * The OS routes every screen through one catch-all, so a client
-             * drill-down is /inbox/portals/<id>. This used to link at
+             * drill-down is /portals/<id> (it was /inbox/portals/<id> until
+             * Client Portals became its own product, 13 Oct). This used to link at
              * /portals/<id> — the tool's own path — which `idForPath` does not
              * recognise, so it fell through to Home. The 47-portal list linked
              * at a screen nobody could reach from it.
              */}
-            <Link href={`/inbox/portals/${row.id}`} className="cname group block truncate" title={row.name}>
+            <Link href={`/portals/${row.id}`} className="cname group block truncate" title={row.name}>
               {row.name}
               <ChevronRight className="ml-0.5 inline size-3.5 -translate-y-px text-[#c2c7d0] transition-transform group-hover:translate-x-0.5 group-hover:text-[#1565C0]" />
             </Link>
@@ -389,6 +459,9 @@ function PortalRow({
             ) : (
               <div className="text-[11.5px] text-[#c23934]">No portal URL set</div>
             )}
+            {note ? (
+              <div className="csince truncate" title={note} data-portal-row-note>{note}</div>
+            ) : null}
           </div>
         </div>
       </td>
@@ -479,8 +552,25 @@ function PortalRow({
             >
               <ExternalLink />
             </a>
+          ) : canDelete ? (
+            /* The slot "Open live portal" leaves empty once a portal is off:
+               the two can never both apply, and a fourth button would make the
+               page wider than a laptop screen (see mi-portals.css). */
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label={`Delete the portal for ${row.name}`}
+              title="Delete this portal (the client is kept)"
+              className="ib ib-danger"
+              data-portal-delete
+            >
+              <Trash2 />
+            </button>
           ) : (
-            <span className="inline-block size-[34px]" />
+            <span
+              className="inline-block size-[34px]"
+              title={onDelete ? (protectedReason(row) ?? undefined) : undefined}
+            />
           )}
         </div>
       </td>
@@ -613,6 +703,273 @@ function EditPortalUrlDialog({
           <Button onClick={save} disabled={pending}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : "Save URL"}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/*
+ * "28 leads, 3 agents and 1 team member" — only what the portal actually
+ * holds. Naming four things at zero would bury the one number that matters.
+ */
+function lossList(c: PortalDeletePlan["cascade"]): string {
+  const n = (count: number, one: string, many = `${one}s`) =>
+    count > 0 ? `${count.toLocaleString("en-US")} ${count === 1 ? one : many}` : null;
+  const parts = [
+    n(c.pipelineEntries, "lead"),
+    n(c.agents, "agent"),
+    n(c.dncEntries, "do-not-contact entry", "do-not-contact entries"),
+    n(c.teamMembers, "team member"),
+  ].filter((x): x is string => x !== null);
+  if (parts.length <= 1) return parts[0] ?? "contents";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/*
+ * Delete ONE portal, and keep the client (13 Oct, admins only).
+ *
+ * Three things have to be true before anything is deleted, and each is its own
+ * moment on screen rather than one button:
+ *
+ *   1. REVIEW   what goes and what stays, counted from the database just now
+ *               (GET …/delete-plan) — "deletes its portal" says nothing about
+ *               whether that portal is an empty shell or holds 400 agents.
+ *   2. TYPE     the portal's name, and — when it holds anything — a ticked
+ *               acknowledgement of exactly what is destroyed.
+ *   3. CONFIRM  a last "are you sure", asked for by the user on 13 Oct
+ *               ("before deleting, it should ask for the confirmation too").
+ *
+ * The server repeats every check (lib/clients/delete-portal.ts); this dialog
+ * only decides what an admin is shown.
+ */
+function DeletePortalDialog({
+  row,
+  onClose,
+  onDeleted,
+}: {
+  row: PortalClientRow | null;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [plan, setPlan] = useState<PortalDeletePlan | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [typed, setTyped] = useState("");
+  const [accept, setAccept] = useState(false);
+  const [step, setStep] = useState<"review" | "confirm">("review");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const id = row?.id ?? null;
+
+  useEffect(() => {
+    setPlan(null);
+    setLoadError(null);
+    setTyped("");
+    setAccept(false);
+    setStep("review");
+    setBusy(false);
+    setError(null);
+    if (!id) return;
+    let live = true;
+    fetch(`/api/tools/master-inbox/clients/${id}/delete-plan`, { credentials: "same-origin" })
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}));
+        if (!live) return;
+        if (!res.ok) setLoadError(json.error ?? "Could not read this portal.");
+        else setPlan(json as PortalDeletePlan);
+      })
+      .catch(() => {
+        if (live) setLoadError("Couldn't reach the server. Nothing was changed.");
+      });
+    return () => {
+      live = false;
+    };
+  }, [id]);
+
+  if (!row) return null;
+
+  const needsAccept = Boolean(plan?.hasContent);
+  const ready =
+    plan !== null && !plan.blocked && confirmationMatches(typed, plan.name) && (!needsAccept || accept);
+
+  async function run() {
+    if (!row || !plan || !ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tools/master-inbox/clients/${row.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: typed, acceptDataLoss: accept }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        failed?: { what: string; error: string }[];
+      };
+      if (!res.ok) {
+        // Refused or failed: nothing was deleted. Back to the review, with why.
+        setError(json.error ?? "The portal was not deleted.");
+        setStep("review");
+        return;
+      }
+      if (json.failed?.length) {
+        toast.warning(
+          `Portal deleted, but: ${json.failed.map((f) => `${f.what} failed (${f.error})`).join("; ")}. Consistency will show it.`,
+          { duration: 15000 },
+        );
+      } else {
+        toast.success(
+          plan.owner ? `Portal deleted — ${plan.owner.name} is still a client` : `Portal “${plan.name}” deleted`,
+        );
+      }
+      onDeleted();
+    } catch {
+      setError("Couldn't reach the server. Check the list before trying again — the portal may or may not have been deleted.");
+      setStep("review");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(v) => {
+        if (!v && !busy) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-lg" data-portal-surface data-portal-delete-dialog data-step={step}>
+        <DialogHeader>
+          <DialogTitle>
+            {step === "confirm" ? "Are you sure?" : `Delete the portal “${row.name}”?`}
+          </DialogTitle>
+        </DialogHeader>
+
+        {step === "confirm" && plan ? (
+          <div className="space-y-3 text-[13.5px] leading-relaxed text-[#5b6472]" data-portal-delete-final>
+            <p>
+              This permanently deletes the portal <b className="text-[#0f1320]">“{plan.name}”</b>
+              {plan.hasContent ? " and everything inside it" : ""}. Its link stops working at once and cannot be
+              brought back.
+            </p>
+            <p>
+              {plan.owner ? (
+                <>
+                  The client <b className="text-[#0f1320]">{plan.owner.name}</b> is kept — in Clients, billing,
+                  campaigns and every other tool.
+                </>
+              ) : (
+                "No client record is changed."
+              )}{" "}
+              <b className="text-[#c23934]">There is no undo.</b>
+            </p>
+          </div>
+        ) : (
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1 text-[13px] leading-relaxed text-[#5b6472]">
+            {loadError ? (
+              <p className="rounded-[10px] bg-[#fdecec] px-3 py-2.5 text-[#c23934]" data-portal-delete-error>
+                {loadError}
+              </p>
+            ) : !plan ? (
+              <p className="flex items-center gap-2 py-6 text-[#9aa0ab]">
+                <Loader2 className="size-4 animate-spin" /> Checking what is inside this portal…
+              </p>
+            ) : plan.blocked ? (
+              <p className="rounded-[10px] bg-[#fdecec] px-3 py-2.5 text-[#c23934]" data-portal-delete-blocked>
+                {plan.blocked}
+              </p>
+            ) : (
+              <>
+                <div data-portal-delete-removes>
+                  <b className="text-[#0f1320]">This removes</b>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                    {plan.willDelete.map((d) => (
+                      <li key={d}>{d}</li>
+                    ))}
+                  </ul>
+                </div>
+                {plan.willKeep.length ? (
+                  <div data-portal-delete-keeps>
+                    <b className="text-[#0f1320]">This keeps</b>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                      {plan.willKeep.map((k) => (
+                        <li key={k}>{k}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {plan.warnings.map((w) => (
+                  <p key={w} className="text-[12.5px] text-[#8a5a0b]">
+                    {w}
+                  </p>
+                ))}
+
+                {needsAccept ? (
+                  <label className="flex cursor-pointer items-start gap-2 rounded-[10px] border border-[#e9b4b0] bg-[#fdecec] px-3 py-2.5 text-[#0f1320]">
+                    <input
+                      id="portal-delete-accept"
+                      type="checkbox"
+                      checked={accept}
+                      onChange={(e) => setAccept(e.target.checked)}
+                      className="mt-[3px] cursor-pointer accent-[#c23934]"
+                    />
+                    <span data-portal-delete-accept-text>
+                      I understand this permanently deletes this portal&apos;s {lossList(plan.cascade)}.
+                    </span>
+                  </label>
+                ) : null}
+
+                <div className="space-y-1.5">
+                  <label htmlFor="portal-delete-name" className="block text-[12px] font-semibold text-[#5b6472]">
+                    Type <b className="text-[#0f1320]">{plan.name}</b> to continue
+                  </label>
+                  <input
+                    id="portal-delete-name"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    placeholder={plan.name}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full rounded-[12px] border border-[#ebecf0] bg-white px-3 py-2.5 text-[13.5px] text-[#0f1320] focus:border-[#bcd5f1] focus:outline-none focus:ring-2 focus:ring-[#eaf2fd]"
+                  />
+                </div>
+              </>
+            )}
+            {error ? (
+              <p className="rounded-[10px] bg-[#fdecec] px-3 py-2.5 text-[#c23934]" data-portal-delete-error>
+                {error}
+              </p>
+            ) : null}
+          </div>
+        )}
+
+        <DialogFooter>
+          {step === "confirm" ? (
+            <>
+              <Button variant="outline" onClick={() => setStep("review")} disabled={busy}>
+                Go back
+              </Button>
+              <Button variant="destructive" onClick={() => void run()} disabled={busy} data-portal-delete-go>
+                {busy ? <Loader2 className="size-4 animate-spin" /> : "Yes, delete this portal"}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={onClose}>
+                {plan && !plan.blocked && !loadError ? "Cancel" : "Close"}
+              </Button>
+              {plan && !plan.blocked && !loadError ? (
+                <Button
+                  variant="destructive"
+                  onClick={() => setStep("confirm")}
+                  disabled={!ready}
+                  data-portal-delete-continue
+                >
+                  Continue
+                </Button>
+              ) : null}
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

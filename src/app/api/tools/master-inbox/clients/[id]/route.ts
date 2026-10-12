@@ -9,12 +9,16 @@ import { withFeatureFlag } from "@/lib/tools/master-inbox/portals/feature-flags"
 import { TEAM_SMS_FLAG } from "@/lib/tools/master-inbox/portals/team-sms";
 import { requireAuthedUser, retagUnknownThreads } from "../route";
 import { isAdminUser } from "@/lib/identity/admin-db";
+import { deletePortal, PortalDeleteRefused } from "@/lib/clients/delete-portal";
+import { clientsChanged } from "@/lib/clients/after-change";
 
 // PATCH  /api/clients/[id]   -> rename + edit aliases, portal URL / on-off,
 //                               SMS alerts on-off (Client Portals page)
-// DELETE /api/clients/[id]   -> delete the client (threads referencing it
-//                               keep client_id NULL via the FK's ON DELETE
-//                               SET NULL — they'll re-tag next webhook).
+// DELETE /api/clients/[id]   -> delete this ONE portal and leave the client
+//                               (admins; body { confirm, acceptDataLoss } —
+//                               see lib/clients/delete-portal.ts). Threads
+//                               referencing it keep client_id NULL via the
+//                               FK's ON DELETE SET NULL.
 //
 // The "Unknown" row (slug='unknown') is protected: rename/delete on it
 // returns 400 because it's the system fallback target.
@@ -199,79 +203,64 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const auth = await requireAuthedUser();
   if ("error" in auth) return auth.error;
-  // Deleting a client cascades its pipeline, agents, DNC list and team, with
-  // no undo. The portal guard below is one PATCH away from passing (anyone
-  // with the inbox grant can switch a portal off), so the delete itself is
-  // for admins. Everyone else removes clients through Clients → Delete.
+  /*
+   * Deleting ONE portal, and leaving the client (13 Oct: "Add the ability to
+   * delete client portals" — "Portal only, client stays", admins only).
+   *
+   * It cascades the portal's pipeline, agents, DNC list and team, with no
+   * undo, and the "not live" guard is one PATCH away from passing — anyone
+   * with Client Portals can switch a portal off. So the delete itself is for
+   * admins, and it is checked HERE as well as in the page: the page only
+   * decides whether the button is drawn.
+   */
   if (!(await isAdminUser(auth.user.email))) {
-    return NextResponse.json(
-      { error: "Only workspace admins can delete a client here. Use Clients → Delete." },
-      { status: 403 },
-    );
+    return NextResponse.json({ error: "Only workspace admins can delete a portal." }, { status: 403 });
   }
   const { id } = await context.params;
 
-  const admin = createAdminSupabase();
-  const { data: existing } = await admin
-    .from("clients")
-    .select("id, slug")
-    .eq("id", id)
-    .maybeSingle();
-  if (!existing) {
-    return NextResponse.json({ error: "Client not found" }, { status: 404 });
-  }
-  if (existing.slug === "unknown") {
-    return NextResponse.json(
-      { error: "The 'Unknown' fallback client can't be deleted." },
-      { status: 400 },
-    );
-  }
+  // The typed name and the acknowledgement travel in the body. A bare DELETE
+  // — a script, a replayed request, the old client — is refused below for
+  // having typed nothing, which is the point.
+  const body = ((await request.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+  const confirm = typeof body.confirm === "string" ? body.confirm : "";
 
   /*
-   * A client row is the root of its portal. Deleting it cascades through the
-   * pipeline, the agents, the DNC list and the team — and there is no undo.
-   * If that client's portal is live, somebody outside this building loses
-   * access the moment this returns 200.
-   *
-   * The tool allows it because the tool is where portals are administered.
-   * Here it is refused while a portal is live, which also protects the demo
-   * portal that the client-facing demo link depends on.
-   *
-   * A client that never had a portal still deletes normally.
+   * Every rule is in lib/clients/delete-portal.ts, re-read at this moment:
+   * the Unknown bucket and the Demo Portal are never deleted, a LIVE portal is
+   * refused until it is switched off, the name must be typed exactly, and a
+   * portal that holds anything needs the acknowledgement too.
    */
-  const { data: portal } = await admin
-    .from("clients")
-    .select("portal_token, portal_enabled, name")
-    .eq("id", id)
-    .maybeSingle();
-  if (portal?.portal_token && portal.portal_enabled !== false) {
+  let result;
+  try {
+    result = await deletePortal(id, {
+      confirm,
+      // Only ever true when the caller ticked the box; anything else (missing,
+      // "true", 1) stays false and the gate holds.
+      acceptDataLoss: body.acceptDataLoss === true,
+      by: auth.user.email ?? null,
+    });
+  } catch (error) {
+    if (error instanceof PortalDeleteRefused) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return NextResponse.json(
-      {
-        error:
-          `"${portal.name}" has a live client portal. Deleting it would break that link ` +
-          `permanently. Disable the portal first if this is really intended.`,
-      },
-      { status: 409 },
+      { error: error instanceof Error ? error.message : "The portal could not be deleted" },
+      { status: 500 },
     );
-  }
-
-  // Threads pointing at this client lose their tag (FK is ON DELETE SET
-  // NULL). The next webhook on each thread re-tags it; or the user can
-  // manually re-classify later.
-  const { error } = await admin.from("clients").delete().eq("id", id);
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   _invalidateClientCache();
-  // Also bust the Inbox's client-list cache so the per-thread Client
-  // filter dropdown shows the new name immediately. Without this,
-  // renames take up to 60s to surface in the inbox UI.
+  // The inbox's Client filter and Clients panel list this row too.
   invalidateInboxClientsCache();
-  return NextResponse.json({ ok: true });
+  // The client record may have changed (its stored link), and every count on
+  // the Consistency page and the tools' count lines just moved by one.
+  clientsChanged();
+  // 200 even when a follow-up step failed: the portal IS gone, and saying
+  // otherwise would invite a second attempt at something already done.
+  return NextResponse.json({ ok: true, ...result });
 }

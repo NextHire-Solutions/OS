@@ -252,7 +252,7 @@ async function open(tab, path, waitFor, min = 1, budget = 45000) {
   const t0 = Date.now();
   await tab.send("Page.navigate", { url: BASE + path });
   let ok = false;
-  /* /inbox/portals walks 1,113 introductions on a cold load (~13s) and is TTL
+  /* /portals walks 1,113 introductions on a cold load (~13s) and is TTL
      cached for 5 minutes after — hence a budget, not a fixed sleep. */
   while (Date.now() - t0 < budget) {
     await new Promise((r) => setTimeout(r, 250));
@@ -279,10 +279,10 @@ async function fresh() {
 }
 
 // ===========================================================================
-console.log("\n  ── A. Portals list · /inbox/portals ──────────────────────────");
+console.log("\n  ── A. Portals list · /portals ──────────────────────────");
 {
   const tab = await fresh();
-  const nav = await open(tab, "/inbox/portals", "section.screen.on *", 40, 60000);
+  const nav = await open(tab, "/portals", "section.screen.on *", 40, 60000);
   console.log(`     loaded in ${nav.ms}ms  (${nav.errors.length} console errors, ${nav.netFails.length} bad responses)`);
   for (const e of [...new Set(nav.errors)].slice(0, 3)) console.log(`        console: ${e}`);
   for (const n of [...new Set(nav.netFails)].slice(0, 3)) console.log(`        network: ${n}`);
@@ -291,14 +291,19 @@ console.log("\n  ── A. Portals list · /inbox/portals ───────�
     const cards = window.__t.all('.card, [data-portal-stat]');
     return cards.map((c) => (c.innerText || '').replace(/\\s+/g, ' ').trim()).slice(0, 6);
   })()`);
-  record("A1", "Stat card — Clients", /client/i.test(stats.join(" ")) ? "PASS" : "FAIL", stats[0] || "");
+  // The first card counts PORTALS since 13 Oct — a client can have two, and the
+  // page said "57 clients" while Consistency said 54. Clients are counted by
+  // the shared line above the cards.
+  record("A1", "Stat card — Portals (not 'Clients')", /^portals/i.test(stats[0] || "") && !/^clients/i.test(stats[0] || "") ? "PASS" : "FAIL", stats[0] || "");
+  const countLine = await tab.eval(`(() => { const e = document.querySelector('[data-portal-countline] .ds-countline'); return e ? e.innerText.replace(/\\s+/g, ' ').trim() : ''; })()`);
+  record("A1b", "The shared client count line is above the cards", /\d+ clients/.test(countLine) && /portals/.test(countLine) ? "PASS" : "FAIL", countLine.slice(0, 90));
   record("A2", "Stat card — Live portals", /live portal/i.test(stats.join(" ")) ? "PASS" : "FAIL", stats[1] || "");
   record("A3", "Stat card — Total introductions", /introduction/i.test(stats.join(" ")) ? "PASS" : "FAIL", stats[2] || "");
 
-  const before = await tab.eval(`window.__t.all('[data-portal-row]').length || window.__t.all('a[href*="/inbox/portals/"]').length`);
+  const before = await tab.eval(`window.__t.all('[data-portal-row]').length || window.__t.all('a[href*="/portals/"]').length`);
   await tab.eval(`window.__t.type('input[type=search], input[placeholder*="Search clients"]', 'Demo')`);
   await new Promise((r) => setTimeout(r, 500));
-  const after = await tab.eval(`window.__t.all('[data-portal-row]').length || window.__t.all('a[href*="/inbox/portals/"]').length`);
+  const after = await tab.eval(`window.__t.all('[data-portal-row]').length || window.__t.all('a[href*="/portals/"]').length`);
   record("A4", "Client search filters the list", after < before && after > 0 ? "PASS" : "FAIL", `${before} → ${after} rows`);
 
   await tab.eval(`window.__t.type('input[type=search], input[placeholder*="Search clients"]', 'zzzznope')`);
@@ -307,8 +312,8 @@ console.log("\n  ── A. Portals list · /inbox/portals ───────�
   await tab.eval(`window.__t.type('input[type=search], input[placeholder*="Search clients"]', '')`);
   await new Promise((r) => setTimeout(r, 500));
 
-  const link = await tab.eval(`(() => { const a = window.__t.all('a[href*="/inbox/portals/"]')[0]; return a ? a.getAttribute('href') : null; })()`);
-  record("A6", "Row links into the drill-down", link && /\/inbox\/portals\/[0-9a-f-]{36}/.test(link) ? "PASS" : "FAIL", link || "no link");
+  const link = await tab.eval(`(() => { const a = window.__t.all('a[href*="/portals/"]')[0]; return a ? a.getAttribute('href') : null; })()`);
+  record("A6", "Row links into the drill-down", link && /\/portals\/[0-9a-f-]{36}/.test(link) ? "PASS" : "FAIL", link || "no link");
 
   /*
    * Following the link, not just reading it.
@@ -319,7 +324,7 @@ console.log("\n  ── A. Portals list · /inbox/portals ───────�
    * to Home. Asserting the href would not have caught that; arriving does.
    */
   const arrived = await tab.eval(`(async () => {
-    const a = window.__t.all('a[href*="/inbox/portals/"]')[0];
+    const a = window.__t.all('a[href*="/portals/"]')[0];
     if (!a) return 'no link';
     a.click();
     for (let i = 0; i < 80; i++) {
@@ -331,9 +336,9 @@ console.log("\n  ── A. Portals list · /inbox/portals ───────�
     return { path: location.pathname, header: false };
   })()`);
   record("A6b", "Following the row link lands on the drill-down",
-    arrived && arrived.header && /^\/inbox\/portals\/[0-9a-f-]{36}$/.test(arrived.path) ? "PASS" : "FAIL",
+    arrived && arrived.header && /^\/portals\/[0-9a-f-]{36}$/.test(arrived.path) ? "PASS" : "FAIL",
     arrived ? `${arrived.path} — pipeline header ${arrived.header ? "rendered" : "MISSING"}` : "no link");
-  await open(tab, "/inbox/portals", "a[href*=\"/inbox/portals/\"]", 5, 60000);
+  await open(tab, "/portals", "a[href*=\"/portals/\"]", 5, 60000);
 
   record("A7", "Portal path readout / 'No portal URL set'",
     (await tab.eval(`window.__t.has('/portal/') || window.__t.has('No portal URL set')`)) ? "VISUAL" : "FAIL");
@@ -378,17 +383,17 @@ console.log("\n  ── A. Portals list · /inbox/portals ───────�
 }
 
 // ===========================================================================
-console.log("\n  ── B–N. Drill-down · /inbox/portals/<Demo Portal> ────────────");
+console.log("\n  ── B–N. Drill-down · /portals/<Demo Portal> ────────────");
 {
   const tab = await fresh();
-  const nav = await open(tab, `/inbox/portals/${DEMO}`, "section.screen.on *", 60, 60000);
+  const nav = await open(tab, `/portals/${DEMO}`, "section.screen.on *", 60, 60000);
   console.log(`     loaded in ${nav.ms}ms  (${nav.errors.length} console errors, ${nav.netFails.length} bad responses)`);
   for (const e of [...new Set(nav.errors)].slice(0, 3)) console.log(`        console: ${e}`);
   for (const n of [...new Set(nav.netFails)].slice(0, 3)) console.log(`        network: ${n}`);
 
   // ---- B. chrome
   record("B1", "'All client portals' back link",
-    (await tab.eval(`window.__t.all('a[href="/inbox/portals"]').length > 0`)) ? "PASS" : "FAIL");
+    (await tab.eval(`window.__t.all('a[href="/portals"]').length > 0`)) ? "PASS" : "FAIL");
   record("B2", "Counts strip — pipeline / agents / DNC / team",
     (await tab.eval(`['in pipeline','agents','DNC','team'].every(window.__t.has)`)) ? "VISUAL" : "FAIL");
   record("B3", "'Open live portal' link",
@@ -896,7 +901,7 @@ console.log("\n  ── B–N. Drill-down · /inbox/portals/<Demo Portal> ──
 if (fubDeferred) {
   console.log("\n  ── E8. Follow Up Boss chip · a FUB-connected client (read-only) ──");
   const tab = await fresh();
-  await open(tab, `/inbox/portals/${FUB_CLIENT}`, "[data-pipeline-row]", 1, 90000);
+  await open(tab, `/portals/${FUB_CLIENT}`, "[data-pipeline-row]", 1, 90000);
   const chip = await tab.eval(`(() => {
     const t = window.__t.txt();
     return ['Push to FUB','In Follow Up Boss','Retry push','Push again'].filter((s) => t.includes(s));
@@ -909,7 +914,7 @@ if (fubDeferred) {
 console.log("\n  ── N. Pagination · a 220-row client (read-only, no clicks) ───");
 {
   const tab = await fresh();
-  await open(tab, `/inbox/portals/${BIG}`, "[data-pipeline-row]", 1, 90000);
+  await open(tab, `/portals/${BIG}`, "[data-pipeline-row]", 1, 90000);
   const pager = await tab.eval(`(() => ({
     readout: /\\d+[–-]\\d+ of \\d+ candidates/.test(window.__t.txt()),
     prev: window.__t.byText('Prev','button').length > 0,

@@ -27,6 +27,10 @@ const SECRET = pick("BS_SSO_SECRET") || pick("AUTH_SECRET");
 
 const SURFACES = {
   inbox:      ["/inbox/all-email", "/inbox/archive", "/inbox/settings", "/api/tools/master-inbox/threads?limit=1"],
+  // Client Portals — its own grant since 13 Oct. Its routes still live under
+  // /api/tools/master-inbox, which is exactly why they are listed here: the
+  // inbox grant must NOT open them, and this grant must not open the inbox's.
+  portals:    ["/portals", "/portals/client-view", "/api/tools/master-inbox/portals"],
   clients:    ["/clients", "/clients/biweekly", "/api/tools/client-health/clients"],
   analytics:  ["/analytics/campaign", "/analytics/campaigns", "/analytics/clients", "/api/tools/analytics/clients"],
   onboarding: ["/onboarding/pipeline", "/onboarding/stages", "/api/tools/onboarding/stages"],

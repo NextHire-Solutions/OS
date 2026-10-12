@@ -31,7 +31,7 @@ const WIDTHS = (process.env.WIDTHS || "1512,1280,1100,960,768").split(",").map(N
 // the 42 screens between them; the full list below is the default.
 const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.trim()).filter(Boolean) : [
   "/", "/performance", "/performance/billing", "/roster", "/admin/team", "/account",
-  "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/trash", "/inbox/portals",
+  "/inbox/all-email", "/inbox/reminders", "/inbox/archive", "/inbox/trash", "/portals",
   "/inbox/settings", "/inbox/settings/labels", "/inbox/settings/templates",
   "/inbox/settings/ai-labeling",
   "/clients", "/clients/biweekly",
@@ -54,7 +54,7 @@ const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.t
    * screen comes up empty, which the render suite reports.
    */
   "/inbox/all-email/4b29f335-4d19-4822-8b01-d30f1a98e6a3",
-  "/inbox/portals/c370499d-8cc4-4c1f-93b0-f75d363b108d",
+  "/portals/c370499d-8cc4-4c1f-93b0-f75d363b108d",
   "/analytics/campaigns/55",
 ];
 

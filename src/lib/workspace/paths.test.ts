@@ -107,7 +107,8 @@ test("the rail section of each screen (9 Oct split)", () => {
   assert.equal(sectionOf("analytics:attribution"), "analytics");
   assert.equal(sectionOf("analytics:campaigns"), "campaign-management");
   assert.equal(sectionOf("analytics:client-view"), "campaign-management");
-  assert.equal(sectionOf("inbox:portals"), "inbox");
+  assert.equal(sectionOf("portals:list"), "portals");
+  assert.equal(sectionOf("portals:client-view"), "portals");
   assert.equal(sectionOf("home"), null);
 });
 
@@ -157,9 +158,28 @@ test("a conversation in Archive or Trash stays in Archive or Trash (12 Oct)", ()
 });
 
 test("every tool has its §8 Client view, addressed inside the tool", () => {
-  for (const tool of ["inbox", "clients", "analytics", "search"]) {
+  // The portal view moved with Client Portals (13 Oct): /portals/client-view.
+  for (const tool of ["portals", "clients", "analytics", "search"]) {
     const id = `${tool}:client-view`;
     assert.equal(pathForId(id), `/${tool}/client-view`);
     assert.equal(idForPath(`/${tool}/client-view`), id);
   }
+});
+
+test("Client Portals is its own product, at /portals (13 Oct)", () => {
+  assert.equal(pathForId("portals:list"), "/portals");
+  assert.equal(idForPath("/portals"), "portals:list");
+  // One portal's drill-down lives under the list.
+  assert.equal(idForPath("/portals/0b4c2a3e-0000-4000-8000-000000000000"), "portals:list");
+  const d = Object.fromEntries(destinations().map((x) => [x.id, x]));
+  assert.equal(d["portals:list"].tool, "portals", "guarded by its own grant, not Master Inbox's");
+  assert.equal(d["portals:list"].group, "Client Portals");
+  assert.equal(d["portals:client-view"].tool, "portals");
+  // Nothing of it is left inside Master Inbox's menu.
+  for (const gone of ["inbox:portals", "inbox:client-view"]) {
+    assert.equal(destinations().some((x) => x.id === gone), false, `${gone} is still in the menu`);
+  }
+  // The old addresses are redirected by the page (app/[[...slug]]/page.tsx);
+  // as a screen id they fall back to the inbox, never to a blank pane.
+  assert.equal(idForPath("/inbox/portals"), "inbox:all-email");
 });

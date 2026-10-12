@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 
 import type { ClientCounts, CountedTool } from "@/lib/reconcile/client-counts";
 
+import { listed } from "@/lib/reconcile/row-note";
+
 export { rowNote } from "@/lib/reconcile/row-note";
 
 /*
@@ -21,6 +23,8 @@ function fetchCounts(): Promise<ClientCounts | null> {
   return shared;
 }
 
+const NONE: readonly string[] = [];
+
 const list = (names: string[]) =>
   names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
@@ -35,19 +39,26 @@ export function useClientCounts(): ClientCounts | null {
   return c;
 }
 
-export function ClientCountLine({ tool, noun = "rows" }: { tool?: CountedTool; noun?: string }) {
+/*
+ * `omit` names rows the tool's table holds but THIS screen does not list —
+ * Client Portals leaves out Master Inbox's "Unknown" bucket, which is not a
+ * portal. They come off the row count and out of the explanation, so the
+ * number in the sentence is the number of rows on the screen.
+ */
+export function ClientCountLine({ tool, noun = "rows", omit = NONE }: { tool?: CountedTool; noun?: string; omit?: readonly string[] }) {
   const c = useClientCounts();
   if (!c) return null;
 
   const t = tool ? c.tools[tool] : undefined;
   const s = c.byStatus;
   const parts: string[] = [];
-  if (t && t.rows !== c.total) {
+  const { rows, extras } = t ? listed(t, omit) : { rows: 0, extras: [] };
+  if (t && rows !== c.total) {
     if (t.secondRows.length) {
       parts.push(`${t.secondRows.length} second portal${t.secondRows.length === 1 ? "" : "s"} of a client already counted (${list(t.secondRows.map((r) => r.name))})`);
     }
-    if (t.extras.length) {
-      parts.push(`${t.extras.length} ${t.extras.length === 1 ? "row that is" : "rows that are"} not a client (${list(t.extras.map((r) => r.name))})`);
+    if (extras.length) {
+      parts.push(`${extras.length} ${extras.length === 1 ? "row that is" : "rows that are"} not a client (${list(extras.map((r) => r.name))})`);
     }
   }
   const missing = t ? t.absent : [];
@@ -64,7 +75,7 @@ export function ClientCountLine({ tool, noun = "rows" }: { tool?: CountedTool; n
       </span>
       {parts.length ? (
         <span className="ds-countline-why">
-          This table has {t!.rows} {noun}: the {t!.present} clients, plus {parts.join(", plus ")}.{" "}
+          This table has {rows} {noun}: the {t!.present} clients, plus {parts.join(", plus ")}.{" "}
           <a href="/consistency">Why →</a>
         </span>
       ) : null}

@@ -166,7 +166,7 @@ export async function PortalDetail({ clientId }: { clientId: string }) {
     <div className="mi-theme mi-portals flex flex-col !overflow-hidden">
       {/* Staff bar above the embedded pipeline */}
       <div className="mi-portals-bar">
-        <Link href="/inbox/portals" className="back">
+        <Link href="/portals" className="back">
           <ChevronLeft />
           All client portals
         </Link>

@@ -86,6 +86,8 @@ export interface ToolDescriptor {
  */
 export const GRANTABLE_TOOLS: ToolDescriptor[] = [
   { id: "inbox", label: "Master Inbox", description: "Unified sales inbox for cold outreach replies." },
+  // Its own switch since 13 Oct; it used to come with Master Inbox.
+  { id: "portals", label: "Client Portals", description: "The client portals: each one's link, on/off, SMS alerts and pipeline." },
   { id: "clients", label: "Client Health", description: "Live client outreach health." },
   // One grant, two menu sections since 9 Oct: Campaign Analytics and Campaign Management.
   { id: "analytics", label: "Campaign Analytics & Management", description: "Campaign performance and attribution, and running campaigns." },

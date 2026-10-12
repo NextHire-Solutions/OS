@@ -24,7 +24,7 @@ const TARGETS = [
   ["Clients",          "/roster"],
   ["All Email",        "/inbox/all-email"],
   ["Campaign",         "/analytics/campaign"],
-  ["Client Portals",   "/inbox/portals"],
+  ["Client Portals",   "/portals"],
   ["Performance",      "/performance"],
 ];
 

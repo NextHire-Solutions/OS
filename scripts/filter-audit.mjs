@@ -34,7 +34,7 @@ const CDP = process.env.CDP || "http://localhost:9470";
 
 const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",") : [
   "/roster", "/performance", "/performance/billing",
-  "/inbox/all-email", "/inbox/archive", "/inbox/reminders", "/inbox/portals",
+  "/inbox/all-email", "/inbox/archive", "/inbox/reminders", "/portals",
   "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/campaigns", "/analytics/attribution",
   "/analytics/clients", "/analytics/schedule", "/analytics/infrastructure",

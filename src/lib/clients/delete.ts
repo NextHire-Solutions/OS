@@ -115,7 +115,7 @@ const CASCADE_TABLES = [
   ["client_team_members", "teamMembers"],
 ] as const;
 
-async function countCascade(miClientId: string): Promise<CascadeCounts> {
+export async function countCascade(miClientId: string): Promise<CascadeCounts> {
   const db = getMasterInboxSupabase();
   const counts: Record<string, number> = {};
   for (const [table, key] of CASCADE_TABLES) {

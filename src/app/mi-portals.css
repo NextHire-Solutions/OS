@@ -522,6 +522,9 @@
 .mi-portals .ib:active:not(:disabled) { transform: scale(0.9); }
 .mi-portals .ib svg { width: 16px; height: 16px; }
 .mi-portals .ib.on { color: var(--green); }
+/* "Delete portal" (admins): quiet until pointed at, then unmistakably red —
+   it sits one slot from "Edit URL" and must not be pressed by momentum. */
+.mi-portals .ib.ib-danger:hover:not(:disabled) { background: var(--red-bg, #FDECEC); color: var(--red); }
 
 /* ── The design's controls ───────────────────────────────────────────────── */
 .mi-portals .inp {

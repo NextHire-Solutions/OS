@@ -59,7 +59,7 @@
  */
 
 /** Tools a grant can be issued for. Keep in sync with the Command Center registry. */
-export type ToolId = "inbox" | "clients" | "analytics" | "search" | "onboarding";
+export type ToolId = "inbox" | "portals" | "clients" | "analytics" | "search" | "onboarding";
 
 /*
  * Adding a tool here is backward compatible on purpose: `grants` is intersected
@@ -69,6 +69,13 @@ export type ToolId = "inbox" | "clients" | "analytics" | "search" | "onboarding"
  */
 export const ALL_TOOLS: readonly ToolId[] = [
   "inbox",
+  /*
+   * Client Portals, a product of its own since 13 Oct (it was a page of
+   * Master Inbox, on the `inbox` grant). Nobody is granted it by this line:
+   * admins hold every tool, and everyone else has it only once it is switched
+   * on for them on Team access — the user's decision, "admins only to start".
+   */
+  "portals",
   "clients",
   "analytics",
   "search",

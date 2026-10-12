@@ -91,3 +91,54 @@ test("removed Onboarding screens are not gated — an old link opens Home; its A
   assert.equal(toolForPath("/onboarding"), null);
   assert.equal(toolForPath("/api/tools/onboarding/stages"), "onboarding");
 });
+
+test("Client Portals is guarded by its own grant — screens, old addresses and its routes (13 Oct)", () => {
+  const id = "0b4c2a3e-0000-4000-8000-000000000000";
+  // Screens.
+  assert.equal(toolForPath("/portals"), "portals");
+  assert.equal(toolForPath(`/portals/${id}`), "portals");
+  assert.equal(toolForPath("/portals/client-view"), "portals");
+  // The old addresses redirect to the new ones, so they carry the new grant:
+  // someone with Client Portals and not Master Inbox must not be refused on a
+  // bookmark, and someone with only Master Inbox must not get in through one.
+  assert.equal(toolForPath("/inbox/portals"), "portals");
+  assert.equal(toolForPath(`/inbox/portals/${id}`), "portals");
+  assert.equal(toolForPath("/inbox/client-view"), "portals");
+
+  // Its routes still live under /api/tools/master-inbox.
+  for (const path of [
+    "/api/tools/master-inbox/portals",
+    "/api/tools/master-inbox/portal/some-token-abc123/pipeline",
+    "/api/tools/master-inbox/portal/some-token-abc123/pipeline/42/notes",
+    "/api/tools/master-inbox/portal/some-token-abc123/stages",
+    `/api/tools/master-inbox/clients/${id}`,
+    `/api/tools/master-inbox/clients/${id}/delete-plan`,
+  ]) {
+    assert.equal(toolForPath(path), "portals", path);
+  }
+});
+
+test("splitting Client Portals out takes nothing from Master Inbox (13 Oct)", () => {
+  // Every one of these is called by an inbox screen or a token-authenticated
+  // feed. Gating any of them on `portals` would break the inbox for someone
+  // who holds Master Inbox only — which, from 13 Oct, is everyone but admins.
+  for (const path of [
+    "/inbox",
+    "/inbox/archive",
+    "/inbox/settings",
+    "/inbox/reminders",
+    "/api/tools/master-inbox/clients",
+    "/api/tools/master-inbox/clients/status",
+    "/api/tools/master-inbox/clients/intro-stats",
+    "/api/tools/master-inbox/clients/intros",
+    "/api/tools/master-inbox/clients/portals",
+    "/api/tools/master-inbox/threads",
+    "/api/tools/master-inbox/lists",
+    "/api/tools/master-inbox/webhooks/emailbison",
+  ]) {
+    assert.equal(toolForPath(path), "inbox", path);
+  }
+  // A look-alike is not a portal route: only a UUID after /clients is.
+  assert.equal(toolForPath("/api/tools/master-inbox/portalsx"), "inbox");
+  assert.equal(toolForPath("/api/tools/master-inbox/clients/not-a-uuid"), "inbox");
+});

@@ -98,7 +98,9 @@ test("the grantable tools exclude the Database app", () => {
   // lists answer different questions and are allowed to differ.
   const ids = GRANTABLE_TOOLS.map((t) => t.id);
   // Onboarding is no longer offered (9 Oct — the section was removed).
-  assert.deepEqual(ids, ["inbox", "clients", "analytics", "search"]);
+  // Client Portals is its own switch since 13 Oct ("its own switch on team
+  // access page") — beside Master Inbox, which it was a page of.
+  assert.deepEqual(ids, ["inbox", "portals", "clients", "analytics", "search"]);
   assert.equal(ids.includes("database" as never), false);
 });
 

@@ -21,7 +21,7 @@ const B = "/Users/sankalpdutt/Desktop/Code/brokerstaffer-os";
 
 const SCREENS = process.env.SCREENS ? process.env.SCREENS.split(",") : [
   "/roster","/performance","/performance/billing",
-  "/inbox/all-email","/inbox/open-responses","/inbox/archive","/inbox/reminders","/inbox/portals",
+  "/inbox/all-email","/inbox/open-responses","/inbox/archive","/inbox/reminders","/portals",
   "/clients","/clients/biweekly",
   "/analytics/campaign","/analytics/campaigns","/analytics/attribution",
   "/analytics/clients","/analytics/schedule","/analytics/infrastructure",
