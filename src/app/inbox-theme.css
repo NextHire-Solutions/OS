@@ -34,9 +34,34 @@
  * `background-color: var(--color-accent)`, that resolved to nothing, and the
  * highlight simply did not paint. It is defined below, so hover and selection
  * are visible for the first time.
+ *
+ * (12 Oct) They were not. Defining `--accent` here was half of it; Tailwind
+ * only emits `bg-accent` when `--color-accent` exists in `@theme`, and it did
+ * not. The mapping is in globals.css now, and it reads the four names below.
  */
 
+/*
+ * What `bg-accent`, `bg-muted` and `text-destructive` resolve to.
+ *
+ * On `:root`, not `.mi-theme`: menus and dialogs render in a portal on <body>,
+ * outside `.mi-theme`, and a menu item's keyboard highlight is `focus:bg-accent`.
+ * New names, so nothing else in the OS can already be reading them — the OS's
+ * own `--accent` (brand blue) and `--muted` (a text grey) are left alone.
+ */
+:root {
+  --mi-accent: var(--inset);
+  --mi-accent-foreground: var(--ink);
+  --mi-muted: var(--inset);
+  --mi-destructive: var(--red);
+}
+
 .mi-theme {
+  /* A conversation that has been opened. Deeper than `--inset`, which is the
+     hover on an unread row — the two have to be tellable apart at a glance. */
+  --mi-read: #EBEDF1;
+  --mi-read-hover: #E2E5EA;
+  --mi-read-line: #DFE2E8;
+
   /* Surfaces — the mockup's white-on-grey, not the app's oklch near-white. */
   --background: var(--surface);
   --surface-elevated: var(--white);

@@ -27,6 +27,7 @@
 
 import "@/app/mi-inbox.css";
 
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/master-inbox/top-bar";
 import { TabBar } from "@/components/master-inbox/tab-bar";
@@ -37,6 +38,9 @@ import { ProspectPanel } from "@/components/master-inbox/prospect-panel";
 import { RealtimeRefresher } from "@/components/master-inbox/realtime-refresher";
 import { ClickRenderTiming } from "@/components/master-inbox/perf-timing";
 import { InboxNavProvider } from "@/components/master-inbox/inbox-nav";
+import { ClientLists } from "./mockup/client-lists";
+import { ClientsToggle } from "./mockup/clients-toggle";
+import { CLIENTS_PANEL_COOKIE, CLIENTS_PANEL_HIDDEN } from "./mockup/clients-panel-cookie";
 import { requireSession } from "@/lib/auth/workspace";
 import { loadThreads } from "@/lib/tools/master-inbox/inbox/threads";
 import { loadThreadDetail } from "@/lib/tools/master-inbox/inbox/thread-detail";
@@ -45,7 +49,7 @@ import { loadLabels } from "@/lib/tools/master-inbox/inbox/labels";
 import { loadChannels } from "@/lib/tools/master-inbox/inbox/channels";
 import { loadCampaigns } from "@/lib/tools/master-inbox/inbox/campaigns";
 import { loadClients } from "@/lib/tools/master-inbox/inbox/clients";
-import { loadLists } from "@/lib/tools/master-inbox/inbox/lists";
+import { loadLists, loadListUnseenCounts } from "@/lib/tools/master-inbox/inbox/lists";
 import { loadChannelEmailMap } from "@/lib/tools/master-inbox/inbox/channel-emails";
 import { decodeFilter, type FilterState } from "@/lib/tools/master-inbox/inbox/filters";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -107,6 +111,28 @@ export async function ThreadDetail({ view, threadId, f, list, page, q }: ThreadD
     });
   };
 
+  /*
+   * Whether this person hid the Clients panel. Read here so the first paint
+   * already has it hidden, instead of drawing four columns and then three.
+   */
+  const clientsHidden = (await cookies()).get(CLIENTS_PANEL_COOKIE)?.value === CLIENTS_PANEL_HIDDEN;
+
+  /*
+   * The Clients panel's "N new" pills — STARTED here, not awaited.
+   *
+   * The list screen awaits this beside its other loaders. Here it turned out
+   * to be the slowest of the thirteen (two queries, ~715ms against ~465ms for
+   * the next slowest, measured over 47 opens), which made every conversation
+   * a quarter of a second slower to open in order to draw a pill in a side
+   * panel. So it is handed to the panel as a promise: the conversation paints
+   * on the other loaders, and the pills fill in when this arrives. A failure
+   * means no pills, never a failed page.
+   */
+  const listCountsLater: Promise<Record<string, number>> = timed(
+    "loadListUnseenCounts (streamed, not awaited)",
+    loadListUnseenCounts(session.activeWorkspace.id),
+  ).catch(() => ({}));
+
   const [threadPage, detail, views, viewCounts, labels, channels, campaigns, clients, lists, currentView, emailByChannelId] = await Promise.all([
     timed("loadThreads", loadThreads(session.activeWorkspace.id, view, filterFromUrl, list ?? null, pageNum, searchQuery)),
     timed("loadThreadDetail", loadThreadDetail(session.activeWorkspace.id, threadId)),
@@ -166,6 +192,7 @@ export async function ThreadDetail({ view, threadId, f, list, page, q }: ThreadD
 
         {/* The design's filter band, holding the tool's 921-line filter builder. */}
         <div className="mi-filter">
+          <ClientsToggle initialCollapsed={clientsHidden} />
           <FilterBar
             initialFilter={initialFilter}
             labels={labels}
@@ -186,7 +213,21 @@ export async function ThreadDetail({ view, threadId, f, list, page, q }: ThreadD
          * scroll memory across navigations, optimistic read state, pagination and
          * the click→render timing probe, none of which a repaint is worth losing.
          * It is restyled from CSS instead.
+         *
+         * The Clients panel sits beside all three, as it does in the tool —
+         * it used to vanish the moment a conversation was opened. `.mi-split`
+         * is the same row the list screen puts it in; `.mi-split-conv` is what
+         * lets it give way on a narrow stage (mi-inbox.css).
          */}
+        <div className="mi-split mi-split-conv">
+          <ClientLists
+            lists={lists}
+            activeListId={list ?? null}
+            view={view}
+            listCountsLater={listCountsLater}
+            collapsible
+            initialCollapsed={clientsHidden}
+          />
         <div className="mi-conv">
           <aside className="pcol mi-conv-rail">
             {/*
@@ -242,6 +283,7 @@ export async function ThreadDetail({ view, threadId, f, list, page, q }: ThreadD
             })()}
           />
           <ProspectPanel detail={detail} />
+        </div>
         </div>
         <RealtimeRefresher workspaceId={session.activeWorkspace.id} />
         <ClickRenderTiming threadId={threadId} />

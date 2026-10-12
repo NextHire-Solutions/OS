@@ -65,11 +65,21 @@
   background: var(--blue-ink);
   border-color: var(--blue-ink);
 }
-/* Destructive keeps the design's red rather than shadcn's. */
-[data-slot="button"].bg-destructive {
+/* Destructive keeps the design's red rather than shadcn's.
+   `bg-destructive/10` is the class the kit's destructive variant actually
+   carries (mi-ui/button.tsx); `.bg-destructive` alone matched nothing, so
+   "Delete 3" in the delete-forever dialog was drawn as a plain white button
+   beside Cancel. `~=` because the class contains a slash. */
+[data-slot="button"].bg-destructive,
+[data-slot="button"][class~="bg-destructive/10"] {
   background: var(--red);
   border-color: var(--red);
   color: #fff;
+}
+[data-slot="button"].bg-destructive:hover:not(:disabled),
+[data-slot="button"][class~="bg-destructive/10"]:hover:not(:disabled) {
+  background: #B3322A;
+  border-color: #B3322A;
 }
 /* Ghost and icon-only buttons become the design's `.ib`: no border, no shadow. */
 [data-slot="button"].bg-transparent,
@@ -173,6 +183,12 @@
 [data-slot="dialog-description"],
 [data-slot="sheet-description"] { font-size: 13px; color: var(--muted); }
 [data-slot="dialog-footer"] { gap: 8px; padding-top: 4px; }
+/* The kit gives a footer `bg-muted/50`. That class painted nothing until
+   `--color-muted` was mapped (globals.css, 12 Oct); now it would, as a grey
+   slab sitting 6px inside the card's padding. The design's dialog has no
+   footer band, so it stays as it has always looked here. */
+[data-slot="dialog-footer"],
+[data-slot="card-footer"] { background: none; }
 
 /* ── Labels, switches, checkboxes, badges ──────────────────────────────────── */
 [data-slot="label"] {
@@ -315,4 +331,18 @@
   border-radius: var(--r-md, 12px);
   border-color: var(--line);
   background: var(--surface);
+}
+/*
+ * …and the hover that rule took away (12 Oct).
+ *
+ * The selector above was written for message cards, but "rounded, bordered,
+ * bg-background" also describes every bordered control in the inbox: the
+ * filter box's field pickers, the reply box's Templates / Attach / AI chips,
+ * the side list's pager. This file is unlayered, so it pinned their background
+ * and their own `hover:bg-accent` could never show — twenty controls with no
+ * hover at all. Same colour the utility would have used; in the two places
+ * where the surface behind is already that grey, mi-inbox.css darkens it.
+ */
+.mi-theme [class*="rounded"][class*="border"][class*="bg-background"][class*="hover:bg-accent"]:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--mi-accent);
 }

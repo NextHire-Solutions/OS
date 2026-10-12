@@ -394,10 +394,14 @@
   box-shadow: inset 3px 0 0 var(--blue);
 }
 .mi-conv-rail li > a[class~="bg-accent"]:hover { background: var(--blue-pale) !important; }
-/* Read rows recede. The tool washes them zinc-200, which is a different grey
-   from every other recessed surface in the design. */
-.mi-conv-rail li > a[class*="bg-zinc-200"] { background: var(--inset) !important; }
-.mi-conv-rail li > a[class*="bg-zinc-200"]:hover { background: var(--inset-2) !important; }
+/* Read rows recede. The tool washes them zinc-200; here it is the same grey
+   the conversation list uses for an opened row (`--mi-read`, inbox-theme.css)
+   so a row is the same colour in the list and in this rail. It was `--inset`,
+   which is also the hover on an unread row — the two were indistinguishable
+   the moment the pointer moved. */
+.mi-conv-rail li > a[class*="bg-zinc-200"] { background: var(--mi-read) !important; }
+.mi-conv-rail li > a[class*="bg-zinc-200"]:hover { background: var(--mi-read-hover) !important; }
+.mi-conv-rail li:has(> a[class*="bg-zinc-200"]) { border-bottom-color: var(--mi-read-line) !important; }
 
 /* The unread dot and the channel tile, at the design's size and colour. */
 .mi-conv-rail li span[class*="rounded-full"][class*="bg-blue-500"] {

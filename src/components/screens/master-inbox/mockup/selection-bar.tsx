@@ -71,6 +71,15 @@ export function MockupSelectionBar({
   const n = selected.length;
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
+  /*
+   * Ticked when every row on the page is selected, a dash when only some are.
+   * A solid tick over three of fifty rows says "all of them", and the bulk
+   * buttons beside it act on what is ticked — so the box has to tell the two
+   * apart. Styled from `aria-checked` (mi-inbox.css), not an inline colour,
+   * which is what left it a blue square with nothing inside.
+   */
+  const rowsOnPage = total === 0 ? 0 : to - from + 1;
+  const allChecked: boolean | "mixed" = n === 0 ? false : n >= rowsOnPage ? true : "mixed";
 
   async function run(label: string, body: Record<string, unknown>) {
     if (busy) return;
@@ -102,10 +111,9 @@ export function MockupSelectionBar({
       <span
         className="cbx"
         role="checkbox"
-        aria-checked={n > 0}
+        aria-checked={allChecked}
         aria-label={n > 0 ? "Clear selection" : "Select every conversation on this page"}
         onClick={n > 0 ? onClear : onSelectAll}
-        style={{ cursor: "pointer", ...(n > 0 ? { background: "var(--blue)", borderColor: "var(--blue)" } : {}) }}
       />
 
       {n === 0 ? (
@@ -113,10 +121,11 @@ export function MockupSelectionBar({
           {from.toLocaleString("en-US")}–{to.toLocaleString("en-US")} of {total.toLocaleString("en-US")}
         </span>
       ) : labels && lists ? (
-        <>
-          <span className="tnum">{n} selected</span>
-          <BulkActionsBar selected={selected} onClear={onClear} labels={labels} lists={lists} view={view} />
-        </>
+        /*
+         * No count of its own here: BulkActionsBar opens with "N selected", so
+         * a second one beside it read "3 selected 3 selected".
+         */
+        <BulkActionsBar selected={selected} onClear={onClear} labels={labels} lists={lists} view={view} />
       ) : (
         <>
           <span className="tnum">{n} selected</span>

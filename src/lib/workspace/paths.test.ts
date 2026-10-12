@@ -143,6 +143,19 @@ test("Performance's sub-pages: Overview at /performance, Billing Calendar at /pe
   assert.equal(sectionOf("billing-calendar"), "performance");
 });
 
+test("a conversation in Archive or Trash stays in Archive or Trash (12 Oct)", () => {
+  // /inbox/archive/<threadId> must resolve to the Archive screen — which is
+  // what then has to open the conversation (page.tsx `folderView`). Resolving
+  // it to All Email would open the thread under the wrong view, and Back would
+  // leave Archive.
+  const thread = "0b4c2a3e-0000-4000-8000-000000000000";
+  assert.equal(idForPath(`/inbox/archive/${thread}`), "inbox:archive");
+  assert.equal(idForPath(`/inbox/trash/${thread}`), "inbox:trash");
+  assert.equal(idForPath(`/inbox/all-email/${thread}`), "inbox:all-email");
+  assert.equal(sectionOf("inbox:archive"), "inbox");
+  assert.equal(sectionOf("inbox:trash"), "inbox");
+});
+
 test("every tool has its §8 Client view, addressed inside the tool", () => {
   for (const tool of ["inbox", "clients", "analytics", "search"]) {
     const id = `${tool}:client-view`;

@@ -399,3 +399,314 @@
   -ms-overflow-style: none;
 }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ===========================================================================
+   PARITY WITH THE STANDALONE INBOX (12 Oct)
+
+   Twelve things the standalone Master Inbox does that this one did not. The
+   behaviour is in the components; what follows is how each one is drawn.
+   Everything is scoped under `.mi-theme`.
+   =========================================================================== */
+
+/* ── Hover on a bar that is already grey ────────────────────────────────────
+   `hover:bg-accent` resolves to `--mi-accent`, which is `--inset` — the same
+   grey as the selection bar and the thread rail's header. A hover that is the
+   colour of its own background is no hover, so on those two the highlight is
+   one step darker. */
+.mi-theme .mi-selbar,
+.mi-theme .mi-conv-rail > div:first-child { --mi-accent: var(--line); }
+
+/* ── An opened conversation is grey ─────────────────────────────────────────
+   Read and unread rows were both white; the only difference was an 8px dot
+   and a font weight. The tool washes a read row `zinc-200/90` so the unread
+   ones stand out as the white rows on a grey page. Same idea, in this
+   palette's cool grey. The hairline darkens with it — the default one is
+   lighter than the wash and would read as a white rule between grey rows. */
+.mi-theme .mi-row.read {
+  background: var(--mi-read);
+  border-bottom-color: var(--mi-read-line);
+}
+.mi-theme .mi-row.read:hover { background: var(--mi-read-hover); }
+/* The grey costs the muted text some contrast; give most of it back. */
+.mi-theme .mi-row.read .prev,
+.mi-theme .mi-row.read .tm { color: #687182; }
+/* The tile and the campaign chip are `--inset`, which is lighter than the
+   wash they now sit on. White keeps them the row's raised things. */
+.mi-theme .mi-row.read .tile,
+.mi-theme .mi-row.read .c-camp { background: var(--surface); }
+
+/* A ticked row is blue, read or not — the tick alone is 18px in a 60px row. */
+.mi-theme .mi-row.sel,
+.mi-theme .mi-row.sel:hover {
+  background: var(--blue-pale);
+  border-bottom-color: #D5E3FF;
+}
+
+/* ── The checkbox ───────────────────────────────────────────────────────────
+   It was a 16px box that turned solid blue when ticked, with nothing inside,
+   and it sat in a row that is one big link: a near miss opened the
+   conversation, which also marks it read.
+
+   The tick and the select-all dash are drawn from `aria-checked`. `::before`
+   is the target — invisible, and in a row it reaches the row's top, bottom
+   and left edges, so the whole left end of a row ticks it. A click on a
+   pseudo-element lands on its element, so the handler in list.tsx is the one
+   that runs. */
+.mi-theme .mi-row .cbx,
+.mi-theme .mi-selbar .cbx {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid #AEB6C2;
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.12s linear, background 0.12s linear;
+}
+.mi-theme .mi-row .cbx::before,
+.mi-theme .mi-selbar .cbx::before {
+  content: "";
+  position: absolute;
+}
+/* 60px row, 18px box: 21px above and below. Left: the 10px gap, the 8px
+   unread dot and the row's 20px padding. Right: most of the gap to the tile. */
+.mi-theme .mi-row .cbx::before { inset: -22px -8px -22px -40px; }
+.mi-theme .mi-selbar .cbx::before { inset: -11px -9px; }
+.mi-theme .mi-row .cbx:hover,
+.mi-theme .mi-selbar .cbx:hover { border-color: var(--blue); }
+
+.mi-theme .mi-row .cbx[aria-checked="true"],
+.mi-theme .mi-selbar .cbx[aria-checked="true"],
+.mi-theme .mi-selbar .cbx[aria-checked="mixed"] {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+.mi-theme .mi-row .cbx[aria-checked="true"]::after,
+.mi-theme .mi-selbar .cbx[aria-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1.5px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+/* Some rows on the page, not all of them. */
+.mi-theme .mi-selbar .cbx[aria-checked="mixed"]::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: #fff;
+}
+
+/* ── "Unknown" is not a client ──────────────────────────────────────────────
+   It is where a reply goes when nobody has been matched to it. In the client
+   amber it read as a client called Unknown. White with a grey outline, so it
+   reads as neutral on a white row and on a grey one. */
+.mi-theme .mi-row .c-client.c-unknown {
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px #D8DCE3;
+}
+
+/* ── Clients by status, above the client list ───────────────────────────────
+   The tool's `● 28 ● 9 ● 17`: active, paused, churned, from the same feed
+   that colours the dot on each row. Hidden until the feed answers. */
+.mi-theme .mi-list-counts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 10px 9px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.mi-theme .mi-list-counts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mi-theme .mi-list-counts .mi-list-dot { width: 8px; height: 8px; }
+/* The dot on each client, at the tool's size. 7px was the design's figure for
+   a rail with no status in it; here the colour is the whole message. */
+.mi-theme .mi-lists .mi-list-item .mi-list-dot { width: 9px; height: 9px; }
+
+/* ── The filter bar ─────────────────────────────────────────────────────────
+   `.mi-filter` is the design's band — a flex row with 14px/26px of padding —
+   and the tool's FilterBar is a full-width 44px bar with its own border. One
+   inside the other gave a bar that shrank to its two buttons, floated in the
+   padding with a border under just itself, and a Filters button drawn as a
+   full bordered `.btn` beside a bare refresh icon.
+
+   The band keeps its hairline and gives up its padding; the bar fills it and
+   gives up its border. Filters becomes what the tool draws: a quiet text
+   button, the same height as the icon beside it. */
+.mi-theme .mi-filter {
+  padding: 0 20px 0 14px;
+  gap: 4px;
+}
+.mi-theme .mi-filter > .mi-filterbar {
+  flex: 1;
+  min-width: 0;
+}
+.mi-theme .mi-filter .mi-filterbar-row {
+  border-bottom: 0;
+  padding-inline: 0;
+  background: none;
+}
+.mi-theme .mi-filter .mi-filterbar-row > [data-slot="button"],
+.mi-theme .mi-filter > .mi-clients-toggle {
+  height: 32px;
+  padding: 0 10px;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  transition: background 0.12s linear, color 0.12s linear;
+}
+.mi-theme .mi-filter .mi-filterbar-row > [data-slot="button"]:hover:not(:disabled),
+.mi-theme .mi-filter .mi-filterbar-row > [data-slot="button"][aria-expanded="true"],
+.mi-theme .mi-filter > .mi-clients-toggle:hover {
+  background: var(--inset);
+  color: var(--ink);
+}
+.mi-theme .mi-filter > .mi-clients-toggle svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.mi-theme .mi-filter > .mi-clients-toggle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* ── The Clients panel beside an open conversation ──────────────────────────
+   The tool keeps its client list on screen while a conversation is open; here
+   it vanished, so changing client meant going back to the list first.
+
+   It cannot simply be a fourth column at every width. This workspace has a
+   264px navigation rail the tool does not, and four columns on a laptop leave
+   the conversation a few words wide — the failure mi-conversation.css §6
+   already describes. So, by the width of the stage (a container query, because
+   collapsing the navigation rail changes it and the viewport does not):
+
+       1200px and up   a real column. Under 1420px the thread rail and the
+                       prospect panel each give some width back to pay for it.
+       under 1200px    out of the flow. The "Clients" button in the filter
+                       bar opens it as a drawer over the thread rail.
+
+   The button is there at every width and also hides the column, for someone
+   who wants the reading room back; that choice is remembered (a cookie, so
+   the server draws it right the first time — see clients-panel.ts).
+
+   `--mi-lists-mode` is how the script knows which of the two it is in without
+   measuring anything: it reads the value this stylesheet resolved. */
+.mi-theme .mi-split-conv { position: relative; }
+/*
+ * A query container only from 1024px up.
+ *
+ * Being a container can make an element the containing block for anything
+ * `position: fixed` inside it (browsers differ on whether it does). Exactly
+ * one thing in here is fixed: the reply box, below 1024px, where it is the
+ * tool's full-height sheet against the window. Under that width the stage is
+ * always narrower than 1200px anyway, so the drawer rules are simply stated
+ * again in a media query further down and nothing here needs measuring.
+ */
+@media (min-width: 1024px) {
+  .mi-theme .mi-split-conv {
+    container-type: inline-size;
+    container-name: mi-convsplit;
+  }
+}
+.mi-theme .mi-split-conv > .mi-conv { flex: 1; min-width: 0; }
+.mi-theme .mi-split-conv > .mi-lists { --mi-lists-mode: column; }
+.mi-theme .mi-split-conv > .mi-lists[data-collapsed="true"] { display: none; }
+
+/*
+ * `min-width` / `max-width`, not `(width >= 1200px) and (width < 1420px)`.
+ * The build rewrites `width < n` as `not (min-width: n)`, and after an `and`
+ * that is not valid CSS — the browser dropped the whole block, silently, and
+ * the conversation was left 336px wide beside four full-size columns.
+ */
+@container mi-convsplit (min-width: 1200px) and (max-width: 1419.98px) {
+  /* Only while the column is actually showing, and nobody is writing a reply. */
+  .mi-theme .mi-split-conv:not(:has(.mi-conv-main [class*="lg:w-[480px]"][class*="border-l"])) > .mi-lists:not([data-collapsed="true"]) { max-width: 232px; }
+  .mi-theme .mi-split-conv:not(:has(.mi-conv-main [class*="lg:w-[480px]"][class*="border-l"])) > .mi-lists:not([data-collapsed="true"]) ~ .mi-conv > .mi-conv-rail { width: 256px; }
+  .mi-theme .mi-split-conv:not(:has(.mi-conv-main [class*="lg:w-[480px]"][class*="border-l"])) > .mi-lists:not([data-collapsed="true"]) ~ .mi-conv > .mi-prospect { max-width: 320px; }
+  /* At 256px the side list's header has room for "1–50 of 12,130" and the
+     two arrows, not for "Page 1 / 243" as well — it wrapped onto a second
+     line inside a 36px strip. The range already says where you are. */
+  .mi-theme .mi-split-conv:not(:has(.mi-conv-main [class*="lg:w-[480px]"][class*="border-l"])) > .mi-lists:not([data-collapsed="true"]) ~ .mi-conv > .mi-conv-rail > div:first-child > div:last-child > span { display: none; }
+
+  /*
+   * While the reply box is open, the column steps aside.
+   *
+   * The reply box is `min(600px, 92%)` of the conversation pane
+   * (inbox-theme.css). Beside the Clients column that pane is 440px, which
+   * makes the box 404px: narrower than the tool's own 480px, and its footer —
+   * attach, AI reply, Introduce, Templates, Send — no longer fits on one line,
+   * so Send ended up behind a sideways scrollbar. Nobody changes client in the
+   * middle of writing a reply, so for exactly that long the screen is laid out
+   * as it was before the column existed: 320 / 568 / 360, reply box 522px.
+   * The selector is the one inbox-theme.css already uses to find the reply box.
+   */
+  .mi-theme .mi-split-conv:has(.mi-conv-main [class*="lg:w-[480px]"][class*="border-l"]) > .mi-lists { display: none; }
+}
+/* The header never wraps, at any width. */
+.mi-theme .mi-conv-rail > div:first-child > span { white-space: nowrap; }
+
+@container mi-convsplit (width < 1200px) {
+  /* Out of the flow, whatever the remembered choice says: there is no room
+     for a column here, so nothing owes it any width either. */
+  .mi-theme .mi-split-conv > .mi-lists {
+    --mi-lists-mode: drawer;
+    display: none;
+    max-width: min(320px, 86%);
+  }
+  /* Above the composer overlay (30) and the prospect panel (40). */
+  .mi-theme .mi-split-conv > .mi-lists[data-drawer="true"] {
+    display: flex;
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    z-index: 50;
+    box-shadow: 14px 0 40px rgba(13, 21, 38, 0.16);
+  }
+}
+
+/* The same rules below 1024px, where the split is not a container. */
+@media (max-width: 1023.98px) {
+  /* Out of the flow, whatever the remembered choice says: there is no room
+     for a column here, so nothing owes it any width either. */
+  .mi-theme .mi-split-conv > .mi-lists {
+    --mi-lists-mode: drawer;
+    display: none;
+    max-width: min(320px, 86%);
+  }
+  /* Above the composer overlay (30) and the prospect panel (40). */
+  .mi-theme .mi-split-conv > .mi-lists[data-drawer="true"] {
+    display: flex;
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    z-index: 50;
+    box-shadow: 14px 0 40px rgba(13, 21, 38, 0.16);
+  }
+}

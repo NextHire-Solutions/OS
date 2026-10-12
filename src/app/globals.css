@@ -114,6 +114,28 @@
   --color-selected-surface: var(--selected-surface);
   --color-ring: var(--ring);
 
+  /*
+   * The inbox's hover, active and destructive colours (12 Oct).
+   *
+   * Same failure as `bg-card` above, found on a different set of classes: the
+   * inbox's components say `hover:bg-accent` 46 times, `bg-muted` 23 and
+   * `text-destructive` on "Delete forever", and with no `--color-accent`,
+   * `--color-muted` or `--color-destructive` here Tailwind emitted none of
+   * them. No hover on the toolbar or the bulk buttons, no pressed state on
+   * Bold and Italic, no highlight on the search result under the arrow keys,
+   * and a grey "Delete forever".
+   *
+   * They point at `--mi-*` names (inbox-theme.css) and NOT at `--accent` /
+   * `--muted`, on purpose: workspace.css already owns both of those with
+   * different meanings — `--accent` is the brand blue and `--muted` is a TEXT
+   * grey used all over the OS. Mapping `bg-muted` to that would paint text
+   * grey as a background.
+   */
+  --color-accent: var(--mi-accent);
+  --color-accent-foreground: var(--mi-accent-foreground);
+  --color-muted: var(--mi-muted);
+  --color-destructive: var(--mi-destructive);
+
   --color-status-up: var(--status-up);
   --color-status-up-subtle: var(--status-up-subtle);
   --color-status-up-border: var(--status-up-border);

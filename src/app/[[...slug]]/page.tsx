@@ -93,12 +93,36 @@ function threadIdFrom(slug: string[] | undefined): string | null {
   return third && UUID.test(third) ? third : null;
 }
 
+/*
+ * Archive and Trash: the list, or one conversation in it.
+ *
+ * Both are real inbox views with their own rail entries, so each has its own
+ * screen key — and each used to render the list whatever the address said.
+ * A row in Archive links to /inbox/archive/<threadId>; the address changed,
+ * the list was drawn again, and the conversation never opened. The tool
+ * renders every view's conversation through the same thread page, so this
+ * does too.
+ */
+function folderView(
+  view: "archive" | "trash",
+  slug: string[] | undefined,
+  query: { f?: string; list?: string; page?: string; q?: string },
+) {
+  // Only when the address really is /inbox/<this view>/<threadId>.
+  const threadId = (slug ?? [])[1] === view ? threadIdFrom(slug) : null;
+  return threadId ? (
+    <ThreadDetail view={view} threadId={threadId} f={query.f} list={query.list} page={query.page} q={query.q} />
+  ) : (
+    <FullInbox view={view} f={query.f} list={query.list} page={query.page} q={query.q} />
+  );
+}
+
 
 /*
  * The Onboarding section — pipeline, stages, templates, settings and the
  * per-client page at /onboarding/clients/<id> — was removed on 9 Oct (OS
  * feedback). /onboarding addresses now open Home. Its webhook receivers and
- * shared code stay: see docs/HANDOVER.md §0.1.
+ * shared code stay: see docs/HANDOVER.md §0.2.
  */
 
 /*
@@ -374,13 +398,9 @@ export default async function WorkspacePage({
          * falling through to the default before, which showed the wrong
          * screen at a URL in the sidebar.
          */
-        "inbox:archive": (
-          <FullInbox view="archive" f={query.f} list={query.list} page={query.page} q={query.q} />
-        ),
+        "inbox:archive": folderView("archive", slug, query),
         // Same shape as Archive: a real inbox view through the same page.
-        "inbox:trash": (
-          <FullInbox view="trash" f={query.f} list={query.list} page={query.page} q={query.q} />
-        ),
+        "inbox:trash": folderView("trash", slug, query),
         /*
          * Leads is an empty placeholder in the live tool as well
          * (`app/(app)/leads/page.tsx` renders exactly this). Kept so the nav

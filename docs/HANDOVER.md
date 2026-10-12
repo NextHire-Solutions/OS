@@ -11,12 +11,13 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
-| **0.1** | [Navigation clean-up, 9 October](#01-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
-| **0.2** | [What changed on 6–7 October](#02-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
-| **0.3** | [What changed on 30 September](#03-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
-| **0.4** | [What changed on 29 September](#04-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
-| **0.5** | [What changed on 28 September](#05-what-changed-on-28-september) — the latest work, how it was verified, what is open |
-| **0.6** | [Switching off Analytics, Client Health and Onboarding](#06-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
+| **0.1** | [Master Inbox parity, 12 October](#01-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
+| **0.2** | [Navigation clean-up, 9 October](#02-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
+| **0.3** | [What changed on 6–7 October](#03-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
+| **0.4** | [What changed on 30 September](#04-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
+| **0.5** | [What changed on 29 September](#05-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
+| **0.6** | [What changed on 28 September](#06-what-changed-on-28-september) — the latest work, how it was verified, what is open |
+| **0.7** | [Switching off Analytics, Client Health and Onboarding](#07-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -160,7 +161,81 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
-## 0.1 Navigation clean-up, 9 October
+## 0.1 Master Inbox parity, 12 October
+
+Twelve things the standalone Master Inbox does that the OS inbox did not, from
+the client's side-by-side list. One release. Nothing in the standalone app,
+the portals or any database changed; no migration.
+
+| # | What was wrong in the OS | Now | Where |
+|---|---|---|---|
+| 1 | No `● 28 ● 9 ● 17` client counts | Strip under the panel's search box, from the status route's `counts` (clients on the master record, not lists) | `mockup/client-lists.tsx` |
+| 2 | Opened rows as white as unopened ones | Read rows are `--mi-read`; a row greys on the click (`opened`, the tool's `optimisticSeen`). Same grey in the conversation's side list | `mockup/list.tsx`, `mi-inbox.css`, `mi-conversation.css` |
+| 3 | Refresh / Filters in a short strip, Filters a big bordered button | The band gives up its padding, the tool's bar its border; Filters is a quiet button | `mi-inbox.css` (`.mi-filterbar*`) |
+| 4 | Filter box only closed from its own button | Outside click and Escape (`useDismiss`). The draft rows survive closing | `master-inbox/use-dismiss.ts`, `filter-bar.tsx` |
+| 5 | A conversation in Archive or Trash drew the list again | `folderView()` renders `ThreadDetail` for `/inbox/archive|trash/<id>` | `app/[[...slug]]/page.tsx` |
+| 6 | Back from a conversation landed at the top | `useScrollMemory`, keyed by the whole list address, on the shell's `.scroll` pane | `mockup/list.tsx` |
+| 7 | The Clients panel vanished beside a conversation | It stays — see below | `thread-detail.tsx`, `mockup/clients-*.ts(x)` |
+| 8 | No hover / pressed states (bulk buttons, Bold/Italic, search results, menus…) | `--color-accent`, `--color-muted`, `--color-destructive` were never mapped, so Tailwind emitted none of those classes | `globals.css`, `inbox-theme.css`, `mi-skin.css` |
+| 9 | "3 selected 3 selected" | Once (BulkActionsBar already prints it) | `mockup/selection-bar.tsx` |
+| 10 | Ticked box was a blue square; a near miss opened the conversation | Tick drawn from `aria-checked`; its `::before` target is the whole left end of the row; select-all shows a dash for "some" | `mi-inbox.css` |
+| 11 | "Delete forever" grey, its confirm a plain button | Red; the skin now matches the kit's real class (`bg-destructive/10`) | `mi-skin.css` |
+| 12 | "Unknown" looked like a client | Grey outline when `client_slug === "unknown"` | `mockup/list.tsx` |
+
+**The Clients panel beside a conversation.** The OS has a 264px navigation
+rail the standalone app does not, so four columns do not fit everywhere. By
+the width of the stage (a container query on `.mi-split-conv`, because
+collapsing the rail changes it and the viewport does not):
+
+- **1200px and up** — a real column. Under 1420px the thread rail goes to
+  256px and the prospect panel is capped at 320px to pay for it.
+- **Under 1200px** — out of the flow; the **Clients** button in the filter bar
+  opens it as a drawer (closes on outside click, Escape, or choosing a client).
+- The same button hides the column at any width. That choice is the cookie
+  `mi_clients_panel` (`hidden` / `shown`), read on the server so the first
+  paint is already right. The drawer's open state is never stored.
+- **While the reply box is open at 1200–1420px the column steps aside**
+  (`:has()` on the composer), so the reply box is exactly as wide as it was
+  before this release (it is `min(600px, 92%)` of the conversation pane, and
+  beside the column its footer no longer fitted on one line).
+
+**Three things that are not obvious from the code**
+
+- **`--mi-accent`, `--mi-muted`, `--mi-destructive` are new names on `:root`.**
+  They must not be pointed at `--accent` / `--muted`: workspace.css owns those
+  (brand blue; a TEXT grey). `:root`, not `.mi-theme`, because menus and
+  dialogs render in a portal on `<body>`.
+- **The panel is rebuilt on every navigation** — one catch-all route, so every
+  tab, page and conversation remounts the screen. `remembered` (module level in
+  `client-lists.tsx`) carries the last status, counts, unread pills and scroll
+  position across, or the panel flashes folder icons and jumps on every click.
+  Written only from effects, so it is empty on the server and on first paint.
+- **The conversation page does not await `loadListUnseenCounts`.** It was the
+  slowest of its loaders (~715ms against ~465ms for the next), so it is handed
+  to the panel as a promise (`listCountsLater`) and the pills fill in after the
+  page. `data-unseen-counts` on the panel says `pending` / `ready`.
+
+**Two CSS traps this cost time on**
+
+- The build rewrites `(width >= 1200px) and (width < 1420px)` in a container
+  query to `… and not (min-width: 1420px)`, which is not valid CSS; the browser
+  drops the whole block silently. Use `min-width` / `max-width`.
+- `mi-skin.css`'s message-card rule (`rounded` + `border` + `bg-background`)
+  also matches every bordered control in the inbox and, being unlayered, pinned
+  their background — about twenty buttons with no hover. The rule after it
+  gives the hover back.
+
+**How it was verified.** Real Chrome on a local production build reading the
+production databases, behind a proxy that refuses every write, refuses
+`/inbox/reminders` (rendering it fires reminders) and serves a conversation
+only if it is already read (rendering one marks it read): 145 checks. 35 other
+screens compared pixel-for-pixel with production. Then the same checks against
+production after the deploy. Note `scripts/conversation-ui-test.mjs` WRITES
+(labels, archive, mark unread) — never run it against production unguarded.
+
+---
+
+## 0.2 Navigation clean-up, 9 October
 
 From the client's "OS Feedback — Navigation & Cleanup" list. Shipped in four
 releases, each tested in a real Chrome as an admin and as each account
@@ -259,7 +334,7 @@ visit the removed screens.
 - The Database view's client names open the client's record
   (`/roster?client=<id>`) instead of the Onboarding page.
 
-## 0.2 What changed on 6–7 October
+## 0.3 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
 `e5e27c4` (Home, Client Health links, start date, speed), `e97f8d8` (profile,
@@ -307,7 +382,7 @@ from May on its cancelled subscription and Stripe no longer retries it; Properti
 people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
 Revolution) — add a person per market (territory "Boston" / "Florida").
 
-## 0.3 What changed on 30 September
+## 0.4 What changed on 30 September
 
 Deployed to `os` and verified on production (`69288cf` and after).
 
@@ -1029,7 +1104,7 @@ What changed, and why:
 
 ---
 
-## 0.4 What changed on 29 September
+## 0.5 What changed on 29 September
 
 All deployed to `os`, verified on production, pushed (`25c453c`, `a005c4e`).
 
@@ -1095,7 +1170,7 @@ Performance cards, for this week and last week:
 
 ---
 
-## 0.5 What changed on 28 September
+## 0.6 What changed on 28 September
 
 All deployed to `os`, verified on production, pushed (`1e66caa` … `b8cce7c`).
 
@@ -1123,7 +1198,7 @@ server errors; 37/37 open customer portals serving their page.
 
 ---
 
-## 0.6 Switching off Analytics, Client Health and Onboarding
+## 0.7 Switching off Analytics, Client Health and Onboarding
 
 **Stay live:** Master Inbox (its app serves every customer portal) and the
 Database app. **To be switched off once the OS is complete:** Analytics, Client
@@ -1143,7 +1218,7 @@ destination is an OS screen.
 |---|---|---|
 | Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
 | Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
-| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.1). Webhook receivers still live |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.2). Webhook receivers still live |
 
 **Switch-off order, per tool — never run two copies of a sync at once:**
 
@@ -1615,7 +1690,7 @@ Detail screens (no rail entry):
 
 Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
 `ai-labeling` (admin-only), plus `webhooks` (not offered). Members, Personal,
-Clients and Reply Agents were removed on 9 Oct — §0.1 says where the last two
+Clients and Reply Agents were removed on 9 Oct — §0.2 says where the last two
 went.
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
@@ -1628,7 +1703,7 @@ route still resolves, so an old bookmark degrades to All Email rather than 404s.
 In the live tool these are states of one page with **no URL of their
 own**. Here each is a real address, which is what lets the rail link straight to
 Delivery and the back button work. (Renamed 9 Oct: Weekly → Overview,
-Bi-Weekly → Delivery; Client Success removed — §0.1.)
+Bi-Weekly → Delivery; Client Success removed — §0.2.)
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
@@ -1647,7 +1722,7 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 
 ### 4.4 Campaign Analytics and Campaign Management — 4 + 3 destinations + campaign detail
 
-Two rail sections of ONE tool since 9 Oct (§0.1): Campaign, Volume,
+Two rail sections of ONE tool since 9 Oct (§0.2): Campaign, Volume,
 Infrastructure and Attribution under **Campaign Analytics**; Campaigns,
 Schedule and Clients (and its Client view) under **Campaign Management**.
 
@@ -1681,7 +1756,7 @@ Two notes for whoever works here:
 
 ### 4.5 Onboarding — removed 9 Oct
 
-The section and its screens were removed (§0.1, Release 4). Its webhook
+The section and its screens were removed (§0.2, Release 4). Its webhook
 receivers and shared library stay and are live.
 
 ### 4.6 Agent Search — 4 destinations
