@@ -15,7 +15,15 @@ import {
   LEAD_NAME_SORT,
   type LeadRow,
 } from "@/lib/tools/analytics/lead-columns.ts";
-import { CAMPAIGN_LEADS_URL, selectAllLeadIds, useAnalyticsData } from "./actions";
+import {
+  NO_LOCATION,
+  locationActive,
+  locationKey,
+  locationParams,
+  type LocationSelection,
+} from "@/lib/tools/analytics/campaigns/location-filter.ts";
+import { CAMPAIGN_LEADS_URL, CAMPAIGN_LEAD_LOCATIONS_URL, selectAllLeadIds, useAnalyticsData } from "./actions";
+import { LocationFilter } from "./location-filter";
 import { VolumeFilter } from "./volume-filter";
 import { useRangeSelect } from "./use-range-select";
 import { invalidate } from "../lazy";
@@ -96,6 +104,8 @@ export function CampaignLeads({
   const [status, setStatus] = useState<string | null>(null);
   // Sales volume from / to, in dollars (EmailBison only; Instantly leads carry no attributes).
   const [volume, setVolume] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
+  // Office city / home city / most transacted city (13 Oct; EmailBison only, like Sales volume).
+  const [location, setLocation] = useState<LocationSelection>(NO_LOCATION);
   const [visible, setVisible] = useColumnPrefs(
     LEAD_COLUMN_PREFS_KEY,
     LEAD_COLUMN_PREFS_VERSION,
@@ -119,7 +129,7 @@ export function CampaignLeads({
    * Page derived during render, not reset from an effect: a filter change
    * moves back to page 1 without rendering the stale page once first.
    */
-  const filterKey = `${debounced}|${status}|${sort?.key ?? ""}|${sort?.dir ?? ""}|${volume.min ?? ""}|${volume.max ?? ""}`;
+  const filterKey = `${debounced}|${status}|${sort?.key ?? ""}|${sort?.dir ?? ""}|${volume.min ?? ""}|${volume.max ?? ""}|${locationKey(location)}`;
   const [pageState, setPageState] = useState({ key: filterKey, page: 1 });
   const page = pageState.key === filterKey ? pageState.page : 1;
 
@@ -128,6 +138,7 @@ export function CampaignLeads({
   if (status) params.append("status", status);
   if (volume.min !== null) params.set("vmin", String(volume.min));
   if (volume.max !== null) params.set("vmax", String(volume.max));
+  for (const [k, v] of locationParams(location)) params.append(k, v);
   if (sort) {
     params.set("sort", sort.key);
     params.set("dir", sort.dir);
@@ -139,6 +150,7 @@ export function CampaignLeads({
    */
   const facetUrl = CAMPAIGN_LEADS_URL(campaignId, "facets=1&page=1");
   const rowsUrl = CAMPAIGN_LEADS_URL(campaignId, params.toString());
+  const locationsUrl = CAMPAIGN_LEAD_LOCATIONS_URL(campaignId);
 
   /*
    * KEEP "INTRODUCED" CURRENT (Amy, 8 Oct). Screen data is cached per URL for
@@ -151,6 +163,8 @@ export function CampaignLeads({
   useState(() => {
     invalidate(facetUrl);
     invalidate(rowsUrl);
+    // The Location control's cities and their counts, for the same reason.
+    invalidate(locationsUrl);
     return null;
   });
 
@@ -234,7 +248,7 @@ export function CampaignLeads({
     setLoadingAll(true);
     setSelectError(null);
     try {
-      setSelected(new Set(await selectAllLeadIds(campaignId, debounced, status, volume)));
+      setSelected(new Set(await selectAllLeadIds(campaignId, debounced, status, volume, location)));
     } catch (e) {
       setSelectError(e instanceof Error ? e.message : "Could not load the full selection");
     } finally {
@@ -244,6 +258,8 @@ export function CampaignLeads({
 
   const afterRemoval = () => {
     setSelected(new Set());
+    // A removed lead no longer counts towards its city in the Location control.
+    invalidate(locationsUrl);
     void reload();
     void facetQuery.reload();
   };
@@ -251,7 +267,14 @@ export function CampaignLeads({
   return (
     <section className="abox" style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--line-soft)" }}>
-        <Search value={search} onChange={setSearch} placeholder="Search name, email or company…" width={260} />
+        {/* Office city too since analytics 097 (Amy, 13 Oct) — EmailBison only;
+            an Instantly lead carries no office city to match. */}
+        <Search
+          value={search}
+          onChange={setSearch}
+          placeholder={isInstantly ? "Search name, email or company…" : "Search name, email, company or office city…"}
+          width={isInstantly ? 260 : 320}
+        />
 
         {/* Counts on the chips, so "how many bounced" is answered without
             clicking through each one. */}
@@ -273,6 +296,7 @@ export function CampaignLeads({
         </span>
 
         {!isInstantly ? <VolumeFilter min={volume.min} max={volume.max} onChange={setVolume} /> : null}
+        {!isInstantly ? <LocationFilter campaignId={campaignId} value={location} onChange={setLocation} /> : null}
 
         <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
           {/*
@@ -408,7 +432,10 @@ export function CampaignLeads({
               <tbody>
                 {total === 0 ? (
                   <EmptyRow colSpan={columns.length + 1}>
-                    {debounced || status
+                    {/* Any filter, not only the first two: with just a Sales
+                        volume range or a city applied this used to claim the
+                        campaign had no leads at all. */}
+                    {debounced || status || volume.min !== null || volume.max !== null || locationActive(location)
                       ? "No leads match that."
                       : "No leads recorded for this campaign yet. Membership is built from the send history, which syncs every three hours."}
                   </EmptyRow>

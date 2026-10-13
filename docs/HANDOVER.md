@@ -11,15 +11,16 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
-| **0.1** | [Client Portals as its own product, 13 October](#01-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
-| **0.2** | [SMS alerts for introductions, 13 October](#02-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
-| **0.3** | [Master Inbox parity, 12 October](#03-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
-| **0.4** | [Navigation clean-up, 9 October](#04-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
-| **0.5** | [What changed on 6–7 October](#05-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
-| **0.6** | [What changed on 30 September](#06-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
-| **0.7** | [What changed on 29 September](#07-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
-| **0.8** | [What changed on 28 September](#08-what-changed-on-28-september) — the latest work, how it was verified, what is open |
-| **0.9** | [Switching off Analytics, Client Health and Onboarding](#09-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
+| **0.1** | [Campaign leads: search by office city, and a Location filter, 13 October](#01-campaign-leads-search-by-office-city-and-a-location-filter-13-october) — two asks on the Leads tab; needs analytics migration 097 |
+| **0.2** | [Client Portals as its own product, 13 October](#02-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
+| **0.3** | [SMS alerts for introductions, 13 October](#03-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
+| **0.4** | [Master Inbox parity, 12 October](#04-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
+| **0.5** | [Navigation clean-up, 9 October](#05-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
+| **0.6** | [What changed on 6–7 October](#06-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
+| **0.7** | [What changed on 30 September](#07-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
+| **0.8** | [What changed on 29 September](#08-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
+| **0.9** | [What changed on 28 September](#09-what-changed-on-28-september) — the latest work, how it was verified, what is open |
+| **0.10** | [Switching off Analytics, Client Health and Onboarding](#010-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -163,14 +164,92 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
-## 0.1 Client Portals as its own product, 13 October
+## 0.1 Campaign leads: search by office city, and a Location filter, 13 October
+
+Campaign Management → Campaigns → a campaign → **Leads**. Two asks, the same
+morning:
+
+| Asked | By | Built |
+|---|---|---|
+| "Could we add the ability to search by office city in the search box" | Amy | The search box also matches the lead's office city |
+| "add location filter (office city, home city and most transacted city)" | Eddy | A **Location** chip beside Sales volume: pick cities per field |
+
+**Both are SQL, in the Analytics database — migration `097_os_lead_location_filter.sql`.**
+The Leads tab is searched, filtered, sorted and paged on the server (a campaign
+has thousands of leads; the Sales volume filter, analytics 096, is the precedent), so the
+OS only passes what was asked for. 097 changes the two OS-only EmailBison
+functions from 095/096 and adds one:
+
+| Function | Change |
+|---|---|
+| `analytics_os_campaign_lead_rows`, `…_lead_ids` | `p_search` also matches the `office city` attribute; new `p_loc jsonb` |
+| `analytics_os_campaign_lead_locations` | new — each field's cities in one campaign, with lead counts, as ONE json value |
+
+Dropped and recreated in one transaction, never overloaded (two versions with
+defaulted arguments make PostgREST's calls ambiguous). `p_loc` defaults to "no
+filter". The standalone Analytics app calls none of these.
+
+**The fields are lead attributes** (`lead_attributes`, the custom variables
+EmailBison carries). The mapping is fixed in
+`lib/tools/analytics/campaigns/location-filter.ts`:
+
+| Field | Attribute | Data on 13 Oct |
+|---|---|---|
+| Office city | `office city` | on nearly every lead ("Valencia, CA") |
+| Most transacted city | `top producing city` (the "Top city" column) | on most leads |
+| Home city | `home city` | **none** — the lists are not uploaded with it |
+
+Home city is wired end to end and offers nothing to choose until a list is
+uploaded with a `home city` variable; then it fills in with no code change.
+
+**The rule.** Cities ticked in one field are alternatives; fields combine (a
+lead must match every field that has cities ticked). Exact city, any case —
+the cities are picked from the campaign's own list, with counts, never typed.
+A lead with nothing on file for a ticked field is hidden while the filter is
+on. The filter holds across paging, sorting, the total and **Select all
+matching** — the reason it was wanted: tick a city, select everyone in it,
+remove them from the campaign.
+
+**Order of release, and why either order is safe.**
+
+| State | What people see |
+|---|---|
+| 097 run, OS not deployed | Search starts matching office city. Nothing else changes |
+| OS deployed, 097 not run | Search as before. The Location chip opens and says "The Location filter isn't switched on yet." |
+| Both | Everything above |
+
+The OS sends `p_loc` **only when a city is ticked**. Before 097 the functions
+have no such argument; sending it with every request would drop every Leads tab
+to the fallback and lose the Introduced status and the Sales volume filter. With
+a city ticked and 097 missing, the request is refused with that plain message —
+never answered unfiltered. `leads/route.test.ts` pins all three.
+
+**EmailBison only.** Instantly leads carry no attributes; the chip is not shown
+and city parameters on an Instantly address are ignored.
+
+**Also fixed.** With only a Sales volume range applied and nothing matching,
+the table said "No leads recorded for this campaign yet"; any filter now gives
+"No leads match that."
+
+**How it was verified.** The SQL: 699 checks on a local Postgres holding a
+copy of one real campaign (1,589 leads) — every result compared with an
+independent reading of the same data in JS, 436 of them proving 096 and 097
+answer identically when the new things are not used, and the copy itself
+checked against production's current functions. The OS: 24 unit and route
+tests, each rule broken on purpose and caught; a local build in Chrome twice —
+against the live database before 097 (14 checks), and against the local copy
+with 097 (32 checks). After 097 runs: re-check on production, read-only.
+
+---
+
+## 0.2 Client Portals as its own product, 13 October
 
 Four pieces of feedback on Client Portals, and what was decided for each:
 
 | Asked for | Decided (by the user, 13 Oct) | Built |
 |---|---|---|
 | "Add the ability to delete client portals" | **Admins only. "Portal only, client stays."** Ask for confirmation first | Delete button per portal; the client is never touched |
-| "Add the missing SMS option" | Already done — §0.2 | — |
+| "Add the missing SMS option" | Already done — §0.3 | — |
 | "Make Client Portals its own standalone product" | **Its own switch on Team access; admins only to start** | Own menu section, own grant `portals`, own address `/portals` |
 | "Client Portals should sync with Consistency" | The count mismatch: the page said 57 clients, Consistency said 54 | The shared count line; the page now counts *portals* |
 
@@ -270,7 +349,7 @@ compared before and after.
 
 ---
 
-## 0.2 SMS alerts for introductions, 13 October
+## 0.3 SMS alerts for introductions, 13 October
 
 When a lead is introduced, the client's team can get a text. The standalone
 Master Inbox built this on 8 October (commits `06d8530`, `c4b6b77`, Akeesh);
@@ -338,7 +417,7 @@ keep running for the portals to work**, whatever staff use for the inbox.
 
 ---
 
-## 0.3 Master Inbox parity, 12 October
+## 0.4 Master Inbox parity, 12 October
 
 Twelve things the standalone Master Inbox does that the OS inbox did not, from
 the client's side-by-side list. One release. Nothing in the standalone app,
@@ -412,7 +491,7 @@ production after the deploy. Note `scripts/conversation-ui-test.mjs` WRITES
 
 ---
 
-## 0.4 Navigation clean-up, 9 October
+## 0.5 Navigation clean-up, 9 October
 
 From the client's "OS Feedback — Navigation & Cleanup" list. Shipped in four
 releases, each tested in a real Chrome as an admin and as each account
@@ -511,7 +590,7 @@ visit the removed screens.
 - The Database view's client names open the client's record
   (`/roster?client=<id>`) instead of the Onboarding page.
 
-## 0.5 What changed on 6–7 October
+## 0.6 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
 `e5e27c4` (Home, Client Health links, start date, speed), `e97f8d8` (profile,
@@ -559,7 +638,7 @@ from May on its cancelled subscription and Stripe no longer retries it; Properti
 people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
 Revolution) — add a person per market (territory "Boston" / "Florida").
 
-## 0.6 What changed on 30 September
+## 0.7 What changed on 30 September
 
 Deployed to `os` and verified on production (`69288cf` and after).
 
@@ -1281,7 +1360,7 @@ What changed, and why:
 
 ---
 
-## 0.7 What changed on 29 September
+## 0.8 What changed on 29 September
 
 All deployed to `os`, verified on production, pushed (`25c453c`, `a005c4e`).
 
@@ -1347,7 +1426,7 @@ Performance cards, for this week and last week:
 
 ---
 
-## 0.8 What changed on 28 September
+## 0.9 What changed on 28 September
 
 All deployed to `os`, verified on production, pushed (`1e66caa` … `b8cce7c`).
 
@@ -1375,7 +1454,7 @@ server errors; 37/37 open customer portals serving their page.
 
 ---
 
-## 0.9 Switching off Analytics, Client Health and Onboarding
+## 0.10 Switching off Analytics, Client Health and Onboarding
 
 **Stay live:** Master Inbox (its app serves every customer portal) and the
 Database app. **To be switched off once the OS is complete:** Analytics, Client
@@ -1395,7 +1474,7 @@ destination is an OS screen.
 |---|---|---|
 | Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
 | Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
-| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.4). Webhook receivers still live |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.5). Webhook receivers still live |
 
 **Switch-off order, per tool — never run two copies of a sync at once:**
 
@@ -1848,7 +1927,7 @@ Sub-screens of the roster:
 
 The tool's own navigation was an icon rail plus a sidebar plus a second settings
 sidebar. It collapses into five rail entries. **Client Portals is its own
-product since 13 Oct (§0.1)** — own menu section, own grant; it is listed here
+product since 13 Oct (§0.2)** — own menu section, own grant; it is listed here
 because its screens and routes still live in the Master Inbox folders.
 
 | Page | Path | What it does | File |
@@ -1857,7 +1936,7 @@ because its screens and routes still live in the Master Inbox folders.
 | Reminders | `/reminders` | The tool's own page — **replaced a hand-written screen that listed reminders and could not dismiss them** | `master-inbox/reminders.tsx` |
 | Archive | `/inbox/archive` | Archived conversations | (full-inbox view) |
 | Trash | `/inbox/trash` | Third folder; without this entry a trashed conversation could only be found by typing the URL | (full-inbox view) |
-| **Client Portals** (own product) | `/portals` | The admin table of portals: link, Live, SMS, and — for admins — delete (§0.1). The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
+| **Client Portals** (own product) | `/portals` | The admin table of portals: link, Live, SMS, and — for admins — delete (§0.2). The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
 | Settings | `/settings/clients` | Eight pages behind the tool's own sub-navigation | `master-inbox/settings.tsx` |
 
 Detail screens (no rail entry):
@@ -1869,7 +1948,7 @@ Detail screens (no rail entry):
 
 Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
 `ai-labeling` (admin-only), plus `webhooks` (not offered). Members, Personal,
-Clients and Reply Agents were removed on 9 Oct — §0.4 says where the last two
+Clients and Reply Agents were removed on 9 Oct — §0.5 says where the last two
 went.
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
@@ -1882,7 +1961,7 @@ route still resolves, so an old bookmark degrades to All Email rather than 404s.
 In the live tool these are states of one page with **no URL of their
 own**. Here each is a real address, which is what lets the rail link straight to
 Delivery and the back button work. (Renamed 9 Oct: Weekly → Overview,
-Bi-Weekly → Delivery; Client Success removed — §0.4.)
+Bi-Weekly → Delivery; Client Success removed — §0.5.)
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
@@ -1901,7 +1980,7 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 
 ### 4.4 Campaign Analytics and Campaign Management — 4 + 3 destinations + campaign detail
 
-Two rail sections of ONE tool since 9 Oct (§0.4): Campaign, Volume,
+Two rail sections of ONE tool since 9 Oct (§0.5): Campaign, Volume,
 Infrastructure and Attribution under **Campaign Analytics**; Campaigns,
 Schedule and Clients (and its Client view) under **Campaign Management**.
 
@@ -1935,7 +2014,7 @@ Two notes for whoever works here:
 
 ### 4.5 Onboarding — removed 9 Oct
 
-The section and its screens were removed (§0.4, Release 4). Its webhook
+The section and its screens were removed (§0.5, Release 4). Its webhook
 receivers and shared library stay and are live.
 
 ### 4.6 Agent Search — 4 destinations

@@ -4,6 +4,7 @@ import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
 import { campaignIntroductions } from "@/lib/tools/analytics/campaigns/introduced";
 import type { IntroducedSet } from "@/lib/tools/analytics/campaigns/introduced-match.ts";
 import { VOLUME_ATTRIBUTE } from "@/lib/tools/analytics/campaigns/amount-filter.ts";
+import { LOCATION_ATTRIBUTES, readLocationParams } from "@/lib/tools/analytics/campaigns/location-filter.ts";
 
 /*
  * One page of a campaign's leads (the Leads tab on the campaign page).
@@ -83,8 +84,49 @@ export async function GET(
   const volumeUnavailable = () =>
     NextResponse.json({ error: "The Sales volume filter isn't switched on yet. Clear it to see every lead." }, { status: 503 });
 
+  /*
+   * "LOCATION" (13 Oct, analytics 097): office city, home city, most
+   * transacted city. The cities arrive as loc_office / loc_home / loc_top and
+   * leave as the SQL's p_loc, keyed by lead-attribute name — the mapping is
+   * fixed in location-filter.ts, so a request cannot name an attribute of its
+   * own. EmailBison only, like Sales volume. p_loc is sent ONLY when a city is
+   * chosen: before 097 runs the functions have no such argument, and sending
+   * it with every request would drop every request to the fallback below.
+   * With a city chosen and 097 not run, the request is refused with a plain
+   * message — never answered unfiltered.
+   */
+  const location = platform === "emailbison" ? readLocationParams(q) : null;
+  const filteringLocation = location !== null;
+  const locationArgs = filteringLocation ? { p_loc: location } : {};
+  const locationUnavailable = () =>
+    NextResponse.json({ error: "The Location filter isn't switched on yet. Clear it to see every lead." }, { status: 503 });
+
   const sb = getSupabase();
   const teamId = TEAM_ID();
+
+  /*
+   * The cities to choose from, for the Location control: each field's cities
+   * in THIS campaign with how many leads each has. One json value from one
+   * function call (097) — a row per city would be cut at 1,000 by PostgREST
+   * without a word. Answered here and returned early: it needs neither the
+   * page nor who has been introduced.
+   */
+  if (q.get("locations") === "1") {
+    if (platform !== "emailbison") return NextResponse.json({ locations: {} });
+    const { data, error } = await sb.rpc("analytics_os_campaign_lead_locations", {
+      p_team_id: teamId,
+      p_campaign_id: campaignId,
+      p_names: LOCATION_ATTRIBUTES,
+    });
+    if (missingFunction(error)) {
+      return NextResponse.json({ error: "The Location filter isn't switched on yet." }, { status: 503 });
+    }
+    if (error) {
+      console.error("[api/campaigns/leads:locations]", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ locations: data ?? {} });
+  }
 
   /*
    * Who has been introduced from this campaign, from the inbox, now. A failure
@@ -132,8 +174,10 @@ export async function GET(
       platform === "instantly" ? "analytics_os_instantly_lead_ids" : "analytics_os_campaign_lead_ids",
       platform === "instantly"
         ? { ...original, p_intro_emails: introEmails }
-        : { ...original, p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails, ...volumeArgs },
+        : { ...original, p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails, ...volumeArgs, ...locationArgs },
     );
+    // Location first: with both filters on and 097 not run, it is the one missing.
+    if (missingFunction(error) && filteringLocation) return locationUnavailable();
     if (missingFunction(error) && filteringVolume) return volumeUnavailable();
     if (missingFunction(error)) {
       ({ data, error } = await sb.rpc(
@@ -266,11 +310,12 @@ export async function GET(
   };
   const introArgs = { p_intro_lead_ids: introLeadIds, p_intro_emails: introEmails };
   let [rows, facets] = await Promise.all([
-    sb.rpc("analytics_os_campaign_lead_rows", { ...rowArgs, ...introArgs, ...volumeArgs }),
+    sb.rpc("analytics_os_campaign_lead_rows", { ...rowArgs, ...introArgs, ...volumeArgs, ...locationArgs }),
     wantFacets
       ? sb.rpc("analytics_os_campaign_lead_facets", { p_team_id: teamId, p_campaign_id: campaignId, ...introArgs })
       : Promise.resolve({ data: [], error: null }),
   ]);
+  if (missingFunction(rows.error) && filteringLocation) return locationUnavailable();
   if (missingFunction(rows.error) && filteringVolume) return volumeUnavailable();
   if (missingFunction(rows.error) || missingFunction(facets.error)) {
     introducedLive = false;

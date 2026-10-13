@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { invalidate, loadOnce } from "../lazy";
+import { locationParams, type LocationSelection } from "@/lib/tools/analytics/campaigns/location-filter.ts";
 
 /*
  * The write half of Campaign Analytics, from the browser.
@@ -223,6 +224,8 @@ export const MERGE_TAGS_URL = `${BASE}/merge-tags`;
 
 /** One page of a campaign's leads, or (with `facets=1`) the status counts. */
 export const CAMPAIGN_LEADS_URL = (id: string, qs: string) => `${BASE}/campaigns/${id}/leads?${qs}`;
+/** The cities the Location control offers for one campaign (analytics 097). */
+export const CAMPAIGN_LEAD_LOCATIONS_URL = (id: string) => CAMPAIGN_LEADS_URL(id, "locations=1");
 
 /** Which inboxes are on this campaign — `summary=1` is the one-call count. */
 export const CAMPAIGN_INBOXES_URL = (id: string, summary?: boolean) =>
@@ -318,6 +321,7 @@ export async function selectAllLeadIds(
   q: string,
   status: string | null,
   volume?: { min: number | null; max: number | null },
+  location?: LocationSelection,
 ): Promise<Array<number | string>> {
   const params = new URLSearchParams({ ids: "1" });
   if (q) params.set("q", q);
@@ -326,6 +330,9 @@ export async function selectAllLeadIds(
   // the screen is not showing.
   if (volume?.min != null) params.set("vmin", String(volume.min));
   if (volume?.max != null) params.set("vmax", String(volume.max));
+  // And the same cities (13 Oct) — for the same reason, and it matters more
+  // here: "everyone in Woodland Hills" is exactly what gets selected to remove.
+  if (location) for (const [k, v] of locationParams(location)) params.append(k, v);
   const { ok, body } = await sendRaw<{ leadIds: Array<number | string> }>(
     CAMPAIGN_LEADS_URL(id, params.toString()),
     { method: "GET" },
