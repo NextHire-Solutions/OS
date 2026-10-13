@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { PLATFORMS, resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
+import { narrowToTags } from "@/lib/tools/analytics/tag-filter";
+import { loadSendingCapacity } from "@/lib/tools/analytics/sending-capacity-load";
 
 /*
  * Sending capacity, and where the volume actually went.
@@ -19,7 +21,7 @@ const TEAM_ID = () => analyticsTeamId();
 export async function GET(request: NextRequest) {
   let filters;
   try {
-    filters = resolveFilters(request.nextUrl.searchParams, toISODate(new Date()));
+    filters = await narrowToTags(resolveFilters(request.nextUrl.searchParams, toISODate(new Date())));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Invalid filters" },
@@ -44,10 +46,19 @@ export async function GET(request: NextRequest) {
   const platforms = filters.platforms.length ? filters.platforms : null;
 
   const sb = getSupabase();
-  const [capacity, split] = await Promise.all([
+  const [capacity, picture, split] = await Promise.all([
     sb.rpc("analytics_sending_capacity", {
       p_team_id: TEAM_ID(),
       p_platforms: platforms,
+    }),
+    /*
+     * The same capacity, with idle platforms set aside and what the active
+     * campaigns need beside it (13 Oct — sending-capacity.ts). Null rather
+     * than a failed page if it cannot be read: the split below still stands.
+     */
+    loadSendingCapacity(filters.platforms).catch((e) => {
+      console.error("[api/analytics/volume] capacity picture:", e instanceof Error ? e.message : e);
+      return null;
     }),
     sb.rpc("analytics_volume_split", {
       p_team_id: TEAM_ID(),
@@ -87,6 +98,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     capacity: capacity.data ?? [],
+    picture,
     rows,
     total: Number(rows[0]?.grand_total ?? 0),
     days,

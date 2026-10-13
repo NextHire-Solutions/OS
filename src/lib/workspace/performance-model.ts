@@ -28,6 +28,15 @@ export interface MonthRow {
   activeAtEnd: number;
   /** Paid Stripe invoices that month; null when Stripe could not be read. */
   revenue: number | null;
+  /*
+   * WHO, not only how many (13 Oct: "add a small dropdown arrow to see which
+   * clients were added, paused, or churned that month"). Sorted by name; the
+   * same clients the three counts above count, so a list is never a different
+   * length from its number. Empty when the caller gave no names.
+   */
+  addedNames: string[];
+  churnedNames: string[];
+  pausedNames: string[];
 }
 
 export interface Performance {
@@ -60,6 +69,8 @@ export interface Performance {
 }
 
 export interface PerfClient {
+  /** For the month lists. Optional: counts need no names. */
+  name?: string;
   status: string;
   plan: string | null;
   weeklyTarget: number | null;
@@ -128,6 +139,8 @@ export function performanceFrom(
       const added = addedMonths.filter((x) => x === m).length;
       const churned = churnMonths.filter((x) => x === m).length;
       const paused = pauseHistory ? pauseMonths.filter((x) => x === m).length : null;
+      const named = (hit: (c: PerfClient) => boolean) =>
+        clients.filter((c) => c.name && hit(c)).map((c) => c.name as string).sort((a, b) => a.localeCompare(b));
       const activeAtEnd = clients.filter((c) => {
         const a = addedOn(c);
         const ch = churnedOn(c);
@@ -136,7 +149,10 @@ export function performanceFrom(
         return a !== null && a <= end && !(ch !== null && ch <= end);
       }).length;
       months.push({ month: m, label: monthLabel(m), added, churned, paused, net: added - churned, activeAtEnd,
-        revenue: revenue ? Math.round((revenue.get(m) ?? 0) * 100) / 100 : null });
+        revenue: revenue ? Math.round((revenue.get(m) ?? 0) * 100) / 100 : null,
+        addedNames: named((c) => addedOn(c)?.slice(0, 7) === m),
+        churnedNames: named((c) => churnedOn(c)?.slice(0, 7) === m),
+        pausedNames: pauseHistory ? named((c) => (c.pauseDates ?? []).some((d) => d.slice(0, 7) === m)) : [] });
     }
   }
 

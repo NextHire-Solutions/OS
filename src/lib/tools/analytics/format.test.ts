@@ -128,6 +128,6 @@ describe("rangeLabel", () => {
 
   test("is timezone-stable at the month boundary", () => {
     // Parsed as UTC, so a machine in UTC-8 still reads Jul 1, not Jun 30.
-    assert.equal(rangeLabel("2026-07-01", "2026-07-01"), "Jul 1 – Jul 1");
+    assert.equal(rangeLabel("2026-07-01", "2026-07-01"), "Jul 1");
   });
 });

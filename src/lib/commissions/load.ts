@@ -10,10 +10,12 @@ import { isSoldBy, type Salesperson } from "@/lib/identity/salesperson-match";
 import { listSalespeople } from "@/lib/identity/salespeople";
 
 import {
-  ACCOUNT_MANAGER_RATE, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, monthTwoStarts, netPer28, nextRun,
+  ACCOUNT_MANAGER_RATE, cancellationDay, commissionLines, easternDay, estimatedPayments, linesForRun, MONTH_DAYS, monthTwoStarts, netPer28, nextRun,
   previousRun, round2, runOnOrAfter, runsBetween, splitLine, SPLIT_FROM, statusAt, runForPayment, sum, type Line, type Payment, type StatusChange,
 } from "./schedule";
 import { stripeGross, stripePayments } from "./stripe-payments";
+import { serviceMonth, type Closing } from "./closings";
+import { getAccountBilling } from "@/lib/clients/billing-account";
 
 /*
  * COMMISSIONS — who earns what, on which payout run.
@@ -82,6 +84,21 @@ export interface CommissionRow {
   /** Their total on the selected run. */
   due: number;
   lastPayment: string | null;
+  /** Which month of service the client is in on this payout (28-day months from its first payment); null before any payment. */
+  month: number | null;
+}
+
+/*
+ * A salesperson's closings — set when the view is ONE person who sells (an
+ * admin picked them, or they are looking at their own page). Every client
+ * they sold, whatever its status now, with the day it signed. Built on the
+ * server like the rest of the view, so one salesperson is never sent another's.
+ */
+export interface SalesView {
+  name: string;
+  closings: Closing[];
+  /** Clients they sold with no sign-up, Stripe or onboarding date: in no month. */
+  undated: string[];
 }
 
 /** One person's card: every role they earn in, added up. */
@@ -120,6 +137,8 @@ export interface CommissionsView {
   people: { key: string; name: string; roles: EarnerRole[] }[];
   settingsAvailable: boolean;
   unavailable: string[];
+  /** The salesperson in view and what they closed (13 Oct); null for Everyone, and for an account manager. */
+  sales: SalesView | null;
 }
 
 /*
@@ -196,6 +215,8 @@ export interface BuildInputs {
   run?: string | null;
   today: string;
   unavailable: string[];
+  /** Per client id: the day it signed according to Stripe (the first $1 charge), when known. */
+  signed?: Map<string, string | null>;
 }
 
 /*
@@ -339,6 +360,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
       earnings,
       due: sum(earnings.flatMap((e) => e.lines)),
       lastPayment: payments.length ? payments[payments.length - 1].date : null,
+      month: serviceMonth(firstPaid, horizon, MONTH_DAYS),
     };
   }).sort((a, b) => b.due - a.due || a.name.localeCompare(b.name));
 
@@ -359,6 +381,28 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
     const clients = new Set(rows.filter((r) => r.earnings.some((x) => list.some((e) => e.key === x.key))).map((r) => r.id)).size;
     return [{ key: pk, name: list[0].name, email: list[0].email, roles, due: Math.round(roles.reduce((t, r) => t + r.due, 0) * 100) / 100, clients }];
   }).sort((a, b) => b.due - a.due || a.name.localeCompare(b.name));
+
+  /*
+   * The salesperson in view, when the view is one person: an admin picked
+   * them, or it is their own page. Their closings are every client that names
+   * them, at any status — not only the active ones the table lists.
+   */
+  const sellerKeys = scope === "all" ? [] : [...keys].filter((k) => earners.get(k)?.role === "salesperson");
+  const seller = sellerKeys.length === 1 ? inp.salespeople.find((p) => `sp:${p.id}` === sellerKeys[0]) : undefined;
+  let sales: SalesView | null = null;
+  if (seller) {
+    const sold = inp.clients.filter((c) => isSoldBy(c.salesperson, seller));
+    const dated = sold.map((c) => ({
+      c,
+      date: (inp.signed?.get(c.id) ?? c.signupDate ?? c.onboardingDate ?? null)?.slice(0, 10) ?? null,
+    }));
+    sales = {
+      name: seller.name,
+      closings: dated.filter((x) => x.date).map((x) => ({ id: x.c.id, name: x.c.name, status: x.c.status, date: x.date! }))
+        .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name)),
+      undated: dated.filter((x) => !x.date).map((x) => x.c.name).sort((a, b) => a.localeCompare(b)),
+    };
+  }
 
   const active = inp.clients.filter((c) => c.status === "active");
   const holding = new Set(active.flatMap((c) => onClient(c).map((e) => e.key)));
@@ -393,6 +437,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
       : [],
     settingsAvailable: settings.available,
     unavailable: inp.unavailable,
+    sales,
   };
 }
 
@@ -422,9 +467,23 @@ export async function loadCommissions(opts: { viewerEmail: string; admin: boolea
   const stripe = new Map(results);
   if (results.some(([, v]) => v === null)) unavailable.push("Stripe (some clients)");
 
+  /*
+   * Sign-up dates from Stripe, for the closings chart — the first $1 charge
+   * across every card a client has paid through (billing-model.ts), the same
+   * date Performance calls "Signed". Not fatal: without it the chart uses the
+   * dates on the client's record.
+   */
+  let signed: Map<string, string | null> | undefined;
+  try {
+    const billing = await getAccountBilling();
+    signed = new Map([...billing.byClient.entries()].map(([id, b]) => [id, b.signupSource === "first $1 charge" || b.signupSource === "first charge" ? b.signupDate : null]));
+  } catch {
+    signed = undefined;
+  }
+
   return buildCommissionsView({
     ...base, history, stripe,
     viewerEmail: opts.viewerEmail, admin: opts.admin, as: opts.as, run: opts.run,
-    today, unavailable: [...unavailable, ...list.unavailable],
+    today, unavailable: [...unavailable, ...list.unavailable], signed,
   });
 }

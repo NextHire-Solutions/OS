@@ -13,7 +13,10 @@ import { ClientCountLine } from "@/components/clients/count-line";
  * Database → Clients. §8's Database view, field for field, in its order:
  *
  *   Client · Client status · MLS/location · Campaign · Campaign ID · Leads ·
- *   Sequencers · Replies · Bounces · In Review · Exported · Onboarding status
+ *   Sequencers · Replies · Bounces
+ *
+ * (In Review, Exported and Onboarding status were removed on 13 Oct: only the
+ * retired Onboarding flow ever set them — lib/tools/database/clients.ts.)
  *
  * It replaces the standalone Database app's Clients page (/webhooks), which is
  * being retired, and reads the same rows — see lib/tools/database/clients.ts
@@ -30,7 +33,7 @@ const URL = "/api/tools/agent-search/clients";
 
 type Key =
   | "name" | "status" | "location" | "campaign" | "campaignId" | "leads"
-  | "inSequencers" | "replied" | "bounced" | "inReview" | "exported" | "stage";
+  | "inSequencers" | "replied" | "bounced";
 
 interface Col {
   key: Key;
@@ -53,9 +56,6 @@ const COLS: Col[] = [
   { key: "inSequencers", label: "Sequencers", numeric: true, value: (c) => c.inSequencers ?? -1 },
   { key: "replied", label: "Replies", numeric: true, value: (c) => c.replied ?? -1 },
   { key: "bounced", label: "Bounces", numeric: true, value: (c) => c.bounced ?? -1 },
-  { key: "inReview", label: "In Review", value: (c) => (c.inReview ? "yes" : "no") },
-  { key: "exported", label: "Exported", value: (c) => (c.exported ? "yes" : "no") },
-  { key: "stage", label: "Onboarding status", value: (c) => `${c.stage ?? ""} ${c.progress ? c.progress.pct : ""}` },
 ];
 
 const none = <span className="api-none">—</span>;
@@ -114,9 +114,7 @@ function ClientsTable({ data }: { data: DatabaseClientsView }) {
             sub="no leads reached the Database"
             tone={unsynced > 0 ? "n-risk" : "n-green"}
           />
-        ) : (
-          <Card label="In review / exported" value={all.filter((c) => c.inReview || c.exported).length} sub="clients flagged" />
-        )}
+        ) : null}
       </div>
 
       <div className="tbl-wrap">
@@ -251,12 +249,6 @@ function ClientRow({ c }: { c: DatabaseClient }) {
       </td>
       <td className="tnum">{n(c.replied)}</td>
       <td className="tnum">{n(c.bounced)}</td>
-      <td>{c.inReview ? <span className="badge s-onboarding">In review</span> : <span className="cell-sub">no</span>}</td>
-      <td>{c.exported ? <span className="badge s-active">Exported</span> : <span className="cell-sub">no</span>}</td>
-      <td>
-        {c.stage ?? none}
-        {c.progress ? <div className="cell-sub">{c.progress.done} of {c.progress.total} steps · {c.progress.pct}%</div> : null}
-      </td>
     </tr>
   );
 }

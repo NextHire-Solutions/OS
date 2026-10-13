@@ -49,6 +49,10 @@ export const REPLY_ROWS_URL = (qs: string) => `${BASE}/replies/rows?${qs}`;
 export const REPLY_FACETS_URL = (qs: string) => `${BASE}/replies/facets?${qs}`;
 export const VOLUME_URL = (qs: string) => `${BASE}/volume?${qs}`;
 export const INFRASTRUCTURE_URL = (qs: string) => `${BASE}/infrastructure?${qs}`;
+/** Every sending inbox in one answer — the Inboxes page filters it in the browser. */
+export const INBOXES_URL = `${BASE}/inboxes`;
+/** Warmup scores and exact campaign assignment, read from EmailBison in the background. */
+export const INBOX_EXTRAS_URL = `${BASE}/inboxes/extras`;
 export const ATTRIBUTION_URL = (qs: string) => `${BASE}/attribution?${qs}`;
 export const ATTRIBUTION_EVENTS_URL = (qs: string) => `${BASE}/attribution/events?${qs}`;
 export const CAMPAIGNS_URL = (qs: string) => `${BASE}/campaigns?${qs}`;
@@ -133,19 +137,11 @@ export const assignCampaign = (campaignId: string, clientId: string | null) =>
 export const setReplyDimension = (clientId: string, key: string, active: boolean) =>
   send(`${BASE}/reply-dimensions`, json("PUT", { clientId, key, active }));
 
-/* ------------------------------- copy tags -------------------------------- */
-
-export const COPY_TAGS_URL = (stepId: number) => `${BASE}/copy/tags?step_id=${stepId}`;
-
-/**
- * Saves the seven copy dimensions for one sequence step.
- *
- * `undefined` means "not part of this update"; `null` or `""` clears the tag.
- * Saving through the UI promotes a suggestion to `manual` and stamps
- * `confirmed_at`, which is how "a person agreed with this" stays answerable.
+/*
+ * The copy-tag actions that lived here went with the copy-dimension panel on
+ * 13 Oct (OS feedback: "Kill Copy dimension and blueprint"). The route
+ * (/copy/tags) and the stored tags are untouched.
  */
-export const saveCopyTags = (sequenceStepId: number, tags: Record<string, string | null>) =>
-  send(`${BASE}/copy/tags`, json("PUT", { sequenceStepId, tags }));
 
 /* ----------------------------- campaign actions --------------------------- */
 
@@ -235,6 +231,13 @@ export const CAMPAIGN_INBOXES_URL = (id: string, summary?: boolean) =>
 export const INBOX_TAGS_URL = (platform: "emailbison" | "instantly") =>
   `${BASE}/campaigns/inboxes?platform=${platform}`;
 
+/** The EmailBison inboxes in several pools, each once — for the dialog's counts (13 Oct). */
+export const INBOX_POOL_IDS_URL = (platform: "emailbison" | "instantly", pools: string[]) => {
+  const p = new URLSearchParams({ platform });
+  for (const pool of pools) p.append("pool", pool);
+  return `${BASE}/campaigns/inboxes?${p.toString()}`;
+};
+
 /** How many leads a re-campaign would move (GET on the same route as the POST). */
 export const RECAMPAIGN_PREVIEW_URL = (id: string) => `${BASE}/campaigns/${id}/re-campaign`;
 
@@ -259,14 +262,33 @@ export interface SequenceStepPayload {
  * tool's own wording, because "retry" and "check what state this campaign is
  * in first" are different instructions.
  */
+/** What the save did with {CLIENT_AREA} / {CLIENT_ALIAS}: how many it filled, for whom, and which it left as placeholders. */
+export interface SavedClientFields {
+  client: string | null;
+  filled: number;
+  kept: string[];
+}
+
+/** The Launch tab's live checks for one campaign (GET), and the launch itself (POST, confirmed). */
+export const CAMPAIGN_LAUNCH_URL = (id: string) => `${BASE}/campaigns/${id}/launch`;
+
+/** Starts the campaign. Throws with the server's own sentence when a check fails or EmailBison refuses. */
+export async function launchCampaign(id: string): Promise<{ ok: boolean; status?: string }> {
+  return (await send(CAMPAIGN_LAUNCH_URL(id), json("POST", { confirm: true }))) as { ok: boolean; status?: string };
+}
+
+/** What the client fields become on one campaign — shown in the editor before Save. */
+export const CAMPAIGN_CLIENT_FIELDS_URL = (id: string) => `${BASE}/campaigns/${id}/client-fields`;
+
 export async function saveSequence(
   id: string,
   sequenceId: number | null,
   steps: SequenceStepPayload[],
-): Promise<{ ok: boolean; updated?: number; added?: number; deleted?: number }> {
+): Promise<{ ok: boolean; updated?: number; added?: number; deleted?: number; clientFields?: SavedClientFields | null }> {
   const { ok, body } = await sendRaw<{
     ok?: boolean;
     partiallyApplied?: { updated: number; added: number; deleted: number };
+    clientFields?: SavedClientFields | null;
   }>(
     `${BASE}/campaigns/${id}/sequence`,
     json("PUT", { ...(sequenceId ? { sequenceId } : {}), steps }),
@@ -280,7 +302,7 @@ export async function saveSequence(
         : (body.error ?? "The sequence could not be saved"),
     );
   }
-  return body as { ok: boolean; updated?: number; added?: number; deleted?: number };
+  return body as { ok: boolean; updated?: number; added?: number; deleted?: number; clientFields?: SavedClientFields | null };
 }
 
 export interface RemoveLeadsResult {
@@ -417,6 +439,8 @@ export async function applyCopySequence(
 
 export interface InboxAssignmentSummary {
   tag: string;
+  /** Every pool that was run, in order (13 Oct). Absent from an older answer. */
+  tags?: string[];
   action: "attach" | "remove";
   inboxes: number;
   skippedDisconnected: number;
@@ -433,12 +457,13 @@ export interface InboxAssignmentSummary {
 /** Attaches or removes a tagged pool on every target. 207 = some refused. */
 export async function assignInboxes(
   targets: Array<{ platform: "emailbison" | "instantly"; id: string }>,
-  tag: string,
+  /** One pool or several; several are run one after another, in this order. */
+  tags: string[],
   action: "attach" | "remove",
 ): Promise<InboxAssignmentSummary> {
   const { ok, status, body } = await sendRaw<InboxAssignmentSummary>(
     `${BASE}/campaigns/inboxes`,
-    json("POST", { targets, tag, action, confirm: true }),
+    json("POST", { targets, tags, action, confirm: true }),
   );
   if (!ok && status !== 207) throw new Error(body.error ?? "The assignment failed.");
   return body;
@@ -485,6 +510,8 @@ export interface FanOutSummary {
     steps: number;
     inboxes: number;
     error?: string;
+    /** Client fields filled in for this client's copy, or why they were not. */
+    note?: string;
   }>;
 }
 

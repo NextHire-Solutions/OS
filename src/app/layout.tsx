@@ -37,7 +37,14 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${geist.variable} ${geistMono.variable}`}>
-      <body>
+      {/*
+        suppressHydrationWarning: when the side menu was left retracted, a
+        script in the page adds `rail-collapsed` to this element before React
+        hydrates (so the menu never flashes open). That one attribute is then
+        deliberately different from the server's HTML; nothing else on <body>
+        is touched, and children are still checked as usual.
+      */}
+      <body suppressHydrationWarning>
         {children}
         {/*
           The inbox reports through `sonner` (composer send failures, "the

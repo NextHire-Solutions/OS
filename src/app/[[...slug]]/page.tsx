@@ -1,4 +1,5 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { RAIL_COLLAPSED, RAIL_COOKIE } from "@/components/shell/rail-state";
 import { getAllSnapshots } from "@/lib/status/store";
 import { aggregate } from "@/lib/status/derive";
 import { getOverview } from "@/lib/workspace/overview";
@@ -42,6 +43,7 @@ import { AnalyticsInfrastructureScreen } from "@/components/screens/analytics/in
 import { AnalyticsAttributionScreen } from "@/components/screens/analytics/attribution";
 import { AnalyticsCampaignsScreen } from "@/components/screens/analytics/campaigns";
 import { AnalyticsVolumeScreen } from "@/components/screens/analytics/volume";
+import { InboxesScreen } from "@/components/screens/analytics/inboxes";
 import { CampaignDetailScreen } from "@/components/screens/analytics/campaign-detail";
 import { AnalyticsScheduleScreen } from "@/components/screens/analytics/schedule";
 import { AnalyticsClientsScreen } from "@/components/screens/analytics/clients";
@@ -122,7 +124,7 @@ function folderView(
  * The Onboarding section — pipeline, stages, templates, settings and the
  * per-client page at /onboarding/clients/<id> — was removed on 9 Oct (OS
  * feedback). /onboarding addresses now open Home. Its webhook receivers and
- * shared code stay: see docs/HANDOVER.md §0.5.
+ * shared code stay: see docs/HANDOVER.md §0.6.
  */
 
 /*
@@ -177,6 +179,8 @@ export default async function WorkspacePage({
   const initialId = idForPath(`/${(slug ?? []).join("/")}`);
 
   const requestHeaders = await headers();
+  // The side menu, left retracted last time (rail-state.ts).
+  const railCollapsed = (await cookies()).get(RAIL_COOKIE)?.value === RAIL_COLLAPSED;
 
   // Set by the proxy, which has already verified the token. Trusting it here
   // avoids a second HMAC per render; Next strips inbound headers of these names,
@@ -287,7 +291,17 @@ export default async function WorkspacePage({
   const firstName = viewer.name ? viewer.name.split(/\s+/)[0] : local.charAt(0).toUpperCase() + local.slice(1);
 
   return (
+    <>
+      {/*
+        Sets the body class while the HTML is still arriving, before the menu
+        below is painted. Left to the shell's effect, a reload showed the menu
+        at full width for a moment and then snapped it shut.
+      */}
+      {railCollapsed ? (
+        <script dangerouslySetInnerHTML={{ __html: 'document.body.classList.add("rail-collapsed")' }} />
+      ) : null}
     <Workspace
+      initialCollapsed={railCollapsed}
       initialId={initialId}
       grants={grants}
       admin={admin}
@@ -473,6 +487,8 @@ export default async function WorkspacePage({
           return id ? <CampaignDetailScreen id={id} /> : <AnalyticsCampaignsScreen />;
         })(),
         "analytics:schedule": <AnalyticsScheduleScreen />,
+        // Inboxes (13 Oct): every sending inbox in one table. Loads itself.
+        "analytics:inboxes": <InboxesScreen />,
         "analytics:clients": <AnalyticsClientsScreen />,
         "team-access": <TeamAccessScreen />,
         // Client-side only: it fetches its own four endpoints, so no loader
@@ -482,5 +498,6 @@ export default async function WorkspacePage({
         account: <AccountScreen email={email} />,
       })}
     />
+    </>
   );
 }

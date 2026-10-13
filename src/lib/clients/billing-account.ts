@@ -7,11 +7,17 @@ import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
 import {
   billingTotals,
   buildBilling,
+  monthsPaidByClient,
+  revenueByDay,
+  subscriptionRows,
+  unattributedByCustomer,
   upcomingCharges,
   type AccountSnapshot,
   type BillingClientRef,
   type ClientBilling,
   type StripeLinkRow,
+  type SubscriptionRow,
+  type UnattributedCustomer,
 } from "./billing-model";
 
 /*
@@ -143,13 +149,24 @@ export interface AccountBilling {
   upcoming: ReturnType<typeof upcomingCharges>;
   linksReady: boolean;
   snapshot: AccountSnapshot;
+  /** The Performance page (13 Oct) — all by the same ownership rules as `byClient`. */
+  subscriptions: SubscriptionRow[];
+  unattributed: UnattributedCustomer[];
+  monthsPaid: Map<string, number>;
+  revenueByDay: Map<string, number>;
 }
 
 /** Every client's billing, the business totals and the 30-day calendar. */
 export async function getAccountBilling(): Promise<AccountBilling> {
   const [snapshot, refs, { links, ready }] = await Promise.all([getStripeSnapshot(), clientRefs(), listStripeLinks()]);
   const byClient = buildBilling(refs, snapshot, links);
-  return { byClient, totals: billingTotals(snapshot, byClient), upcoming: upcomingCharges(snapshot, byClient, 30), linksReady: ready, snapshot };
+  return {
+    byClient, totals: billingTotals(snapshot, byClient), upcoming: upcomingCharges(snapshot, byClient, 30), linksReady: ready, snapshot,
+    subscriptions: subscriptionRows(refs, snapshot, links),
+    unattributed: unattributedByCustomer(refs, snapshot, links),
+    monthsPaid: monthsPaidByClient(refs, snapshot, links),
+    revenueByDay: revenueByDay(snapshot),
+  };
 }
 
 /**

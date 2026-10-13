@@ -2,6 +2,8 @@ import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors.ts";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
 import type { EBSequenceStep } from "@/lib/tools/analytics/emailbison/types.ts";
+import { clientFieldsProblem, fillSteps, usesClientFields } from "./client-fields.ts";
+import { clientFieldValuesForCampaign } from "./client-fields-load";
 
 /*
  * Copying a sequence between campaigns (spec §9.4).
@@ -271,9 +273,32 @@ export async function applyCopy(
   const target = campaigns?.find((c) => c.id === targetId);
   const source = campaigns?.find((c) => c.id === sourceId);
 
-  const selected = (options.includeVariants ? sourceSteps : sourceSteps.filter((s) => !s.variant))
+  let selected = (options.includeVariants ? sourceSteps : sourceSteps.filter((s) => !s.variant))
     .slice()
     .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+
+  /*
+   * {CLIENT_AREA} / {CLIENT_ALIAS} in the source (13 Oct — client-fields.ts):
+   * filled for the TARGET's client, which is the point of copying a template
+   * into a client's campaign. Decided before the snapshot and before any
+   * write, so a refusal leaves the target exactly as it was. A source with no
+   * client field is not touched and no client is looked up.
+   */
+  if (usesClientFields(selected.flatMap((s) => [s.email_subject, s.email_body]))) {
+    let values;
+    try {
+      values = await clientFieldValuesForCampaign("emailbison", targetId);
+    } catch (error) {
+      return {
+        ok: false, created: 0, deleted: 0,
+        error: `The source uses a client field, and this campaign's client could not be looked up, so nothing was copied. ${error instanceof Error ? error.message : ""}`.trim(),
+      };
+    }
+    const filled = fillSteps(selected, values);
+    const problem = clientFieldsProblem(filled.missing, values);
+    if (problem) return { ok: false, created: 0, deleted: 0, error: problem.replace("cannot be saved with it", "cannot be copied in with it") };
+    selected = filled.value;
+  }
 
   /*
    * THE SNAPSHOT. Written before a single destructive call, and containing the

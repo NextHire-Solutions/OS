@@ -18,8 +18,25 @@ import { DEFAULT_SERIES, SERIES_KEYS, type SeriesKey } from "./series.ts";
  *   - Unknown params are dropped rather than passed through.
  */
 
-export const PRESETS = ["7d", "30d", "90d", "custom"] as const;
+/*
+ * Today, Yesterday and This week joined 7d / 30d / 90d on 13 Oct (client:
+ * "Time filters: add Today and Yesterday" · "add a quick option to select This
+ * Week"). They are the first three presets that are not "the last N days
+ * ending today" — Yesterday does not end today at all — so a preset is now a
+ * RANGE (see `presetRange`), not a day count.
+ */
+export const PRESETS = ["today", "yesterday", "week", "7d", "30d", "90d", "custom"] as const;
 export type Preset = (typeof PRESETS)[number];
+
+/** What each quick option is called on its pill, in the order they are offered. */
+export const PRESET_PILLS: ReadonlyArray<{ value: Exclude<Preset, "custom">; label: string; title: string }> = [
+  { value: "today", label: "Today", title: "Today so far" },
+  { value: "yesterday", label: "Yesterday", title: "Yesterday, the whole day" },
+  { value: "week", label: "This week", title: "Monday to today" },
+  { value: "7d", label: "7d", title: "The last 7 days, today included" },
+  { value: "30d", label: "30d", title: "The last 30 days, today included" },
+  { value: "90d", label: "90d", title: "The last 90 days, today included" },
+];
 
 export const SUB_VIEWS = ["charts", "clients", "campaigns", "replies"] as const;
 export type SubView = (typeof SUB_VIEWS)[number];
@@ -41,7 +58,7 @@ export type SubView = (typeof SUB_VIEWS)[number];
 export const PLATFORMS = ["emailbison", "instantly"] as const;
 export type Platform = (typeof PLATFORMS)[number];
 
-const PRESET_DAYS: Record<Exclude<Preset, "custom">, number> = {
+const PRESET_DAYS: Record<"7d" | "30d" | "90d", number> = {
   "7d": 7,
   "30d": 30,
   "90d": 90,
@@ -66,6 +83,31 @@ export function addDays(value: string, days: number): string {
   const date = parseISODate(value);
   date.setUTCDate(date.getUTCDate() + days);
   return toISODate(date);
+}
+
+/*
+ * The [from, to] a quick option means on a given day — inclusive at both ends,
+ * like every range here.
+ *
+ *   today       today alone (so far: the day is still running)
+ *   yesterday   the day before, whole — the one preset that does not end today
+ *   week        this week, MONDAY to today. Monday because that is the week
+ *               the rest of the business counts in (Client Health's weeks and
+ *               billing cycles are Monday-keyed); on a Monday it is one day.
+ *   7d/30d/90d  today and the N−1 days before it
+ */
+export function presetRange(preset: Exclude<Preset, "custom">, today: string): { from: string; to: string } {
+  if (preset === "today") return { from: today, to: today };
+  if (preset === "yesterday") {
+    const y = addDays(today, -1);
+    return { from: y, to: y };
+  }
+  if (preset === "week") {
+    // getUTCDay: Sunday 0 … Saturday 6. Days since Monday: Sunday is 6.
+    const sinceMonday = (parseISODate(today).getUTCDay() + 6) % 7;
+    return { from: addDays(today, -sinceMonday), to: today };
+  }
+  return { from: addDays(today, -(PRESET_DAYS[preset] - 1)), to: today };
 }
 
 /** Inclusive day count: daysBetween("2026-07-01", "2026-07-01") === 1. */
@@ -184,6 +226,12 @@ export const filtersSchema = z.object({
   client_ids: csvOf(parseUuid, "client id"),
   platforms: csvOf(parsePlatform, "platform"),
   /*
+   * EmailBison campaign tags (13 Oct). One `tags=` per tag, never comma-joined:
+   * a tag is free text typed in EmailBison and may contain a comma. Resolved
+   * to campaign ids server-side — tag-filter-rule.ts.
+   */
+  tags: listOf(),
+  /*
    * Reply attribute filters (REQ page 2). One param per dimension, values
    * comma-separated. Kept free-text rather than an enum because the vocabulary
    * IS the data — brokerage names and cities come from leads and change without
@@ -214,6 +262,8 @@ export interface ResolvedFilters {
   clientIds: string[];
   /** Empty = every platform, which is what an absent filter means. */
   platforms: Platform[];
+  /** EmailBison campaign tags; several are alternatives. Empty = no tag filter. */
+  tags: string[];
   /** Reply attribute filters, keyed by reply_dimensions.key. */
   replyFacets: Record<string, string[]>;
   compare: boolean;
@@ -233,7 +283,7 @@ export interface ResolvedFilters {
  * testable, and so the server can resolve "today" in the team's timezone.
  */
 /** Params carried as `?k=a&k=b` rather than `?k=a,b` — see `listOf`. */
-const REPEATED_KEYS = ["reply_company", "reply_location", "reply_sales_volume"] as const;
+const REPEATED_KEYS = ["reply_company", "reply_location", "reply_sales_volume", "tags"] as const;
 
 export function resolveFilters(
   params: URLSearchParams | Record<string, string | undefined>,
@@ -267,8 +317,7 @@ export function resolveFilters(
     to = parsed.to;
   } else {
     if (preset === "custom") preset = "30d"; // custom with no dates is meaningless
-    to = today;
-    from = addDays(today, -(PRESET_DAYS[preset as Exclude<Preset, "custom">] - 1));
+    ({ from, to } = presetRange(preset as Exclude<Preset, "custom">, today));
   }
 
   // Guard against an inverted range arriving from a hand-edited URL.
@@ -289,6 +338,7 @@ export function resolveFilters(
     instantlyCampaignIds: parsed.campaign_ids.filter((id) => UUID_RE.test(id)),
     clientIds: parsed.client_ids,
     platforms: parsed.platforms,
+    tags: parsed.tags,
     replyFacets: {
       company: parsed.reply_company,
       location: parsed.reply_location,
@@ -348,6 +398,8 @@ export function filtersToSearchParams(
   setList("campaign_ids", filters.campaignIds);
   setList("client_ids", filters.clientIds);
   setList("platforms", filters.platforms);
+  // One by one, like the reply facets: a tag may contain a comma.
+  for (const tag of filters.tags ?? []) params.append("tags", tag);
   // Appended one by one, not comma-joined: a facet value may contain a comma.
   for (const [key, values] of Object.entries(filters.replyFacets ?? {})) {
     for (const value of values ?? []) params.append(`reply_${key}`, value);

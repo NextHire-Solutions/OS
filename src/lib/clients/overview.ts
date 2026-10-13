@@ -16,6 +16,9 @@ import { type ClientStatus } from "./client-status";
 import { nextBillingDate } from "@/lib/tools/client-health/derive";
 import type { BillingInterval } from "@/lib/tools/client-health/types";
 import { listCoverage } from "./coverage-db";
+import { alignWithStripe, stripeAnchor } from "./billing-align.ts";
+import { stripeFactsByClient } from "./billing-align-load";
+import { easternDay } from "@/lib/commissions/schedule";
 
 /*
  * One row per client, gathered from every tool.
@@ -164,7 +167,7 @@ async function marketSummaries(): Promise<Map<string, MarketSummary>> {
 }
 
 export async function getClientsOverview(): Promise<ClientsOverview> {
-  const [health, inbox, analytics, stored, portals, momentsResult, marketsResult] = await Promise.allSettled([
+  const [health, inbox, analytics, stored, portals, momentsResult, marketsResult, stripeResult] = await Promise.allSettled([
     readClientHealth(),
     readMasterInbox(),
     readAnalytics(),
@@ -172,7 +175,12 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
     readPortalTokens(),
     latestStatusMoments(),
     marketSummaries(),
+    // Each client's Stripe subscriptions — billing dates follow the real charge (13 Oct).
+    stripeFactsByClient(),
   ]);
+  // Without Stripe every client keeps the dates on its record.
+  const stripeFacts = stripeResult.status === "fulfilled" ? stripeResult.value : null;
+  const today = easternDay(new Date());
   const portalByKey: Map<string, string> =
     portals.status === "fulfilled" ? portals.value : new Map();
   // Null, not an empty map, when unreadable — see ClientRow.os.markets.
@@ -278,7 +286,20 @@ export async function getClientsOverview(): Promise<ClientsOverview> {
          * four branches (14-day, 28-day, monthly, custom-N).
          */
         nextBillingDate: (() => {
-          const anchor = str(hr?.billing_anchor_date);
+          /*
+           * Stripe's charge date where the cycle follows Stripe (13 Oct —
+           * billing-align.ts), so this page, the client's record and Client
+           * Health's Delivery give one date.
+           */
+          const onRecord = {
+            billing_anchor_date: str(hr?.billing_anchor_date), start_date: str(hr?.start_date),
+            billing_interval: (str(hr?.billing_interval) ?? "biweekly") as BillingInterval,
+            billing_interval_days: num(hr?.billing_interval_days),
+          };
+          const followed = hr && os?.id && stripeFacts
+            ? stripeAnchor(alignWithStripe(onRecord, stripeFacts.get(os.id) ?? [], today))
+            : null;
+          const anchor = followed ?? str(hr?.billing_anchor_date);
           if (!anchor) return null;
           const next = nextBillingDate(
             anchor,

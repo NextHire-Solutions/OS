@@ -22,6 +22,7 @@ import { CampaignLeads } from "./campaign-leads";
 import { CopySequenceDialog } from "./copy-sequence-dialog";
 import { EmailPanel } from "./email-panel";
 import { FanOutDialog } from "./fan-out-dialog";
+import { LaunchTab } from "./launch-tab";
 import { PushSequenceDialog } from "./push-sequence-dialog";
 import { ReCampaignDialog } from "./re-campaign-dialog";
 import { SequenceEditor, type EditableStep } from "./sequence-editor";
@@ -134,7 +135,7 @@ interface DetailResponse {
   sentStepIds: number[];
 }
 
-type Tab = "overview" | "leads" | "sequence" | "settings" | "activity";
+type Tab = "overview" | "leads" | "sequence" | "settings" | "launch" | "activity";
 
 export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () => void }) {
   const { data, error, loading, reload } = useAnalyticsData<DetailResponse>(CAMPAIGN_URL(id));
@@ -195,6 +196,9 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
     { value: "leads", label: "Leads" },
     { value: "sequence", label: "Sequence" },
     ...(isInstantly ? [] : [{ value: "settings" as Tab, label: "Settings" }]),
+    // Launch (13 Oct): the checks and the button that starts a draft or a
+    // paused campaign. EmailBison only, like Settings — launch-tab.tsx.
+    ...(isInstantly ? [] : [{ value: "launch" as Tab, label: "Launch" }]),
     { value: "activity", label: "Activity" },
   ];
   const platformName = isInstantly ? "Instantly" : "EmailBison";
@@ -309,6 +313,9 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
         ) : null}
         {tab === "settings" ? (
           <Settings campaign={c} show={show} onSaved={() => void reload()} />
+        ) : null}
+        {tab === "launch" ? (
+          <LaunchTab campaignId={String(c.id)} show={show} onLaunched={() => void reload()} />
         ) : null}
         {tab === "activity" ? <ActivityLog rows={data.activity ?? []} /> : null}
       </div>

@@ -3,8 +3,10 @@
 import { useState } from "react";
 
 import { fullNumber } from "@/lib/tools/analytics/format.ts";
+import { MAX_POOLS, poolNames, poolPreview, togglePool } from "@/lib/tools/analytics/campaigns/inbox-pools.ts";
 import {
   CAMPAIGN_INBOXES_URL,
+  INBOX_POOL_IDS_URL,
   INBOX_TAGS_URL,
   assignInboxes,
   useAnalyticsData,
@@ -21,6 +23,12 @@ import { Btn } from "./toast";
  * The tags are EmailBison's own — "Nicole Pool", "LeadGenJay", "Zapmail" — read
  * from our cache of every inbox, so choosing a pool costs no API calls and a
  * pool created upstream appears after the next sync-senders.
+ *
+ * SEVERAL POOLS AT ONCE (13 Oct: "select multiple groups of inboxes when
+ * adding or removing"). The rows are ticked, not chosen one at a time, and
+ * everything the dialog says is counted over the UNION of the ticked pools —
+ * an inbox usually carries both its vendor's tag and its pool's, so two pools'
+ * sizes cannot simply be added (inbox-pools.ts).
  */
 
 interface TagRow {
@@ -62,7 +70,7 @@ export function AssignInboxesDialog({
   onOpenChange: (open: boolean) => void;
   onDone: () => void;
 }) {
-  const [tag, setTag] = useState<string>("");
+  const [picked, setPicked] = useState<string[]>([]);
   const [action, setAction] = useState<"attach" | "remove">("attach");
   /*
    * A third view, because counts and a list answer different questions. "Nicole
@@ -108,24 +116,59 @@ export function AssignInboxesDialog({
 
   const tags = tagQuery.data?.tags ?? [];
   const alreadyOn = new Map((assigned?.tags ?? []).map((t) => [t.tag, t.inboxes]));
-  const chosen = tags.find((t) => t.tag === tag);
-  // What will actually be sent: an attach skips inboxes that cannot send.
-  const willSend = chosen ? (action === "attach" ? chosen.connected : chosen.inboxes) : 0;
-  const dead = chosen ? chosen.inboxes - chosen.connected : 0;
+  const chosen = tags.filter((t) => picked.includes(t.tag));
+  const many = chosen.length > 1;
 
   /*
-   * How many of this pool are ALREADY on the campaign, and therefore how many
+   * The ticked pools' inboxes, each once — asked for only when more than one
+   * EmailBison pool is ticked, because one pool's own numbers are already
+   * exact. While it loads (or if it cannot be read) the dialog says "up to"
+   * the pools added together rather than claim a number it does not have.
+   */
+  const unionQuery = useAnalyticsData<{ ids: { all: number[]; connected: number[] } | null }>(
+    INBOX_POOL_IDS_URL(platform ?? "emailbison", picked),
+    { skip: !open || !many || platform !== "emailbison" },
+  );
+  const union = many && platform === "emailbison" ? (unionQuery.data?.ids ?? null) : null;
+  const exact = !many || union !== null;
+  const counting = many && platform === "emailbison" && !union && unionQuery.loading;
+
+  const summed = {
+    all: chosen.reduce((t, c) => t + c.inboxes, 0),
+    connected: chosen.reduce((t, c) => t + c.connected, 0),
+  };
+  const preview = union
+    ? poolPreview({ action, all: union.all, connected: union.connected, assigned: single && assigned ? assigned.inboxes.map((i) => i.id) : null })
+    : null;
+
+  // What will actually be sent: an attach skips inboxes that cannot send.
+  const willSend = preview ? preview.willSend : action === "attach" ? summed.connected : summed.all;
+  const dead = preview ? preview.dead : summed.all - summed.connected;
+
+  /*
+   * How many of these are ALREADY on the campaign, and therefore how many
    * would genuinely change. "531 inboxes will start sending" when 346 of them
    * were already sending is true of the end state and false about the change.
+   *
+   * One pool: from the campaign's per-tag counts, as before. Several: from the
+   * union against the campaign's own inbox list, which is the only way to count
+   * an inbox that sits in two of the ticked pools once.
    */
-  const onAlready = single ? Math.min(alreadyOn.get(tag) ?? 0, willSend) : 0;
+  const onAlready = !single
+    ? 0
+    : preview?.onAlready != null
+      ? preview.onAlready
+      : many
+        ? 0
+        : Math.min(alreadyOn.get(picked[0] ?? "") ?? 0, willSend);
   const newlyAdded = Math.max(willSend - onAlready, 0);
+  const label = poolNames(chosen.map((c) => c.tag));
 
   const run = async () => {
     setRunning(true);
     setError(null);
     try {
-      setSummary(await assignInboxes(targets, tag, action));
+      setSummary(await assignInboxes(targets, chosen.map((c) => c.tag), action));
       onDone();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The assignment failed.");
@@ -139,6 +182,8 @@ export function AssignInboxesDialog({
     setTimeout(() => {
       setSummary(null);
       setError(null);
+      // The next opening may be for other campaigns: nothing is left ticked.
+      setPicked([]);
     }, 200);
   };
 
@@ -169,15 +214,18 @@ export function AssignInboxesDialog({
                 // A mixed selection has no single pool list, so there is
                 // nothing safe to apply.
                 !platform ||
-                !tag ||
+                chosen.length === 0 ||
                 willSend === 0 ||
                 // Nothing would change: every connected inbox in this pool is
                 // already on the campaign.
-                (action === "attach" && single && platform === "emailbison" && newlyAdded === 0)
+                // (Only claimed when the count is exact — see `exact`.)
+                (action === "attach" && single && platform === "emailbison" && exact && newlyAdded === 0)
               }
             >
               {running ? "Working…" : action === "attach" ? "Assign" : "Remove"}
-              {chosen && !running ? ` ${fullNumber(action === "attach" && single && onAlready > 0 ? newlyAdded : willSend)}` : ""}
+              {chosen.length && !running
+                ? ` ${exact ? "" : "up to "}${fullNumber(action === "attach" && single && onAlready > 0 ? newlyAdded : willSend)}`
+                : ""}
             </Btn>
           </>
         )
@@ -202,7 +250,7 @@ export function AssignInboxesDialog({
       {summary ? (
         <>
           <p className="tnum" style={{ margin: 0 }}>
-            <b>{fullNumber(summary.inboxes)}</b> inboxes tagged <b>{summary.tag}</b>{" "}
+            <b>{fullNumber(summary.inboxes)}</b> inboxes tagged <b>{poolNames(summary.tags?.length ? summary.tags : [summary.tag])}</b>{" "}
             {summary.action === "attach" ? "assigned to" : "removed from"}{" "}
             {fullNumber(summary.results.filter((r) => r.ok).length)} of {fullNumber(summary.results.length)} campaigns.
           </p>
@@ -316,18 +364,35 @@ export function AssignInboxesDialog({
               {tags.length === 0 ? (
                 <div className="mut" style={{ padding: 20, textAlign: "center", fontSize: 12.5 }}>No tagged pools on {platform === "instantly" ? "Instantly" : "EmailBison"}.</div>
               ) : null}
-              {tags.map((t) => (
+              {tags.map((t) => {
+                const on = picked.includes(t.tag);
+                const full = !on && picked.length >= MAX_POOLS;
+                return (
                 <button
                   key={t.tag}
                   type="button"
-                  onClick={() => setTag(t.tag)}
-                  aria-pressed={tag === t.tag}
+                  role="checkbox"
+                  aria-checked={on}
+                  data-inbox-pool={t.tag}
+                  disabled={full}
+                  onClick={() => setPicked((now) => togglePool(now, t.tag))}
                   style={{
                     display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "6px 8px", border: 0, borderRadius: 6,
-                    background: tag === t.tag ? "var(--blue-pale)" : "none", cursor: "pointer", font: "inherit", fontSize: 13,
-                    fontWeight: tag === t.tag ? 600 : 400, textAlign: "left",
+                    background: on ? "var(--blue-pale)" : "none", cursor: full ? "not-allowed" : "pointer", font: "inherit", fontSize: 13,
+                    fontWeight: on ? 600 : 400, textAlign: "left", opacity: full ? 0.5 : 1,
                   }}
                 >
+                  {/* A tick box, because several can be on at once (13 Oct). */}
+                  <span
+                    aria-hidden
+                    style={{
+                      flex: "none", width: 15, height: 15, borderRadius: 4, display: "inline-grid", placeItems: "center",
+                      border: `1.5px solid ${on ? "var(--blue)" : "var(--line)"}`, background: on ? "var(--blue)" : "var(--surface, #fff)",
+                      color: "#fff", fontSize: 11, lineHeight: 1, fontWeight: 700,
+                    }}
+                  >
+                    {on ? "✓" : ""}
+                  </span>
                   <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.tag}</span>
                   {/* Says how much of this pool is ALREADY on the campaign, so
                       "assign" and "re-assign what is already there" are
@@ -342,36 +407,53 @@ export function AssignInboxesDialog({
                     {t.connected !== t.inboxes ? ` of ${fullNumber(t.inboxes)}` : ""}
                   </span>
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
+          {showing === "pools" && tags.length > 1 ? (
+            <div className="mut" data-inbox-pool-hint style={{ fontSize: 12 }}>
+              {chosen.length === 0
+                ? "Tick one pool or several."
+                : `${chosen.length} pool${chosen.length === 1 ? "" : "s"} ticked${many ? " — an inbox in more than one is counted once" : ""}.`}
+            </div>
+          ) : null}
 
-          {chosen && showing === "pools" ? (
+          {chosen.length && showing === "pools" ? (
             <Warn>
-              <span className="tnum">
-                {action === "attach" ? (
+              <span className="tnum" data-inbox-pool-preview>
+                {!exact ? (
+                  // Several pools, union not in yet: no number is claimed that
+                  // the write might not match.
+                  <>
+                    {counting ? <>Counting the inboxes in {label}… up to </> : <>Up to </>}
+                    <b>{fullNumber(willSend)} inboxes</b>
+                    {counting ? null : <> from {label}</>} will {action === "attach" ? "start" : "stop"} sending for{" "}
+                    {fullNumber(campaignIds.length)} campaign{campaignIds.length === 1 ? "" : "s"} — fewer if the pools share inboxes.
+                  </>
+                ) : action === "attach" ? (
                   <>
                     {single && newlyAdded === 0 && onAlready > 0 ? (
                       // Nothing to do. The attach would succeed and change
                       // nothing, and a button reading "Assign 0" invites a
                       // click that reports success for a no-op.
-                      <>All {fullNumber(onAlready)} connected {chosen.tag} inboxes are already on this campaign. Nothing to add.</>
+                      <>All {fullNumber(onAlready)} connected {label} inboxes are already on this campaign. Nothing to add.</>
                     ) : single && onAlready > 0 ? (
                       <>
                         <b>{fullNumber(newlyAdded)} {newlyAdded === 1 ? "inbox" : "inboxes"}</b> will start sending.{" "}
-                        {fullNumber(onAlready)} of this pool {onAlready === 1 ? "is" : "are"} already on the campaign, so it will
-                        hold {fullNumber(willSend)} from {chosen.tag} afterwards.
+                        {fullNumber(onAlready)} of {many ? "these pools" : "this pool"} {onAlready === 1 ? "is" : "are"} already on the campaign, so it will
+                        hold {fullNumber(willSend)} from {label} afterwards.
                       </>
                     ) : (
                       <>
-                        <b>{fullNumber(willSend)} inboxes</b> will start sending for {fullNumber(campaignIds.length)} campaign{campaignIds.length === 1 ? "" : "s"}.
+                        <b>{fullNumber(willSend)} inboxes</b>{many ? <> from {label}</> : null} will start sending for {fullNumber(campaignIds.length)} campaign{campaignIds.length === 1 ? "" : "s"}.
                       </>
                     )}
                     {dead > 0 ? <> {fullNumber(dead)} tagged {dead === 1 ? "inbox is" : "inboxes are"} not connected and will be left out.</> : null}
                   </>
                 ) : (
                   <>
-                    <b>{fullNumber(willSend)} inboxes</b> will stop sending for {fullNumber(campaignIds.length)} campaign{campaignIds.length === 1 ? "" : "s"}.
+                    <b>{fullNumber(preview?.onAlready != null ? preview.changes : willSend)} inboxes</b>{many ? <> from {label}</> : null} will stop sending for {fullNumber(campaignIds.length)} campaign{campaignIds.length === 1 ? "" : "s"}.
                     A campaign left with no inboxes cannot send at all.
                   </>
                 )}

@@ -134,6 +134,63 @@ body.rail-collapsed .app { grid-template-columns: 76px 1fr; }
 /* The transition is on the grid, so the stage slides rather than jumping. */
 .app { transition: grid-template-columns 0.22s var(--sp-smooth, cubic-bezier(0.4, 0, 0.2, 1)); }
 
+/* ---------------------------------------------------------------------------
+   The retracted rail's fly-out (13 Oct) — see rail.tsx.
+
+   The design's hover label is a ::after placed outside the rail, and the
+   rail's scroller clips sideways, so it was drawn and cut off. It is switched
+   off here and replaced by a real element portalled to <body>, which also
+   carries a product's screens so they can be opened without expanding.
+   ------------------------------------------------------------------------- */
+body.rail-collapsed .nav::after,
+body.rail-collapsed .acc-btn::after { display: none; }
+/*
+ * Three things the retracted rail lost to os.css, which is unlayered and so
+ * beats the design's own collapsed rules whatever their specificity:
+ *
+ *   · the scroller kept 12px of side padding, leaving the 46px icons 3px off
+ *     centre in a 76px strip (and tighter still when a scrollbar appeared);
+ *   · the product you are IN had no marker at all — the design marks it with a
+ *     border and a shadow, both switched off there. It now takes the same fill
+ *     as an active page;
+ *   · the same, at 1000px and under, where the strip appears by itself.
+ */
+body.rail-collapsed .rail-scroll { padding: 4px 0 16px; overflow-x: hidden; }
+body.rail-collapsed .acc.has-active > .acc-btn { background: #EFEFF1 !important; color: var(--x-ink, var(--ink)) !important; }
+body.rail-collapsed .acc.has-active > .acc-btn .ico { color: var(--x-ink, var(--ink)) !important; opacity: 1 !important; }
+@media (max-width: 1000px) {
+  .rail .rail-scroll { padding: 4px 0 16px; overflow-x: hidden; }
+  .rail .acc.has-active > .acc-btn { background: #EFEFF1 !important; }
+  .rail .acc-body { grid-template-rows: 0fr !important; }
+}
+.rail-fly {
+  position: fixed; z-index: 45; min-width: 190px; max-width: 260px;
+  padding: 6px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--line);
+  box-shadow: 0 14px 34px -12px rgba(35, 35, 35, 0.28), var(--sh-card);
+}
+.rail-fly-h {
+  padding: 7px 10px 6px; font-size: 12px; font-weight: 600; color: var(--muted);
+  letter-spacing: -0.005em; white-space: nowrap;
+}
+.rail-fly-i {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none;
+  font: inherit; font-size: 13.5px; color: var(--ink-2); text-align: left; cursor: pointer;
+}
+.rail-fly-i:hover, .rail-fly-i:focus-visible { background: var(--inset); color: var(--ink); outline: none; }
+.rail-fly-i.on { background: var(--inset); color: var(--ink); font-weight: 600; }
+.rail-fly-i .pill {
+  font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  background: var(--blue-pale); color: var(--blue-ink);
+}
+/* A single page: just its name, in the design's dark label. */
+.rail-fly.rail-fly-tip {
+  min-width: 0; padding: 0; border: 0; background: var(--ink);
+  box-shadow: 0 8px 20px -8px rgba(35, 35, 35, 0.5); pointer-events: none;
+}
+.rail-fly.rail-fly-tip .rail-fly-h { padding: 6px 10px; color: #fff; font-size: 12.5px; }
+
 /* Anything that only makes sense with a label goes when the labels do. */
 body.rail-collapsed .rail-foot .who { display: none; }
 body.rail-collapsed .rail-foot { justify-content: center; gap: 0; }

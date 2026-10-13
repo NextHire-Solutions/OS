@@ -15,6 +15,16 @@ export function replyRate(replies: number, sent: number): number | null {
   return sent > 0 ? replies / sent : null;
 }
 
+/**
+ * Replies / People emailed — the same replies over the people rather than the
+ * emails (13 Oct: "need both"). A sequence sends several emails to one person,
+ * so this is always the larger of the two and is the one EmailBison's own
+ * screens quote. Null when the count of people is unknown, never a guess.
+ */
+export function replyRatePerContact(replies: number, prospects: number | null | undefined): number | null {
+  return prospects != null && prospects > 0 ? replies / prospects : null;
+}
+
 /** Human Replies / Sent. Screenshot: ~1.28%. */
 export function humanRate(humanReplies: number, sent: number): number | null {
   return sent > 0 ? humanReplies / sent : null;

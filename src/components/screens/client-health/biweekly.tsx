@@ -16,12 +16,12 @@ import {
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
 import { AheadBadge, CarryBadge, fmtMDY, isBehind } from "./billing-cells";
+import { alignmentNote } from "@/lib/clients/billing-align.ts";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
 import { ToastHost } from "./toast";
 import { ClientHealthToolbar, useSelectedWeek, weekLabel } from "./toolbar";
-import { SummaryCards } from "./summary-cards";
 import { setFilters, useClientHealthView } from "./view-state";
 import { ClientCampaignsName } from "./campaigns-link";
 
@@ -84,12 +84,6 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
     () => sortBiWeekly(biweeklyRows(filtered.map((r) => r.client), now), sort),
     [filtered, now, sort],
   );
-  const summary = useMemo(
-    () => (isCurrent && data.summary ? data.summary : summarize(rowsAll, key)),
-    [isCurrent, data.summary, rowsAll, key],
-  );
-  const lifetimeRates = funnelRates(summary.lifetime);
-  const weekRates = funnelRates(summary.week);
 
   // 1st click → desc, 2nd → asc, 3rd → back to the default order.
   const cycleSort = (col: BwSortCol) =>
@@ -109,8 +103,13 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
       ) : null}
 
       <ClientHealthToolbar title="Delivery" description="who bills next, and what they are still owed" week={week} onAdd={openAdd} sync={data.sync} now={now} />
-      <SummaryCards s={summary} lifetime={lifetimeRates} week={weekRates} isCurrent={isCurrent} weekKey={key} />
-
+      {/*
+        Delivery keeps ONE row of figures — its own (13 Oct, client: "Remove the
+        first 4 cards/sections above — Status, Performance, Funnel Lifetime,
+        and This Week. Keep only the last row"). Those four bands are
+        Overview's; here they pushed the billing cycles, which are the point of
+        this page, a full screen down.
+      */}
       <Stats>
         <Stat label="Clients" value={rows.length} sub="in this cycle view" />
         <Stat label="Billing in ≤3 days" value={dueSoon} sub="invoice imminent" tone={dueSoon > 0 ? "red" : undefined} />
@@ -184,6 +183,7 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
 
 function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
   const { client: c, billing, days, intros, required, leftCycle, snap, tzShort } = row;
+  const note = alignmentNote(c.billing_alignment);
 
   // The tool's three-way colouring: met, at least half, below half.
   const tone =
@@ -208,6 +208,21 @@ function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
 
       <td className="num">
         {billing ? fmtMDY(billing) : <button type="button" className="ds-link" onClick={onEdit}>Set billing date</button>}
+        {/*
+          Where this date comes from, when it is not simply the record's
+          (13 Oct — lib/clients/billing-align.ts): following Stripe's real
+          charge date, or a difference with Stripe that a date cannot fix.
+        */}
+        {note ? (
+          <span
+            className="ds-sub"
+            data-billing-note={c.billing_alignment?.kind}
+            title={note.text}
+            style={note.tone === "warn" ? { color: "var(--ds-danger, #C93A31)" } : undefined}
+          >
+            {note.tone === "warn" ? "differs from Stripe" : "per Stripe"}
+          </span>
+        ) : null}
       </td>
 
       <td>

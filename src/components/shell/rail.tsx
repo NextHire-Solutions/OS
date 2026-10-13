@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { NAV, sectionKey, sectionOf, type NavPage, type NavProduct } from "@/lib/workspace/nav";
 import { RailBrand } from "./rail-brand";
 import { ToolGlyph } from "./tool-glyph";
@@ -34,7 +35,39 @@ export interface RailProps {
   admin?: boolean;
   /** Account manager / salesperson: fewer pages (Eddy, 2 Oct). */
   roles?: RoleFlags;
+  /** The rail is retracted to its 76px icon strip. */
+  collapsed?: boolean;
 }
+
+/*
+ * What the retracted rail shows beside an icon (13 Oct: "Side Menu OS: when
+ * retracted, it's broken").
+ *
+ * It was broken in two ways, both invisible in the stylesheet:
+ *
+ *   · A product's icon did NOTHING. Its click toggles the list underneath,
+ *     and the retracted rail hides every list — so Master Inbox, Client
+ *     Portals, Client Health, both Campaign sections and Agent Search could
+ *     not be opened at all without expanding the rail first.
+ *   · The hover label never showed. It is a CSS ::after positioned outside the
+ *     rail, and the rail's scroller clips sideways (overflow-x) — it was drawn
+ *     and cut off.
+ *
+ * So the retracted rail gets one fly-out, drawn in a portal on <body> where
+ * nothing can clip it: for a product, its name and its screens, each a click
+ * away; for a single page, just its name.
+ */
+interface Fly {
+  key: string;
+  label: string;
+  /** Top of the icon, in the viewport. */
+  top: number;
+  /** A product's screens; null for a single page (a plain label). */
+  leaves: Array<{ id: string; label: string; count?: number }> | null;
+}
+
+/** The retracted rail's width — `body.rail-collapsed .app` in shell.css. */
+const COLLAPSED_WIDTH = 76;
 
 /**
  * The rail section a destination id belongs to — `"inbox:archive"` →
@@ -43,7 +76,7 @@ export interface RailProps {
  */
 const productOf = sectionOf;
 
-export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, user, admin = false, roles = {} }: RailProps) {
+export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, user, admin = false, roles = {}, collapsed = false }: RailProps) {
   /*
    * Which product's list is open.
    *
@@ -69,6 +102,98 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
     lastProduct.current = product;
   }, [activeId]);
 
+  const [fly, setFly] = useState<Fly | null>(null);
+  const flyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flyRef = useRef<HTMLDivElement | null>(null);
+  const [flyTop, setFlyTop] = useState(0);
+  const keepFly = useCallback(() => {
+    if (flyTimer.current) clearTimeout(flyTimer.current);
+    flyTimer.current = null;
+  }, []);
+  /** The icon the fly-out belongs to — where focus returns on Escape. */
+  const flyAnchor = useRef<HTMLElement | null>(null);
+  /** Set while focus is handed back to an icon by Escape, so that does not reopen its menu. */
+  const quietFocus = useRef(false);
+  const showFly = useCallback((el: HTMLElement, next: Omit<Fly, "top">) => {
+    if (quietFocus.current) return;
+    keepFly();
+    flyAnchor.current = el;
+    setFly({ ...next, top: el.getBoundingClientRect().top });
+  }, [keepFly]);
+  /*
+   * Keyboard. The fly-out is portalled to the end of <body>, so Tab from an
+   * icon goes to the next icon, not into the menu. Right or Down enters it;
+   * Up/Down move through it; Left or Escape goes back to the icon.
+   */
+  const flyItems = () => [...(flyRef.current?.querySelectorAll<HTMLElement>(".rail-fly-i") ?? [])];
+  const onRailKey = (e: React.KeyboardEvent) => {
+    if (!collapsed || !fly?.leaves) return;
+    // Keys pressed INSIDE the menu arrive here too (a portal's events bubble
+    // to its React parent); those are the menu's own business.
+    if (flyRef.current?.contains(e.target as Node)) return;
+    if (e.key !== "ArrowRight" && e.key !== "ArrowDown") return;
+    const first = flyItems()[0];
+    if (!first) return;
+    e.preventDefault();
+    keepFly();
+    first.focus();
+  };
+  const onFlyKey = (e: React.KeyboardEvent) => {
+    const items = flyItems();
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = items[(at + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length];
+      next?.focus();
+    } else if (e.key === "ArrowLeft" || e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      const back = flyAnchor.current;
+      closeFly();
+      quietFocus.current = true;
+      back?.focus();
+      quietFocus.current = false;
+    }
+  };
+  // A short grace period, so the pointer can cross the gap from icon to menu.
+  const hideFlySoon = useCallback(() => {
+    keepFly();
+    flyTimer.current = setTimeout(() => setFly(null), 160);
+  }, [keepFly]);
+  const closeFly = useCallback(() => {
+    keepFly();
+    setFly(null);
+  }, [keepFly]);
+
+  // Expanding the rail, or moving to another screen, puts the fly-out away.
+  useEffect(() => {
+    if (!collapsed) closeFly();
+  }, [collapsed, closeFly]);
+  useEffect(() => closeFly(), [activeId, closeFly]);
+  useEffect(() => {
+    if (!fly) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeFly();
+    };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (t && (flyRef.current?.contains(t) || document.getElementById("rail")?.contains(t))) return;
+      closeFly();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [fly, closeFly]);
+  // Kept on screen: a menu opened from the last icon would run off the bottom.
+  useLayoutEffect(() => {
+    if (!fly) return;
+    const h = flyRef.current?.offsetHeight ?? 0;
+    setFlyTop(Math.max(8, Math.min(fly.top, window.innerHeight - h - 8)));
+  }, [fly]);
+
   const initials = user.name
     .split(/\s+/)
     .map((p) => p[0])
@@ -78,7 +203,7 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
     .toUpperCase();
 
   return (
-    <aside className="rail" id="rail">
+    <aside className="rail" id="rail" onKeyDown={onRailKey}>
       <div className="rail-head">
         <RailBrand />
       </div>
@@ -109,6 +234,11 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
                       onOpen={() => setOpen(item.id)}
                       onNavigate={onNavigate}
                       onPrefetch={onPrefetch}
+                      collapsed={collapsed}
+                      flyOpen={fly?.key === item.id}
+                      onFly={showFly}
+                      onFlyLeave={hideFlySoon}
+                      onFlyClose={closeFly}
                     />
                   );
                 }
@@ -118,9 +248,18 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
                       key={item.id}
                       className={`nav${activeId === item.id ? " on" : ""}`}
                       data-tip={item.label}
+                      aria-label={item.label}
                       onClick={() => onNavigate(item.id)}
-                      onMouseEnter={() => onPrefetch?.(item.id)}
-                      onFocus={() => onPrefetch?.(item.id)}
+                      onMouseEnter={(e) => {
+                        onPrefetch?.(item.id);
+                        if (collapsed) showFly(e.currentTarget, { key: item.id, label: item.label, leaves: null });
+                      }}
+                      onMouseLeave={collapsed ? hideFlySoon : undefined}
+                      onFocus={(e) => {
+                        onPrefetch?.(item.id);
+                        if (collapsed) showFly(e.currentTarget, { key: item.id, label: item.label, leaves: null });
+                      }}
+                      onBlur={collapsed ? hideFlySoon : undefined}
                     >
                       <ToolGlyph id={item.id} />
                       <span className="lbl">{item.label}</span>
@@ -138,6 +277,11 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
                     onToggle={() => setOpen(open === key ? null : key)}
                     onNavigate={onNavigate}
                     onPrefetch={onPrefetch}
+                    collapsed={collapsed}
+                    flyOpen={fly?.key === key}
+                    onFly={showFly}
+                    onFlyLeave={hideFlySoon}
+                    onFlyClose={closeFly}
                   />
                 );
               })}
@@ -181,8 +325,60 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
           </button>
         </form>
       </div>
+
+      {collapsed && fly && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={flyRef}
+              className={`rail-fly${fly.leaves ? "" : " rail-fly-tip"}`}
+              // A page's label is decoration — its icon already carries the
+              // name as aria-label — so it has no role (and a stylesheet here
+              // re-centres anything with role="tooltip", which moved it over
+              // the icons).
+              role={fly.leaves ? "menu" : undefined}
+              aria-hidden={fly.leaves ? undefined : true}
+              aria-label={fly.leaves ? fly.label : undefined}
+              data-rail-fly={fly.key}
+              style={{ top: flyTop, left: COLLAPSED_WIDTH + 4 }}
+              onMouseEnter={keepFly}
+              onMouseLeave={hideFlySoon}
+              onFocus={keepFly}
+              onBlur={hideFlySoon}
+              onKeyDown={onFlyKey}
+            >
+              <div className="rail-fly-h">{fly.label}</div>
+              {fly.leaves?.map((leaf) => (
+                <button
+                  key={leaf.id}
+                  type="button"
+                  role="menuitem"
+                  className={`rail-fly-i${activeId === leaf.id ? " on" : ""}`}
+                  onClick={() => {
+                    closeFly();
+                    onNavigate(leaf.id);
+                  }}
+                  onMouseEnter={() => onPrefetch?.(leaf.id)}
+                  onFocus={() => onPrefetch?.(leaf.id)}
+                >
+                  <span>{leaf.label}</span>
+                  {typeof leaf.count === "number" && leaf.count > 0 ? <span className="pill">{leaf.count}</span> : null}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </aside>
   );
+}
+
+/** What a product or page group needs to drive the retracted rail's fly-out. */
+interface FlyProps {
+  collapsed: boolean;
+  flyOpen: boolean;
+  onFly: (el: HTMLElement, next: Omit<Fly, "top">) => void;
+  onFlyLeave: () => void;
+  onFlyClose: () => void;
 }
 
 /*
@@ -200,6 +396,7 @@ function PageGroup({
   onToggle,
   onOpen,
   onNavigate, onPrefetch,
+  collapsed, flyOpen, onFly, onFlyLeave, onFlyClose,
 }: {
   page: NavPage;
   leaves: { id: string; label: string }[];
@@ -209,21 +406,37 @@ function PageGroup({
   onOpen: () => void;
   onNavigate: (id: string) => void;
   onPrefetch?: (id: string) => void;
-}) {
+} & FlyProps) {
   const holdsActive = leaves.some((l) => l.id === activeId);
+  const fly = { key: page.id, label: page.label, leaves };
   return (
     <div className={`acc${open ? " open" : ""}${holdsActive ? " has-active" : ""}`}>
       <button
         className="acc-btn"
         type="button"
-        aria-expanded={open}
+        aria-expanded={collapsed ? flyOpen : open}
+        aria-haspopup={collapsed ? "menu" : undefined}
+        aria-label={page.label}
         data-tip={page.label}
-        onClick={() => {
+        onClick={(e) => {
+          // Retracted: the list has nowhere to open, so the click opens the
+          // page itself (as it always has from outside) and shows its menu.
+          if (collapsed) {
+            onFly(e.currentTarget, fly);
+            if (!holdsActive) onNavigate(leaves[0]?.id ?? page.id);
+            return;
+          }
           if (holdsActive) return onToggle();
           onOpen();
           onNavigate(leaves[0]?.id ?? page.id);
         }}
-        onMouseEnter={() => onPrefetch?.(leaves[0]?.id ?? page.id)}
+        onMouseEnter={(e) => {
+          onPrefetch?.(leaves[0]?.id ?? page.id);
+          if (collapsed) onFly(e.currentTarget, fly);
+        }}
+        onMouseLeave={collapsed ? onFlyLeave : undefined}
+        onFocus={collapsed ? (e) => onFly(e.currentTarget, fly) : undefined}
+        onBlur={collapsed ? onFlyLeave : undefined}
       >
         <ToolGlyph id={page.id} />
         <span className="lbl">{page.label}</span>
@@ -260,6 +473,7 @@ function Product({
   badges,
   onToggle,
   onNavigate, onPrefetch,
+  collapsed, flyOpen, onFly, onFlyLeave, onFlyClose,
 }: {
   product: NavProduct;
   open: boolean;
@@ -269,17 +483,40 @@ function Product({
   onNavigate: (id: string) => void;
   /** Warms a destination before it is clicked. See workspace.tsx. */
   onPrefetch?: (id: string) => void;
-}) {
+} & FlyProps) {
   const holdsActive = product.children.some((c) => `${product.id}:${c.id}` === activeId);
+  const fly = {
+    key: sectionKey(product),
+    label: product.label,
+    leaves: product.children.map((c) => ({
+      id: `${product.id}:${c.id}`,
+      label: c.label,
+      count: c.badgeKey ? badges[c.badgeKey] : undefined,
+    })),
+  };
 
   return (
     <div className={`acc${open ? " open" : ""}${holdsActive ? " has-active" : ""}`}>
       <button
         className="acc-btn"
         type="button"
-        aria-expanded={open}
+        aria-expanded={collapsed ? flyOpen : open}
+        aria-haspopup={collapsed ? "menu" : undefined}
+        aria-label={product.label}
         data-tip={product.label}
-        onClick={onToggle}
+        onClick={(e) => {
+          // Retracted: toggling a list nobody can see did nothing at all. The
+          // click shows the product's screens beside the icon instead. It
+          // never closes them: the pointer arriving has usually opened the
+          // menu already, and a click that then shut it would look broken
+          // all over again. Escape, a click elsewhere or moving away closes.
+          if (!collapsed) return onToggle();
+          onFly(e.currentTarget, fly);
+        }}
+        onMouseEnter={collapsed ? (e) => onFly(e.currentTarget, fly) : undefined}
+        onMouseLeave={collapsed ? onFlyLeave : undefined}
+        onFocus={collapsed ? (e) => onFly(e.currentTarget, fly) : undefined}
+        onBlur={collapsed ? onFlyLeave : undefined}
       >
         <ToolGlyph id={sectionKey(product)} />
         <span className="lbl">{product.label}</span>

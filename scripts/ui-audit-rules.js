@@ -45,6 +45,26 @@ window.__audit = function () {
     }
     return false;
   }
+  /*
+   * What is actually painted of a control: its rect cut to every scrolling or
+   * clipping ancestor. `scrollClipped` only drops a control that is ENTIRELY
+   * out of view; one straddling the edge of a scrolled rail (the last item,
+   * half under the footer) kept its full layout rect and "overlapped" the
+   * sign-out button below the clip — the same false report, one item lower.
+   */
+  function paintedRect(e) {
+    const r = e.getBoundingClientRect();
+    let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+    for (let n = e.parentElement; n && n !== document.body; n = n.parentElement) {
+      const c = getComputedStyle(n);
+      const clips = (v) => v === "auto" || v === "scroll" || v === "hidden";
+      if (!clips(c.overflowY) && !clips(c.overflowX)) continue;
+      const p = n.getBoundingClientRect();
+      left = Math.max(left, p.left); top = Math.max(top, p.top);
+      right = Math.min(right, p.right); bottom = Math.min(bottom, p.bottom);
+    }
+    return { left, top, right, bottom };
+  }
   function inHorizontalScroller(e) {
     for (let n = e.parentElement; n && n !== document.body; n = n.parentElement) {
       const o = getComputedStyle(n).overflowX;
@@ -355,8 +375,10 @@ window.__audit = function () {
       if (ca.position === "absolute" && inside(ra, rb)) continue;
       if (cb2.position === "absolute" && inside(rb, ra)) continue;
 
-      const ox = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
-      const oy = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+      // Measured on what is painted, not on the layout box — see paintedRect.
+      const pa = paintedRect(a), pb = paintedRect(b);
+      const ox = Math.min(pa.right, pb.right) - Math.max(pa.left, pb.left);
+      const oy = Math.min(pa.bottom, pb.bottom) - Math.max(pa.top, pb.top);
       // 4px in BOTH axes: a 1px shared border or a rounding artefact is not an
       // overlap, and adjacent controls touching edge-to-edge are normal.
       if (ox > 4 && oy > 4) {

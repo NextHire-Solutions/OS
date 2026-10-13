@@ -3,6 +3,8 @@ import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors.ts";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
 import { renderName } from "./fan-out-name.ts";
+import { clientFieldsProblem } from "./client-fields.ts";
+import { clientFieldValuesForClient, fillCampaignSequence } from "./client-fields-load";
 
 /*
  * One template campaign → one real campaign per client.
@@ -34,6 +36,8 @@ export interface FanOutTarget {
   steps: number;
   inboxes: number;
   error?: string;
+  /** Something the reader must know about a campaign that WAS built — e.g. client fields it could not fill. */
+  note?: string;
 }
 
 export interface FanOutSummary {
@@ -103,12 +107,27 @@ export async function fanOutToClients(
 
       await eb.updateCampaign(created, { name });
 
+      /*
+       * The duplicate arrives with the template's sequence, placeholders and
+       * all. {CLIENT_AREA} / {CLIENT_ALIAS} are filled HERE for this client —
+       * one template, each client's own area (13 Oct — client-fields.ts). A
+       * sequence with no client field costs the one read this always did and
+       * no write.
+       *
+       * If they cannot be filled the campaign still exists and is still this
+       * client's, so it is reported, not failed — and it cannot be started
+       * while a placeholder remains (campaigns/actions.ts).
+       */
       try {
-        const steps = await eb.getCampaignSequenceSteps(created);
-        target.steps = steps?.data?.sequence_steps?.length ?? 0;
-      } catch {
-        // Cosmetic. The duplicate either carried the sequence or it did not,
-        // and failing a built campaign over a count would be worse.
+        const values = await clientFieldValuesForClient(client.id);
+        const result = await fillCampaignSequence(eb, created, name, values);
+        target.steps = result.steps;
+        const problem = clientFieldsProblem(result.missing, values);
+        if (problem) target.note = `Client fields not filled: ${problem.replace(", so the sequence cannot be saved with it", "")}`;
+        else if (result.filled) target.note = `${result.filled} client field${result.filled === 1 ? "" : "s"} filled in`;
+      } catch (error) {
+        // The count is cosmetic; an unfilled client field is not, so it is said.
+        target.note = `Could not check the sequence for client fields: ${describeEmailBisonError(error)}. Open its sequence before starting it.`;
       }
 
       if (senderIds.length) {

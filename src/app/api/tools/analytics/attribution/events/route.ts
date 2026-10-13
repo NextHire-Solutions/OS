@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
+import { narrowToTags } from "@/lib/tools/analytics/tag-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
 
   let filters;
   try {
-    filters = resolveFilters(params, toISODate(new Date()));
+    filters = await narrowToTags(resolveFilters(params, toISODate(new Date())));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Invalid filters" },

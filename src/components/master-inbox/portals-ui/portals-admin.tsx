@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -38,6 +38,7 @@ import type { PortalClientRow } from "@/components/screens/master-inbox/portals"
 import { STATUS_MEANING, STATUS_TONE, isClientStatus, statusLabel } from "@/lib/clients/client-status";
 import { ClientCountLine, rowNote, useClientCounts } from "@/components/clients/count-line";
 import { blockReason, confirmationMatches, protectedReason } from "@/lib/clients/delete-portal-rule";
+import { isDemoOrTest, liveVsActive, matchLine, type ActiveClientRef } from "@/lib/tools/master-inbox/portals/live-vs-active";
 import type { PortalDeletePlan } from "@/lib/clients/delete-portal";
 
 // Absolute date for the "last intro" column — client asked for an
@@ -75,7 +76,42 @@ function clientInitials(name: string): string {
  */
 const NOT_LISTED = ["Unknown"] as const;
 
-export function PortalsAdmin({ rows, admin = false }: { rows: PortalClientRow[]; admin?: boolean }) {
+export function PortalsAdmin({
+  rows: allRows,
+  admin = false,
+  activeClients = null,
+}: {
+  rows: PortalClientRow[];
+  admin?: boolean;
+  /** The master record's active clients; null when it could not be read. */
+  activeClients?: ActiveClientRef[] | null;
+}) {
+  /*
+   * DEMO AND TEST PORTALS ARE APART, AT THE TOP (13 Oct: "Demo/Test portal
+   * should be separate and easily accessible from the top"). A portal no
+   * client is tied to is not one of "the portals" — it sat in the middle of
+   * the alphabet, was counted as a live portal, and made 30 live for 28 active
+   * clients look like two faults. `rows` from here on is client portals only.
+   */
+  const demo = useMemo(() => allRows.filter((r) => isDemoOrTest({ clientId: r.client_id })), [allRows]);
+  const rows = useMemo(() => allRows.filter((r) => !isDemoOrTest({ clientId: r.client_id })), [allRows]);
+  const notListed = useMemo(() => [...NOT_LISTED, ...demo.map((r) => r.name)], [demo]);
+  const match = useMemo(
+    () =>
+      activeClients
+        ? liveVsActive(
+            rows.map((r) => ({
+              name: r.name,
+              live: Boolean(r.portal_enabled && r.portal_token),
+              clientId: r.client_id,
+              clientName: r.client_name,
+              clientStatus: r.status,
+            })),
+            activeClients,
+          )
+        : null,
+    [rows, activeClients],
+  );
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<PortalClientRow | null>(null);
   /* The portal an admin has asked to delete — see DeletePortalDialog. */
@@ -168,8 +204,23 @@ export function PortalsAdmin({ rows, admin = false }: { rows: PortalClientRow[];
           * line, and everything below it is called what it is: portals.
           */}
         <div data-portal-countline>
-          <ClientCountLine tool="master_inbox" noun="portals" omit={NOT_LISTED} />
+          <ClientCountLine tool="master_inbox" noun="portals" omit={notListed} />
         </div>
+
+        {demo.length ? (
+          <div className="mi-portals-demo" data-portal-demo>
+            {demo.map((r) => (
+              <DemoPortal
+                key={r.id}
+                row={r}
+                onToggleSms={(enabled) => {
+                  if (enabled) setSmsConfirm(r);
+                  else void saveSms(r, false);
+                }}
+              />
+            ))}
+          </div>
+        ) : null}
 
         {/* ---- Summary ---- */}
         <div className="cards">
@@ -183,7 +234,7 @@ export function PortalsAdmin({ rows, admin = false }: { rows: PortalClientRow[];
             icon={Globe}
             label="Live portals"
             value={livePortals}
-            hint={`of ${rows.length} portals`}
+            hint={match ? `for ${match.activeClients} active client${match.activeClients === 1 ? "" : "s"}` : `of ${rows.length} portals`}
           />
           <SummaryCard
             icon={Sparkles}
@@ -193,6 +244,13 @@ export function PortalsAdmin({ rows, admin = false }: { rows: PortalClientRow[];
             accent
           />
         </div>
+
+        {match ? (
+          <p className={`mi-portals-match ${match.matches ? "ok" : "warn"}`} data-portal-match={match.matches ? "ok" : "mismatch"} role="note">
+            {match.matches ? <Check /> : <TriangleAlert />}
+            <span>{matchLine(match)}</span>
+          </p>
+        ) : null}
 
         {/* ---- Client list ---- */}
         <div className="tbl-wrap">
@@ -346,6 +404,76 @@ export function PortalsAdmin({ rows, admin = false }: { rows: PortalClientRow[];
           router.refresh();
         }}
       />
+    </div>
+  );
+}
+
+/*
+ * The demo (or a test) portal, on its own at the top of the page.
+ *
+ * It is the one portal people open again and again — to show a prospect, to
+ * check a change — so its link is one click from the top instead of a search
+ * through the client list. Everything the row offered is still here except
+ * the two things that must not be done to it by reflex: there is no Live
+ * switch (switching the demo off breaks every demo link in circulation; the
+ * standing rule is that it stays) and no Delete.
+ */
+function DemoPortal({ row, onToggleSms }: { row: PortalClientRow; onToggleSms: (enabled: boolean) => void }) {
+  const [copied, setCopied] = useState(false);
+  const url = publicPortalUrl(row.portal_token);
+  const isLive = Boolean(row.portal_enabled && url);
+
+  function copyLink() {
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(
+      () => {
+        setCopied(true);
+        toast.success("Demo portal link copied");
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => toast.error("Couldn't copy"),
+    );
+  }
+
+  return (
+    <div className="mi-portals-demo-card" data-portal-demo-row>
+      <span className="mi-portals-av">{clientInitials(row.name)}</span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href={`/portals/${row.id}`} className="cname group" title={`Open ${row.name} in the OS`}>
+            {row.name}
+            <ChevronRight className="ml-0.5 inline size-3.5 -translate-y-px text-[#c2c7d0] transition-transform group-hover:translate-x-0.5 group-hover:text-[#1565C0]" />
+          </Link>
+          <span className="mi-portals-demo-tag">Demo · not a client</span>
+          <span className={`badge ${isLive ? "s-done" : "s-risk"}`}>
+            <span className="dot" />
+            {isLive ? "Live" : "Off"}
+          </span>
+        </div>
+        <div className="csince truncate" title={url ?? undefined}>
+          {url ?? "No portal URL set"}
+        </div>
+      </div>
+      <div className="mi-portals-demo-sms" title={row.sms_alerts ? "Team gets a text for each new introduction" : "No SMS alerts"}>
+        <span>SMS</span>
+        <Switch
+          checked={row.sms_alerts}
+          onCheckedChange={(v) => onToggleSms(Boolean(v))}
+          aria-label={`SMS alerts for ${row.name}`}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" onClick={copyLink} disabled={!url} data-portal-demo-copy>
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          {copied ? "Copied" : "Copy link"}
+        </Button>
+        {isLive && url ? (
+          <a href={url} target="_blank" rel="noopener" className="mi-portals-demo-open" data-portal-demo-open>
+            Open demo portal
+            <ExternalLink className="size-4" />
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }

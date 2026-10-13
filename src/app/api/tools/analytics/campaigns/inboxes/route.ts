@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { AUTH_COOKIE, verifySessionToken } from "@/lib/tools/analytics/session";
-import { assignInboxesByTag, listInboxTags } from "@/lib/tools/analytics/campaigns/inbox-assignment.ts";
+import { assignInboxesByTags, listInboxTags, poolInboxIds } from "@/lib/tools/analytics/campaigns/inbox-assignment.ts";
+import { MAX_POOLS, cleanPools } from "@/lib/tools/analytics/campaigns/inbox-pools.ts";
 import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
 
 /*
@@ -46,6 +47,23 @@ export async function GET(request: NextRequest) {
    */
   const platform =
     request.nextUrl.searchParams.get("platform") === "instantly" ? "instantly" : "emailbison";
+
+  /*
+   * `?pool=A&pool=B` — the EmailBison inboxes in those pools, each once
+   * (13 Oct). Several pools usually share inboxes, so the dialog counts what
+   * it is about to do over this union rather than adding the pools' sizes.
+   * EmailBison only: Instantly is assigned by tag, never by a list of ids.
+   */
+  const pools = cleanPools(request.nextUrl.searchParams.getAll("pool"));
+  if (pools.length) {
+    if (platform !== "emailbison") return NextResponse.json({ platform, pools, ids: null });
+    try {
+      return NextResponse.json({ platform, pools, ids: await poolInboxIds(TEAM_ID(), pools) });
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "Could not read those pools." }, { status: 500 });
+    }
+  }
+
   return NextResponse.json({
     platform,
     tags: await listInboxTags(TEAM_ID(), platform),
@@ -67,7 +85,12 @@ const Body = z.object({
    */
   targets: z.array(Target).min(1).max(500).optional(),
   campaignIds: z.array(z.number().int().positive()).min(1).max(500).optional(),
-  tag: z.string().min(1).max(200),
+  /*
+   * One pool (`tag`, as before) or several (`tags`, 13 Oct). Several are run
+   * one after another in the order given — inbox-assignment.ts.
+   */
+  tag: z.string().min(1).max(200).optional(),
+  tags: z.array(z.string().min(1).max(200)).min(1).max(MAX_POOLS).optional(),
   action: z.enum(["attach", "remove"]),
   /*
    * Required for both directions. Attaching changes who sends for a live
@@ -97,7 +120,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { tag, action } = parsed.data;
+  const { action } = parsed.data;
+  const tags = cleanPools([...(parsed.data.tags ?? []), ...(parsed.data.tag ? [parsed.data.tag] : [])]);
+  if (!tags.length) {
+    return NextResponse.json({ error: "No inbox pool given. Send `tags: [\"…\"]`." }, { status: 400 });
+  }
   const targets =
     parsed.data.targets ??
     (parsed.data.campaignIds ?? []).map((id) => ({
@@ -115,9 +142,9 @@ export async function POST(request: NextRequest) {
   // Deduplicated on the PAIR: the same number can be a valid id on both sides.
   const unique = [...new Map(targets.map((t) => [`${t.platform}:${t.id}`, t])).values()];
 
-  const summary = await assignInboxesByTag(
+  const summary = await assignInboxesByTags(
     unique,
-    tag,
+    tags,
     action,
     session.email,
     TEAM_ID(),

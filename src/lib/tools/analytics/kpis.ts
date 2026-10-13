@@ -10,6 +10,7 @@ import {
 import type { ResolvedFilters } from "./query-params.ts";
 import { resolvePlatformScope } from "./platform-scope.ts";
 import { fetchFollowUpOverall } from "./follow-up.ts";
+import { instantlyIdle, mergedBounces, mergedPositive } from "./instantly-idle.ts";
 
 /*
  * Assembles the KPI band from three sources, because no single one has all of it:
@@ -68,7 +69,7 @@ export interface KpiResponse {
      * chip visibly ticked looks like the filter is being ignored — which is
      * precisely what the old behaviour did, in the other direction.
      */
-    instantlyExcludedBy?: "campaign-filter" | null;
+    instantlyExcludedBy?: "campaign-filter" | "tag-filter" | null;
   };
 }
 
@@ -342,6 +343,7 @@ export async function loadKpis(
    * other direction.
    */
   let instantlyProspects: number | null = null;
+  let positiveCoversInstantly = false;
 
   if (wantsInstantly) {
     const { data: inst, error: instError } = await sb.rpc("analytics_instantly_kpis", {
@@ -373,6 +375,12 @@ export async function loadKpis(
 
     if (i) {
       platformsCovered = [...platformsCovered, "instantly"];
+      /*
+       * An idle Instantly has no Positive to be missing (instantly-idle.ts), so
+       * EmailBison's figure covers both and the tile needs no "EmailBison
+       * only" caveat.
+       */
+      positiveCoversInstantly = wantsEmailBison && instantlyIdle(i);
       instantlyProspects = i.prospects == null ? null : Number(i.prospects);
       const base = wantsEmailBison ? currentRow : undefined;
       currentRow = {
@@ -389,18 +397,16 @@ export async function loadKpis(
             : Number(base?.prospects ?? 0) + Number(i.prospects ?? 0),
         replies: Number(base?.replies ?? 0) + Number(i.replies ?? 0),
         human_replies: Number(base?.human_replies ?? 0) + Number(i.human_replies ?? 0),
-        // Deliberately unavailable while Instantly is in scope. See above.
-        positive: null,
+        // Unavailable while Instantly has activity in the window; EmailBison's
+        // when it has none (13 Oct — instantly-idle.ts).
+        positive: mergedPositive(base?.positive, i),
         /*
          * Summed where BOTH sides have a figure. If Instantly's is null — a
          * window entirely before 077 wrote per-day bounces — the total goes
          * null too rather than silently reporting the EmailBison half as though
          * it were the whole.
          */
-        bounces:
-          i.bounces == null
-            ? null
-            : Number(base?.bounces ?? 0) + Number(i.bounces),
+        bounces: mergedBounces(base?.bounces, i),
       } satisfies RpcRow;
     }
   }
@@ -436,14 +442,16 @@ export async function loadKpis(
        * rather than leaving a reader to assume it covers everything.
        */
       platforms: platformsCovered,
-      positiveCoversInstantly: false,
+      positiveCoversInstantly,
       /*
        * Instantly was asked for and deliberately left out. Surfaced so the band
        * can say so — an unexplained EmailBison-only figure while the Instantly
        * chip is visibly selected reads as the filter being ignored, which is
        * exactly what the previous behaviour actually was.
        */
-      instantlyExcludedBy: scope.instantlyExcludedBy ?? null,
+      // A tag is a campaign filter in other words (tag-filter-rule.ts); the
+      // band names the control the reader actually touched.
+      instantlyExcludedBy: scope.instantlyExcludedBy ? (filters.tags.length ? "tag-filter" : "campaign-filter") : null,
     },
   };
 

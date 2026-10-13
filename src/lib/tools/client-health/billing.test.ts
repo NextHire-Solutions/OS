@@ -178,3 +178,38 @@ test('Completed cycles feed the Client Score (base target, most recent first)', 
     { target: 4, delivered: 1 }, // Sept 11 → Sept 25
   ]);
 });
+
+// --- following Stripe's charge date (13 Oct — lib/clients/billing-align.ts) ---
+
+test('stripe_anchor: absent or null, the schedule is exactly the record\'s', () => {
+  const now = new Date('2026-10-13T15:00:00Z');
+  const base = billingSnapshot(client(), now, GO_LIVE)!;
+  for (const stripe_anchor of [undefined, null]) {
+    const snap = billingSnapshot(client({ stripe_anchor }), now, GO_LIVE)!;
+    assert.equal(iso(snap.cycle.end), iso(base.cycle.end));
+    assert.equal(iso(snap.cycle.start), iso(base.cycle.start));
+    assert.equal(snap.cycle.required, base.cycle.required);
+  }
+});
+
+test('stripe_anchor: the cycle, its billing date and its intro count all move together', () => {
+  // Wagner: no anchor, started 18 Aug (cycle ends 13 Oct); Stripe charges 23 Oct.
+  const wagner = client({ billing_anchor_date: null, start_date: '2026-08-18', monthly_target: 8, intro_dates: [at('2026-10-05'), at('2026-10-10'), at('2026-10-12')] });
+  const now = new Date('2026-10-13T15:00:00Z');
+  const onRecord = billingSnapshot(wagner, now)!;
+  assert.equal(iso(onRecord.cycle.end), '2026-10-13');
+  const followed = billingSnapshot({ ...wagner, stripe_anchor: '2026-10-23' }, now)!;
+  assert.equal(iso(followed.cycle.start), '2026-10-09');
+  assert.equal(iso(followed.cycle.end), '2026-10-23', 'the date Stripe charges');
+  // 5 Oct is before this cycle opened on 9 Oct; 10 and 12 Oct are in it.
+  assert.equal(followed.cycle.delivered, 2);
+  assert.equal(followed.cycle.target, 4);
+});
+
+test('stripe_anchor wins over the anchor on the record, and a future one is fine', () => {
+  const s = scheduleFor(client({ billing_anchor_date: '2026-08-25', stripe_anchor: '2026-10-16' }))!;
+  const today = Math.floor(Date.parse('2026-10-13T00:00:00Z') / 86_400_000);
+  const k = s.cycleIndexOf(today);
+  assert.equal(iso(new Date(s.billingDay(k + 1) * 86_400_000)), '2026-10-16');
+  assert.equal(iso(new Date(s.billingDay(k) * 86_400_000)), '2026-10-02');
+});

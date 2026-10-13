@@ -172,9 +172,9 @@ function OverviewSkeleton() {
           <span style={{ display: "block", width: 150, height: 15, borderRadius: 5, background: "var(--inset-2)" }} />
         </div>
       </div>
-      <div className="ovkpis">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div className="ovk" key={i}>
+      <div className="ovkpis ovkpis-6">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div className="ovk ovk-plain" key={i}>
             <div className="ovk-l"><span style={{ display: "block", width: 62, height: 10, borderRadius: 5, background: "var(--inset-2)" }} /></div>
             <div className="ovk-n"><span style={{ display: "block", width: 52, height: 22, borderRadius: 5, background: "var(--inset-2)" }} /></div>
           </div>

@@ -5,7 +5,6 @@ import type { ClientStatus } from "@/lib/clients/client-status";
 import { ttlCache } from "@/lib/cache/ttl";
 
 import { getCorofySupabase } from "../corofy/supabase";
-import { progressFor, type Progress } from "../onboarding/step-state";
 import { bisonCampaignKey, mergeCampaigns, type DbCampaign } from "./campaigns";
 
 export type { DbCampaign };
@@ -14,7 +13,14 @@ export type { DbCampaign };
  * THE DATABASE VIEW — §8's list for the Database tool, inside the OS.
  *
  *   Client · Client status · MLS/location · Campaign · Campaign ID · Leads ·
- *   Sequencers · Replies · Bounces · In Review · Exported · Onboarding status
+ *   Sequencers · Replies · Bounces
+ *
+ * (In Review, Exported and Onboarding status were the last three columns until
+ * 13 Oct. All three were written only by the Onboarding flow, which was retired
+ * on 9 Oct, so they had stopped meaning anything — OS feedback: "Remove all
+ * fields, columns, data related to onboarding status" and, of the two flags,
+ * "if we do not use these, kill it". Nothing is deleted from the Database; the
+ * OS simply no longer reads them.)
  *
  * The standalone Database app shows these on its Clients page (/webhooks). It
  * is being retired, so the OS has to show them itself, from the same rows.
@@ -30,8 +36,6 @@ export type { DbCampaign };
  *                                         record of Instantly campaigns
  *   Leads, Sequencers, Replies, Bounces   os_client_campaign_stats(): the SAME
  *                                         counts as the Database app's page
- *   In Review, Exported                   the Database's client flags
- *   Onboarding status                     pipeline stage + step progress
  *
  * The sequencer counts are aggregated IN the database by one function
  * (migration 0123 in the Database repo). The view behind them holds ~440k
@@ -54,10 +58,6 @@ export interface DatabaseClient {
   matched: number | null;
   replied: number | null;
   bounced: number | null;
-  inReview: boolean;
-  exported: boolean;
-  stage: string | null;
-  progress: Progress | null;
   createdAt: string | null;
 }
 
@@ -119,24 +119,20 @@ async function loadStats(): Promise<Map<string, Stats> | null> {
 
 async function load(): Promise<DatabaseClientsView> {
   const sb = getCorofySupabase();
-  const [clientsRes, stagesRes, bisonRes, stats, master, synced] = await Promise.all([
+  const [clientsRes, bisonRes, stats, master, synced] = await Promise.all([
     sb
       .from("orch_clients")
       .select(
-        "id,client_name,brand,office_name,status,stage_id,mls,location,bison_campaign_id," +
-          "leads_inreview,bison_leads_exported,portal_url,created_at",
+        "id,client_name,brand,office_name,status,mls,location,bison_campaign_id,created_at",
       )
       .order("client_name"),
-    sb.from("orch_stages").select("id,name"),
     paged("bison_campaigns", "bison_campaign_id,bison_number:raw->>id,name,status,orch_client_id"),
     loadStats(),
     masterByToolId("database").catch(() => new Map<string, MasterFacts>()),
     sb.from("bison_campaigns").select("fetched_at").order("fetched_at", { ascending: false }).limit(1),
   ]);
   if (clientsRes.error) throw new Error(`orch_clients: ${clientsRes.error.message}`);
-  if (stagesRes.error) throw new Error(`orch_stages: ${stagesRes.error.message}`);
 
-  const stageName = new Map(rows(stagesRes.data).map((s) => [String(s.id), String(s.name)]));
   const bisonByClient = new Map<string, { id: string; uuid: string | null; name: string; status: string | null }[]>();
   for (const b of bisonRes) {
     const cid = str(b.orch_client_id);
@@ -162,15 +158,6 @@ async function load(): Promise<DatabaseClientsView> {
   }
 
   const clientRows = rows(clientsRes.data);
-  const progress = await progressFor(
-    clientRows.map((c) => ({
-      id: String(c.id),
-      portal_url: str(c.portal_url),
-      leads_inreview: c.leads_inreview === true,
-      bison_leads_exported: c.bison_leads_exported === true,
-      bison_campaign_id: str(c.bison_campaign_id),
-    })),
-  ).catch((): Record<string, Progress> => ({}));
 
   const clients: DatabaseClient[] = clientRows.map((c) => {
     const id = String(c.id);
@@ -189,12 +176,6 @@ async function load(): Promise<DatabaseClientsView> {
       matched: s ? s.matched : null,
       replied: s ? s.replied : null,
       bounced: s ? s.bounced : null,
-      // Booleans in this table; `!!` on a stray number would invert nothing, but
-      // strict equality keeps a string "false" from reading as true.
-      inReview: c.leads_inreview === true,
-      exported: c.bison_leads_exported === true,
-      stage: stageName.get(String(c.stage_id)) ?? null,
-      progress: progress[id] ?? null,
       createdAt: str(c.created_at),
     };
   });

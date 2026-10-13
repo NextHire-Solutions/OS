@@ -73,6 +73,8 @@ interface Agent {
     questions: Question[];
     required: number;
     passRule: "all_answered" | "any_answered";
+    /** Categories (labels) the agent leaves to a person. Absent from an older answer. */
+    skipLabels?: string[];
   };
   handover: { ccEmails: string[]; message: string };
 }
@@ -337,6 +339,11 @@ export function ReplyAgentConfigPanel() {
                       <b style={{ color: "var(--ink)" }}>Questions:</b>{" "}
                       {a.qualification.enabled ? `${a.qualification.questions.length} asked` : "none"}
                     </span>
+                    {/* Categories it does not answer (13 Oct). */}
+                    <span data-agent-skip-labels>
+                      <b style={{ color: "var(--ink)" }}>Left to a person:</b>{" "}
+                      {(a.qualification.skipLabels ?? []).length ? (a.qualification.skipLabels ?? []).join(", ") : "nothing — answers every category"}
+                    </span>
                     <span>
                       <b style={{ color: "var(--ink)" }}>Handover:</b>{" "}
                       {a.handover.ccEmails.length > 0
@@ -470,6 +477,8 @@ function AgentEditor({
   const [qualEnabled, setQualEnabled] = useState(agent.qualification.enabled);
   const [required, setRequired] = useState(agent.qualification.required);
   const [passRule, setPassRule] = useState(agent.qualification.passRule);
+  // Typed as a list ("Interested, Meeting booked"); sent as an array.
+  const [skipLabels, setSkipLabels] = useState((agent.qualification.skipLabels ?? []).join(", "));
   const [cc, setCc] = useState(agent.handover.ccEmails.join(", "));
   const [handoverMessage, setHandoverMessage] = useState(agent.handover.message);
   const [schedule, setSchedule] = useState<ScheduleJson>(agent.schedule);
@@ -556,6 +565,28 @@ function AgentEditor({
               })
             )}
           </div>
+        </Section>
+
+        {/* ---- categories left to a person (13 Oct) ---- */}
+        <Section
+          title="Categories left to a person"
+          sub="The agent answers every category of reply except the ones named here. A conversation carrying one of these labels is not drafted for and not sent to — a person handles it."
+        >
+          <label htmlFor={`agent-skip-${agent.id}`} style={{ display: "block", fontSize: 12.5, color: "var(--muted)", marginBottom: 4 }}>
+            Label names, separated by commas
+            <span style={{ display: "block", fontSize: 12, marginTop: 2, lineHeight: 1.6 }}>
+              Exact names, as they appear in the inbox — &ldquo;Interested&rdquo; does not match &ldquo;Not Interested&rdquo;.
+              Leave empty for the agent to answer every category.
+            </span>
+          </label>
+          <input
+            id={`agent-skip-${agent.id}`}
+            className="inp"
+            style={FIELD}
+            placeholder="Interested"
+            value={skipLabels}
+            onChange={(e) => setSkipLabels(e.target.value)}
+          />
         </Section>
 
         {/* ---- qualification ---- */}
@@ -788,6 +819,7 @@ function AgentEditor({
                       .map((q) => ({ id: q.id, text: q.text.trim() })),
                     required,
                     pass_rule: passRule,
+                    skip_labels: skipLabels.split(",").map((x) => x.trim()).filter(Boolean),
                   },
                   handover: {
                     cc_emails: cc

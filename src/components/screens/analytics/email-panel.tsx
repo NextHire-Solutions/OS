@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 
-import { buildBlueprint } from "@/lib/tools/analytics/blueprint.ts";
 import { countVariations, htmlToPlainText, rollSpintax } from "@/lib/tools/analytics/spintax.ts";
 import { Seg } from "./shared";
 import { Btn } from "./toast";
@@ -31,7 +30,6 @@ import { Btn } from "./toast";
 export function EmailPanel({ subject, body }: { subject: string | null; body: string | null }) {
   const [view, setView] = useState<"preview" | "spintax">("preview");
   const [seed, setSeed] = useState(1);
-  const [showBlueprint, setShowBlueprint] = useState(false);
 
   const variations = body ? countVariations(body) : 1;
   const rolled = useMemo(() => (body ? rollSpintax(body, seed) : ""), [body, seed]);
@@ -71,14 +69,8 @@ export function EmailPanel({ subject, body }: { subject: string | null; body: st
             Shuffle
           </Btn>
         ) : null}
-        {/* §5.4: "A side panel breaks the message down into its parts." */}
-        <Btn
-          style={{ padding: "6px 10px", fontSize: 12, fontWeight: showBlueprint ? 700 : undefined }}
-          aria-pressed={showBlueprint}
-          onClick={() => setShowBlueprint((v) => !v)}
-        >
-          Blueprint
-        </Btn>
+        {/* The Blueprint side panel (a guessed breakdown of the message into
+            parts) was removed on 13 Oct — OS feedback. */}
         <span className="mut" style={{ marginLeft: "auto", fontSize: 11.5 }}>
           {variations > 1 ? `${variations.toLocaleString("en-US")} variations` : "no spintax"}
           {" · "}
@@ -94,7 +86,7 @@ export function EmailPanel({ subject, body }: { subject: string | null; body: st
         </div>
       ) : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: showBlueprint ? "minmax(0,1fr) 260px" : "minmax(0,1fr)" }}>
+      <div>
         <div style={{ minWidth: 0 }}>
           {view === "preview" ? (
             <iframe
@@ -117,7 +109,6 @@ export function EmailPanel({ subject, body }: { subject: string | null; body: st
             </pre>
           )}
         </div>
-        {showBlueprint ? <Blueprint body={rolled} /> : null}
       </div>
     </div>
   );
@@ -135,44 +126,6 @@ function previewDocument(html: string): string {
     "img{max-width:100%;height:auto}a{color:#0165fe}p{margin:0 0 1em}</style></head><body>" +
     html +
     "</body></html>"
-  );
-}
-
-/**
- * The message broken into its parts (§5.4).
- *
- * IT SHOWS THE TEXT IT PICKED, not just the label, and that is the whole reason
- * this is safe to ship. The split is a heuristic with no tagging behind it, so
- * it will sometimes be wrong — but a reader can see instantly that it labelled
- * the wrong sentence "Proof", which they could not do from a name alone. The
- * header says it is a guess rather than implying analysis.
- */
-function Blueprint({ body }: { body: string }) {
-  const parts = buildBlueprint(body);
-
-  return (
-    <aside style={{ minWidth: 0, borderLeft: "1px solid var(--line-soft)", background: "var(--inset)", padding: 12 }}>
-      <div className="grp-h" style={{ padding: 0 }}>Blueprint</div>
-      {parts.length ? (
-        <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0, display: "grid", gap: 10 }}>
-          {parts.map((part) => (
-            <li key={part.key}>
-              <div className="csince" style={{ marginTop: 0, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10.5 }}>
-                {part.label}
-              </div>
-              <div style={{ fontSize: 12, lineHeight: 1.4, marginTop: 2, color: "var(--ink)" }}>{part.text}</div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="mut" style={{ marginTop: 8, fontSize: 12 }}>
-          Not enough structure to break this one down.
-        </div>
-      )}
-      <div className="mut" style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid var(--line-soft)", fontSize: 10.5, lineHeight: 1.4 }}>
-        Worked out from the wording, not from tags — check it against the email before relying on it.
-      </div>
-    </aside>
   );
 }
 

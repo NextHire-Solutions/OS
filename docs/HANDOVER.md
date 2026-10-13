@@ -11,16 +11,17 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
-| **0.1** | [Campaign leads: search by office city, and a Location filter, 13 October](#01-campaign-leads-search-by-office-city-and-a-location-filter-13-october) — two asks on the Leads tab; needs analytics migration 097 |
-| **0.2** | [Client Portals as its own product, 13 October](#02-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
-| **0.3** | [SMS alerts for introductions, 13 October](#03-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
-| **0.4** | [Master Inbox parity, 12 October](#04-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
-| **0.5** | [Navigation clean-up, 9 October](#05-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
-| **0.6** | [What changed on 6–7 October](#06-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
-| **0.7** | [What changed on 30 September](#07-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
-| **0.8** | [What changed on 29 September](#08-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
-| **0.9** | [What changed on 28 September](#09-what-changed-on-28-september) — the latest work, how it was verified, what is open |
-| **0.10** | [Switching off Analytics, Client Health and Onboarding](#010-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
+| **0.1** | [OS feedback batch, 13–14 October — BUILT LOCALLY, NOT DEPLOYED](#01-os-feedback-batch-1314-october--built-locally-not-deployed) — ~45 items across the OS on branch `wip/oct13-feedback`; what each became, what was not done, what was never exercised |
+| **0.2** | [Campaign leads: search by office city, and a Location filter, 13 October](#02-campaign-leads-search-by-office-city-and-a-location-filter-13-october) — two asks on the Leads tab; needs analytics migration 097 |
+| **0.3** | [Client Portals as its own product, 13 October](#03-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
+| **0.4** | [SMS alerts for introductions, 13 October](#04-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
+| **0.5** | [Master Inbox parity, 12 October](#05-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
+| **0.6** | [Navigation clean-up, 9 October](#06-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
+| **0.7** | [What changed on 6–7 October](#07-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
+| **0.8** | [What changed on 30 September](#08-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
+| **0.9** | [What changed on 29 September](#09-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
+| **0.10** | [What changed on 28 September](#010-what-changed-on-28-september) — the latest work, how it was verified, what is open |
+| **0.11** | [Switching off Analytics, Client Health and Onboarding](#011-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -164,7 +165,162 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
-## 0.1 Campaign leads: search by office city, and a Location filter, 13 October
+## 0.1 OS feedback batch, 13–14 October — BUILT LOCALLY, NOT DEPLOYED
+
+Branch **`wip/oct13-feedback`** (from `main` @ `e067dc8`). **Uncommitted, not
+pushed, not deployed** — the instruction was "do not push to github and railway,
+just keep doing the work locally". Nothing in production changed and no real
+data was written. To ship: commit the branch, merge, `railway up --service os`
+(§2). No migration is needed for any of it.
+
+The batch was one message of ~45 items across the whole OS, with a 3-page
+wireframe for Performance. What each item became:
+
+### Shell, Home, Performance, Commissions, Client Portals
+
+| Asked | Built | Where |
+|---|---|---|
+| Side menu broken when retracted | A retracted rail shows each item's name on hover, and a product's screens in a fly-out (mouse and keyboard). The choice survives a reload (cookie `os_rail`); under 1000px the rail is retracted by itself | `components/shell/rail.tsx`, `rail-state.ts`, `workspace.tsx`, `shell.css` |
+| Home: drop Median Reply and the client counts; add Interested Reply, Interested Reply Rate, Reply Rate per Contact (keep per email) | Six tiles: Emails sent · Replies · Reply rate per email · Reply rate per contact · Interested replies · Interested reply rate. **Interested comes from Master Inbox** (threads labelled Interested or Introduction, one per thread), not EmailBison's "positive" | `lib/workspace/overview-model.ts`, `interested.ts`, `overview.ts`, `screens/overview-card.tsx` |
+| Home graph = the campaign tool's graph | The same chart component as Campaign Analytics (series chips, Volume / Rates, Normalize) | `screens/analytics/chart.tsx` (`labels`, `only` props) |
+| Performance wireframe | Date filter (This month / 30 / 90 / YTD default / All time / Custom) with Compare; three rows of tiles tagged RANGE / TODAY / ALL TIME; Active and Paused subscriptions open a side panel; a month expands to the clients added, paused and churned | `lib/workspace/performance-range.ts`, `performance.ts`, `screens/performance.tsx`, `lib/clients/billing-model.ts` |
+| "$6,624 not tied to a client — what are these?" | The tile opens the list: every Stripe customer with money and no client | `unattributedByCustomer` in `billing-model.ts` |
+| Commissions: closings per month; a Month column | A bar chart of clients closed per month beside the person's card, and a Month column (which month of service the client is in) — both only when ONE salesperson is in view | `lib/commissions/closings.ts`, `load.ts`, `screens/commissions.tsx` |
+| Live portals should match active clients; Demo portal separate at the top | The page says "N live portals for M active clients" and names any mismatch; the Demo Portal is its own block above the list | `lib/tools/master-inbox/portals/live-vs-active.ts`, `portals-admin.tsx` |
+
+Decisions taken where the wireframe had placeholders — **confirm with the
+client**: *Signed* = first $1 Stripe charge, else the sign-up date entered, else
+the onboarding date. *Customer lifespan* = months of service actually paid for
+(a 14-day invoice is 0.46 of a month), averaged over clients signed in the
+range. *Interested rate* = interested ÷ replies. *This week* = Monday to today.
+
+### Campaign Analytics
+
+| Asked | Built | Where |
+|---|---|---|
+| Metrics not showing | Positive, Positive Rate, Lead to Email and Bounces were a dash whenever Instantly was merely not filtered out. **An Instantly that sent and received nothing in the window is no longer treated as half the figures** | `lib/tools/analytics/instantly-idle.ts`, `kpis.ts` |
+| Reply rate per email sent | The Reply Rate tile says "per email sent" and gives the per-contact rate under it; two decimals | `kpi-band.tsx`, `metrics.ts` |
+| Today, Yesterday, This week | Three new quick ranges before 7d / 30d / 90d. A one-day range reads as one date | `query-params.ts` (`presetRange`), `format.ts` |
+| Filter by Tag | A Tags picker beside Campaigns / Clients / Platform. A tag is an EmailBison campaign tag, resolved to campaign ids in ONE place and honoured by all eleven analytics endpoints. A tag that matches nothing shows nothing (`NO_CAMPAIGN`), never everything | `tag-filter-rule.ts`, `tag-filter.ts`, `filters.tsx` |
+| Sending Capacity seems off; show capacity needed | **A platform with no active campaign is not counted** — 536 idle Instantly inboxes were a quarter of the headline. New tile: *Needed by active campaigns* = their daily send limits added up, with the gap. "How this is worked out" is on the page | `sending-capacity.ts`, `sending-capacity-load.ts`, `screens/analytics/volume.tsx` |
+| Use the original tool's UI | The KPI band is two rows of six again (ds.css's auto-fit made it 7 + 5) | `os.css` `.kpi.kpi-band` |
+
+### Campaign Management
+
+| Asked | Built | Where |
+|---|---|---|
+| Launch tab on a campaign | **Launch** tab (EmailBison): six live checks — sequence, client fields, leads, inboxes, client, limits — and a two-step button that launches a draft or resumes a paused campaign. The checks run again on the server before the one call | `campaigns/launch.ts`, `launch-load.ts`, `api/.../campaigns/[id]/launch`, `launch-tab.tsx` |
+| Area and Client Alias as merge fields | `{CLIENT_AREA}` and `{CLIENT_ALIAS}` in Insert field. **The OS fills them in, from the campaign's client, when a sequence is saved, copied in, or fanned out** — EmailBison would send the placeholder itself. A campaign with no client keeps them (a template); a campaign still holding one cannot be started | `campaigns/client-fields.ts`, `client-fields-load.ts`, sequence route, `copy-sequence.ts`, `fan-out.ts`, `actions.ts` |
+| Several inbox groups at once | The pools in the Inboxes dialog are tick boxes. Counts are over the UNION of the ticked pools (an inbox carries several tags); the write stays one pool at a time through the existing function | `campaigns/inbox-pools.ts`, `inbox-assignment.ts`, `assign-inboxes-dialog.tsx` |
+| Kill Copy dimension and Blueprint | Removed from the editor, the preview and the copy dialog. `/copy/tags` and the stored tags are untouched | `sequence-editor.tsx`, `email-panel.tsx`, `copy-sequence-dialog.tsx` |
+| Volume needed for the active campaigns | One line above the Campaigns list: what they are set to send against what connected inboxes can | `screens/analytics/campaigns.tsx` |
+| Schedule shows 15 of 22 | `/api/campaigns/sending-schedules` ignores cursor paging and answers with numbered pages; the walk stopped after page 1. `fetchAllPages` now follows numbered pages when the first answer is page-shaped | `emailbison/client.ts` |
+| Instantly campaigns still showing | The Clients tab counted MAPPINGS, and a mapping outlives its campaign: every client read "12 on Instantly" after all 333 Instantly campaigns were archived. Only live campaigns are counted | `clients/campaign-counts.ts` |
+
+### Client Health, Clients, Database, Reply agent, Inboxes
+
+| Asked | Built | Where |
+|---|---|---|
+| Delivery: keep only the last row of tiles | The four summary sections are gone from Delivery | `client-health/biweekly.tsx` |
+| **Wagner says Billing in 2 days; the Client says another date** | See "One billing date" below | `lib/clients/billing-align.ts` |
+| Remove onboarding status everywhere | Onboarding status, stage and step progress removed from the Clients table, the record's Tools tab, the Database view and Agent Search → Clients. **Kept:** the lifecycle status "Onboarding" and the Onboarding date | `field-registry.ts`, `cells.tsx`, `master-list.ts`, `database/clients.ts` |
+| Leads in review / Leads exported — kill if unused | Two flags only the retired Onboarding flow ever set. Removed from every OS screen; the Database columns are untouched | same files |
+| Reply agent: all categories except Interested | Each agent has *Categories left to a person* (default **Interested**). A conversation carrying one is not drafted for and not sent to. Stored in the `qualification` jsonb as `skip_labels` — no migration. **The agent was not switched to Live** | `ai/agent-config.ts`, `runtime.ts`, `reply-agent-config.tsx` |
+| New product: Inboxes | **Inboxes → All inboxes** (`/analytics/inboxes`, the Campaign Analytics grant): every sending inbox, sortable on every column, tick filters and number filters. Warmup (3 / 7 days) and Assigned are read from EmailBison in the background | `analytics/inboxes.ts`, `inbox-extras*.ts`, `inbox-ranges.ts`, `screens/analytics/inboxes.tsx` |
+
+### One billing date (the Wagner item)
+
+Two things were both called "the billing date": Client Health's **schedule**
+(the billing anchor date on the record — or, with none, the start date —
+stepped in 14- or 28-day cycles) and **Stripe's** actual charge. Nothing kept
+them in step; the anchor is typed by hand. On 13 Oct, 18 of the 22 clients
+billed through Stripe agreed to the day. Wagner had no anchor (cycle from its
+start date: 13 Oct; Stripe: 23 Oct); Jeff Cook and SERHANT NJ were a few days
+out; Rise's record says every 28 days while Stripe charges every 14.
+
+`alignWithStripe` (pure) decides per client: **aligned** (nothing changes),
+**follow** (same interval, different day — the cycle is re-anchored on Stripe's
+next charge, IN MEMORY, so the billing date, the cycle window and its intro
+counts move together), **differs** (a different interval, or subscriptions on
+different days — left alone and said in red), **none** (no active Stripe
+subscription). `scheduleFor` reads `stripe_anchor ?? billing_anchor_date ??
+start_date`; the three loaders that build billing figures apply it
+(`client-health/loadDashboard.ts`, `clients/master-list.ts`,
+`clients/overview.ts`). Nothing is written: the anchor on the record still
+shows what was typed, and the screen says "per Stripe".
+
+**It never holds a page up.** A cold Stripe read takes tens of seconds; the
+first build that waited for it made `/roster` miss the link audit's 25-second
+limit. `stripeFactsByClient` waits at most 4 seconds (`STRIPE_WAIT_MS`); past
+that the page uses the record's dates and the read carries on into the shared
+cache, so the next load has it. On production the cache is kept warm, so this
+only matters in the first minute after a restart.
+
+The lasting fix for the three is to type the right anchor on their records
+(a data write, not done); Rise needs its interval corrected by a person.
+
+### Inboxes: where each column comes from
+
+Daily limit, Sent, Replied (people who replied), Bounced, Status, Vendor, Tags,
+Type: `sender_emails`, as the three-hourly sync stores them. **Warmup 3 / 7
+days** and **Assigned to campaign** are stored nowhere, so
+`inbox-extras-load.ts` reads them from EmailBison — about 700 GETs, three at a
+time, under three minutes — the first time someone opens the page, and keeps
+the answer for six hours in the process (a restart reads again). Assigned is
+exact: one active campaign's inbox list is walked (the pool nearly all share),
+then only the inboxes still unsettled are asked one by one. Until the read
+finishes the table shows a dash for warmup and an estimate from the send
+history for Assigned, and says so.
+
+### What was NOT done, and why
+
+| Item | Why |
+|---|---|
+| Password on the old products | Needs the client: which products, and the client portals are deliberately login-free |
+| Re-sequence (info on the OpsLabs portal) | The spec is on a portal this work has no access to |
+| Move the Database to db.brokerstaffer.com | Database work was left out by instruction |
+| Type the right billing anchors; fix Rise's interval; add the two missing aliases | Real-data writes — listed for a person |
+| Switch the Reply agent to Live | Emailing leads automatically needs an explicit go-ahead |
+
+A finding for the Analytics database, not fixed (it needs SQL run there):
+`analytics_kpis` counts **1 reply when none match** — `COUNT(*)` over a LEFT
+JOIN counts the empty row — so a filter matching nothing reads "Replies 1". The
+fix is `COUNT(r.id)` in the `reply_counts` CTE; the standalone tool shares the
+function.
+
+### Verified
+
+Unit tests 1,932 / 1,932; `tsc` clean; a local production build. Real Chrome
+against the local server behind the write guard (reads only — no Assign, Save,
+Launch or Pause was ever confirmed): rail + portals, Home, Performance,
+Commissions, Campaign Analytics + Volume, Inboxes, Campaign Management,
+Delivery + record + Database view + Reply agent.
+
+**Never exercised against the real platforms** (they write): saving a sequence
+with client fields, copy and fan-out filling them, launching a campaign,
+assigning several pools. Each is unit-tested against a fake EmailBison; do the
+first real one on a throwaway campaign.
+
+### Traps met
+
+- **Turbopack dev keeps a stale module** for a server lib with a module-level
+  cache (`master-list.ts`) after an edit: the route's chunk is rebuilt, the
+  running instance is not. Restart `next dev`, or check on a production build.
+- A `shared` ttlCache survives hot reloads — bump its key when a payload's
+  shape changes (`home-overview-v2`, `performance-v2`).
+- The global `.tip` class translates by −50%; the rail's tooltip is
+  `.rail-fly-tip` for that reason.
+- A browser test that navigates away from the sequence editor with unsaved
+  edits hangs on the `beforeunload` prompt — press Cancel → Discard first.
+- `~/Desktop` is an iCloud Drive folder: `.next` collects "name 2" conflict
+  copies and the next build dies with `ENOTEMPTY`. `rm -rf .next` first.
+- Most of the repo's older audit suites (client-health-ui-test,
+  reply-agent-config-ui-test, settings-ui-test, parts of analytics-ui-test)
+  fail on `main` too — they test screens as they were before earlier releases.
+  Compare against a baseline build of `main` before blaming a change.
+
+
+## 0.2 Campaign leads: search by office city, and a Location filter, 13 October
 
 Campaign Management → Campaigns → a campaign → **Leads**. Two asks, the same
 morning:
@@ -242,14 +398,14 @@ with 097 (32 checks). After 097 runs: re-check on production, read-only.
 
 ---
 
-## 0.2 Client Portals as its own product, 13 October
+## 0.3 Client Portals as its own product, 13 October
 
 Four pieces of feedback on Client Portals, and what was decided for each:
 
 | Asked for | Decided (by the user, 13 Oct) | Built |
 |---|---|---|
 | "Add the ability to delete client portals" | **Admins only. "Portal only, client stays."** Ask for confirmation first | Delete button per portal; the client is never touched |
-| "Add the missing SMS option" | Already done — §0.3 | — |
+| "Add the missing SMS option" | Already done — §0.4 | — |
 | "Make Client Portals its own standalone product" | **Its own switch on Team access; admins only to start** | Own menu section, own grant `portals`, own address `/portals` |
 | "Client Portals should sync with Consistency" | The count mismatch: the page said 57 clients, Consistency said 54 | The shared count line; the page now counts *portals* |
 
@@ -349,7 +505,7 @@ compared before and after.
 
 ---
 
-## 0.3 SMS alerts for introductions, 13 October
+## 0.4 SMS alerts for introductions, 13 October
 
 When a lead is introduced, the client's team can get a text. The standalone
 Master Inbox built this on 8 October (commits `06d8530`, `c4b6b77`, Akeesh);
@@ -417,7 +573,7 @@ keep running for the portals to work**, whatever staff use for the inbox.
 
 ---
 
-## 0.4 Master Inbox parity, 12 October
+## 0.5 Master Inbox parity, 12 October
 
 Twelve things the standalone Master Inbox does that the OS inbox did not, from
 the client's side-by-side list. One release. Nothing in the standalone app,
@@ -491,7 +647,7 @@ production after the deploy. Note `scripts/conversation-ui-test.mjs` WRITES
 
 ---
 
-## 0.5 Navigation clean-up, 9 October
+## 0.6 Navigation clean-up, 9 October
 
 From the client's "OS Feedback — Navigation & Cleanup" list. Shipped in four
 releases, each tested in a real Chrome as an admin and as each account
@@ -590,7 +746,7 @@ visit the removed screens.
 - The Database view's client names open the client's record
   (`/roster?client=<id>`) instead of the Onboarding page.
 
-## 0.6 What changed on 6–7 October
+## 0.7 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
 `e5e27c4` (Home, Client Health links, start date, speed), `e97f8d8` (profile,
@@ -638,7 +794,7 @@ from May on its cancelled subscription and Stripe no longer retries it; Properti
 people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
 Revolution) — add a person per market (territory "Boston" / "Florida").
 
-## 0.7 What changed on 30 September
+## 0.8 What changed on 30 September
 
 Deployed to `os` and verified on production (`69288cf` and after).
 
@@ -1360,7 +1516,7 @@ What changed, and why:
 
 ---
 
-## 0.8 What changed on 29 September
+## 0.9 What changed on 29 September
 
 All deployed to `os`, verified on production, pushed (`25c453c`, `a005c4e`).
 
@@ -1426,7 +1582,7 @@ Performance cards, for this week and last week:
 
 ---
 
-## 0.9 What changed on 28 September
+## 0.10 What changed on 28 September
 
 All deployed to `os`, verified on production, pushed (`1e66caa` … `b8cce7c`).
 
@@ -1454,7 +1610,7 @@ server errors; 37/37 open customer portals serving their page.
 
 ---
 
-## 0.10 Switching off Analytics, Client Health and Onboarding
+## 0.11 Switching off Analytics, Client Health and Onboarding
 
 **Stay live:** Master Inbox (its app serves every customer portal) and the
 Database app. **To be switched off once the OS is complete:** Analytics, Client
@@ -1474,7 +1630,7 @@ destination is an OS screen.
 |---|---|---|
 | Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
 | Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
-| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.5). Webhook receivers still live |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.6). Webhook receivers still live |
 
 **Switch-off order, per tool — never run two copies of a sync at once:**
 
@@ -1927,7 +2083,7 @@ Sub-screens of the roster:
 
 The tool's own navigation was an icon rail plus a sidebar plus a second settings
 sidebar. It collapses into five rail entries. **Client Portals is its own
-product since 13 Oct (§0.2)** — own menu section, own grant; it is listed here
+product since 13 Oct (§0.3)** — own menu section, own grant; it is listed here
 because its screens and routes still live in the Master Inbox folders.
 
 | Page | Path | What it does | File |
@@ -1936,7 +2092,7 @@ because its screens and routes still live in the Master Inbox folders.
 | Reminders | `/reminders` | The tool's own page — **replaced a hand-written screen that listed reminders and could not dismiss them** | `master-inbox/reminders.tsx` |
 | Archive | `/inbox/archive` | Archived conversations | (full-inbox view) |
 | Trash | `/inbox/trash` | Third folder; without this entry a trashed conversation could only be found by typing the URL | (full-inbox view) |
-| **Client Portals** (own product) | `/portals` | The admin table of portals: link, Live, SMS, and — for admins — delete (§0.2). The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
+| **Client Portals** (own product) | `/portals` | The admin table of portals: link, Live, SMS, and — for admins — delete (§0.3). The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
 | Settings | `/settings/clients` | Eight pages behind the tool's own sub-navigation | `master-inbox/settings.tsx` |
 
 Detail screens (no rail entry):
@@ -1948,7 +2104,7 @@ Detail screens (no rail entry):
 
 Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
 `ai-labeling` (admin-only), plus `webhooks` (not offered). Members, Personal,
-Clients and Reply Agents were removed on 9 Oct — §0.5 says where the last two
+Clients and Reply Agents were removed on 9 Oct — §0.6 says where the last two
 went.
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
@@ -1961,7 +2117,7 @@ route still resolves, so an old bookmark degrades to All Email rather than 404s.
 In the live tool these are states of one page with **no URL of their
 own**. Here each is a real address, which is what lets the rail link straight to
 Delivery and the back button work. (Renamed 9 Oct: Weekly → Overview,
-Bi-Weekly → Delivery; Client Success removed — §0.5.)
+Bi-Weekly → Delivery; Client Success removed — §0.6.)
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
@@ -1980,7 +2136,7 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 
 ### 4.4 Campaign Analytics and Campaign Management — 4 + 3 destinations + campaign detail
 
-Two rail sections of ONE tool since 9 Oct (§0.5): Campaign, Volume,
+Two rail sections of ONE tool since 9 Oct (§0.6): Campaign, Volume,
 Infrastructure and Attribution under **Campaign Analytics**; Campaigns,
 Schedule and Clients (and its Client view) under **Campaign Management**.
 
@@ -2014,7 +2170,7 @@ Two notes for whoever works here:
 
 ### 4.5 Onboarding — removed 9 Oct
 
-The section and its screens were removed (§0.5, Release 4). Its webhook
+The section and its screens were removed (§0.6, Release 4). Its webhook
 receivers and shared library stay and are live.
 
 ### 4.6 Agent Search — 4 destinations

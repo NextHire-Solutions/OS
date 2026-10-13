@@ -7,6 +7,8 @@ import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { createInstantlyClient } from "@/lib/tools/analytics/instantly/client.ts";
 import { platformOfId } from "@/lib/tools/analytics/campaigns/campaign-id.ts";
+import { clientFieldsProblem, fillSteps, usesClientFields } from "@/lib/tools/analytics/campaigns/client-fields.ts";
+import { clientFieldValuesForCampaign } from "@/lib/tools/analytics/campaigns/client-fields-load";
 
 /*
  * Saving an edited sequence (spec §9.3).
@@ -43,6 +45,43 @@ const Step = z.object({
   variant: z.boolean().default(false),
   variant_from_step_id: z.number().int().positive().nullable().optional(),
 });
+
+/*
+ * {CLIENT_AREA} and {CLIENT_ALIAS} (13 Oct — campaigns/client-fields.ts).
+ *
+ * Filled in HERE, from the campaign's client, before anything is written: the
+ * sending platform would send the placeholder itself to a lead. A sequence
+ * with no client field in it is returned untouched and no client is looked up.
+ *
+ *   · the campaign has a client          → every field is replaced
+ *   · …but the client lacks a value      → refused, with what to fix
+ *   · the campaign has no client         → kept as placeholders (a template)
+ *   · the client cannot be looked up     → refused: never written blind
+ */
+async function withClientFields<S extends { email_subject: string; email_body: string }>(
+  platform: "emailbison" | "instantly",
+  campaignId: string | number,
+  steps: S[],
+): Promise<
+  | { ok: true; steps: S[]; clientFields: { client: string | null; filled: number; kept: string[] } | null }
+  | { ok: false; status: number; error: string }
+> {
+  if (!usesClientFields(steps.flatMap((s) => [s.email_subject, s.email_body]))) return { ok: true, steps, clientFields: null };
+  let values;
+  try {
+    values = await clientFieldValuesForCampaign(platform, campaignId);
+  } catch (error) {
+    return {
+      ok: false,
+      status: 502,
+      error: `This sequence uses a client field, and the campaign's client could not be looked up, so nothing was saved. ${error instanceof Error ? error.message : ""}`.trim(),
+    };
+  }
+  const filled = fillSteps(steps, values);
+  const problem = clientFieldsProblem(filled.missing, values);
+  if (problem) return { ok: false, status: 422, error: problem };
+  return { ok: true, steps: filled.value, clientFields: { client: values.clientName, filled: filled.filled, kept: filled.missing } };
+}
 
 const Body = z.object({
   /*
@@ -85,7 +124,9 @@ export async function PUT(
 
   const parsed = Body.safeParse(await request.json().catch(() => null));
   if (parsed.success && platform === "instantly") {
-    return saveInstantlySequence(id, parsed.data.steps, session.email);
+    const ready = await withClientFields("instantly", id, parsed.data.steps);
+    if (!ready.ok) return NextResponse.json({ error: ready.error }, { status: ready.status });
+    return saveInstantlySequence(id, ready.steps, session.email);
   }
   /*
    * EmailBison addresses the sequence by id and cannot proceed without one.
@@ -105,7 +146,11 @@ export async function PUT(
     );
   }
 
-  const { sequenceId, steps } = parsed.data;
+  const { sequenceId } = parsed.data;
+  // Client fields filled before anything else looks at the steps (see above).
+  const ready = await withClientFields("emailbison", campaignId, parsed.data.steps);
+  if (!ready.ok) return NextResponse.json({ error: ready.error }, { status: ready.status });
+  const steps = ready.steps;
   const sb = getSupabase();
   const eb = createEmailBisonClient();
   const teamId = TEAM_ID();
@@ -256,10 +301,10 @@ export async function PUT(
     actor: session.email,
     status: "ok",
     before_state: before,
-    after_state: { ...applied, steps: steps.length },
+    after_state: { ...applied, steps: steps.length, ...(ready.clientFields ? { clientFields: ready.clientFields } : {}) },
   });
 
-  return NextResponse.json({ ok: true, ...applied });
+  return NextResponse.json({ ok: true, ...applied, clientFields: ready.clientFields });
 }
 
 

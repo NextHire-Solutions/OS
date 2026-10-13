@@ -41,6 +41,9 @@ export interface PortalClientRow {
   last_intro_at: string | null;
   /** The client's lifecycle status from the master record (§11). */
   status: string | null;
+  /** The master client this portal belongs to; null for the demo portal or a test row. */
+  client_id: string | null;
+  client_name: string | null;
   /** §8 Portal view: team, agents, DNC. */
   team: number;
   agents: number;
@@ -75,6 +78,7 @@ export async function PortalsAdminScreen({ admin: isAdmin = false }: { admin?: b
 
   const rows: PortalClientRow[] = (clients ?? []).map((c) => {
     const s = summary.get(c.id as string);
+    const owner = resolveByIdOrName(masterByMi, masterList, c.id as string, c.name as string);
     return {
       id: c.id as string,
       name: c.name as string,
@@ -87,12 +91,24 @@ export async function PortalsAdminScreen({ admin: isAdmin = false }: { admin?: b
       ),
       intro_count: s?.count ?? 0,
       last_intro_at: s?.lastAt ?? null,
-      status: resolveByIdOrName(masterByMi, masterList, c.id as string, c.name as string)?.status ?? null,
+      status: owner?.status ?? null,
+      client_id: owner?.id ?? null,
+      client_name: owner?.name ?? null,
       team: people.get(c.id as string)?.team ?? 0,
       agents: people.get(c.id as string)?.agents ?? 0,
       dnc: people.get(c.id as string)?.dnc ?? 0,
     };
   });
 
-  return <PortalsAdmin rows={rows} admin={isAdmin} />;
+  /*
+   * The active clients, for "live portals should match the list of active
+   * clients" (13 Oct). Null when the master list could not be read — the page
+   * then says nothing about the match rather than reporting every active
+   * client as missing a portal.
+   */
+  const activeClients = masterList.length
+    ? masterList.filter((m) => m.status === "active").map((m) => ({ id: m.id, name: m.name }))
+    : null;
+
+  return <PortalsAdmin rows={rows} admin={isAdmin} activeClients={activeClients} />;
 }

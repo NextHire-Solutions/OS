@@ -55,7 +55,6 @@ function sortValue(k: string, c: MasterClient): string | number {
   if (k === "completeness") return completeness(c).pct;
   if (k === "savedViews") return c.savedViews?.length ?? -1;
   if (k === "campaignMetrics") return c.analytics.sent ?? -1;
-  if (k === "onboardingProgress" || k === "onboardingStatus") return c.onboarding.progress?.pct ?? -1;
   return textOf(k, c).toLowerCase() || "￿";
 }
 

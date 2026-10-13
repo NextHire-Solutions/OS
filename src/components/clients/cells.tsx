@@ -230,12 +230,6 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
       const v = c[k];
       return v === null ? <None /> : <span className="cx-num">{fmtNum(v)}</span>;
     }
-    case "inReview": case "exported": {
-      const v = c[k];
-      if (v === null) return <None />;
-      if (typeof v === "boolean") return <span className={`cx-chip${v ? " t-green" : ""}`}>{v ? "Yes" : "No"}</span>;
-      return <span className="cx-num">{fmtNum(v)}</span>;
-    }
     /* ---- the extra columns a §8 tool view uses ---- */
     case "performance": {
       const p = c.health.period;
@@ -256,16 +250,6 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
         <span className="cx-inline">
           <span className={`cx-chip t-${pace.tone === "amber" ? "orange" : pace.tone}`}>{pace.label}</span>
           {carry > 0 ? <span className="cx-chip t-red" title="Introductions carried forward from the last cycle">+{carry} carried</span> : null}
-        </span>
-      );
-    }
-    case "onboardingStatus": case "onboardingProgress": {
-      const pr = c.onboarding.progress;
-      if (!c.onboarding.present) return <None title="Not in Onboarding" />;
-      return (
-        <span className="cx-perf" title={c.onboarding.stage ?? undefined}>
-          {k === "onboardingStatus" && c.onboarding.stage ? <span>{c.onboarding.stage}</span> : null}
-          {pr ? <><span className="cx-num">{pr.done}/{pr.total}</span><Meter value={pr.done} max={pr.total} tone={pr.pct >= 100 ? "green" : "brand"} /></> : null}
         </span>
       );
     }

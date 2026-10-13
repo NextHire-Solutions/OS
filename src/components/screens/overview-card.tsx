@@ -1,48 +1,70 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
-import type { HomeClients, Overview, OverviewMetric, OverviewSeriesPoint } from "@/lib/workspace/overview";
+import type { Overview, OverviewMetric } from "@/lib/workspace/overview";
+import type { SeriesKey } from "@/lib/tools/analytics/series.ts";
+
+import { SeriesChart, SeriesChips, type SeriesLabels } from "./analytics/chart";
+import { Check, Seg } from "./analytics/shared";
 
 /*
- * The headline card on Home, following the design's markup and class names.
+ * The headline card on Home.
  *
- * The four figures are TABS: clicking one charts that figure, day by day, over
- * the last 30 days (6 Oct — they used to look clickable and do nothing, and the
- * chart only ever showed replies). The panel beside the chart is the client
- * base — Active / Paused / Churned / Net — from the master record; the old
- * Positive / Needs review split is gone at the client's request.
+ * 13 Oct, from the client's notes on Home — all four changes are here:
+ *
+ *   · "Remove Median Reply"                      gone, with its daily series
+ *   · "Add … Interested Reply, Interested Reply  six tiles now: both reply
+ *      Rate, Reply Rate per Contact … need both"  rates and both Interested
+ *                                                figures (overview-model.ts)
+ *   · "The graph really needs to improve (use    the graph IS the campaign
+ *      same graph UI as campaign tool)"          tool's — the same component,
+ *                                                chips, Volume / Rates and
+ *                                                drag-to-read
+ *   · "Remove Active, paused, churned, net"      the panel beside the chart
+ *                                                is gone; the chart takes the
+ *                                                full width
+ *
+ * The tiles used to be tabs that chose what the old chart drew. The campaign
+ * tool's chart chooses its own lines, with chips, so the tiles are plain
+ * figures again — two ways to choose one thing was one too many.
  *
  * A metric with no data renders an em dash, never a zero: on a card this size
  * a fabricated 0 reads as "nothing happened", which is a much worse claim than
  * "we could not measure".
  */
 
-type SeriesKey = "sent" | "replies" | "reply-rate" | "median-reply";
-
-const CHART_LABEL: Record<SeriesKey, string> = {
-  sent: "Emails sent per day",
-  replies: "Replies per day",
-  "reply-rate": "Reply rate per day",
-  "median-reply": "Our median reply time per day (business hours)",
+/*
+ * The chart's lines, in the campaign tool's own keys. On Home the `positive`
+ * line is Master Inbox's Interested (not Analytics' Positive), and is named
+ * for what it is; Human replies is left to the campaign tool, where its
+ * definition is explained.
+ */
+const LINES: readonly SeriesKey[] = ["sent", "prospects", "replies", "positive", "bounces"];
+const LABELS: SeriesLabels = { positive: "Interested", prospects: "People emailed" };
+const NOUN: Record<SeriesKey, string> = {
+  sent: "Emails sent",
+  prospects: "People emailed",
+  replies: "Replies",
+  human: "Human replies",
+  positive: "Interested replies",
+  bounces: "Bounces",
+};
+const RATE_NOUN: Partial<Record<SeriesKey, string>> = {
+  replies: "Reply rate per email",
+  positive: "Interested reply rate",
+  bounces: "Bounce rate",
 };
 
-function pointValue(p: OverviewSeriesPoint, key: SeriesKey): number | null {
-  if (key === "sent") return p.sent;
-  if (key === "replies") return p.replies;
-  if (key === "reply-rate") return p.replyRate;
-  return p.medianSeconds;
-}
-
-function formatFor(key: SeriesKey, v: number | null): string {
-  if (v === null) return "—";
-  if (key === "reply-rate") return `${(v * 100).toFixed(2)}%`;
-  if (key === "median-reply") return duration(v);
-  return Math.round(v).toLocaleString("en-US");
+function chartTitle(series: SeriesKey[], mode: "volume" | "rates"): string {
+  if (series.length !== 1) return mode === "rates" ? "Rates per day" : "Volume per day";
+  return mode === "rates" ? `${RATE_NOUN[series[0]] ?? NOUN[series[0]]} per day` : `${NOUN[series[0]]} per day`;
 }
 
 export function OverviewCard({ overview }: { overview: Overview }) {
-  const [selected, setSelected] = useState<SeriesKey>("replies");
+  const [mode, setMode] = useState<"volume" | "rates">("volume");
+  const [series, setSeries] = useState<SeriesKey[]>(["replies", "positive"]);
+  const [normalize, setNormalize] = useState(false);
 
   if (overview.unavailable) {
     return (
@@ -51,59 +73,73 @@ export function OverviewCard({ overview }: { overview: Overview }) {
         <div style={{ padding: "8px 22px 24px", fontSize: 13.5, color: "var(--muted)" }}>
           {overview.unavailable}
         </div>
-        {overview.clients ? <div className="chart-row"><div /><ClientsPanel clients={overview.clients} /></div> : null}
       </section>
     );
   }
 
+  // Without Master Inbox there is no Interested line to draw — offering the
+  // chip would draw a flat zero and call it a fact.
+  const lines = overview.interestedLive ? LINES : LINES.filter((k) => k !== "positive");
+  const shown = series.filter((k) => lines.includes(k));
+  const selected = shown.length ? shown : (["replies"] as SeriesKey[]);
+
   return (
-    <section className="ov-card">
+    <section className="ov-card" data-home-overview>
       <CardTop />
 
-      <div className="ovkpis" role="tablist" aria-label="Choose what the chart shows">
-        {overview.metrics.map((metric) => {
-          const on = metric.key === selected;
-          return (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={on}
-              className={`ovk${on ? " on" : ""}`}
-              key={metric.key}
-              onClick={() => setSelected(metric.key as SeriesKey)}
-            >
-              <div className="ovk-l">
-                <span className="bar" />
-                {metric.label}
-              </div>
-              <div className="ovk-n">{formatValue(metric)}</div>
-              <div className="ovk-f">
-                {metric.delta !== null ? (
-                  <span className={`delta${isGood(metric) ? "" : " dn"}`}>
-                    {metric.delta >= 0 ? "+" : "−"}
-                    {Math.abs(metric.delta * 100).toFixed(1)}%
-                  </span>
-                ) : null}
-                {metric.hint ?? `In the ${overview.windowLabel}`}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="chart-row">
-        <div className="plot">
-          <div className="ov-chart-h">
-            <span>{CHART_LABEL[selected]}</span>
-            <small>{overview.seriesLabel}</small>
+      <div className="ovkpis ovkpis-6" data-home-tiles>
+        {overview.metrics.map((metric) => (
+          <div className="ovk ovk-plain" key={metric.key} data-home-tile={metric.key}>
+            <div className="ovk-l">{metric.label}</div>
+            <div className="ovk-n">{formatValue(metric)}</div>
+            <div className="ovk-f">
+              {metric.delta !== null ? (
+                <span className={`delta${isGood(metric) ? "" : " dn"}`}>
+                  {metric.delta >= 0 ? "+" : "−"}
+                  {Math.abs(metric.delta * 100).toFixed(1)}%
+                </span>
+              ) : null}
+              <span className="ovk-hint">{metric.hint ?? `In the ${overview.windowLabel}`}</span>
+            </div>
           </div>
-          {overview.series.length > 0 ? (
-            <SeriesChart series={overview.series} metric={selected} />
-          ) : (
-            <div className="ov-chart-empty">No daily figures to chart yet.</div>
-          )}
+        ))}
+      </div>
+      <p className="ov-window">
+        Tiles: the {overview.windowLabel}, against the 7 days before. Chart: the {overview.seriesLabel}.
+        {overview.interestedLive ? null : " Interested could not be read from Master Inbox just now."}
+      </p>
+
+      {/* The campaign tool's chart card, as it is drawn there (analytics/campaign.tsx). */}
+      <div className="lc-card ov-chart-card" data-home-chart>
+        <div className="lc-head" style={{ alignItems: "center", padding: "10px 22px 4px" }}>
+          <h2 className="lc-title" title="Drag across the chart to read any day">{chartTitle(selected, mode)}</h2>
+          <SeriesChips selected={selected} mode={mode} onChange={setSeries} labels={LABELS} only={lines} />
+          <div className="an-lc-tools" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <Seg
+              label="Chart mode"
+              value={mode}
+              options={[
+                { value: "volume", label: "Volume" },
+                { value: "rates", label: "Rates" },
+              ]}
+              onChange={(m) => {
+                setMode(m);
+                // Sent and People emailed have no rate — they are what the
+                // others are divided by. Left selected they would vanish.
+                if (m === "rates") {
+                  const kept = selected.filter((k) => k !== "sent" && k !== "prospects");
+                  setSeries(kept.length ? kept : ["replies"]);
+                }
+              }}
+            />
+            <Check checked={normalize} onChange={setNormalize} label="Normalize" tip="Each line to its own scale" />
+          </div>
         </div>
-        {overview.clients ? <ClientsPanel clients={overview.clients} /> : <div />}
+        {overview.series.length > 0 ? (
+          <SeriesChart data={{ points: overview.series, mode }} series={selected} mode={mode} normalize={normalize} labels={LABELS} />
+        ) : (
+          <div className="ov-chart-empty">No daily figures to chart yet.</div>
+        )}
       </div>
     </section>
   );
@@ -123,152 +159,6 @@ function CardTop() {
   );
 }
 
-/*
- * One series, drawn to scale.
- *
- * The SVG is stretched to the panel's width, so the line uses a non-scaling
- * stroke (it used to smear sideways) and everything round — the hover dot, the
- * labels — is HTML laid over it at real percentages, never inside the
- * stretched drawing. Today's running figure is dashed and faded so the line
- * does not appear to collapse at the right edge.
- */
-function SeriesChart({ series, metric }: { series: OverviewSeriesPoint[]; metric: SeriesKey }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const W = 1000;
-  const H = 200;
-  const PAD_TOP = 10;
-
-  const values = useMemo(() => series.map((p) => pointValue(p, metric)), [series, metric]);
-  const known = values.filter((v): v is number => v !== null);
-  const top = niceMax(Math.max(0, ...known));
-  const n = series.length;
-  const xPct = (i: number) => (n <= 1 ? 50 : (i / (n - 1)) * 100);
-  const xAt = (i: number) => ((xPct(i) / 100) * W).toFixed(1);
-  const yOf = (v: number) => H - (top > 0 ? (v / top) * (H - PAD_TOP) : 0);
-
-  // Solid line through complete days; a dashed tail into today's partial day.
-  let lastFull = -1;
-  series.forEach((p, i) => { if (!p.partial) lastFull = i; });
-  const solidEnd = lastFull < 0 ? n - 1 : lastFull;
-  const pathFor = (from: number, to: number) => {
-    let d = "";
-    for (let i = from; i <= to; i++) {
-      const v = values[i];
-      if (v === null) continue;
-      d += `${d ? "L" : "M"} ${xAt(i)} ${yOf(v).toFixed(1)} `;
-    }
-    return d.trim();
-  };
-  const solid = pathFor(0, solidEnd);
-  const tail = lastFull >= 0 && lastFull < n - 1 ? pathFor(lastFull, n - 1) : "";
-  const firstKnown = values.findIndex((v) => v !== null);
-  let lastKnown = -1;
-  values.forEach((v, i) => { if (v !== null && i <= solidEnd) lastKnown = i; });
-  const area = solid && firstKnown >= 0 && lastKnown >= 0 ? `${solid} L ${xAt(lastKnown)} ${H} L ${xAt(firstKnown)} ${H} Z` : "";
-
-  const ticks = [0, Math.floor((n - 1) / 3), Math.floor((2 * (n - 1)) / 3), n - 1].filter((v, i, a) => v >= 0 && a.indexOf(v) === i);
-  const hv = hover !== null ? values[hover] : null;
-
-  return (
-    <div className="ov-chart">
-      <div className="ov-yax" aria-hidden="true">
-        <span style={{ top: 0 }}>{formatFor(metric, top)}</span>
-        <span style={{ top: "50%" }}>{formatFor(metric, top / 2)}</span>
-        <span style={{ top: "100%" }}>{formatFor(metric, 0)}</span>
-      </div>
-      <div
-        className="ov-canvas"
-        onMouseLeave={() => setHover(null)}
-        onMouseMove={(e) => {
-          const r = e.currentTarget.getBoundingClientRect();
-          const i = Math.round(((e.clientX - r.left) / r.width) * (n - 1));
-          setHover(Math.max(0, Math.min(n - 1, i)));
-        }}
-      >
-        <div className="ov-grid" aria-hidden="true"><i /><i /><i /></div>
-        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
-          aria-label={`${CHART_LABEL[metric]}, ${series[0]?.date} to ${series[n - 1]?.date}`}>
-          <defs>
-            <linearGradient id="ovg" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#0165FE" stopOpacity=".16" />
-              <stop offset="100%" stopColor="#0165FE" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {area ? <path d={area} fill="url(#ovg)" /> : null}
-          {solid ? <path d={solid} fill="none" stroke="#0165FE" strokeWidth="2.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" /> : null}
-          {tail ? <path d={tail} fill="none" stroke="#0165FE" strokeOpacity=".45" strokeWidth="2.2" strokeDasharray="5 5" vectorEffect="non-scaling-stroke" /> : null}
-        </svg>
-        {hover !== null ? (
-          <>
-            <span className="ov-hline" style={{ left: `${xPct(hover)}%` }} />
-            {hv !== null ? <span className="ov-dot" style={{ left: `${xPct(hover)}%`, top: `${(yOf(hv) / H) * 100}%` }} /> : null}
-            <span className={`ov-tip${xPct(hover) > 70 ? " left" : ""}`} style={{ left: `${xPct(hover)}%` }}>
-              <b>{formatFor(metric, hv)}</b>
-              {shortDate(series[hover].date)}{series[hover].partial ? " · so far today" : ""}
-            </span>
-          </>
-        ) : null}
-      </div>
-      <div className="ov-xax" aria-hidden="true">
-        {ticks.map((i) => (
-          <span key={series[i].date} style={{ left: `${xPct(i)}%` }} className={i === 0 ? "first" : i === n - 1 ? "last" : undefined}>
-            {shortDate(series[i].date)}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Active / Paused / Churned / Net, from the master record. */
-function ClientsPanel({ clients }: { clients: HomeClients }) {
-  const rows: Array<{ label: string; value: string; tone: string; sub?: string }> = [
-    { label: "Active clients", value: String(clients.active), tone: "var(--green)" },
-    { label: "Paused", value: String(clients.paused), tone: "var(--amber)" },
-    { label: "Churned", value: String(clients.churned), tone: "var(--red)" },
-    {
-      label: `Net this month (${clients.monthLabel})`,
-      value: `${clients.net > 0 ? "+" : clients.net < 0 ? "−" : ""}${Math.abs(clients.net)}`,
-      tone: clients.net >= 0 ? "var(--green)" : "var(--red)",
-      sub: `${clients.added} added · ${clients.churnedThisMonth} churned`,
-    },
-  ];
-  return (
-    <div className="breakdown ov-clients" aria-label="Clients">
-      {rows.map((r) => (
-        <div className="brow" key={r.label}>
-          <span className="ov-cdot" style={{ background: r.tone }} />
-          <span className="btxt">
-            <small>{r.label}</small>
-            <b>{r.value}</b>
-            {r.sub ? <em>{r.sub}</em> : null}
-          </span>
-        </div>
-      ))}
-      {clients.onboarding ? <div className="ov-cfoot">{clients.onboarding} onboarding</div> : null}
-    </div>
-  );
-}
-
-/** A round axis top just above the largest value: 0, ½ and the top are labelled. */
-function niceMax(v: number): number {
-  if (v <= 0) return 1;
-  if (v < 1) return Math.ceil(v * 1000) / 1000; // rates
-  const p = Math.pow(10, Math.floor(Math.log10(v)));
-  for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
-  return 10 * p;
-}
-
-function shortDate(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
-
-function duration(value: number): string {
-  if (value >= 3600) return `${(value / 3600).toFixed(1)}h`;
-  if (value >= 60) return `${Math.round(value / 60)}m`;
-  return `${Math.round(value)}s`;
-}
-
 /** A drop in reply time is good; a drop in sent is not. */
 function isGood(metric: OverviewMetric): boolean {
   if (metric.delta === null) return true;
@@ -279,6 +169,10 @@ function formatValue(metric: OverviewMetric): string {
   const { value, format } = metric;
   if (value === null) return "—";
   if (format === "percent") return `${(value * 100).toFixed(2)}%`;
-  if (format === "duration") return duration(value);
+  if (format === "duration") {
+    if (value >= 3600) return `${(value / 3600).toFixed(1)}h`;
+    if (value >= 60) return `${Math.round(value / 60)}m`;
+    return `${Math.round(value)}s`;
+  }
   return value.toLocaleString("en-US");
 }

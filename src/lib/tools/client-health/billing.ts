@@ -46,6 +46,13 @@ export function dayToDate(day: number): Date {
 
 export interface BillingClient {
   billing_anchor_date: string | null;
+  /*
+   * Stripe's next charge, when the cycle follows Stripe rather than the dates
+   * on the record (13 Oct — lib/clients/billing-align.ts says when and why).
+   * Set in memory by the loaders, never stored. Absent or null: the record's
+   * own dates, exactly as before.
+   */
+  stripe_anchor?: string | null;
   start_date: string | null;
   billing_interval: BillingInterval;
   billing_interval_days: number | null;
@@ -92,7 +99,7 @@ function stepDays(c: BillingClient): number | null {
 
 /** Null when the client has no anchor/start date or an unusable custom interval. */
 export function scheduleFor(c: BillingClient, goLive: string = CARRY_FORWARD_START): Schedule | null {
-  const anchorISO = c.billing_anchor_date ?? c.start_date;
+  const anchorISO = c.stripe_anchor ?? c.billing_anchor_date ?? c.start_date;
   if (!anchorISO) return null;
   const anchor = dayNumber(anchorISO);
   if (!Number.isFinite(anchor)) return null;

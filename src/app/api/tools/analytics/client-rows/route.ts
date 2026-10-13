@@ -4,6 +4,7 @@ import { loadCombinedIntroSummaryByClient } from "@/lib/tools/master-inbox/porta
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
+import { narrowToTags } from "@/lib/tools/analytics/tag-filter";
 import { resolvePlatformScope } from "@/lib/tools/analytics/platform-scope.ts";
 import {
   bounceRate,
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
 
   let filters;
   try {
-    filters = resolveFilters(request.nextUrl.searchParams, toISODate(new Date()));
+    filters = await narrowToTags(resolveFilters(request.nextUrl.searchParams, toISODate(new Date())));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Invalid filters" },

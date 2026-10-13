@@ -3,6 +3,7 @@ import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.
 import { createInstantlyClient } from "@/lib/tools/analytics/instantly/client.ts";
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors.ts";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
+import { cleanPools, mergeAssignments, unionIds, type PoolSummary, type PoolsSummary } from "./inbox-pools.ts";
 
 /*
  * Attaching a pool of inboxes to campaigns by tag.
@@ -458,6 +459,107 @@ export async function assignInboxesByTag(
   if (auditRows.length) await sb.from("campaign_audit_log").insert(auditRows);
 
   return summary;
+}
+
+/*
+ * The EmailBison inboxes in several pools, each once (13 Oct — inbox-pools.ts).
+ *
+ * The same RPC the write uses, so the dialog's "N inboxes will start sending"
+ * is counted over exactly the ids that would be sent — and over the UNION:
+ * an inbox tagged with both its vendor and its pool is one inbox.
+ */
+export async function poolInboxIds(teamId: number, tags: readonly string[]): Promise<{ all: number[]; connected: number[] }> {
+  const sb = getSupabase();
+  const lists = await Promise.all(
+    cleanPools(tags).map(async (tag) => {
+      const [connected, all] = await Promise.all([
+        sb.rpc("sender_ids_by_tag", { p_team_id: teamId, p_tag: tag, p_connected_only: true }),
+        sb.rpc("sender_ids_by_tag", { p_team_id: teamId, p_tag: tag, p_connected_only: false }),
+      ]);
+      const failed = connected.error ?? all.error;
+      if (failed) throw new Error(`inbox lookup: ${failed.message}`);
+      return { connected: (connected.data ?? []) as number[], all: (all.data ?? []) as number[] };
+    }),
+  );
+  return { all: unionIds(lists.map((l) => l.all)), connected: unionIds(lists.map((l) => l.connected)) };
+}
+
+/** Instantly's accounts in several pools, each once. */
+async function poolInstantlyEmails(teamId: number, tags: readonly string[]): Promise<string[]> {
+  const sb = getSupabase();
+  const lists = await Promise.all(
+    cleanPools(tags).map(async (tag) => {
+      const { data, error } = await sb.rpc("instantly_account_emails_by_tag", { p_team_id: teamId, p_tag: tag });
+      if (error) throw new Error(`inbox lookup: ${error.message}`);
+      return (data ?? []) as string[];
+    }),
+  );
+  return unionIds(lists);
+}
+
+/*
+ * Several pools on the same campaigns (13 Oct: "select multiple groups of
+ * inboxes when adding or removing").
+ *
+ * ONE POOL AT A TIME, IN THE ORDER GIVEN, through `assignInboxesByTag` — the
+ * function above is the one that knows EmailBison's refusals (a remove chunk
+ * naming an inbox the campaign does not hold; an attach of inboxes already
+ * there), and running the pools through it serially means none of that is
+ * re-implemented. An inbox in two of the pools is attached by the first and
+ * found already-attached by the second; on a remove, the second pool's read of
+ * the campaign simply no longer contains it.
+ *
+ * A pool whose lookup fails is reported against every campaign and the next
+ * pool still runs: one bad tag must not hide what the others did.
+ */
+export async function assignInboxesByTags(
+  targets: Array<{ platform: "emailbison" | "instantly"; id: string }>,
+  tags: readonly string[],
+  action: "attach" | "remove",
+  actor: string,
+  teamId: number,
+): Promise<PoolsSummary> {
+  const pools = cleanPools(tags);
+  const summaries: PoolSummary[] = [];
+  for (const tag of pools) {
+    try {
+      summaries.push(await assignInboxesByTag(targets, tag, action, actor, teamId));
+    } catch (caught) {
+      const error = caught instanceof Error ? caught.message : String(caught);
+      summaries.push({
+        batchId: randomUUID(),
+        tag,
+        action,
+        inboxes: 0,
+        skippedDisconnected: 0,
+        results: targets.map((t) => ({ campaignId: t.id, platform: t.platform, name: `#${t.id}`, ok: false, applied: 0, error })),
+      });
+    }
+  }
+
+  /*
+   * How many DISTINCT inboxes that was — only worth a second read when pools
+   * could overlap. Cosmetic: if it cannot be read the summary falls back to
+   * the pools added up, and the write above is unaffected either way.
+   */
+  let distinct: { inboxes: number; skippedDisconnected: number } | null = null;
+  if (pools.length > 1) {
+    try {
+      let inboxes = 0;
+      let skippedDisconnected = 0;
+      if (targets.some((t) => t.platform === "emailbison")) {
+        const ids = await poolInboxIds(teamId, pools);
+        inboxes += (action === "attach" ? ids.connected : ids.all).length;
+        if (action === "attach") skippedDisconnected += ids.all.length - ids.connected.length;
+      }
+      if (targets.some((t) => t.platform === "instantly")) inboxes += (await poolInstantlyEmails(teamId, pools)).length;
+      distinct = { inboxes, skippedDisconnected };
+    } catch {
+      distinct = null;
+    }
+  }
+
+  return mergeAssignments(action, summaries, distinct);
 }
 
 /** The inbox tags worth offering, read from the cache. */

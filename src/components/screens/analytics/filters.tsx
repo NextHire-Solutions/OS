@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import {
   filtersToSearchParams,
+  PRESET_PILLS,
   resolveFilters,
   toISODate,
   type ResolvedFilters,
@@ -160,6 +161,8 @@ export interface FilterOption {
 interface FilterOptions {
   campaigns: FilterOption[];
   clients: FilterOption[];
+  /** EmailBison campaign tags in use. Absent from an answer cached before 13 Oct. */
+  tags?: FilterOption[];
 }
 
 const FILTERS_URL = "/api/tools/analytics/filters";
@@ -274,17 +277,20 @@ export function FilterBar({
   return (
     <div className="an-filter">
       <div className="qr" role="group" aria-label="Date range">
-        {(["7d", "30d", "90d"] as const).map((preset) => (
+        {/* Today, Yesterday and This week first (13 Oct) — query-params.ts presetRange. */}
+        {PRESET_PILLS.map(({ value: preset, label, title }) => (
           <button
             key={preset}
             type="button"
             className={filters.preset === preset ? "on" : ""}
             aria-pressed={filters.preset === preset}
+            title={title}
+            data-preset={preset}
             // Clearing from/to as well: a stale custom range left behind would
             // win over the preset and the pill would look ignored.
             onClick={() => setFilters({ preset, from: undefined, to: undefined })}
           >
-            {preset}
+            {label}
           </button>
         ))}
       </div>
@@ -320,6 +326,22 @@ export function FilterBar({
           onChange={(platforms) =>
             setFilters({ platforms: platforms as ResolvedFilters["platforms"] })
           }
+        />
+      ) : null}
+
+      {/*
+        Tag (13 Oct), beside Campaigns, Clients and Platform. A tag is an
+        EmailBison campaign tag, so it is a campaign filter by another name —
+        "every campaign carrying any of these" — and is hidden where the
+        Campaigns picker is, for the same reason (Volume does not filter by
+        campaign, and a control that changes nothing is worse than none).
+      */}
+      {supportsCampaignFilter ? (
+        <MultiSelect
+          label="Tags"
+          options={options?.tags ?? []}
+          selected={filters.tags}
+          onChange={(tags) => setFilters({ tags })}
         />
       ) : null}
 

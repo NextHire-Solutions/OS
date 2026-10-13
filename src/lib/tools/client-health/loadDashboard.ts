@@ -3,6 +3,9 @@
 
 import { getSupabase } from './supabase';
 import { masterByToolId } from '@/lib/clients/master-lookup';
+import { alignWithStripe, stripeAnchor, type BillingAlignment } from '@/lib/clients/billing-align.ts';
+import { stripeFactsByClient } from '@/lib/clients/billing-align-load';
+import { easternDay } from '@/lib/commissions/schedule';
 import { lifecycleOf } from "./publish";
 import { generateSeed } from './seed';
 import {
@@ -98,14 +101,21 @@ export async function loadDashboardClients(): Promise<{
     return { data: all, error: null };
   }
 
-  const [clientsRes, metricsRes, campaignsRes, bisonRes, masters] = await Promise.all([
+  const [clientsRes, metricsRes, campaignsRes, bisonRes, masters, stripeFacts] = await Promise.all([
     sb.from('clients').select('*').order('name'),
     fetchAllMetrics(),
     sb.from('instantly_campaigns').select('*'),
     sb.from('bison_campaigns').select('*'),
     // Null on failure: "could not read" is not "no markets" (R1).
     masterByToolId('clientHealth').catch(() => null),
+    /*
+     * Each client's Stripe subscriptions, so the billing cycle follows the
+     * real charge date (13 Oct — billing-align.ts). Null when Stripe cannot be
+     * read: every client then keeps the dates on its record, as before.
+     */
+    stripeFactsByClient().catch(() => null),
   ]);
+  const today = easternDay(new Date());
 
   if (clientsRes.error) {
     return {
@@ -149,12 +159,26 @@ export async function loadDashboardClients(): Promise<{
       .map((id) => bisonById.get(id))
       .filter((x): x is BisonCampaign => Boolean(x));
 
+    const masterId = masters?.get(c.id)?.id ?? null;
+    const alignment: BillingAlignment = stripeFacts && masterId
+      ? alignWithStripe(
+          {
+            billing_anchor_date: c.billing_anchor_date ?? null, start_date: c.start_date,
+            billing_interval: c.billing_interval ?? 'biweekly', billing_interval_days: c.billing_interval_days ?? null,
+          },
+          stripeFacts.get(masterId) ?? [],
+          today,
+        )
+      : { kind: 'none' };
+
     return {
       id: c.id,
       name: c.name,
       plan: c.plan,
       weekly_target: c.weekly_target,
       start_date: c.start_date,
+      stripe_anchor: stripeAnchor(alignment),
+      billing_alignment: alignment,
       instantly_campaign_ids: c.instantly_campaign_ids ?? [],
       bison_campaign_ids: c.bison_campaign_ids ?? [],
       campaign_size: c.campaign_size ?? 0,

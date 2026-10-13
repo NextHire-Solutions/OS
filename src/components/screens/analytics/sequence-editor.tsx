@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { countVariations } from "@/lib/tools/analytics/spintax.ts";
-import { MERGE_TAGS_URL, saveSequence, useAnalyticsData } from "./actions";
-import { CopyTagsPanel } from "./copy-tags-panel";
+import { CAMPAIGN_CLIENT_FIELDS_URL, MERGE_TAGS_URL, saveSequence, useAnalyticsData } from "./actions";
+import { clientFieldsIn } from "@/lib/tools/analytics/campaigns/client-fields.ts";
 import { EmailPanel } from "./email-panel";
 import { RichBody, type RichBodyHandle, type RichFormat } from "./rich-body";
 import { Btn, ConfirmButton, DIM } from "./toast";
@@ -126,6 +126,18 @@ export function SequenceEditor({
   const mergeTags = useAnalyticsData<{ tags: string[] }>(MERGE_TAGS_URL);
   const tags = mergeTags.data?.tags?.length ? mergeTags.data.tags : FALLBACK_MERGE_TAGS;
 
+  /*
+   * {CLIENT_AREA} / {CLIENT_ALIAS} (13 Oct): filled in by the OS when the
+   * sequence is saved, from this campaign's client. What they will become is
+   * asked for only once one is actually in the sequence, and shown above the
+   * steps so nobody has to save to find out.
+   */
+  const clientFieldsUsed = [...new Set(steps.flatMap((s) => [...clientFieldsIn(s.email_subject), ...clientFieldsIn(s.email_body)]))];
+  const clientFields = useAnalyticsData<{
+    client: string | null;
+    fields: Array<{ key: string; token: string; label: string; from: string; value: string | null }>;
+  }>(CAMPAIGN_CLIENT_FIELDS_URL(campaignId), { skip: clientFieldsUsed.length === 0 });
+
   async function save() {
     /*
      * EmailBison addresses a sequence by id and the route refuses without one;
@@ -140,7 +152,7 @@ export function SequenceEditor({
     setSaving(true);
     setSaveError(null);
     try {
-      await saveSequence(
+      const saved = await saveSequence(
         campaignId,
         platform === "emailbison" ? sequenceId : null,
         steps.map((s) => ({
@@ -153,7 +165,15 @@ export function SequenceEditor({
           variant_from_step_id: s.variant_from_step_id ?? null,
         })),
       );
-      show({ text: platform === "instantly" ? "Sequence saved to Instantly" : "Sequence saved to EmailBison" });
+      const where = platform === "instantly" ? "Instantly" : "EmailBison";
+      const cf = saved.clientFields;
+      show({
+        text: !cf
+          ? `Sequence saved to ${where}`
+          : cf.filled > 0
+            ? `Sequence saved to ${where} — ${cf.filled} client field${cf.filled === 1 ? "" : "s"} filled in for ${cf.client}`
+            : `Sequence saved to ${where} — this campaign has no client, so its client fields were kept as placeholders`,
+      });
       onSaved();
       onDone();
     } catch (e) {
@@ -285,6 +305,42 @@ export function SequenceEditor({
           {saving ? "Saving…" : "Save"}
         </Btn>
       </div>
+
+      {clientFieldsUsed.length ? (
+        <div
+          data-client-fields={clientFields.data ? (clientFields.data.client ? "client" : "template") : clientFields.error ? "error" : "loading"}
+          style={{
+            border: "1px solid var(--line)", background: "var(--inset)", borderRadius: "var(--r-md)",
+            padding: "8px 10px", fontSize: 12.5, lineHeight: 1.5, color: "var(--ink-2)",
+          }}
+        >
+          {clientFields.error ? (
+            <>This sequence uses a client field, and the campaign&apos;s client could not be read just now ({clientFields.error}). Saving will check again and refuse rather than send a placeholder.</>
+          ) : !clientFields.data ? (
+            <>Looking up this campaign&apos;s client…</>
+          ) : clientFields.data.client ? (
+            <>
+              <b>Client fields</b> are filled in for <b>{clientFields.data.client}</b> when you save:{" "}
+              {clientFields.data.fields
+                .filter((f) => clientFieldsUsed.includes(f.key as never))
+                .map((f, i) => (
+                  <span key={f.key} data-client-field={f.key}>
+                    {i ? " · " : ""}
+                    <code style={{ fontFamily: "var(--mono)" }}>{f.token}</code> →{" "}
+                    {f.value ? <b>{f.value}</b> : <b style={{ color: "var(--red)" }}>nothing on the client&apos;s record — the save will be refused</b>}
+                  </span>
+                ))}
+            </>
+          ) : (
+            <>
+              <b>This campaign has no client</b>, so{" "}
+              {clientFieldsUsed.map((k) => clientFields.data!.fields.find((f) => f.key === k)?.token).join(" and ")} will be saved as
+              written. They are filled in when the campaign is fanned out or its sequence is copied to a client&apos;s campaign, and a
+              campaign still holding one cannot be started.
+            </>
+          )}
+        </div>
+      ) : null}
 
       {saveError ? (
         <div
@@ -528,15 +584,9 @@ export function SequenceEditor({
                   <EmailPanel subject={step.email_subject} body={step.email_body} />
                 </div>
 
-                {/* §6.3: "Tag the copy's seven dimensions from the same screen." */}
-                <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 12 }}>
-                  <CopyTagsPanel
-                    stepId={step.id ?? null}
-                    subject={step.email_subject || null}
-                    show={show}
-                    isFirstEmail={index === 0 || step.variant}
-                  />
-                </div>
+                {/* The copy-dimension tags that sat here were removed on 13 Oct
+                    (OS feedback: "Kill Copy dimension and blueprint"). The tags
+                    already stored are untouched; nothing reads them. */}
               </div>
             ) : null}
           </div>

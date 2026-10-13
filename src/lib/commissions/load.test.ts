@@ -10,12 +10,12 @@ import type { Payment } from "./schedule.ts";
 const client = (id: string, name: string, sp: string | null, am: string | null, extra: Partial<MasterClient> = {}): MasterClient => ({
   id, name, aliases: [], status: "active", statusSince: null, introCustom: false, signupDate: null, website: null, zillowUrl: null, pocName: null, pocEmail: null, plan: "production", startDate: "2026-06-01", onboardingDate: null,
   dateAdded: null, markets: { markets: null, mls: [], areas: [] }, timezone: null, team: null, agents: null, dnc: null, sender: null, salesperson: sp,
-  accountManager: am, firstBillingDate: null, billingAnchorDate: "2026-06-03", billingInterval: "biweekly", billingIntervalDays: null,
+  accountManager: am, firstBillingDate: null, billingAnchorDate: "2026-06-03", billingAlignment: { kind: "none" }, billingInterval: "biweekly", billingIntervalDays: null,
   nextBillingDate: null, stripeCustomerId: null, stripeSubscriptionId: null, campaigns: [], campaignAliases: [], campaignLocation: null,
   assignedLeads: null, weeklyTarget: null, monthlyTarget: null, introductions: null, lastIntroAt: null, replies: null, bounces: null,
-  sequencers: null, inReview: null, exported: null, pauseDate: null, pauseDates: [], churnDate: null, reactivationDate: null,
+  sequencers: null, pauseDate: null, pauseDates: [], churnDate: null, reactivationDate: null,
   contact: { name: null, role: null, email: null, brokerage: null, extra: [] },
-  health: { present: true, period: null, cycle: null, pace: null }, onboarding: { present: false, stage: null, progress: null },
+  health: { present: true, period: null, cycle: null, pace: null },
   portal: { count: 0, url: null, enabled: null, links: [] }, analytics: { present: false, campaigns: null, sent: null }, database: { present: false },
   ...extra,
 });
@@ -205,4 +205,66 @@ test("a paused client earns nothing on the split; a client that has never paid e
     stripe: new Map([...base({}).stripe, ["c", { payments: [], gross: 1800, cycleDays: 14 }]]),
   }));
   assert.ok(unpaid.rows.find((r) => r.name === "Coastal Realty")!.earnings.every((e) => e.due === 0));
+});
+
+/* ------------------------------------------------- 13 Oct: closings and the Month column --- */
+
+test("a salesperson in view carries their closings: every client they sold, at any status, dated by sign-up", () => {
+  const sold = [
+    ...clients,
+    client("p", "Paused Homes", "Ryan Jagdeo", "Amy", { status: "paused", signupDate: "2026-07-02", onboardingDate: "2026-07-09" }),
+    client("x", "Gone Realty", "Ryan Jagdeo", "Amy", { status: "churned", churnDate: "2026-09-01", onboardingDate: "2026-05-20" }),
+    client("z", "No Date Co", "Ryan Jagdeo", "Amy"),
+  ];
+  const v = buildCommissionsView(base({
+    clients: sold, viewerEmail: "admin@x.com", admin: true, as: "p:ryan@x.com",
+    signed: new Map([["c", "2026-09-18"], ["p", null]]),
+  }));
+  assert.ok(v.sales);
+  assert.equal(v.sales.name, "Ryan Jagdeo");
+  assert.deepEqual(v.sales.closings, [
+    { id: "x", name: "Gone Realty", status: "churned", date: "2026-05-20" },   // onboarding date: nothing better
+    { id: "p", name: "Paused Homes", status: "paused", date: "2026-07-02" },    // the sign-up date on the record
+    { id: "c", name: "Coastal Realty", status: "active", date: "2026-09-18" },  // Stripe's first $1 charge wins
+  ]);
+  assert.deepEqual(v.sales.undated, ["No Date Co"]);
+  // The table below still lists active clients only.
+  assert.deepEqual(v.rows.map((r) => r.id), ["c", "z"].filter((id) => v.rows.some((r) => r.id === id)));
+  assert.ok(v.rows.every((r) => r.status === "active"));
+});
+
+test("Everyone, and an account manager, have no closings chart", () => {
+  assert.equal(buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true })).sales, null);
+  assert.equal(buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, as: "p:amy@x.com" })).sales, null);
+  assert.equal(buildCommissionsView(base({ viewerEmail: "amy@x.com", admin: false })).sales, null);
+});
+
+test("a salesperson sees their OWN closings on their own page — and nobody else's", () => {
+  const v = buildCommissionsView(base({ viewerEmail: "ryan@x.com", admin: false }));
+  assert.ok(v.sales);
+  assert.equal(v.sales.name, "Ryan Jagdeo");
+  assert.ok(v.sales.closings.every((c) => c.id === "c") || v.sales.closings.length === 0);
+  // Asking for someone else is ignored for a non-admin: scope is decided on the server.
+  const tried = buildCommissionsView(base({ viewerEmail: "ryan@x.com", admin: false, as: "sp:s" }));
+  assert.equal(tried.sales?.name, "Ryan Jagdeo");
+  assert.equal(JSON.stringify(tried).includes("Keyes"), false, "another salesperson's client must not be in the response");
+});
+
+test("someone who both sells and manages (one person, two roles) still gets their closings", () => {
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, as: "p:eddy@x.com" }));
+  assert.equal(v.sales?.name, "Eddy");
+});
+
+test("Month: which 28-day month of service each client is in on the payout", () => {
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true }));
+  const month = Object.fromEntries(v.rows.map((r) => [r.id, r.month]));
+  // today 30 Sep (the payout, 1 Oct, is still ahead — counted to today).
+  assert.equal(month.k, 4, "first paid 24 Jun: 98 days → the 4th 28-day month");
+  assert.equal(month.c, 1, "first paid 20 Sep: 10 days in");
+  assert.equal(month.n, 3, "first paid 1 Aug: 60 days");
+});
+
+test("Month is blank for a client that has not paid yet", () => {
+  const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, stripe: new Map([["k", { payments: [], gross: 3000, cycleDays: 14 }]]) }));
+  assert.equal(v.rows.find((r) => r.id === "k")?.month, null);
 });

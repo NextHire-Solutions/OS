@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { loadKpis } from "@/lib/tools/analytics/kpis";
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
+import { narrowToTags } from "@/lib/tools/analytics/tag-filter";
 import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { cachedGet } from "@/lib/tools/analytics/cached-get";
 
@@ -15,10 +16,10 @@ async function load(request: NextRequest) {
   try {
     // The SAME parser the client hook uses, so the two can't disagree about
     // what "7d" means or whether `to` is inclusive.
-    filters = resolveFilters(
+    filters = await narrowToTags(resolveFilters(
       request.nextUrl.searchParams,
       toISODate(new Date()),
-    );
+    ));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Invalid filters" },

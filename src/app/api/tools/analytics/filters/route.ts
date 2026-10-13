@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { cachedGet } from "@/lib/tools/analytics/cached-get";
+import { analyticsTagOptions } from "@/lib/tools/analytics/tag-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ async function load() {
   const teamId = analyticsTeamId();
   const sb = getSupabase();
 
-  const [campaigns, clients, mappings, instantlyCampaigns, instantlyMappings] = await Promise.all([
+  const [campaigns, clients, mappings, instantlyCampaigns, instantlyMappings, tags] = await Promise.all([
     sb.from("campaigns")
       .select("id, name, lifetime_emails_sent")
       .eq("team_id", teamId)
@@ -34,6 +35,8 @@ async function load() {
       .is("archived_at", null)
       .order("emails_sent", { ascending: false, nullsFirst: false }),
     sb.from("instantly_campaign_clients").select("campaign_id, excluded"),
+    // EmailBison campaign tags in use, most campaigns first (13 Oct).
+    analyticsTagOptions(),
   ]);
 
   // Excluded campaigns are omitted from the picker: they're excluded from every
@@ -80,6 +83,7 @@ async function load() {
         value: c.id,
         label: c.name,
       })),
+      tags,
     },
     { headers: { "Cache-Control": "private, max-age=300" } },
   );

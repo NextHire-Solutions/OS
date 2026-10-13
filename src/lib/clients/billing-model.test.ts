@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { billingTotals, buildBilling, customerKey, upcomingCharges, type AccountSnapshot, type StripeSubscription } from "./billing-model.ts";
+import { billingTotals, buildBilling, customerKey, monthsPaidByClient, revenueByDay, subscriptionRows, unattributedByCustomer, upcomingCharges, type AccountSnapshot, type StripeSubscription } from "./billing-model.ts";
 
 const T = (iso: string) => Math.floor(Date.parse(`${iso}T15:00:00Z`) / 1000);
 const sub = (id: string, customer: string, amount: number, created: string, o: Partial<StripeSubscription> = {}): StripeSubscription => ({
@@ -124,4 +124,100 @@ test("billing calendar: each live subscription's next charges in the window, cyc
   const rt = cal.filter((c) => c.clientId === "rt");
   assert.deepEqual(rt.map((c) => c.date), ["2026-10-15", "2026-10-29"]);
   assert.ok(!cal.some((c) => c.subscription === "sub_paused"), "paused collection is not upcoming");
+});
+
+/* ------------------------------------------------ the Performance page (13 Oct) --- */
+
+test("the subscriptions list has exactly the rows the Active and Paused tiles count", () => {
+  const rows = subscriptionRows(clients, snap, []);
+  const totals = billingTotals(snap, buildBilling(clients, snap, []), Date.parse("2026-10-01T15:00:00Z"));
+  assert.equal(rows.filter((r) => r.state === "active").length, totals.activeSubscriptions);
+  assert.equal(rows.filter((r) => r.state === "paused").length, totals.pausedSubscriptions);
+  assert.deepEqual(rows.map((r) => r.id).sort(), ["sub_54c", "sub_54d", "sub_jpar", "sub_paused", "sub_rt"]);
+  // Cancelled subscriptions are in neither list.
+  assert.equal(rows.some((r) => r.id === "sub_54old" || r.id === "sub_rt_old"), false);
+  // The active rows' MRR adds up to the MRR tile — to the cent or two that
+  // rounding each row separately can differ by.
+  const listed = rows.filter((r) => r.state === "active").reduce((t, r) => t + r.mrr, 0);
+  assert.ok(Math.abs(listed - totals.mrr) < 0.01 * rows.length, `${listed} vs ${totals.mrr}`);
+});
+
+test("each subscription names its client by the same rules as the per-client totals; one tied to nobody says whose card it is", () => {
+  const by = Object.fromEntries(subscriptionRows(clients, snap, []).map((r) => [r.id, r]));
+  assert.equal(by.sub_54c.clientId, "c54", "a second subscription on another card is still 54 Realty's");
+  assert.equal(by.sub_rt.clientId, "rt");
+  assert.equal(by.sub_jpar.clientId, "jp", "a shared customer: each subscription to its owner");
+  assert.equal(by.sub_paused.clientId, null);
+  assert.equal(by.sub_paused.customerName, "Someone Else Realty");
+  assert.equal(by.sub_paused.state, "paused");
+  assert.equal(by.sub_paused.nextCharge, null, "a paused subscription has no next charge");
+  assert.equal(by.sub_54d.nextCharge, "2026-10-15");
+  assert.equal(by.sub_54d.every, "every 14 days");
+  assert.equal(by.sub_54d.amount, 750);
+});
+
+test("a paused subscription shows when collection resumes, if a date is set", () => {
+  const withResume: AccountSnapshot = { ...snap, subscriptions: snap.subscriptions.map((s) => (s.id === "sub_paused" ? { ...s, pause: { behavior: "void", resumesAt: T("2026-11-03") } } : s)) };
+  assert.equal(subscriptionRows(clients, withResume, []).find((r) => r.id === "sub_paused")!.resumes, "2026-11-03");
+});
+
+const withStrays: AccountSnapshot = {
+  ...snap,
+  charges: [
+    ...snap.charges,
+    charge("s1", "cus_other", 300, "2026-01-05"),
+    charge("s2", "cus_other", 200, "2026-03-09", null, 50),
+    { ...charge("s3", "cus_other", 999, "2026-03-10"), status: "failed" },
+    { ...charge("s4", "cus_x", 75, "2026-02-02"), customer: null },
+  ],
+};
+
+test("money tied to no client is listed by the Stripe customer it came from, and adds up to the tile", () => {
+  const list = unattributedByCustomer(clients, withStrays, []);
+  assert.deepEqual(list, [
+    { customerId: "cus_other", name: "Someone Else Realty", email: null, amount: 450, charges: 2, first: "2026-01-05", last: "2026-03-09" },
+    { customerId: null, name: null, email: null, amount: 75, charges: 1, first: "2026-02-02", last: "2026-02-02" },
+  ]);
+  const totals = billingTotals(withStrays, buildBilling(clients, withStrays, []));
+  assert.equal(list.reduce((t, c) => t + c.amount, 0), totals.unattributed);
+  assert.equal(totals.unattributed, 525);
+  // Nothing stray: nothing listed.
+  assert.deepEqual(unattributedByCustomer(clients, snap, []), []);
+});
+
+test("an explicit link moves a stray customer's money to its client — and off the list", () => {
+  const linked = unattributedByCustomer(clients, withStrays, [{ clientId: "rt", customerId: "cus_other", subscriptionId: null, excluded: false }]);
+  assert.deepEqual(linked.map((c) => c.customerId), [null]);
+});
+
+test("customer lifespan: each paid subscription charge counts for the period it paid for", () => {
+  const months = monthsPaidByClient(clients, snap, []);
+  const fortnight = 14 / 30.4375;
+  // 54 Realty: three paid fortnights across three subscriptions; the two $1 card checks are not service.
+  assert.equal(months.get("c54"), Math.round(3 * fortnight * 100) / 100);
+  // Raintown: two (one partly refunded still paid for its period); its one-off $250 and $1 are not counted.
+  assert.equal(months.get("rt"), Math.round(2 * fortnight * 100) / 100);
+  // JPAR: one paid, one FAILED.
+  assert.equal(months.get("jp"), Math.round(fortnight * 100) / 100);
+});
+
+test("…a monthly invoice is one month, a charge refunded in full is none, and a client who never paid is absent", () => {
+  const s: AccountSnapshot = {
+    customers: [{ id: "cus_m", name: "Monthly Co", email: null, created: T("2026-01-01") }],
+    subscriptions: [sub("sub_m", "cus_m", 2000, "2026-01-01", { items: [{ amount: 2000, interval: "month", intervalCount: 1, quantity: 1 }] })],
+    charges: [charge("m1", "cus_m", 2000, "2026-01-01", "sub_m"), charge("m2", "cus_m", 2000, "2026-02-01", "sub_m"), charge("m3", "cus_m", 2000, "2026-03-01", "sub_m", 2000)],
+    invoices: [],
+  };
+  const cs = [{ id: "m", name: "Monthly Co", stripeCustomerId: "cus_m", stripeSubscriptionId: "sub_m" }, { id: "n", name: "Never Paid Realty", stripeCustomerId: null, stripeSubscriptionId: null }];
+  const months = monthsPaidByClient(cs, s, []);
+  assert.equal(months.get("m"), 2);
+  assert.equal(months.has("n"), false);
+});
+
+test("revenue per day adds up to everything ever collected, less refunds", () => {
+  const byDay = revenueByDay(snap);
+  const totals = billingTotals(snap, buildBilling(clients, snap, []));
+  assert.equal(Math.round([...byDay.values()].reduce((a, b) => a + b, 0) * 100) / 100, totals.totalBilled);
+  assert.equal(byDay.get("2026-06-11"), 650, "a partly refunded charge counts for what was kept");
+  assert.equal(byDay.has("2026-09-28"), false, "a failed charge collected nothing");
 });

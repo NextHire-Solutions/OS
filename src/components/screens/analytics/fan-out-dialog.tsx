@@ -102,12 +102,18 @@ export function FanOutDialog({
           </p>
           <Panel style={{ maxHeight: 224, overflowY: "auto", fontSize: 12.5, display: "grid", gap: 4 }}>
             {summary.targets.map((t) => (
-              <div key={t.clientName} style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <span style={{ color: t.ok ? "var(--green)" : "var(--red)", flex: "none" }}>{t.ok ? "✓" : "✗"}</span>
-                <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
-                <span className="tnum mut" style={{ flex: "none" }}>
-                  {t.ok ? `${t.steps} steps · ${fullNumber(t.inboxes)} inboxes` : t.error}
-                </span>
+              <div key={t.clientName}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ color: t.ok ? "var(--green)" : "var(--red)", flex: "none" }}>{t.ok ? "✓" : "✗"}</span>
+                  <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+                  <span className="tnum mut" style={{ flex: "none" }}>
+                    {t.ok ? `${t.steps} steps · ${fullNumber(t.inboxes)} inboxes` : t.error}
+                  </span>
+                </div>
+                {/* Client fields filled in — or not — for this client's copy (13 Oct). */}
+                {t.note ? (
+                  <div data-fan-out-note style={{ marginLeft: 20, color: /not filled|Could not/.test(t.note) ? "var(--red)" : "var(--muted)" }}>{t.note}</div>
+                ) : null}
               </div>
             ))}
           </Panel>

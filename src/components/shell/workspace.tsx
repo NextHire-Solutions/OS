@@ -2,11 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import type { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition, useLayoutEffect } from "react";
 
 import { SessionKeeper } from "./session-keeper";
 import { OutboxSweeper } from "./outbox-sweeper";
 import { Rail } from "./rail";
+import { recalledRail, rememberRail } from "./rail-state";
 import { Topbar } from "./topbar";
 import { Palette } from "./palette";
 import { ToolPane } from "./tool-pane";
@@ -46,6 +47,8 @@ export interface WorkspaceProps {
   initialId?: string;
   /** Account manager / salesperson: fewer pages (Eddy, 2 Oct). */
   roles?: RoleFlags;
+  /** The side menu was left retracted (the `os_rail` cookie, read on the server). */
+  initialCollapsed?: boolean;
 }
 
 export function Workspace({
@@ -58,6 +61,7 @@ export function Workspace({
   screens,
   initialId = "home",
   roles = {},
+  initialCollapsed = false,
 }: WorkspaceProps) {
   const [activeId, setActiveId] = useState(initialId);
   /*
@@ -73,7 +77,31 @@ export function Workspace({
         : { accountManager: !!next.accountManager, salesperson: !!next.salesperson },
     );
   }, []);
-  const [collapsed, setCollapsed] = useState(false);
+  /*
+   * Remembered (rail-state.ts): this component is rebuilt on navigation, so a
+   * plain `useState(false)` re-expanded the menu on the very next click.
+   */
+  const [collapsed, setCollapsedState] = useState(() => recalledRail() ?? initialCollapsed);
+  const setCollapsed = useCallback((next: boolean | ((v: boolean) => boolean)) => {
+    setCollapsedState((v) => {
+      const value = typeof next === "function" ? next(v) : next;
+      rememberRail(value);
+      return value;
+    });
+  }, []);
+  /*
+   * At 1000px and under the stylesheet shows the icon strip whatever the
+   * toggle says (workspace.css). The menu has to know, or its icons fall back
+   * to opening lists nobody can see — the same dead click, at one width.
+   */
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1000px)");
+    const sync = () => setNarrow(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   /*
@@ -174,7 +202,8 @@ export function Workspace({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  useEffect(() => {
+  // Before paint, so a remount never shows one frame of the other width.
+  useLayoutEffect(() => {
     document.body.classList.toggle("rail-collapsed", collapsed);
   }, [collapsed]);
 
@@ -251,6 +280,7 @@ export function Workspace({
           onPrefetch={prefetch}
           badges={badges}
           user={user}
+          collapsed={collapsed || narrow}
         />
 
         <main className="stage">

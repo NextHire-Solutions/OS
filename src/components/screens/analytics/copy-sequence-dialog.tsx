@@ -87,12 +87,6 @@ export function CopySequenceDialog({
   const [mode, setMode] = useState<CopyMode>("append");
   const [includeVariants, setIncludeVariants] = useState(true);
   const [includeAttachments, setIncludeAttachments] = useState(true);
-  /*
-   * §9.4 lists copy tags alongside variants and attachments. Defaults on: a
-   * sequence copied without its dimensions shows as Untagged in Copy & Offer —
-   * dropping out of the analysis that identified it as worth copying.
-   */
-  const [includeCopyTags, setIncludeCopyTags] = useState(true);
   const [plan, setPlan] = useState<CopyPlan | null>(null);
   const [typed, setTyped] = useState("");
   const [previewing, setPreviewing] = useState(false);
@@ -106,7 +100,13 @@ export function CopySequenceDialog({
   const options = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all;
   const source = all.find((c) => String(c.id) === String(sourceId));
 
-  const opts = { includeVariants, includeAttachments, includeCopyTags };
+  /*
+   * Copy tags are no longer carried (13 Oct — "Kill Copy dimension and
+   * blueprint"): nothing shows or edits them now, so bringing them would be a
+   * write nobody can see. The route still defaults to carrying them for any
+   * other caller, so this says no explicitly.
+   */
+  const opts = { includeVariants, includeAttachments, includeCopyTags: false };
 
   async function preview() {
     if (!sourceId) return;
@@ -291,7 +291,6 @@ export function CopySequenceDialog({
           <div style={{ display: "grid", gap: 8, borderTop: "1px solid var(--line-soft)", paddingTop: 10 }}>
             <Check checked={includeVariants} onChange={setIncludeVariants} label="Bring variants" />
             <Check checked={includeAttachments} onChange={setIncludeAttachments} label="Bring attachments" />
-            <Check checked={includeCopyTags} onChange={setIncludeCopyTags} label="Bring copy tags" />
           </div>
           {previewError ? <Fail>{previewError}</Fail> : null}
         </>

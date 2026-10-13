@@ -163,8 +163,8 @@ export const FIELDS: FieldDef[] = [
     definition: "Every 14 days, every 28 days, or monthly.", sourceOfTruth: "Billing / Master Client Record", source: "Client Health",
     editIn: "Clients", editable: true, tools: ["Health", "Billing"], sync: "Yes" },
   { key: "nextBillingDate", label: "Next billing date", category: "billing", kind: "date",
-    definition: "The next date the client is billed.", sourceOfTruth: "Billing / Master Client Record", source: "Derived",
-    editIn: "Follows the anchor and interval", editable: false, tools: ["Health", "Billing"], sync: "Recomputed daily" },
+    definition: "The next date the client is billed — Stripe's next charge where the client is billed through Stripe on the same interval, otherwise the anchor and interval.", sourceOfTruth: "Billing / Master Client Record", source: "Derived",
+    editIn: "Follows Stripe, or the anchor and interval", editable: false, tools: ["Health", "Billing"], sync: "Recomputed daily" },
   { key: "stripeCustomerId", label: "Stripe Customer ID", category: "billing", kind: "id",
     definition: "The client's customer in Stripe.", sourceOfTruth: MASTER, source: "Master record",
     editIn: "Clients", editable: true, tools: ["Billing"], sync: "Links the record to Stripe" },
@@ -220,12 +220,13 @@ export const FIELDS: FieldDef[] = [
   { key: "bounces", label: "Bounces", category: "performance", kind: "number",
     definition: "Emails to the client's leads that bounced.", sourceOfTruth: "Database", source: "Database",
     editIn: "Generated — nobody edits it", editable: false, tools: ["Database", "Analytics"], sync: "Fed back automatically" },
-  { key: "inReview", label: "Leads in review", category: "performance", kind: "number",
-    definition: "Leads waiting for review before they are sent.", sourceOfTruth: "Database", source: "Database",
-    editIn: "Database", editable: false, tools: ["Database"], sync: "Fed back automatically" },
-  { key: "exported", label: "Leads exported", category: "performance", kind: "number",
-    definition: "Leads exported to the sending platforms.", sourceOfTruth: "Database", source: "Database",
-    editIn: "Database", editable: false, tools: ["Database"], sync: "Fed back automatically" },
+  /*
+   * "Leads in review" and "Leads exported" were here until 13 Oct. They were
+   * two yes/no flags on the Database's client row that only the Onboarding
+   * flow ever set; with Onboarding retired (9 Oct) nothing updates them, so
+   * they were removed from every screen. The columns in the Database are
+   * untouched.
+   */
 
   /* ----------------------------------------------------- §12 lifecycle dates --- */
   { key: "pauseDate", label: "Pause date", category: "lifecycle", kind: "date",
@@ -293,7 +294,6 @@ export const TOOL_VIEWS: ToolView[] = [
       { key: "name", label: "Client" }, { key: "status", label: "Client status" }, { key: "campaignLocation", label: "MLS/location" },
       { key: "campaignName", label: "Campaign" }, { key: "campaignId", label: "Campaign ID" }, { key: "assignedLeads", label: "Leads" },
       { key: "sequencers", label: "Sequencers" }, { key: "replies", label: "Replies" }, { key: "bounces", label: "Bounces" },
-      { key: "inReview", label: "In Review" }, { key: "exported", label: "Exported" }, { key: "onboardingStatus", label: "Onboarding status" },
     ],
     openIn: { label: "Open the Database view", href: "/search/clients" },
   },

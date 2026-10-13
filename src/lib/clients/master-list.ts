@@ -3,6 +3,9 @@ import "server-only";
 import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { billingSnapshot, dayNumber, dayToDate, scheduleFor } from "@/lib/tools/client-health/billing";
 import { nextBillingDate } from "@/lib/tools/client-health/derive";
+import { alignWithStripe, stripeAnchor, type BillingAlignment } from "./billing-align.ts";
+import { stripeFactsByClient } from "./billing-align-load";
+import { easternDay } from "@/lib/commissions/schedule";
 import { listClientRows } from "@/lib/tools/client-health/publish";
 import { getSupabase as getHealthSupabase } from "@/lib/tools/client-health/supabase";
 import type { BillingInterval } from "@/lib/tools/client-health/types";
@@ -81,6 +84,13 @@ export interface MasterClient {
   billingInterval: string | null;
   billingIntervalDays: number | null;
   nextBillingDate: string | null;
+  /*
+   * How the cycle on record compares with Stripe's real charges (13 Oct —
+   * billing-align.ts). When it is "follow", `nextBillingDate` and
+   * `firstBillingDate` are already on Stripe's days; `billingAnchorDate` stays
+   * what is stored, so the record still shows what was typed.
+   */
+  billingAlignment: BillingAlignment;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   /* Campaign Information */
@@ -96,9 +106,8 @@ export interface MasterClient {
   replies: number | null;
   bounces: number | null;
   sequencers: number | null;
-  /** Counts where the Database has them, else yes/no from its flags. */
-  inReview: number | boolean | null;
-  exported: number | boolean | null;
+  // (Leads in review / exported, and the Onboarding stage and step progress,
+  // were carried here until 13 Oct — removed with the Onboarding status fields.)
   /* §12 lifecycle */
   /** The LAST pause: the later of one entered by hand (0032) and the status history's latest. */
   pauseDate: string | null;
@@ -137,7 +146,6 @@ export interface MasterClient {
     cycle: { delivered: number; required: number; carryIn: number } | null;
     pace: "risk" | "ok" | "done" | "pending" | null;
   };
-  onboarding: { present: boolean; stage: string | null; progress: { done: number; total: number; pct: number } | null };
   /** `url` is the first open portal; `links` is every portal the client has (a client can run several markets). */
   portal: { count: number; url: string | null; enabled: boolean | null; links: { name: string; url: string; enabled: boolean }[] };
   analytics: { present: boolean; campaigns: number | null; sent: number | null };
@@ -184,6 +192,8 @@ function matcher<T>(rows: T[], idOf: (r: T) => string | null, nameOf: (r: T) => 
  */
 export function firstBillingDate(c: {
   start_date: string | null; billing_anchor_date: string | null;
+  /** Stripe's charge date, when the cycle follows Stripe (billing-align.ts). */
+  stripe_anchor?: string | null;
   billing_interval: BillingInterval; billing_interval_days: number | null;
 }): string | null {
   const s = scheduleFor({ ...c, monthly_target: 0, intro_dates: [] });
@@ -311,6 +321,8 @@ async function load(): Promise<MasterClientList> {
     listClientDates().then((m) => { if (!m) throw new Error("migration 0023"); return m; }),
     readIntroCustom(),
     listClientProfiles(),
+    // Each client's Stripe subscriptions, so billing dates follow the real charge (13 Oct).
+    stripeFactsByClient(),
   ]);
   const unavailable: string[] = [];
   const get = <T,>(i: number): T | null => {
@@ -336,12 +348,15 @@ async function load(): Promise<MasterClientList> {
   const introCustom = settled[12].status === "fulfilled" ? (settled[12].value as Set<string>) : new Set<string>();
   // Null before 0027 runs: the fields read as empty, never "unavailable".
   const profiles = settled[13].status === "fulfilled" ? (settled[13].value as Map<string, ClientProfile> | null) : null;
+  // Never reported as unavailable: without Stripe every client keeps the dates on its record.
+  const stripeFacts = settled[14].status === "fulfilled" ? (settled[14].value as Awaited<ReturnType<typeof stripeFactsByClient>>) : null;
 
   const pickHealth = matcher(healthRows ?? [], (r) => str(r.id), (r) => str(r.name));
   const pickDb = matcher(db?.clients ?? [], (r) => r.id, (r) => r.name);
   const pickOnb = matcher((pipeline as unknown as { clients?: Row[] } | null)?.clients ?? [], (r) => str(r.id), (r) => str(r.name));
   const pickAn = matcher(analytics ?? [], (r) => str(r.id), (r) => str(r.name));
   const now = new Date();
+  const today = easternDay(now);
 
   const clients: MasterClient[] = os.map((c) => {
     const h = pickHealth(c, c.links.clientHealth);
@@ -360,13 +375,25 @@ async function load(): Promise<MasterClientList> {
 
     // Client Health
     const interval = (str(h?.billing_interval) ?? "biweekly") as BillingInterval;
-    const billingIn = h ? {
+    const onRecord = h ? {
       start_date: str(h.start_date), billing_anchor_date: str(h.billing_anchor_date),
       billing_interval: interval, billing_interval_days: num(h.billing_interval_days),
-      monthly_target: num(h.monthly_target) ?? 0, intro_dates: strs(h.intro_dates),
+    } : null;
+    /*
+     * The cycle follows Stripe's charge date where the two are the same
+     * cadence on different days (billing-align.ts). The same rule Client
+     * Health's own loader applies, so its Delivery page and this record give
+     * one date.
+     */
+    const billingAlignment: BillingAlignment = onRecord && stripeFacts
+      ? alignWithStripe(onRecord, stripeFacts.get(c.id) ?? [], today)
+      : { kind: "none" };
+    const billingIn = onRecord ? {
+      ...onRecord, stripe_anchor: stripeAnchor(billingAlignment),
+      monthly_target: num(h!.monthly_target) ?? 0, intro_dates: strs(h!.intro_dates),
     } : null;
     const snap = billingIn ? billingSnapshot(billingIn, now) : null;
-    const anchor = billingIn ? billingIn.billing_anchor_date ?? billingIn.start_date : null;
+    const anchor = billingIn ? billingIn.stripe_anchor ?? billingIn.billing_anchor_date ?? billingIn.start_date : null;
     const next = billingIn && anchor ? nextBillingDate(anchor, interval, now, billingIn.billing_interval_days) : null;
 
     const campaignIds = h ? [...strs(h.instantly_campaign_ids).map((id) => ["Instantly", id] as const), ...strs(h.bison_campaign_ids).map((id) => ["EmailBison", id] as const)] : [];
@@ -402,6 +429,7 @@ async function load(): Promise<MasterClientList> {
 
       firstBillingDate: billingIn ? firstBillingDate(billingIn) : null,
       billingAnchorDate: billingIn?.billing_anchor_date ?? null,
+      billingAlignment,
       billingInterval: h ? interval : null,
       billingIntervalDays: billingIn?.billing_interval_days ?? null,
       nextBillingDate: next ? iso(next) : null,
@@ -420,8 +448,6 @@ async function load(): Promise<MasterClientList> {
       replies: d?.replied ?? null,
       bounces: d?.bounced ?? null,
       sequencers: d?.inSequencers ?? null,
-      inReview: num(onb?.leadsInReview) ?? (d ? d.inReview : null),
-      exported: num(onb?.leadsExported) ?? (d ? d.exported : null),
 
       pauseDate: laterDay(dates?.get(c.id)?.pauseDate, life.pauseDate),
       pauseDates: pauseDays(changes, dates?.get(c.id)?.pauseDate),
@@ -440,11 +466,6 @@ async function load(): Promise<MasterClientList> {
         period: snap && snap.period.target > 0 ? { delivered: snap.period.delivered, target: snap.period.target } : null,
         cycle: snap && snap.cycle.target > 0 ? { delivered: snap.cycle.delivered, required: snap.cycle.required, carryIn: snap.cycle.carryIn } : null,
         pace: snap && snap.period.target > 0 ? snap.status : null,
-      },
-      onboarding: {
-        present: !!o,
-        stage: str(onb?.stageName) ?? d?.stage ?? null,
-        progress: onb?.progress ?? null,
       },
       portal: {
         count: mine.length,

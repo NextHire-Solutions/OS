@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { CommissionRow, CommissionsView, RepSummary } from "@/lib/commissions/load";
+import type { CommissionRow, CommissionsView, RepSummary, SalesView } from "@/lib/commissions/load";
+import {
+  CLOSING_STATUSES,
+  CLOSING_WINDOWS,
+  axisTop,
+  closingsByMonth,
+  type ClosingStatus,
+  type ClosingWindow,
+} from "@/lib/commissions/closings";
 import { planLabel } from "@/components/clients/cells";
 
 import { PlaceholderScreen } from "./lazy";
@@ -85,6 +93,13 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
   const [sort, setSort] = useState<{ k: SortKey; dir: 1 | -1 }>({ k: "due", dir: -1 });
   const onSort = (k: SortKey) => setSort((s) => ({ k, dir: s.k === k ? (s.dir === 1 ? -1 : 1) : NUMERIC.has(k) ? -1 : 1 }));
   const rows = useMemo(() => sortRows(data.rows, sort.k, sort.dir), [data.rows, sort]);
+  /*
+   * The Month column — "for salespersons only and when a salesperson is
+   * selected" (13 Oct). `data.sales` is exactly that: set by the server when
+   * the view is one person who sells.
+   */
+  const showMonth = data.sales !== null;
+  const columns = useMemo(() => (showMonth ? [...COLUMNS.slice(0, 2), MONTH_COLUMN, ...COLUMNS.slice(2)] : COLUMNS), [showMonth]);
 
   return (
     <div className="cx-page" aria-busy={busy}>
@@ -136,11 +151,13 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
       {data.unavailable.length ? <p className="ds-note" style={{ margin: 0 }}>Not read this time: {data.unavailable.join(", ")}.</p> : null}
 
       {/* ------------------------------------------------------- rep cards */}
-      <section className="cm-reps" aria-label="Due per person">
+      {/* A salesperson in view: their card, and beside it what they have closed, month by month (13 Oct). */}
+      <section className={`cm-reps${data.sales ? " cm-reps-sales" : ""}`} aria-label="Due per person">
         {(single && shown ? [shown] : data.reps).map((r) => (
           <RepCard key={r.key} rep={r} run={data.run} admin={data.viewer.admin} canSave={data.settingsAvailable}
             onPick={single || !data.viewer.admin ? undefined : () => onAs(r.key)} onChanged={onChanged} />
         ))}
+        {data.sales ? <ClosingsChart sales={data.sales} today={data.today} /> : null}
         {data.reps.length === 0 ? (
           <p className="cm-empty">{data.viewer.admin
             ? "Nobody holds a client yet — give people the Salesperson or Account manager role on Team access, then assign clients below."
@@ -161,12 +178,13 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
           <table className="cx-table cm-table">
             <thead>
               <tr className="cx-cols">
-                {COLUMNS.map(([k, h], i) => {
+                {columns.map(([k, h], i) => {
                   const on = sort.k === k;
                   return (
                     <th key={k} className={i === 0 ? "cx-pin" : NUMERIC.has(k) ? "num" : undefined}
                       aria-sort={on ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-                      title={k === "net" ? "Monthly gross less Stripe's fee: 2.9% + $0.30 per successful card charge. Commission is paid on this." : undefined}>
+                      title={k === "net" ? "Monthly gross less Stripe's fee: 2.9% + $0.30 per successful card charge. Commission is paid on this."
+                        : k === "month" ? "Which month of service the client is in on this payout — 28-day months, counted from its first payment." : undefined}>
                       <button type="button" onClick={() => onSort(k)}>
                         {k === "due" ? `Due ${day(data.run)}` : h}
                         <span className={`cx-arrow${on ? " on" : ""}`} aria-hidden="true">{on ? (sort.dir === 1 ? "↑" : "↓") : "↕"}</span>
@@ -178,9 +196,9 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
             </thead>
             <tbody>
               {data.rows.length === 0 ? (
-                <tr><td colSpan={8} className="cx-empty">{single ? "No active clients are assigned to this person." : "No active client has a salesperson or account manager yet."}</td></tr>
+                <tr><td colSpan={columns.length} className="cx-empty">{single ? "No active clients are assigned to this person." : "No active client has a salesperson or account manager yet."}</td></tr>
               ) : rows.map((r) => (
-                <Row key={r.id} r={r} split={data.split} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
+                <Row key={r.id} r={r} split={data.split} showMonth={showMonth} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
               ))}
             </tbody>
           </table>
@@ -198,12 +216,13 @@ function CommissionsView({ data, busy, error, onAs, onRun, onChanged }: {
   );
 }
 
-type SortKey = "name" | "plan" | "gross" | "net" | "salesperson" | "accountManager" | "status" | "due";
+type SortKey = "name" | "plan" | "month" | "gross" | "net" | "salesperson" | "accountManager" | "status" | "due";
+const MONTH_COLUMN: [SortKey, string] = ["month", "Month"];
 const COLUMNS: [SortKey, string][] = [
   ["name", "Client"], ["plan", "Plan"], ["gross", "Monthly (gross)"], ["net", "Monthly (net)"],
   ["salesperson", "Salesperson"], ["accountManager", "Account manager"], ["status", "Status"], ["due", "Due"],
 ];
-const NUMERIC = new Set<SortKey>(["gross", "net", "due"]);
+const NUMERIC = new Set<SortKey>(["month", "gross", "net", "due"]);
 const PLAN_ORDER: Record<string, number> = { minimum: 1, production: 2, partner: 3 };
 
 /** Sorted by one column; empty values always last, ties by client name. */
@@ -212,6 +231,7 @@ function sortRows(rows: CommissionRow[], k: SortKey, dir: 1 | -1): CommissionRow
     switch (k) {
       case "name": return r.name.toLowerCase();
       case "plan": return r.plan ? PLAN_ORDER[r.plan] ?? 9 : null;
+      case "month": return r.month;
       case "gross": return r.gross;
       case "net": return r.net;
       case "salesperson": return r.salesperson?.toLowerCase() || null;
@@ -284,13 +304,18 @@ function RepCard({ rep, run, admin, canSave, onPick, onChanged }: {
   );
 }
 
-function Row({ r, split, open, onToggle }: { r: CommissionRow; split: boolean; open: boolean; onToggle: () => void }) {
+function Row({ r, split, showMonth, open, onToggle }: { r: CommissionRow; split: boolean; showMonth: boolean; open: boolean; onToggle: () => void }) {
   const tone = r.status === "churned" ? "cancelled" : r.statusLabel === "Month 1" ? "month1" : r.status === "paused" ? "paused" : "active";
   return (
     <>
       <tr onClick={onToggle} className={open ? "on" : undefined} aria-expanded={open}>
         <td className="cx-pin"><b className="cx-strong">{r.name}</b></td>
         <td>{r.plan ? <span className={`cx-plan p-${r.plan}`}>{planLabel(r.plan)}</span> : <span className="cx-none">—</span>}</td>
+        {showMonth ? (
+          <td className="num" data-cm-month title={r.month === null ? "No payment yet" : `In its ${ordinal(r.month)} 28-day month since the first payment`}>
+            {r.month === null ? <span className="cx-none">—</span> : `Month ${r.month}`}
+          </td>
+        ) : null}
         <td className="num">
           {money(r.gross)}
           {r.grossSource ? <span className={`cm-src ${r.grossSource}`}>{r.grossSource === "stripe" ? "Stripe" : "Estimate"}</span>
@@ -308,7 +333,7 @@ function Row({ r, split, open, onToggle }: { r: CommissionRow; split: boolean; o
       </tr>
       {open ? (
         <tr className="cm-lines cx-static">
-          <td colSpan={8}>
+          <td colSpan={showMonth ? 9 : 8}>
             {r.earnings.map((e) => (
               <div key={e.key} style={{ marginBottom: 10 }}>
                 <span className="cm-note"><b>{e.name}</b> · {ROLE[e.role]} · {split ? <>{pct(e.rate)} of the monthly payment after Stripe&rsquo;s fee, half on each payout</> : <>{pct(e.rate)} of each payment after Stripe&rsquo;s fee</>}{e.role === "account_manager" ? ", from Month 2" : ""}</span>
@@ -333,6 +358,91 @@ function Row({ r, split, open, onToggle }: { r: CommissionRow; split: boolean; o
         </tr>
       ) : null}
     </>
+  );
+}
+
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+
+/*
+ * What a salesperson has closed, month by month (13 Oct, with the client's
+ * sketch: the chart to the right of the person's card, filters top right).
+ *
+ * One bar per month, a quiet month drawn as an empty bar rather than left out.
+ * Pointing at a bar — or tabbing to it — names the clients in it underneath,
+ * so the chart answers "how many" and "who" without leaving the page.
+ */
+function ClosingsChart({ sales, today }: { sales: SalesView; today: string }) {
+  const [period, setPeriod] = useState<ClosingWindow>("12m");
+  const [status, setStatus] = useState<ClosingStatus>("all");
+  const months = useMemo(() => closingsByMonth(sales.closings, period, status, today), [sales.closings, period, status, today]);
+  const [picked, setPicked] = useState<string | null>(null);
+  const top = axisTop(Math.max(0, ...months.map((m) => m.clients.length)));
+  const total = months.reduce((n, m) => n + m.clients.length, 0);
+  const shown = months.find((m) => m.month === picked) ?? null;
+  const first = sales.name.split(/\s+/)[0];
+
+  return (
+    <div className="cm-chart" data-cm-closings>
+      <div className="cm-chart-head">
+        <div>
+          <div className="cm-title">Clients closed by month</div>
+          <div className="cm-note" data-cm-closings-total>
+            {total} {status === "all" ? "closed" : CLOSING_STATUSES.find((s) => s.value === status)!.label.toLowerCase()} · {CLOSING_WINDOWS.find((w) => w.value === period)!.label.toLowerCase()}
+          </div>
+        </div>
+        <div className="cm-chart-filters">
+          <select id="cm-closings-window" className="cm-select" aria-label="Period" value={period} onChange={(e) => { setPeriod(e.target.value as ClosingWindow); setPicked(null); }}>
+            {CLOSING_WINDOWS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+          </select>
+          <select id="cm-closings-status" className="cm-select" aria-label="Which clients" value={status} onChange={(e) => { setStatus(e.target.value as ClosingStatus); setPicked(null); }}>
+            {CLOSING_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="cm-bars" role="list" aria-label={`Clients ${first} closed each month`} onMouseLeave={() => setPicked(null)}>
+        <div className="cm-bars-axis" aria-hidden="true"><span>{top}</span><span>{top / 2 >= 1 && Number.isInteger(top / 2) ? top / 2 : ""}</span><span>0</span></div>
+        <div className="cm-bars-plot" style={{ gridTemplateColumns: `repeat(${months.length}, minmax(0, 1fr))` }}>
+          {months.map((m) => {
+            const n = m.clients.length;
+            return (
+              <button
+                key={m.month}
+                type="button"
+                role="listitem"
+                className={`cm-bar${picked === m.month ? " on" : ""}${n === 0 ? " zero" : ""}`}
+                data-cm-bar={m.month}
+                data-count={n}
+                aria-label={`${m.long}: ${n} closed${n ? ` — ${m.clients.map((c) => c.name).join(", ")}` : ""}`}
+                onMouseEnter={() => setPicked(m.month)}
+                onFocus={() => setPicked(m.month)}
+                onClick={() => setPicked(m.month)}
+              >
+                <span className="cm-bar-n">{n || ""}</span>
+                <span className="cm-bar-col"><span className="cm-bar-fill" style={{ height: `${(n / top) * 100}%` }} /></span>
+                <span className="cm-bar-l">{m.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="cm-chart-foot" data-cm-closings-detail aria-live="polite">
+        {shown ? (
+          shown.clients.length ? (
+            <><b>{shown.long}</b> — {shown.clients.map((c, i) => (
+              <span key={c.id}>{i ? ", " : ""}{c.name}{c.status !== "active" ? <span className="cx-none"> ({c.status})</span> : null}</span>
+            ))}</>
+          ) : <><b>{shown.long}</b> — nobody closed</>
+        ) : (
+          <span className="cx-none">
+            Point at a month to see who. A closing is dated by the client&rsquo;s sign-up{sales.undated.length
+              ? ` · ${sales.undated.length} of ${first}’s clients ${sales.undated.length === 1 ? "has" : "have"} no date and ${sales.undated.length === 1 ? "is" : "are"} in no month: ${sales.undated.join(", ")}`
+              : ""}.
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

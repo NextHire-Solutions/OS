@@ -8,6 +8,7 @@ import {
   ratio,
   type Delta,
 } from "@/lib/tools/analytics/format.ts";
+import { replyRatePerContact } from "@/lib/tools/analytics/metrics.ts";
 
 /*
  * The KPI band — twelve cells in two rows of six, in the design's own `.kpi`.
@@ -51,7 +52,7 @@ export interface KpiResponse {
     replyTimingSampleSize: number;
     platforms?: string[];
     positiveCoversInstantly?: boolean;
-    instantlyExcludedBy?: "campaign-filter" | null;
+    instantlyExcludedBy?: "campaign-filter" | "tag-filter" | null;
   };
   range?: { from: string; to: string };
 }
@@ -117,9 +118,11 @@ export function kpiCells(data: KpiResponse | null): { cells: Cell[]; scope?: str
    * invites the reader to conclude the filter is broken.
    */
   const scope =
-    data.coverage.instantlyExcludedBy === "campaign-filter"
-      ? "EmailBison only — the campaign filter selects EmailBison campaigns, so Instantly is not included"
-      : scopeNote(data.coverage.platforms);
+    data.coverage.instantlyExcludedBy === "tag-filter"
+      ? "EmailBison only — tags are EmailBison campaign tags, so Instantly is not included"
+      : data.coverage.instantlyExcludedBy === "campaign-filter"
+        ? "EmailBison only — the campaign filter selects EmailBison campaigns, so Instantly is not included"
+        : scopeNote(data.coverage.platforms);
 
   /*
    * Why Positive is a dash, said on the tile rather than left to be discovered.
@@ -129,6 +132,13 @@ export function kpiCells(data: KpiResponse | null): { cells: Cell[]; scope?: str
    */
   const positiveNote =
     data.coverage.positiveCoversInstantly === false ? "EmailBison only" : scope;
+
+  const perContact = replyRatePerContact(c.replies, c.prospects);
+  const perContactNote =
+    // Two lines on purpose (os.css draws the note pre-line): one tile is too
+    // narrow for both on one, and a wrap mid-phrase reads as a mistake.
+    perContact == null ? "per email sent" : `per email sent
+${percent(perContact, 2)} per contact`;
 
   return {
     scope,
@@ -156,8 +166,15 @@ export function kpiCells(data: KpiResponse | null): { cells: Cell[]; scope?: str
         // read as the same kind of measure.
         data.coverage.followUpBusinessHours ? "business hours" : undefined,
       ),
-      cell("replyRate", "Reply Rate", percent(c.replyRate)),
-      cell("humanRate", "Human Rate", percent(c.humanRate)),
+      /*
+       * Both reply rates, and which is which (13 Oct). The big figure is per
+       * email SENT — the one every table on this screen uses; the note carries
+       * the same replies per PERSON emailed, which is what EmailBison quotes.
+       * Two decimals: per email these are well under 1%, and "0.6%" hides the
+       * difference between 0.55% and 0.64%.
+       */
+      cell("replyRate", "Reply Rate", percent(c.replyRate, 2), perContactNote),
+      cell("humanRate", "Human Rate", percent(c.humanRate, 2), "per email sent"),
       cell("positiveRate", "Positive Rate", percent(c.positiveRate), positiveNote),
       cell("leadToEmail", "Lead to Email", ratio(c.leadToEmail), positiveNote),
     ],
@@ -169,7 +186,7 @@ export function KpiBand({ data, loading }: { data: KpiResponse | null; loading: 
 
   if (!cells.length) {
     return (
-      <div className="kpi" aria-busy={loading}>
+      <div className="kpi kpi-band" aria-busy={loading}>
         {Array.from({ length: 12 }, (_, i) => (
           <div key={i}>
             <div className="k">&nbsp;</div>
@@ -190,7 +207,8 @@ export function KpiBand({ data, loading }: { data: KpiResponse | null; loading: 
   return (
     <>
       <div
-        className="kpi"
+        // `kpi-band`: two rows of six, as the campaign tool draws it — os.css.
+        className="kpi kpi-band"
         /*
          * Dimmed rather than replaced while a filter change is in flight. The
          * tool's `placeholderData: keepPreviousData` for the same reason: a band

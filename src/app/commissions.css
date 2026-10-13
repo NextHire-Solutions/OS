@@ -71,3 +71,28 @@
 .cm-rules b { font-family: var(--mono); font-weight: 500; color: var(--x-ink); }
 .cm-foot { font-size: 11.5px; color: var(--x-faint); padding-top: 14px; border-top: 1px solid var(--x-line); line-height: 1.6; }
 @media (max-width: 900px) { .cm-rules { grid-template-columns: 1fr; } .cm-rules > div { border-left: 0; border-top: 1px solid var(--x-line); } }
+
+/* ---- Closings by month, beside a salesperson's card (13 Oct) ---- */
+.cm-reps.cm-reps-sales { grid-template-columns: minmax(280px, 320px) minmax(0, 1fr); align-items: stretch; }
+@media (max-width: 900px) { .cm-reps.cm-reps-sales { grid-template-columns: minmax(0, 1fr); } }
+.cm-chart { background: var(--x-surface); border: 1px solid var(--x-line); border-radius: 14px; padding: 16px 20px 14px; display: grid; gap: 12px; min-width: 0; align-content: start; }
+.cm-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cm-chart-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.cm-chart-filters .cm-select { height: 30px; font-size: 12.5px; }
+.cm-bars { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; height: 150px; }
+.cm-bars-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 16px 0 20px; font-family: var(--mono); font-size: 10px; color: var(--x-faint); text-align: right; }
+.cm-bars-plot { display: grid; gap: 6px; align-items: stretch; min-width: 0; border-bottom: 1px solid var(--x-line); background:
+  linear-gradient(var(--x-line-2, #F0F0F2), var(--x-line-2, #F0F0F2)) 0 16px / 100% 1px no-repeat; }
+.cm-bar { appearance: none; border: 0; background: none; padding: 0; font: inherit; cursor: default; min-width: 0;
+  display: grid; grid-template-rows: 16px minmax(0, 1fr) 20px; justify-items: center; }
+.cm-bar-n { font-family: var(--mono); font-size: 11px; color: var(--x-ink-2); line-height: 16px; }
+.cm-bar-col { width: min(34px, 72%); display: flex; align-items: flex-end; }
+.cm-bar-fill { width: 100%; background: var(--x-accent, #0165FE); border-radius: 4px 4px 0 0; min-height: 0; transition: height .18s ease, opacity .12s; opacity: .82; }
+.cm-bar.zero .cm-bar-fill { height: 2px !important; background: var(--x-line); border-radius: 1px; opacity: 1; }
+.cm-bar.on .cm-bar-fill, .cm-bar:focus-visible .cm-bar-fill { opacity: 1; }
+.cm-bar:focus-visible { outline: 2px solid var(--x-accent, #0165FE); outline-offset: 2px; border-radius: 4px; }
+.cm-bar-l { font-family: var(--mono); font-size: 10px; color: var(--x-faint); white-space: nowrap; line-height: 20px; overflow: hidden; max-width: 100%; }
+.cm-bar.on .cm-bar-l { color: var(--x-ink); }
+.cm-chart-foot { font-size: 12.5px; color: var(--x-ink-2); line-height: 1.5; min-height: 38px; }
+.cm-chart-foot b { color: var(--x-ink); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .cm-bar-fill { transition: none; } }

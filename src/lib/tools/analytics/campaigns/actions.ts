@@ -4,6 +4,8 @@ import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
 import { createInstantlyClient } from "@/lib/tools/analytics/instantly/client.ts";
 import { canApply, platformSupports, whyNot, type CampaignAction } from "./status.ts";
+import { unfilledProblem } from "./client-fields.ts";
+import { unfilledClientFields } from "./client-fields-load";
 
 /*
  * Applying campaign actions.
@@ -140,6 +142,13 @@ async function applyOne(
           await eb.pauseCampaign(id);
           break;
         case "resume": {
+          /*
+           * A sequence still holding {CLIENT_AREA} or {CLIENT_ALIAS} would send
+           * the placeholder itself to a lead (13 Oct — client-fields.ts). Only
+           * a placeholder that is positively seen stops the resume.
+           */
+          const problem = unfilledProblem(await unfilledClientFields(eb, id));
+          if (problem) throw new Error(problem);
           const response = await eb.resumeCampaign(id);
           status = response?.data?.status ?? status;
           break;

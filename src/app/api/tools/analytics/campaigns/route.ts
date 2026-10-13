@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
+import { loadSendingCapacity } from "@/lib/tools/analytics/sending-capacity-load";
 
 /*
  * The campaign list, served from the Supabase cache — never from EmailBison.
@@ -219,8 +220,21 @@ export async function GET(request: NextRequest) {
     platformCounts[row.platform] = (platformCounts[row.platform] ?? 0) + 1;
   }
 
+  /*
+   * What the ACTIVE campaigns need against what the inboxes can send (13 Oct:
+   * "Show the volume needed to sustain the current sending limit of all Active
+   * campaigns"). The whole estate, whatever this page is filtered to — it is a
+   * fact about capacity, not about the rows listed. Null if it cannot be read;
+   * the list does not depend on it.
+   */
+  const capacity = await loadSendingCapacity().catch((e) => {
+    console.error("[api/analytics/campaigns] capacity:", e instanceof Error ? e.message : e);
+    return null;
+  });
+
   return NextResponse.json({
     items,
+    capacity,
     total: count ?? items.length,
     statusCounts,
     platformCounts,

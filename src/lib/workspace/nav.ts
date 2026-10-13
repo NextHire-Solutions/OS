@@ -242,6 +242,24 @@ export const NAV: NavSection[] = [
         ],
       },
       /*
+       * Inboxes (13 Oct, OS feedback: "Add a new Product: Inboxes") — every
+       * sending inbox in one sortable, filterable table, the way Instantly
+       * lists its email accounts. A third section of the `analytics` tool, like
+       * Campaign Management: the same grant and URL prefix, so nobody's access
+       * changes and no migration is needed. The leaf id must stay unique
+       * across all three sections.
+       */
+      {
+        kind: "product",
+        id: "analytics",
+        key: "inboxes",
+        label: "Inboxes",
+        baseUrlEnv: "ANALYTICS_URL",
+        children: [
+          { id: "inboxes", label: "All inboxes", path: "/analytics/inboxes", verified: true },
+        ],
+      },
+      /*
        * Onboarding was removed on 9 Oct (OS feedback): its screens and its
        * scheduled jobs. /onboarding addresses open Home. The `onboarding`
        * grant and tool id stay (sessions carry them); its webhook receivers

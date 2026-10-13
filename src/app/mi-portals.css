@@ -522,6 +522,37 @@
 .mi-portals .ib:active:not(:disabled) { transform: scale(0.9); }
 .mi-portals .ib svg { width: 16px; height: 16px; }
 .mi-portals .ib.on { color: var(--green); }
+/* ── The demo portal, apart at the top (13 Oct) ─────────────────────────────
+   One quiet strip, not a fourth card: it is a shortcut, and it must not read
+   as one of the numbers. */
+.mi-portals .mi-portals-demo { display: grid; gap: 8px; margin: 0 0 16px; }
+.mi-portals .mi-portals-demo-card {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px;
+  padding: 12px 16px; border: 1px dashed var(--line); border-radius: 14px;
+  background: var(--inset);
+}
+.mi-portals .mi-portals-demo-tag {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; background: var(--surface);
+}
+.mi-portals .mi-portals-demo-sms { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.mi-portals .mi-portals-demo-open {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px;
+  border-radius: 10px; background: var(--blue); color: #fff; font-size: 13.5px; font-weight: 600;
+  text-decoration: none; white-space: nowrap;
+}
+.mi-portals .mi-portals-demo-open:hover { filter: brightness(1.06); }
+
+/* ── "Live portals match active clients" (13 Oct) ─────────────────────────── */
+.mi-portals .mi-portals-match {
+  display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding: 0 2px;
+  font-size: 12.5px; line-height: 1.5; color: var(--muted);
+}
+.mi-portals .mi-portals-match svg { width: 15px; height: 15px; flex: none; margin-top: 2px; }
+.mi-portals .mi-portals-match.ok svg { color: var(--green); }
+.mi-portals .mi-portals-match.warn { color: #8A5A0B; }
+.mi-portals .mi-portals-match.warn svg { color: #B7791F; }
+
 /* "Delete portal" (admins): quiet until pointed at, then unmistakably red —
    it sits one slot from "Edit URL" and must not be pressed by momentum. */
 .mi-portals .ib.ib-danger:hover:not(:disabled) { background: var(--red-bg, #FDECEC); color: var(--red); }

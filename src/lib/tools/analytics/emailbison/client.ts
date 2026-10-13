@@ -158,6 +158,42 @@ export class EmailBisonClient {
       pages++;
 
       const next = response.meta?.next_cursor ?? null;
+      /*
+       * AN ENDPOINT THAT IGNORES CURSOR MODE.
+       *
+       * /api/campaigns/sending-schedules answers `pagination_type=cursor` with
+       * an ordinary numbered page: `current_page: 1, last_page: 2, total: 24`
+       * and no `next_cursor` key at all (probed 13 Oct). With no cursor this
+       * walk ended after the first 15 rows and called it everything — the
+       * Schedule screen showed 15 campaigns when 24 were sending, and its
+       * forecast was short by the other nine.
+       *
+       * "No next_cursor" therefore means "the end" only when the response is
+       * cursor-shaped. If it is page-shaped and says there are more pages,
+       * they are read by number. Only ever on the first response: a cursor
+       * walk never turns into a page walk half way.
+       */
+      if (!next && cursor === null && pages === 1) {
+        const meta = response.meta;
+        const pageShaped = !!meta && !("next_cursor" in meta) && typeof meta.last_page === "number";
+        const last = pageShaped ? meta!.last_page! : 1;
+        for (let page = (meta?.current_page ?? 1) + 1; pageShaped && page <= last; page++) {
+          if (pages >= maxPages) {
+            console.warn(`[emailbison] ${endpoint}: hit the ${maxPages}-page runaway guard — DATA WAS LEFT BEHIND`);
+            break;
+          }
+          const q = new URLSearchParams({
+            ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+            page: String(page),
+          });
+          const more: Paginated<T> = await this.request<Paginated<T>>(`${endpoint}?${q.toString()}`);
+          all.push(...(more.data ?? []));
+          pages++;
+          // A page that comes back empty before `last_page` means the list
+          // shrank while it was being read; there is nothing further to fetch.
+          if (!more.data?.length) break;
+        }
+      }
       // A null next_cursor is the documented end-of-data marker.
       if (!next) break;
       // Guard against a cursor that returns itself, which would loop forever.
@@ -482,7 +518,8 @@ export class EmailBisonClient {
    *
    * Paginated — 15 campaigns per page — so the single-page call this replaces
    * would silently under-report the day's volume once the workspace grew past
-   * one page. It already has two.
+   * one page. It already has two. This endpoint pages by NUMBER and ignores
+   * cursor mode; `fetchAllPages` reads it either way (13 Oct).
    */
   async getAllSendingSchedules(
     day: "today" | "tomorrow" | "day_after_tomorrow" = "today",
@@ -505,6 +542,27 @@ export class EmailBisonClient {
 
   async getAllSenderEmails(): Promise<EBSenderEmail[]> {
     return this.fetchAllPages<EBSenderEmail>("/api/sender-emails");
+  }
+
+  /**
+   * One page of warmup scores for a date range (13 Oct — the Inboxes page).
+   *
+   * By page NUMBER, not cursor: the list is ~115 pages and the caller reads a
+   * few side by side, which a cursor walk cannot do. Well inside the 1,000-page
+   * ceiling numbered paging has (that is 15,000 inboxes).
+   */
+  async getWarmupScoresPage(startDate: string, endDate: string, page: number) {
+    const query = new URLSearchParams({ start_date: startDate, end_date: endDate, page: String(page) });
+    return this.request<Paginated<{ id: number; warmup_score: number | null }>>(
+      `/api/warmup/sender-emails?${query.toString()}`,
+    );
+  }
+
+  /** The campaigns one inbox is attached to, with each campaign's status. */
+  async getSenderEmailCampaigns(senderEmailId: number) {
+    return this.fetchAllPages<{ id: number; status: string | null }>(
+      `/api/sender-emails/${senderEmailId}/campaigns`,
+    );
   }
 
   // --- replies ---------------------------------------------------------------

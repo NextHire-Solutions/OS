@@ -108,17 +108,22 @@ const PAD = { top: 14, right: 16, bottom: 26, left: 52 };
 const VIEW_W = 1000;
 const VIEW_H = 300;
 
+/** Another screen's names for the same six lines — Home calls `positive` "Interested" (13 Oct). */
+export type SeriesLabels = Partial<Record<SeriesKey, string>>;
+
 export function SeriesChart({
   data,
   series,
   mode,
   normalize,
+  labels,
 }: {
   data: Series;
   series: SeriesKey[];
   mode: "volume" | "rates";
   /** Each line scaled to its own maximum, so a small one is still readable. */
   normalize: boolean;
+  labels?: SeriesLabels;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const box = useRef<HTMLDivElement | null>(null);
@@ -244,7 +249,7 @@ export function SeriesChart({
       ref={box}
       tabIndex={0}
       role="img"
-      aria-label={`${series.map((s) => SERIES[s].label).join(", ")} over ${points.length} days`}
+      aria-label={`${series.map((s) => labels?.[s] ?? SERIES[s].label).join(", ")} over ${points.length} days`}
       onMouseMove={(e) => onMove(e.clientX)}
       onMouseLeave={() => setHover(null)}
       onKeyDown={(e) => {
@@ -405,7 +410,7 @@ export function SeriesChart({
               return (
                 <div className="row" key={key}>
                   <i style={{ background: SERIES_COLOR[key] }} />
-                  {SERIES[key].label}
+                  {labels?.[key] ?? SERIES[key].label}
                   <b>
                     {v == null ? "—" : mode === "rates" ? percent(v, 2) : fullNumber(v)}
                     {data.compare ? (
@@ -442,15 +447,20 @@ export function SeriesChips({
   selected,
   mode,
   onChange,
+  labels,
+  only,
 }: {
   selected: SeriesKey[];
   mode: "volume" | "rates";
   onChange: (next: SeriesKey[]) => void;
+  labels?: SeriesLabels;
+  /** Offer only these lines (in this order) — a screen whose data does not carry all six. */
+  only?: readonly SeriesKey[];
 }) {
   return (
     <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-      {(Object.keys(SERIES) as SeriesKey[]).map((key) => {
-        const def = SERIES[key];
+      {(only ?? (Object.keys(SERIES) as SeriesKey[])).map((key) => {
+        const def = { ...SERIES[key], label: labels?.[key] ?? SERIES[key].label, note: labels?.[key] ? undefined : SERIES[key].note };
         const disabled = mode === "rates" && !def.hasRate;
         const on = selected.includes(key) && !disabled;
         return (

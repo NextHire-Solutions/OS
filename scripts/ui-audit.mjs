@@ -37,6 +37,8 @@ const ROUTES = process.env.ROUTES ? process.env.ROUTES.split(",").map((r) => r.t
   "/clients", "/clients/biweekly",
   "/analytics/campaign", "/analytics/volume", "/analytics/infrastructure", "/analytics/attribution",
   "/analytics/campaigns", "/analytics/schedule", "/analytics/clients",
+  // Inboxes — its own menu section since the 14 Oct release.
+  "/analytics/inboxes",
   "/search/search", "/search/accounts", "/search/mls", "/search/import",
 
   /*

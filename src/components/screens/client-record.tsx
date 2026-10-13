@@ -25,6 +25,7 @@ import { MarketsPanel } from "./markets-panel";
 import type { ChangeKind, ClientPatch } from "./clients";
 import type { ClientBilling } from "@/lib/clients/billing-model";
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
+import { alignmentNote } from "@/lib/clients/billing-align.ts";
 import type { ClientView } from "@/lib/clients/saved-views-match";
 
 /*
@@ -264,6 +265,7 @@ export function ClientRecord({
   };
 
   const period = c.health.period;
+  const billingNote = alignmentNote(c.billingAlignment);
   const daysToBilling = c.nextBillingDate
     ? Math.round((Date.parse(`${c.nextBillingDate}T00:00:00Z`) - Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)) / 86_400_000)
     : null;
@@ -353,6 +355,20 @@ export function ClientRecord({
                 <small>Next billing</small>
                 <b>{c.nextBillingDate ? fmtDay(c.nextBillingDate)?.replace(/, \d{4}$/, "") : "—"}</b>
                 <span>{daysToBilling === null ? "no schedule" : daysToBilling === 0 ? "today" : `in ${daysToBilling} day${daysToBilling === 1 ? "" : "s"}`}</span>
+                {/*
+                  One billing date (13 Oct): this follows Stripe's real charge
+                  where the record's own dates were off it, and says so; a
+                  difference a date cannot fix is said in red. billing-align.ts.
+                */}
+                {billingNote ? (
+                  <span
+                    data-billing-note={c.billingAlignment?.kind}
+                    title={billingNote.text}
+                    style={billingNote.tone === "warn" ? { color: "var(--red)" } : undefined}
+                  >
+                    {billingNote.tone === "warn" ? "differs from Stripe" : "per Stripe"}
+                  </span>
+                ) : null}
               </div>
               <div>
                 <small>Agents</small>
@@ -839,7 +855,6 @@ function Tools({ c }: { c: MasterClient }) {
     { tool: "Client Portal", present: c.portal.url ? true : c.portal.count ? false : null, note: c.portal.url ? "open" : c.portal.count ? "closed" : "none" },
     { tool: "Client Health", present: c.health.present, note: c.health.present ? `${planLabel(c.plan) ?? "no plan"} · ${c.monthlyTarget ?? 0} / 28 days` : "not in Client Health" },
     { tool: "Database", present: c.database.present, note: c.database.present ? `${fmtNum(c.assignedLeads) ?? 0} leads · ${fmtNum(c.replies) ?? 0} replies` : "not in the Database" },
-    { tool: "Onboarding", present: c.onboarding.present, note: c.onboarding.progress ? `${c.onboarding.progress.done}/${c.onboarding.progress.total} steps` : "—" },
     { tool: "Analytics", present: c.analytics.present, note: c.analytics.present ? `${fmtNum(c.analytics.campaigns) ?? 0} campaigns · ${fmtNum(c.analytics.sent) ?? 0} sent` : "not in Analytics" },
   ];
   return (

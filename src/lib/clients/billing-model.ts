@@ -144,6 +144,13 @@ function every(it: StripeSubscription["items"][number]): string {
   return it.intervalCount === 1 ? `every ${unit}` : `every ${it.intervalCount} ${unit}s`;
 }
 
+/** A day- or week-based interval in days; null for months and years, which are not a fixed number of days. */
+function stepDaysOf(it: StripeSubscription["items"][number]): number | null {
+  if (it.interval === "day") return it.intervalCount;
+  if (it.interval === "week") return 7 * it.intervalCount;
+  return null;
+}
+
 const isLive = (s: StripeSubscription) => ["active", "past_due"].includes(s.status) && !s.pause;
 
 export function subscriptionMonthly(s: StripeSubscription): number {
@@ -152,12 +159,18 @@ export function subscriptionMonthly(s: StripeSubscription): number {
   return m;
 }
 
-/** Every client's billing, from one account snapshot. */
-export function buildBilling(
+/*
+ * WHO OWNS EACH SUBSCRIPTION AND EACH CHARGE — the rules in this file's header,
+ * resolved once. `buildBilling` reads it for each client's figures; the
+ * Performance page (13 Oct) reads the same answer for the subscriptions list,
+ * the charges tied to nobody and how long each client has paid, so those three
+ * can never disagree with the per-client totals about whose money is whose.
+ */
+function resolveOwnership(
   clients: BillingClientRef[],
   snap: AccountSnapshot,
   links: StripeLinkRow[],
-): Map<string, ClientBilling> {
+) {
   const subById = new Map(snap.subscriptions.map((s) => [s.id, s]));
   const custById = new Map(snap.customers.map((c) => [c.id, c]));
   const excluded = new Set(links.filter((l) => l.excluded).map((l) => `${l.clientId}|${l.customerId}|${l.subscriptionId ?? ""}`));
@@ -217,6 +230,17 @@ export function buildBilling(
     }
     return ch.customer ? primary.get(ch.customer) ?? null : null;
   };
+
+  return { subById, custById, subOwner, claims, primary, subClient, chargeClient };
+}
+
+/** Every client's billing, from one account snapshot. */
+export function buildBilling(
+  clients: BillingClientRef[],
+  snap: AccountSnapshot,
+  links: StripeLinkRow[],
+): Map<string, ClientBilling> {
+  const { subById, custById, subOwner, claims, primary, subClient, chargeClient } = resolveOwnership(clients, snap, links);
 
   const out = new Map<string, ClientBilling>();
   for (const c of clients) {
@@ -333,6 +357,147 @@ export function upcomingCharges(snap: AccountSnapshot, perClient: Map<string, Cl
     }
   }
   return out.sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount);
+}
+
+/* ------------------------------------------- the Performance page (13 Oct) --- */
+
+/** One live or paused subscription, for the list behind "Active subs" / "Paused subs". */
+export interface SubscriptionRow {
+  id: string;
+  /** Collecting now, or paused (collection paused, not cancelled). */
+  state: "active" | "paused";
+  customerId: string;
+  /** The client it belongs to, or null when no client is tied to it. */
+  clientId: string | null;
+  /** The Stripe customer's name — what is shown when there is no client. */
+  customerName: string | null;
+  /** Stripe's monthly figure for this subscription (what MRR adds up). */
+  mrr: number;
+  amount: number;
+  every: string;
+  /** The interval in days (14, 28…); null when it is month- or year-based. For billing-align.ts. */
+  stepDays: number | null;
+  /** Next charge (active) — Eastern day. */
+  nextCharge: string | null;
+  /** When collection resumes (paused), if a date is set — Eastern day. */
+  resumes: string | null;
+}
+
+/*
+ * The subscriptions the two tiles count, one row each — the SAME two filters
+ * as `billingTotals` (isLive; paused and not cancelled), so the list a tile
+ * opens always has exactly as many rows as the number on the tile.
+ */
+export function subscriptionRows(clients: BillingClientRef[], snap: AccountSnapshot, links: StripeLinkRow[]): SubscriptionRow[] {
+  const { custById, subClient } = resolveOwnership(clients, snap, links);
+  const rows: SubscriptionRow[] = [];
+  for (const s of snap.subscriptions) {
+    if (["canceled", "incomplete_expired"].includes(s.status)) continue;
+    const state = isLive(s) ? "active" : s.pause ? "paused" : null;
+    if (!state) continue; // trialing, unpaid, incomplete: counted by neither tile
+    rows.push({
+      id: s.id,
+      state,
+      customerId: s.customer,
+      clientId: subClient(s),
+      customerName: custById.get(s.customer)?.name ?? null,
+      mrr: cents(subscriptionMonthly(s)),
+      amount: cents(s.items.reduce((t, it) => t + it.amount * it.quantity, 0) * (1 - s.percentOff / 100)),
+      every: s.items[0] ? every(s.items[0]) : "",
+      stepDays: s.items[0] ? stepDaysOf(s.items[0]) : null,
+      nextCharge: state === "active" && s.periodEnd ? etDay(s.periodEnd) : null,
+      resumes: state === "paused" && s.pause?.resumesAt ? etDay(s.pause.resumesAt) : null,
+    });
+  }
+  return rows.sort((a, b) => b.mrr - a.mrr || a.id.localeCompare(b.id));
+}
+
+/** Money collected that no client is tied to, by the Stripe customer it came from. */
+export interface UnattributedCustomer {
+  customerId: string | null;
+  name: string | null;
+  email: string | null;
+  /** Collected from them, less refunds. */
+  amount: number;
+  charges: number;
+  first: string;
+  last: string;
+}
+
+/*
+ * "$6,624 not tied to a client — can you tell us what these are?" (13 Oct).
+ *
+ * Every successful charge `buildBilling` gives to no client, grouped by the
+ * Stripe customer that paid. It adds up to `billingTotals().unattributed`
+ * exactly, because it is the same charges by the same rule.
+ */
+export function unattributedByCustomer(clients: BillingClientRef[], snap: AccountSnapshot, links: StripeLinkRow[]): UnattributedCustomer[] {
+  const { custById, chargeClient } = resolveOwnership(clients, snap, links);
+  const known = new Set(clients.map((c) => c.id));
+  const by = new Map<string, UnattributedCustomer & { firstT: number; lastT: number }>();
+  for (const ch of snap.charges) {
+    if (ch.status !== "succeeded") continue;
+    const owner = chargeClient(ch);
+    if (owner && known.has(owner)) continue;
+    const key = ch.customer ?? "";
+    const cust = ch.customer ? custById.get(ch.customer) : undefined;
+    const e = by.get(key) ?? { customerId: ch.customer, name: cust?.name ?? null, email: cust?.email ?? null, amount: 0, charges: 0, first: "", last: "", firstT: Infinity, lastT: -Infinity };
+    e.amount += ch.amount - ch.refunded;
+    e.charges += 1;
+    if (ch.created < e.firstT) { e.firstT = ch.created; e.first = etDay(ch.created); }
+    if (ch.created > e.lastT) { e.lastT = ch.created; e.last = etDay(ch.created); }
+    by.set(key, e);
+  }
+  return [...by.values()]
+    .map(({ firstT: _f, lastT: _l, ...rest }) => ({ ...rest, amount: cents(rest.amount) }))
+    .sort((a, b) => b.amount - a.amount || (a.name ?? "").localeCompare(b.name ?? ""));
+}
+
+/** A billing interval, in months (Stripe's average month). */
+function intervalMonths(interval: string, count: number): number {
+  if (interval === "day") return count / AVG_MONTH_DAYS;
+  if (interval === "week") return (7 * count) / AVG_MONTH_DAYS;
+  if (interval === "year") return 12 * count;
+  return count;
+}
+
+/*
+ * How long each client has paid, in months — "customer lifespan".
+ *
+ * The wireframe's definition: "count of paid monthly invoices per client".
+ * Most clients are not billed monthly but every 14 days, so a paid invoice is
+ * counted for the period it paid for: a 14-day invoice is 0.46 of a month, a
+ * monthly one is 1. Two fortnightly invoices and one monthly invoice are then
+ * the same lifespan, which is what the figure is for.
+ *
+ * Only money paid on a subscription counts — the $1 card check at sign-up and
+ * one-off payments are not a period of service — and a charge refunded in
+ * full does not count. A client with no such charge is absent from the map.
+ */
+export function monthsPaidByClient(clients: BillingClientRef[], snap: AccountSnapshot, links: StripeLinkRow[]): Map<string, number> {
+  const { subById, chargeClient } = resolveOwnership(clients, snap, links);
+  const out = new Map<string, number>();
+  for (const ch of snap.charges) {
+    if (ch.status !== "succeeded" || !ch.subscription || ch.amount - ch.refunded <= 0) continue;
+    const owner = chargeClient(ch);
+    const it = subById.get(ch.subscription)?.items[0];
+    if (!owner || !it) continue;
+    out.set(owner, (out.get(owner) ?? 0) + intervalMonths(it.interval, it.intervalCount));
+  }
+  for (const [k, v] of out) out.set(k, Math.round(v * 100) / 100);
+  return out;
+}
+
+/** Collected per Eastern day, less refunds — every successful charge in the account. */
+export function revenueByDay(snap: AccountSnapshot): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const ch of snap.charges) {
+    if (ch.status !== "succeeded") continue;
+    const day = etDay(ch.created);
+    out.set(day, (out.get(day) ?? 0) + ch.amount - ch.refunded);
+  }
+  for (const [k, v] of out) out.set(k, cents(v));
+  return out;
 }
 
 export { AVG_MONTH_DAYS };

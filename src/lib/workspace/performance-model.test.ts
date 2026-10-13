@@ -81,3 +81,34 @@ test("a pause alone can open the month list", () => {
   const r = performanceFrom([{ ...c("paused", null), pauseDates: ["2026-03-10"] }], null, null, 0, TODAY);
   assert.equal(r.months.at(-1)!.month, "2026-03");
 });
+
+test("each month lists WHO was added, churned and paused — the same clients its counts count (13 Oct)", () => {
+  const p = performanceFrom(
+    [
+      { name: "Zeta Homes", status: "active", plan: null, weeklyTarget: null, onboardingDate: "2026-09-03", signupDate: null, churnDate: null },
+      { name: "Acme", status: "active", plan: null, weeklyTarget: null, onboardingDate: "2026-09-20", signupDate: null, churnDate: null, pauseDates: ["2026-10-02", "2026-10-09"] },
+      { name: "Old Co", status: "churned", plan: null, weeklyTarget: null, onboardingDate: "2026-08-01", signupDate: null, churnDate: "2026-10-05" },
+      { name: "Back Again", status: "active", plan: null, weeklyTarget: null, onboardingDate: "2026-08-10", signupDate: null, churnDate: "2026-09-01" },
+      { status: "active", plan: null, weeklyTarget: null, onboardingDate: "2026-09-25", signupDate: null, churnDate: null },
+    ],
+    null, null, 0, new Date("2026-10-13T12:00:00Z"),
+  );
+  const m = Object.fromEntries(p.months.map((r) => [r.month, r]));
+  assert.deepEqual(m["2026-09"].addedNames, ["Acme", "Zeta Homes"], "sorted by name; a client with no name is counted but not listed");
+  assert.equal(m["2026-09"].added, 3);
+  assert.deepEqual(m["2026-10"].churnedNames, ["Old Co"]);
+  assert.deepEqual(m["2026-10"].pausedNames, ["Acme"], "paused twice that month, listed once");
+  assert.equal(m["2026-10"].paused, 1);
+  // A reactivated client's old churn date is not a churn.
+  assert.deepEqual(m["2026-09"].churnedNames, []);
+  assert.equal(m["2026-09"].churned, 0);
+});
+
+test("with the status history unreadable, no pause names are claimed", () => {
+  const p = performanceFrom(
+    [{ name: "Acme", status: "active", plan: null, weeklyTarget: null, onboardingDate: "2026-09-20", signupDate: null, churnDate: null, pauseDates: ["2026-10-02"] }],
+    null, null, 0, new Date("2026-10-13T12:00:00Z"), false,
+  );
+  assert.deepEqual(p.months[0].pausedNames, []);
+  assert.equal(p.months[0].paused, null);
+});

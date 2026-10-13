@@ -522,7 +522,12 @@ function Row({
         {c.billing_interval === "custom" && c.billing_interval_days
           ? `every ${c.billing_interval_days}d`
           : (c.billing_interval ?? "—")}
-        <span className="ds-sub">{c.billing_anchor_date ? `anchor ${formatDate(c.billing_anchor_date)}` : "no anchor set"}</span>
+        {/* The cycle follows Stripe's charge date where the record's own dates were off it (13 Oct). */}
+        <span className="ds-sub">
+          {c.stripe_anchor
+            ? `following Stripe · ${formatDate(c.stripe_anchor)}`
+            : c.billing_anchor_date ? `anchor ${formatDate(c.billing_anchor_date)}` : "no anchor set"}
+        </span>
       </td>
       <td className="wrap" style={{ maxWidth: 220, minWidth: 120 }}>
         {(c.campaign_aliases ?? []).length

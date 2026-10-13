@@ -4,6 +4,7 @@ import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tool
 import { databaseOwnersForAnalytics } from "@/lib/tools/analytics/ownership/load";
 import { masterByToolId } from "@/lib/clients/master-lookup";
 import { disagreements, keyOf } from "@/lib/tools/analytics/ownership/suggest";
+import { clientCampaignCounts } from "@/lib/tools/analytics/clients/campaign-counts.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -60,26 +61,16 @@ export async function GET() {
   const byCampaign = new Map((mappings.data ?? []).map((m) => [m.campaign_id, m]));
 
   /*
-   * Counted across BOTH platforms. `campaignCount` is the number of campaigns
-   * a client has, and a client does not experience its Instantly work as a
-   * separate business.
+   * Counted across BOTH platforms, LIVE campaigns only (13 Oct) — a mapping
+   * outlives its campaign, and every client still read "12 on Instantly" weeks
+   * after the last Instantly campaign was archived. See campaign-counts.ts.
    */
-  const counts = new Map<string, { total: number; manual: number; instantly: number }>();
-  const tally = (
-    rows: Array<{ client_id: string | null; excluded: boolean; match_method?: string }>,
-    platform: "emailbison" | "instantly",
-  ) => {
-    for (const m of rows) {
-      if (!m.client_id || m.excluded) continue;
-      const c = counts.get(m.client_id) ?? { total: 0, manual: 0, instantly: 0 };
-      c.total++;
-      if (m.match_method === "manual") c.manual++;
-      if (platform === "instantly") c.instantly++;
-      counts.set(m.client_id, c);
-    }
-  };
-  tally((mappings.data ?? []) as never[], "emailbison");
-  tally((instantlyMappings.data ?? []) as never[], "instantly");
+  const counts = clientCampaignCounts({
+    emailbison: (mappings.data ?? []) as never[],
+    instantly: (instantlyMappings.data ?? []) as never[],
+    liveEmailbison: (campaigns.data ?? []).map((c) => c.id),
+    liveInstantly: ((instantlyCampaigns.data ?? []) as Array<{ id: string }>).map((c) => c.id),
+  });
 
   const sentByCampaign = new Map<string, number>([
     ...((allEb.data ?? []) as { id: number; lifetime_emails_sent: number | null }[]).map((c) => [`emailbison:${c.id}`, Number(c.lifetime_emails_sent ?? 0)] as [string, number]),

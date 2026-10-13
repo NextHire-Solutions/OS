@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
+import { CLIENT_FIELDS } from "@/lib/tools/analytics/campaigns/client-fields.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,14 @@ export const dynamic = "force-dynamic";
 /** Built-ins, kept because they are not lead custom variables. */
 const BUILT_IN = ["FIRST_NAME", "LAST_NAME", "EMAIL", "COMPANY"];
 
+/*
+ * The client's own fields (13 Oct): {CLIENT_AREA} and {CLIENT_ALIAS}. Unlike
+ * everything else here they are not filled by the sending platform from the
+ * lead — the OS fills them from the campaign's client when the sequence is
+ * saved. See campaigns/client-fields.ts.
+ */
+const CLIENT_TAGS: string[] = CLIENT_FIELDS.map((f) => f.token);
+
 export async function GET() {
   const teamId = analyticsTeamId();
 
@@ -45,7 +54,7 @@ export async function GET() {
   if (error) {
     // Degrade to the built-ins rather than an empty menu: a personalisation
     // menu that offers nothing is worse than one offering only the basics.
-    return NextResponse.json({ tags: BUILT_IN.map((t) => `{${t}}`), degraded: true });
+    return NextResponse.json({ tags: [...BUILT_IN.map((t) => `{${t}}`), ...CLIENT_TAGS], degraded: true });
   }
 
   const fromLeads = [
@@ -55,7 +64,10 @@ export async function GET() {
   return NextResponse.json({
     tags: [
       ...BUILT_IN.map((t) => `{${t}}`),
-      ...fromLeads.filter((t) => !BUILT_IN.includes(t)).map((t) => `{${t}}`),
+      ...CLIENT_TAGS,
+      // A lead variable that happened to share a client field's name would be
+      // read as the client field by the save, so it is not offered twice.
+      ...fromLeads.filter((t) => !BUILT_IN.includes(t)).map((t) => `{${t}}`).filter((t) => !CLIENT_TAGS.includes(t.replace(/ /g, "_"))),
     ],
     degraded: false,
   });

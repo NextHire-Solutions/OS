@@ -101,7 +101,11 @@ export function delta(value: Numeric): Delta | null {
   };
 }
 
-/** `Jun 30 – Jul 30` — the date-range trigger label. No year, matching the reference. */
+/**
+ * `Jun 30 – Jul 30` — the date-range trigger label. No year, matching the reference.
+ * One day reads as one date (`Oct 13`): Today and Yesterday (13 Oct) are single
+ * days every time, and "Oct 13 – Oct 13" reads as a mistake.
+ */
 export function rangeLabel(from: string, to: string): string {
   const format = (iso: string) => {
     const [y, m, d] = iso.split("-").map(Number);
@@ -111,5 +115,5 @@ export function rangeLabel(from: string, to: string): string {
       timeZone: "UTC",
     });
   };
-  return `${format(from)} – ${format(to)}`;
+  return from === to ? format(from) : `${format(from)} – ${format(to)}`;
 }

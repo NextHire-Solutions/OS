@@ -60,6 +60,10 @@ export interface Client {
   client_paused: boolean; // manual "service temporarily paused" flag (default false)
   portal_active: boolean; // synced from Corofy /api/clients/portals by sync-worker
   billing_anchor_date: string | null; // ISO date, anchor for billing cycle math
+  /** Stripe's next charge, when the cycle follows Stripe instead (billing-align.ts). In memory only. */
+  stripe_anchor?: string | null;
+  /** How the cycle on record compares with Stripe's charges — for the note beside the billing date. */
+  billing_alignment?: import("@/lib/clients/billing-align.ts").BillingAlignment;
   billing_interval: BillingInterval;
   billing_interval_days: number | null; // only meaningful when billing_interval='custom'
   emails_today: number;               // today's emails sent (EST)
