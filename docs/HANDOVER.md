@@ -11,7 +11,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
-| **0.1** | [OS feedback batch, 13–14 October — BUILT LOCALLY, NOT DEPLOYED](#01-os-feedback-batch-1314-october--built-locally-not-deployed) — ~45 items across the OS on branch `wip/oct13-feedback`; what each became, what was not done, what was never exercised |
+| **0.1** | [OS feedback batch, 13–14 October](#01-os-feedback-batch-1314-october) — ~45 items across the OS, LIVE 14 Oct (`28d910b`, standalone inbox `840094f`); what each became, what was not done, what was never exercised |
 | **0.2** | [Campaign leads: search by office city, and a Location filter, 13 October](#02-campaign-leads-search-by-office-city-and-a-location-filter-13-october) — two asks on the Leads tab; needs analytics migration 097 |
 | **0.3** | [Client Portals as its own product, 13 October](#03-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
 | **0.4** | [SMS alerts for introductions, 13 October](#04-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
@@ -165,13 +165,17 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
-## 0.1 OS feedback batch, 13–14 October — BUILT LOCALLY, NOT DEPLOYED
+## 0.1 OS feedback batch, 13–14 October
 
-Branch **`wip/oct13-feedback`** (from `main` @ `e067dc8`). **Uncommitted, not
-pushed, not deployed** — the instruction was "do not push to github and railway,
-just keep doing the work locally". Nothing in production changed and no real
-data was written. To ship: commit the branch, merge, `railway up --service os`
-(§2). No migration is needed for any of it.
+**LIVE since 14 Oct 2026.** OS commit `28d910b` on `main`, deployed to Railway
+`os` (deployment `ae108eb6`, SUCCESS 13 Oct 23:22 UTC) from a clean export of
+the commit. The Reply agent change also went to the standalone Master Inbox —
+`840094f` on its `main`, deployed to `alluring-ambition` — because THAT app
+receives the EmailBison webhooks and runs the agent on inbound replies (the
+OS receives none). No migration. Verified on production, read-only: the 164
+browser checks of the batch, every write blocked in the browser; both
+services' logs after the deploy; the first post-deploy agent run drafted for
+an "Objection" reply (not Interested), as it should.
 
 The batch was one message of ~45 items across the whole OS, with a 3-page
 wireframe for Performance. What each item became:
@@ -278,9 +282,16 @@ history for Assigned, and says so.
 |---|---|
 | Password on the old products | Needs the client: which products, and the client portals are deliberately login-free |
 | Re-sequence (info on the OpsLabs portal) | The spec is on a portal this work has no access to |
-| Move the Database to db.brokerstaffer.com | Database work was left out by instruction |
+| Move the Database to db.brokerstaffer.com | **Half done 14 Oct:** the custom domain is added on Railway (project Database, service `web`). It goes live once two records exist at name.com, which hosts the DNS: CNAME `db` → `bwn3ladj.up.railway.app`, TXT `_railway-verify.db` → the `railway-verify=…` value `railway domain status db.brokerstaffer.com --service web` prints. Then set `NEXT_PUBLIC_SITE_URL=https://db.brokerstaffer.com` on `web` (a rebuild of Akeesh's service — ask first) and add the address to Supabase Auth's redirect list so invite and reset emails link there. The old address keeps working throughout |
 | Type the right billing anchors; fix Rise's interval; add the two missing aliases | Real-data writes — listed for a person |
 | Switch the Reply agent to Live | Emailing leads automatically needs an explicit go-ahead |
+
+A finding, not caused by this release: the OS's 30-minute `sync-external-intros`
+job (and the standalone's copy) reads the legacy introductions feed at
+`web-production-d18b09.up.railway.app/api/masterinbox/intros` — Health Dashboard's
+`web` service — and that feed answers **401** to an unauthenticated request. That
+service was last deployed 1 Oct; the job has been failing quietly since then.
+Either send it the credential it now wants or retire the job.
 
 A finding for the Analytics database, not fixed (it needs SQL run there):
 `analytics_kpis` counts **1 reply when none match** — `COUNT(*)` over a LEFT
