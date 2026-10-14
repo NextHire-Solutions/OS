@@ -3,7 +3,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { loadAgents } from "./agent.ts";
 import { attemptLiveSend } from "./live.ts";
 import { planHandover } from "./qualification.ts";
-import { assembleRunInput } from "./runtime.ts";
+import { assembleRunInput, handoverVariables } from "./runtime.ts";
 import { sendWindow } from "./schedule.ts";
 import { loadHeldStates, upsertThreadState, type StoredThreadState } from "./thread-state.ts";
 
@@ -161,17 +161,7 @@ export async function releaseHeldReplies(
       const plan = planHandover(agent.handover, {
         client: ctx.introduction.client,
         unavailableReason: ctx.introduction.unavailableReason,
-        variables: {
-          lead: {
-            name: ctx.leadName,
-            email: ctx.leadEmail,
-            phone: ctx.leadPhone,
-            company: ctx.leadCompany,
-            title: ctx.leadTitle,
-          },
-          thread: { subject: ctx.subject },
-          sender: { name: ctx.senderName, email: ctx.ourEmail },
-        },
+        variables: handoverVariables(ctx),
       });
       if (plan.kind === "stop") {
         // The runtime would have stopped here too. Same state, same reason.
