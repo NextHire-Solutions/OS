@@ -214,6 +214,20 @@ production after the deploy (deployment `1320cb61`): 26/26, `client_report`
 3.6 s, `list_clients` 0.6 s. Not yet done by a real Claude account — the first
 admin to connect is that test.
 
+### Also 15 October: account managers get Client Portals
+
+Asked by the user. The **Account manager** role on Team access now brings
+Client Portals with it, the way it already opens the Clients page — a rule
+(`src/lib/identity/role-grants.ts`, applied in `identity/store.ts
+findByEmail`), so the session token carries it and the proxy, menu and APIs
+follow unchanged. Team access shows that switch On and locked ("Comes with the
+Account manager role"); inviting an account manager no longer requires another
+tool. Taking the role away removes it unless Client Portals is also switched on
+for them. Deleting a portal stays admins only. Commit `d0a3546`, deployed;
+verified on production through each account manager's real session refresh
+(Amy, Gabriel, and Eddy as admin: Client Portals granted, `/portals` 200), and
+in Chrome on a local build (10/10).
+
 ## 0.2 Interested leads → Slack, 14 October
 
 **State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway
