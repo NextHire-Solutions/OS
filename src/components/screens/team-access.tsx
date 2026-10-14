@@ -3,6 +3,7 @@
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModalDialog } from "@/components/ui/modal-dialog";
+import { grantedByRole } from "@/lib/identity/role-grants";
 
 /*
  * Team access — who may open which tool.
@@ -397,19 +398,23 @@ export function TeamAccessScreen() {
                     ) : null}
                   </td>
                   {data.tools.map((tool) => {
-                    const on = user.isAdmin || (draft[user.email] ?? []).includes(tool.id);
+                    // Client Portals comes with the Account manager role (role-grants.ts, 15 Oct).
+                    const viaRole = !user.isAdmin && grantedByRole(tool.id, { accountManager: user.accountManager });
+                    const locked = user.isAdmin || viaRole;
+                    const on = locked || (draft[user.email] ?? []).includes(tool.id);
                     return (
                       <td key={tool.id}>
-                        {/* An Owner holds every tool, always — the switch is a
+                        {/* An Owner holds every tool, always, and an account
+                            manager holds Client Portals — the switch is a
                             statement, not a control. */}
                         <button
                           className={`tg${on ? " on" : ""}`}
                           aria-pressed={on}
-                          aria-label={`${tool.label} for ${user.email}${user.isAdmin ? " (always on for an Owner)" : ""}`}
-                          disabled={user.isAdmin}
-                          title={user.isAdmin ? "Owners always have every tool" : undefined}
-                          style={user.isAdmin ? { cursor: "default", opacity: 0.85 } : undefined}
-                          onClick={() => { if (!user.isAdmin) toggle(user.email, tool.id); }}
+                          aria-label={`${tool.label} for ${user.email}${user.isAdmin ? " (always on for an Owner)" : viaRole ? " (comes with the Account manager role)" : ""}`}
+                          disabled={locked}
+                          title={user.isAdmin ? "Owners always have every tool" : viaRole ? "Comes with the Account manager role" : undefined}
+                          style={locked ? { cursor: "default", opacity: 0.85 } : undefined}
+                          onClick={() => { if (!locked) toggle(user.email, tool.id); }}
                         >
                           <i />
                           {on ? "On" : "Off"}
@@ -578,8 +583,8 @@ function InviteForm({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState("");
 
-  // An admin holds every tool, so needs none switched on here.
-  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && (grants.length > 0 || roles.admin);
+  // An admin holds every tool, and an account manager Client Portals, so neither needs one switched on here.
+  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && (grants.length > 0 || roles.admin || roles.accountManager);
 
   async function submit() {
     setBusy(true);
@@ -636,18 +641,21 @@ function InviteForm({
           <span style={LABEL}>Tools they can open {roles.admin ? "(an admin has every tool)" : "*"}</span>
           <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
             {tools.map((t) => {
-              const on = grants.includes(t.id);
+              // Client Portals comes with the Account manager role (role-grants.ts).
+              const viaRole = !roles.admin && grantedByRole(t.id, { accountManager: roles.accountManager });
+              const on = viaRole || grants.includes(t.id);
               return (
                 <button
                   key={t.id}
                   type="button"
                   role="switch"
                   aria-checked={on}
-                  aria-label={`${t.label} for the new teammate`}
-                  onClick={() => setGrants((g) => (on ? g.filter((x) => x !== t.id) : [...g, t.id]))}
+                  aria-disabled={viaRole}
+                  aria-label={`${t.label} for the new teammate${viaRole ? " (comes with the Account manager role)" : ""}`}
+                  onClick={() => { if (!viaRole) setGrants((g) => (on ? g.filter((x) => x !== t.id) : [...g, t.id])); }}
                   style={{
                     display: "flex", alignItems: "center", gap: 10, textAlign: "left",
-                    padding: "10px 12px", borderRadius: "var(--r-md)", cursor: "pointer", font: "inherit",
+                    padding: "10px 12px", borderRadius: "var(--r-md)", cursor: viaRole ? "default" : "pointer", font: "inherit",
                     border: `1px solid ${on ? "var(--blue)" : "var(--line)"}`,
                     background: on ? "var(--blue-bg, var(--inset))" : "var(--surface)",
                   }}
@@ -658,7 +666,7 @@ function InviteForm({
                   </span>
                   <span style={{ minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>{t.label}</span>
-                    <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</span>
+                    <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{viaRole ? "Comes with the Account manager role." : t.description}</span>
                   </span>
                 </button>
               );

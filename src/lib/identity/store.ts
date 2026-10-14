@@ -21,6 +21,7 @@ import { osTable } from "../clients/os-db.ts";
 import { indexGrantRows, coerceStoredTools } from "./grant-table.ts";
 import { indexUserRows, mergeUsers, type MergedUser, type UserRow } from "./user-table.ts";
 import { isAdmin } from "./admin.ts";
+import { withRoleGrants } from "./role-grants.ts";
 
 /*
  * An admin (ADMIN_EMAILS) holds every tool, always.
@@ -179,7 +180,8 @@ export class DbGrantStore implements GrantStore {
       const own = (await this.users())?.get(key);
       return withAdminGrants({
         ...base,
-        grants: row ?? base.grants,
+        // Plus what their roles bring (role-grants.ts: an account manager has Client Portals).
+        grants: withRoleGrants(row ?? base.grants, { accountManager: own?.isAccountManager }),
         source: "env" as const,
         mustChangePassword: false,
         ...(own ? { passwordHash: own.passwordHash, tokenVersion: own.tokenVersion } : {}),
@@ -201,7 +203,8 @@ export class DbGrantStore implements GrantStore {
       email: invited.email,
       passwordHash: invited.passwordHash,
       tokenVersion: invited.tokenVersion,
-      grants: rows?.get(key) ?? [],
+      // Their grants row, plus what their roles bring (role-grants.ts).
+      grants: withRoleGrants(rows?.get(key) ?? [], { accountManager: invited.isAccountManager }),
       isActive: true,
       source: "db" as const,
       mustChangePassword: invited.mustChangePassword,

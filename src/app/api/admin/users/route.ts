@@ -328,9 +328,10 @@ export async function POST(request: Request) {
   }
   const name = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 120) : null;
   const asAdmin = body.admin === true;
-  // An admin holds every tool; nobody else is invited into an empty workspace.
+  // An admin holds every tool, and an account manager Client Portals (role-grants.ts);
+  // nobody else is invited into an empty workspace.
   const grants = asAdmin ? coerceTools(GRANTABLE_TOOLS.map((t) => t.id)) : coerceTools(body.grants);
-  if (grants.length === 0) {
+  if (grants.length === 0 && body.accountManager !== true) {
     return NextResponse.json({ error: "Switch on at least one tool, or the person will sign in to an empty workspace." }, { status: 400 });
   }
   // findByEmail hides deactivated people (they cannot sign in), but their row
