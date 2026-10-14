@@ -11,17 +11,18 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
-| **0.1** | [OS feedback batch, 13–14 October](#01-os-feedback-batch-1314-october) — ~45 items across the OS, LIVE 14 Oct (`28d910b`, standalone inbox `840094f`); what each became, what was not done, what was never exercised |
-| **0.2** | [Campaign leads: search by office city, and a Location filter, 13 October](#02-campaign-leads-search-by-office-city-and-a-location-filter-13-october) — two asks on the Leads tab; needs analytics migration 097 |
-| **0.3** | [Client Portals as its own product, 13 October](#03-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
-| **0.4** | [SMS alerts for introductions, 13 October](#04-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
-| **0.5** | [Master Inbox parity, 12 October](#05-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
-| **0.6** | [Navigation clean-up, 9 October](#06-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
-| **0.7** | [What changed on 6–7 October](#07-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
-| **0.8** | [What changed on 30 September](#08-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
-| **0.9** | [What changed on 29 September](#09-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
-| **0.10** | [What changed on 28 September](#010-what-changed-on-28-september) — the latest work, how it was verified, what is open |
-| **0.11** | [Switching off Analytics, Client Health and Onboarding](#011-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
+| **0.1** | [Interested leads → Slack, 14 October](#01-interested-leads--slack-14-october) — one Slack post per conversation newly labelled Interested, to #client-interested-updates; needs Master Inbox migration 0033 |
+| **0.2** | [OS feedback batch, 13–14 October](#02-os-feedback-batch-1314-october) — ~45 items across the OS, LIVE 14 Oct (`28d910b`, standalone inbox `840094f`); what each became, what was not done, what was never exercised |
+| **0.3** | [Campaign leads: search by office city, and a Location filter, 13 October](#03-campaign-leads-search-by-office-city-and-a-location-filter-13-october) — two asks on the Leads tab; needs analytics migration 097 |
+| **0.4** | [Client Portals as its own product, 13 October](#04-client-portals-as-its-own-product-13-october) — its own menu section and Team access switch, deleting one portal, and a count that matches Consistency |
+| **0.5** | [SMS alerts for introductions, 13 October](#05-sms-alerts-for-introductions-13-october) — the standalone inbox's SMS switches, now obeyed (and set) by the OS |
+| **0.6** | [Master Inbox parity, 12 October](#06-master-inbox-parity-12-october) — twelve things the standalone inbox did that the OS inbox did not; the Clients panel beside a conversation |
+| **0.7** | [Navigation clean-up, 9 October](#07-navigation-clean-up-9-october) — removed and renamed screens, Campaign Management, what old links open |
+| **0.8** | [What changed on 6–7 October](#08-what-changed-on-67-october) — profile completeness, billing across subscriptions, failed payments and portal blocks, introductions, the assistant |
+| **0.9** | [What changed on 30 September](#09-what-changed-on-30-september) — Clients as the master client system, §8 tool views, §15 dictionary, one status visual |
+| **0.10** | [What changed on 29 September](#010-what-changed-on-29-september) — Client Health billing cycles and Play/Pause; one look across the OS |
+| **0.11** | [What changed on 28 September](#011-what-changed-on-28-september) — the latest work, how it was verified, what is open |
+| **0.12** | [Switching off Analytics, Client Health and Onboarding](#012-switching-off-analytics-client-health-and-onboarding) — what is ready, the order, and what needs people |
 | **1** | [The estate](#1-the-estate) — repos, Railway projects, hosts, credentials |
 | **2** | [Deploying anything](#2-deploying-anything) — the command, and three traps |
 | **3** | [The OS itself](#3-the-os-itself) — routing, auth, connectors, schedulers, data model |
@@ -165,7 +166,64 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 ---
 
-## 0.1 OS feedback batch, 13–14 October
+## 0.1 Interested leads → Slack, 14 October
+
+**State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway
+`os` (deployment `53c5b4a6`, SUCCESS 14:26 UTC) from a clean export, with
+`MASTER_INBOX_SLACK_CHANNEL_INTERESTED=C0C941UQCHE` set. **Posts nothing yet:**
+migration 0033 must be run in the Master Inbox database first, and the bot must
+be in the channel. No test post was sent — the first real Interested lead is the
+test, and its result is in the logs and in `side_effect_outbox`.
+
+**What was asked.** Amy (via Eddy, in Slack): a channel that is told whenever
+a lead is labelled **Interested** in Master Inbox. Eddy gave the channel:
+`C0C941UQCHE`, #client-interested-updates, in the BrokerStaffer workspace.
+
+**What it does.** When a conversation is labelled Interested — by the AI as a
+reply arrives (that happens in the standalone inbox, which receives the
+EmailBison webhooks) or by a person in either app — the OS posts one message
+to that channel: the client, the lead's name, email and phone, their
+brokerage, the campaign, the first 280 characters of their reply (quoted
+history stripped), and a link to the conversation in the OS
+(`/inbox/all-email/<thread id>`).
+
+**The rules, all tested** (`interested-alerts.test.ts`, 9 tests;
+`interested-alert.test.ts`, 7; 13/13 mutations caught):
+
+| Rule | How |
+|---|---|
+| Once per conversation, ever | Claimed in `side_effect_outbox` as kind `slack_interested`, subject = thread. Its unique index (workspace, kind, subject) lets exactly one claim succeed — re-labelled, labelled in both apps, or seen by two sweeps, it posts once. |
+| No backfill | Only assignments since go-live, `2026-10-14T02:00Z` (`INTERESTED_ALERTS_FROM`), and within the last 30 minutes. |
+| Never Demo Portal | Checked by Master Inbox client name. |
+| Label taken off or changed before the post | Re-checked just before posting; nothing is sent, the job is marked done with `no_longer_interested`. |
+| Only "Interested" | Exact name, any case. "Not Interested" never matches. |
+| Slack refuses (e.g. bot not in the channel) | The job stays pending with Slack's reason in `last_error` (`not_in_channel`), and the outbox drain the OS already runs retries it, up to five times. |
+
+**Where.** `src/lib/tools/master-inbox/interested-alert.ts` (pure: rules and
+wording) and `interested-alerts.ts` (the sweep and the post); started every
+minute from `src/instrumentation.ts`, Railway only, never overlapped;
+`outbox.ts` gained the `slack_interested` case so a failed post is retried
+rather than marked done. **Why a sweep and not a hook:** Interested is applied
+in three places across two codebases; `label_assignments` is the one table all
+of them write, so reading it once a minute needs no change in either app.
+
+**Switches.**
+- `MASTER_INBOX_SLACK_CHANNEL_INTERESTED` on Railway `os` — unset = off.
+- Migration **0033** (`migrations/0033_outbox_slack_interested.sql`, Master
+  Inbox database) lets the outbox hold the new kind. Until it runs, the claim
+  is refused and **nothing is posted** — an alert that cannot be de-duplicated
+  is not sent. The log line then reads `off: migration 0033 has not been run`.
+- Token: the existing `MASTER_INBOX_SLACK_BOT_TOKEN` (bot "brokerstaffer_bot").
+  The bot must be a member of the channel; it has no `channels:read` scope, so
+  membership is only visible from the first post's answer.
+
+**Reading it in production.** Railway logs of `os`, prefix `[interested-alerts]`
+(a line only when something was claimed or failed). The record of every alert
+is `side_effect_outbox where kind = 'slack_interested'` — `status`, `attempts`,
+`last_error` (`excluded` for Demo Portal, `no_longer_interested`, or Slack's
+error).
+
+## 0.2 OS feedback batch, 13–14 October
 
 **LIVE since 14 Oct 2026.** OS commit `28d910b` on `main`, deployed to Railway
 `os` (deployment `ae108eb6`, SUCCESS 13 Oct 23:22 UTC) from a clean export of
@@ -331,7 +389,7 @@ first real one on a throwaway campaign.
   Compare against a baseline build of `main` before blaming a change.
 
 
-## 0.2 Campaign leads: search by office city, and a Location filter, 13 October
+## 0.3 Campaign leads: search by office city, and a Location filter, 13 October
 
 Campaign Management → Campaigns → a campaign → **Leads**. Two asks, the same
 morning:
@@ -409,14 +467,14 @@ with 097 (32 checks). After 097 runs: re-check on production, read-only.
 
 ---
 
-## 0.3 Client Portals as its own product, 13 October
+## 0.4 Client Portals as its own product, 13 October
 
 Four pieces of feedback on Client Portals, and what was decided for each:
 
 | Asked for | Decided (by the user, 13 Oct) | Built |
 |---|---|---|
 | "Add the ability to delete client portals" | **Admins only. "Portal only, client stays."** Ask for confirmation first | Delete button per portal; the client is never touched |
-| "Add the missing SMS option" | Already done — §0.4 | — |
+| "Add the missing SMS option" | Already done — §0.5 | — |
 | "Make Client Portals its own standalone product" | **Its own switch on Team access; admins only to start** | Own menu section, own grant `portals`, own address `/portals` |
 | "Client Portals should sync with Consistency" | The count mismatch: the page said 57 clients, Consistency said 54 | The shared count line; the page now counts *portals* |
 
@@ -516,7 +574,7 @@ compared before and after.
 
 ---
 
-## 0.4 SMS alerts for introductions, 13 October
+## 0.5 SMS alerts for introductions, 13 October
 
 When a lead is introduced, the client's team can get a text. The standalone
 Master Inbox built this on 8 October (commits `06d8530`, `c4b6b77`, Akeesh);
@@ -584,7 +642,7 @@ keep running for the portals to work**, whatever staff use for the inbox.
 
 ---
 
-## 0.5 Master Inbox parity, 12 October
+## 0.6 Master Inbox parity, 12 October
 
 Twelve things the standalone Master Inbox does that the OS inbox did not, from
 the client's side-by-side list. One release. Nothing in the standalone app,
@@ -658,7 +716,7 @@ production after the deploy. Note `scripts/conversation-ui-test.mjs` WRITES
 
 ---
 
-## 0.6 Navigation clean-up, 9 October
+## 0.7 Navigation clean-up, 9 October
 
 From the client's "OS Feedback — Navigation & Cleanup" list. Shipped in four
 releases, each tested in a real Chrome as an admin and as each account
@@ -757,7 +815,7 @@ visit the removed screens.
 - The Database view's client names open the client's record
   (`/roster?client=<id>`) instead of the Onboarding page.
 
-## 0.7 What changed on 6–7 October
+## 0.8 What changed on 6–7 October
 
 The client's feedback list (sections 2–8), built and deployed. OS commits
 `e5e27c4` (Home, Client Health links, start date, speed), `e97f8d8` (profile,
@@ -805,7 +863,7 @@ from May on its cancelled subscription and Stripe no longer retries it; Properti
 people on its record (its intro is a manual template to Jenn Tonucci, RE/MAX
 Revolution) — add a person per market (territory "Boston" / "Florida").
 
-## 0.8 What changed on 30 September
+## 0.9 What changed on 30 September
 
 Deployed to `os` and verified on production (`69288cf` and after).
 
@@ -1527,7 +1585,7 @@ What changed, and why:
 
 ---
 
-## 0.9 What changed on 29 September
+## 0.10 What changed on 29 September
 
 All deployed to `os`, verified on production, pushed (`25c453c`, `a005c4e`).
 
@@ -1593,7 +1651,7 @@ Performance cards, for this week and last week:
 
 ---
 
-## 0.10 What changed on 28 September
+## 0.11 What changed on 28 September
 
 All deployed to `os`, verified on production, pushed (`1e66caa` … `b8cce7c`).
 
@@ -1621,7 +1679,7 @@ server errors; 37/37 open customer portals serving their page.
 
 ---
 
-## 0.11 Switching off Analytics, Client Health and Onboarding
+## 0.12 Switching off Analytics, Client Health and Onboarding
 
 **Stay live:** Master Inbox (its app serves every customer portal) and the
 Database app. **To be switched off once the OS is complete:** Analytics, Client
@@ -1641,7 +1699,7 @@ destination is an OS screen.
 |---|---|---|
 | Analytics | sync jobs and routes swept line by line against Campaign-tool @ `68ed3cb`; ported confirm-gone, the Instantly 404 fix, the deleted-campaign queue filter, Instantly copy-sequence (`b8e7ec7`). Remaining differences are intentional OS fixes | **yes** — `ANALYTICS_ENABLE_SCHEDULER=1`, alongside the tool's own `analytics-cron` (same code, same database) |
 | Client Health | sync brought level with shaurs `6837ce6` — per-source weekly columns, paged reads, skip-on-unreadable, aliases, Corofy retry (`8f97bfb`) | **no** — `CLIENT_HEALTH_SYNC_ENABLED=0`, and the manual Sync button now refuses while it is off. Two syncs interleaving caused the 17 Sep outage |
-| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.6). Webhook receivers still live |
+| Onboarding | orchestrator steps, webhooks and crons ported (15 Sep) | **no** since 9 Oct — `ONBOARDING_CRON_ENABLED` and `ONBOARDING_CRON_SECRET` deleted with the section (§0.7). Webhook receivers still live |
 
 **Switch-off order, per tool — never run two copies of a sync at once:**
 
@@ -2094,7 +2152,7 @@ Sub-screens of the roster:
 
 The tool's own navigation was an icon rail plus a sidebar plus a second settings
 sidebar. It collapses into five rail entries. **Client Portals is its own
-product since 13 Oct (§0.3)** — own menu section, own grant; it is listed here
+product since 13 Oct (§0.4)** — own menu section, own grant; it is listed here
 because its screens and routes still live in the Master Inbox folders.
 
 | Page | Path | What it does | File |
@@ -2103,7 +2161,7 @@ because its screens and routes still live in the Master Inbox folders.
 | Reminders | `/reminders` | The tool's own page — **replaced a hand-written screen that listed reminders and could not dismiss them** | `master-inbox/reminders.tsx` |
 | Archive | `/inbox/archive` | Archived conversations | (full-inbox view) |
 | Trash | `/inbox/trash` | Third folder; without this entry a trashed conversation could only be found by typing the URL | (full-inbox view) |
-| **Client Portals** (own product) | `/portals` | The admin table of portals: link, Live, SMS, and — for admins — delete (§0.3). The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
+| **Client Portals** (own product) | `/portals` | The admin table of portals: link, Live, SMS, and — for admins — delete (§0.4). The portals themselves live on `portal.brokerstaffer.com` and are deliberately outside the workspace | `master-inbox/portals.tsx` |
 | Settings | `/settings/clients` | Eight pages behind the tool's own sub-navigation | `master-inbox/settings.tsx` |
 
 Detail screens (no rail entry):
@@ -2115,7 +2173,7 @@ Detail screens (no rail entry):
 
 Settings tabs (`master-inbox/settings-tabs/`): `labels`, `templates`,
 `ai-labeling` (admin-only), plus `webhooks` (not offered). Members, Personal,
-Clients and Reply Agents were removed on 9 Oct — §0.6 says where the last two
+Clients and Reply Agents were removed on 9 Oct — §0.7 says where the last two
 went.
 **Webhooks is built but not offered in the strip, at the user's request** — the
 component and its route still exist.
@@ -2128,7 +2186,7 @@ route still resolves, so an old bookmark degrades to All Email rather than 404s.
 In the live tool these are states of one page with **no URL of their
 own**. Here each is a real address, which is what lets the rail link straight to
 Delivery and the back button work. (Renamed 9 Oct: Weekly → Overview,
-Bi-Weekly → Delivery; Client Success removed — §0.6.)
+Bi-Weekly → Delivery; Client Success removed — §0.7.)
 
 | Page | Path | Question it answers | File |
 |---|---|---|---|
@@ -2147,7 +2205,7 @@ a read-only **"Also known as"** showing campaign aliases), `campaigns-popup.tsx`
 
 ### 4.4 Campaign Analytics and Campaign Management — 4 + 3 destinations + campaign detail
 
-Two rail sections of ONE tool since 9 Oct (§0.6): Campaign, Volume,
+Two rail sections of ONE tool since 9 Oct (§0.7): Campaign, Volume,
 Infrastructure and Attribution under **Campaign Analytics**; Campaigns,
 Schedule and Clients (and its Client view) under **Campaign Management**.
 
@@ -2181,7 +2239,7 @@ Two notes for whoever works here:
 
 ### 4.5 Onboarding — removed 9 Oct
 
-The section and its screens were removed (§0.6, Release 4). Its webhook
+The section and its screens were removed (§0.7, Release 4). Its webhook
 receivers and shared library stay and are live.
 
 ### 4.6 Agent Search — 4 destinations
