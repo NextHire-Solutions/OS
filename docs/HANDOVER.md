@@ -224,6 +224,25 @@ is `side_effect_outbox where kind = 'slack_interested'` — `status`, `attempts`
 `last_error` (`excluded` for Demo Portal, `no_longer_interested`, or Slack's
 error).
 
+### Also 14 October: introductions are signed by Nicole
+
+Asked by the user with a screenshot: an introduction sent From
+nicole.c@brokerstaffer.com was signed "Best, Lydia Reed" — the name of the
+campaign mailbox that first emailed the lead, because the macro's
+`{{sender.name}}` was filled from the thread's own mailbox before From switched
+to Nicole. Now the sign-off is the name on the mailbox the introduction goes
+out from ("Nicole Collins"), in the Introduce button and in the reply agent's
+handover, in BOTH apps (OS `130e09b`, standalone Master Inbox `69b3a30`).
+`introSignOffName` in `inbox/intro-sender.ts`; the agent's run input carries
+`introSenderName`, and runtime and the release sweep share
+`handoverVariables()`. Unchanged: ordinary replies, the Templates picker (it
+does not switch From), and Instantly conversations (Nicole's Instantly mailbox
+is disconnected, so they go from — and are signed by — the campaign mailbox).
+A draft saved before the change keeps the old name until Introduce is pressed
+again. Verified in Chrome on a local build against the thread in the
+screenshot, every save blocked: From Nicole, signed "Nicole Collins", wording
+otherwise identical.
+
 ## 0.2 OS feedback batch, 13–14 October
 
 **LIVE since 14 Oct 2026.** OS commit `28d910b` on `main`, deployed to Railway
