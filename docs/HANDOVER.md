@@ -170,10 +170,11 @@ buttons because they stay live and clients use them. See §6 for what remains.
 
 **State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway
 `os` (deployment `53c5b4a6`, SUCCESS 14:26 UTC) from a clean export, with
-`MASTER_INBOX_SLACK_CHANNEL_INTERESTED=C0C941UQCHE` set. **Posts nothing yet:**
-migration 0033 must be run in the Master Inbox database first, and the bot must
-be in the channel. No test post was sent — the first real Interested lead is the
-test, and its result is in the logs and in `side_effect_outbox`.
+`MASTER_INBOX_SLACK_CHANNEL_INTERESTED=C0C941UQCHE` set. Migration 0033 was
+run in the Master Inbox database the same day (confirmed: the table now accepts
+the kind). The bot must also be in the channel — its membership cannot be read
+(no `channels:read`). No test post was sent — the first real Interested lead is
+the test, and its result is in the logs and in `side_effect_outbox`.
 
 **What was asked.** Amy (via Eddy, in Slack): a channel that is told whenever
 a lead is labelled **Interested** in Master Inbox. Eddy gave the channel:
