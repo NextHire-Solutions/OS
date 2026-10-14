@@ -772,6 +772,17 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }),
 };
 
+/**
+ * One tool, run exactly as the chat runs it — for the Claude connector
+ * (lib/mcp, 15 Oct), which offers Claude these same tools. Throws for a name
+ * that is not a tool; the read-only guard applies as it does here.
+ */
+export async function runAssistantTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  const handler = HANDLERS[name];
+  if (!handler) throw new Error(`No tool named ${name}.`);
+  return handler(args);
+}
+
 /*
  * How many times the model may call tools before it has to answer.
  *

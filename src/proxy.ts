@@ -51,6 +51,9 @@ const CRON_BEARER_ROUTES = new Set([
 
 const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/health"];
 
+/** The Claude connector's token-checked endpoints. Exact paths — see the block in proxy(). */
+const CLAUDE_CONNECTOR_PUBLIC = new Set(["/api/mcp", "/api/oauth/token", "/api/oauth/register"]);
+
 function isPublic(pathname: string): boolean {
   return PUBLIC_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -94,6 +97,17 @@ export async function proxy(request: NextRequest) {
    * the receivers so a new receiver cannot be added without being listed here.
    */
   if (MASTER_INBOX_PUBLIC.includes(pathname)) {
+    return NextResponse.next();
+  }
+
+  /*
+   * The Claude connector (15 Oct, lib/mcp). Claude carries no OS cookie: the
+   * MCP endpoint checks its bearer on every request, the token endpoint a
+   * PKCE verifier or refresh token, and registration and the discovery
+   * documents hold nothing secret. The page where a person presses Allow
+   * (/oauth/authorize) and its POST are NOT listed — they need the session.
+   */
+  if (CLAUDE_CONNECTOR_PUBLIC.has(pathname) || pathname.startsWith("/.well-known/")) {
     return NextResponse.next();
   }
 
