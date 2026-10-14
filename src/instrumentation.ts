@@ -159,4 +159,32 @@ export async function register() {
   const watchSafely = () => { watchBilling().catch((e) => console.error("[billing-watch] failed:", e instanceof Error ? e.message : e)); };
   setTimeout(watchSafely, 45_000).unref?.();
   setInterval(watchSafely, 15 * 60_000).unref?.();
+
+  /*
+   * "A lead is Interested" → Slack (14 Oct, #client-interested-updates). Every
+   * minute, conversations newly labelled Interested — by the AI in the
+   * standalone inbox or by a person in either app — are posted once each; see
+   * lib/tools/master-inbox/interested-alerts.ts. Off until
+   * MASTER_INBOX_SLACK_CHANNEL_INTERESTED is set, and posts nothing until
+   * migration 0033 has run. Railway only: a local server never posts.
+   */
+  let interestedRunning = false;
+  const sweepInterested = async () => {
+    if (interestedRunning) return; // a slow sweep is never overlapped
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !process.env.MASTER_INBOX_SLACK_CHANNEL_INTERESTED) return;
+    if (!(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    interestedRunning = true;
+    try {
+      const { sweepInterestedAlerts } = await import("./lib/tools/master-inbox/interested-alerts");
+      const r = await sweepInterestedAlerts();
+      if (r.claimed || r.failed || r.errors.length) {
+        console.log(`[interested-alerts] ${r.posted} posted · ${r.skipped} skipped · ${r.failed} failed${r.off ? ` · off: ${r.off}` : ""}${r.errors.length ? ` · ${r.errors.join(" | ")}` : ""}`);
+      }
+    } finally {
+      interestedRunning = false;
+    }
+  };
+  const sweepInterestedSafely = () => { sweepInterested().catch((e) => console.error("[interested-alerts] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(sweepInterestedSafely, 30_000).unref?.();
+  setInterval(sweepInterestedSafely, 60_000).unref?.();
 }

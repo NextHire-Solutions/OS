@@ -128,6 +128,11 @@ export const env = {
   get SLACK_CHANNEL_INTRODUCTIONS() {
     return lazyOptional("SLACK_CHANNEL_INTRODUCTIONS")();
   },
+  // The "a lead is Interested" channel (14 Oct, #client-interested-updates).
+  // No fallback: unset means the alert is off — see interested-alerts.ts.
+  get SLACK_CHANNEL_INTERESTED() {
+    return lazyOptional("SLACK_CHANNEL_INTERESTED")();
+  },
   // Hard-pinned singleton workspace UUID. Setting this lets requireSession
   // skip the per-request Supabase query that resolves "which workspace am
   // I in" — saving ~280ms × every page render on the single-tenant

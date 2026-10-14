@@ -4,6 +4,7 @@ import { getMasterInboxSupabase, workspaceId } from "./supabase";
 import { notifyIntroductionForThreads } from "./webhooks/n8n-introduction";
 import { notifyPortalIntroductionForThreads } from "./webhooks/slack-portal";
 import { pushIntroPipelineEntriesForThreadsToFub } from "./integrations/push-pipeline-entry";
+import { deliverInterestedAlert } from "./interested-alerts";
 
 /*
  * A durable queue for introduction side effects.
@@ -38,8 +39,15 @@ import { pushIntroPipelineEntriesForThreadsToFub } from "./integrations/push-pip
  *   for the same introduction.
  */
 
-export type SideEffectKind = "n8n_introduction" | "slack_introduction" | "fub_push";
+/*
+ * `slack_interested` (14 Oct, migration 0033) is not an introduction effect: it
+ * is claimed and first attempted by interested-alerts.ts. It is listed here so
+ * that the drain RETRIES a failed one — without a case below, the drain would
+ * have marked it done without posting.
+ */
+export type SideEffectKind = "n8n_introduction" | "slack_introduction" | "fub_push" | "slack_interested";
 
+/** The three side effects of an INTRODUCTION — what enqueueIntroduction queues. */
 const KINDS: SideEffectKind[] = ["n8n_introduction", "slack_introduction", "fub_push"];
 
 /** Attempts before a job is parked as failed rather than retried forever. */
@@ -111,6 +119,10 @@ async function attempt(kind: SideEffectKind, threadId: string): Promise<void> {
       // Already idempotent in the tool: it skips entries with fub_pushed_at
       // set, so a retry after a partial success is a no-op.
       await pushIntroPipelineEntriesForThreadsToFub([threadId]);
+      return;
+    case "slack_interested":
+      // Throws when Slack refuses, so markFailed counts the attempt.
+      await deliverInterestedAlert(threadId);
       return;
   }
 }
