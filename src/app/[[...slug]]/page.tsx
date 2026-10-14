@@ -124,7 +124,7 @@ function folderView(
  * The Onboarding section — pipeline, stages, templates, settings and the
  * per-client page at /onboarding/clients/<id> — was removed on 9 Oct (OS
  * feedback). /onboarding addresses now open Home. Its webhook receivers and
- * shared code stay: see docs/HANDOVER.md §0.7.
+ * shared code stay: see docs/HANDOVER.md §0.8.
  */
 
 /*
