@@ -275,11 +275,16 @@ rule is gone; Client Portals is an ordinary switch.
 - Clients, Commissions and Performance are decided by `nav.ts canSeePage`
   (page and page guards). Clients' billing pause/resume and inbox rows follow
   the Clients switch.
-- `switch-transition.ts`: sessions signed before 2026-10-15 17:00 UTC were
-  read as they were meant until they renewed, so nobody at work was sent Home
-  by the deploy. Inert after 17:30 UTC; can be deleted in a later clean-up.
-- Data: Amy and Gabriel had Clients, Commissions, Client Portals, Campaign
-  Management and Inboxes switched on before the deploy — nobody lost a page.
+- `switch-transition.ts`: sessions signed before the deploy were read as they
+  were meant until they renewed, so nobody at work was sent Home by it. Its
+  cut-off was moved to 16:00 UTC (`7b62fa5`) so Eddy's own changes applied at
+  once; it is inert now and can be deleted in a later clean-up.
+- Data: to keep what they had, Amy and Gabriel had Clients, Commissions,
+  Client Portals, Campaign Management and Inboxes switched on at the deploy.
+  Eddy did not want that and set them himself at 16:21 UTC (Commissions off
+  for both, Inboxes off for Amy). **Rule from this: never switch new access on
+  for anyone by default — leave it off and let Eddy decide.** (The Commissions
+  page only ever showed a non-admin their own earnings.)
 
 Commit `d50aa4f`, deployed. Verified: 2,025 tests, 18/18 mutations caught,
 38/38 in Chrome on a local build (three widths, seven access profiles, a
