@@ -15,7 +15,9 @@ import { initials, type PreviewStage, type PreviewView } from "@/lib/crm-preview
 import { Icon, type IconName } from "./icons";
 import { k } from "./k";
 import { PipelineScreen } from "./pipeline";
-import { DncScreen, IntegrationsScreen, MyAgentsScreen, NotInPreview, TeamScreen } from "./pages";
+import { DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
+import { MarketScreen, ReportsScreen } from "./market";
+import { CampaignsScreen, HelpScreen } from "./static-pages";
 import logo from "./brokerstaffer-logo.png";
 
 export interface PreviewClient {
@@ -51,6 +53,7 @@ export function CrmPreview({
   client,
   portals,
   stages,
+  furthest,
   entries,
   agents,
   dnc,
@@ -61,6 +64,8 @@ export function CrmPreview({
   client: PreviewClient;
   portals: Array<{ id: string; name: string }>;
   stages: PreviewStage[];
+  /** For agents in Nurture / Not a Fit / No Response: the furthest forward stage on record. */
+  furthest: Record<string, string>;
   entries: PipelineEntry[];
   agents: AgentEntry[];
   dnc: DncEntry[];
@@ -168,17 +173,23 @@ export function CrmPreview({
 
         <div className={k("main")}>
           {view === "pipeline" ? (
-            <PipelineScreen entries={entries} stages={stages} token={client.token} now={today} />
+            <PipelineScreen entries={entries} stages={stages} furthest={furthest} token={client.token} now={today} />
+          ) : view === "market" || view === "prospects" ? (
+            <MarketScreen key={view} clientId={client.id} list={view} />
+          ) : view === "reports" ? (
+            <ReportsScreen clientId={client.id} entries={entries} />
+          ) : view === "campaigns" ? (
+            <CampaignsScreen />
+          ) : view === "help" ? (
+            <HelpScreen />
           ) : view === "agents" ? (
             <MyAgentsScreen agents={agents} />
           ) : view === "dnc" ? (
             <DncScreen dnc={dnc} />
           ) : view === "team" ? (
             <TeamScreen team={team} />
-          ) : view === "integrations" ? (
-            <IntegrationsScreen fubConnected={client.fubConnected} />
           ) : (
-            <NotInPreview view={view} />
+            <IntegrationsScreen fubConnected={client.fubConnected} />
           )}
         </div>
       </div>

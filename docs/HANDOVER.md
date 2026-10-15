@@ -328,10 +328,31 @@ broken … not all team should see this … do not add this to product switch �
 only we should be able to see this".
 
 **`/crm-preview`** draws the design on any client's real data — pick a client,
-then Pipeline (board and list, stage and tag chips, the five time ranges,
-search, the agent panel, the read-only conversation, notes), My Agents, DNC
-List, Team and Integrations. Reports, Campaigns, Market, Prospects and Help
-say they are not in the preview yet.
+then every page of the design's sidebar: Pipeline (board and list, stage and
+tag chips, the five time ranges, search, the agent panel, the read-only
+conversation, notes, Manage stages opened read-only), Reports (All market and
+Interested only), Campaigns (a coming-soon page in the design too), Market,
+Prospects, My Agents, DNC List, Team, Integrations and Help. Only Billing (a
+link to Stripe) and the support chat are not drawn.
+
+**Market, Prospects and Reports** (added later on 16 Oct) read the agent
+database — the Database project's Supabase — through two Owner-only GET routes,
+`/api/crm-preview/market` and `/api/crm-preview/report` (`lib/crm-preview/market.ts`):
+- *Market* = every agent in an MLS on the client's record
+  (`os_clients.mls_codes`; Areas are free text and not used). A code the agent
+  database lacks is named, never guessed — 5 of our 35 codes (ECOAR, realMLS,
+  CHMLS, REcolorado, SEFMLS; the database has ECAOR, CHSMLS, SEFMIAMI). 14
+  clients have no MLS, so no market. C21: 115,720 agents.
+- *Prospects* = the agents in the client's lists in the agent database — the
+  Database app's own client filter (its campaign leads). C21: 12,100.
+- The List column: DNC List, My Agents, In your pipeline, Prospects or Not on
+  a list — matched by email, by full name only where the list entry has no email.
+- Counts are the Database app's own (`fn_filter_search`, `fn_facet_options`,
+  both STABLE), so they equal its Agent Search screen. Reports' brokerages are
+  its exact brand counts; office cities are counted exactly by office (its
+  city list double-counts across location kinds and MLSs, so it only picks the
+  candidates). A report's ~25 counts run four at a time and are kept 30 minutes
+  (C21 ~20 s cold). "Years licensed" is recorded for ~1 agent in 80 — its menu says so.
 
 | Rule | Where |
 |---|---|
@@ -340,31 +361,36 @@ say they are not in the preview yet.
 | **Read-only**: reads what the portal reads (`portal-data.ts`); every add/edit/delete/save is drawn disabled; the browser's one request is the portal's own GET conversation feed. A test fails on any write call in the preview's files | `access.test.ts` |
 | The live portal (portal.brokerstaffer.com, the standalone app) is untouched — no code, URL, stage or lead changed | — |
 | The Follow Up Boss key never reaches the browser, only whether one is saved | `page.tsx` |
+| The two data routes: Owners only, checked first, GET only, a bare 404 for anyone else; the agent database only through the read-only guard and only its two search functions | `api/crm-preview/*`, test `access.test.ts` |
 | The design's CSS is generated from the handoff with every class prefixed `crx-`, so it and the OS's `.app`/`.rail`/`.card` never meet. Re-run on a new handoff: `node scripts/crm-preview-css.mjs <folder>` | `app/crm-preview/crm-preview.css` (generated), `preview.css` (the preview's own) |
 
 How the design is read on today's data (`lib/crm-preview/model.ts`): the
 forward stages (the client's own names, Interview Scheduled only where the
 client has it) are columns; **Nurture, Not a Fit and No Response are tags**,
-as the design asks — today they are stages, so those agents have no forward
-stage and sit outside the columns until their chip is picked. Nothing is
-moved. Three deliberate departures from the mockup, each to fit real data: the
+as the design asks. Today they are stages, so such an agent has no forward
+stage: as Eddy approved (16 Oct), the preview places them at the **furthest
+forward stage on record** before the tag (`pipeline_outcome_events`), else the
+first stage, with the tag under the name; the panel says which. A stage chip
+counts everyone at the stage, a tag chip shows that tag's agents in their
+columns. Nothing is moved — read, not written. Three deliberate departures from the mockup, each to fit real data: the
 board scrolls sideways to every column (the mockup clips at four) and holds
 to the window's height; a picked chip is highlighted; an email is shown as
 text from its HTML part (this mailbox's text part loses its line breaks),
 without the quoted history.
 
-Eddy's answers to the six questions (16 Oct): stages → tags **yes**, and he
-asked which stage those agents are left at — the furthest forward stage on
-record (`pipeline_outcome_events`, kept since 3 Aug): of 971 agents in the
-three today, 90 went past Introduction; the other 881 have only Introduction
-on record. Pipeline entry: a **per-client switch** — existing clients keep
-Introduction, new clients enter at Interested (he wrote "via PostScan" —
-read as Postmark, not yet confirmed). Text alerts:
-yes, where enabled. Prospects: added to live campaigns automatically, and DNC
-and My Agents removed from campaigns (My Agents never has been — a change to
-live campaigns). Billing: clients can update, cancel and see paid invoices
-(today a paused or churned client is paused in Stripe, never cancelled).
-None of this is built yet; the preview shows the design only.
+Eddy's decisions (16 Oct, two rounds): stages → tags **yes**, and a tagged
+agent stays at the furthest forward stage on record — **approved** (of 971
+agents in the three today, 90 went past Introduction; the other 881 have only
+Introduction on record, history being kept since 3 Aug). Pipeline entry: a
+**per-client switch** — existing clients keep Introduction, new clients enter
+at Interested, via **Postmark** (confirmed). Text alerts: yes, where enabled.
+Prospects: added to live campaigns automatically; DNC **and My Agents** removed
+from campaigns — approved (My Agents never has been; a change to live
+campaigns). Billing: clients can update, cancel and see paid invoices; a
+client who cancels in the Stripe portal is marked **Churned**; and clients
+should be able to **pause until a date** on the portal (new). **"Do not launch
+this new CRM until we've reviewed it on Demo Portal or on a staging
+environment."** None of this is built for real clients; the preview reads only.
 
 ## 0.2 Interested leads → Slack, 14 October
 

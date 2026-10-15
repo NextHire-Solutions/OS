@@ -62,7 +62,11 @@
 
 /* Read-only: what would change something is shown, not usable. */
 .cpv-shell [aria-disabled="true"] { cursor: default; }
-.cpv-shell .crx-card.crx-ms[aria-disabled="true"] { opacity: 0.6; }
+
+/* Manage stages opens and closes (the mockup's links are buttons here). */
+.cpv-shell button.crx-ms { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.cpv-shell button.crx-ms:focus-visible { outline: 2px solid var(--cpv-blue); outline-offset: 2px; }
+.cpv-shell .crx-stg input[readonly] { cursor: default; }
 
 /*
  * Board cards open the agent's panel, so they are buttons here (links in the

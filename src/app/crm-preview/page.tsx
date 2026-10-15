@@ -29,7 +29,8 @@ import { notFound } from "next/navigation";
 import { SSO_COOKIE, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
 import { canSeeCrmPreview } from "@/lib/crm-preview/access";
-import { PREVIEW_VIEWS, previewStages, type PreviewView } from "@/lib/crm-preview/model";
+import { furthestStages, PREVIEW_VIEWS, previewStages, type PreviewView } from "@/lib/crm-preview/model";
+import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
   loadAgentEntries,
@@ -109,12 +110,23 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
     ? resolveStageDefs(stageClient, await loadClientStageRows(client.id as string))
     : canonicalStageDefs(stageClient);
 
-  const [entries, agents, dnc, team] = await Promise.all([
+  const [entries, agents, dnc, team, history] = await Promise.all([
     loadPipelineEntries(client.id as string),
     loadAgentEntries(client.id as string),
     loadDncEntries(client.id as string),
     loadTeamMembers(client.id as string),
+    // The stage history the portal keeps (since 3 Aug), for where a tagged agent sits (model.ts placeEntry).
+    fetchAllRows<{ entry_id: string | null; event_type: string }>(({ from, to }) =>
+      admin.from("pipeline_outcome_events").select("entry_id, event_type").eq("client_id", client.id as string).eq("voided", false).order("id").range(from, to),
+    ).catch((err) => {
+      // Without the history a tagged agent sits at the first stage — shown, not hidden.
+      console.error("[crm-preview] stage history", err);
+      return [];
+    }),
   ]);
+  const stages = previewStages(defs);
+  const tagKeys = new Set(stages.filter((s) => s.role === "tag").map((s) => s.key));
+  const tagged = new Set(entries.filter((e) => tagKeys.has(e.custom_stage_key ?? e.stage)).map((e) => e.id));
 
   return shell(
     <CrmPreview
@@ -126,7 +138,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
         fubConnected: Boolean((client as { fub_api_key?: string | null }).fub_api_key),
       }}
       portals={portals}
-      stages={previewStages(defs)}
+      stages={stages}
+      furthest={furthestStages(history, tagged)}
       entries={entries}
       agents={agents}
       dnc={dnc}

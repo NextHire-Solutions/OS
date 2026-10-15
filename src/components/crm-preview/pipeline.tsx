@@ -18,7 +18,7 @@ import {
   salesVolumeOf,
   shortDate,
   sourceLabel,
-  stageKeyOf,
+  type Placement,
   type PreviewStage,
   type TimeRange,
 } from "@/lib/crm-preview/model";
@@ -32,7 +32,7 @@ type Open = { kind: "agent" | "conversation" | "notes"; entry: PipelineEntry } |
 const CARDS_PER_COLUMN = 40;
 const ROWS_PER_MONTH = 10;
 
-export function PipelineScreen({ entries, stages, token, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; token: string; now: Date }) {
+export function PipelineScreen({ entries, stages, furthest, token, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; token: string; now: Date }) {
   const [mode, setMode] = useState<"board" | "list">("board");
   const [range, setRange] = useState<TimeRange>("all");
   const [search, setSearch] = useState("");
@@ -42,8 +42,7 @@ export function PipelineScreen({ entries, stages, token, now }: { entries: Pipel
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const menuRef = useRef<HTMLSpanElement>(null);
 
-  const byKey = useMemo(() => new Map(stages.map((s) => [s.key, s])), [stages]);
-  const view = useMemo(() => pipelineView(entries, stages, { range, search, chip, now }), [entries, stages, range, search, chip, now]);
+  const view = useMemo(() => pipelineView(entries, stages, { range, search, chip, now }, furthest), [entries, stages, range, search, chip, now, furthest]);
   const groups = useMemo(() => groupByMonth(view.shown), [view.shown]);
   const rangeLabel = TIME_RANGES.find((r) => r.id === range)?.label ?? "All time";
   const forward = stages.filter((s) => s.role === "stage");
@@ -62,7 +61,7 @@ export function PipelineScreen({ entries, stages, token, now }: { entries: Pipel
     };
   }, [menuOpen]);
 
-  const stageOf = (e: PipelineEntry) => byKey.get(stageKeyOf(e))!;
+  const placeOf = (e: PipelineEntry) => view.placement.get(e.id)!;
   const toggleChip = (key: string) => setChip((c) => (c === key ? null : key));
   const openAgent = (entry: PipelineEntry) => setOpen({ kind: "agent", entry });
 
@@ -77,14 +76,7 @@ export function PipelineScreen({ entries, stages, token, now }: { entries: Pipel
       </header>
 
       <div className={k("content")}>
-        <div className={k("card ms")} aria-disabled="true" title={READ_ONLY}>
-          <span className={k("mi")}><Icon name="stages" size={16} /></span>
-          <span>
-            <b>Manage stages</b>
-            <span className={k("t")}>Rename, reorder, and show or hide your pipeline stages. Applies to everyone viewing this portal.</span>
-          </span>
-          <span className={k("cv")}><Icon name="chevDown" size={15} /></span>
-        </div>
+        <ManageStages stages={stages} tagCounts={tagCounts(view.placement)} />
 
         {entries.length === 0 ? (
           <div className={k("es")}>
@@ -191,7 +183,7 @@ export function PipelineScreen({ entries, stages, token, now }: { entries: Pipel
                       </div>
                       {cards.map((e) => {
                         const sv = salesVolumeOf(e);
-                        const stage = stageOf(e);
+                        const place = placeOf(e);
                         const src = sourceLabel(e);
                         return (
                           <button key={e.id} type="button" className={k("kc")} onClick={() => openAgent(e)}>
@@ -201,7 +193,7 @@ export function PipelineScreen({ entries, stages, token, now }: { entries: Pipel
                               <span><Icon name="calendar" size={12} />{shortDate(e.introduced_at, now)}</span>
                               <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>
                             </span>
-                            {stage.role === "tag" ? <span className="cpv-cardtag"><TagChip stage={stage} /></span> : null}
+                            {place.tag ? <span className="cpv-cardtag"><TagChip stage={place.tag} /></span> : null}
                           </button>
                         );
                       })}
@@ -253,7 +245,7 @@ export function PipelineScreen({ entries, stages, token, now }: { entries: Pipel
                           <ListRow
                             key={e.id}
                             entry={e}
-                            stage={stageOf(e)}
+                            placement={placeOf(e)}
                             now={now}
                             onAgent={() => openAgent(e)}
                             onConversation={() => setOpen({ kind: "conversation", entry: e })}
@@ -286,30 +278,111 @@ export function PipelineScreen({ entries, stages, token, now }: { entries: Pipel
       {open?.kind === "agent" ? (
         <AgentPanel
           entry={open.entry}
-          stage={stageOf(open.entry)}
+          placement={placeOf(open.entry)}
           onClose={() => setOpen(null)}
           onConversation={() => setOpen({ kind: "conversation", entry: open.entry })}
           onNotes={() => setOpen({ kind: "notes", entry: open.entry })}
         />
       ) : null}
       {open?.kind === "conversation" ? (
-        <ConversationPanel entry={open.entry} stage={stageOf(open.entry)} token={token} now={now} onClose={() => setOpen(null)} />
+        <ConversationPanel entry={open.entry} placement={placeOf(open.entry)} token={token} now={now} onClose={() => setOpen(null)} />
       ) : null}
       {open?.kind === "notes" ? <NotesPanel entry={open.entry} onClose={() => setOpen(null)} /> : null}
     </>
   );
 }
 
+/** How many agents carry each tag — all of them, whatever the filters. */
+function tagCounts(placement: Map<string, Placement>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const p of placement.values()) if (p.tag) out.set(p.tag.key, (out.get(p.tag.key) ?? 0) + 1);
+  return out;
+}
+
+const NAME_INPUT = { flex: 1, border: 0, outline: 0, background: "transparent", fontSize: 13, color: "#1f2124", fontWeight: 500 } as const;
+
+/*
+ * Manage stages, as the design draws it open (its Stages screen): the client's
+ * stages and tags with their own names and colours. Renaming, reordering,
+ * hiding, adding and saving are drawn disabled; opening and closing it works.
+ */
+function ManageStages({ stages, tagCounts: counts }: { stages: PreviewStage[]; tagCounts: Map<string, number> }) {
+  const [open, setOpen] = useState(false);
+  const forward = stages.filter((s) => s.role === "stage");
+  const tags = stages.filter((s) => s.role === "tag");
+  const head = (
+    <>
+      <span className={k("mi")}><Icon name="stages" size={17} /></span>
+      <span>
+        <b>Manage stages</b>
+        <span className={k("t")}>Rename, reorder, and show or hide your pipeline stages. Applies to everyone viewing this portal.</span>
+      </span>
+      <span className={k("cv")}><Icon name={open ? "chevUp" : "chevDown"} size={16} /></span>
+    </>
+  );
+  if (!open) {
+    return <button type="button" className={k("card ms")} aria-expanded={false} onClick={() => setOpen(true)}>{head}</button>;
+  }
+  const row = (s: PreviewStage, end: React.ReactNode) => (
+    <div key={s.key} className={k("stg")}>
+      <button type="button" className={k("ib")} aria-label={`Reorder ${s.label}`} title={READ_ONLY} disabled><Icon name="reorder" size={16} /></button>
+      <span className={k("dot")} style={{ background: s.dot }} />
+      <input value={s.label} aria-label={`Rename ${s.label}`} style={NAME_INPUT} readOnly title={READ_ONLY} />
+      {end}
+    </div>
+  );
+  return (
+    <section className={k("card")}>
+      <button type="button" className={k("ms msx")} aria-expanded onClick={() => setOpen(false)} aria-label="Collapse manage stages">{head}</button>
+      <div className={k("stl")}>
+        {forward.map((s, i) => {
+          // The design keeps the first and the last (Hired) always shown.
+          const always = i === 0 || s.key === "hired";
+          return row(s, (
+            <button type="button" className={k("ib")} disabled aria-label={always ? `${s.label} is always shown` : `Hide ${s.label}`} title={always ? "Always shown" : READ_ONLY} style={always ? { color: "#c2c7d0", cursor: "default" } : undefined}>
+              <Icon name="eyeOutline" size={16} />
+            </button>
+          ));
+        })}
+        <button type="button" className={k("addb")} disabled title={READ_ONLY}><Icon name="plus" size={14} />Add stage</button>
+        <div className={k("svr")}>
+          <span>Custom stages are for your team&apos;s workflow. They don&apos;t change your&nbsp;reporting.</span>
+          <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}>Save changes</button>
+        </div>
+        {tags.length ? (
+          <>
+            <div style={{ padding: "18px 0 4px", borderTop: "1px solid #ebedf0", marginTop: 10 }}>
+              <div style={{ fontWeight: 600 }}>Tags</div>
+              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Tag an agent without moving them through your pipeline. Stages only move&nbsp;forward.</div>
+            </div>
+            {tags.map((t) => row(t, (
+              <>
+                <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{(counts.get(t.key) ?? 0).toLocaleString("en-US")} agents</span>
+                <button type="button" className={k("ib")} aria-label={`Delete tag ${t.label}`} title={READ_ONLY} disabled><Icon name="x" size={15} /></button>
+              </>
+            )))}
+            <button type="button" className={k("addb")} disabled title={READ_ONLY}><Icon name="plus" size={14} />Add tag</button>
+            <div className={k("svr")}>
+              <span>Tags are shared with everyone on your&nbsp;team.</span>
+              <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}>Save changes</button>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function ListRow({
   entry: e,
-  stage,
+  placement,
   now,
   onAgent,
   onConversation,
   onNotes,
 }: {
   entry: PipelineEntry;
-  stage: PreviewStage;
+  placement: Placement;
   now: Date;
   onAgent: () => void;
   onConversation: () => void;
@@ -333,7 +406,7 @@ function ListRow({
               </a>
             ) : null}
             <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>
-            {stage.role === "tag" ? <TagChip stage={stage} /> : null}
+            {placement.tag ? <TagChip stage={placement.tag} /> : null}
           </div>
         </div>
       </td>
@@ -350,7 +423,7 @@ function ListRow({
         )}
       </td>
       <td className={k("vt")}><div className={k("coc")}>{e.current_brokerage || <span className={k("dash")}>&ndash;</span>}</div></td>
-      <td className={k("vt")}><StageCell stage={stage} /></td>
+      <td className={k("vt")}><StageCell stage={placement.stage} /></td>
       <td className={k("vt")}>
         {owner ? (
           <span className={k("own")}><span className={k("av")}>{initials(owner)}</span>{owner}</span>

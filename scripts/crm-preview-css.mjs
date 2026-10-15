@@ -49,11 +49,8 @@ function rules(css) {
 
 const board = rules(styleOf("Pipeline-Board"));
 const list = rules(styleOf("Pipeline-List"));
-const pages = rules(styleOf("Your-Agents"));
-const empty = rules(styleOf("Pipeline-Empty"));
 
-const bySelector = (rs) => new Map(rs.map((r) => [r.selector, r.body]));
-const base = bySelector(board);
+const base = new Map(board.map((r) => [r.selector, r.body]));
 for (const r of list) {
   if (base.get(r.selector) !== r.body) throw new Error(`the list view's ${r.selector} differs from the board's`);
 }
@@ -66,18 +63,46 @@ for (const r of list) {
  */
 const PAGE_RENAMES = { ".bulk": ".abulk", ".bulk.on": ".abulk.on", ".bulk .acts": ".abulk .acts" };
 const PAGE_UNUSED = new Set([".selall", ".selall b", ".selall button", ".ov", ".dlg", ".dlg .dh", ".dlg .dh h2", ".dlg .df", ".g2", ".drop", ".drop code", ".drop .dt", ".drop .dc"]);
+const pageRename = (s) => PAGE_RENAMES[s] ?? s;
+
+/*
+ * The other screens, each merged onto the board's rules in turn. Where a screen
+ * uses a name the board already uses for something else, its rules get a name
+ * of their own, so neither restyles the other:
+ *   Reports  `.lg` is its chart legend; the board's `.lg` is the sidebar logo
+ *            (`.rail .lg`, kept as is) — the legend becomes `.rlg`.
+ *   Market   its menus and links (`.menu`, `.lnk`) differ from the board's time
+ *            menu — they become `.mmenu` and `.mlnk`.
+ * Anything else that differs stops the script.
+ */
+const SCREENS = [
+  { screen: "Your-Agents", rename: pageRename, unused: PAGE_UNUSED },
+  { screen: "Pipeline-Empty", rename: (s) => s, unused: new Set() },
+  { screen: "Campaign", rename: (s) => s, unused: new Set() },
+  { screen: "Help", rename: pageRename, unused: PAGE_UNUSED },
+  { screen: "Reports", rename: (s) => s.replace(/^\.lg\b/, ".rlg"), unused: new Set() },
+  { screen: "Market", rename: (s) => s.replace(/\.menu\b/g, ".mmenu").replace(/\.lnk\b/g, ".mlnk"), unused: new Set([".toast", ".toast button"]) },
+];
 
 const merged = [...board];
-const have = new Set(board.map((r) => r.selector));
-for (const r of [...pages, ...empty]) {
-  if (PAGE_RENAMES[r.selector]) { merged.push({ selector: PAGE_RENAMES[r.selector], body: r.body }); continue; }
-  if (PAGE_UNUSED.has(r.selector)) continue;
-  if (have.has(r.selector)) {
-    if (base.get(r.selector) !== r.body) throw new Error(`${r.selector} differs between screens and is not handled`);
-    continue;
+const have = new Map(base);
+for (const { screen, rename, unused } of SCREENS) {
+  // A screen can declare one selector twice (Reports' `.br`: a colour, then a padding); in
+  // order, the two are one rule — later declarations win — so they are joined before comparing.
+  const own = new Map();
+  for (const r of rules(styleOf(screen))) {
+    if (unused.has(r.selector)) continue;
+    const selector = rename(r.selector);
+    own.set(selector, own.has(selector) ? `${own.get(selector)};${r.body}` : r.body);
   }
-  have.add(r.selector);
-  merged.push(r);
+  for (const [selector, body] of own) {
+    if (have.has(selector)) {
+      if (have.get(selector) !== body) throw new Error(`${screen}: ${selector} differs from an earlier screen's and is not handled`);
+      continue;
+    }
+    have.set(selector, body);
+    merged.push({ selector, body });
+  }
 }
 
 function transformSelector(sel) {

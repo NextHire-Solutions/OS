@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { initials, type PreviewView } from "@/lib/crm-preview/model";
+import { initials } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
 import { k, READ_ONLY } from "./k";
@@ -378,28 +378,6 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
             </div>
           </section>
         </div>
-      </div>
-    </>
-  );
-}
-
-// ------------------------------------------------------- not drawn yet ---
-
-const LATER: Partial<Record<PreviewView, { title: string; icon: IconName; text: string }>> = {
-  reports: { title: "Reports", icon: "reports", text: "Agents per group across the client's market, and the interested ones. Needs the market data the redesign adds, so it comes in a later phase." },
-  campaigns: { title: "Campaigns", icon: "campaigns", text: "A \"coming soon\" page in the design too, until editing emails and creating campaigns is built." },
-  market: { title: "Market", icon: "search", text: "Every agent in the client's market, with filters and moving agents between lists. Comes in a later phase." },
-  prospects: { title: "Prospects", icon: "target", text: "The agents we email for this client. Comes in a later phase, with adding them to live campaigns." },
-  help: { title: "Help", icon: "help", text: "The help center and the support chat come in a later phase." },
-};
-
-export function NotInPreview({ view }: { view: PreviewView }) {
-  const page = LATER[view] ?? { title: "This page", icon: "help" as IconName, text: "Comes in a later phase." };
-  return (
-    <>
-      <Header title={page.title} />
-      <div className={k("content")}>
-        <Empty icon={page.icon} title={`${page.title} isn't in this preview yet`} text={page.text} />
       </div>
     </>
   );

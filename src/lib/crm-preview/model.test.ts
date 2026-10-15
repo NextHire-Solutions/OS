@@ -5,12 +5,14 @@ import type { PipelineEntry, PipelineStage } from "@/lib/tools/master-inbox/port
 import { canonicalStageDefs, resolveStageDefs, type ClientStageRow } from "@/lib/tools/master-inbox/portals/stage-config";
 import {
   abbrevUsd,
+  furthestStages,
   groupByMonth,
   inRange,
   initials,
   messageText,
   panelFields,
   pipelineView,
+  placeEntry,
   previewStages,
   rangeStart,
   salesVolumeOf,
@@ -68,26 +70,58 @@ test("the Demo portal's own stages: custom ones are columns, the two no-show sta
   assert.equal(stages[1].dot, "#0891b2", "a custom stage keeps its colour");
 });
 
-test("the board: forward stages only by default; the summary counts everyone, tags included", () => {
+test("the board: every agent in a forward column — a tagged one at the furthest stage on record, tag under the name", () => {
   const stages = previewStages(canonicalStageDefs({}));
-  const entries = [entry("introduction", withVolume("$2,000,000")), entry("introduction"), entry("hired", withVolume("1500000")), entry("keep_warm"), entry("we_they_rejected")];
-  const v = pipelineView(entries, stages, { range: "all", search: "", chip: null, now: NOW });
+  const warm = entry("keep_warm");
+  const unfit = entry("we_they_rejected");
+  const entries = [entry("introduction", withVolume("$2,000,000")), entry("introduction"), entry("hired", withVolume("1500000")), warm, unfit];
+  const v = pipelineView(entries, stages, { range: "all", search: "", chip: null, now: NOW }, { [unfit.id]: "interview" });
   assert.equal(v.shown.length, 5);
   assert.equal(v.totalVolume, 3_500_000);
-  assert.deepEqual(v.columns.map((c) => [c.stage.key, c.entries.length]), [["introduction", 2], ["phone_screen_scheduled", 0], ["phone_screen", 0], ["interview", 0], ["hired", 1]]);
+  assert.deepEqual(v.columns.map((c) => [c.stage.key, c.entries.length]), [["introduction", 3], ["phone_screen_scheduled", 0], ["phone_screen", 0], ["interview", 1], ["hired", 1]]);
   assert.equal(v.columns[0].volume, 2_000_000);
+  assert.equal(v.placement.get(warm.id)?.tag?.label, "Nurture");
+  assert.equal(v.placement.get(warm.id)?.stage.key, "introduction", "no history: the first stage");
+  assert.equal(v.placement.get(unfit.id)?.stage.key, "interview", "history: the furthest stage");
   assert.equal(v.counts.get("keep_warm"), 1);
+  assert.equal(v.counts.get("introduction"), 3, "a stage counts the tagged agents at it");
+  assert.equal(v.counts.get("interview"), 1);
 });
 
-test("a chip narrows to its stage or tag; a tag's agents then show as its own column", () => {
+test("a stage chip shows its column; a tag chip keeps the columns and shows only that tag's agents", () => {
   const stages = previewStages(canonicalStageDefs({}));
-  const entries = [entry("introduction"), entry("keep_warm"), entry("keep_warm")];
-  const tag = pipelineView(entries, stages, { range: "all", search: "", chip: "keep_warm", now: NOW });
+  const a = entry("introduction"), b = entry("keep_warm"), c = entry("keep_warm");
+  const tag = pipelineView([a, b, c], stages, { range: "all", search: "", chip: "keep_warm", now: NOW }, { [c.id]: "phone_screen" });
   assert.equal(tag.shown.length, 2);
-  assert.deepEqual(tag.columns.map((c) => [c.stage.label, c.entries.length]), [["Nurture", 2]]);
-  assert.equal(tag.counts.get("introduction"), 1, "the other chips keep their counts");
-  const unknown = pipelineView(entries, stages, { range: "all", search: "", chip: "interview_scheduled", now: NOW });
+  assert.deepEqual(tag.columns.filter((x) => x.entries.length).map((x) => [x.stage.label, x.entries.length]), [["Introduction", 1], ["Phone Screen", 1]]);
+  assert.equal(tag.columns.length, 5, "every forward column stays");
+  assert.equal(tag.counts.get("introduction"), 2, "the other chips keep their counts");
+  const stage = pipelineView([a, b, c], stages, { range: "all", search: "", chip: "introduction", now: NOW });
+  assert.deepEqual(stage.columns.map((x) => [x.stage.key, x.entries.length]), [["introduction", 3]]);
+  const unknown = pipelineView([a, b, c], stages, { range: "all", search: "", chip: "interview_scheduled", now: NOW });
   assert.equal(unknown.shown.length, 3, "a chip for a stage the client does not show is ignored");
+});
+
+test("the furthest stage on record, from the portal's stage history", () => {
+  const tagged = new Set(["e1", "e2", "e3"]);
+  const events = [
+    { entry_id: "e1", event_type: "introduction" }, { entry_id: "e1", event_type: "interview" }, { entry_id: "e1", event_type: "phone_screen" },
+    { entry_id: "e1", event_type: "we_they_rejected" },
+    { entry_id: "e2", event_type: "introduction" }, { entry_id: "e2", event_type: "no_show" },
+    { entry_id: "x9", event_type: "hired" }, { entry_id: null, event_type: "hired" },
+  ];
+  assert.deepEqual(furthestStages(events, tagged), { e1: "interview", e2: "introduction" }, "tags are not stages; untagged and orphaned events are ignored");
+});
+
+test("a recorded stage the client does not show falls back to the nearest earlier one it does", () => {
+  const stages = previewStages(canonicalStageDefs({})); // no Interview Scheduled
+  const e = entry("no_show");
+  const p = placeEntry(e, stages, { [e.id]: "interview_scheduled" });
+  assert.equal(p?.stage.key, "phone_screen");
+  assert.equal(p?.tag?.key, "no_show");
+  assert.equal(p?.fromHistory, true);
+  assert.equal(placeEntry(entry("hired"), stages, {})?.tag, null, "a forward stage is its own column, no tag");
+  assert.equal(placeEntry(entry("interview_scheduled"), stages, {}), null, "a stage the client does not show: not placed (as on the live board)");
 });
 
 test("agents in a stage the client does not show stay out, as on the live board", () => {

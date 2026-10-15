@@ -42,7 +42,34 @@ function filesUnder(dir: string): string[] {
   }
   return out;
 }
-const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
+const ROUTES = filesUnder("src/app/api/crm-preview");
+const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
+
+test("the preview's data routes: Owners only, checked first; GET only; anyone else a bare 404", () => {
+  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["market/route.ts", "report/route.ts"]);
+  for (const r of ROUTES) {
+    const src = read(r);
+    assert.deepEqual([...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["GET"], `${r}: GET only`);
+    const gate = src.indexOf("canSeeCrmPreview(");
+    assert.ok(gate > 0, `${r} calls the gate`);
+    assert.match(src.slice(gate, gate + 160), /new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for anyone else`);
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "searchParams"]) {
+      const at = src.indexOf(load, src.indexOf("export async function GET"));
+      assert.ok(at === -1 || at > gate, `${r}: ${load} only after the gate`);
+    }
+  }
+});
+
+test("the agent database is asked only through its two read-only search functions, behind the read-only guard", () => {
+  const market = read("src/lib/crm-preview/market.ts");
+  assert.match(market, /async function rpc\(fn: "fn_filter_search" \| "fn_facet_options", args:/, "exactly these two functions, nothing added");
+  assert.equal((market.match(/\.rpc\(/g) ?? []).length, 1, "and through that one helper");
+  assert.match(market, /const agentDb = \(\) => readOnly\(getCorofySupabase\(\)\)/);
+  assert.match(market, /const mi = \(\) => readOnly\(createAdminSupabase\(\)\)/);
+  for (const f of PREVIEW_FILES.filter((f) => f !== "src/lib/crm-preview/market.ts")) {
+    assert.doesNotMatch(read(f), /\.rpc\(/, `${f}: no database functions outside market.ts`);
+  }
+});
 
 test("the page checks the Owner before it reads anything", () => {
   const src = read("src/app/crm-preview/page.tsx");
@@ -57,15 +84,20 @@ test("the page checks the Owner before it reads anything", () => {
 
 test("read-only: nothing in the preview writes, posts or calls a server action", () => {
   assert.ok(PREVIEW_FILES.length >= 4, PREVIEW_FILES.join(", "));
-  const WRITES = [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/, /method\s*:/, /["'](POST|PUT|PATCH|DELETE)["']/, /["']use server["']/, /formAction/, /navigator\.sendBeacon/];
+  const WRITES = [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /method\s*:/, /["'](POST|PUT|PATCH|DELETE)["']/, /["']use server["']/, /formAction/, /navigator\.sendBeacon/];
+  // The requests the browser makes: the portal's own read-only conversation feed and the preview's two GET routes.
+  const READS = [
+    /^\/api\/tools\/master-inbox\/portal\/\$\{[^}]+\}\/conversation\/\$\{[^}]+\}$/,
+    /^\/api\/crm-preview\/market\?\$\{[^}]+\}$/,
+    /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
+  ];
   for (const f of PREVIEW_FILES) {
     const src = read(f);
     for (const w of WRITES) assert.doesNotMatch(src, w, `${f} matches ${w}`);
-    // The one request the browser makes: the portal's own read-only conversation feed.
     for (const m of src.matchAll(/fetch\(\s*`([^`]*)`/g)) {
-      assert.match(m[1], /^\/api\/tools\/master-inbox\/portal\/\$\{[^}]+\}\/conversation\/\$\{[^}]+\}$/, `${f}: ${m[1]}`);
+      assert.ok(READS.some((r) => r.test(m[1])), `${f}: fetch ${m[1]} is not one of the preview's reads`);
     }
-    assert.doesNotMatch(src, /fetch\(\s*["']/, `${f}: only the conversation feed is fetched`);
+    assert.doesNotMatch(src, /fetch\(\s*["']/, `${f}: only the preview's reads are fetched`);
   }
 });
 

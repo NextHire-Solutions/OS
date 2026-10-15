@@ -39,6 +39,12 @@ const SHAPES = {
   building: <><rect x="5" y="3" width="14" height="18" rx="1.5" /><path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2M10 21v-3h4v3" /></>,
   eye: <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>,
   externalSmall: <><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6" /></>,
+  mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></>,
+  spark: <><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6" /></>,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
+  chevUp: <><path d="M6 15l6-6 6 6" /></>,
+  reorder: <><path d="M8 4v16M5 7l3-3 3 3M16 20V4M13 17l3 3 3-3" /></>,
+  eyeOutline: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof SHAPES;

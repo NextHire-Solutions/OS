@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
-import { initials, longDate, messageText, panelFields, shortDate, sourceLabel, stamp, type PreviewStage } from "@/lib/crm-preview/model";
+import { initials, longDate, messageText, panelFields, shortDate, sourceLabel, stamp, type Placement, type PreviewStage } from "@/lib/crm-preview/model";
 
 import { Icon } from "./icons";
 import { k, READ_ONLY } from "./k";
@@ -31,6 +31,19 @@ export function StageCell({ stage }: { stage: PreviewStage }) {
   return stage.role === "stage" ? <span className={k(`pill p-${stage.pill}`)}>{stage.label}</span> : <span className={k("dash")}>&ndash;</span>;
 }
 
+/** The stage, and for a tagged agent where it came from (Eddy, 16 Oct: the furthest stage reached before the tag). */
+function StageWhy({ placement }: { placement: Placement }) {
+  if (!placement.tag) return <StageCell stage={placement.stage} />;
+  return (
+    <span style={{ display: "inline-flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+      <StageCell stage={placement.stage} />
+      <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.4 }}>
+        {placement.fromHistory ? "The furthest stage on record before the tag." : "No stage history before the tag (kept since 3 Aug), so the first stage."}
+      </span>
+    </span>
+  );
+}
+
 function Source({ entry }: { entry: PipelineEntry }) {
   const src = sourceLabel(entry);
   return <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>;
@@ -40,13 +53,13 @@ const LABEL = { fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTran
 
 export function AgentPanel({
   entry: e,
-  stage,
+  placement,
   onClose,
   onConversation,
   onNotes,
 }: {
   entry: PipelineEntry;
-  stage: PreviewStage;
+  placement: Placement;
   onClose: () => void;
   onConversation: () => void;
   onNotes: () => void;
@@ -75,8 +88,8 @@ export function AgentPanel({
           <button type="button" className={k("ib")} aria-label="Close" style={{ marginLeft: 2 }} onClick={onClose} autoFocus><Icon name="x" size={16} /></button>
         </div>
         <dl className={k("pf")}>
-          {row("Stage", <StageCell stage={stage} />)}
-          {row("Tags", stage.role === "tag" ? <TagChip stage={stage} /> : (
+          {row("Stage", <StageWhy placement={placement} />)}
+          {row("Tags", placement.tag ? <TagChip stage={placement.tag} /> : (
             <button type="button" className={k("btn sm")} style={{ height: 24 }} disabled title={READ_ONLY}>Add tag <Icon name="chevDown" size={12} /></button>
           ))}
           {row("Email", e.lead_email || "–")}
@@ -117,13 +130,13 @@ const bare = (s: string | null) => (s ?? "").replace(/^\s*((re|fwd?|fw)\s*:\s*)+
 
 export function ConversationPanel({
   entry: e,
-  stage,
+  placement,
   token,
   now,
   onClose,
 }: {
   entry: PipelineEntry;
-  stage: PreviewStage;
+  placement: Placement;
   token: string;
   now: Date;
   onClose: () => void;
@@ -156,7 +169,8 @@ export function ConversationPanel({
             <h2>{name}</h2>
             <div className={k("meta")}>{[e.lead_email, e.current_brokerage].filter(Boolean).join(" · ")}</div>
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              {stage.role === "stage" ? <StageCell stage={stage} /> : <TagChip stage={stage} />}
+              <StageCell stage={placement.stage} />
+              {placement.tag ? <TagChip stage={placement.tag} /> : null}
               <Source entry={e} />
             </div>
           </div>

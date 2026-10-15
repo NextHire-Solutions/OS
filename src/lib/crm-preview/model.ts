@@ -10,8 +10,11 @@
  *     Interview Scheduled (where the client has it), Interview, Hired.
  *   - Nurture, Not a Fit and No Response are TAGS in the design, shown under
  *     the agent's name and as filter chips. Today they are stages, so an agent
- *     in one has no forward stage; the preview shows them as tags and leaves
- *     them out of the columns until their chip is picked. Nothing is moved.
+ *     in one has no forward stage. Eddy approved (16 Oct) that such an agent
+ *     stays at the FURTHEST forward stage they reached before being tagged —
+ *     from the stage history the portal keeps (pipeline_outcome_events, since
+ *     3 Aug); with no history, the first stage. The preview places them so,
+ *     tag under the name. Nothing is moved: it is read, not written.
  *   - Labels, hidden stages and the Demo portal's own stages come from the
  *     same settings the live portal uses (stage-config.ts).
  *
@@ -73,6 +76,60 @@ export function previewStages(defs: readonly StageDef[]): PreviewStage[] {
 /** Where an entry sits: its Demo-only custom stage if set, else its stage (as the live board reads it). */
 export function stageKeyOf(e: Pick<PipelineEntry, "custom_stage_key" | "stage">): string {
   return e.custom_stage_key ?? e.stage;
+}
+
+// ----------------------------------------------- tagged agents' stage ---
+
+/** The forward stages in the order they are reached (the stage history's vocabulary). */
+const FORWARD: readonly PipelineStage[] = ["introduction", "phone_screen_scheduled", "phone_screen", "interview_scheduled", "interview", "hired"];
+
+/**
+ * For each tagged agent, the furthest forward stage their history records
+ * (pipeline_outcome_events.event_type is a pipeline_stage value).
+ */
+export function furthestStages(
+  events: ReadonlyArray<{ entry_id: string | null; event_type: string }>,
+  taggedIds: ReadonlySet<string>,
+): Record<string, PipelineStage> {
+  const out: Record<string, PipelineStage> = {};
+  for (const ev of events) {
+    if (!ev.entry_id || !taggedIds.has(ev.entry_id)) continue;
+    const rank = FORWARD.indexOf(ev.event_type as PipelineStage);
+    if (rank < 0) continue;
+    const had = out[ev.entry_id];
+    if (had === undefined || FORWARD.indexOf(had) < rank) out[ev.entry_id] = FORWARD[rank];
+  }
+  return out;
+}
+
+export interface Placement {
+  /** The board column: a forward stage. */
+  stage: PreviewStage;
+  /** The tag, for an agent in Nurture / Not a Fit / No Response today. */
+  tag: PreviewStage | null;
+  /** True when the stage came from the history rather than the agent's own stage. */
+  fromHistory: boolean;
+}
+
+/**
+ * Where an entry sits on the redesign's board. A tagged agent goes to the
+ * furthest stage recorded for them — or, when the client does not show that
+ * stage (Interview Scheduled is Demo-only), the nearest earlier one it does —
+ * else the first stage.
+ */
+export function placeEntry(e: Pick<PipelineEntry, "id" | "custom_stage_key" | "stage">, stages: readonly PreviewStage[], furthest: Readonly<Record<string, string>>): Placement | null {
+  const own = stages.find((s) => s.key === stageKeyOf(e));
+  if (!own) return null;
+  if (own.role === "stage") return { stage: own, tag: null, fromHistory: false };
+  const forward = stages.filter((s) => s.role === "stage");
+  if (!forward.length) return null;
+  const reached = furthest[e.id];
+  const rank = reached ? FORWARD.indexOf(reached as PipelineStage) : -1;
+  for (let r = rank; r >= 0; r -= 1) {
+    const hit = forward.find((s) => s.key === FORWARD[r]);
+    if (hit) return { stage: hit, tag: own, fromHistory: true };
+  }
+  return { stage: forward[0], tag: own, fromHistory: false };
 }
 
 // ----------------------------------------------------------------- dates ---
@@ -195,31 +252,46 @@ export interface BoardColumn {
 }
 
 export interface PipelineView {
-  /** Per stage and tag: how many agents match the time range and search. */
+  /** Per stage: agents at it (tagged ones included); per tag: agents with it — within the time range and search. */
   counts: Map<string, number>;
   /** The agents the page lists: the above, narrowed to the picked chip. */
   shown: PipelineEntry[];
   totalVolume: number;
-  /** The board: the forward stages — or just the picked chip's. */
+  /** The board: the forward stages — or just the picked stage's. */
   columns: BoardColumn[];
+  /** Where each listed agent sits. */
+  placement: Map<string, Placement>;
 }
 
-export function pipelineView(entries: readonly PipelineEntry[], stages: readonly PreviewStage[], f: PipelineFilter): PipelineView {
+export function pipelineView(entries: readonly PipelineEntry[], stages: readonly PreviewStage[], f: PipelineFilter, furthest: Readonly<Record<string, string>> = {}): PipelineView {
   const known = new Map(stages.map((s) => [s.key, s]));
-  const matching = entries.filter((e) => known.has(stageKeyOf(e)) && inRange(e.introduced_at, f.range, f.now) && matchesSearch(e, f.search));
+  const placement = new Map<string, Placement>();
+  for (const e of entries) {
+    const p = placeEntry(e, stages, furthest);
+    if (p) placement.set(e.id, p);
+  }
+  const matching = entries.filter((e) => placement.has(e.id) && inRange(e.introduced_at, f.range, f.now) && matchesSearch(e, f.search));
   const counts = new Map<string, number>(stages.map((s) => [s.key, 0]));
-  for (const e of matching) counts.set(stageKeyOf(e), (counts.get(stageKeyOf(e)) ?? 0) + 1);
+  for (const e of matching) {
+    const p = placement.get(e.id)!;
+    counts.set(p.stage.key, (counts.get(p.stage.key) ?? 0) + 1);
+    if (p.tag) counts.set(p.tag.key, (counts.get(p.tag.key) ?? 0) + 1);
+  }
 
-  const chip = f.chip && known.has(f.chip) ? f.chip : null;
-  const shown = chip ? matching.filter((e) => stageKeyOf(e) === chip) : matching;
+  const chip = f.chip && known.has(f.chip) ? known.get(f.chip)! : null;
+  const shown = !chip ? matching : matching.filter((e) => {
+    const p = placement.get(e.id)!;
+    return chip.role === "tag" ? p.tag?.key === chip.key : p.stage.key === chip.key;
+  });
   const totalVolume = shown.reduce((sum, e) => sum + (salesVolumeOf(e) ?? 0), 0);
 
-  const columnStages = chip ? [known.get(chip)!] : stages.filter((s) => s.role === "stage");
+  // A tag chip keeps every column and shows only that tag's agents in them; a stage chip shows its column.
+  const columnStages = chip && chip.role === "stage" ? [chip] : stages.filter((s) => s.role === "stage");
   const columns = columnStages.map((stage) => {
-    const col = shown.filter((e) => stageKeyOf(e) === stage.key);
+    const col = shown.filter((e) => placement.get(e.id)!.stage.key === stage.key);
     return { stage, entries: col, volume: col.reduce((sum, e) => sum + (salesVolumeOf(e) ?? 0), 0) };
   });
-  return { counts, shown, totalVolume, columns };
+  return { counts, shown, totalVolume, columns, placement };
 }
 
 export interface MonthGroup {
