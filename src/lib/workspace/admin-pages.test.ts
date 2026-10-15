@@ -1,26 +1,40 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { canSeePage } from "./nav.ts";
+import { ALL_TOOLS } from "../bs-auth.ts";
+import { canSeePage, PAGE_GRANTS } from "./nav.ts";
 
-const ALL = ["inbox", "clients", "analytics", "search", "onboarding"] as const;
+const EVERY = [...ALL_TOOLS];
+const ROLES = [{}, { accountManager: true }, { salesperson: true }, { accountManager: true, salesperson: true }];
 
-test("admin-only pages (5 Oct): Team access, Reply agent, Consistency, Performance (and its Billing Calendar, 9 Oct), Assistant — even with every tool", () => {
-  for (const id of ["team-access", "reply-agent", "consistency", "performance", "billing-calendar", "assistant"]) {
-    assert.equal(canSeePage(id, false, [...ALL], ALL), false, `${id}: a teammate with every tool`);
-    assert.equal(canSeePage(id, false, [...ALL], ALL, { accountManager: true, salesperson: true }), false, `${id}: account manager + salesperson`);
-    assert.equal(canSeePage(id, true, [], ALL), true, `${id}: admin`);
+test("admin-only pages: Team access, Reply agent, Consistency, Assistant — even with every switch and every role", () => {
+  for (const id of ["team-access", "reply-agent", "consistency", "assistant"]) {
+    for (const roles of ROLES) {
+      assert.equal(canSeePage(id, false, EVERY, ALL_TOOLS, roles), false, `${id}: a teammate with every switch, roles ${JSON.stringify(roles)}`);
+    }
+    assert.equal(canSeePage(id, true, [], ALL_TOOLS), true, `${id}: admin`);
   }
 });
 
-test("by role: Clients for account managers, Commissions for account managers and salespeople, Home for everyone", () => {
-  const am = { accountManager: true }, sp = { salesperson: true }, none = {};
-  assert.equal(canSeePage("roster", false, [], ALL, am), true);
-  assert.equal(canSeePage("roster", false, [], ALL, sp), false);
-  assert.equal(canSeePage("roster", false, [...ALL], ALL, none), false, "a teammate with no role does not see Clients");
-  assert.equal(canSeePage("commissions", false, [], ALL, am), true);
-  assert.equal(canSeePage("commissions", false, [], ALL, sp), true);
-  assert.equal(canSeePage("commissions", false, [...ALL], ALL, none), false, "no role, no payouts to show");
-  for (const r of [am, sp, none]) assert.equal(canSeePage("home", false, [], ALL, r), true);
-  assert.equal(canSeePage("roster", true, [], ALL, none), true, "admins see everything");
+test("Clients, Commissions and Performance (with its Billing Calendar) follow their own switch (15 Oct)", () => {
+  assert.deepEqual({ ...PAGE_GRANTS }, { roster: "roster", commissions: "commissions", performance: "performance", "billing-calendar": "performance" });
+  for (const [page, grant] of Object.entries(PAGE_GRANTS)) {
+    assert.equal(canSeePage(page, false, [grant], ALL_TOOLS), true, `${page}: its switch on`);
+    const others = EVERY.filter((g) => g !== grant);
+    assert.equal(canSeePage(page, false, others, ALL_TOOLS), false, `${page}: every switch but its own`);
+    assert.equal(canSeePage(page, true, [], ALL_TOOLS), true, `${page}: admins always`);
+  }
+});
+
+test("a role alone no longer opens a page — Eddy chooses who sees what on Team access", () => {
+  for (const roles of ROLES) {
+    assert.equal(canSeePage("roster", false, [], ALL_TOOLS, roles), false, `Clients without its switch, roles ${JSON.stringify(roles)}`);
+    assert.equal(canSeePage("commissions", false, [], ALL_TOOLS, roles), false, `Commissions without its switch, roles ${JSON.stringify(roles)}`);
+  }
+});
+
+test("Home is for everyone, switched on or not", () => {
+  for (const roles of ROLES) {
+    assert.equal(canSeePage("home", false, [], ALL_TOOLS, roles), true);
+  }
 });

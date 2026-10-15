@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { toolForPath } from "@/lib/workspace/tool-paths";
+import { grantsForRequest } from "@/lib/workspace/tool-paths";
+import { isPreSplitSession, preSplitToolGrants } from "@/lib/workspace/switch-transition";
 import { tokenRouteOpen } from "@/lib/http/token-routes";
 import { PROXY_ALLOWLIST as MASTER_INBOX_PUBLIC } from "@/lib/tools/master-inbox/webhooks/public-paths";
 
@@ -170,11 +171,17 @@ export async function proxy(request: NextRequest) {
    * Screens redirect (a person gets somewhere useful); API routes get a 403,
    * so a fetch() caller can tell "not allowed" from "not signed in".
    */
-  const tool = toolForPath(pathname);
-  if (tool && !session.grants.includes(tool)) {
+  // A session signed before the 15 Oct switch split is read as it was meant (switch-transition.ts).
+  const preSplit = isPreSplitSession(session.iat);
+  const grants = preSplitToolGrants(session.grants, session.iat);
+
+  // Any one of the switches opens it (15 Oct: one tool's sections can have several — tool-paths.ts).
+  const needed = grantsForRequest(pathname, request.method);
+  if (needed && !needed.some((g) => grants.includes(g))) {
+    const tool = needed[0];
     if (pathname.startsWith("/api/")) {
       return NextResponse.json(
-        { error: "Forbidden", detail: `No access to ${tool}` },
+        { error: "Forbidden", detail: `No access to ${needed.join(" or ")}` },
         { status: 403 },
       );
     }
@@ -187,7 +194,9 @@ export async function proxy(request: NextRequest) {
   // The shell reads these to build the sidebar, so an ungranted tool is never
   // rendered either. Presentation on top of the enforcement above.
   response.headers.set("x-bs-user", session.email);
-  response.headers.set("x-bs-grants", session.grants.join(","));
+  response.headers.set("x-bs-grants", grants.join(","));
+  // Always set, so a request can never bring its own: the page adds the role-opened pages for these.
+  response.headers.set("x-bs-pre-split", preSplit ? "1" : "0");
   return response;
 }
 

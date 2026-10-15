@@ -96,6 +96,77 @@ export function toolForPath(pathname: string): ToolId | null {
   return SCREEN_PREFIX[parts[0]] ?? null;
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * THE SWITCHES THAT OPEN A REQUEST (15 Oct) — what the proxy enforces.
+ *
+ * Eddy: "All products should be on settings and I can choose who sees what".
+ * Two things that used to ride on something else got switches of their own:
+ *
+ *   - Campaign Analytics, Campaign Management and Inboxes were ONE switch
+ *     (`analytics`). They are still one tool with one URL prefix — every link
+ *     and bookmark stays as it was — so the switch is decided by which section
+ *     a path belongs to (the leaf sets below, pinned to nav.ts by a test).
+ *   - Clients, Commissions and Performance followed a role or the admin rule
+ *     and now need `roster`, `commissions` and `performance`. They are NOT
+ *     decided here: they are workspace pages, decided by nav.ts canSeePage in
+ *     the page and in the routes' page guards — which know the person's roles,
+ *     needed for sessions signed before the split (switch-transition.ts). The
+ *     proxy cannot read roles.
+ *
+ * The three analytics sections share one API. Who may call it:
+ *   - Inboxes' own data: the Inboxes switch only.
+ *   - Reading anything else: Campaign Analytics OR Campaign Management — both
+ *     sections read the same campaign figures. The read-only sync status strip
+ *     is on all three, so Inboxes may read it too.
+ *   - Changing anything that runs a campaign (sequences, launch, pause,
+ *     inboxes, leads, the client a campaign belongs to, copy tags): Campaign
+ *     Management only. Someone with only Campaign Analytics can look, not act.
+ *   - Changing Campaign Analytics' own settings (reply categories, outcomes):
+ *     Campaign Analytics only. A sync run: either.
+ *
+ * ANY one of the returned switches opens the request; null means the request
+ * is not tool-specific (toolForPath's rule).
+ */
+const ANALYTICS_SECTION: Record<string, ToolId> = {
+  // Campaign Analytics (its first leaf, `campaign`, is also the bare /analytics).
+  campaign: "analytics", volume: "analytics", infrastructure: "analytics", attribution: "analytics",
+  // Campaign Management.
+  campaigns: "campaigns", schedule: "campaigns", clients: "campaigns", "client-view": "campaigns",
+  // Inboxes.
+  inboxes: "inboxes",
+};
+
+/** The section switch for an /analytics screen. An unknown leaf opens Campaign Analytics' first screen (nav.ts idForPath). */
+export function analyticsScreenGrant(leaf: string | undefined): ToolId {
+  return (leaf && ANALYTICS_SECTION[leaf]) || "analytics";
+}
+
+/** The leaves each section owns — for the test that keeps this in step with the menu. */
+export function analyticsSectionLeaves(): Readonly<Record<string, ToolId>> {
+  return ANALYTICS_SECTION;
+}
+
+const READS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function analyticsApiGrants(family: string | undefined, method: string): ToolId[] {
+  const write = !READS.has(method.toUpperCase());
+  if (family === "inboxes") return ["inboxes"];
+  if (family === "sync") return write ? ["analytics", "campaigns"] : ["analytics", "campaigns", "inboxes"];
+  if (!write) return ["analytics", "campaigns"];
+  if (family === "campaigns" || family === "clients" || family === "copy") return ["campaigns"];
+  if (family === "reply-dimensions" || family === "outcomes") return ["analytics"];
+  return ["analytics", "campaigns"];
+}
+
+export function grantsForRequest(pathname: string, method = "GET"): ToolId[] | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] === "api" && parts[1] === "tools" && parts[2] === "analytics") return analyticsApiGrants(parts[3], method);
+  if (parts[0] === "analytics") return [analyticsScreenGrant(parts[1])];
+  const tool = toolForPath(pathname);
+  return tool ? [tool] : null;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /*

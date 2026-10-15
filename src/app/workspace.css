@@ -632,6 +632,20 @@ tbody tr:hover{background:var(--inset)}
 .tg.on i{opacity:1}
 
 .acc-tbl td{padding:16px 18px}
+/* Team access with ten switches (15 Oct): grouped like the menu (Workspace,
+   Products), compact switches, and Person pinned while a narrower screen
+   scrolls the switches sideways. Scoped to .acc-tbl — no other table changes. */
+.acc-tbl td.acc-sw{padding:14px 6px;text-align:center}
+.acc-tbl .tg{padding:6px 10px;gap:6px}
+.tbl-wrap .acc-tbl thead th.acc-group{text-align:center;padding:10px 6px 2px;font-size:10.5px;font-weight:600;
+  letter-spacing:.09em;text-transform:uppercase;border-bottom:0}
+.tbl-wrap .acc-tbl thead th.acc-tool{text-align:center;padding:4px 6px 10px;white-space:normal;line-height:1.3;
+  min-width:84px;vertical-align:bottom}
+.tbl-wrap .acc-tbl thead th.acc-person{vertical-align:bottom;position:sticky;left:0;z-index:2}
+.acc-tbl .acc-first{border-left:1px solid var(--line-soft)}
+.acc-tbl th.acc-person,.acc-tbl td.acc-person{min-width:230px;width:270px}
+.acc-tbl td.acc-person{position:sticky;left:0;z-index:1;background:var(--surface);box-shadow:1px 0 0 var(--line-soft)}
+.acc-tbl tbody tr:hover td.acc-person{background:#FBFBFC}
 
 /* ===================== OVERVIEW — KPI band + chart ======================= */
 .ov-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);

@@ -4,6 +4,7 @@ import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { clientsChanged } from "@/lib/clients/after-change";
 import { editInboxRow, inboxRowsFor, InboxRowError } from "@/lib/clients/inbox-rows";
 import { viewerRoles } from "@/lib/identity/viewer-roles";
+import { sessionPageGrants } from "@/lib/workspace/switch-transition";
 
 /*
  * A client's Master Inbox rows (one per portal): names, spellings and
@@ -20,7 +21,8 @@ async function viewer(request: Request) {
   const s = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
   if (!s?.email) return null;
   const v = await viewerRoles(s.email);
-  return { email: s.email.toLowerCase(), admin: v.admin, accountManager: v.accountManager };
+  // The Clients page's own data: whoever has that page (its switch since 15 Oct; account managers before).
+  return { email: s.email.toLowerCase(), admin: v.admin, clientsPage: sessionPageGrants(s, v).includes("roster") };
 }
 
 const fail = (e: unknown) =>
@@ -29,7 +31,7 @@ const fail = (e: unknown) =>
 export async function GET(request: Request) {
   const who = await viewer(request);
   if (!who) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!who.admin && !who.accountManager) return NextResponse.json({ error: "Only admins and account managers can see this." }, { status: 403 });
+  if (!who.admin && !who.clientsPage) return NextResponse.json({ error: "Only admins and people with the Clients page can see this." }, { status: 403 });
   const clientId = new URL(request.url).searchParams.get("clientId") ?? "";
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   try {

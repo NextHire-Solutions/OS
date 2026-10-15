@@ -33,21 +33,36 @@ export const GRANT_BY_CONNECTOR: Record<ConnectorId, GrantId> = {
  * "portals" service to monitor. So two grants point at one connector, and the
  * way back (GRANT_BY_CONNECTOR) still answers `inbox` for that service.
  */
-export const SHARES_A_SERVICE: ReadonlySet<GrantId> = new Set<GrantId>(["portals"]);
+export const SHARES_A_SERVICE: ReadonlySet<GrantId> = new Set<GrantId>(["portals", "campaigns", "inboxes"]);
 
-export const CONNECTOR_BY_GRANT: Record<GrantId, ConnectorId> = {
+/*
+ * Grants for the workspace's own pages (15 Oct): Clients, Commissions and
+ * Performance are switched on per person like a product, but they are OS
+ * pages, not an upstream service — there is nothing to monitor, so no
+ * connector.
+ */
+export const NO_SERVICE: ReadonlySet<GrantId> = new Set<GrantId>(["roster", "commissions", "performance"]);
+
+export const CONNECTOR_BY_GRANT: Record<GrantId, ConnectorId | null> = {
   inbox: "master-inbox",
   portals: "master-inbox",
   clients: "client-health",
   analytics: "analytics",
   search: "scraper",
   onboarding: "onboarding",
+  // Campaign Management and Inboxes have their own switches since 15 Oct, and
+  // are still served by the Campaign Analytics service.
+  campaigns: "analytics",
+  inboxes: "analytics",
+  roster: null,
+  commissions: null,
+  performance: null,
 };
 
 export function toGrantId(id: ConnectorId): GrantId {
   return GRANT_BY_CONNECTOR[id];
 }
 
-export function toConnectorId(id: GrantId): ConnectorId {
+export function toConnectorId(id: GrantId): ConnectorId | null {
   return CONNECTOR_BY_GRANT[id];
 }

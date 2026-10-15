@@ -46,6 +46,12 @@ export interface NavProduct {
    * Management is a second section of the `analytics` tool). Defaults to `id`.
    */
   key?: string;
+  /**
+   * The switch that shows this section, when it is not `id` (15 Oct: Campaign
+   * Management and Inboxes have switches of their own while staying sections
+   * of the `analytics` tool). Must agree with tool-paths.ts — a test checks.
+   */
+  grant?: ToolId;
   label: string;
   /** Which env var holds this tool's base URL. */
   baseUrlEnv: string;
@@ -232,6 +238,7 @@ export const NAV: NavSection[] = [
         kind: "product",
         id: "analytics",
         key: "campaign-management",
+        grant: "campaigns",
         label: "Campaign Management",
         baseUrlEnv: "ANALYTICS_URL",
         children: [
@@ -253,6 +260,7 @@ export const NAV: NavSection[] = [
         kind: "product",
         id: "analytics",
         key: "inboxes",
+        grant: "inboxes",
         label: "Inboxes",
         baseUrlEnv: "ANALYTICS_URL",
         children: [
@@ -305,6 +313,8 @@ export interface Destination {
   group: string;
   /** Set for a tool pane. */
   tool?: ToolId;
+  /** The switch that opens it — the section's, else the tool's (15 Oct). */
+  grant?: ToolId;
   path?: string;
   /** Set for a workspace-owned screen. */
   route?: string;
@@ -334,6 +344,7 @@ export function destinations(): Destination[] {
           label: leaf.label,
           group: item.label,
           tool: item.id,
+          grant: item.grant ?? item.id,
           path: leaf.path,
           verified: leaf.verified ?? false,
         });
@@ -458,26 +469,40 @@ export function idForPath(pathname: string): string {
  * 30 Sep: Team access, Reply agent. 2 Oct: Consistency. 5 Oct (Eddy:
  * "teammates can still see performance"): Performance and the Assistant —
  * a teammate holding every tool is still a teammate. 9 Oct: Performance's
- * Billing Calendar sub-page too.
+ * Billing Calendar sub-page too. 15 Oct: Performance left this list for a
+ * switch of its own (below) — it stays admins-only until someone's is on.
  */
-export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consistency", "performance", "billing-calendar", "assistant"]);
+export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consistency", "assistant"]);
 
-/** A person's sales roles, for the pages below. Admins see everything regardless. */
+/** A person's sales roles. Admins see everything regardless. */
 export interface RoleFlags {
   accountManager?: boolean;
   salesperson?: boolean;
 }
 
 /*
- * Everyone else, by role (Eddy, 2 and 5 Oct):
- *   Clients      account managers — they run accounts on it
- *   Commissions  account managers and salespeople — it shows their own payouts
- *   Home and the tools they are granted on Team access: everyone
+ * Workspace pages behind a switch of their own on Team access (15 Oct, Eddy:
+ * "All products should be on settings and I can choose who sees what"). They
+ * followed a role (Clients: account managers; Commissions: account managers
+ * and salespeople) or the admin rule (Performance). Everyone who saw them
+ * that day had the switch turned on, so nobody lost a page.
  */
-export function canSeePage(id: string, admin: boolean, _grants: string[], _allTools: readonly string[], roles: RoleFlags = {}): boolean {
+export const PAGE_GRANTS: Readonly<Record<string, ToolId>> = {
+  roster: "roster",
+  commissions: "commissions",
+  performance: "performance",
+  "billing-calendar": "performance",
+};
+
+/*
+ * Admins: every page. Everyone else: Home, the pages and tools switched on
+ * for them on Team access — never the admin-only pages. Roles no longer open
+ * pages; Commissions still shows a non-admin only their own payouts.
+ */
+export function canSeePage(id: string, admin: boolean, grants: readonly string[], _allTools: readonly string[], _roles: RoleFlags = {}): boolean {
   if (admin) return true;
   if (ADMIN_ONLY_PAGES.has(id)) return false;
-  if (id === "roster") return !!roles.accountManager;
-  if (id === "commissions") return !!(roles.accountManager || roles.salesperson);
+  const grant = PAGE_GRANTS[id];
+  if (grant) return grants.includes(grant);
   return true;
 }

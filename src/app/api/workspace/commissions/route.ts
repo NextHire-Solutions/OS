@@ -6,6 +6,7 @@ import { getMasterClientList } from "@/lib/clients/master-list";
 import { osTable } from "@/lib/clients/os-db";
 import { loadCommissions } from "@/lib/commissions/load";
 import { isAdminUser } from "@/lib/identity/admin-db";
+import { pageGuard } from "@/lib/identity/viewer-roles";
 import { SALESPERSON_RATES } from "@/lib/commissions/schedule";
 import { SalespersonError, updateSalesperson } from "@/lib/identity/salespeople";
 
@@ -40,6 +41,9 @@ async function who(request: Request): Promise<{ email: string; admin: boolean } 
 export async function GET(request: Request) {
   const me = await who(request);
   if (!me) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // The page's own switch (15 Oct; it followed the account manager / salesperson roles before).
+  const refused = await pageGuard(request, "commissions");
+  if (refused) return refused;
   const url = new URL(request.url);
   try {
     return NextResponse.json(await loadCommissions({

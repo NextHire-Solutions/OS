@@ -4,6 +4,7 @@ import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { BillingControlError, readBilling, setBilling } from "@/lib/clients/billing-control";
 import { osTable } from "@/lib/clients/os-db";
 import { viewerRoles } from "@/lib/identity/viewer-roles";
+import { sessionPageGrants } from "@/lib/workspace/switch-transition";
 import { parseAmount, parseEvery } from "@/lib/clients/payment-link-plan";
 import { cancelLink, createLink, openLinks, PaymentLinkError, settle } from "@/lib/clients/payment-links";
 import { getAccountBilling, getStripeSnapshot } from "@/lib/clients/billing-account";
@@ -29,15 +30,20 @@ import { blockingEnabled, blockThreshold, openPortalBlocks } from "@/lib/clients
  */
 export const dynamic = "force-dynamic";
 
-/** Who may use billing: an admin, or an account manager — the people the Clients screen is for. */
+/*
+ * Who may use billing: an admin, or someone with the Clients page switched on
+ * — the people the Clients screen is for. (9 Oct it was account managers, who
+ * held that screen by role; 15 Oct the screen became a switch of its own, and
+ * billing follows the screen.)
+ */
 async function billingUser(request: Request): Promise<{ email: string; admin: boolean } | NextResponse> {
   const secret = process.env.AUTH_SECRET;
   if (!secret) return NextResponse.json({ error: "Not configured." }, { status: 503 });
   const s = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
   if (!s?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const v = await viewerRoles(s.email);
-  if (!v.admin && !v.accountManager) {
-    return NextResponse.json({ error: "Only admins and account managers can see or change billing." }, { status: 403 });
+  if (!v.admin && !sessionPageGrants(s, v).includes("roster")) {
+    return NextResponse.json({ error: "Only admins and people with the Clients page can see or change billing." }, { status: 403 });
   }
   return { email: s.email.toLowerCase(), admin: v.admin };
 }

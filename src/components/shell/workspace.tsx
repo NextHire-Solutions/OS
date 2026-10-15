@@ -119,7 +119,7 @@ export function Workspace({
   const all = useMemo(() => destinations(), []);
   const reachable = useMemo(
     // The command palette offers exactly what the menu does.
-    () => all.filter((d) => (!d.tool || grants.includes(d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS, liveRoles)),
+    () => all.filter((d) => (!d.tool || grants.includes(d.grant ?? d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS, liveRoles)),
     [all, grants, admin, liveRoles],
   );
 

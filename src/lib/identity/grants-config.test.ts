@@ -13,9 +13,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { buildGrantsConfig } from "./grants-config.ts";
-import type { ToolId } from "../bs-auth.ts";
+import { ALL_TOOLS, type ToolId } from "../bs-auth.ts";
 
-const ALL: ToolId[] = ["inbox", "portals", "clients", "analytics", "search", "onboarding"];
+// The real list, not a copy: a copy went stale when five switches were added (15 Oct).
+const ALL: ToolId[] = [...ALL_TOOLS];
 const row = (email: string, grants: ToolId[]) => ({ email, grants });
 
 /** A baseline where everyone already has everything, i.e. BS_GRANTS unset. */
@@ -82,7 +83,8 @@ test("warns when a tool would have no one at all", () => {
     [row("s@x.com", ALL), row("n@x.com", ALL)],
   );
   const orphaned = c.warnings.filter((w) => w.level === "danger" && /Nobody would have access/.test(w.message));
-  assert.equal(orphaned.length, 5, "portals, clients, analytics, search and onboarding all lose everyone");
+  assert.equal(orphaned.length, ALL_TOOLS.length - 1, "every tool but inbox loses everyone");
+  assert.ok(orphaned.some((w) => /performance/.test(w.message)), "the new switches are covered too");
 });
 
 test("warns when a listed person is dropped from the paste entirely", () => {

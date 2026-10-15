@@ -6,6 +6,7 @@ import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { osTable } from "@/lib/clients/os-db";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 import { canSeePage, type RoleFlags } from "@/lib/workspace/nav";
+import { sessionPageGrants } from "@/lib/workspace/switch-transition";
 
 import { isAdminUser } from "./admin-db";
 
@@ -46,6 +47,7 @@ export async function pageGuard(request: Request, pageId: string): Promise<NextR
   const session = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const v = await viewerRoles(session.email);
-  if (canSeePage(pageId, v.admin, session.grants, ALL_TOOLS, v)) return null;
+  // The switches as the page reads them, a pre-split session included (switch-transition.ts, 15 Oct).
+  if (canSeePage(pageId, v.admin, sessionPageGrants(session, v), ALL_TOOLS, v)) return null;
   return NextResponse.json({ error: "Forbidden", detail: "This page is not available for your role." }, { status: 403 });
 }

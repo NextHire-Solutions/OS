@@ -13,6 +13,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { EnvGrantStore } from "./store.ts";
+import { ALL_TOOLS } from "../bs-auth.ts";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -52,14 +53,15 @@ test("with BS_GRANTS entirely unset, listed operators get every tool", async () 
   const store = new EnvGrantStore(USERS, undefined);
   const sam = await store.findByEmail("sam@brokerstaffer.com");
 
-  assert.deepEqual(sam?.grants, ["inbox", "portals", "clients", "analytics", "search", "onboarding"]);
+  // Every tool there is — the switches added on 15 Oct included.
+  assert.deepEqual(sam?.grants, [...ALL_TOOLS]);
   assert.equal(store.describe().governed, false, "and it reports itself as ungoverned");
 });
 
 test("an empty BS_GRANTS string is treated as unset, not as 'nobody'", async () => {
   const store = new EnvGrantStore(USERS, "   \n  ");
   assert.equal(store.describe().governed, false);
-  assert.equal((await store.findByEmail("sam@brokerstaffer.com"))?.grants.length, 6);
+  assert.equal((await store.findByEmail("sam@brokerstaffer.com"))?.grants.length, ALL_TOOLS.length);
 });
 
 test("unknown tool names are dropped, not trusted", async () => {

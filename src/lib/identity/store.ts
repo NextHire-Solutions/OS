@@ -21,7 +21,6 @@ import { osTable } from "../clients/os-db.ts";
 import { indexGrantRows, coerceStoredTools } from "./grant-table.ts";
 import { indexUserRows, mergeUsers, type MergedUser, type UserRow } from "./user-table.ts";
 import { isAdmin } from "./admin.ts";
-import { withRoleGrants } from "./role-grants.ts";
 
 /*
  * An admin (ADMIN_EMAILS) holds every tool, always.
@@ -180,8 +179,7 @@ export class DbGrantStore implements GrantStore {
       const own = (await this.users())?.get(key);
       return withAdminGrants({
         ...base,
-        // Plus what their roles bring (role-grants.ts: an account manager has Client Portals).
-        grants: withRoleGrants(row ?? base.grants, { accountManager: own?.isAccountManager }),
+        grants: row ?? base.grants,
         source: "env" as const,
         mustChangePassword: false,
         ...(own ? { passwordHash: own.passwordHash, tokenVersion: own.tokenVersion } : {}),
@@ -203,8 +201,10 @@ export class DbGrantStore implements GrantStore {
       email: invited.email,
       passwordHash: invited.passwordHash,
       tokenVersion: invited.tokenVersion,
-      // Their grants row, plus what their roles bring (role-grants.ts).
-      grants: withRoleGrants(rows?.get(key) ?? [], { accountManager: invited.isAccountManager }),
+      // Exactly their switches on Team access. (14–15 Oct the Account manager
+      // role also brought Client Portals; since 15 Oct every page and product
+      // is a switch of its own, so roles bring nothing.)
+      grants: rows?.get(key) ?? [],
       isActive: true,
       source: "db" as const,
       mustChangePassword: invited.mustChangePassword,

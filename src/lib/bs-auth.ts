@@ -59,7 +59,10 @@
  */
 
 /** Tools a grant can be issued for. Keep in sync with the Command Center registry. */
-export type ToolId = "inbox" | "portals" | "clients" | "analytics" | "search" | "onboarding";
+export type ToolId =
+  | "inbox" | "portals" | "clients" | "analytics" | "search" | "onboarding"
+  // Their own switches on Team access since 15 Oct (Eddy: "all products should be on settings").
+  | "roster" | "commissions" | "performance" | "campaigns" | "inboxes";
 
 /*
  * Adding a tool here is backward compatible on purpose: `grants` is intersected
@@ -80,6 +83,22 @@ export const ALL_TOOLS: readonly ToolId[] = [
   "analytics",
   "search",
   "onboarding",
+  /*
+   * 15 Oct (Eddy: "All products should be on settings and I can choose who
+   * sees what"): every menu item that used to follow a role, an admin rule or
+   * another product's switch has its own. Appended, so tokens and the other
+   * apps (which drop ids they do not know) are unaffected.
+   *   roster       the Clients page (was: account managers)
+   *   commissions  Commissions (was: account managers and salespeople)
+   *   performance  Performance and its Billing Calendar (was: admins only)
+   *   campaigns    Campaign Management (was: the Campaign Analytics switch)
+   *   inboxes      Inboxes (was: the Campaign Analytics switch)
+   */
+  "roster",
+  "commissions",
+  "performance",
+  "campaigns",
+  "inboxes",
 ];
 
 export interface SsoSession {

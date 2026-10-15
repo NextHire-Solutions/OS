@@ -100,8 +100,22 @@ test("the grantable tools exclude the Database app", () => {
   // Onboarding is no longer offered (9 Oct — the section was removed).
   // Client Portals is its own switch since 13 Oct ("its own switch on team
   // access page") — beside Master Inbox, which it was a page of.
-  assert.deepEqual(ids, ["inbox", "portals", "clients", "analytics", "search"]);
+  // 15 Oct (Eddy: "All products should be on settings"): the Workspace pages
+  // first, then every product — Campaign Management and Inboxes no longer ride
+  // on Campaign Analytics.
+  assert.deepEqual(ids, ["roster", "commissions", "performance", "inbox", "portals", "clients", "analytics", "campaigns", "inboxes", "search"]);
   assert.equal(ids.includes("database" as never), false);
+});
+
+test("Team access groups the switches as the menu does: Workspace pages, then Products", () => {
+  assert.deepEqual(
+    GRANTABLE_TOOLS.map((t) => `${t.group}:${t.label}`),
+    [
+      "Workspace:Clients", "Workspace:Commissions", "Workspace:Performance",
+      "Products:Master Inbox", "Products:Client Portals", "Products:Client Health", "Products:Campaign Analytics",
+      "Products:Campaign Management", "Products:Inboxes", "Products:Agent Search",
+    ],
+  );
 });
 
 test("every grantable tool has a label and a description for the screen", () => {

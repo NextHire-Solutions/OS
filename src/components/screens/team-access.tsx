@@ -3,7 +3,6 @@
 import { ToolGlyph } from "@/components/shell/tool-glyph";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModalDialog } from "@/components/ui/modal-dialog";
-import { grantedByRole } from "@/lib/identity/role-grants";
 
 /*
  * Team access — who may open which tool.
@@ -32,6 +31,26 @@ interface ToolDescriptor {
   id: string;
   label: string;
   description: string;
+  /** The menu section it sits in (15 Oct); an older server sends none, which reads as Products. */
+  group?: "Workspace" | "Products";
+}
+
+const groupOf = (t: ToolDescriptor) => t.group ?? "Products";
+
+/** The switches' groups in order, each with how many columns it spans. */
+function toolGroups(tools: ToolDescriptor[]): { name: string; count: number }[] {
+  const out: { name: string; count: number }[] = [];
+  for (const t of tools) {
+    const last = out[out.length - 1];
+    if (last && last.name === groupOf(t)) last.count += 1;
+    else out.push({ name: groupOf(t), count: 1 });
+  }
+  return out;
+}
+
+/** True for the first switch of a group — it carries the group's dividing line. */
+function startsGroup(tools: ToolDescriptor[], i: number): boolean {
+  return i === 0 || groupOf(tools[i]) !== groupOf(tools[i - 1]);
 }
 
 interface TeamUser {
@@ -318,19 +337,26 @@ export function TeamAccessScreen() {
 
       <div className="tbl-wrap">
         <div className="tbl-scroll">
+          {/* Ten switches since 15 Oct: grouped as the menu is (Workspace, Products), with
+              Person pinned while the table scrolls sideways on a narrower screen. */}
           <table className="acc-tbl">
             <thead>
               <tr>
-                <th>Person</th>
-                {data.tools.map((t) => (
-                  <th key={t.id}>{t.label}</th>
+                <th rowSpan={2} className="acc-person">Person</th>
+                {toolGroups(data.tools).map((g) => (
+                  <th key={g.name} colSpan={g.count} className="acc-group acc-first" scope="colgroup">{g.name}</th>
+                ))}
+              </tr>
+              <tr>
+                {data.tools.map((t, i) => (
+                  <th key={t.id} className={`acc-tool${startsGroup(data.tools, i) ? " acc-first" : ""}`} title={t.description} scope="col">{t.label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {data.users.map((user) => (
                 <tr key={user.email}>
-                  <td>
+                  <td className="acc-person">
                     <div className="cname" style={{ opacity: user.isActive ? 1 : 0.55 }}>
                       {user.name ?? user.email.split("@")[0]}
                       {!user.isActive ? <span className="csince" style={{ marginLeft: 8 }}>deactivated</span> : null}
@@ -346,7 +372,8 @@ export function TeamAccessScreen() {
                       </div>
                     ) : null}
                     {user.source === "db" && !user.isSelf && data.capabilities.canInvite ? (
-                      <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                      // Wraps, so the pinned Person column stays narrow beside ten switches (15 Oct).
+                      <div style={{ display: "flex", flexWrap: "wrap", columnGap: 10, rowGap: 2, marginTop: 6 }}>
                         <button
                           type="button"
                           style={{ ...LINK_BUTTON, fontSize: 12.5 }}
@@ -397,24 +424,20 @@ export function TeamAccessScreen() {
                       </div>
                     ) : null}
                   </td>
-                  {data.tools.map((tool) => {
-                    // Client Portals comes with the Account manager role (role-grants.ts, 15 Oct).
-                    const viaRole = !user.isAdmin && grantedByRole(tool.id, { accountManager: user.accountManager });
-                    const locked = user.isAdmin || viaRole;
-                    const on = locked || (draft[user.email] ?? []).includes(tool.id);
+                  {data.tools.map((tool, i) => {
+                    const on = user.isAdmin || (draft[user.email] ?? []).includes(tool.id);
                     return (
-                      <td key={tool.id}>
-                        {/* An Owner holds every tool, always, and an account
-                            manager holds Client Portals — the switch is a
+                      <td key={tool.id} className={`acc-sw${startsGroup(data.tools, i) ? " acc-first" : ""}`}>
+                        {/* An Owner holds every tool, always — the switch is a
                             statement, not a control. */}
                         <button
                           className={`tg${on ? " on" : ""}`}
                           aria-pressed={on}
-                          aria-label={`${tool.label} for ${user.email}${user.isAdmin ? " (always on for an Owner)" : viaRole ? " (comes with the Account manager role)" : ""}`}
-                          disabled={locked}
-                          title={user.isAdmin ? "Owners always have every tool" : viaRole ? "Comes with the Account manager role" : undefined}
-                          style={locked ? { cursor: "default", opacity: 0.85 } : undefined}
-                          onClick={() => { if (!locked) toggle(user.email, tool.id); }}
+                          aria-label={`${tool.label} for ${user.email}${user.isAdmin ? " (always on for an Owner)" : ""}`}
+                          disabled={user.isAdmin}
+                          title={user.isAdmin ? "Owners always have every tool" : undefined}
+                          style={user.isAdmin ? { cursor: "default", opacity: 0.85 } : undefined}
+                          onClick={() => { if (!user.isAdmin) toggle(user.email, tool.id); }}
                         >
                           <i />
                           {on ? "On" : "Off"}
@@ -583,8 +606,8 @@ function InviteForm({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState("");
 
-  // An admin holds every tool, and an account manager Client Portals, so neither needs one switched on here.
-  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && (grants.length > 0 || roles.admin || roles.accountManager);
+  // An admin holds every tool, so needs none switched on here.
+  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && (grants.length > 0 || roles.admin);
 
   async function submit() {
     setBusy(true);
@@ -638,40 +661,43 @@ function InviteForm({
         </div>
 
         <div style={FIELD}>
-          <span style={LABEL}>Tools they can open {roles.admin ? "(an admin has every tool)" : "*"}</span>
-          <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-            {tools.map((t) => {
-              // Client Portals comes with the Account manager role (role-grants.ts).
-              const viaRole = !roles.admin && grantedByRole(t.id, { accountManager: roles.accountManager });
-              const on = viaRole || grants.includes(t.id);
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="switch"
-                  aria-checked={on}
-                  aria-disabled={viaRole}
-                  aria-label={`${t.label} for the new teammate${viaRole ? " (comes with the Account manager role)" : ""}`}
-                  onClick={() => { if (!viaRole) setGrants((g) => (on ? g.filter((x) => x !== t.id) : [...g, t.id])); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10, textAlign: "left",
-                    padding: "10px 12px", borderRadius: "var(--r-md)", cursor: viaRole ? "default" : "pointer", font: "inherit",
-                    border: `1px solid ${on ? "var(--blue)" : "var(--line)"}`,
-                    background: on ? "var(--blue-bg, var(--inset))" : "var(--surface)",
-                  }}
-                >
-                  <span className={`tg${on ? " on" : ""}`} aria-hidden style={{ pointerEvents: "none" }}>
-                    <i />
-                    {on ? "On" : "Off"}
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>{t.label}</span>
-                    <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{viaRole ? "Comes with the Account manager role." : t.description}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <span style={LABEL}>Pages and tools they can open {roles.admin ? "(an admin has every one)" : "*"}</span>
+          {/* Grouped as the menu is (15 Oct): Workspace pages, then Products. */}
+          {toolGroups(tools).map((g) => (
+            <div key={g.name} style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--muted)", marginTop: 4 }}>{g.name}</span>
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                {tools.filter((t) => groupOf(t) === g.name).map((t) => {
+                  const on = grants.includes(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={`${t.label} for the new teammate`}
+                      onClick={() => setGrants((cur) => (on ? cur.filter((x) => x !== t.id) : [...cur, t.id]))}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+                        padding: "10px 12px", borderRadius: "var(--r-md)", cursor: "pointer", font: "inherit",
+                        border: `1px solid ${on ? "var(--blue)" : "var(--line)"}`,
+                        background: on ? "var(--blue-bg, var(--inset))" : "var(--surface)",
+                      }}
+                    >
+                      <span className={`tg${on ? " on" : ""}`} aria-hidden style={{ pointerEvents: "none" }}>
+                        <i />
+                        {on ? "On" : "Off"}
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>{t.label}</span>
+                        <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{t.description}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
 
         {failed ? <div style={{ fontSize: 13, color: "var(--red)" }}>{failed}</div> : null}

@@ -48,6 +48,7 @@ import { CampaignDetailScreen } from "@/components/screens/analytics/campaign-de
 import { AnalyticsScheduleScreen } from "@/components/screens/analytics/schedule";
 import { AnalyticsClientsScreen } from "@/components/screens/analytics/clients";
 import { canSeePage, idForPath, products } from "@/lib/workspace/nav";
+import { preSplitPageGrants } from "@/lib/workspace/switch-transition";
 import { redirect } from "next/navigation";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 import { viewerRoles } from "@/lib/identity/viewer-roles";
@@ -256,7 +257,9 @@ export default async function WorkspacePage({
   const viewer = await viewerRoles(email);
   const admin = viewer.admin;
   const roles = { accountManager: viewer.accountManager, salesperson: viewer.salesperson };
-  if (!initialId.includes(":") && !canSeePage(initialId, admin, grants, ALL_TOOLS, roles)) redirect("/");
+  // A session signed before the 15 Oct switch split also has the pages its roles opened (switch-transition.ts).
+  const pageGrants = preSplitPageGrants(grants, requestHeaders.get("x-bs-pre-split") === "1", roles);
+  if (!initialId.includes(":") && !canSeePage(initialId, admin, pageGrants, ALL_TOOLS, roles)) redirect("/");
 
   /*
    * Admin → Reply agent edits the agents themselves (create, delete, model, API
@@ -303,7 +306,7 @@ export default async function WorkspacePage({
     <Workspace
       initialCollapsed={railCollapsed}
       initialId={initialId}
-      grants={grants}
+      grants={pageGrants}
       admin={admin}
       badges={railBadges}
       user={{ name: viewer.name ?? firstName, email }}

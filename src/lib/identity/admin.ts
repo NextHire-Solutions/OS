@@ -76,6 +76,8 @@ export interface ToolDescriptor {
   id: ToolId;
   label: string;
   description: string;
+  /** The menu section it sits in — Team access groups its switches by it. */
+  group: "Workspace" | "Products";
 }
 
 /*
@@ -85,13 +87,24 @@ export interface ToolDescriptor {
  * app. This is "what a person can be granted", which excludes it.
  */
 export const GRANTABLE_TOOLS: ToolDescriptor[] = [
-  { id: "inbox", label: "Master Inbox", description: "Unified sales inbox for cold outreach replies." },
+  /*
+   * Workspace pages, in menu order — their own switches since 15 Oct (they
+   * followed a role or the admin rule). An admin holds every switch, always.
+   * Commissions still shows a non-admin only their own payouts.
+   */
+  { id: "roster", label: "Clients", description: "The master client list and each client's record, billing included.", group: "Workspace" },
+  { id: "commissions", label: "Commissions", description: "Payouts. An admin sees everyone's; anyone else only their own.", group: "Workspace" },
+  { id: "performance", label: "Performance", description: "Revenue, subscriptions and the billing calendar, across every client.", group: "Workspace" },
+  // Products, in menu order.
+  { id: "inbox", label: "Master Inbox", description: "Unified sales inbox for cold outreach replies.", group: "Products" },
   // Its own switch since 13 Oct; it used to come with Master Inbox.
-  { id: "portals", label: "Client Portals", description: "The client portals: each one's link, on/off, SMS alerts and pipeline." },
-  { id: "clients", label: "Client Health", description: "Live client outreach health." },
-  // One grant, two menu sections since 9 Oct: Campaign Analytics and Campaign Management.
-  { id: "analytics", label: "Campaign Analytics & Management", description: "Campaign performance and attribution, and running campaigns." },
-  { id: "search", label: "Agent Search", description: "Sources agent data from Courted, Zillow and Realtor.com." },
+  { id: "portals", label: "Client Portals", description: "The client portals: each one's link, on/off, SMS alerts and pipeline.", group: "Products" },
+  { id: "clients", label: "Client Health", description: "Live client outreach health.", group: "Products" },
+  // Three switches since 15 Oct; until then one switch opened all three sections.
+  { id: "analytics", label: "Campaign Analytics", description: "Campaign performance, volume, infrastructure and attribution.", group: "Products" },
+  { id: "campaigns", label: "Campaign Management", description: "Running campaigns: sequences, launching, pausing, inboxes and schedules.", group: "Products" },
+  { id: "inboxes", label: "Inboxes", description: "Every sending inbox, with its limits, sends, replies and bounces.", group: "Products" },
+  { id: "search", label: "Agent Search", description: "Sources agent data from Courted, Zillow and Realtor.com.", group: "Products" },
   // Onboarding was removed on 9 Oct: no longer offered. The tool id stays valid
   // (existing grants and sessions carry it) and simply opens nothing.
 ];

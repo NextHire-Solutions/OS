@@ -211,7 +211,8 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
       <div className="rail-scroll">
         {NAV.map((section) => {
           const items = section.items.filter(
-            (item) => item.kind === "page" ? canSeePage(item.id, admin, grants, ALL_TOOLS, roles) : grants.includes(item.id),
+            // A section with a switch of its own (Campaign Management, Inboxes — 15 Oct) follows it.
+            (item) => item.kind === "page" ? canSeePage(item.id, admin, grants, ALL_TOOLS, roles) : grants.includes(item.grant ?? item.id),
           );
           // A section whose every item is ungranted renders nothing at all —
           // not an empty heading, which would advertise what someone cannot have.
