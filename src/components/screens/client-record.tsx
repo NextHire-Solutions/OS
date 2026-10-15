@@ -344,15 +344,19 @@ export function ClientRecord({
               <div>
                 <small>Introductions</small>
                 <b>{fmtNum(c.introductions) ?? "—"}</b>
-                <span>
-                  {c.lastIntroAt ? `last ${fmtDay(c.lastIntroAt)}` : "none yet"}
-                  {/* Introductions made but never in the portal (before the 15 Oct fix) — why this can exceed the portal's count. */}
-                  {c.introsNotInPortal ? (
-                    <span title="Introduced while the conversation had no client, so the portal never received it. Fixed for new introductions on 15 Oct; older ones were not added to the portal.">
-                      {" · "}{fmtNum(c.introsNotInPortal)} not in the portal
-                    </span>
-                  ) : null}
-                </span>
+                <span>{c.lastIntroAt ? `last ${fmtDay(c.lastIntroAt)}` : "none yet"}</span>
+                {/* The number above is what the portal shows. Introductions that never
+                    reached the portal (before the 15 Oct fix) are beside it, never in it. */}
+                {c.introsNotInPortal ? (
+                  <span className="rx-note" title="Introduced while the conversation had no client, so the portal never received it. Fixed for new introductions on 15 Oct; older ones were not added to the portal.">
+                    +{fmtNum(c.introsNotInPortal)} not in the portal
+                  </span>
+                ) : null}
+                {c.introsClientOwn ? (
+                  <span className="rx-note" title="Candidates the client added to their own portal. The portal counts them with its candidates; they are not BrokerStaffer introductions.">
+                    +{fmtNum(c.introsClientOwn)} added by the client
+                  </span>
+                ) : null}
               </div>
               <div>
                 <small>28-day period</small>

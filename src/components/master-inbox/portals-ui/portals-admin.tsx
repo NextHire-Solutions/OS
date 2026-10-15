@@ -158,6 +158,8 @@ export function PortalsAdmin({
       : rows.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()));
 
   const totalIntros = rows.reduce((n, r) => n + r.intro_count, 0);
+  // Introductions that never reached a portal (labelled before the conversation had a client; 15 Oct).
+  const notInPortals = rows.reduce((n, r) => n + (r.not_in_portal ?? 0), 0);
   const livePortals = rows.filter((r) => r.portal_enabled && r.portal_token).length;
   const withIntros = rows.filter((r) => r.intro_count > 0).length;
 
@@ -238,9 +240,9 @@ export function PortalsAdmin({
           />
           <SummaryCard
             icon={Sparkles}
-            label="Total introductions"
+            label="In the portals"
             value={totalIntros}
-            hint="across all clients"
+            hint={notInPortals ? `+${notInPortals.toLocaleString()} introduced but not in a portal` : "across all clients"}
             accent
           />
         </div>
@@ -611,6 +613,11 @@ function PortalRow({
       <td className="text-center">
         <span
           data-portal-intros
+          title={
+            row.not_in_portal
+              ? `${row.intro_count} in the portal, as the client sees it. ${row.not_in_portal} more introduced but never reached the portal (labelled before the conversation had a client; fixed for new ones on 15 Oct).`
+              : `${row.intro_count} in the portal, as the client sees it.`
+          }
           className={cn(
             "inline-flex h-[26px] min-w-[34px] items-center justify-center rounded-lg px-2.5 text-[13px] font-semibold tabular-nums",
             row.intro_count > 0

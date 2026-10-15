@@ -37,7 +37,10 @@ export interface PortalClientRow {
   portal_enabled: boolean;
   /** SMS alerts on for this client (the team_sms_notifications flag). */
   sms_alerts: boolean;
+  /** What the portal itself shows: "N of N candidates" (15 Oct — the list must match the portal). */
   intro_count: number;
+  /** Introductions made for this portal that never reached it (before Master Inbox 0078). */
+  not_in_portal?: number;
   last_intro_at: string | null;
   /** The client's lifecycle status from the master record (§11). */
   status: string | null;
@@ -89,7 +92,8 @@ export async function PortalsAdminScreen({ admin: isAdmin = false }: { admin?: b
         { feature_flags: c.feature_flags as Record<string, unknown> | null },
         TEAM_SMS_FLAG,
       ),
-      intro_count: s?.count ?? 0,
+      intro_count: s?.candidates ?? s?.count ?? 0,
+      not_in_portal: s?.notInPortal ?? 0,
       last_intro_at: s?.lastAt ?? null,
       status: owner?.status ?? null,
       client_id: owner?.id ?? null,
