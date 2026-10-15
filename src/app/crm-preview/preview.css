@@ -1,0 +1,115 @@
+/*
+ * The preview's own pieces, around the design (crm-preview.css, generated):
+ * the bar that says what this page is, the client picker, and the few places
+ * the mockup's CSS needs a real data set to work. Classes are cpv- so they
+ * meet neither the design's (crx-) nor the OS's.
+ */
+
+.cpv-shell {
+  --cpv-ink: #1f2124;
+  --cpv-sub: #6b7280;
+  --cpv-line: #ebedf0;
+  --cpv-blue: #3e6bd1;
+  font-family: var(--crx-font), "Inter Tight", system-ui, sans-serif;
+  color: var(--cpv-ink);
+  background: #f7f8fa;
+}
+
+/* ------------------------------------------------------------ the bar --- */
+.cpv-bar {
+  position: sticky; top: 0; z-index: 9;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  min-height: 40px; padding: 6px 16px; box-sizing: border-box;
+  background: #1f2124; color: #e9ebef; font-size: 12.5px;
+}
+.cpv-bar b { color: #fff; font-weight: 600; }
+.cpv-bar .cpv-tag {
+  height: 20px; padding: 0 8px; border-radius: 99px; display: inline-flex; align-items: center;
+  background: #3e6bd1; color: #fff; font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+.cpv-bar .cpv-note { color: #a9afba; }
+.cpv-bar .cpv-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.cpv-bar select {
+  height: 26px; max-width: 260px; padding: 0 8px; border-radius: 6px; border: 1px solid #3d4048;
+  background: #2a2c31; color: #fff; font: inherit; font-size: 12.5px;
+}
+.cpv-bar a { color: #c9d6f5; text-decoration: none; }
+.cpv-bar a:hover { color: #fff; }
+.cpv-bar :focus-visible { outline: 2px solid #8fb0f0; outline-offset: 2px; }
+
+/* The design fills the window; under the bar it fills what is left. */
+.cpv-shell .crx-app { min-height: calc(100vh - 40px); }
+
+/*
+ * The mockup's board clips at four columns (overflow: hidden) because its
+ * sample shows four. A real pipeline has five or six forward stages, so the
+ * board scrolls sideways instead of hiding Interview and Hired — and is held
+ * to the window's height with each column scrolling inside, so that sideways
+ * scrollbar is on screen rather than under a hundred cards. (The live
+ * portal's board does the same for its Demo layout.)
+ */
+.cpv-shell .crx-board {
+  overflow-x: auto; overflow-y: hidden; padding-bottom: 6px;
+  height: calc(100vh - 96px); min-height: 420px;
+}
+.cpv-shell .crx-col { min-height: 0; overflow-y: auto; }
+.cpv-shell .crx-colh { position: sticky; top: 0; z-index: 1; background: #f1f3f6; }
+
+/* A picked chip. The mockup has no selected state; this uses its own "set" blue. */
+.cpv-shell .crx-chip { cursor: pointer; }
+.cpv-shell .crx-chip.cpv-on { background: #eef2fa; border-color: #c9d6f2; color: #2f55a8; }
+.cpv-shell .crx-chip.cpv-on b { color: #2f55a8; }
+
+/* Read-only: what would change something is shown, not usable. */
+.cpv-shell [aria-disabled="true"] { cursor: default; }
+.cpv-shell .crx-card.crx-ms[aria-disabled="true"] { opacity: 0.6; }
+
+/*
+ * Board cards open the agent's panel, so they are buttons here (links in the
+ * mockup); these make a button draw as the design's card.
+ */
+.cpv-shell button.crx-kc { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.cpv-shell button.crx-kc .crx-co { display: block; }
+.cpv-shell button.crx-kc .cpv-cardtag { display: block; margin-top: 8px; }
+.cpv-shell button.crx-kc:hover { border-color: #d9e1f2; }
+.cpv-shell .crx-kc:focus-visible,
+.cpv-shell .crx-nmc a:focus-visible,
+.cpv-shell .crx-chip:focus-visible { outline: 2px solid var(--cpv-blue); outline-offset: 2px; }
+
+/* The scrims are close buttons. */
+.cpv-shell button.crx-dimx,
+.cpv-shell button.crx-ov { border: 0; padding: 0; margin: 0; cursor: default; }
+
+/*
+ * The list pages' row actions are a table cell (<td class="acts">). Their own
+ * stylesheet never made `.acts` a flex box; the board's does (for its inline
+ * action groups), and merged, it pulled the cell out of the row. A cell again.
+ */
+.cpv-shell td.crx-acts { display: table-cell; white-space: nowrap; }
+
+/* A long list of the lead's details scrolls inside the panel. */
+.cpv-shell .crx-panel { overflow-y: auto; }
+
+/* An email body, as text: keep its line breaks, wrap long links. */
+.cpv-shell .cpv-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; line-height: 1.55; }
+.cpv-shell .cpv-muted { color: var(--cpv-sub); }
+.cpv-shell .cpv-more { display: flex; justify-content: center; padding: 10px; }
+
+/* ----------------------------------------------------------- the picker --- */
+.cpv-pick { max-width: 880px; margin: 0 auto; padding: 40px 16px 64px; }
+.cpv-pick h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; text-wrap: balance; }
+.cpv-pick p { margin: 0 0 22px; max-width: 62ch; color: var(--cpv-sub); line-height: 1.55; font-size: 13.5px; }
+.cpv-pick .cpv-warn { margin-bottom: 18px; padding: 10px 14px; border-radius: 8px; background: #fff5e6; color: #7a4a00; font-size: 13px; }
+.cpv-pick ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.cpv-pick li a {
+  display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px; box-sizing: border-box;
+  border: 1px solid var(--cpv-line); border-radius: 9px; background: #fff; color: var(--cpv-ink);
+  text-decoration: none; font-size: 13.5px;
+}
+.cpv-pick li a:hover { border-color: #c9d6f2; background: #f5f7fc; }
+.cpv-pick li a:focus-visible { outline: 2px solid var(--cpv-blue); outline-offset: 2px; }
+.cpv-pick li a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cpv-pick .cpv-av {
+  flex: 0 0 26px; height: 26px; border-radius: 99px; background: #eef2fa; color: #2f55a8;
+  display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600;
+}

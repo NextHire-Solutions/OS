@@ -290,6 +290,54 @@ Commit `d50aa4f`, deployed. Verified: 2,025 tests, 18/18 mutations caught,
 38/38 in Chrome on a local build (three widths, seven access profiles, a
 pre-deploy session), 41/41 on production.
 
+### 16 October: the client's portal redesign, as an Owner-only preview
+
+The client sent a redesign of the client portal ("BrokerStaffer CRM": 56
+mockup screens, README, tokens). The user: "we do not change our current
+client portals. first we need to see and experience this for few clients",
+then: "make sure clients cannot see this and client portals do not get
+broken … not all team should see this … do not add this to product switch …
+only we should be able to see this".
+
+**`/crm-preview`** draws the design on any client's real data — pick a client,
+then Pipeline (board and list, stage and tag chips, the five time ranges,
+search, the agent panel, the read-only conversation, notes), My Agents, DNC
+List, Team and Integrations. Reports, Campaigns, Market, Prospects and Help
+say they are not in the preview yet.
+
+| Rule | Where |
+|---|---|
+| **Owners only** (`ADMIN_EMAILS`) — not marked admins, not account managers. Anyone else gets Not found. Fails closed when `ADMIN_EMAILS` is unset | `lib/crm-preview/access.ts`, `app/crm-preview/page.tsx` |
+| Not a product: no menu item, no Team access switch, no grant, nothing in the proxy | test `access.test.ts` |
+| **Read-only**: reads what the portal reads (`portal-data.ts`); every add/edit/delete/save is drawn disabled; the browser's one request is the portal's own GET conversation feed. A test fails on any write call in the preview's files | `access.test.ts` |
+| The live portal (portal.brokerstaffer.com, the standalone app) is untouched — no code, URL, stage or lead changed | — |
+| The Follow Up Boss key never reaches the browser, only whether one is saved | `page.tsx` |
+| The design's CSS is generated from the handoff with every class prefixed `crx-`, so it and the OS's `.app`/`.rail`/`.card` never meet. Re-run on a new handoff: `node scripts/crm-preview-css.mjs <folder>` | `app/crm-preview/crm-preview.css` (generated), `preview.css` (the preview's own) |
+
+How the design is read on today's data (`lib/crm-preview/model.ts`): the
+forward stages (the client's own names, Interview Scheduled only where the
+client has it) are columns; **Nurture, Not a Fit and No Response are tags**,
+as the design asks — today they are stages, so those agents have no forward
+stage and sit outside the columns until their chip is picked. Nothing is
+moved. Three deliberate departures from the mockup, each to fit real data: the
+board scrolls sideways to every column (the mockup clips at four) and holds
+to the window's height; a picked chip is highlighted; an email is shown as
+text from its HTML part (this mailbox's text part loses its line breaks),
+without the quoted history.
+
+Eddy's answers to the six questions (16 Oct): stages → tags **yes**, and he
+asked which stage those agents are left at — the furthest forward stage on
+record (`pipeline_outcome_events`, kept since 3 Aug): of 971 agents in the
+three today, 90 went past Introduction; the other 881 have only Introduction
+on record. Pipeline entry: a **per-client switch** — existing clients keep
+Introduction, new clients enter at Interested (he wrote "via PostScan" —
+read as Postmark, not yet confirmed). Text alerts:
+yes, where enabled. Prospects: added to live campaigns automatically, and DNC
+and My Agents removed from campaigns (My Agents never has been — a change to
+live campaigns). Billing: clients can update, cancel and see paid invoices
+(today a paused or churned client is paused in Stripe, never cancelled).
+None of this is built yet; the preview shows the design only.
+
 ## 0.2 Interested leads → Slack, 14 October
 
 **State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway
