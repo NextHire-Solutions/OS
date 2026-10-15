@@ -250,6 +250,41 @@ and are shown as "not in the portal". Known gap: an entry created late this way
 sends no SMS / Bison / Follow Up Boss notification. OS `0df2a54`, standalone
 `3fb860e`, both deployed; 0078 is run by hand in the Master Inbox database.
 
+### Also 15 October: every page and product has its own switch on Team access
+
+Eddy: "All products should be on settings and I can choose who sees what."
+Team access now has ten switches, grouped as the menu is — Workspace:
+**Clients, Commissions, Performance**; Products: Master Inbox, Client Portals,
+Client Health, **Campaign Analytics, Campaign Management, Inboxes**, Agent
+Search. Before, Clients and Commissions followed the Account manager /
+Salesperson roles, Performance was admins-only, and one switch opened all of
+Campaign Analytics, Campaign Management and Inboxes. Roles no longer open
+pages (Commissions still shows a non-admin only their own payouts). Team
+access itself, the Assistant, Consistency, Reply agent and the Claude
+connector stay admins-only. The 14 Oct "account managers get Client Portals"
+rule is gone; Client Portals is an ordinary switch.
+
+- New tool ids appended to `ALL_TOOLS` (`roster`, `commissions`,
+  `performance`, `campaigns`, `inboxes`); every URL is unchanged.
+- The three analytics sections are still one tool: the proxy picks the switch
+  by section (`tool-paths.ts grantsForRequest`, any-of). Inboxes' data needs
+  Inboxes; reading campaign data needs Campaign Analytics or Campaign
+  Management; **changing a campaign needs Campaign Management**; Campaign
+  Analytics' own settings need Campaign Analytics. A test fails when a new
+  write route is added without a decided switch.
+- Clients, Commissions and Performance are decided by `nav.ts canSeePage`
+  (page and page guards). Clients' billing pause/resume and inbox rows follow
+  the Clients switch.
+- `switch-transition.ts`: sessions signed before 2026-10-15 17:00 UTC were
+  read as they were meant until they renewed, so nobody at work was sent Home
+  by the deploy. Inert after 17:30 UTC; can be deleted in a later clean-up.
+- Data: Amy and Gabriel had Clients, Commissions, Client Portals, Campaign
+  Management and Inboxes switched on before the deploy — nobody lost a page.
+
+Commit `d50aa4f`, deployed. Verified: 2,025 tests, 18/18 mutations caught,
+38/38 in Chrome on a local build (three widths, seven access profiles, a
+pre-deploy session), 41/41 on production.
+
 ## 0.2 Interested leads → Slack, 14 October
 
 **State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway
