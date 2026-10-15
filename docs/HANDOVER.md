@@ -228,6 +228,28 @@ verified on production through each account manager's real session refresh
 (Amy, Gabriel, and Eddy as admin: Client Portals granted, `/portals` 200), and
 in Chrome on a local build (10/10).
 
+### Also 15 October: one correct introductions count (and migration 0078)
+
+Asked by the user: 54 Realty showed 34 introductions in the OS and 50 in its
+portal. Both were wrong in a different way — the true figure is 53:
+- the OS counted only conversations labelled Introduction, so it missed the
+  portal's introductions that have no Master Inbox conversation (history
+  loaded when the portals opened — 19 of 54 Realty's, 413 overall);
+- 123 labelled introductions (27 portals, May–Sept 2026) never reached the
+  portal: the label trigger skips a conversation with no client and nothing
+  revisited it when the client was set.
+
+Fixed: `src/lib/tools/master-inbox/portals/intro-counts.ts` (and the same file
+in the standalone app) counts our portal entries (not the client's own "Client
+Entry" candidates) plus labelled conversations with no entry; the client
+record says "N not in the portal". Every introductions figure in both apps uses
+it. **Migration 0078** (standalone repo) creates the portal entry when a
+labelled conversation gets its client later — for introductions from 15 Oct
+on. **No backfill** (user decision): the 123 old ones stay out of the portals
+and are shown as "not in the portal". Known gap: an entry created late this way
+sends no SMS / Bison / Follow Up Boss notification. OS `0df2a54`, standalone
+`3fb860e`, both deployed; 0078 is run by hand in the Master Inbox database.
+
 ## 0.2 Interested leads → Slack, 14 October
 
 **State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway
