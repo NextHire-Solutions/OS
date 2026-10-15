@@ -11,8 +11,8 @@ import { isPreSplitSession, preSplitPageGrants, preSplitToolGrants, sessionPageG
 const BEFORE = SWITCH_SPLIT_AT - 60_000;
 const AFTER = SWITCH_SPLIT_AT + 60_000;
 
-test("the cut-off is after the deploy (15 Oct 2026, 17:00 UTC) and splits sessions at it", () => {
-  assert.equal(new Date(SWITCH_SPLIT_AT).toISOString(), "2026-10-15T17:00:00.000Z");
+test("the cut-off (15 Oct 2026, 16:00 UTC — after every pre-deploy session expired) splits sessions at it", () => {
+  assert.equal(new Date(SWITCH_SPLIT_AT).toISOString(), "2026-10-15T16:00:00.000Z");
   assert.equal(isPreSplitSession(BEFORE), true);
   assert.equal(isPreSplitSession(AFTER), false);
   assert.equal(isPreSplitSession(Number.NaN), false);

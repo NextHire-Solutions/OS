@@ -22,7 +22,13 @@ import { ALL_TOOLS, type ToolId } from "../bs-auth.ts";
  * person had that day (everyone who saw those pages had their switches turned
  * on at the deploy).
  */
-export const SWITCH_SPLIT_AT = Date.parse("2026-10-15T17:00:00Z");
+/*
+ * 16:00, not the 17:00 first shipped (d50aa4f): Eddy changed switches at 16:21
+ * and wanted them to apply at once, and every session signed before the 15:57
+ * deploy had already expired (30-minute life). From 16:00 a session is read
+ * exactly as its switches say.
+ */
+export const SWITCH_SPLIT_AT = Date.parse("2026-10-15T16:00:00Z");
 
 export function isPreSplitSession(iat: number): boolean {
   return Number.isFinite(iat) && iat < SWITCH_SPLIT_AT;
