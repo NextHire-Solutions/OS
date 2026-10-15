@@ -187,4 +187,31 @@ export async function register() {
   const sweepInterestedSafely = () => { sweepInterested().catch((e) => console.error("[interested-alerts] failed:", e instanceof Error ? e.message : e)); };
   setTimeout(sweepInterestedSafely, 30_000).unref?.();
   setInterval(sweepInterestedSafely, 60_000).unref?.();
+
+  /*
+   * Introductions that reached their portal late (15 Oct): Master Inbox
+   * migration 0078 creates the portal entry when a labelled conversation gets
+   * its client afterwards; this sends the three introduction notices once for
+   * each — see lib/tools/master-inbox/late-introductions.ts. Nothing before
+   * 15 Oct, nothing until migration 0034 has run. Railway only.
+   * OS_LATE_INTRO_NOTICES=0 switches it off.
+   */
+  let lateRunning = false;
+  const sweepLate = async () => {
+    if (lateRunning) return;
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    lateRunning = true;
+    try {
+      const { sweepLateIntroductions } = await import("./lib/tools/master-inbox/late-introductions");
+      const r = await sweepLateIntroductions();
+      if (r.seen || r.failed.length) {
+        console.log(`[late-introductions] ${r.notified} notified of ${r.seen}${r.off ? ` · off: ${r.off}` : ""}${r.failed.length ? ` · ${r.failed.join(" | ")}` : ""}`);
+      }
+    } finally {
+      lateRunning = false;
+    }
+  };
+  const sweepLateSafely = () => { sweepLate().catch((e) => console.error("[late-introductions] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(sweepLateSafely, 40_000).unref?.();
+  setInterval(sweepLateSafely, 60_000).unref?.();
 }

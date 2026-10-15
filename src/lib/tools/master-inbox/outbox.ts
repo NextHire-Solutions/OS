@@ -45,7 +45,7 @@ import { deliverInterestedAlert } from "./interested-alerts";
  * that the drain RETRIES a failed one — without a case below, the drain would
  * have marked it done without posting.
  */
-export type SideEffectKind = "n8n_introduction" | "slack_introduction" | "fub_push" | "slack_interested";
+export type SideEffectKind = "n8n_introduction" | "slack_introduction" | "fub_push" | "slack_interested" | "late_introduction";
 
 /** The three side effects of an INTRODUCTION — what enqueueIntroduction queues. */
 const KINDS: SideEffectKind[] = ["n8n_introduction", "slack_introduction", "fub_push"];
@@ -123,6 +123,14 @@ async function attempt(kind: SideEffectKind, threadId: string): Promise<void> {
     case "slack_interested":
       // Throws when Slack refuses, so markFailed counts the attempt.
       await deliverInterestedAlert(threadId);
+      return;
+    case "late_introduction":
+      // Only reached if a sweep claimed it and the process died before marking
+      // it done (late-introductions.ts sends and marks done in one pass). The
+      // three notices, as the sweep sends them.
+      await notifyIntroductionForThreads([threadId], "inbox_label");
+      await notifyPortalIntroductionForThreads([threadId]);
+      await pushIntroPipelineEntriesForThreadsToFub([threadId]);
       return;
   }
 }
