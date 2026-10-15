@@ -27,6 +27,35 @@ import {
 } from "./tools-phase4.ts";
 import { agentDatabaseTool, clientReplyRatesTool, sendingVolumeTool } from "./tools-phase5.ts";
 import { mlsCoverageTool, outcomesTool, remindersTool } from "./tools-phase6.ts";
+import { agentPlacesTool, onboardingRecordsTool, searchAgentsTool, type SearchAgentsArgs } from "./tools-phase10.ts";
+
+/** search_agents' arguments, typed from what the model sent — anything of the wrong type is dropped. */
+export function searchAgentsArgs(a: Record<string, unknown>): SearchAgentsArgs {
+  const str = (k: string) => (typeof a[k] === "string" && (a[k] as string).trim() ? (a[k] as string) : undefined);
+  const num = (k: string) => (typeof a[k] === "number" && Number.isFinite(a[k]) ? (a[k] as number) : undefined);
+  const bool = (k: string) => (typeof a[k] === "boolean" ? (a[k] as boolean) : undefined);
+  const placeType = str("place_type");
+  return {
+    place: str("place"),
+    place_type: placeType && ["city", "county", "state", "zip"].includes(placeType) ? (placeType as SearchAgentsArgs["place_type"]) : undefined,
+    located_by: str("located_by"),
+    mls: str("mls"),
+    brokerage: str("brokerage"),
+    office: str("office"),
+    min_sales_volume: num("min_sales_volume"),
+    max_sales_volume: num("max_sales_volume"),
+    min_transactions: num("min_transactions"),
+    max_transactions: num("max_transactions"),
+    has_email: bool("has_email"),
+    contacted: bool("contacted"),
+    replied: bool("replied"),
+    client: str("client"),
+    count: a.count === "offices" ? "offices" : "agents",
+    list: num("list"),
+    sort_by: str("sort_by"),
+    group_by: a.group_by === "brokerage" ? "brokerage" : undefined,
+  };
+}
 
 /*
  * The tool-calling loop.
@@ -282,7 +311,8 @@ export const TOOL_SCHEMA = [
       name: "agent_database",
       description:
         "The scraped agent database: how many agents and offices we hold, how many MLS areas, and the largest areas by " +
-        "member count. This is every agent ever scraped, not a per-client figure.",
+        "member count. This is every agent ever scraped, not a per-client figure. For agents in a place or matching " +
+        "filters ('how many agents in Dallas') use search_agents.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -546,8 +576,80 @@ export const TOOL_SCHEMA = [
     function: {
       name: "find_agent",
       description:
-        "Look an agent up in the scraped agent database (Agent Search) by name, email or licence number: brokerage/office, location, sales volume, transactions, experience.",
+        "Look an agent up in the scraped agent database (Agent Search) by name, email or licence number: brokerage/office, location, sales volume, transactions, experience, and the campaigns they are a lead in (whether they replied or bounced) — answers 'have we emailed her'.",
       parameters: {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "search_agents",
+      description:
+        "Count real-estate agents (or their offices) in the agent database for a place and filters — 'how many agents are in Dallas', " +
+        "'agents in Dallas County doing $10M+', 'Keller Williams agents in Texas we have never emailed', 'agents in NTREIS', " +
+        "'top 10 agents in Austin by volume', 'biggest brokerages in Miami'. The same count and sales volume the Database app's Agent Search " +
+        "screen shows. A place matches an agent's office, home OR most-transacted location (each is also counted separately); without a state, " +
+        "the largest place of that name is used and the others are listed — say which one was counted. Every argument is optional; none = the whole database.",
+      parameters: {
+        type: "object",
+        properties: {
+          place: { type: "string", description: "City ('Dallas', 'Dallas, TX'), county ('Dallas County, TX'), state ('TX', 'Texas') or 5-digit zip." },
+          place_type: { type: "string", enum: ["city", "county", "state", "zip"], description: "Only when the place is ambiguous ('New York' the city, not the state)." },
+          located_by: { type: "string", enum: ["any", "office", "home", "most_transacted"], description: "Which of the agent's locations must be in the place. Default any." },
+          mls: { type: "string", description: "MLS code or name, e.g. 'NTREIS'." },
+          brokerage: { type: "string", description: "Brokerage brand, e.g. 'Keller Williams', 'Compass'." },
+          office: { type: "string", description: "One office by name." },
+          min_sales_volume: { type: "number", description: "Dollars, last 12 months." },
+          max_sales_volume: { type: "number", description: "Dollars, last 12 months." },
+          min_transactions: { type: "number" },
+          max_transactions: { type: "number" },
+          has_email: { type: "boolean" },
+          contacted: { type: "boolean", description: "true = already a lead in one of our campaigns; false = never put in one." },
+          replied: { type: "boolean", description: "true = has replied to us; false = never replied." },
+          client: { type: "string", description: "Only agents in this client's lists (the agents scraped, enriched or sent for that client)." },
+          count: { type: "string", enum: ["agents", "offices"], description: "Default agents." },
+          list: { type: "number", description: "Also list the top N (max 25), no contact details." },
+          sort_by: { type: "string", enum: ["sales_volume", "closed_transactions", "units", "approx_gci", "avg_sale_price", "agent_count"], description: "For the list. Default sales_volume (offices: agent_count)." },
+          group_by: { type: "string", enum: ["brokerage"], description: "Also the top brokerages within the filters, with their agent counts." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "agent_places",
+      description:
+        "Rank places by how many agents (or offices) the agent database holds: the cities, counties or zips of one state, the states, " +
+        "or brokerages nationally — 'which cities in Texas have the most agents', 'biggest states', 'largest brokerages'. From the Database app's " +
+        "place index (refresh time returned); for one place's exact count use search_agents.",
+      parameters: {
+        type: "object",
+        properties: {
+          by: { type: "string", enum: ["city", "county", "zip", "state", "brokerage"], description: "Default city." },
+          state: { type: "string", description: "Limit cities, counties or zips to one state." },
+          count: { type: "string", enum: ["agents", "offices"], description: "Default agents." },
+          limit: { type: "number", description: "1-50, default 15." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "onboarding_records",
+      description:
+        "What the onboarding app records per client (it shares the agent database): its onboarding status (new, assigned, campaign_launched), " +
+        "stage (Sign Up … Launched), copy status, sender name, salesperson and account manager as it holds them, and the introductions it logged. " +
+        "One client, or all with counts by status and stage. The OS has had no Onboarding screen since 9 Oct; the master client record (client_record) " +
+        "stays the authority for status, people and billing.",
+      parameters: {
+        type: "object",
+        properties: {
+          client: { type: "string" },
+          status: { type: "string", description: "Only records with this onboarding status or stage." },
+        },
+      },
     },
   },
   {
@@ -599,9 +701,9 @@ export const TOOL_SCHEMA = [
 
 export const SYSTEM_PROMPT = `You answer questions about a lead-generation business from its own data.
 
-There are six products: Master Inbox (email threads, the reply agent), Client Portals (each client's portal: its link, on/off, SMS alerts and pipeline), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
+There are six products: Master Inbox (email threads, the reply agent), Client Portals (each client's portal: its link, on/off, SMS alerts and pipeline), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents into the agent database — about 1.2 million agents, the Database app; the onboarding app and the scraper share that database). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
 
-Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), the agent database (find_agent), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
+Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), the agent database (find_agent for one agent and the campaigns they are in; search_agents for how many agents or offices are in a place or match filters — sales volume, brokerage, MLS, emailed or not — with top agents and top brokerages; agent_places to rank cities, counties, zips, states or brokerages), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
 
 A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
@@ -637,7 +739,8 @@ REMOVED FROM THE OS ON 9 OCT 2026 \u2014 say "removed on 9 Oct 2026", never "not
 CAMPAIGN LEADS SINCE 13 OCT 2026 (Campaign Management \u2192 Campaigns \u2192 a campaign \u2192 Leads, EmailBison campaigns): the search box also matches the lead's office city, and a Location filter picks cities from that campaign's own leads by office city, home city or most transacted city (the Top city column) \u2014 several cities in one field are alternatives, and fields combine. Home city is not uploaded with the lead lists yet, so that field has nothing to choose.
 THE 14 OCT 2026 RELEASE (OS feedback batch) \u2014 all real, never deny them; you can only READ, so say where each is done. HOME: six tiles for the last 7 days (emails sent, replies, reply rate per email, reply rate per contact, interested replies, interested reply rate) \u2014 Interested is counted from Master Inbox labels (Interested or Introduction), and Median Reply and the client counts are no longer on Home. PERFORMANCE \u203a Overview: a date filter (This month, Last 30, Last 90, Year to date, All time, Custom) with a comparison; the Active and Paused subscription tiles open the list of subscriptions; the 'not tied to a client' figure opens the Stripe customers behind it; a month in Client movement expands to the clients added, paused and churned. COMMISSIONS: with one salesperson in view, a chart of clients closed per month and a Month column (which month of service each client is in). CAMPAIGN ANALYTICS: quick ranges Today, Yesterday and This week (Monday to today); a Tags filter (EmailBison campaign tags; Instantly campaigns carry none); Reply Rate is per email sent with the per-contact rate under it; Positive, Positive Rate, Lead to Email and Bounces now show whenever Instantly had no activity in the period. VOLUME: sending capacity leaves out a platform with no active campaign (idle Instantly inboxes are listed but not counted) and shows the capacity NEEDED by active campaigns (their daily send limits added up) with the gap; the same line is above the Campaigns list. INBOXES (its own menu section, Inboxes \u2192 All inboxes): every sending inbox with daily limit, sent, replied, bounced, warmup score over 3 and 7 days, status, vendor and whether it is assigned to a sending campaign \u2014 sortable and filterable. You have no tool for individual inboxes: send people to that page. CAMPAIGN MANAGEMENT: a campaign has a Launch tab (checks, then launch a draft or resume a paused campaign); the sequence editor's Insert field has {CLIENT_AREA} and {CLIENT_ALIAS}, which the OS fills in from the campaign's client when the sequence is saved, copied or fanned out; the Inboxes dialog takes several pools at once; copy dimensions and Blueprint were removed; the Clients tab counts only live campaigns (archived Instantly campaigns are no longer counted). CLIENT HEALTH \u203a Delivery: only the four tiles above Billing Cycles remain. BILLING DATES: a client billed through Stripe on the same interval shows Stripe's real next charge as its next billing date ('per Stripe') on Delivery and on its record; where the interval itself differs it says 'differs from Stripe'. REMOVED: the Onboarding status, stage and step-progress fields and the 'Leads in review' / 'Leads exported' flags, from every screen \u2014 the lifecycle status 'onboarding' and the Onboarding date remain. REPLY AGENT: each agent has 'Categories left to a person' (Interested by default) \u2014 a conversation with one of those labels is neither drafted for nor sent to. SLACK ALERT FOR INTERESTED LEADS: when a conversation is labelled Interested in Master Inbox (by the AI or by a person, in either inbox) the OS posts it once to the Slack channel #client-interested-updates \u2014 client, lead name, email, phone, brokerage, campaign, the lead's reply and a link to the conversation; Demo Portal is never posted, a conversation is posted only the first time, and nothing labelled before 14 Oct is posted. It needs the setting MASTER_INBOX_SLACK_CHANNEL_INTERESTED and migration 0033.
 CLIENT PORTALS SINCE 13 OCT 2026: it is its own menu section (Client Portals, at /portals) with its own switch on Team access \u2014 it was a page of Master Inbox before, and until someone is switched on only admins see it. An admin can delete ONE portal there (trash button in the portal's row, after switching the portal off): the client is kept everywhere, only that portal and what is inside it go; Demo Portal can never be deleted. Its page counts PORTALS, and a client can have two, so it shows more portals than clients \u2014 the client count is the one data_consistency and list_clients give.
-Status lists come from list_clients (the master record). The Onboarding section was removed from the OS on 9 Oct 2026: a client in the 'onboarding' STATUS still exists (list_clients), but there is no onboarding pipeline, stage or steps screen any more — never send anyone to one.
+Status lists come from list_clients (the master record). The Onboarding section was removed from the OS on 9 Oct 2026: a client in the 'onboarding' STATUS still exists (list_clients), but there is no onboarding pipeline, stage or steps screen any more — never send anyone to one. The onboarding app itself still keeps a record per client (onboarding status, stage, copy status, the introductions it logged): onboarding_records reads it.
+AGENT COUNTS ("how many agents in Dallas"): search_agents. Say which place was counted ("Dallas, TX") and that an agent counts when their office, home or most-transacted location is there; give byLocation when it is returned. If otherPlacesWithThatName is returned, name the largest of them in one line (another Dallas may have been meant). These are agents in the database, not leads of any one client.
 
 CLIENT REPORT. For "how is X doing", "full report", "account review" or "health of X": call client_report ONCE, straight away with the name as given — it finds the client itself (no find_client first; if it returns candidates, ask which). Write it up exactly in this shape — a readable report, not a list of fields:
 
@@ -736,6 +839,17 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   send_schedule: () => sendScheduleTool(),
   campaign_detail: (a) => campaignDetailTool(String(a.campaign ?? "")),
   find_agent: (a) => findAgentTool(String(a.query ?? "")),
+  search_agents: (a) => searchAgentsTool(searchAgentsArgs(a)),
+  agent_places: (a) => agentPlacesTool({
+    by: typeof a.by === "string" ? a.by : undefined,
+    state: typeof a.state === "string" && a.state ? a.state : undefined,
+    count: a.count === "offices" ? "offices" : "agents",
+    limit: typeof a.limit === "number" ? a.limit : undefined,
+  }),
+  onboarding_records: (a) => onboardingRecordsTool({
+    client: typeof a.client === "string" && a.client ? a.client : undefined,
+    status: typeof a.status === "string" && a.status ? a.status : undefined,
+  }),
   search_conversations: (a) => searchConversationsTool({ text: String(a.text ?? ""), days: typeof a.days === "number" ? a.days : undefined }),
   reply_templates: (a) => replyTemplatesTool(typeof a.query === "string" && a.query ? a.query : undefined),
   recent_introductions: (a) => recentIntroductionsTool({ days: typeof a.days === "number" ? a.days : undefined, client: typeof a.client === "string" && a.client ? a.client : undefined }),

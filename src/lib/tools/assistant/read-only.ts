@@ -42,8 +42,13 @@ const FORBIDDEN_VERBS = ["insert", "update", "upsert", "delete"] as const;
  * through the same rpc() door, so the door alone is not the boundary. These
  * are matched on a prefix because the families are named consistently:
  * `reply_agent_set_key`, `ai_labeling_set_key`, `fn_undo_agent_contact`.
+ *
+ * The agent database (16 Oct, when its search functions were opened to the
+ * assistant) adds its own writers — fn_update_agent_contact,
+ * fn_set_manual_titles, fn_rebuild_location_options, fn_rollup_agent_stats —
+ * and two underscore helpers (_timeit, _t2) that run whatever they are given.
  */
-const FORBIDDEN_RPC = [/_set_key$/, /^fn_undo_/, /_touch_run$/, /^fn_refresh_/, /^fn_export_/];
+const FORBIDDEN_RPC = [/_set_key$/, /^fn_undo_/, /_touch_run$/, /^fn_refresh_/, /^fn_export_/, /^fn_update_/, /^fn_set_/, /^fn_rebuild_/, /^fn_rollup_/, /^_/];
 
 export class AssistantWriteAttemptError extends Error {
   constructor(what: string) {

@@ -191,10 +191,35 @@ export async function findAgentTool(query: string) {
   const as = readOnly(getAgentSearchSupabase());
   const col = q.includes("@") ? "preferred_email" : /^\d{4,}$/.test(q) ? "license_number" : "full_name";
   const { data, error } = await as.from("agents")
-    .select("full_name, preferred_email, preferred_phone, license_number, brand, office_name, office_city, office_state, most_transacted_city, sales_volume, closed_transactions, avg_sale_price, est_time_in_industry_raw")
+    .select("id, full_name, preferred_email, preferred_phone, license_number, brand, office_name, office_city, office_state, most_transacted_city, sales_volume, closed_transactions, avg_sale_price, est_time_in_industry_raw")
     .ilike(col, `%${q}%`).limit(10);
   if (error) return { note: `The agent database could not be read: ${error.message}` };
-  return { searchedBy: col, matches: data ?? [], note: "The scraped agent database (Agent Search) — every agent ever scraped, not one client's list." };
+  const rows = (data ?? []) as Array<Record<string, unknown> & { id: string }>;
+  /*
+   * Which of our campaigns each one is in, and whether they replied or
+   * bounced (16 Oct) — "have we already emailed her?". v_agent_campaigns is
+   * the Database app's own view of campaign leads matched to agents; its
+   * client is the onboarding app's client (orch_clients).
+   */
+  const ids = rows.map((r) => r.id);
+  const [camps, orch] = ids.length
+    ? await Promise.all([
+      as.from("v_agent_campaigns").select("agent_id, campaign_name, client_id, provider, replied, bounced").in("agent_id", ids).limit(500),
+      as.from("orch_clients").select("id, client_name"),
+    ])
+    : [{ data: [] }, { data: [] }];
+  const clientName = new Map(((orch.data ?? []) as Array<{ id: string; client_name: string }>).map((c) => [c.id, c.client_name]));
+  const byAgent = new Map<string, Array<{ campaign: string | null; client: string | null; provider: string | null; replied: boolean; bounced: boolean }>>();
+  for (const c of (camps.data ?? []) as Array<{ agent_id: string; campaign_name: string | null; client_id: string | null; provider: string | null; replied: boolean | null; bounced: boolean | null }>) {
+    const list = byAgent.get(c.agent_id) ?? [];
+    list.push({ campaign: c.campaign_name, client: clientName.get(c.client_id ?? "") ?? null, provider: c.provider, replied: c.replied === true, bounced: c.bounced === true });
+    byAgent.set(c.agent_id, list);
+  }
+  return {
+    searchedBy: col,
+    matches: rows.map(({ id: _id, ...rest }) => ({ ...rest, campaigns: byAgent.get(_id) ?? [] })),
+    note: "The scraped agent database (Agent Search) — every agent ever scraped, not one client's list. `campaigns` lists the campaigns each agent is a lead in (empty = never put in one), with whether they replied or bounced.",
+  };
 }
 
 export async function searchConversationsTool(a: { text: string; days?: number }) {

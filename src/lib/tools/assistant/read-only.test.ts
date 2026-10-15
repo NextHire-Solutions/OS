@@ -81,3 +81,14 @@ test("the refused-function patterns match the real writing functions", () => {
     assert.equal(isForbiddenRpc(fn), false, `${fn} only reads and must be allowed`);
   }
 });
+
+test("the agent database: its search functions read; its writers and SQL-running helpers are refused", () => {
+  // From the agent database's own function list (16 Oct).
+  for (const fn of ["fn_update_agent_contact", "fn_set_manual_titles", "fn_rebuild_location_options", "fn_rebuild_location_options_mls",
+                    "fn_rollup_agent_stats", "fn_refresh_location_options", "fn_undo_agent_contact", "fn_export_rows", "_timeit", "_t2"]) {
+    assert.equal(isForbiddenRpc(fn), true, `${fn} must be refused`);
+  }
+  for (const fn of ["fn_filter_search", "fn_search_options", "fn_facet_options"]) {
+    assert.equal(isForbiddenRpc(fn), false, `${fn} is what search_agents asks — STABLE, so it only reads`);
+  }
+});

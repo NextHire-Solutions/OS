@@ -214,6 +214,34 @@ production after the deploy (deployment `1320cb61`): 26/26, `client_report`
 3.6 s, `list_clients` 0.6 s. Not yet done by a real Claude account — the first
 admin to connect is that test.
 
+### 16 October: the agent database in Claude (and the in-OS Assistant)
+
+"For mcp, we need to check the database project supabase as well (onboarding
+and scraper project uses same supabase project) … example of question: How
+many agents are there in, let's say, Dallas?" That Supabase is the one the OS
+already calls Agent Search (`AGENT_SEARCH_SUPABASE_*`, same host as the
+Database project's `NEXT_PUBLIC_SUPABASE_URL`); it was only missing tools.
+Three new tools, one extended — 48 in the connector:
+
+| Tool | Answers | Reads |
+|---|---|---|
+| `search_agents` | agents (or offices) in a city/county/state/zip, with MLS, brokerage, office, sales volume, transactions, has email, emailed or not, replied, one client's lists; optional top N (no contact details) and top brokerages | the Database app's own `fn_filter_search`, `fn_search_options`, `fn_facet_options` — STABLE, so the count is the one its Agent Search screen shows |
+| `agent_places` | cities/counties/zips of a state, states, or brokerages nationally, ranked | `location_options` (the place index its Location filter lists; refresh time returned) |
+| `onboarding_records` | the onboarding app's own status, stage, copy status, sender, intro log per client | `orch_*`; its Stripe and campaign fields are left out (all "unpaid"/empty on 16 Oct — not true) |
+| `find_agent` (extended) | now also the campaigns an agent is a lead in, replied/bounced | `v_agent_campaigns` |
+
+A place matches an agent's office, home OR most-transacted location (as the
+Database screen defaults); the answer gives each separately too. Without a
+state, the largest place of that name is counted and the others listed —
+Dallas = Dallas, TX 15,484 agents (11,667 by office), Dallas, GA 972. Live
+figures on 16 Oct: whole database 1,188,261; Dallas County, TX 22,568; Texas
+138,863; NTREIS 57,084. Parsing and the filter are pure and tested
+(`assistant/agent-query.ts`); the tools are `assistant/tools-phase10.ts`.
+
+The read-only guard now also refuses the agent database's writers
+(`fn_update_*`, `fn_set_*`, `fn_rebuild_*`, `fn_rollup_*`) and its `_timeit`/`_t2`
+helpers, which run whatever SQL they are given.
+
 ### Also 15 October: account managers get Client Portals
 
 Asked by the user. The **Account manager** role on Team access now brings
