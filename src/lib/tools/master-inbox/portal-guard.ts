@@ -128,6 +128,11 @@ export const PORTAL_TABLES = [
  * reversible or derived.
  *
  * Not used on INSERT: a new client must be able to mint its first token.
+ *
+ * 16 Oct: no longer used by the Client Portals editor — a portal's URL can now
+ * be changed there, because its old link keeps working (Master Inbox 0079,
+ * portals/portal-link.ts). Writers with no business with the URL (the
+ * inbox-row rename, lib/clients/inbox-rows.ts) still use it.
  */
 export function assertPortalUrlStable(patch: Record<string, unknown>): void {
   if ("portal_token" in patch) throw new PortalGuardError("portal_token");

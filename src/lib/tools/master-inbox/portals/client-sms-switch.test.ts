@@ -139,12 +139,76 @@ test("the switch writes feature_flags and nothing else: the portal's URL, on/off
   assert.equal(row(OTHER).slug, "other-client");
 });
 
-test("a request that also tries to change the portal URL is refused whole — the flag is not written either", { skip }, async () => {
+test("before Master Inbox 0079, a request that also changes the portal URL is refused whole — the flag is not written either", { skip }, async () => {
   seed();
-  assert.equal(await patch(OTHER, { sms_alerts: true, portal_token: "brand-new-token-123" }), 409);
+  db.missingTables.add("portal_token_aliases");
+  const res = await PATCH!(
+    new Request(`http://os.test/api/tools/master-inbox/clients/${OTHER}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ sms_alerts: true, portal_token: "brand-new-token-123" }) }),
+    { params: Promise.resolve({ id: OTHER }) },
+  );
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /migration 0079/);
   assert.equal(db.writes("clients", "PATCH").length, 0);
   assert.deepEqual(flagsOf(OTHER), { manage_stages: true, portal_tour: true });
   assert.equal(row(OTHER).portal_token, "other-client-abc123def4");
+});
+
+/* ---- changing a portal's URL (16 Oct): the old link keeps working ---- */
+
+const aliases = () => db.rows("portal_token_aliases").map((a) => `${a.old_token}->${a.client_id === OTHER ? "OTHER" : a.client_id === DEMO ? "DEMO" : a.client_id}`).sort();
+
+test("a new URL: the old one is kept, BEFORE the token changes, and the new one is live", { skip }, async () => {
+  seed();
+  db.seed("portal_token_aliases", []);
+  assert.equal(await patch(OTHER, { portal_token: "other-client-new-77aa1" }), 200);
+  assert.equal(row(OTHER).portal_token, "other-client-new-77aa1");
+  assert.deepEqual(aliases(), ["other-client-abc123def4->OTHER"]);
+  const order = db.calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.table}`);
+  assert.ok(order.indexOf("POST portal_token_aliases") < order.indexOf("PATCH clients"), `old link kept first: ${order.join(", ")}`);
+});
+
+test("dropping the old link is only on purpose (keep_old_link: false), and only after the new URL is in", { skip }, async () => {
+  seed();
+  db.seed("portal_token_aliases", []);
+  assert.equal(await patch(OTHER, { portal_token: "other-client-new-77aa1", keep_old_link: false }), 200);
+  assert.equal(row(OTHER).portal_token, "other-client-new-77aa1");
+  assert.deepEqual(aliases(), [], "the old link no longer opens anything");
+});
+
+test("another portal's OLD link can't be taken — it would take over that portal's old links", { skip }, async () => {
+  seed();
+  db.seed("portal_token_aliases", [{ old_token: "demo-portal-old-1234", client_id: DEMO }]);
+  assert.equal(await patch(OTHER, { portal_token: "demo-portal-old-1234" }), 409);
+  assert.equal(row(OTHER).portal_token, "other-client-abc123def4");
+  assert.equal(db.writes("clients", "PATCH").length, 0);
+  assert.deepEqual(aliases(), ["demo-portal-old-1234->DEMO"]);
+});
+
+test("going back to its own old link is allowed", { skip }, async () => {
+  seed();
+  db.seed("portal_token_aliases", [{ old_token: "other-client-old-1234", client_id: OTHER }]);
+  assert.equal(await patch(OTHER, { portal_token: "other-client-old-1234" }), 200);
+  assert.equal(row(OTHER).portal_token, "other-client-old-1234");
+  assert.ok(aliases().includes("other-client-abc123def4->OTHER"), "the link it had until now is kept too");
+});
+
+test("the same URL as now writes nothing; a bad URL is refused before anything is written", { skip }, async () => {
+  seed();
+  db.seed("portal_token_aliases", []);
+  assert.equal(await patch(OTHER, { portal_token: "other-client-abc123def4" }), 200);
+  assert.equal(db.writes("clients", "PATCH").length, 0);
+  assert.deepEqual(aliases(), []);
+  for (const bad of ["short", "has spaces in it", "slash/es-in-it", "x".repeat(121)]) {
+    assert.equal(await patch(OTHER, { portal_token: bad }), 400, bad);
+  }
+  assert.equal(db.writes("clients", "PATCH").length + db.writes("portal_token_aliases", "POST").length, 0);
+});
+
+test("the Unknown fallback has no portal URL to change", { skip }, async () => {
+  seed();
+  db.seed("portal_token_aliases", []);
+  assert.equal(await patch(UNKNOWN, { portal_token: "unknown-new-token-1" }), 400);
+  assert.deepEqual(aliases(), []);
 });
 
 test("turning SMS on twice, or off twice, is harmless", { skip }, async () => {

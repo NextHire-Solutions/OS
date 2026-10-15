@@ -745,7 +745,7 @@ function IconAction({
 // PATCH helper shared by the toggle + the edit dialog.
 async function patchPortal(
   clientId: string,
-  patch: { portal_token?: string; portal_enabled?: boolean; sms_alerts?: boolean },
+  patch: { portal_token?: string; keep_old_link?: boolean; portal_enabled?: boolean; sms_alerts?: boolean },
 ): Promise<boolean> {
   const res = await fetch(`/api/tools/master-inbox/clients/${clientId}`, {
     method: "PATCH",
@@ -770,11 +770,16 @@ function EditPortalUrlDialog({
   onSaved: () => void;
 }) {
   const [token, setToken] = useState("");
+  // Keep the client's old link working (it forwards to the new one) — the default (16 Oct).
+  const [keepOld, setKeepOld] = useState(true);
   const [pending, startTransition] = useTransition();
   const open = row !== null;
 
   useEffect(() => {
-    if (row) setToken(row.portal_token ?? "");
+    if (row) {
+      setToken(row.portal_token ?? "");
+      setKeepOld(true);
+    }
   }, [row?.id, row?.portal_token, row]);
 
   function onOpenChange(v: boolean) {
@@ -796,9 +801,9 @@ function EditPortalUrlDialog({
       onClose();
       return;
     }
-    const ok = await patchPortal(row.id, { portal_token: next });
+    const ok = await patchPortal(row.id, { portal_token: next, keep_old_link: keepOld });
     if (ok) {
-      toast.success("Portal URL updated");
+      toast.success(keepOld ? "Portal URL changed — the old link forwards to the new one" : "Portal URL changed — the old link no longer works");
       startTransition(() => onSaved());
     }
   }
@@ -830,13 +835,39 @@ function EditPortalUrlDialog({
             the random suffix so it can&apos;t be guessed. Letters, numbers,
             hyphens and underscores only; 8 characters minimum.
           </p>
+          {row.portal_token && token.trim() && token.trim() !== row.portal_token ? (
+            <div className="space-y-2 rounded-[12px] border border-[#ebecf0] bg-[#fafbfc] p-3 text-[12px] leading-relaxed text-[#5b6170]">
+              <div>
+                The new link is <span className="font-mono text-[#1f2124]">{publicPortalUrl(token.trim())}</span>, and every link
+                we send from now on uses it.
+              </div>
+              <label className="flex items-start gap-2 text-[#1f2124]">
+                <input
+                  type="checkbox"
+                  className="mt-[3px]"
+                  checked={keepOld}
+                  onChange={(e) => setKeepOld(e.target.checked)}
+                />
+                <span>
+                  Keep the old link working — it forwards to the new one, so bookmarks and the links in emails and texts
+                  already sent still open the portal.
+                </span>
+              </label>
+              {!keepOld ? (
+                <div className="text-[#b42318]">
+                  The old link <span className="font-mono">/portal/{row.portal_token}</span> will stop working at once.
+                  Only untick this if the old link must no longer open the portal.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button onClick={save} disabled={pending}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : "Save URL"}
+            {pending ? <Loader2 className="size-4 animate-spin" /> : keepOld ? "Save URL" : "Save URL and stop the old link"}
           </Button>
         </DialogFooter>
       </DialogContent>

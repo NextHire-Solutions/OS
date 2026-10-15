@@ -392,6 +392,32 @@ should be able to **pause until a date** on the portal (new). **"Do not launch
 this new CRM until we've reviewed it on Demo Portal or on a staging
 environment."** None of this is built for real clients; the preview reads only.
 
+### 16 October: a portal's URL can be changed from the OS — the old link keeps working
+
+Amy could not change Jeff Cook's portal URL: the OS refused any change to
+`clients.portal_token` (`assertPortalUrlStable`), because a portal's URL IS its
+token and a new one killed every link the client already had. The user: "we
+need a system to control things from here".
+
+- **Master Inbox migration 0079** — `portal_token_aliases` (old token → portal)
+  and a trigger on every change of `clients.portal_token`, from either app:
+  keeps the old token, refuses a token that is another portal's old one,
+  and a portal going back to its own old token makes it current again.
+  Additive; tested on a local Postgres (10 cases) before it was handed over.
+- **The portal app** (`beba2ed`): a token that finds no portal is looked up
+  there and forwarded to the portal's current link (its front page — every
+  link we send is the front page). Off / Unknown portals stay "not found" on
+  old links too. Without the table: "not found", exactly as before.
+- **The OS** (Client Portals → Portals → pencil): the change is allowed only
+  when 0079 is in (otherwise a clear refusal, nothing written); the OS
+  records the old token itself before changing, as well as the trigger;
+  "Keep the old link working" is ticked by default and can be unticked on
+  purpose (the old link then stops at once). Anyone with the Client Portals
+  switch, as before. The inbox-row rename still never touches the URL.
+
+Order used: portal app, then OS, then the migration — nothing could change a
+URL before old links forward.
+
 ## 0.2 Interested leads → Slack, 14 October
 
 **State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminSupabase } from "@/lib/supabase/admin";
-import { assertPortalUrlStable, PortalGuardError } from "@/lib/tools/master-inbox/portal-guard";
+import { ALIAS_TABLE, isMissingTable, linkChangeProblem, NEEDS_MIGRATION } from "@/lib/tools/master-inbox/portals/portal-link";
 import { _invalidateClientCache } from "@/lib/clients/derive";
 import { invalidateInboxClientsCache } from "@/lib/inbox/clients";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/portals/flag";
@@ -39,6 +39,9 @@ const patchSchema = z.object({
     .regex(/^[a-zA-Z0-9_-]+$/, "Only letters, numbers, hyphens and underscores")
     .optional(),
   portal_enabled: z.boolean().optional(),
+  // With a new portal_token: keep the old link working, forwarding to the new
+  // one (the default), or drop it on purpose. See portals/portal-link.ts.
+  keep_old_link: z.boolean().optional(),
   // SMS alerts for this client (Client Portals page "SMS" switch). Stored
   // as the team_sms_notifications feature flag: on = the portal Team page
   // shows per-member SMS switches and Introductions are texted to the
@@ -77,7 +80,7 @@ export async function PATCH(
   const admin = createAdminSupabase();
   const { data: existing } = await admin
     .from("clients")
-    .select("id, name, slug, feature_flags")
+    .select("id, name, slug, feature_flags, portal_token")
     .eq("id", id)
     .maybeSingle();
   if (!existing) {
@@ -136,21 +139,44 @@ export async function PATCH(
   }
 
   /*
-   * The portal's URL is its token, and this client already has one in
-   * circulation. Rewriting it would dead-link whatever the client has
-   * bookmarked, with nothing to tell them the new address.
+   * A new portal URL (16 Oct): allowed when the client's old link keeps
+   * working — portals/portal-link.ts. Until 16 Oct this was refused outright,
+   * because a new token dead-linked whatever the client had bookmarked.
    *
-   * Everything else this editor writes stays allowed — including `slug`, which
-   * a rename legitimately derives, and `portal_enabled`, which is a reversible
-   * switch a person is choosing to flip.
+   * The old token is recorded HERE, before the token changes, as well as by
+   * the database's own trigger (Master Inbox 0079) — so the old link is kept
+   * whichever of the two runs, and an old link is never lost to a missing
+   * trigger. Without the table the change is refused and nothing is written.
    */
-  try {
-    assertPortalUrlStable(update);
-  } catch (guardError) {
-    if (guardError instanceof PortalGuardError) {
-      return NextResponse.json({ error: guardError.message }, { status: 409 });
+  const oldToken = (existing.portal_token as string | null) ?? null;
+  const changingLink = typeof update.portal_token === "string" && update.portal_token !== oldToken;
+  if (typeof update.portal_token === "string" && !changingLink) delete update.portal_token;
+  if (changingLink) {
+    const next = update.portal_token as string;
+    const { data: taken, error: aliasError } = await admin
+      .from(ALIAS_TABLE)
+      .select("client_id")
+      .eq("old_token", next)
+      .maybeSingle();
+    if (aliasError) {
+      return NextResponse.json(
+        { error: isMissingTable(aliasError) ? NEEDS_MIGRATION : aliasError.message },
+        { status: isMissingTable(aliasError) ? 409 : 500 },
+      );
     }
-    throw guardError;
+    const problem = linkChangeProblem(next, oldToken, (taken as { client_id?: string } | null)?.client_id ?? null, id);
+    if (problem) return NextResponse.json({ error: problem }, { status: 409 });
+    if (oldToken) {
+      const { error: keepError } = await admin
+        .from(ALIAS_TABLE)
+        .upsert({ old_token: oldToken, client_id: id }, { onConflict: "old_token" });
+      if (keepError) {
+        return NextResponse.json({ error: `The old link could not be kept, so nothing was changed: ${keepError.message}` }, { status: 500 });
+      }
+    }
+  }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ ok: true, unchanged: true });
   }
 
   const { data, error } = await admin
@@ -170,6 +196,19 @@ export async function PATCH(
       },
       { status: error.code === "23505" ? 409 : 500 },
     );
+  }
+
+  // The old link dropped on purpose: only when asked, and only after the new one is in.
+  let oldLinkKept: boolean | undefined;
+  if (changingLink && oldToken) {
+    oldLinkKept = parsed.data.keep_old_link !== false;
+    if (!oldLinkKept) {
+      const { error: dropError } = await admin.from(ALIAS_TABLE).delete().eq("old_token", oldToken).eq("client_id", id);
+      if (dropError) {
+        console.error("[clients/portal-link] the old link could not be dropped", dropError);
+        oldLinkKept = true;
+      }
+    }
   }
 
   _invalidateClientCache();
@@ -199,7 +238,7 @@ export async function PATCH(
   if (parsed.data.aliases !== undefined || parsed.data.name !== undefined) {
     await retagUnknownThreads(admin, id);
   }
-  return NextResponse.json({ ok: true, client: data });
+  return NextResponse.json({ ok: true, client: data, ...(oldLinkKept === undefined ? {} : { oldLinkKept }) });
 }
 
 export async function DELETE(

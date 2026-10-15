@@ -53,6 +53,8 @@ export interface ProviderCall {
 
 export class FakePostgrest {
   readonly tables = new Map<string, Row[]>();
+  /** Tables that answer as PostgREST does for a table that does not exist (cleared by reset). */
+  readonly missingTables = new Set<string>();
   readonly calls: RecordedCall[] = [];
   readonly providerCalls: ProviderCall[] = [];
   readonly blocked: string[] = [];
@@ -70,6 +72,7 @@ export class FakePostgrest {
   }
   reset() {
     this.tables.clear();
+    this.missingTables.clear();
     this.calls.length = 0;
     this.providerCalls.length = 0;
     this.blocked.length = 0;
@@ -175,6 +178,13 @@ export class FakePostgrest {
     };
 
     if (table.startsWith("rpc:")) return respond([]);
+    // A table the database does not have yet (a migration not run): PostgREST's own answer.
+    if (this.missingTables.has(table)) {
+      return new Response(JSON.stringify({ code: "PGRST205", message: `Could not find the table 'public.${table}' in the schema cache` }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    }
     const store = this.tables.get(table) ?? [];
     this.tables.set(table, store);
 
