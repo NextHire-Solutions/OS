@@ -344,7 +344,15 @@ export function ClientRecord({
               <div>
                 <small>Introductions</small>
                 <b>{fmtNum(c.introductions) ?? "—"}</b>
-                <span>{c.lastIntroAt ? `last ${fmtDay(c.lastIntroAt)}` : "none yet"}</span>
+                <span>
+                  {c.lastIntroAt ? `last ${fmtDay(c.lastIntroAt)}` : "none yet"}
+                  {/* Introductions made but never in the portal (before the 15 Oct fix) — why this can exceed the portal's count. */}
+                  {c.introsNotInPortal ? (
+                    <span title="Introduced while the conversation had no client, so the portal never received it. Fixed for new introductions on 15 Oct; older ones were not added to the portal.">
+                      {" · "}{fmtNum(c.introsNotInPortal)} not in the portal
+                    </span>
+                  ) : null}
+                </span>
               </div>
               <div>
                 <small>28-day period</small>

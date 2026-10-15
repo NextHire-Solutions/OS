@@ -101,7 +101,10 @@ export interface MasterClient {
   /* Performance / Target Information */
   weeklyTarget: number | null;
   monthlyTarget: number | null;
+  /** Introductions made for the client: in their portal + never in it (portals/intro-counts.ts). */
   introductions: number | null;
+  /** Of those, how many never reached the client's portal (made before 0078 while the conversation had no client). */
+  introsNotInPortal?: number | null;
   lastIntroAt: string | null;
   replies: number | null;
   bounces: number | null;
@@ -340,7 +343,7 @@ async function load(): Promise<MasterClientList> {
   const healthCampaigns = get<Map<string, { name: string; status: string | null; size: number | null }>>(4);
   const portals = get<(MiPortalRow & { portal_token: string | null })[]>(5);
   const people = get<Map<string, { team: number; agents: number; dnc: number }>>(6);
-  const intros = get<Map<string, { count: number; lastAt: string | null }>>(7);
+  const intros = get<Map<string, { count: number; lastAt: string | null; notInPortal?: number }>>(7);
   const db = get<Awaited<ReturnType<typeof loadDatabaseClients>>>(8);
   const pipeline = get<Awaited<ReturnType<typeof getOnboardingPipeline>>>(9);
   const analytics = get<Row[]>(10);
@@ -370,7 +373,7 @@ async function load(): Promise<MasterClientList> {
     const mine = (portals ? portalsFor(c, portals) : []) as (MiPortalRow & { portal_token: string | null })[];
     const sum = (k: "team" | "agents" | "dnc") =>
       people && portals ? mine.reduce((n, p) => n + (people.get(p.id)?.[k] ?? 0), 0) : null;
-    const introList = mine.map((p) => intros?.get(p.id)).filter(Boolean) as { count: number; lastAt: string | null }[];
+    const introList = mine.map((p) => intros?.get(p.id)).filter(Boolean) as { count: number; lastAt: string | null; notInPortal?: number }[];
     const liveToken = mine.find((p) => p.portal_token && p.portal_enabled !== false)?.portal_token ?? null;
 
     // Client Health
@@ -444,6 +447,7 @@ async function load(): Promise<MasterClientList> {
       weeklyTarget: num(h?.weekly_target),
       monthlyTarget: num(h?.monthly_target),
       introductions: introList.length ? introList.reduce((n, x) => n + x.count, 0) : intros && portals ? 0 : null,
+      introsNotInPortal: introList.some((x) => x.notInPortal !== undefined) ? introList.reduce((n, x) => n + (x.notInPortal ?? 0), 0) : null,
       lastIntroAt: introList.map((x) => x.lastAt).filter((x): x is string => !!x).sort().pop() ?? null,
       replies: d?.replied ?? null,
       bounces: d?.bounced ?? null,
