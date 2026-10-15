@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { canSeeCrmPreview } from "./access.ts";
+import { canSeeCrmPreview, PREVIEW_REVIEWERS } from "./access.ts";
 
 /*
  * The CRM redesign preview is for Owners only (ADMIN_EMAILS) — "only we should
@@ -18,13 +18,19 @@ test("an Owner sees it, whatever the address's case", () => {
   assert.equal(canSeeCrmPreview(" Admin@Outreachify.io ", OWNERS), true);
 });
 
-test("nobody else: not a marked admin, not an account manager, not a salesperson", () => {
-  for (const email of ["eddy@brokerstaffer.com", "amy@brokerstaffer.com", "gabriel@brokerstaffer.com", "client@brokerage.com"]) {
+test("Eddy, by name — the reviewer the user chose (16 Oct) — and no one else by being an admin", () => {
+  assert.deepEqual(PREVIEW_REVIEWERS, ["eddy@brokerstaffer.com"], "a reviewer is added here, deliberately");
+  assert.equal(canSeeCrmPreview("eddy@brokerstaffer.com", OWNERS), true);
+  assert.equal(canSeeCrmPreview(" Eddy@BrokerStaffer.com", OWNERS), true);
+});
+
+test("nobody else: not another admin, not an account manager, not a salesperson, not a client", () => {
+  for (const email of ["amy@brokerstaffer.com", "gabriel@brokerstaffer.com", "client@brokerage.com", "eddy@brokerstaffer.co", "eddy@brokerstaffer.com.evil.io"]) {
     assert.equal(canSeeCrmPreview(email, OWNERS), false, email);
   }
 });
 
-test("fails closed: no Owners list, no session, no address — nobody", () => {
+test("fails closed: no Owners list, no session, no address — nobody but the named reviewer", () => {
   assert.equal(canSeeCrmPreview("admin@outreachify.io", []), false);
   assert.equal(canSeeCrmPreview(null, OWNERS), false);
   assert.equal(canSeeCrmPreview("", OWNERS), false);

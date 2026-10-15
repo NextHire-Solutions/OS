@@ -10,7 +10,8 @@
  * to see this".
  *
  * So:
- *   - Owners only (ADMIN_EMAILS — access.ts). Anyone else gets Not found, the
+ *   - Owners only (ADMIN_EMAILS), and Eddy by name as its reviewer (16 Oct,
+ *     the user's choice — access.ts). Anyone else gets Not found, the
  *     same as an address that does not exist; it is in no menu and on no Team
  *     access switch.
  *   - The OS only. Nothing here is served on portal.brokerstaffer.com, and the

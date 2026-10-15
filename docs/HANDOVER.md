@@ -356,7 +356,7 @@ database — the Database project's Supabase — through two Owner-only GET rout
 
 | Rule | Where |
 |---|---|
-| **Owners only** (`ADMIN_EMAILS`) — not marked admins, not account managers. Anyone else gets Not found. Fails closed when `ADMIN_EMAILS` is unset | `lib/crm-preview/access.ts`, `app/crm-preview/page.tsx` |
+| **Owners only** (`ADMIN_EMAILS`), **plus Eddy by name** as its reviewer (16 Oct — he asked to review before any launch; the user chose to open the preview to him, not to every admin: `PREVIEW_REVIEWERS`). Not other admins, not account managers. Anyone else gets Not found. Owners fail closed when `ADMIN_EMAILS` is unset | `lib/crm-preview/access.ts`, `app/crm-preview/page.tsx` |
 | Not a product: no menu item, no Team access switch, no grant, nothing in the proxy | test `access.test.ts` |
 | **Read-only**: reads what the portal reads (`portal-data.ts`); every add/edit/delete/save is drawn disabled; the browser's one request is the portal's own GET conversation feed. A test fails on any write call in the preview's files | `access.test.ts` |
 | The live portal (portal.brokerstaffer.com, the standalone app) is untouched — no code, URL, stage or lead changed | — |

@@ -7,7 +7,7 @@ export function ClientPicker({ portals, missing = false }: { portals: Array<{ id
       <div className="cpv-bar" role="note">
         <span className="cpv-tag">PREVIEW</span>
         <b>New client portal design</b>
-        <span className="cpv-note">Read-only · visible to Owners only · the live portals are unchanged</span>
+        <span className="cpv-note">Read-only · private: not visible to clients or the team · the live portals are unchanged</span>
         <span className="cpv-right"><a href="/">Back to the OS</a></span>
       </div>
       <main className="cpv-pick">

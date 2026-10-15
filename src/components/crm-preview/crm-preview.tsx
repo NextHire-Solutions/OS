@@ -90,7 +90,7 @@ export function CrmPreview({
       <div className="cpv-bar" role="note">
         <span className="cpv-tag">PREVIEW</span>
         <b>New client portal design</b>
-        <span className="cpv-note">Read-only · visible to Owners only · {client.name}&apos;s live portal is unchanged</span>
+        <span className="cpv-note">Read-only · private: not visible to clients or the team · {client.name}&apos;s live portal is unchanged</span>
         <span className="cpv-right">
           <select
             id="cpv-client"
