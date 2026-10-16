@@ -415,6 +415,34 @@ since no chat exists; the Setup welcome line shows the client's areas (the
 design: "Done For You · Atlanta" — no plan is on record). Not drawn: Billing (a
 link to Stripe). The audit drove a real Chrome, GETs only.
 
+**Data protection (17 Oct).** The user: "no one should be able to extract
+data from this new client portals" — the agent database behind Market,
+Prospects and Reports is the sensitive part (C21's market alone is 115,720
+agents). Nothing on a screen can be made uncopyable by hand; bulk extraction
+is refused by the server and noticed (`lib/crm-preview/data-guard.ts`, tests
+`data-guard.test.ts`):
+- only the page's own fetch is served — a request without the browser's
+  same-origin fetch headers (curl, a script, a scraping tool, even one holding
+  a copied session cookie) gets 403; signed out gets 401 at the proxy;
+- per person: requests a minute and agent rows a day (staff 120/min,
+  60,000/day; the client limits, 30/min, 2,000/day, 20 reports/day, are
+  defined for the client build);
+- one search goes 1,000 agents deep at most (`MAX_ROWS`, 20 pages of 50) —
+  past that, narrow the filters;
+- a market agent's or a prospect's email never leaves the server; only
+  agents already on the client's own lists (My Agents, DNC, its pipeline) carry
+  one, and only in the Setup tables;
+- every data response is `no-store` and `noindex`; every request is logged
+  (`[crm-preview] data`), every refusal warned (`[crm-preview] refused`).
+
+Must-haves before ANY client sees the new portal's Market / Prospects: every
+person signs in (no data behind a shareable link, unlike today's portals);
+the counters move to the database (one per person and per client) with an
+alert to staff and an automatic lock when exceeded or when paging looks
+automated; no export of the market or prospects (exports only of the client's
+own lists); a bot challenge on suspicious use; a few canary agents per client
+so a leaked list can be traced; an anti-scraping clause in the client terms.
+
 Eddy's decisions (16 Oct, two rounds): stages → tags **yes**, and a tagged
 agent stays at the furthest forward stage on record — **approved** (of 971
 agents in the three today, 90 went past Introduction; the other 881 have only

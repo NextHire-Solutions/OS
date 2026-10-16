@@ -84,7 +84,13 @@ export const TITLES = ["Salesperson", "Team Leader", "Managing Broker"] as const
 export const PAGE_SIZE = 50;
 /** The Setup wizard's tables show eight agents a page (Setup-2-Agents, Setup-4-Target). */
 export const SETUP_PAGE_SIZE = 8;
-const MAX_ROWS = 10_000; // this deep at most; past that, narrow the filter.
+/*
+ * How deep one search may go: 1,000 agents (20 pages of 50, 125 of 8). Past
+ * that, narrow the filters — paging through a whole market is what a scraper
+ * does (the user, 17 Oct: no one may extract the data; lib/crm-preview/data-guard.ts).
+ */
+export const MAX_ROWS = 1_000;
+export const maxPage = (per: number) => Math.floor(MAX_ROWS / per);
 
 export interface MarketQuery {
   list: MarketList;
@@ -113,7 +119,7 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
   const per = p.get("per") === String(SETUP_PAGE_SIZE) ? SETUP_PAGE_SIZE : PAGE_SIZE;
   return {
     list: p.get("list") === "prospects" ? "prospects" : "market",
-    page: Number.isFinite(page) && page >= 1 ? Math.min(page, MAX_ROWS / per) : 1,
+    page: Number.isFinite(page) && page >= 1 ? Math.min(page, maxPage(per)) : 1,
     per,
     q: text("q", 80) ?? "",
     minVolume: pick(p.get("minVolume"), VOLUME_PRESETS),

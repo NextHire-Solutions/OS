@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
 import { abbrevUsd, formatPhone, initials } from "@/lib/crm-preview/model";
-import { SETUP_PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } from "@/lib/crm-preview/market-model";
+import { maxPage, SETUP_PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
@@ -59,7 +59,7 @@ function Pager({ page, total, onPage }: { page: number; total: number; onPage: (
       <span>{fmt(from)}-{fmt(to)} of {fmt(total)} matching agents</span>
       <div className={k("pg")}>
         <button className={k("btn sm")} type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>Previous</button>
-        <button className={k("btn sm")} type="button" disabled={to >= total} onClick={() => onPage(page + 1)}>Next</button>
+        <button className={k("btn sm")} type="button" disabled={to >= total || page >= maxPage(PER)} title={page >= maxPage(PER) && to < total ? "A search shows its first 1,000 agents — narrow the filters to see others" : undefined} onClick={() => onPage(page + 1)}>Next</button>
       </div>
     </div>
   );

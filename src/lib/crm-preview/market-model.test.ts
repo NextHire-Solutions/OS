@@ -45,9 +45,9 @@ test("the query string is held to the chips' presets", () => {
   assert.equal(bad.minUnits, null);
   assert.equal(bad.title, null);
   assert.equal(bad.q.length, 80);
-  assert.equal(parseMarketQuery(new URLSearchParams("page=99999")).page, 200, "deep pages are capped");
+  assert.equal(parseMarketQuery(new URLSearchParams("page=99999")).page, 20, "a search goes 1,000 agents deep at most");
   assert.equal(parseMarketQuery(new URLSearchParams("per=8")).per, 8, "the Setup wizard's eight a page");
-  assert.equal(parseMarketQuery(new URLSearchParams("per=8&page=99999")).page, 1250, "the same depth, eight at a time");
+  assert.equal(parseMarketQuery(new URLSearchParams("per=8&page=99999")).page, 125, "the same depth, eight at a time");
   assert.equal(parseMarketQuery(new URLSearchParams("per=5000")).per, 50, "no other page size");
 });
 

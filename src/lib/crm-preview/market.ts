@@ -134,9 +134,11 @@ export interface MarketRow {
   /** Whole years in the industry, where the database records it (about 1 agent in 80). */
   years: number | null;
   /**
-   * Only on the Setup wizard's eight-a-page tables, whose design has an Email
-   * column; Market and Prospects (50 a page) keep emails on the server, where
-   * they are only matched against the client's lists.
+   * Only on the Setup wizard's eight-a-page tables (their design has an Email
+   * column), and only for an agent already on the client's own lists — My
+   * Agents, the DNC List, its pipeline. A market agent's or a prospect's
+   * email never leaves the server (the user, 17 Oct: no one may extract the
+   * data); it is only matched against the client's lists.
    */
   email?: string | null;
   list: string;
@@ -147,6 +149,9 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : t
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 /** One page of Market or Prospects. Emails are read to place agents on lists and never leave the server. */
+/* The client's own lists: the only agents whose email may reach the browser. */
+const OWN_LISTS: ReadonlySet<string> = new Set(["My Agents", "DNC List", "In your pipeline"]);
+
 export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
@@ -173,7 +178,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
       units: num(r.units),
       office: str(r.office_name),
       years: num(r.est_time_in_industry_months) !== null ? Math.floor((num(r.est_time_in_industry_months) as number) / 12) : null,
-      ...(q.per === SETUP_PAGE_SIZE ? { email: str(r.preferred_email) ?? str(r.enriched_email) } : {}),
+      ...(q.per === SETUP_PAGE_SIZE && OWN_LISTS.has(list) ? { email: str(r.preferred_email) ?? str(r.enriched_email) } : {}),
       list,
       pill: LIST_PILL[list],
     };

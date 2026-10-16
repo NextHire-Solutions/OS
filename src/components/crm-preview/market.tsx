@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
-import { interestedReport, LIST_PILL, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type ReportGroup } from "@/lib/crm-preview/market-model";
+import { interestedReport, LIST_PILL, maxPage, PAGE_SIZE, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type ReportGroup } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
@@ -352,7 +352,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
               <span>{data ? `${from.toLocaleString("en-US")}–${to.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} · ` : ""}Sales volume and units are the last 12&nbsp;months</span>
               <div className={k("pg")}>
                 <button type="button" className={k("btn sm")} disabled={page <= 1 || state.loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</button>
-                <button type="button" className={k("btn sm")} disabled={to >= total || shownPage >= 200 || state.loading} onClick={() => setPage((p) => p + 1)}>Next</button>
+                <button type="button" className={k("btn sm")} disabled={to >= total || shownPage >= maxPage(PAGE_SIZE) || state.loading} title={shownPage >= maxPage(PAGE_SIZE) && to < total ? "A search shows its first 1,000 agents — narrow the filters to see others" : undefined} onClick={() => setPage((p) => p + 1)}>Next</button>
               </div>
             </div>
           </div>
