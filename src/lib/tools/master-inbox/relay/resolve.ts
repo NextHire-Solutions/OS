@@ -142,7 +142,8 @@ export function portalsByCampaignName(campaignName: string, portals: PortalRow[]
 
 export function resolveBrokerage(thread: ThreadCampaign, world: World): Resolution {
   const key = campaignKey(thread);
-  if (!key) return { ok: false, outcome: "hold", reason: "no_campaign" };
+  // No campaign id AND no name: nothing to place it by, and nothing the team could assign.
+  if (!key) return { ok: false, outcome: "skip", reason: "no_campaign" };
 
   let found: { osClientId: string; portalId: string | null; source: ResolvedBy } | null = null;
 

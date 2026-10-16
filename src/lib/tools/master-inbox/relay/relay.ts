@@ -103,7 +103,7 @@ const FOLLOW_UP_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 /** Held reasons the sweep re-checks by itself. The others wait for the team. */
 const RECHECK_REASONS = ["hourly_cap", "no_recipients", "read_error", "evaluating"];
 /** Held reasons a team answer for the campaign can clear. */
-const CAMPAIGN_REASONS = ["no_campaign", "unknown_campaign", "ambiguous_campaign", "no_roster_record", "campaign_conflict"];
+const CAMPAIGN_REASONS = ["unknown_campaign", "ambiguous_campaign", "no_roster_record", "campaign_conflict"];
 const STALE_EVALUATING_MS = 5 * 60 * 1000;
 const BOUNCE_POLL_MS = 10 * 60 * 1000;
 
@@ -347,6 +347,7 @@ interface RelayRow {
   status: RelayStatus;
   reason: string | null;
   decidedBy: string | null;
+  attempts: number;
 }
 
 function relayRowFrom(r: Row): RelayRow {
@@ -362,6 +363,7 @@ function relayRowFrom(r: Row): RelayRow {
     status: (str(r.status) ?? "held") as RelayStatus,
     reason: str(r.reason),
     decidedBy: str(r.decided_by),
+    attempts: Number.isFinite(Number(r.attempts)) ? Number(r.attempts) : 0,
   };
 }
 
@@ -539,8 +541,31 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
     practice,
   };
 
+  // The agent's slot with this brokerage, in this mode — whose is it, if anyone's?
+  const claimOwner = async (): Promise<string | null | undefined> => {
+    const { data, error } = await ctx
+      .os("os_brokerage_relay_agents")
+      .select("relay_id")
+      .eq("workspace_id", ctx.ws)
+      .eq("os_client_id", osClientId)
+      .eq("agent_email", agentEmail)
+      .eq("mode", mode)
+      .maybeSingle();
+    if (error) throw new Error(`os_brokerage_relay_agents: ${error.message}`);
+    return data ? str((data as Row).relay_id) : undefined; // undefined = nobody's
+  };
+
   // One click (the default): prepared and shown; a person presses "Send to brokerage".
   if (effectiveMode(ctx.global, client.relay) === "one_click" && via.by !== "click") {
+    // Already handed to this brokerage: say so now rather than offer a button that would refuse.
+    if (rec.kind === "handoff") {
+      try {
+        const owner = await claimOwner();
+        if (owner !== undefined && owner !== rec.id) return stop("skipped", "already_delivered", computed);
+      } catch (e) {
+        return stop("held", "read_error", { ...computed, detail: e instanceof Error ? e.message.slice(0, 300) : String(e) });
+      }
+    }
     await update(ctx, rec.id, { ...computed, status: "ready", decided_by: decidedBy });
     return "ready";
   }
@@ -568,7 +593,18 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
       )
       .select("agent_email");
     if (clErr) return stop("held", "read_error", { ...computed, detail: `claim: ${clErr.message}` });
-    if (!((claim ?? []) as Row[]).length) return stop("skipped", "already_delivered", computed);
+    if (!((claim ?? []) as Row[]).length) {
+      // Taken — by another hand-off (skip), or by THIS one in an attempt that stopped before it
+      // got as far as "sending" (nothing went; carry on). A record that reached "sending" is
+      // never re-evaluated, so this cannot send twice.
+      let owner: string | null | undefined;
+      try {
+        owner = await claimOwner();
+      } catch (e) {
+        return stop("held", "read_error", { ...computed, detail: e instanceof Error ? e.message.slice(0, 300) : String(e) });
+      }
+      if (owner !== rec.id) return stop("skipped", "already_delivered", computed);
+    }
   }
 
   if (practice) {
@@ -577,7 +613,7 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
   }
 
   // LIVE. The transport checks the env switch again before it builds a request.
-  await update(ctx, rec.id, { ...computed, status: "sending", decided_by: decidedBy, decided_at: ctx.now.toISOString(), attempts: 1 });
+  await update(ctx, rec.id, { ...computed, status: "sending", decided_by: decidedBy, decided_at: ctx.now.toISOString(), attempts: rec.attempts + 1 });
   const res = await ctx.transport.send(email);
   if (res.ok) {
     await update(ctx, rec.id, { status: "sent", sent_at: new Date().toISOString(), provider_message_id: res.messageId });

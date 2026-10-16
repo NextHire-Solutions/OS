@@ -32,7 +32,7 @@ export interface RelayRecordView {
 
 export const REASON_TEXT: Record<string, string> = {
   evaluating: "Being checked.",
-  no_campaign: "The conversation has no campaign, so the brokerage is unknown — waiting for the team to assign it.",
+  no_campaign: "The conversation has no campaign, so its brokerage cannot be known — never guessed from the inbox.",
   unknown_campaign: "The campaign does not match a brokerage — waiting for the team to assign it.",
   ambiguous_campaign: "The campaign name matches more than one brokerage — waiting for the team to assign it.",
   campaign_conflict: "The campaign points to one brokerage but the conversation is filed under another — waiting for the team.",

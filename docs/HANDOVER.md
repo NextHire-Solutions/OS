@@ -485,6 +485,59 @@ need a system to control things from here".
 Order used: portal app, then OS, then the migration — nothing could change a
 URL before old links forward.
 
+### 16 October: Interested replies → the brokerage, by Postmark — BUILT, NOT LIVE
+
+The approved client plan ("Interested replies, straight to the brokerage").
+**State: local branch `wip/postmark-relay` only — not pushed, not deployed,
+migrations not run, nothing has ever been sent.** Practice is the default
+everywhere; a send needs every lock below opened by a person.
+
+When a conversation is labelled **Interested** or **Meetings Booked** (AI or a
+person, either app), a minute sweep (`instrumentation.ts`, like the Slack alert)
+decides, records and — only when live — sends the agent's own reply through
+Postmark: From `"<Agent> via BrokerStaffer" <agents@leads.brokerstaffer.com>`,
+Reply-To the address the agent wrote from, To the brokerage's people, subject
+`Re: <conversation subject>`, the agent's words then this conversation's earlier
+messages quoted (nothing on top, tracking off; In-Reply-To/References when the
+provider stored the agent's Message-ID).
+
+| Rule | How (`src/lib/tools/master-inbox/relay/`) |
+|---|---|
+| Brokerage from the CAMPAIGN, never the inbox | `resolve.ts`: team's answer (`os_relay_campaigns`) > campaign → portal (0025) > campaign name (derive.ts's own matcher). A tie between clients, or a conversation filed under another client, is HELD |
+| Unknown campaign → short list | Held; Settings → Brokerage hand-off lists them by campaign; an admin assigns (or "not a brokerage campaign") and they are checked again. Never writes `os_campaign_portals` |
+| Active only; never Demo Portal; billing block | `os_clients.status = 'active'`; `os_portal_blocks` mode `blocked` |
+| No OOO / auto-reply / unsubscribe | Stop labels (Unsubscribe, Do Not Contact, OOO Sequence, Not Interested…), subject/body patterns, `looksLikeUnsubscribe` |
+| Brokerage's DNC | `client_dnc_entries` of all its portals: address, company domain (sub-domains), full name on name-only entries. Unreadable list → held. Also skipped: on its My Agents list, already introduced (Introduction label or in its pipeline) |
+| Once per conversation; once per agent per brokerage | Unique `dedupe_key`; primary key of `os_brokerage_relay_agents` (practice and live kept apart) |
+| Recipients | `routeIntro` — the Introduce button's territory routing — or one address per brokerage |
+| Hourly cap per brokerage | Default 5 (global, per-brokerage override); over it → held, goes next hour |
+| Recorded on the conversation | One line under the toolbar: "Sent to Angela at 10:42 AM", "Practice — would have gone to…", "Held — …" |
+| Bounces | GET /bounces every 10 min while something was sent that week → hand-off marked, OS bell (`os_notifications`, kind `relay_bounce`) |
+
+**Locks — a send needs ALL of them:** `OS_BROKERAGE_RELAY_LIVE_SEND=1` and
+`POSTMARK_SERVER_TOKEN` on Railway `os` (both unset); Settings switch on and
+practice mode off (`os_relay_settings`, default off / practice); the
+brokerage's own switch (`os_clients.relay_settings.enabled`, default off); in
+one-click mode (default) a person pressing **Send to brokerage**. The transport
+re-checks the env lock before it builds a request. `OS_BROKERAGE_RELAY=0` stops
+the sweep. Optional: `OS_BROKERAGE_RELAY_FROM` (must be @leads.brokerstaffer.com),
+`POSTMARK_MESSAGE_STREAM` (default `outbound`).
+
+**Plan §7 open questions, built as settings with the cautious default:** one
+click (not automatic); intro contacts by territory (or one address);
+later replies not relayed; a hand-off is not an introduction (recorded only);
+no pilot brokerage chosen.
+
+**Pipeline entry (Eddy, 16 Oct):** `os_clients.pipeline_entry` (0036) —
+existing clients `introduction`, rows created after 0036 `interested`. Each
+hand-off records what it would do (`pipeline_action`); creating the portal
+entry at Interested is NOT built (it writes the live portal). Nothing in the
+relay writes a Master Inbox table — only `os_*`.
+
+**Migrations (Master Inbox database), in order:** `0035_brokerage_relay.sql`,
+`0036_client_pipeline_entry.sql`. Tests: `relay/*.test.ts` (71), every write
+asserted to be `os_*` and no request to any other host; 28/28 mutations caught.
+
 ## 0.2 Interested leads → Slack, 14 October
 
 **State, 14 Oct 2026.** Code LIVE: `a896bb3` on `main`, deployed to Railway

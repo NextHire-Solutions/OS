@@ -351,6 +351,42 @@ test("never twice: the same agent's second conversation with the same brokerage 
   assertContained();
 });
 
+test("an attempt that stopped after claiming the agent (before 'sending') carries on — it is not 'already delivered' to itself", async () => {
+  seed();
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const [rec] = add("os_brokerage_relays", [{
+    workspace_id: WS, dedupe_key: `handoff:${thread.id}`, kind: "handoff", thread_id: thread.id, trigger: "Interested", triggered_at: at(-2),
+    status: "held", reason: "evaluating", practice: true, created_at: at(-10), updated_at: at(-10), attempts: 0, recipients: [],
+  }]);
+  add("os_brokerage_relay_agents", [{ workspace_id: WS, os_client_id: C.jeff, agent_email: "jordan@coastal.test", mode: "practice", relay_id: rec.id }]);
+  const r = await relay.sweepBrokerageRelay(NOW, deps());
+  assert.equal(r.rechecked, 1);
+  assert.equal(recordFor(thread.id).status, "practice");
+});
+
+test("one click: an agent already handed to this brokerage is marked so at once, not offered a button", async () => {
+  seed();
+  const a = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, a.thread.id, at(-3));
+  await relay.sweepBrokerageRelay(NOW, deps());
+  db.seed("os_relay_settings", db.rows("os_relay_settings").map((r) => ({ ...r, mode: "one_click" })));
+  const b = conversation({ portal: P.jeff, campaign: "Jeff Cook Real Estate + Summerville", campaignId: "102" });
+  label(L.interested, b.thread.id, at(1));
+  await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 2 * 60_000), deps());
+  assert.equal(recordFor(b.thread.id).status, "skipped");
+  assert.equal(recordFor(b.thread.id).reason, "already_delivered");
+});
+
+test("a conversation with no campaign at all is never guessed from the inbox: skipped", async () => {
+  seed();
+  const { thread } = conversation({ portal: P.jeff, campaign: "" });
+  db.seed("threads", db.rows("threads").map((t) => (t.id === thread.id ? { ...t, campaign_id: null, campaign_name: null } : t)));
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["skipped", "no_campaign"]);
+});
+
 test("practice does not use up the live delivery (claims are kept apart by mode)", async () => {
   seed();
   const a = conversation({ portal: P.jeff, campaign: CHARLESTON });
