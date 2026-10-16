@@ -1,29 +1,31 @@
--- 0036 — Where a client's agents enter its portal pipeline (16 Oct 2026)
+-- 0036 — Where a client's agents enter its portal pipeline (16 Oct 2026; revised 17 Oct)
 --
 -- RUN THIS IN THE MASTER INBOX SUPABASE PROJECT, after 0035. Safe to run more
--- than once. Additive: one new column on os_clients.
+-- than once. Additive: one new column on os_clients. Nothing else.
 --
 -- Eddy (16 Oct): a per-client switch. EXISTING clients keep entering the
--- pipeline at "Introduction" (today's behaviour); NEW clients enter at
--- "Interested", via the Postmark hand-off (0035).
+-- pipeline at "Introduction" (today's behaviour); NEW clients are meant to
+-- enter at "Interested", via the Postmark hand-off (0035).
 --
--- So the column is added with 'introduction' — which every existing row takes
--- — and only then is its default changed to 'interested', which applies to
--- rows created from now on. No existing row is changed by the second step.
+-- WHAT RUNNING IT CHANGES TODAY: NOTHING, for any client.
 --
--- What it changes today: nothing a client can see. The relay reads it and
--- RECORDS what the hand-off would do to the pipeline (pipeline_action on
--- os_brokerage_relays). Creating the portal pipeline entry at Interested is
--- not built — it writes the live portal and needs the portal to have that
--- stage — so the Introduction label keeps working exactly as before for every
--- client.
+-- Every row — the existing ones AND every client created after this runs —
+-- reads 'introduction', today's behaviour. The "enter the portal at
+-- Interested" side is NOT built (it would write the live portal, and the
+-- portal needs that stage first). Until it is, a client is 'interested' only
+-- if an admin sets it on purpose in Inbox → Settings → Brokerage hand-off, and
+-- even then the only effect is a field RECORDED on each hand-off
+-- (os_brokerage_relays.pipeline_action) for the team to review. No portal
+-- entry, label, Follow Up Boss push or count changes.
 --
--- If you would rather new clients also start at 'introduction' until that
--- part is built, skip the ALTER ... SET DEFAULT below.
+-- The first draft of this file then switched the column's default to
+-- 'interested', so new clients would silently differ from existing ones
+-- before anything used the difference. That step was removed on review
+-- (17 Oct). Make 'interested' the default for new clients in a LATER
+-- migration, shipped together with the portal side:
+--
+--   ALTER TABLE public.os_clients ALTER COLUMN pipeline_entry SET DEFAULT 'interested';
 
 ALTER TABLE public.os_clients
   ADD COLUMN IF NOT EXISTS pipeline_entry text NOT NULL DEFAULT 'introduction'
   CHECK (pipeline_entry IN ('introduction', 'interested'));
-
-ALTER TABLE public.os_clients
-  ALTER COLUMN pipeline_entry SET DEFAULT 'interested';
