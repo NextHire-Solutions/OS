@@ -18,7 +18,7 @@ export function CampaignsScreen() {
   return (
     <>
       <header className={k("top")}>
-        <div className={k("ttl")}><h1>Campaigns</h1><span className={k("soonp")}>Coming soon</span></div>
+        <div className={k("ttl")}><h1>Campaigns</h1><span className={k("soonp")} style={{ marginLeft: 4 }}>Coming soon</span></div>
         <div className={k("hr")} />
       </header>
       <div className={k("content")}>

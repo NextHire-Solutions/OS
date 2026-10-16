@@ -31,8 +31,6 @@ import { AgentPanel, ConversationPanel, NotesPanel, StageCell, TagChip } from ".
 
 type Open = { kind: "agent" | "conversation" | "notes"; entry: PipelineEntry } | null;
 
-const CARDS_PER_COLUMN = 40;
-
 export function PipelineScreen({ entries, stages, furthest, token, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; token: string; now: Date }) {
   const [mode, setMode] = useState<"board" | "list">("board");
   const [range, setRange] = useState<TimeRange>("all");
@@ -127,7 +125,7 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
               <span className={k("vlab")} style={{ marginLeft: "auto" }}>View as:</span>
               <div className={k("seg")} role="group" aria-label="View as">
                 <button type="button" className={mode === "board" ? k("on") : undefined} aria-pressed={mode === "board"} onClick={() => setMode("board")}><Icon name="board" size={14} />Board</button>
-                <button type="button" className={mode === "list" ? k("on") : undefined} aria-pressed={mode === "list"} onClick={() => setMode("list")}><Icon name="list" size={15} />List</button>
+                <button type="button" className={mode === "list" ? k("on") : undefined} aria-pressed={mode === "list"} onClick={() => setMode("list")}><Icon name="list" size={14} />List</button>
               </div>
               <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Upload CSV</button>
               <button type="button" className={k("btn pri")} {...RO}><Icon name="plus" size={15} />Add agent</button>
@@ -174,9 +172,8 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
 
             {mode === "board" ? (
               <div className={k("board")}>
+                {/* Every card, as the design's board (no client has more than a few hundred); each column scrolls. */}
                 {view.columns.map((c) => {
-                  const showAll = expanded[`col:${c.stage.key}`];
-                  const cards = showAll ? c.entries : c.entries.slice(0, CARDS_PER_COLUMN);
                   return (
                     <section key={c.stage.key} className={k("col")} aria-label={c.stage.label}>
                       <div className={k("colh")}>
@@ -185,7 +182,7 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                         {c.volume > 0 ? <span className={k("amt")}>{abbrevUsd(c.volume)}</span> : null}
                         <span className={k("n")}>{c.entries.length}</span>
                       </div>
-                      {cards.map((e) => {
+                      {c.entries.map((e) => {
                         const sv = salesVolumeOf(e);
                         const place = placeOf(e);
                         const src = sourceLabel(e);
@@ -194,20 +191,13 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                             <span className={k("t1")}>{e.lead_name || "Unnamed agent"}{sv ? <span>{abbrevUsd(sv)}</span> : null}</span>
                             <span className={k("co")}>{e.current_brokerage || "—"}</span>
                             <span className={k("t3")}>
-                              <span><Icon name="calendar" size={12} />{shortDate(e.introduced_at, now)}</span>
+                              <span><Icon name="calendar" size={13} />{shortDate(e.introduced_at, now)}</span>
                               <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>
                             </span>
                             {place.tag ? <span className="cpv-cardtag"><TagChip stage={place.tag} /></span> : null}
                           </button>
                         );
                       })}
-                      {c.entries.length > cards.length ? (
-                        <div className="cpv-more">
-                          <button type="button" className={k("btn sm")} onClick={() => setExpanded((x) => ({ ...x, [`col:${c.stage.key}`]: true }))}>
-                            Show {c.entries.length - cards.length} more
-                          </button>
-                        </div>
-                      ) : null}
                     </section>
                   );
                 })}
@@ -293,8 +283,6 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
           entry={open.entry}
           placement={placeOf(open.entry)}
           onClose={() => setOpen(null)}
-          onConversation={() => setOpen({ kind: "conversation", entry: open.entry })}
-          onNotes={() => setOpen({ kind: "notes", entry: open.entry })}
         />
       ) : null}
       {open?.kind === "conversation" ? (
@@ -434,7 +422,7 @@ function ListRow({
           <span className={k("ph")}>
             {formatPhone(e.lead_phone)}
             <button className={k("mini")} type="button" aria-label="Copy phone number" title="Copy phone number" onClick={() => void navigator.clipboard?.writeText(e.lead_phone ?? "")}>
-              <Icon name="copy" size={12} />
+              <Icon name="copy" size={13} />
             </button>
           </span>
         ) : (
@@ -445,7 +433,7 @@ function ListRow({
       <td className={k("vt")}>
         {/* The design's stage picker: a pill that opens the stages — drawn, not usable here. */}
         <button type="button" className={k(`pill p-${placement.stage.pill}`)} {...RO}>
-          {placement.stage.label} <Icon name="chevDown" size={12} />
+          {placement.stage.label} <Icon name="chevDown" size={11} />
         </button>
       </td>
       <td className={k("vt")}>
@@ -460,7 +448,7 @@ function ListRow({
         <div className={k("acts")}>
           <button type="button" className={k("ib")} aria-label={`Edit ${name}`} {...RO}><Icon name="pencil" size={15} /></button>
           <button type="button" className={k("btn sm")} style={{ marginLeft: 4 }} onClick={onNotes}>
-            <Icon name="note" size={14} />Add note
+            <Icon name="note" size={13} />Add note
           </button>
         </div>
       </td>

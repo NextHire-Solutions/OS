@@ -129,7 +129,7 @@ export function CrmPreview({
         </span>
       </div>
 
-      <div className={k("app")} onClickCapture={onClickCapture}>
+      <div className={k("app")} data-view={view} onClickCapture={onClickCapture}>
         <nav className={k(collapsed ? "rail cl" : "rail")} aria-label="Main">
           <div className={k("lg")}>
             <span className={k("lw")}>

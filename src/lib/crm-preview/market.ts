@@ -183,19 +183,38 @@ export const marketOptions = ttlCache(async (ctx: MarketContext): Promise<{ brok
 
 /*
  * Reports › All market. Every figure is an exact count of agents in the
- * market (fn_filter_search), except two things taken from the Database app's
- * option lists, both only to choose WHICH groups to count:
- *   - brokerages: its brand list is an exact count per brand (checked against
- *     a direct count on 16 Oct: Keller Williams in C21's market 11,863 both ways);
- *   - office cities: its city list counts an agent once per location kind
- *     and once per MLS (Atlanta: 31,727 listed, 15,279 by office), so it only
- *     names the candidates; each is then counted by office city exactly.
+ * market, from the Database app's own STABLE functions:
+ *   - brokerages: its brand list (fn_facet_options), an exact count per brand
+ *     (checked on 16 Oct: Keller Williams in C21's market 11,863 both ways). It
+ *     lists the largest 50, so how many brokerages there are is not known;
+ *   - office cities: its Location view (fn_filter_search, location mode, by
+ *     office, city level) — every office city with its agents, and how many
+ *     cities (C21: 1,450; Atlanta 15,114, the same as filtering by office city);
+ *     the agents with no office city are "Unknown";
+ *   - the sales and deals bands: one count each.
  */
 export interface MarketReport {
   total: number;
   groups: ReportGroup[];
   /** Every brokerage the Database app lists for the market (its largest 50), for "See all". */
   allBrokerages: GroupRow[];
+}
+
+/* Every office city in the market with its agents (the Location view's rows), and how many cities there are. */
+async function officeCities(base: Record<string, unknown>): Promise<{ rows: GroupRow[]; cities: number }> {
+  const rows: GroupRow[] = [];
+  let cities = 0;
+  for (let page = 0; page < 10; page++) {
+    const d = (await rpc("fn_filter_search", {
+      p_mode: "location", p_source: "all", p_filters: { ...base, locGranularity: "city", locKinds: ["office"] },
+      p_sort_by: "agents", p_sort_dir: "desc", p_limit: 5000, p_offset: page * 5000,
+    })) as { data?: Array<{ location?: string; agents?: number }>; totalCount?: number } | null;
+    const got = d?.data ?? [];
+    cities = Number(d?.totalCount) || 0;
+    for (const r of got) if (r.location) rows.push({ label: r.location, n: Number(r.agents) || 0 });
+    if (got.length < 5000 || rows.length >= cities) break;
+  }
+  return { rows, cities };
 }
 
 export const marketReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport | { unavailable: string }> => {
@@ -205,21 +224,17 @@ export const marketReport = ttlCache(async (ctx: MarketContext): Promise<MarketR
   const [all, brands, cities] = await Promise.all([
     search(base, 1),
     rpc("fn_facet_options", { p_type: "brand", p_q: "", p_field: null, p_source: "all", p_filters: base }),
-    rpc("fn_facet_options", { p_type: "location", p_q: "", p_field: "city", p_source: "all", p_filters: base }),
+    officeCities(base),
   ]);
   const brandRows = ((Array.isArray(brands) ? brands : []) as Array<{ v: string; n: number }>).map((b) => ({ label: b.v, n: Number(b.n) || 0 }));
-  const candidates = (((cities as { options?: Array<{ v: string }> } | null)?.options ?? []).map((c) => c.v)).slice(0, 10);
 
-  const officeCity = (v: string) => ({ ...base, location: { field: "city", appliesTo: ["office"], values: [v], excludeValues: [], excludeField: "city" } });
   const jobs: Array<() => Promise<number>> = [
-    ...candidates.map((v) => () => search(officeCity(v), 1).then((r) => r.total)),
     ...SALES_BANDS.map((b) => () => search({ ...base, salesVolume: rangeFilter(b) }, 1).then((r) => r.total)),
     ...DEAL_BANDS.map((b) => () => search({ ...base, closedTransactions: rangeFilter(b) }, 1).then((r) => r.total)),
   ];
   const counts = await pooled(jobs, 4);
-  const cityCounts = counts.slice(0, candidates.length);
-  const salesCounts = counts.slice(candidates.length, candidates.length + SALES_BANDS.length);
-  const dealCounts = counts.slice(candidates.length + SALES_BANDS.length);
+  const salesCounts = counts.slice(0, SALES_BANDS.length);
+  const dealCounts = counts.slice(SALES_BANDS.length);
 
   const bands = (labels: ReadonlyArray<{ label: string }>, n: number[]): GroupRow[] => {
     const m = new Map(labels.map((b, i) => [b.label, n[i]]));
@@ -228,20 +243,21 @@ export const marketReport = ttlCache(async (ctx: MarketContext): Promise<MarketR
     return bandRows(m, labels);
   };
   // City names as the design shows them ("Atlanta"); "City, ST" only when the market crosses states
-  // (ChuckTown's Columbia is SC, and another market's could be MO).
-  const states = new Set(candidates.map((v) => (/,\s*([A-Z]{2})$/.exec(v)?.[1] ?? "")));
+  // (C21's has Charlotte, NC; ChuckTown's Columbia is SC, and another market's could be MO).
+  const largest = cities.rows.filter((r) => r.n > 0).slice(0, 50);
+  const states = new Set(largest.map((r) => (/,\s*([A-Z]{2})$/.exec(r.label)?.[1] ?? "")));
   const oneState = states.size === 1 && !states.has("");
-  const cityRows = candidates
-    .map((v, i) => ({ label: oneState ? v.replace(/,\s*[A-Z]{2}$/, "") : v, n: cityCounts[i] }))
-    .filter((r) => r.n > 0)
-    .sort((a, b) => b.n - a.n)
-    .slice(0, 8);
+  const placed = cities.rows.reduce((s, r) => s + r.n, 0);
+  const cityRows: GroupRow[] = [
+    ...largest.map((r) => ({ label: oneState ? r.label.replace(/,\s*[A-Z]{2}$/, "") : r.label, n: r.n })),
+    ...(all.total > placed ? [{ label: "Unknown", n: all.total - placed }] : []),
+  ];
   return {
     total: all.total,
     groups: [
       // The list stops at 50, so "of N" is only said when it is all of them.
       { title: "Current brokerage", rows: brandRows.slice(0, 8), ...(brandRows.length < 50 ? { of: { shown: Math.min(8, brandRows.length), total: brandRows.length, noun: "brokerages" } } : {}) },
-      { title: "Office city", rows: cityRows },
+      { title: "Office city", rows: cityRows, of: { shown: Math.min(8, largest.length), total: cities.cities, noun: "cities" } },
       { title: "Sales volume, last 12 months", rows: bands(SALES_BANDS, salesCounts) },
       { title: "Deals closed, last 12 months", rows: bands(DEAL_BANDS, dealCounts) },
     ],

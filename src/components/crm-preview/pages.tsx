@@ -11,13 +11,12 @@ import { useMemo, useState } from "react";
 
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { formatPhone, initials } from "@/lib/crm-preview/model";
+import { formatPhone, initials, LIST_PAGE_SIZE } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
 import fubLogo from "./follow-up-boss.png";
 
-const PAGE = 100;
 const AV = { width: 30, height: 30, fontSize: 11, background: "#eef2fa", color: "#2f55a8" } as const;
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
@@ -77,11 +76,29 @@ function Dash() {
   return <span className={k("dash")}>&ndash;</span>;
 }
 
-function ShowMore({ shown, total, onMore }: { shown: number; total: number; onMore: () => void }) {
-  if (shown >= total) return null;
+/* A long list pages 50 at a time with the design's own footer (its Pipeline list); one page needs none, as the design's tables. */
+function pageOf<T>(rows: readonly T[], page: number) {
+  const pages = Math.max(1, Math.ceil(rows.length / LIST_PAGE_SIZE));
+  const p = Math.min(Math.max(1, page), pages);
+  return { page: p, pages, rows: rows.slice((p - 1) * LIST_PAGE_SIZE, p * LIST_PAGE_SIZE) };
+}
+
+function Pager({ page, pages, total, onPage }: { page: number; pages: number; total: number; onPage: (p: number) => void }) {
+  if (pages <= 1) return null;
+  const from = (page - 1) * LIST_PAGE_SIZE + 1;
+  const to = Math.min(total, page * LIST_PAGE_SIZE);
   return (
-    <div className="cpv-more">
-      <button type="button" className={k("btn sm")} onClick={onMore}>Show {Math.min(PAGE, total - shown)} more of {(total - shown).toLocaleString("en-US")}</button>
+    <div className={k("tf")}>
+      <span>
+        <b style={{ color: "#1f2124", fontWeight: 600 }}>{from.toLocaleString("en-US")}&ndash;{to.toLocaleString("en-US")}</b> of {total.toLocaleString("en-US")} agents
+      </span>
+      <div className={k("pg")} style={{ alignItems: "center" }}>
+        <button type="button" className={k(page <= 1 ? "btn sm dis" : "btn sm")} disabled={page <= 1} onClick={() => onPage(page - 1)}>Previous</button>
+        <span>Page {page} / {pages}</span>
+        <button type="button" className={k(page >= pages ? "btn sm dis" : "btn sm")} disabled={page >= pages} onClick={() => onPage(page + 1)}>
+          Next <Icon name="chevRight" size={12} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -116,8 +133,9 @@ const has = (q: string, ...vals: Array<string | null | undefined>) => {
 
 export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
   const [q, setQ] = useState("");
-  const [limit, setLimit] = useState(PAGE);
+  const [pageNo, setPageNo] = useState(1);
   const found = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
+  const shown = pageOf(found, pageNo);
   return (
     <>
       <Header title="My Agents" add={agents.length ? "Add agent" : undefined} />
@@ -134,7 +152,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
                 <span className={k("s")}>We never reach out to these agents.</span>
               </div>
             </div>
-            <Search id="crx-agents-search" label="Search agents..." value={q} onChange={(v) => { setQ(v); setLimit(PAGE); }} count={`${found.length.toLocaleString("en-US")} of ${agents.length.toLocaleString("en-US")}`} />
+            <Search id="crx-agents-search" label="Search agents..." value={q} onChange={(v) => { setQ(v); setPageNo(1); }} count={`${found.length.toLocaleString("en-US")} of ${agents.length.toLocaleString("en-US")}`} />
             <BulkOff />
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
@@ -148,7 +166,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {found.slice(0, limit).map((a) => (
+                  {shown.rows.map((a) => (
                     <tr key={a.id}>
                       <td><input type="checkbox" className={k("ck")} aria-label={`Select ${a.name}`} {...RO} /></td>
                       <td><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className={k("av")} style={AV}>{initials(a.name)}</span><span className={k("nm")}>{a.name}</span></div></td>
@@ -159,8 +177,8 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
                   ))}
                 </tbody>
               </table>
+              <Pager page={shown.page} pages={shown.pages} total={found.length} onPage={setPageNo} />
             </div>
-            <ShowMore shown={Math.min(limit, found.length)} total={found.length} onMore={() => setLimit((l) => l + PAGE)} />
           </>
         )}
       </div>
@@ -172,11 +190,12 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
 
 export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const [q, setQ] = useState("");
-  const [limit, setLimit] = useState(PAGE);
+  const [pageNo, setPageNo] = useState(1);
   const people = useMemo(() => dnc.filter((d) => d.kind === "agent"), [dnc]);
   const companies = useMemo(() => dnc.filter((d) => d.kind === "company"), [dnc]);
   const foundPeople = useMemo(() => people.filter((d) => has(q, d.name, d.email, d.phone, d.brokerage)), [people, q]);
   const foundCompanies = useMemo(() => companies.filter((d) => has(q, d.name, d.domain, d.notes)), [companies, q]);
+  const shown = pageOf(foundPeople, pageNo);
   return (
     <>
       <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} />
@@ -202,7 +221,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                 <span className={k("s")}>entire firms excluded from outreach</span>
               </div>
             </div>
-            <Search id="crx-dnc-search" label="Search agents or companies..." value={q} onChange={(v) => { setQ(v); setLimit(PAGE); }} />
+            <Search id="crx-dnc-search" label="Search agents or companies..." value={q} onChange={(v) => { setQ(v); setPageNo(1); }} />
             <BulkOff />
             <div className={k("sec")}>Agents<span>{foundPeople.length.toLocaleString("en-US")}</span></div>
             <div className={k("card")} style={{ overflow: "hidden" }}>
@@ -217,14 +236,14 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {foundPeople.slice(0, limit).map((d) => (
+                  {shown.rows.map((d) => (
                     <tr key={d.id}>
                       <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} {...RO} /></td>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span className={k("av")} style={AV}>{initials(d.name)}</span>
                           <span className={k("nm")}>{d.name}</span>
-                          <span title="Do not contact" aria-label="Do not contact" style={{ color: "#d92d20", display: "inline-flex" }}><Icon name="ban" size={14} /></span>
+                          <span title="Do not contact" aria-label="Do not contact" style={{ color: "#d92d20", display: "inline-flex" }}><Icon name="ban" size={13} /></span>
                         </div>
                       </td>
                       <td>{d.brokerage || <Dash />}</td>
@@ -241,8 +260,8 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                   ))}
                 </tbody>
               </table>
+              <Pager page={shown.page} pages={shown.pages} total={foundPeople.length} onPage={setPageNo} />
             </div>
-            <ShowMore shown={Math.min(limit, foundPeople.length)} total={foundPeople.length} onMore={() => setLimit((l) => l + PAGE)} />
 
             {companies.length > 0 ? (
               <>
@@ -375,7 +394,7 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
               <label className={k("fl")} htmlFor="crx-fubkey">API key</label>
               <div className={k("inw")}>
                 <input id="crx-fubkey" className={k("in")} type="password" placeholder={fubConnected ? "A key is saved for this client" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} readOnly {...RO} />
-                <button type="button" className={k("ib")} aria-label="Show API key" {...RO}><Icon name="eye" size={15} /></button>
+                <button type="button" className={k("ib")} aria-label="Show API key" {...RO}><Icon name="eye" size={16} /></button>
               </div>
               <p className={k("hint")}>
                 Find it in Follow Up Boss under <b style={{ color: "#1f2124", fontWeight: 500 }}>My Settings &rarr; API</b>.{" "}

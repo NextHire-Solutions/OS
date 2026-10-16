@@ -15,6 +15,32 @@
   background: #f7f8fa;
 }
 
+/*
+ * The design was drawn on the browser's own defaults; the OS's global styles
+ * (Tailwind's reset in @layer base, workspace.css in @layer mockup, ds.css's
+ * body) reach every element on the page and changed it: line height 1.5,
+ * border-box sizing, form controls stripped of their padding and font, block
+ * images and icons, a grey table header and row borders, antialiased text.
+ * Inside the design every element goes back to the browser's defaults —
+ * `all: revert` at zero specificity, unlayered — which beats every layered OS
+ * rule and loses to every design rule (crx-), every preview rule (cpv-) and
+ * inline style. The root resets what it would otherwise inherit from the OS's
+ * body. Measured element by element against the handoff (16 Oct).
+ *
+ * Icons are left out: an SVG's attributes (stroke, fill, a circle's r, a
+ * path's d) are styles too, and reverting them erases the icon. An SVG gets
+ * back only what the OS's reset changed on it (block, middle-aligned).
+ */
+.cpv-shell {
+  line-height: normal; letter-spacing: normal; font-size: 16px; font-weight: 400;
+  -webkit-font-smoothing: auto; -moz-osx-font-smoothing: auto;
+}
+:where(.crx-root *:not(svg, svg *)),
+:where(.crx-root *:not(svg, svg *))::before,
+:where(.crx-root *:not(svg, svg *))::after,
+:where(.crx-root *:not(svg, svg *))::placeholder { all: revert; }
+:where(.crx-root svg) { display: revert; vertical-align: revert; box-sizing: revert; margin: revert; padding: revert; border: revert; }
+
 /* ------------------------------------------------------------ the bar --- */
 .cpv-bar {
   position: sticky; top: 0; z-index: 9;
@@ -52,8 +78,43 @@
   overflow-x: auto; overflow-y: hidden; padding-bottom: 6px;
   height: calc(100vh - 96px); min-height: 420px;
 }
-.cpv-shell .crx-col { min-height: 0; overflow-y: auto; }
+.cpv-shell .crx-board .crx-col { min-height: 0; overflow-y: auto; }
 .cpv-shell .crx-colh { position: sticky; top: 0; z-index: 1; background: #f1f3f6; }
+
+/*
+ * The sidebar's collapse button is `.col`, as is a board column, and the
+ * design's board screens' stylesheet sizes every `.col` as a board column (a
+ * quarter of the row, at least 420px tall) — so on those screens the button
+ * is that tall, which is why the collapsed sidebar in the design has a large
+ * gap under the logo and its icons low down. Its other screens have no board
+ * rule and a 26px button. The preview follows each: the board's sizing only
+ * while the board is showing.
+ */
+.cpv-shell .crx-rail .crx-col { flex: 0 0 auto; min-height: 0; }
+.cpv-shell .crx-app:has(.crx-board) .crx-rail .crx-col { flex: 0 0 calc((100% - 36px) / 4); min-height: 420px; }
+
+/*
+ * The same on the design's Reports screen: its chart-legend rule `.lg` also
+ * catches the sidebar's logo row (a faint line under it, the logo taking the
+ * row). The preview follows it on Reports only.
+ */
+.cpv-shell .crx-app[data-view="reports"] .crx-rail:not(.crx-cl) .crx-lg { gap: 12px; min-height: 34px; border-bottom: 1px solid #f1f2f4; }
+.cpv-shell .crx-app[data-view="reports"] .crx-rail:not(.crx-cl) .crx-lg > span:first-child { flex: 1; }
+
+/* My Agents' and DNC's row actions space their icons 2px apart; the Pipeline list's (one icon, then Add note) do not. */
+.cpv-shell .crx-lt .crx-acts .crx-ib { margin-left: 0; }
+
+/*
+ * Where the design has a link and the preview a button (it opens something:
+ * a card, Manage stages, a chip, a panel's close), the button is drawn as the
+ * link — none of a button's own padding, border, background or font. Zero
+ * specificity, so every design rule still wins.
+ */
+:where(.crx-root button.crx-kc, .crx-root button.crx-ms, .crx-root button.crx-chip, .crx-root .crx-pnh > button.crx-ib, .crx-root .crx-ph1 > button.crx-ib, .crx-root td.crx-vt .crx-acts > button.crx-ib) {
+  padding: 0; border: 0; margin: 0; background: none; font: inherit; color: inherit; text-align: inherit; cursor: pointer;
+}
+/* A chip's 24px is its content, as a link's is (a button's would include its border). */
+:where(.crx-root button.crx-chip) { box-sizing: content-box; }
 
 /* A picked chip. The mockup has no selected state; this uses its own "set" blue. */
 .cpv-shell .crx-chip { cursor: pointer; }
@@ -94,10 +155,9 @@
 /* A long list of the lead's details scrolls inside the panel. */
 .cpv-shell .crx-panel { overflow-y: auto; }
 
-/* An email body, as text: keep its line breaks, wrap long links. */
-.cpv-shell .cpv-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; line-height: 1.55; }
+/* A paragraph of an email or note (the design's .msg p sets the rest): keep a line break inside it, wrap long links. */
+.cpv-shell .cpv-para { white-space: pre-line; overflow-wrap: anywhere; }
 .cpv-shell .cpv-muted { color: var(--cpv-sub); }
-.cpv-shell .cpv-more { display: flex; justify-content: center; padding: 10px; }
 
 /* ----------------------------------------------------------- the picker --- */
 .cpv-pick { max-width: 880px; margin: 0 auto; padding: 40px 16px 64px; }
@@ -126,3 +186,5 @@
   box-shadow: 0 8px 24px rgba(31, 33, 36, 0.25);
 }
 .cpv-bar .cpv-context { color: #c9d6f5; }
+/* A panel takes focus when it opens (for the keyboard); the design draws no ring round the whole panel. */
+.cpv-shell aside[tabindex="-1"]:focus { outline: none; }

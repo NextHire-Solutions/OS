@@ -6,7 +6,7 @@
  * page and close on the scrim, the close button or Escape.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { formatPhone, initials, longDate, messageText, panelFields, shortDate, sourceLabel, stamp, type Placement, type PreviewStage } from "@/lib/crm-preview/model";
@@ -22,6 +22,19 @@ function useEscape(onClose: () => void) {
   }, [onClose]);
 }
 
+/* Focus moves into the panel itself (not onto its close button, which would draw a ring the design does not have). */
+function usePanelFocus() {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => ref.current?.focus(), []);
+  return ref;
+}
+
+/* A message or note as the design sets it: one <p> per paragraph; a line break inside one is kept. */
+function Paragraphs({ text }: { text: string }) {
+  const parts = text.split(/\n[ \t]*\n+/).map((t) => t.trim()).filter(Boolean);
+  return <>{parts.map((t, i) => <p key={i} className="cpv-para">{t}</p>)}</>;
+}
+
 export function TagChip({ stage }: { stage: PreviewStage }) {
   return <span className={k("tg")}><i style={{ background: stage.dot }} />{stage.label}</span>;
 }
@@ -31,19 +44,6 @@ export function StageCell({ stage }: { stage: PreviewStage }) {
   return stage.role === "stage" ? <span className={k(`pill p-${stage.pill}`)}>{stage.label}</span> : <span className={k("dash")}>&ndash;</span>;
 }
 
-/** The stage, and for a tagged agent where it came from (Eddy, 16 Oct: the furthest stage reached before the tag). */
-function StageWhy({ placement }: { placement: Placement }) {
-  if (!placement.tag) return <StageCell stage={placement.stage} />;
-  return (
-    <span style={{ display: "inline-flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
-      <StageCell stage={placement.stage} />
-      <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.4 }}>
-        {placement.fromHistory ? "The furthest stage on record before the tag." : "No stage history before the tag (kept since 3 Aug), so the first stage."}
-      </span>
-    </span>
-  );
-}
-
 function Source({ entry }: { entry: PipelineEntry }) {
   const src = sourceLabel(entry);
   return <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>;
@@ -51,23 +51,26 @@ function Source({ entry }: { entry: PipelineEntry }) {
 
 const LABEL = { fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", color: "#6b7280", marginBottom: 4 } as const;
 
+/*
+ * The agent's details exactly as the design lists them: stage, tags, email,
+ * phone, company, source, then the lead's own fields, then the date
+ * introduced. (A tagged agent's stage is the furthest one reached before the
+ * tag — Eddy, 16 Oct.) Conversation and notes open from the list, as in the
+ * design.
+ */
 export function AgentPanel({
   entry: e,
   placement,
   onClose,
-  onConversation,
-  onNotes,
 }: {
   entry: PipelineEntry;
   placement: Placement;
   onClose: () => void;
-  onConversation: () => void;
-  onNotes: () => void;
 }) {
   useEscape(onClose);
+  const focus = usePanelFocus();
   const name = e.lead_name || "Unnamed agent";
   const fields = panelFields(e);
-  const profile = e.agent_profile_url && /^https?:\/\//i.test(e.agent_profile_url) && !fields.some((f) => f.href === e.agent_profile_url) ? e.agent_profile_url : null;
   const row = (dt: string, dd: React.ReactNode) => (
     <div key={dt}>
       <dt>{dt}</dt>
@@ -77,7 +80,7 @@ export function AgentPanel({
   return (
     <div className={k("pnl-ov")}>
       <button type="button" className={k("dimx")} aria-label="Close panel" onClick={onClose} />
-      <aside className={k("panel")} role="dialog" aria-modal="true" aria-label={name}>
+      <aside ref={focus} tabIndex={-1} className={k("panel")} role="dialog" aria-modal="true" aria-label={name}>
         <div className={k("pnh")}>
           <span className={k("av big")}>{initials(name)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -85,10 +88,10 @@ export function AgentPanel({
             <span style={{ display: "inline-flex", marginTop: 6 }}><Source entry={e} /></span>
           </div>
           <button type="button" className={k("btn sm")} {...RO}><Icon name="pencil" size={14} />Edit</button>
-          <button type="button" className={k("ib")} aria-label="Close" style={{ marginLeft: 2 }} onClick={onClose} autoFocus><Icon name="x" size={16} /></button>
+          <button type="button" className={k("ib")} aria-label="Close" style={{ marginLeft: 2 }} onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <dl className={k("pf")}>
-          {row("Stage", <StageWhy placement={placement} />)}
+          {row("Stage", <StageCell stage={placement.stage} />)}
           {row("Tags", placement.tag ? <TagChip stage={placement.tag} /> : (
             <button type="button" className={k("btn sm")} style={{ height: 24 }} {...RO}>Add tag <Icon name="chevDown" size={12} /></button>
           ))}
@@ -96,19 +99,11 @@ export function AgentPanel({
           {row("Phone", formatPhone(e.lead_phone) ?? "–")}
           {row("Company", e.current_brokerage || "–")}
           {row("Source", sourceLabel(e))}
-          {row("Owner", e.assigned_team_member?.name ?? "Unassigned")}
-          {e.lead_location ? row("Location", e.lead_location) : null}
-          {e.campaign_name ? row("Campaign", e.campaign_name) : null}
-          {profile ? row("Profile", <a href={profile} target="_blank" rel="noopener noreferrer" style={{ color: "#3e6bd1", overflowWrap: "anywhere" }}>{profile}</a>) : null}
           {fields.map((f) => row(f.label, f.href ? <a href={f.href} target="_blank" rel="noopener noreferrer" style={{ color: "#3e6bd1", overflowWrap: "anywhere" }}>{f.value}</a> : f.value))}
         </dl>
         <div style={{ margin: "0 20px", paddingTop: 18, borderTop: "1px solid #ebedf0" }}>
           <div style={LABEL}>Introduced</div>
           {longDate(e.introduced_at)}
-        </div>
-        <div style={{ display: "flex", gap: 8, margin: "18px 20px 22px" }}>
-          {e.thread_id ? <button type="button" className={k("btn sm")} onClick={onConversation}><Icon name="chat" size={14} />Conversation</button> : null}
-          <button type="button" className={k("btn sm")} onClick={onNotes}><Icon name="note" size={14} />Notes{e.notes_log.length ? ` (${e.notes_log.length})` : ""}</button>
         </div>
       </aside>
     </div>
@@ -142,6 +137,7 @@ export function ConversationPanel({
   onClose: () => void;
 }) {
   useEscape(onClose);
+  const focus = usePanelFocus();
   const name = e.lead_name || "Unnamed agent";
   const [state, setState] = useState<{ loading: boolean; error: string | null; messages: Message[]; noThread: boolean }>({ loading: true, error: null, messages: [], noThread: false });
 
@@ -162,7 +158,7 @@ export function ConversationPanel({
   return (
     <>
       <button type="button" className={k("ov")} style={{ zIndex: 10 }} aria-label="Close conversation" onClick={onClose} />
-      <aside className={k("pnl")} role="dialog" aria-modal="true" aria-label={`Conversation with ${name}`}>
+      <aside ref={focus} tabIndex={-1} className={k("pnl")} role="dialog" aria-modal="true" aria-label={`Conversation with ${name}`}>
         <div className={k("ph1")}>
           <span className={k("av")}>{initials(name)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -174,7 +170,7 @@ export function ConversationPanel({
               <Source entry={e} />
             </div>
           </div>
-          <button type="button" className={k("ib")} aria-label="Close" onClick={onClose} autoFocus><Icon name="x" size={16} /></button>
+          <button type="button" className={k("ib")} aria-label="Close" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <div className={k("thr")}>
           {state.loading ? (
@@ -195,7 +191,7 @@ export function ConversationPanel({
                     <span>{stamp(m.sent_at)}</span>
                   </div>
                   {showSubject ? <div className={k("sj")}>{m.subject}</div> : null}
-                  <p className="cpv-body">{messageText(m.body_text, m.body_html)}</p>
+                  <Paragraphs text={messageText(m.body_text, m.body_html)} />
                 </div>
               );
             })
@@ -214,18 +210,19 @@ export function ConversationPanel({
 
 export function NotesPanel({ entry: e, onClose }: { entry: PipelineEntry; onClose: () => void }) {
   useEscape(onClose);
+  const focus = usePanelFocus();
   const name = e.lead_name || "Unnamed agent";
   return (
     <>
       <button type="button" className={k("ov")} style={{ zIndex: 10 }} aria-label="Close notes" onClick={onClose} />
-      <aside className={k("pnl")} role="dialog" aria-modal="true" aria-label={`Notes for ${name}`}>
+      <aside ref={focus} tabIndex={-1} className={k("pnl")} role="dialog" aria-modal="true" aria-label={`Notes for ${name}`}>
         <div className={k("ph1")}>
           <span className={k("av")}>{initials(name)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h2>{name}</h2>
             <div className={k("meta")}>Notes{e.current_brokerage ? ` · ${e.current_brokerage}` : ""}</div>
           </div>
-          <button type="button" className={k("ib")} aria-label="Close" onClick={onClose} autoFocus><Icon name="x" size={16} /></button>
+          <button type="button" className={k("ib")} aria-label="Close" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <div className={k("thr")}>
           {e.notes_log.length === 0 ? (
@@ -234,7 +231,7 @@ export function NotesPanel({ entry: e, onClose }: { entry: PipelineEntry; onClos
             e.notes_log.map((n) => (
               <div key={n.id} className={k("msg")}>
                 <div className={k("mh")}><span><b>Note</b></span><span>{stamp(n.created_at)}</span></div>
-                <p className="cpv-body">{n.body}</p>
+                <Paragraphs text={n.body} />
               </div>
             ))
           )}

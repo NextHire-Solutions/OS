@@ -259,15 +259,29 @@ export function MarketScreen({ clientId, list, onContext }: { clientId: string; 
 
 const NOUN: Record<string, string> = { "Current brokerage": "brokerages", "Office city": "cities" };
 
+/*
+ * A list card shows the design's eight rows — "Unknown" the last of them when
+ * some agents have none ("Top 8 of 64 cities": seven cities and Unknown) — and
+ * "See all" opens the rest. The brokerage list is the Database app's largest
+ * 50, so how many there are in all is "50+".
+ */
 function ReportCard({ group, interested, all }: { group: ReportGroup; interested: boolean; all?: GroupRow[] }) {
   const [open, setOpen] = useState(false);
-  const known = group.rows.filter((r) => r.label !== "Unknown");
+  const noun = NOUN[group.title];
+  const isList = Boolean(noun);
   const unknown = group.rows.find((r) => r.label === "Unknown");
-  const full = open && all ? all : known;
-  const isList = Boolean(NOUN[group.title]);
-  const rows = [...(isList && !open ? full.slice(0, 8) : full), ...(unknown ? [unknown] : [])];
+  const known = (all ?? group.rows).filter((r) => r.label !== "Unknown");
+  const top = unknown ? 7 : 8;
+  const rows = isList ? [...(open ? known : known.slice(0, top)), ...(unknown ? [unknown] : [])] : group.rows;
   const max = Math.max(1, ...rows.map((r) => r.n));
-  const more = isList && ((all && all.length > 8) || known.length > 8);
+  const more = isList && known.length > top;
+  const capped = !group.of && known.length >= 50;
+  const total = group.of?.total ?? known.length;
+  const foot = open
+    ? `${capped || total > known.length ? "Largest" : "All"} ${known.length.toLocaleString("en-US")} ${noun}`
+    : more
+      ? `Top ${rows.length} of ${capped ? "50+" : total.toLocaleString("en-US")} ${noun}`
+      : `All ${total.toLocaleString("en-US")} ${noun}`;
   return (
     <section className={k("card")} style={{ display: "flex", flexDirection: "column" }}>
       <div className={k("ch")} style={{ padding: "16px 18px 6px", alignItems: "center" }}><h2>{group.title}</h2></div>
@@ -291,11 +305,7 @@ function ReportCard({ group, interested, all }: { group: ReportGroup; interested
       <span style={{ flexGrow: 1 }} />
       {isList && rows.length > 0 ? (
         <div className={k("tf")} style={{ padding: "10px 18px" }}>
-          <span>
-            {open ? `All ${full.length}` : `Top ${Math.min(8, known.length)}`}
-            {group.of && !open ? ` of ${group.of.total.toLocaleString("en-US")}` : ""} {NOUN[group.title]}
-            {!group.of && !open && all && all.length >= 50 ? " (the largest 50 are listed)" : ""}
-          </span>
+          <span>{foot}</span>
           {more ? (
             <a href="#" style={{ color: "#3e6bd1", fontWeight: 500 }} onClick={(e) => { e.preventDefault(); setOpen((o) => !o); }}>{open ? "Show fewer" : "See all"}</a>
           ) : null}

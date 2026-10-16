@@ -349,16 +349,17 @@ database — the Database project's Supabase — through two Owner-only GET rout
   a list — matched by email, by full name only where the list entry has no email.
 - Counts are the Database app's own (`fn_filter_search`, `fn_facet_options`,
   both STABLE), so they equal its Agent Search screen. Reports' brokerages are
-  its exact brand counts; office cities are counted exactly by office (its
-  city list double-counts across location kinds and MLSs, so it only picks the
-  candidates). A report's ~25 counts run four at a time and are kept 30 minutes
-  (C21 ~20 s cold). "Years licensed" is recorded for ~1 agent in 80 — its menu says so.
+  its exact brand counts (it lists the largest 50, so the card says "Top 8 of
+  50+ brokerages"); office cities are its Location view by office, city level —
+  every city's agents and how many cities (C21: ~1,450; the agents with no
+  office city are "Unknown"). A report's counts run four at a time and are kept
+  30 minutes. "Years licensed" is recorded for ~1 agent in 80 — its menu says so.
 
 | Rule | Where |
 |---|---|
 | **Owners only** (`ADMIN_EMAILS`), **plus Eddy by name** as its reviewer (16 Oct — he asked to review before any launch; the user chose to open the preview to him, not to every admin: `PREVIEW_REVIEWERS`). Not other admins, not account managers. Anyone else gets Not found. Owners fail closed when `ADMIN_EMAILS` is unset | `lib/crm-preview/access.ts`, `app/crm-preview/page.tsx` |
 | Not a product: no menu item, no Team access switch, no grant, nothing in the proxy | test `access.test.ts` |
-| **Read-only**: reads what the portal reads (`portal-data.ts`); every add/edit/delete/save is drawn disabled; the browser's one request is the portal's own GET conversation feed. A test fails on any write call in the preview's files | `access.test.ts` |
+| **Read-only**: reads what the portal reads (`portal-data.ts`); every add/edit/delete/save is drawn exactly as the design draws it (not greyed) and is inert — `RO` in `k.ts` marks it, the preview's frame catches the click and says "read-only" (what the design itself shows disabled, like the bulk bar, stays disabled); the browser's requests are GETs only (the conversation feed and the two data routes). A test fails on any write call in the preview's files | `access.test.ts`, `components/crm-preview/k.ts` |
 | The live portal (portal.brokerstaffer.com, the standalone app) is untouched — no code, URL, stage or lead changed | — |
 | The Follow Up Boss key never reaches the browser, only whether one is saved | `page.tsx` |
 | The two data routes: Owners only, checked first, GET only, a bare 404 for anyone else; the agent database only through the read-only guard and only its two search functions | `api/crm-preview/*`, test `access.test.ts` |
@@ -370,13 +371,32 @@ client has it) are columns; **Nurture, Not a Fit and No Response are tags**,
 as the design asks. Today they are stages, so such an agent has no forward
 stage: as Eddy approved (16 Oct), the preview places them at the **furthest
 forward stage on record** before the tag (`pipeline_outcome_events`), else the
-first stage, with the tag under the name; the panel says which. A stage chip
+first stage, with the tag under the name. A stage chip
 counts everyone at the stage, a tag chip shows that tag's agents in their
-columns. Nothing is moved — read, not written. Three deliberate departures from the mockup, each to fit real data: the
-board scrolls sideways to every column (the mockup clips at four) and holds
-to the window's height; a picked chip is highlighted; an email is shown as
-text from its HTML part (this mailbox's text part loses its line breaks),
-without the quoted history.
+columns. Nothing is moved — read, not written.
+
+**Fidelity (audited 16 Oct, screen by screen against the handoff's 20
+matching screenshots):** every fixed text of the design is on the preview and
+nothing else is (copy compared both ways by script), every element's computed
+style was compared with the handoff's in the same browser, and a second
+reviewer compared the screenshots independently. The OS's global styles
+(Tailwind's reset, workspace.css, ds.css) had leaked into the design — line
+height, box sizing, form controls, table header and row borders, antialiased
+text; `preview.css` puts the design back on the browser's defaults (icons
+excepted — reverting an SVG's attributes erases it). Two quirks of the design's
+own CSS are reproduced, as delivered: on its board screens the sidebar's
+collapse button shares `.col` with a board column (the collapsed sidebar's big
+gap), and on Reports its legend's `.lg` draws a faint line under the logo. The
+preview adds nothing the design lacks except, to fit real data: the dark
+preview bar on top (with, on Market and Reports, what "market" means for this
+client); the board scrolls sideways to every column (the mockup clips at four)
+and holds to the window's height; a picked chip is highlighted; long tables
+(My Agents, DNC) page 50 at a time with the design's own list footer; DNC
+companies are listed under the agents (the design only counts them); an email
+is shown as text from its HTML part without the quoted history. Not drawn:
+the add/edit/import/upload dialogs and ticked-row states, the Setup wizard,
+the support chat window, Market's row menu and no-results state, and Billing
+(a link to Stripe). The audit drove a real Chrome on production, GETs only.
 
 Eddy's decisions (16 Oct, two rounds): stages → tags **yes**, and a tagged
 agent stays at the furthest forward stage on record — **approved** (of 971
