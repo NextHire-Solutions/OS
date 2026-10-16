@@ -64,7 +64,7 @@
 .cpv-bar :focus-visible { outline: 2px solid #8fb0f0; outline-offset: 2px; }
 
 /* The design fills the window; under the bar it fills what is left. */
-.cpv-shell .crx-app { min-height: calc(100vh - 40px); }
+.cpv-shell .crx-app, .cpv-shell .crx-ob { min-height: calc(100vh - 40px); }
 
 /*
  * The mockup's board clips at four columns (overflow: hidden) because its

@@ -45,13 +45,14 @@ const has = (q: string, ...vals: Array<string | null | undefined>) => {
 function ListTag({ list }: { list: string }) {
   if (list === "My Agents") return <span className={k("tag ok")}>My agent</span>;
   if (list === "DNC List") return <span className={k("tag no")}>DNC List</span>;
-  if (list === "Prospects") return <span className={k("tag tg")}>Prospects</span>;
+  if (list === "Prospects") return <span className={k("tag ltg")}>Prospects</span>;
   return <span className={k("sub")}>{list}</span>;
 }
 
 /* "1-8 of 41,870 matching agents" · Previous · Next, as the design writes it. */
 function Pager({ page, total, onPage }: { page: number; total: number; onPage: (p: number) => void }) {
-  const from = total === 0 ? 0 : (page - 1) * PER + 1;
+  if (total === 0) return null;
+  const from = (page - 1) * PER + 1;
   const to = Math.min(total, page * PER);
   return (
     <div className={k("tf")}>
@@ -90,6 +91,14 @@ function Tabs<T extends string>({ tabs, on, onTab }: { tabs: Array<{ id: T; labe
 }
 
 const Divider = () => <span style={{ width: 1, height: 20, background: "#ebedf0", margin: "0 4px" }} />;
+
+/* A table with nobody in it says why (a client with no MLS on record has no market). */
+function NoRows({ cols, why }: { cols: number; why: string }) {
+  return <tr><td /><td colSpan={cols - 1} className="cpv-muted" style={{ padding: "18px 0" }}>{why}</td></tr>;
+}
+
+/* The design's search box is 280px for "Search all 41,870 agents in your market"; a longer count widens it rather than cutting the word off. */
+const searchWidth = (placeholder: string) => Math.max(280, 280 + (placeholder.length - 39) * 7);
 
 /** A page of the client's market or prospects, eight at a time, from the preview's market route. */
 function useMarket(clientId: string, list: "market" | "prospects", page: number, q: string, f: Filters, enabled = true) {
@@ -206,7 +215,6 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
   const [search, setSearch] = useState("");
   const q = useDebounced(search);
   const [page, setPage] = useState(1);
-  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const market = useMarket(clientId, "market", tab === "market" ? page : 1, tab === "market" ? q : "", NO_FILTERS);
   useEffect(() => setPage(1), [tab, q]);
   const mine = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
@@ -216,7 +224,10 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
       : mine.slice((page - 1) * PER, page * PER).map((a) => ({ id: a.id, name: a.name, office: null, city: null, email: a.email, years: null, list: "My Agents" }));
   const total = tab === "market" ? market.total ?? 0 : mine.length;
   const n = agents.length;
-  const toggle = (id: string) => setPicked((cur) => withIds(cur, [id], !cur.has(id)));
+  // As the design draws it: a row is ticked when the agent is on My Agents; ticking or unticking would change the list, so it is inert.
+  const onList = (r: { list: string }) => r.list === "My Agents";
+  const ticked = rows.filter(onList).length;
+  const placeholder = `Search all ${fmt(market.total ?? 0)} agents in your market`;
   return (
     <>
       <Head
@@ -228,9 +239,9 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
       <div className={k("card")}>
         <Tabs tabs={[{ id: "market", label: "All agents in your market", count: market.total }, { id: "mine", label: "My Agents", count: n }]} on={tab} onTab={setTab} />
         <div className={k("tbar")}>
-          <label className={k("srch")} style={{ width: 280 }}>
+          <label className={k("srch")} style={{ width: searchWidth(placeholder) }}>
             <Icon name="search" size={15} />
-            <input id="crx-setup-agents-search" type="search" placeholder={`Search all ${fmt(market.total ?? 0)} agents in your market`} aria-label="Search agents in your market" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input id="crx-setup-agents-search" type="search" placeholder={placeholder} aria-label="Search agents in your market" value={search} onChange={(e) => setSearch(e.target.value)} />
           </label>
           <Divider />
           <button className={k("dd")} type="button" {...RO}>Office<Icon name="chevDown" size={14} /></button>
@@ -252,13 +263,13 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
         ) : (
           <div className={k("sbulk idle")}>
             <span className={k("bt")}><b className={k("num")}>{fmt(total)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{fmt(n)} added to My Agents</span></span>
-            <button className={k("btn sm")} type="button" {...RO}>Add to My Agents</button>
+            <button className={k("btn sm")} type="button" {...RO}>{ticked ? "Remove selected" : "Add to My Agents"}</button>
           </div>
         )}
         <table className={k("tb")}>
           <thead>
             <tr>
-              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" checked={rows.length > 0 && rows.every((r) => picked.has(r.id))} onChange={() => { const all = rows.every((r) => picked.has(r.id)); setPicked((cur) => withIds(cur, rows.map((r) => r.id), !all)); }} /></th>
+              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" checked={rows.length > 0 && ticked === rows.length} readOnly {...RO} /></th>
               <th>Agent</th>
               <th>Office</th>
               <th>City</th>
@@ -268,9 +279,10 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && !(tab === "market" && market.loading) ? <NoRows cols={7} why={tab === "market" ? market.unavailable ?? "No agents match." : "No agents on My Agents yet."} /> : null}
             {rows.map((r) => (
-              <tr key={r.id} className={picked.has(r.id) ? k("sel") : undefined}>
-                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={picked.has(r.id)} onChange={() => toggle(r.id)} /></td>
+              <tr key={r.id} className={onList(r) ? k("sel") : undefined}>
+                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={onList(r)} readOnly {...RO} /></td>
                 <td className={k("nm")}>{r.name}</td>
                 <td>{r.office ?? "–"}</td>
                 <td>{r.city ?? "–"}</td>
@@ -401,6 +413,8 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
   const any = Object.values(f).some((v) => v !== null) || !!q;
   const shown = tab === "market" ? filtered : prospects;
   const marketTotal = all.total ?? 0;
+  // As the design draws it: a row is ticked when the agent is in the client's prospects; changing that is inert.
+  const inProspects = (r: Row) => tab === "prospects" || r.list === "Prospects";
   return (
     <>
       <Head step={4} title="Choose who we email" text={"Every active agent in your market. Filter them, then add the ones you want to your prospects. My Agents and your DNC List are always left\u00a0out."} />
@@ -433,7 +447,7 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
         <table className={k("tb")}>
           <thead>
             <tr>
-              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" {...RO} /></th>
+              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" checked={shown.rows.length > 0 && shown.rows.every(inProspects)} readOnly {...RO} /></th>
               <th>Agent</th>
               <th>Brokerage</th>
               <th>City</th>
@@ -444,9 +458,10 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
             </tr>
           </thead>
           <tbody>
+            {shown.rows.length === 0 && !shown.loading ? <NoRows cols={8} why={shown.unavailable ?? "No agents match."} /> : null}
             {shown.rows.map((r) => (
-              <tr key={r.id}>
-                <td><input type="checkbox" aria-label={`Select ${r.name}`} {...RO} /></td>
+              <tr key={r.id} className={inProspects(r) ? k("sel") : undefined}>
+                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={inProspects(r)} readOnly {...RO} /></td>
                 <td className={k("nm")}>{r.name}</td>
                 <td>{r.brokerage ?? "–"}</td>
                 <td>{r.officeCity ?? "–"}</td>

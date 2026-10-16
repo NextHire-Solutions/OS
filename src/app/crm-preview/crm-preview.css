@@ -403,7 +403,7 @@
 .crx-sbulk{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#f5f7fc;border-top:1px solid #ebedf0;border-bottom:1px solid #ebedf0;font-size:13px;color:#3d4459}
 .crx-sbulk .crx-bt{margin-right:auto}
 .crx-sbulk.crx-idle{background:#fafbfc;color:#6b7280}
-.crx-tag.crx-tg{background:#eef2fa;color:#2f55a8}
+.crx-tag.crx-ltg{background:#eef2fa;color:#2f55a8}
 .crx-tag.crx-ok{background:#e9f6ee;color:#1a7f38}
 .crx-tag.crx-no{background:#fdeeed;color:#b42318}
 .crx-tb tr.crx-dis td{color:#a0a7b4}

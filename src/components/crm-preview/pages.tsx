@@ -269,8 +269,8 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
             </div>
             <Search id="crx-dnc-search" label="Search agents or companies..." value={q} onChange={(v) => { setQ(v); setPageNo(1); }} />
             <Bulk count={count} onCancel={clear} />
-            {pageAll && foundPeople.length > pageIds.length ? <SelAll onPage={pageIds.length} total={foundPeople.length} onAll={() => pick(foundPeople.map((d) => d.id), true)} /> : null}
             <div className={k("sec")}>Agents<span>{foundPeople.length.toLocaleString("en-US")}</span></div>
+            {pageAll && foundPeople.length > pageIds.length ? <SelAll onPage={pageIds.length} total={foundPeople.length} onAll={() => pick(foundPeople.map((d) => d.id), true)} /> : null}
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
                 <thead>
@@ -335,7 +335,8 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                             </div>
                           </td>
                           <td>{d.domain ? `@${d.domain}` : <Dash />}</td>
-                          <td>{d.notes || <Dash />}</td>
+                          {/* The design's cells don't wrap; a company's note can be a paragraph (Maltos: two sentences), so this one does. */}
+                          <td style={{ whiteSpace: "normal", overflowWrap: "anywhere", minWidth: 220 }}>{d.notes || <Dash />}</td>
                           <RowActions name={d.name} />
                         </tr>
                       ))}

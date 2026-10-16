@@ -65,8 +65,9 @@ for (const r of list) {
  *           bar, select-all strip, dialog, overlay, two-column grid and drop
  *           zone → .abulk .aselall .adlg .aov .ag2 .adrop
  *   setup   (the Setup wizard): bulk bar, actions, lists, sections, form
- *           labels → .sbulk .sacts .snx .ssec .slb (the last only to keep it
- *           off My Agents' KPI labels, which are also .lb)
+ *           labels, list tags → .sbulk .sacts .snx .ssec .slb .ltg (the last two
+ *           only to keep them off My Agents' KPI labels, also .lb, and the
+ *           pipeline's tag chips, also .tg — which drew a 22px tag at 20px)
  *   market  (Market, Prospects): menus and links → .mmenu .mlnk
  *   reports its chart legend `.lg` (the board's `.lg` is the sidebar logo) → .rlg
  * The pipeline family (board, list, panels, its dialogs, chat) keeps the
@@ -74,7 +75,7 @@ for (const r of list) {
  */
 const renamer = (pairs) => (s) => pairs.reduce((acc, [from, to]) => acc.replace(new RegExp(`\\.${from}(?![\\w-])`, "g"), `.${to}`), s);
 const PAGES = renamer([["bulk", "abulk"], ["selall", "aselall"], ["dlg", "adlg"], ["ov", "aov"], ["g2", "ag2"], ["drop", "adrop"]]);
-const SETUP = renamer([["bulk", "sbulk"], ["acts", "sacts"], ["nx", "snx"], ["sec", "ssec"], ["lb", "slb"]]);
+const SETUP = renamer([["bulk", "sbulk"], ["acts", "sacts"], ["nx", "snx"], ["sec", "ssec"], ["lb", "slb"], ["tg", "ltg"]]);
 const MARKET = renamer([["menu", "mmenu"], ["lnk", "mlnk"]]);
 const REPORTS = (s) => s.replace(/^\.lg\b/, ".rlg");
 const SAME = (s) => s;
