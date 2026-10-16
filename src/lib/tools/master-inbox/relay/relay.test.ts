@@ -419,7 +419,7 @@ test("unknown campaign: held on the short list; the team assigns it and it goes"
   assert.equal(overview.server.tokenSet, false);
 
   const res = await relay.assignCampaign({ platform: "emailbison", campaignId: "900", campaignName: "Template Zillow Flex", osClientId: C.wag, ignore: false }, "amy@brokerstaffer.com", deps(), NOW);
-  assert.deepEqual(res, { rechecked: 1, outcomes: { practice: 1 } });
+  assert.deepEqual(res, { rechecked: 1, outcomes: { practice: 1 }, queued: 0 });
   const rec = recordFor(thread.id);
   assert.equal(rec.resolved_by, "team");
   assert.equal(rec.os_client_id, C.wag);
@@ -510,7 +510,9 @@ test("nobody with an address for that market: held until a contact is added", as
   await relay.sweepBrokerageRelay(NOW, deps());
   assert.equal(recordFor(thread.id).reason, "no_recipients");
   db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.wag ? { ...r, contact_email: "wendy@wagner.test" } : r)));
-  const r = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 60_000), deps());
+  // A held one is looked at again every five minutes, not every minute.
+  assert.equal((await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 60_000), deps())).rechecked, 0);
+  const r = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 6 * 60_000), deps());
   assert.equal(r.rechecked, 1);
   assert.equal(recordFor(thread.id).status, "practice");
 });
@@ -667,5 +669,245 @@ test("settings: saving the switches and a brokerage's settings writes only os ta
   const row = db.rows("os_clients").find((r) => r.id === C.jeff)!;
   assert.deepEqual(row.relay_settings, { enabled: true, mode: null, recipients: "intro_contacts", address: null, hourly_cap: null });
   assert.equal(row.pipeline_entry, "interested");
+  assertContained();
+});
+
+/* ============================================================ review fixes (17 Oct) */
+
+/** A transport that takes a moment, so two evaluations overlap the way two requests would. */
+function slowTransport(ms = 5): Transport {
+  return {
+    async send(email) {
+      await new Promise((r) => setTimeout(r, ms));
+      handed.push(email);
+      return answer;
+    },
+  };
+}
+
+test("ONE SEND under a double press: two presses on the same hand-off at once send it once (review fix: send lock)", async () => {
+  seed({ mode: "one_click", practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  const id = String(recordFor(thread.id).id);
+  const d = { ws: WS, transport: slowTransport(), env: LIVE };
+  // Two tabs, or two people, press at the same moment. Both pass the agent-slot claim (it is this record's own).
+  const results = await Promise.allSettled([
+    relay.sendToBrokerage(id, thread.id, "amy@brokerstaffer.com", d, NOW),
+    relay.sendToBrokerage(id, thread.id, "eddy@brokerstaffer.com", d, NOW),
+  ]);
+  assert.equal(handed.length, 1, "Postmark is handed the email once");
+  assert.ok(results.some((r) => r.status === "fulfilled" && r.value.status === "sent"), JSON.stringify(results.map((r) => r.status)));
+  for (const r of results) if (r.status === "rejected") assert.match(String(r.reason), /already (sending|sent)/);
+  assert.equal(recordFor(thread.id).status, "sent");
+  assert.equal(recordFor(thread.id).attempts, 1);
+  assertContained();
+});
+
+test("ONE SEND when two sweeps re-check the same interrupted hand-off at once (review fix: send lock)", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id, at(-40)); // outside the window: only the re-check reaches it
+  const [rec] = add("os_brokerage_relays", [{
+    workspace_id: WS, dedupe_key: `handoff:${thread.id}`, kind: "handoff", thread_id: thread.id, trigger: "Interested", triggered_at: at(-40),
+    status: "held", reason: "evaluating", practice: true, created_at: at(-40), updated_at: at(-40), attempts: 0, recipients: [],
+  }]);
+  // Two OS replicas (or a slow sweep overlapping the next) pick it up together.
+  const d = { ws: WS, transport: slowTransport(), env: LIVE };
+  await Promise.all([relay.sweepBrokerageRelay(NOW, d), relay.sweepBrokerageRelay(NOW, d)]);
+  assert.equal(handed.length, 1);
+  assert.equal(db.rows("os_brokerage_relays").find((r) => r.id === rec.id)!.status, "sent");
+  assertContained();
+});
+
+test("a press sends only in the mode it showed: prepared in practice, now live → prepared again, nothing sent (review fix)", async () => {
+  seed({ mode: "one_click" }, { enabled: true }); // practice: the button reads "Send to brokerage (practice)"
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  assert.equal(recordFor(thread.id).practice, true);
+  // Practice is switched off before anyone presses the practice button.
+  db.seed("os_relay_settings", db.rows("os_relay_settings").map((r) => ({ ...r, practice_mode: false })));
+  const v = await relay.sendToBrokerage(String(recordFor(thread.id).id), thread.id, "amy@brokerstaffer.com", deps(LIVE), NOW);
+  assert.equal(handed.length, 0, "the practice button never sends a real email");
+  assert.equal(v.status, "ready");
+  assert.equal(v.practice, false, "now offered as a real send");
+  assert.match(String(v.notice), /now live — nothing was sent/);
+  // A second, deliberate press sends.
+  const again = await relay.sendToBrokerage(String(recordFor(thread.id).id), thread.id, "amy@brokerstaffer.com", deps(LIVE), NOW);
+  assert.equal(again.status, "sent");
+  assert.equal(again.notice, null);
+  assert.equal(handed.length, 1);
+  assertContained();
+});
+
+test("'Check again' on a held hand-off never sends in one-click mode — it prepares it (review fix)", async () => {
+  seed({ mode: "one_click", practice_mode: false }, { enabled: true });
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, contact2_email: null, contact3_email: null } : r)));
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  assert.equal(recordFor(thread.id).reason, "no_recipients", "Charleston's people have no address yet");
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, contact2_email: "lance@jeffcook.test" } : r)));
+  const v = await relay.sendToBrokerage(String(recordFor(thread.id).id), thread.id, "amy@brokerstaffer.com", deps(LIVE), NOW);
+  assert.equal(v.status, "ready", "the button said Check again, not Send");
+  assert.equal(handed.length, 0);
+  assertContained();
+});
+
+test("DNC is matched on the brokerage's WHOLE list, the DNC tool's way (review fix)", async () => {
+  // A suffix on the lead's name, accents on the entry: the old last-word query looked for "Jr." / "Núñez".
+  assert.deepEqual(await outcomeOf(() => add("client_dnc_entries", [{ client_id: P.jeff, kind: "agent", name: "Jordan Ellis", email: null }]), { name: "Jordan Ellis Jr." }), ["skipped", "dnc", "by name"]);
+  assert.deepEqual(await outcomeOf(() => add("client_dnc_entries", [{ client_id: P.jeff, kind: "agent", name: "José Núñez", email: null }]), { name: "Jose Nunez", email: "jose@coastal.test" }), ["skipped", "dnc", "by name"]);
+  // A company domain typed as a link: the old exact-string query never matched it.
+  assert.deepEqual(await outcomeOf(() => add("client_dnc_entries", [{ client_id: P.jeff, kind: "company", name: "Coastal", domain: "https://www.Coastal.test/team" }])), ["skipped", "dnc", "by domain"]);
+  // An AGENT entry's domain is not a block (the DNC tool blocks an agent by address): another agent there still goes.
+  assert.deepEqual(await outcomeOf(() => add("client_dnc_entries", [{ client_id: P.jeff, kind: "agent", name: "Pat Other", email: "pat@coastal.test", domain: "coastal.test" }])), ["practice", null, null]);
+  // The match is past the old 200-row cap, and past a server page limit smaller than ours.
+  assert.deepEqual(
+    await outcomeOf(() => {
+      db.pageLimit = 7;
+      add("client_dnc_entries", Array.from({ length: 260 }, (_, i) => ({ client_id: P.jeff, kind: "agent", name: `Someone${i} Ellis`, email: null })));
+      add("client_dnc_entries", [{ client_id: P.jeff, kind: "agent", name: "Jordan Ellis", email: null }]);
+    }),
+    ["skipped", "dnc", "by name"],
+  );
+});
+
+test("a DNC list that does not arrive in full holds — never 'assume fine' (review fix)", async () => {
+  const out = await outcomeOf(() => {
+    add("client_dnc_entries", Array.from({ length: 3 }, (_, i) => ({ client_id: P.jeff, kind: "agent", name: `X${i} Y`, email: `x${i}@y.test` })));
+    db.pageLimit = 1;
+    db.claimedTotals.set("client_dnc_entries", 999_999); // the server promises rows that never come
+  });
+  assert.deepEqual(out.slice(0, 2), ["held", "read_error"]);
+  assert.match(String(out[2]), /client_dnc_entries: 3 of 999999 rows read/);
+});
+
+test("an old conversation labelled again is not handed off — the reply must be recent at the label (review fix)", async () => {
+  assert.deepEqual(await outcomeOf(() => {}, { replyAt: at(-20 * 24 * 60) }), ["skipped", "stale_reply", `replied ${at(-20 * 24 * 60).slice(0, 10)}`]);
+  assert.deepEqual(await outcomeOf(() => {}, { replyAt: at(-3 * 24 * 60) }), ["practice", null, null], "three days is not old");
+});
+
+test("EmailBison's own 'automatic reply' flag skips it, whatever the words say (review fix)", async () => {
+  const out = await outcomeOf((t) => {
+    db.seed("messages", db.rows("messages").map((m) => (m.thread_id === t.id && m.direction === "inbound" ? { ...m, raw_payload: { data: { reply: { id: 1, raw_message_id: "<a@b.test>", automated_reply: true } } } } : m)));
+  }, { text: "Thanks for reaching out, sounds good." });
+  assert.deepEqual(out, ["skipped", "auto_reply", null]);
+});
+
+test("a short reply's quote header (Outlook's From:/Sent:) is not passed on as the agent's words (review fix)", async () => {
+  seed();
+  const { thread } = conversation({
+    portal: P.jeff,
+    campaign: CHARLESTON,
+    text: "Yes, interested.\n\nFrom: Nicole Collins <nicole.c@brokerstaffer.com>\nSent: Monday, October 5, 2026 10:00 AM\nTo: Jordan Ellis\nSubject: Quick question, Jordan\n\nHi Jordan, I came across your listings",
+  });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  const rec = recordFor(thread.id);
+  assert.ok(String(rec.text_body).startsWith("Yes, interested.\n\nOn "), String(rec.text_body));
+  assert.doesNotMatch(String(rec.text_body), /nicole\.c@brokerstaffer\.com|^From:/m, "our sender inbox never appears in the brokerage's copy");
+  assert.doesNotMatch(String(rec.html_body), /nicole\.c@brokerstaffer\.com/);
+});
+
+test("the sweep reads EVERY label in the window, works a burst through a slice a minute, and writes nothing when nothing is new (review fix)", async () => {
+  seed();
+  const convs = Array.from({ length: 120 }, (_, i) => conversation({ portal: P.jeff, campaign: CHARLESTON, email: `agent${i}@x.test`, name: `Agent${i} Person` }));
+  for (const c of convs) label(L.interested, c.thread.id);
+  db.pageLimit = 50; // a server page limit smaller than the window
+  const first = await relay.sweepBrokerageRelay(NOW, deps());
+  assert.equal(first.seen, 120, "every label, not a first page");
+  assert.equal(first.claimed, 100);
+  assert.match(first.errors.join(" "), /20 new label\(s\) left for the next sweep/);
+  const second = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 60_000), deps());
+  assert.equal(second.claimed, 20);
+  assert.equal(records().length, 120);
+  const before = db.calls.length;
+  const third = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 2 * 60_000), deps());
+  assert.equal(third.claimed, 0);
+  assert.deepEqual(db.calls.slice(before).filter((c) => c.method !== "GET" && c.method !== "HEAD").map((c) => `${c.method} ${c.table}`), [], "nothing new: no writes at all");
+  assertContained();
+});
+
+test("held hand-offs are re-checked least-recently-checked first — a pile that stays held cannot starve the rest (review fix)", async () => {
+  seed();
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.wag ? { ...r, contact_email: null } : r)));
+  const convs = Array.from({ length: 30 }, (_, i) => conversation({ portal: P.wag, campaign: "Wagner Realty - Miami", email: `w${i}@x.test`, name: `Wag${i} Agent` }));
+  for (const c of convs) label(L.interested, c.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  assert.ok(convs.every((c) => recordFor(c.thread.id).reason === "no_recipients"));
+  const r1 = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 6 * 60_000), deps());
+  const r2 = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 12 * 60_000), deps());
+  assert.equal(r1.rechecked, 25);
+  assert.equal(r2.rechecked, 25);
+  const checkedAfterFirst = convs.filter((c) => String(recordFor(c.thread.id).updated_at) > NOW.toISOString()).length;
+  assert.equal(checkedAfterFirst, 30, "all thirty were looked at again, not the same twenty-five twice");
+});
+
+test("bounces: an out-of-office is not one; a spam report says so; each failed address is recorded once (review fix)", async () => {
+  seed();
+  const base = { workspace_id: WS, kind: "handoff", status: "sent", practice: false, sent_at: at(-60), brokerage_name: "Jeff Cook Real Estate", agent_name: "Jordan Ellis", os_client_id: null };
+  add("os_brokerage_relays", [
+    { ...base, dedupe_key: "handoff:t7", thread_id: "t7", provider_message_id: "pm-7", recipients: [{ name: "A", email: "a@jc.test" }, { name: "B", email: "b@jc.test" }] },
+    { ...base, dedupe_key: "handoff:t8", thread_id: "t8", provider_message_id: "pm-8", recipients: [{ name: "C", email: "c@jc.test" }] },
+    { ...base, dedupe_key: "handoff:t9", thread_id: "t9", provider_message_id: "pm-9", recipients: [{ name: "D", email: "d@jc.test" }] },
+  ]);
+  const bounces = [
+    { ID: 1, Type: "HardBounce", MessageID: "pm-7", Email: "a@jc.test" },
+    { ID: 2, Type: "HardBounce", MessageID: "pm-7", Email: "b@jc.test" },
+    { ID: 3, Type: "SpamComplaint", MessageID: "pm-8", Email: "c@jc.test" },
+    { ID: 4, Type: "AutoResponder", MessageID: "pm-9", Email: "d@jc.test", Description: "Out of office" },
+    { ID: 5, Type: "Transient", MessageID: "pm-9", Email: "d@jc.test" },
+  ];
+  const r = await relay.sweepBrokerageRelay(NOW, { ...deps(), bounces: async () => ({ ok: true as const, bounces }) });
+  assert.equal(r.bounced, 3);
+  const byPm = (pm: string) => records().find((x) => x.provider_message_id === pm)!;
+  assert.equal(byPm("pm-9").status, "sent", "an out-of-office means it arrived");
+  assert.equal(byPm("pm-8").status, "bounced");
+  assert.match(String(byPm("pm-7").error), /a@jc\.test.*; HardBounce — b@jc\.test/);
+  const notes = db.rows("os_notifications");
+  assert.equal(notes.length, 3);
+  assert.ok(notes.some((n) => /reported as spam/.test(String(n.title))));
+  // The next poll adds nothing.
+  const again = await relay.sweepBrokerageRelay(NOW, { ...deps(), bounces: async () => ({ ok: true as const, bounces }) });
+  assert.equal(again.bounced, 0);
+  assertContained();
+});
+
+test("a campaign answer re-checks 50 at once and hands the rest to the sweep — none is left on the held list (review fix)", async () => {
+  seed();
+  const convs = Array.from({ length: 53 }, (_, i) => conversation({ portal: P.unknown, campaign: "Template Zillow Flex", campaignId: "900", email: `z${i}@x.test`, name: `Zed${i} Agent` }));
+  for (const c of convs) label(L.interested, c.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  assert.equal(records().filter((x) => x.reason === "unknown_campaign").length, 53);
+  const res = await relay.assignCampaign({ platform: "emailbison", campaignId: "900", campaignName: "Template Zillow Flex", osClientId: C.wag, ignore: false }, "amy@brokerstaffer.com", deps(), NOW);
+  assert.equal(res.rechecked, 50);
+  assert.equal(res.queued, 3);
+  await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 60_000), deps());
+  assert.equal(records().filter((x) => x.status === "held" && ["unknown_campaign", "evaluating"].includes(String(x.reason))).length, 0);
+  assert.ok(records().every((x) => x.os_client_id === C.wag));
+  assertContained();
+});
+
+test("later replies: found past a server page limit, and only conversations with something new are loaded (review fix)", async () => {
+  seed({ forward_later_replies: true });
+  const convs = ["a", "b", "c", "d"].map((x) => conversation({ portal: P.jeff, campaign: CHARLESTON, email: `${x}@x.test`, name: `${x.toUpperCase()}ndy Agent` }));
+  for (const c of convs) label(L.interested, c.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  assert.equal(records().filter((r) => r.status === "practice").length, 4);
+  // Three of the four write again; the fourth does not.
+  for (const c of convs.slice(0, 3)) {
+    const lead = db.rows("leads").find((l) => l.id === c.lead.id)!;
+    add("messages", [{ thread_id: c.thread.id, direction: "inbound", sender: lead.email, sender_name: lead.full_name, subject: "Re: Quick question, Jordan", body_text: "Also free Thursday.", sent_at: at(5) }]);
+  }
+  db.pageLimit = 2; // four hand-offs, two to a page
+  const before = db.calls.length;
+  const r = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 10 * 60_000), deps());
+  assert.equal(r.followUps, 3, "every hand-off read, not the first page");
+  const loaded = new Set(db.calls.slice(before).filter((c) => c.table === "threads" && c.method === "GET").map((c) => c.query.get("id")));
+  assert.equal(loaded.has(`eq.${convs[3].thread.id}`), false, "the quiet conversation is never loaded");
+  assert.equal(loaded.size, 3);
   assertContained();
 });

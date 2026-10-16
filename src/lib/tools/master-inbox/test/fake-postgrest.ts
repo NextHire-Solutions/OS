@@ -60,6 +60,18 @@ export class FakePostgrest {
   readonly blocked: string[] = [];
   /** Queued provider responses, consumed in order; a canned success otherwise. */
   readonly nextProviderResponses: Array<{ status: number; body: unknown }> = [];
+  /**
+   * A server-side page limit (PostgREST's max-rows), smaller than what the
+   * code asks for — to prove a reader does not take a short page for the end.
+   * null (the default, and after reset) = no limit.
+   */
+  pageLimit: number | null = null;
+  /**
+   * Per table, a total to report in Content-Range instead of the true one —
+   * a server that promises more rows than it delivers, to prove a reader
+   * reports a short read instead of calling it the end. Cleared by reset.
+   */
+  readonly claimedTotals = new Map<string, number>();
 
   /** Seeds a table (replacing it) and returns the rows, each with an id. */
   seed(table: string, rows: Row[]): Array<Row & { id: string }> {
@@ -77,6 +89,8 @@ export class FakePostgrest {
     this.providerCalls.length = 0;
     this.blocked.length = 0;
     this.nextProviderResponses.length = 0;
+    this.pageLimit = null;
+    this.claimedTotals.clear();
   }
   writes(table: string, method: "POST" | "PATCH" | "DELETE") {
     return this.calls.filter((c) => c.table === table && c.method === method);
@@ -134,7 +148,15 @@ export class FakePostgrest {
   private order(rows: Row[], query: URLSearchParams): Row[] {
     const order = query.get("order");
     if (!order) return rows;
-    const [col, ...mods] = order.split(".");
+    // `order=a.asc,b.desc` (two .order() calls): sort by the last key first, then stably by each earlier one.
+    const keys = order.split(",");
+    let out = rows;
+    for (const key of keys.slice(1).reverse()) out = this.orderBy(out, key);
+    return this.orderBy(out, keys[0]);
+  }
+
+  private orderBy(rows: Row[], key: string): Row[] {
+    const [col, ...mods] = key.split(".");
     const desc = mods.includes("desc");
     return [...rows].sort((a, b) => {
       const av = a[col] as string | number | null | undefined;
@@ -208,9 +230,19 @@ export class FakePostgrest {
         store.filter((r) => this.matches(r, url.searchParams)),
         url.searchParams,
       );
+      const total = this.claimedTotals.get(table) ?? rows.length;
+      // `.range(from, to)` sends offset + limit; a page beyond the end is empty, as PostgREST's is.
+      const offset = Number(url.searchParams.get("offset") ?? 0) || 0;
+      if (offset) rows = rows.slice(offset);
       const limit = url.searchParams.get("limit");
       if (limit) rows = rows.slice(0, Number(limit));
-      return respond(rows);
+      if (this.pageLimit !== null) rows = rows.slice(0, this.pageLimit);
+      const response = respond(rows);
+      // `.select(cols, { count: "exact" })` — the total travels in Content-Range, as PostgREST sends it.
+      if ((headers.get("prefer") ?? "").includes("count=exact")) {
+        response.headers.set("content-range", rows.length ? `${offset}-${offset + rows.length - 1}/${total}` : `*/${total}`);
+      }
+      return response;
     }
     if (method === "POST") {
       const incoming: Row[] = Array.isArray(body) ? body : [body];

@@ -30,6 +30,8 @@ export function BrokerageRelayStrip({ threadId }: { threadId: string }) {
   const [records, setRecords] = useState<Rec[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // "Prepared again — press again": the press did not do what its label said, because the mode changed.
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -45,21 +47,26 @@ export function BrokerageRelayStrip({ threadId }: { threadId: string }) {
   useEffect(() => {
     setRecords(null);
     setError(null);
+    setNotice(null);
     void load();
   }, [load]);
 
   const press = async (r: Rec) => {
     setBusy(r.id);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(`/api/tools/master-inbox/threads/${threadId}/relay`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ relayId: r.id }),
       });
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const body = (await res.json().catch(() => null)) as { error?: string; notice?: string | null } | null;
       if (!res.ok) setError(body?.error ?? `The hand-off failed (${res.status})`);
+      else if (body?.notice) setNotice(body.notice);
       await load();
+    } catch {
+      setError("The server could not be reached. Check the line above before pressing again.");
     } finally {
       setBusy(null);
     }
@@ -85,6 +92,11 @@ export function BrokerageRelayStrip({ threadId }: { threadId: string }) {
           </div>
         );
       })}
+      {notice ? (
+        <div className="mi-relay-row mi-relay-waiting" role="status">
+          <span className="mi-relay-text">{notice}</span>
+        </div>
+      ) : null}
       {error ? (
         <div className="mi-relay-row mi-relay-problem" role="alert">
           <span className="mi-relay-text">{error}</span>
