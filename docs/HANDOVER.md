@@ -450,7 +450,9 @@ agent stays at the furthest forward stage on record — **approved** (of 971
 agents in the three today, 90 went past Introduction; the other 881 have only
 Introduction on record, history being kept since 3 Aug). Pipeline entry: a
 **per-client switch** — existing clients keep Introduction, new clients enter
-at Interested, via **Postmark** (confirmed). Text alerts: yes, where enabled.
+at Interested, via **Postmark** (confirmed; until the portal side is built,
+0036 keeps every client at Introduction — see the relay section below). Text
+alerts: yes, where enabled.
 Prospects: added to live campaigns automatically; DNC **and My Agents** removed
 from campaigns — approved (My Agents never has been; a change to live
 campaigns). Billing: clients can update, cancel and see paid invoices; a
@@ -485,12 +487,22 @@ need a system to control things from here".
 Order used: portal app, then OS, then the migration — nothing could change a
 URL before old links forward.
 
-### 16 October: Interested replies → the brokerage, by Postmark — BUILT, NOT LIVE
+### 16–17 October: Interested replies → the brokerage, by Postmark — BUILT, REVIEWED, NOT LIVE
 
 The approved client plan ("Interested replies, straight to the brokerage").
 **State: local branch `wip/postmark-relay` only — not pushed, not deployed,
-migrations not run, nothing has ever been sent.** Practice is the default
-everywhere; a send needs every lock below opened by a person.
+migrations not run, nothing has ever been sent.** Built 16 Oct; reviewed and
+hardened 17 Oct (below). Practice is the default everywhere; a send needs every
+lock below opened by a person.
+
+**Eddy's answers (17 Oct):** sending address "either way — just make sure it
+doesn't land in spam" → `agents@leads.brokerstaffer.com` (a subdomain keeps
+this mail's reputation apart from the everyday @brokerstaffer.com mail);
+"automatic after, but let's pilot first" → **one click** during the pilot
+(global default), automatic afterwards (global switch, or per brokerage);
+recipients = "the brokerage's introduction contact for that market, same as
+today" → the Introduce button's territory routing (`routeIntro`); the
+one-address-per-brokerage option stays off.
 
 When a conversation is labelled **Interested** or **Meetings Booked** (AI or a
 person, either app), a minute sweep (`instrumentation.ts`, like the Slack alert)
@@ -506,13 +518,15 @@ provider stored the agent's Message-ID).
 | Brokerage from the CAMPAIGN, never the inbox | `resolve.ts`: team's answer (`os_relay_campaigns`) > campaign → portal (0025) > campaign name (derive.ts's own matcher). A tie between clients, or a conversation filed under another client, is HELD |
 | Unknown campaign → short list | Held; Settings → Brokerage hand-off lists them by campaign; an admin assigns (or "not a brokerage campaign") and they are checked again. Never writes `os_campaign_portals` |
 | Active only; never Demo Portal; billing block | `os_clients.status = 'active'`; `os_portal_blocks` mode `blocked` |
-| No OOO / auto-reply / unsubscribe | Stop labels (Unsubscribe, Do Not Contact, OOO Sequence, Not Interested…), subject/body patterns, `looksLikeUnsubscribe` |
-| Brokerage's DNC | `client_dnc_entries` of all its portals: address, company domain (sub-domains), full name on name-only entries. Unreadable list → held. Also skipped: on its My Agents list, already introduced (Introduction label or in its pipeline) |
-| Once per conversation; once per agent per brokerage | Unique `dedupe_key`; primary key of `os_brokerage_relay_agents` (practice and live kept apart) |
-| Recipients | `routeIntro` — the Introduce button's territory routing — or one address per brokerage |
+| No OOO / auto-reply / unsubscribe | Stop labels (Unsubscribe, Do Not Contact, OOO Sequence, Not Interested…), EmailBison's own `automated_reply` flag on the reply, subject/body patterns, `looksLikeUnsubscribe` |
+| Brokerage's DNC | The WHOLE `client_dnc_entries` list of all its portals (every page; a short read or > 50,000 rows → held), matched the DNC tool's way: any entry's address; a COMPANY entry's domain (normalised like `normalizeDomain`, sub-domains count — an agent entry's domain is not a block); full name (`sameName`: accents, "Jr." ignored) on an entry with no address. Also skipped: on its My Agents list, already introduced (Introduction label or in its pipeline) |
+| No old conversations | The agent's reply must be ≤ 14 days older than the label (`isStaleReply`) — an AI re-label or a tidy-up of old threads is not handed off |
+| Once per conversation; once per agent per brokerage; once per send | Unique `dedupe_key`; primary key of `os_brokerage_relay_agents` (practice and live kept apart); the move to `sending` is a compare-and-set on (status, attempts), so a double press, two tabs, two replicas or a press racing the sweep send once |
+| A press does what it said | "Send to brokerage (practice)" never sends for real: if the locks opened since it was prepared, it is prepared again and needs a new press. "Check again" (held) never sends in one-click mode. "Try again" only after a definite refusal (4xx) |
+| Recipients | `routeIntro` — the Introduce button's territory routing — or one address per brokerage (off) |
 | Hourly cap per brokerage | Default 5 (global, per-brokerage override); over it → held, goes next hour |
-| Recorded on the conversation | One line under the toolbar: "Sent to Angela at 10:42 AM", "Practice — would have gone to…", "Held — …" |
-| Bounces | GET /bounces every 10 min while something was sent that week → hand-off marked, OS bell (`os_notifications`, kind `relay_bounce`) |
+| Recorded on the conversation | One line under the toolbar: "Sent to Angela at 10:42 AM" (with the date when not today; Eastern, like the rest of the OS), "Practice — would have gone to…", "Held — …", a send with no answer after 10 min says so |
+| Bounces | GET /bounces (every page) every 10 min while something was sent that week → hand-off marked, OS bell (`os_notifications`, kind `relay_bounce`); an out-of-office / delay is not a bounce; a spam complaint is titled as one |
 
 **Locks — a send needs ALL of them:** `OS_BROKERAGE_RELAY_LIVE_SEND=1` and
 `POSTMARK_SERVER_TOKEN` on Railway `os` (both unset); Settings switch on and
@@ -524,19 +538,104 @@ the sweep. Optional: `OS_BROKERAGE_RELAY_FROM` (must be @leads.brokerstaffer.com
 `POSTMARK_MESSAGE_STREAM` (default `outbound`).
 
 **Plan §7 open questions, built as settings with the cautious default:** one
-click (not automatic); intro contacts by territory (or one address);
+click (Eddy: pilot first); intro contacts by territory (Eddy: as today);
 later replies not relayed; a hand-off is not an introduction (recorded only);
-no pilot brokerage chosen.
+no pilot brokerage chosen yet.
 
-**Pipeline entry (Eddy, 16 Oct):** `os_clients.pipeline_entry` (0036) —
-existing clients `introduction`, rows created after 0036 `interested`. Each
-hand-off records what it would do (`pipeline_action`); creating the portal
-entry at Interested is NOT built (it writes the live portal). Nothing in the
-relay writes a Master Inbox table — only `os_*`.
+**Who may press Send to brokerage (review decision, 17 Oct):** anyone with
+the **Master Inbox** switch — the proxy's grant for every
+`/api/tools/master-inbox/*` request, the same switch that sends a reply or
+presses Introduce on that conversation (which already emails the same
+brokerage people). A signed-in address is required and recorded. No new
+grant, nobody switched on. The switches, brokerages' settings and campaign
+answers are admins only. Pinned by `relay-access.test.ts`. If Eddy wants the
+pilot's presses limited to admins, it is a one-line `requireAdminSession` in
+`threads/[threadId]/relay/route.ts` POST.
+
+**Pipeline entry (review decision, 17 Oct):** `os_clients.pipeline_entry`
+(0036) is `introduction` for EVERY row, existing and new — the draft's default
+flip to `interested` for new clients was removed, because the portal side
+("enter at Interested") is not built and new clients would silently differ.
+An admin can set a client to `interested` in Settings; the only effect is
+`pipeline_action` recorded on each hand-off. Ship the default flip with the
+portal side (the statement is in 0036's comment). Nothing in the relay writes
+a Master Inbox table, a portal, Follow Up Boss, EmailBison or Instantly — only
+`os_*` (the four relay tables, `os_notifications`, and `os_clients`'
+`relay_settings`/`pipeline_entry` from Settings).
+
+**Review, 17 Oct — what was found and fixed** (each with a test; 16/16
+mutations caught): a double press / two tabs / two replicas / a press racing
+the sweep could send twice (send lock); a practice button could send for real
+after the locks opened, and Check again could send in one-click mode; DNC
+missed "Jr."/accented names (raw last-word query, 200-row cap), un-normalised
+company domains, and read an agent row's domain as a company block; old
+threads relabelled would be handed off (stale-reply rule); EmailBison's
+`automated_reply` flag was ignored; the Message-ID search could pick our own
+scheduled email's id; a short reply kept a quote header with our cold-email
+sender address; a Postmark 5xx / unreadable 2xx counted as "refused" (freed
+the slot → possible duplicate on Try again); out-of-office "bounces" marked
+hand-offs bounced; capped pages everywhere (labels 200, re-checks 25 with
+starvation, later replies 100, campaign answers 100, bounces 100, held list
+500); `From` accepted `x@y.com@leads…`; the broadcast stream could be
+configured; the conversation line had no date. Load: a quiet minute is now
+reads only (it used to upsert every label in the 30-minute window).
 
 **Migrations (Master Inbox database), in order:** `0035_brokerage_relay.sql`,
-`0036_client_pipeline_entry.sql`. Tests: `relay/*.test.ts` (71), every write
-asserted to be `os_*` and no request to any other host; 28/28 mutations caught.
+`0036_client_pipeline_entry.sql`. Both purely additive (pinned by
+`relay/migrations.test.ts`). Tests: `relay/*.test.ts` (107), every write
+asserted to be `os_*` and no request to any other host.
+
+**The email, for deliverability ("make sure it doesn't land in spam"):**
+text part + a plain HTML part with the same words (agent's text escaped, no
+images, no added links, no tracking pixel — `TrackOpens: false`, `TrackLinks:
+None`, also off on the Postmark server itself); From `"<Agent> via
+BrokerStaffer" <agents@leads.brokerstaffer.com>`; Reply-To the agent; Subject
+`Re: <conversation subject>`; In-Reply-To/References only with the agent's
+real Message-ID (EmailBison `raw_message_id`, Instantly email `message_id`),
+otherwise left out; Postmark's transactional `outbound` stream (broadcast is
+refused). Known, accepted signal: Reply-To is often a free-mail address
+(gmail) while From is ours — some filters score that a little; good
+authentication outweighs it, and it is how the plan's Reply works.
+
+**DNS, as read on 17 Oct (read-only `dig`):** brokerstaffer.com is on
+name.com; MX Google Workspace; **DMARC exists: `v=DMARC1; p=quarantine;
+rua=mailto:eddy@brokerstaffer.com`** — no `sp=`, so leads.brokerstaffer.com
+inherits quarantine: mail from it MUST pass DKIM or SPF aligned, or it goes to
+spam/quarantine. Google DKIM (`google._domainkey`) is set. **brokerstaffer.com
+publishes TWO SPF records** (`v=spf1 include:_spf.google.com ~all` and `v=spf1
++mx +a +ip4:169.44.182.40 ~all`) — that is an SPF PermError for the everyday
+mail; it is saved today by Google's DKIM. Not the relay's problem (its SPF is
+on the Return-Path subdomain), but worth merging into one record.
+leads.brokerstaffer.com has no records of its own (it answers only through the
+`*.brokerstaffer.com` wildcard A record). Postmark server (`GET /server`,
+read-only): "My First Server", delivery type Live, open/link tracking off, no
+webhooks.
+
+**DNS checklist (in order):** 1) Postmark → Sender Signatures → Domains → add
+the DOMAIN `leads.brokerstaffer.com`. 2) Postmark shows two records; add both
+at name.com (DNS for brokerstaffer.com — name.com's Host field is relative,
+so drop the trailing `.brokerstaffer.com`): a **TXT** whose host is the one
+Postmark shows, ending in `._domainkey.leads`, with the DKIM value it shows
+(`k=rsa; p=…`); and a **CNAME** host `pm-bounces.leads` → `pm.mtasv.net`
+(the Return-Path: Postmark's SPF `include:spf.mtasv.net` then covers the
+subdomain, aligned with From). 3) Postmark → Verify both (DNS can
+take minutes to hours). 4) Postmark → "Request approval" to leave test mode.
+No DMARC change is needed (quarantine is inherited); do not add an SPF TXT on
+`leads` for this; nothing on brokerstaffer.com itself changes.
+
+**Before the practice week:** run 0035 then 0036 in the Master Inbox Supabase
+project; deploy the OS (`railway up --service os`, from a clean tree); in
+Inbox → Settings → Brokerage hand-off switch **Hand-off on**, leave
+**Practice mode** on, mode **one click** (or automatic, to have every
+Interested reply practised without a press — still nothing is sent). No env
+var is needed for practice. Review the log against what the team did by hand.
+**Before a real send (pilot):** DNS verified + Postmark approved; on Railway
+`os` set `POSTMARK_SERVER_TOKEN` and `OS_BROKERAGE_RELAY_LIVE_SEND=1`, then
+redeploy; Settings: practice off (two clicks); switch on the pilot
+brokerage(s) only (two clicks); mode one click; a first send to the team's
+own test mailboxes is a send — only with the user's explicit go-ahead. Tell
+the team not to press Introduce on a conversation that already shows "Sent to
+…" (the two are not linked yet). `OS_BROKERAGE_RELAY=0` stops everything.
 
 ## 0.2 Interested leads → Slack, 14 October
 
