@@ -51,7 +51,14 @@ export function hasIntroductionLabel(names: string[]): boolean {
  * quoted email under them is not, since it is ours.
  */
 const AUTO_SUBJECT = /\b(out of (the )?office|automatic reply|auto-?reply|autoreply|auto response|away from (the )?office|on vacation|on leave|out of town|delivery status notification|undeliver(able|ed)|mail delivery (failed|subsystem)|returned mail|read receipt)\b/i;
-const AUTO_BODY = /\b(i am (currently )?(out of|away from) (the )?office|i'?m (currently )?(out of|away from) (the )?office|i will be out of (the )?office|i am currently away|i'?m currently away|this is an automatic(ally generated)? (reply|response|message)|this is an auto-?(reply|response)|auto-?generated (reply|response|message)|do not reply to this (email|message)|this mailbox is (not|no longer) (monitored|active)|delivery (has )?failed|message (could not|couldn't) be delivered|mailer-daemon)\b/i;
+/*
+ * Body phrases an out-of-office or a robot writes and an interested person
+ * does not. Kept to unambiguous ones: "I'm travelling this week but yes,
+ * call me" is a real reply and must not match. (Reviewed 17 Oct: added
+ * "automated …", "limited access to email", "… upon my return" and "on
+ * <kind of> leave".)
+ */
+const AUTO_BODY = /\b(i am (currently )?(out of|away from) (the )?office|i'?m (currently )?(out of|away from) (the )?office|i will be out of (the )?office|i am currently away|i'?m currently away|this is an (automatic(ally generated)?|automated) (reply|response|message)|this is an auto-?(reply|response)|auto-?generated (reply|response|message)|do not reply to this (email|message)|this mailbox is (not|no longer) (monitored|active)|delivery (has )?failed|message (could not|couldn't) be delivered|mailer-daemon|limited access to (my )?e-?mail|(respond|reply|get back to you)\b[^.\n]{0,40}\bupon my return|on (annual|maternity|paternity|parental|medical|sick|bereavement) leave)\b/i;
 const SYSTEM_SENDER = /^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounces?|auto-?reply|autoresponder)([+.@-]|$)/i;
 
 export function looksAutomatic(subject: string | null | undefined, ownText: string | null | undefined, sender: string | null | undefined): boolean {
@@ -101,7 +108,52 @@ export interface LeadFacts {
 /** The message's own words: HTML converted when there is no text, quoted history removed. */
 export function ownText(m: Pick<MessageFacts, "bodyText" | "bodyHtml">): string {
   const raw = (m.bodyText ?? "").trim() ? String(m.bodyText) : htmlToText(m.bodyHtml ?? "");
-  return stripQuoted(raw.replace(/\r\n/g, "\n")).replace(/\n{3,}/g, "\n\n").trim();
+  // Before stripQuoted (which keeps a lone "From:" once it has cut the lines that identify it) and after it.
+  return trimReplyHeader(stripQuoted(trimReplyHeader(raw.replace(/\r\n/g, "\n")))).replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/*
+ * What stripQuoted (shared with the phone finder, so left as it is) can leave
+ * under a SHORT reply: the header a mail client writes above the quote.
+ * Gmail wraps "On Mon, Oct 5, 2026 at 10:42 AM Nicole Collins <" and
+ * "nicole.c@…> wrote:" over two lines, and Outlook's "From: … / Sent: …"
+ * block survives when the reply above it is under three lines. Either would
+ * put our cold-email sender's address into the brokerage's copy, as if the
+ * agent had written it. Everything from such a header down is dropped.
+ */
+export function trimReplyHeader(text: string): string {
+  const lines = text.split("\n");
+  const cutAt = (i: number) => lines.slice(0, i).join("\n").trimEnd();
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (/^on\s/i.test(t)) {
+      for (let j = i; j < Math.min(lines.length, i + 3); j++) {
+        const joined = lines.slice(i, j + 1).map((l) => l.trim()).join(" ");
+        if (/wrote:\s*$/i.test(lines[j].trim()) && /^on\s.{4,300}\swrote:$/i.test(joined)) return cutAt(i);
+      }
+    }
+    const ahead = lines.slice(i + 1, i + 5).map((l) => l.trim());
+    if (/^_{8,}$/.test(t) && ahead.slice(0, 3).some((l) => /^from:\s/i.test(l))) return cutAt(i);
+    if (/^from:\s+\S/i.test(t) && ahead.some((l) => /^(sent|date|to|subject|cc):\s/i.test(l))) return cutAt(i);
+  }
+  return text;
+}
+
+/*
+ * The agent's reply must be this recent when it was labelled. Older means an
+ * old conversation being labelled again — an AI re-label of the workspace, or
+ * a tidy-up — not an agent waiting for an answer now; "no backfill" is about
+ * the reply, not only the label. Such a conversation is never handed off by
+ * itself (the team can still introduce by hand).
+ */
+export const REPLY_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+export function isStaleReply(replySentAt: string | null | undefined, at: string | Date | null | undefined): boolean {
+  const sent = replySentAt ? Date.parse(replySentAt) : NaN;
+  if (!Number.isFinite(sent)) return true; // no date: cannot show it is recent
+  const ref = at instanceof Date ? at.getTime() : at ? Date.parse(at) : NaN;
+  if (!Number.isFinite(ref)) return false;
+  return ref - sent > REPLY_MAX_AGE_MS;
 }
 
 /** HTML → readable text. Quoted blocks (blockquote, Gmail/Outlook quote containers) are dropped first. */
@@ -184,10 +236,45 @@ export interface DncEntry {
 export type DncHit = { by: "email" | "domain" | "name"; entry: string } | null;
 
 /*
+ * A DNC domain as the DNC tool reads it — the same rules as
+ * portals/enforce-blocklist.ts normalizeDomain (kept apart because that module
+ * brings the EmailBison and Instantly clients with it): no protocol, no "@",
+ * no "www.", nothing after a slash, and it must look like a domain.
+ * "https://www.KW.com/team" → "kw.com".
+ */
+export function dncDomain(raw: string | null | undefined): string | null {
+  let v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return null;
+  v = v.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^@/, "").replace(/^www\./, "");
+  v = v.split("/")[0] ?? v;
+  return /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(v) ? v : null;
+}
+
+/*
+ * The domain an entry blocks. In the DNC tool a COMPANY entry blocks a domain
+ * (it is pushed to the providers' domain blocklists) and an AGENT entry
+ * blocks an address — an agent entry's domain field is not a block, and
+ * reading it as one would stop every agent at gmail.com for that brokerage.
+ * An entry of no stated kind is read by what it holds: a domain and no
+ * address is a company.
+ */
+function blockedDomain(e: DncEntry): string | null {
+  const kind = (e.kind ?? "").trim().toLowerCase();
+  if (kind === "agent") return null;
+  if (kind !== "company" && normEmail(e.email)) return null;
+  return dncDomain(e.domain);
+}
+
+/*
  * On the brokerage's DNC list by address (any of the agent's), by company
- * domain (company entries; a sub-domain counts), or by full name (name-only
- * entries — 68% of all entries carry no address, and a name match is the
- * cautious reading: a miss sends to someone the brokerage said not to).
+ * domain (a sub-domain counts), or by full name on an entry with no address
+ * (68% of all entries carry no address, and a name match is the cautious
+ * reading: a miss sends to someone the brokerage said not to). Names compare
+ * the way the DNC tool's own stop does (sameName: first and last name, case,
+ * accents and suffixes like "Jr." ignored).
+ *
+ * The caller passes the brokerage's WHOLE list — a pre-filtered page could
+ * leave out the one entry that matches.
  */
 export function dncHit(entries: DncEntry[], agent: { emails: string[]; name: string | null }): DncHit {
   const emails = new Set(agent.emails.map(normEmail).filter(Boolean));
@@ -197,10 +284,11 @@ export function dncHit(entries: DncEntry[], agent: { emails: string[]; name: str
     if (em && emails.has(em)) return { by: "email", entry: em };
   }
   for (const e of entries) {
-    const d = (e.domain ?? "").trim().toLowerCase().replace(/^@/, "");
+    const d = blockedDomain(e);
     if (d && domains.has(d)) return { by: "domain", entry: d };
   }
   for (const e of entries) {
+    if ((e.kind ?? "").trim().toLowerCase() === "company") continue;
     if (!normEmail(e.email) && e.name && sameName(e.name, agent.name)) return { by: "name", entry: e.name };
   }
   return null;

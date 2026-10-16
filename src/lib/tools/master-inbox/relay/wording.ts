@@ -56,7 +56,13 @@ export const REASON_TEXT: Record<string, string> = {
   too_old: "Held too long to send now.",
   read_error: "Something could not be read, so it was held rather than guessed.",
   empty_reply: "The agent's reply has no text of its own.",
+  stale_reply: "The agent's reply is more than two weeks older than the label — an old conversation labelled again, not handed off by itself. Introduce by hand if it should go.",
+  send_failed: "Postmark refused it — nothing was sent.",
+  send_unknown: "Postmark's answer did not come back, so it may have been sent — check Postmark's activity before sending again.",
 };
+
+/** A send with no answer recorded after this long is reported as such (the record is never retried by itself). */
+export const SENDING_STUCK_MS = 10 * 60 * 1000;
 
 const TIME = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
 const DAY_TIME = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -90,7 +96,12 @@ export function recipientsPhrase(recipients: RelayRecordView["recipients"]): str
 
 export type LineTone = "sent" | "practice" | "waiting" | "stopped" | "problem";
 
-/** One line for the conversation, e.g. "Sent to Angela at 10:42 AM". */
+/**
+ * One line for the conversation, e.g. "Sent to Angela at 10:42 AM" — or "at
+ * Oct 14, 10:42 AM" when it was not today. Pass `today` (the server's now):
+ * without it there is no date at all, and a hand-off from last week reads as
+ * if it were this morning. Times are Eastern, as everywhere in the OS.
+ */
 export function relayLine(r: RelayRecordView, today?: string | null): { tone: LineTone; text: string } {
   const who = recipientsPhrase(r.recipients);
   const at = (iso: string | null) => (iso ? ` at ${stamp(iso, today)}` : "");
@@ -107,16 +118,26 @@ export function relayLine(r: RelayRecordView, today?: string | null): { tone: Li
         tone: "waiting",
         text: `${what} ready for ${r.brokerageName ?? "the brokerage"}: ${who}${r.practice ? " (practice — nothing will be sent)" : ""}`,
       };
-    case "sending":
+    case "sending": {
+      const since = Date.parse(r.decidedAt ?? "");
+      const now = Date.parse(today ?? "");
+      if (Number.isFinite(since) && Number.isFinite(now) && now - since > SENDING_STUCK_MS) {
+        return { tone: "problem", text: `Sending to ${who}${at(r.decidedAt)} — no answer was recorded. Check Postmark's activity; it is never sent again by itself.` };
+      }
       return { tone: "waiting", text: `Sending to ${who}…` };
+    }
     case "held":
       return { tone: "waiting", text: `${what} held — ${reason}${extra}` };
     case "skipped":
       return { tone: "stopped", text: `Not handed to ${r.brokerageName ?? "the brokerage"} — ${reason}${extra}` };
     case "failed":
-      return { tone: "problem", text: `Not delivered — ${r.error ?? "Postmark refused it"}` };
+      return {
+        tone: "problem",
+        text: r.reason === "send_unknown" ? `Not confirmed — ${REASON_TEXT.send_unknown}` : `Not delivered — ${r.error ?? REASON_TEXT.send_failed}`,
+      };
     case "bounced":
-      return { tone: "problem", text: `Bounced${at(r.bouncedAt)} — ${r.error ?? who}` };
+      // With several people on it, the others may well have received it: say whose address failed.
+      return { tone: "problem", text: `${r.recipients.length > 1 ? "Did not reach everyone" : "Bounced"}${at(r.bouncedAt)} — ${r.error ?? who}` };
   }
 }
 

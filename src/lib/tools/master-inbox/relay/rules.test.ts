@@ -23,10 +23,12 @@ import {
 import { DEFAULT_FROM_ADDRESS, fromAddress, isRelayAddress, liveSendAllowed, messageStream, sweepSwitchedOff } from "./gate.ts";
 import { campaignKey, osClientForPortal, portalsOfClient, resolveBrokerage, type World } from "./resolve.ts";
 import {
+  dncDomain,
   dncHit,
   hasIntroductionLabel,
   isActiveStatus,
   isExcludedBrokerage,
+  isStaleReply,
   isTriggerLabel,
   looksAutomatic,
   looksLikeOptOut,
@@ -34,7 +36,9 @@ import {
   pickAgentReply,
   planRecipients,
   replyToOf,
+  REPLY_MAX_AGE_MS,
   stopLabel,
+  trimReplyHeader,
   type MessageFacts,
 } from "./rules.ts";
 import { recipientsPhrase, recordView, relayLine, REASON_TEXT } from "./wording.ts";
@@ -347,6 +351,68 @@ test("the record on the conversation reads like the plan: 'Sent to Angela at 10:
   for (const reason of ["unknown_campaign", "hourly_cap", "dnc", "already_delivered", "auto_reply", "brokerage_not_active"]) {
     assert.ok(REASON_TEXT[reason], reason);
   }
+});
+
+/* ------------------------------------------------------------------ review fixes (17 Oct) */
+
+test("quote headers a short reply leaves behind are trimmed — Gmail's two-line one, Outlook's From:/Sent: block (review fix)", () => {
+  const gmail = "Sure.\n\nOn Mon, Oct 5, 2026 at 10:00 AM Nicole Collins <\nnicole.c@brokerstaffer.com> wrote:\n\n> Hi Jordan";
+  assert.equal(ownText(msg({ bodyText: gmail })), "Sure.");
+  const outlook = "Yes!\n\n________________________________\nFrom: Nicole Collins <nicole.c@brokerstaffer.com>\nSent: Monday, October 5, 2026 10:00 AM\nTo: Jordan\nSubject: Quick question";
+  assert.equal(ownText(msg({ bodyText: outlook })), "Yes!");
+  assert.equal(trimReplyHeader("Call me.\nFrom: N <n@b.test>\nDate: Mon\nSubject: Q"), "Call me.");
+  // The agent's own words are left alone, even when they mention "from" or "on".
+  const own = "On Monday I'm free from 2pm.\nFrom: my cell, (843) 555-0142";
+  assert.equal(trimReplyHeader(own), own);
+});
+
+test("a reply more than 14 days older than its label is stale; no date cannot show it is recent (review fix)", () => {
+  const label = "2026-10-15T15:00:00.000Z";
+  assert.equal(isStaleReply("2026-10-14T15:00:00.000Z", label), false);
+  assert.equal(isStaleReply("2026-10-01T14:59:00.000Z", label), true);
+  assert.equal(isStaleReply("2026-10-01T15:00:00.000Z", label), false, "exactly 14 days is still fine");
+  assert.equal(isStaleReply(null, label), true);
+  assert.equal(isStaleReply("2026-10-16T00:00:00.000Z", label), false, "a reply after the label (the grace) is not stale");
+  assert.equal(REPLY_MAX_AGE_MS, 14 * 24 * 60 * 60 * 1000);
+});
+
+test("DNC domains read the DNC tool's way; only company entries block a domain; names never match a company (review fix)", () => {
+  assert.equal(dncDomain("https://www.KW.com/team"), "kw.com");
+  assert.equal(dncDomain("@coastal.test"), "coastal.test");
+  assert.equal(dncDomain("not a domain"), null);
+  const agent = { emails: ["jordan@coastal.test"], name: "Jordan Ellis" };
+  assert.deepEqual(dncHit([{ kind: "company", name: "Coastal", email: null, domain: "www.coastal.test" }], agent), { by: "domain", entry: "coastal.test" });
+  assert.equal(dncHit([{ kind: "agent", name: "Pat", email: "pat@coastal.test", domain: "coastal.test" }], agent), null, "an agent entry blocks an address, not a domain");
+  assert.equal(dncHit([{ kind: "agent", name: "Pat", email: "pat@gmail.test", domain: "gmail.test" }], { emails: ["jordan@gmail.test"], name: "Jordan Ellis" }), null);
+  assert.deepEqual(dncHit([{ kind: null, name: "Coastal", email: null, domain: "coastal.test" }], agent), { by: "domain", entry: "coastal.test" }, "no kind, a domain and no address: a company");
+  assert.equal(dncHit([{ kind: "company", name: "Jordan Ellis", email: null, domain: "other.test" }], agent), null, "a company called after a person is not that person");
+  assert.deepEqual(dncHit([{ kind: "agent", name: "JORDAN ELLIS JR.", email: "", domain: null }], agent), { by: "name", entry: "JORDAN ELLIS JR." });
+});
+
+test("automatic replies: the added out-of-office phrases match; a real reply that mentions travel does not (review fix)", () => {
+  for (const t of [
+    "This is an automated response. I will reply shortly.",
+    "I have limited access to email this week.",
+    "I will respond to your message upon my return on Monday.",
+    "I am on maternity leave until January.",
+  ]) assert.equal(looksAutomatic("Re: Quick question", t, "jordan@coastal.test"), true, t);
+  for (const t of ["I'm travelling this week but yes, call me Monday.", "Sure — back from vacation, happy to chat.", "Leave me your number and I'll call."]) {
+    assert.equal(looksAutomatic("Re: Quick question", t, "jordan@coastal.test"), false, t);
+  }
+});
+
+test("the conversation line carries the date when it was not today, and a stuck send says so (review fix)", () => {
+  const today = "2026-10-17T15:00:00.000Z";
+  assert.equal(relayLine(view({ sent_at: "2026-10-14T14:42:00.000Z" }), today).text, "Sent to Angela at Oct 14, 10:42 AM");
+  assert.equal(relayLine(view({ sent_at: "2026-10-17T14:42:00.000Z" }), today).text, "Sent to Angela at 10:42 AM");
+  assert.equal(relayLine(view({ status: "sending", decided_at: "2026-10-17T14:58:00.000Z" }), today).text, "Sending to Angela…");
+  const stuck = relayLine(view({ status: "sending", decided_at: "2026-10-17T14:00:00.000Z" }), today);
+  assert.equal(stuck.tone, "problem");
+  assert.match(stuck.text, /no answer was recorded.*never sent again by itself/);
+  assert.match(relayLine(view({ status: "failed", reason: "send_unknown" })).text, /may have been sent/);
+  assert.match(relayLine(view({ status: "bounced", error: "HardBounce — a@x.test" })).text, /^Bounced — HardBounce/);
+  assert.match(relayLine(view({ status: "bounced", error: "HardBounce — a@x.test", recipients: [{ name: "A", email: "a@x.test" }, { name: "B", email: "b@x.test" }] })).text, /^Did not reach everyone/);
+  for (const reason of ["stale_reply", "send_failed", "send_unknown"]) assert.ok(REASON_TEXT[reason], reason);
 });
 
 test("recipients read as first names", () => {

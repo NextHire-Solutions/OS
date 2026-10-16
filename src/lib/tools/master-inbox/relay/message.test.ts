@@ -13,6 +13,7 @@ import {
   buildRelayEmail,
   cleanDisplayName,
   messageIdFromPayload,
+  providerSaysAutomatic,
   quotedHistory,
   relaySubject,
   type RelayEmail,
@@ -111,9 +112,10 @@ test("subject: exactly one Re:, from the conversation's subject", () => {
 
 test("threads into the agent's own conversation when the provider gave the Message-ID", () => {
   assert.equal(messageIdFromPayload({ data: { reply: { raw_message_id: "<CAB123@mail.gmail.com>" } } }), "<CAB123@mail.gmail.com>");
-  assert.equal(messageIdFromPayload({ message_id: "abc@x.test" }), "<abc@x.test>");
+  // An Instantly email object (what sync/instantly.ts stores for a synced email).
+  assert.equal(messageIdFromPayload({ id: "e1", message_id: "abc@x.test", ue_type: 2, eaccount: "nicole@b.test" }), "<abc@x.test>");
   assert.equal(messageIdFromPayload({ data: { reply: { id: 99 } } }), null);
-  assert.equal(messageIdFromPayload({ message_id: "not an id" }), null);
+  assert.equal(messageIdFromPayload({ id: "e1", message_id: "not an id", ue_type: 2 }), null);
   const e = build({ agentMessageId: "<CAB123@mail.gmail.com>" });
   assert.deepEqual(e.headers, [
     { Name: "In-Reply-To", Value: "<CAB123@mail.gmail.com>" },
@@ -232,6 +234,42 @@ test("every page of bounces is read — a capped first page is not the whole lis
   const endless = (async () => new Response(JSON.stringify({ Bounces: page(500, 0), TotalCount: 99999 }), { status: 200 })) as typeof fetch;
   const capped = await fetchBounces(new Date("2026-10-10T00:00:00.000Z"), { fetch: endless, env: { POSTMARK_SERVER_TOKEN: "t" } });
   assert.equal(capped.ok, false, "too many to read in full is an error, not a silent cut");
+});
+
+test("the Message-ID is the REPLY's own — never our scheduled email's or the lead's, never made up (review fix)", () => {
+  // The EmailBison webhook carries our outreach (scheduled_email) beside the reply; its id used to be reachable first.
+  const envelope = {
+    event: { type: "LEAD_REPLIED" },
+    data: {
+      lead: { id: 5, email: "jordan@coastal.test" },
+      scheduled_email: { id: 7, raw_message_id: "<our-outreach@bison.test>" },
+      reply: { id: 9, raw_message_id: "<agent-reply@mail.gmail.com>", automated_reply: false },
+    },
+  };
+  assert.equal(messageIdFromPayload(envelope), "<agent-reply@mail.gmail.com>");
+  const noReplyId = { ...envelope, data: { ...envelope.data, reply: { id: 9 } } };
+  assert.equal(messageIdFromPayload(noReplyId), null, "the scheduled email's id is not the agent's");
+  // The wrapped test-event shape, and the conversation-thread reply object itself.
+  assert.equal(messageIdFromPayload({ data: { event: {}, data: { reply: { raw_message_id: "w@x.test" } } } }), "<w@x.test>");
+  assert.equal(messageIdFromPayload({ id: 9, raw_message_id: "c@x.test", from_email_address: "jordan@coastal.test" }), "<c@x.test>");
+  // An Instantly webhook carries no Message-ID: no headers rather than a guess.
+  assert.equal(messageIdFromPayload({ event_type: "reply_received", email_id: "u-1", lead_email: "jordan@coastal.test" }), null);
+  assert.equal(messageIdFromPayload(null), null);
+});
+
+test("EmailBison's own 'automatic reply' flag is read from the reply (review fix)", () => {
+  assert.equal(providerSaysAutomatic({ data: { reply: { id: 1, automated_reply: true } } }), true);
+  assert.equal(providerSaysAutomatic({ id: 1, raw_message_id: "a@b.test", automated_reply: true }), true);
+  assert.equal(providerSaysAutomatic({ data: { reply: { id: 1, automated_reply: false } } }), false);
+  assert.equal(providerSaysAutomatic({ data: { scheduled_email: { automated_reply: true }, reply: { id: 1 } } }), false, "only the reply's own flag");
+  assert.equal(providerSaysAutomatic(undefined), false);
+});
+
+test("subject: control characters never reach the header, and a runaway subject is cut at a word (review fix)", () => {
+  assert.equal(relaySubject("Quick\u0000question\u0007\tJordan", null), "Re: Quick question Jordan");
+  const long = relaySubject(`${"word ".repeat(80)}end`, null);
+  assert.ok(long.length <= 205, String(long.length));
+  assert.match(long, /^Re: word word .* word…$/);
 });
 
 test("an out-of-office or a delay is not a bounce; a spam report is its own kind (review fix)", () => {

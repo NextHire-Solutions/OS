@@ -75,10 +75,16 @@ export function addressHeader(name: string | null | undefined, email: string): s
   return n ? `"${n}" <${email}>` : email;
 }
 
-/** "Re: <subject>", with exactly one Re: however many the conversation piled up. */
+const MAX_SUBJECT = 200;
+
+/**
+ * "Re: <subject>", with exactly one Re: however many the conversation piled
+ * up. Control characters (CR/LF included) become spaces, and a runaway
+ * subject is cut at a word: one line, nothing a header could be split on.
+ */
 export function relaySubject(threadSubject: string | null | undefined, replySubject: string | null | undefined): string {
   let base = String((threadSubject ?? "").trim() || (replySubject ?? "").trim())
-    .replace(/[\r\n]+/g, " ")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   for (let i = 0; i < 10; i++) {
@@ -86,6 +92,7 @@ export function relaySubject(threadSubject: string | null | undefined, replySubj
     if (next === base) break;
     base = next.trim();
   }
+  if (base.length > MAX_SUBJECT) base = `${base.slice(0, MAX_SUBJECT).replace(/\s+\S*$/, "")}…`;
   return `Re: ${base || "(no subject)"}`;
 }
 
@@ -130,26 +137,53 @@ export function replyText(reply: MessageFacts): string {
   return String(reply.bodyText ?? "").replace(/\r\n/g, "\n").trim();
 }
 
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
+
+/*
+ * The agent's reply inside what the provider stored for it (messages.raw_payload).
+ * Only the shapes the sync code writes are read (sync/emailbison.ts,
+ * sync/instantly.ts):
+ *
+ *   EmailBison webhook       { event, data: { reply, lead, campaign, scheduled_email, … } }
+ *   EmailBison, wrapped      { data: { event, data: { reply, … } } }   (the test-event sample)
+ *   EmailBison conversation  the reply object itself: { id, raw_message_id, automated_reply, … }
+ *   Instantly email          the email object itself: { id, message_id, ue_type, … }
+ *
+ * Never searched at large: the webhook also carries the SCHEDULED email (our
+ * own outreach) and the lead, and a Message-ID found there is not the agent's.
+ */
+export function replyFromPayload(payload: unknown): Obj | null {
+  if (!isObj(payload)) return null;
+  const data = isObj(payload.data) ? payload.data : null;
+  if (data && isObj(data.reply)) return data.reply;
+  if (data && isObj(data.data) && isObj((data.data as Obj).reply)) return (data.data as Obj).reply as Obj;
+  if ("raw_message_id" in payload || "automated_reply" in payload || "from_email_address" in payload) return payload;
+  if ("message_id" in payload && ("ue_type" in payload || "from_address_email" in payload || "eaccount" in payload)) return payload;
+  return null;
+}
+
 /*
  * The Message-ID of the agent's email, when the provider gave us one, so the
- * brokerage's answer threads into the agent's own conversation. Providers put
- * it in different places; anything not shaped like a Message-ID is ignored.
+ * brokerage's answer threads into the agent's own conversation (In-Reply-To /
+ * References). Anything not shaped like a Message-ID is ignored, and nothing
+ * is ever made up: without one the headers are simply left out.
  */
-export function messageIdFromPayload(payload: unknown, depth = 0): string | null {
-  if (!payload || typeof payload !== "object" || depth > 4) return null;
-  for (const [k, v] of Object.entries(payload as Record<string, unknown>)) {
-    if (typeof v === "string" && /^(raw_|rfc(822)?_|internet_)?message[-_]?id(_header)?$/i.test(k)) {
-      const id = v.trim().replace(/^<|>$/g, "");
-      if (/^[^\s<>@]+@[^\s<>@]+$/.test(id)) return `<${id}>`;
-    }
-  }
-  for (const v of Object.values(payload as Record<string, unknown>)) {
-    if (v && typeof v === "object") {
-      const found = messageIdFromPayload(v, depth + 1);
-      if (found) return found;
-    }
+export function messageIdFromPayload(payload: unknown): string | null {
+  const reply = replyFromPayload(payload);
+  if (!reply) return null;
+  for (const key of ["raw_message_id", "message_id"]) {
+    const v = reply[key];
+    if (typeof v !== "string") continue;
+    const id = v.trim().replace(/^<|>$/g, "");
+    if (/^[^\s<>@]+@[^\s<>@]+$/.test(id)) return `<${id}>`;
   }
   return null;
+}
+
+/** EmailBison's own verdict that the reply is automatic (an out-of-office, an auto-responder). */
+export function providerSaysAutomatic(payload: unknown): boolean {
+  return replyFromPayload(payload)?.automated_reply === true;
 }
 
 export interface BuildInput {
