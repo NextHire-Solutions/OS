@@ -384,6 +384,7 @@ test("DNC domains read the DNC tool's way; only company entries block a domain; 
   assert.deepEqual(dncHit([{ kind: "company", name: "Coastal", email: null, domain: "www.coastal.test" }], agent), { by: "domain", entry: "coastal.test" });
   assert.equal(dncHit([{ kind: "agent", name: "Pat", email: "pat@coastal.test", domain: "coastal.test" }], agent), null, "an agent entry blocks an address, not a domain");
   assert.equal(dncHit([{ kind: "agent", name: "Pat", email: "pat@gmail.test", domain: "gmail.test" }], { emails: ["jordan@gmail.test"], name: "Jordan Ellis" }), null);
+  assert.equal(dncHit([{ kind: "agent", name: "Pat Other", email: null, domain: "gmail.test" }], { emails: ["jordan@gmail.test"], name: "Jordan Ellis" }), null, "an agent entry with only a domain still blocks no domain");
   assert.deepEqual(dncHit([{ kind: null, name: "Coastal", email: null, domain: "coastal.test" }], agent), { by: "domain", entry: "coastal.test" }, "no kind, a domain and no address: a company");
   assert.equal(dncHit([{ kind: "company", name: "Jordan Ellis", email: null, domain: "other.test" }], agent), null, "a company called after a person is not that person");
   assert.deepEqual(dncHit([{ kind: "agent", name: "JORDAN ELLIS JR.", email: "", domain: null }], agent), { by: "name", entry: "JORDAN ELLIS JR." });

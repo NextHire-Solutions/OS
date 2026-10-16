@@ -753,6 +753,17 @@ test("'Check again' on a held hand-off never sends in one-click mode — it prep
   const v = await relay.sendToBrokerage(String(recordFor(thread.id).id), thread.id, "amy@brokerstaffer.com", deps(LIVE), NOW);
   assert.equal(v.status, "ready", "the button said Check again, not Send");
   assert.equal(handed.length, 0);
+
+  // In practice too: Check again prepares (as the sweep would); it does not record a practice send nobody pressed.
+  seed({ mode: "one_click" });
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, contact2_email: null, contact3_email: null } : r)));
+  const p = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, p.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, contact2_email: "lance@jeffcook.test" } : r)));
+  const pv = await relay.sendToBrokerage(String(recordFor(p.thread.id).id), p.thread.id, "amy@brokerstaffer.com", deps(), NOW);
+  assert.equal(pv.status, "ready");
+  assert.equal(db.rows("os_brokerage_relay_agents").length, 0, "nothing claimed by a check");
   assertContained();
 });
 
