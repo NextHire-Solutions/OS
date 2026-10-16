@@ -955,3 +955,15 @@ test("a later reply whose hand-off cannot be read right now is held and tried ag
   assert.equal(f().status, "practice", "checked again once the read works");
   assertContained();
 });
+
+test("a brokerage's switch saves with 0035 run and 0036 not yet; asking for the pipeline entry then says to run 0036 (review fix)", async () => {
+  seed();
+  db.seed("os_clients", db.rows("os_clients").map(({ pipeline_entry: _drop, ...r }) => r));
+  // Without 0036 the column does not exist: PostgREST refuses a write that names it.
+  db.failWhen = (c) => c.table === "os_clients" && c.method === "PATCH" && JSON.stringify(db.calls[db.calls.length - 1].body ?? {}).includes("pipeline_entry");
+  const b = await relay.saveBrokerageSettings(C.jeff, { enabled: true }, { ws: WS });
+  assert.equal(b.relay.enabled, true);
+  assert.equal(b.pipelineEntry, "introduction");
+  await assert.rejects(relay.saveBrokerageSettings(C.jeff, { pipelineEntry: "interested" }, { ws: WS }));
+  assertContained();
+});

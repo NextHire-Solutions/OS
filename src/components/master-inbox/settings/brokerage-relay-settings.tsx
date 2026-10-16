@@ -302,7 +302,8 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
       address: address || null,
       hourlyCap: cap === "" ? null : Number(cap),
       mode: mode || null,
-      pipelineEntry: entry,
+      // Only when changed: without migration 0036 the column is not there, and the other settings must still save.
+      ...(entry !== row.pipelineEntry ? { pipelineEntry: entry } : {}),
     });
     setBusy(false);
     show(r.ok ? { text: `Saved ${row.name}` } : { text: r.error ?? "Could not save", bad: true });
