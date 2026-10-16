@@ -141,7 +141,7 @@ function Panel({ data }: { data: RelayOverview }) {
       </Section>
 
       <Held data={data} />
-      <Brokerages rows={data.brokerages} />
+      <Brokerages rows={data.brokerages} liveGlobally={s.enabled && !s.practiceMode && data.server.liveSendAllowed && data.server.tokenSet} />
       <Recent data={data} />
     </>
   );
@@ -164,7 +164,12 @@ function Held({ data }: { data: RelayOverview }) {
       ignore,
     });
     setBusy(null);
-    show(r.ok ? { text: ignore ? "Marked as not a brokerage campaign" : `Assigned — ${String(r.rechecked ?? 0)} conversation(s) checked again` } : { text: r.error ?? "Could not save", bad: true });
+    const queued = Number(r.queued ?? 0);
+    show(
+      r.ok
+        ? { text: `${ignore ? "Marked as not a brokerage campaign" : "Assigned"} — ${String(r.rechecked ?? 0)} conversation(s) checked again${queued ? `, ${queued} more within a few minutes` : ""}` }
+        : { text: r.error ?? "Could not save", bad: true },
+    );
     if (r.ok) router.refresh();
   };
 
@@ -240,11 +245,11 @@ function Held({ data }: { data: RelayOverview }) {
   );
 }
 
-function Brokerages({ rows }: { rows: BrokerageRow[] }) {
+function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally: boolean }) {
   return (
     <Section
       title="Brokerages"
-      sub="Each brokerage's own switch (the pilot), who receives, and where its agents enter the portal pipeline. A brokerage that is off is still practised — recorded, never sent."
+      sub="Each brokerage's own switch (the pilot), who receives, one click or automatic, and where its agents enter the portal pipeline. A brokerage that is off is still practised — recorded, never sent. For the pilot: switch on one or two, leave the mode on one click; move to automatic after the pilot."
     >
       <div className="tbl-scroll">
         <table className="atbl">
@@ -261,7 +266,7 @@ function Brokerages({ rows }: { rows: BrokerageRow[] }) {
           </thead>
           <tbody>
             {rows.map((b) => (
-              <BrokerageLine key={b.id} row={b} />
+              <BrokerageLine key={b.id} row={b} liveGlobally={liveGlobally} />
             ))}
           </tbody>
         </table>
@@ -270,7 +275,7 @@ function Brokerages({ rows }: { rows: BrokerageRow[] }) {
   );
 }
 
-function BrokerageLine({ row }: { row: BrokerageRow }) {
+function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally: boolean }) {
   const router = useRouter();
   const show = useShowToast();
   const [enabled, setEnabled] = useState(row.relay.enabled);
@@ -335,15 +340,32 @@ function BrokerageLine({ row }: { row: BrokerageRow }) {
         </select>
       </td>
       <td>
-        <select className="sel" value={entry} onChange={(e) => setEntry(e.target.value as PipelineEntry)} aria-label="Pipeline entry">
+        <select
+          className="sel"
+          value={entry}
+          onChange={(e) => setEntry(e.target.value as PipelineEntry)}
+          aria-label="Pipeline entry"
+          title="Recorded on each hand-off only. Entering the portal at Interested is not built yet: nothing in the portal changes either way."
+        >
           <option value="introduction">Introduction (today)</option>
-          <option value="interested">Interested (via hand-off)</option>
+          <option value="interested">Interested — recorded only, not built yet</option>
         </select>
       </td>
       <td>
-        <Btn primary disabled={!dirty || busy} onClick={save}>
-          Save
-        </Btn>
+        {/* Switching a brokerage on while sending is live means real emails from its next hand-off: two clicks. */}
+        {enabled && !row.relay.enabled && liveGlobally ? (
+          <ConfirmButton
+            label="Save"
+            armedLabel={`Click again: ${row.name} can receive real emails`}
+            title={`${row.name}'s next hand-offs are sent for real (one click: when someone presses Send to brokerage).`}
+            onConfirm={save}
+            disabled={!dirty || busy}
+          />
+        ) : (
+          <Btn primary disabled={!dirty || busy} onClick={save}>
+            Save
+          </Btn>
+        )}
       </td>
     </tr>
   );
@@ -377,7 +399,7 @@ function Recent({ data }: { data: RelayOverview }) {
                   </td>
                   <td>{r.brokerageName ?? r.campaignName ?? "—"}</td>
                   <td>
-                    {relayLine(r).text}
+                    {relayLine(r, data.now).text}
                     {r.pipelineAction === "enter_at_interested" ? <div className="mut">Pipeline: would enter at Interested (not written)</div> : null}
                   </td>
                 </tr>

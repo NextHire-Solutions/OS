@@ -1292,16 +1292,19 @@ export interface RelayOverview {
   brokerages: BrokerageRow[];
   held: HeldCampaign[];
   recent: Array<RelayRecordView & { threadId: string; agentName: string | null }>;
+  /** The server's time when this was read — the screen dates its lines against it, never against the browser's clock. */
+  now: string;
 }
 
 /** Everything the Settings tab shows. Reads only; never prints the token, only whether one is set. */
-export async function relayOverview(deps: RelayDeps = {}): Promise<RelayOverview> {
+export async function relayOverview(deps: RelayDeps = {}, at = new Date()): Promise<RelayOverview> {
   const env = deps.env ?? process.env;
   const os: Os = deps.os ?? osTable;
   const ws = deps.ws ?? (await workspaceId());
+  const now = at.toISOString();
   const server = { liveSendAllowed: liveSendAllowed(env), tokenSet: postmarkToken(env) !== null, fromAddress: fromAddress(env) };
   const { settings, missing } = await loadGlobalSettings(os, ws);
-  if (missing) return { available: false, settings, server, brokerages: [], held: [], recent: [] };
+  if (missing) return { available: false, settings, server, brokerages: [], held: [], recent: [], now };
 
   const rows = await loadClientRows(os);
   const brokerages: BrokerageRow[] = rows
@@ -1355,7 +1358,9 @@ export async function relayOverview(deps: RelayDeps = {}): Promise<RelayOverview
     byCampaign.set(k, g);
   }
 
-  const { data: recentRows } = await os("os_brokerage_relays").select("*").eq("workspace_id", ws).order("created_at", { ascending: false }).limit(100);
+  // The newest 100 — a log, labelled "Recent" on the screen, not a count of anything.
+  const { data: recentRows, error: recentErr } = await os("os_brokerage_relays").select("*").eq("workspace_id", ws).order("created_at", { ascending: false }).limit(100);
+  if (recentErr) throw new Error(`os_brokerage_relays: ${recentErr.message}`);
   return {
     available: true,
     settings,
@@ -1363,5 +1368,6 @@ export async function relayOverview(deps: RelayDeps = {}): Promise<RelayOverview
     brokerages,
     held: [...byCampaign.values()],
     recent: ((recentRows ?? []) as Row[]).map((r) => ({ ...recordView(r), threadId: String(r.thread_id), agentName: str(r.agent_name) })),
+    now,
   };
 }
