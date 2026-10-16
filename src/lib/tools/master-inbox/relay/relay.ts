@@ -193,37 +193,66 @@ export async function loadGlobalSettings(os: Os, ws: string): Promise<{ settings
 
 const OPTIONAL_CLIENT_COLUMNS = ["intro_override", "more_contacts", "contact_territories", "intro_variants", "relay_settings", "pipeline_entry"];
 
-/** os_clients with every column the relay reads; a column a migration has not added yet reads as empty. */
+/** The database's own message, without readAll's "<label>: " prefix (which names the table). */
+const dbMessage = (e: unknown, label: string) => (e instanceof Error ? e.message : String(e)).replace(new RegExp(`^${label}: `), "");
+
+/** os_clients with every column the relay reads (every page); a column a migration has not added yet reads as empty. */
 async function loadClientRows(os: Os): Promise<Row[]> {
   let cols = `id, aliases, status, mi_client_id, ${INTRO_ROW_COLUMNS}, relay_settings, pipeline_entry`;
   for (let i = 0; i <= OPTIONAL_CLIENT_COLUMNS.length; i++) {
-    const { data, error } = await os("os_clients").select(cols);
-    if (!error) return (data ?? []) as unknown as Row[];
-    const missing = OPTIONAL_CLIENT_COLUMNS.find((c) => error.message.includes(c) && cols.includes(c));
-    if (!missing) throw new Error(`os_clients: ${error.message}`);
-    cols = cols.replace(new RegExp(`,\\s*${missing}\\b`), "");
+    try {
+      const select = cols;
+      return await readAll(
+        (from, to, first) => os("os_clients").select(select, first ? { count: "exact" } : undefined).order("id", { ascending: true }).range(from, to),
+        "os_clients",
+        20_000,
+      );
+    } catch (e) {
+      const msg = dbMessage(e, "os_clients");
+      const missing = OPTIONAL_CLIENT_COLUMNS.find((c) => msg.includes(c) && cols.includes(c));
+      if (!missing) throw new Error(`os_clients: ${msg}`);
+      cols = cols.replace(new RegExp(`,\\s*${missing}\\b`), "");
+    }
   }
   throw new Error("os_clients: could not be read");
 }
 
-async function optionalRows(os: Os, table: OsTable, columns: string): Promise<Row[]> {
-  const { data, error } = await os(table).select(columns);
-  if (error) {
-    if (missingTable(error.message, table)) return [];
-    throw new Error(`${table}: ${error.message}`);
+/*
+ * A table a migration may not have created yet reads as empty; any other
+ * failure throws. Every page is read: os_campaign_portals grows with every
+ * campaign, and a route missing from a capped page would change which
+ * brokerage a conversation resolves to.
+ */
+async function optionalRows(os: Os, table: OsTable, columns: string, orderBy: string[]): Promise<Row[]> {
+  try {
+    return await readAll(
+      (from, to, first) => {
+        let q = os(table).select(columns, first ? { count: "exact" } : undefined);
+        for (const c of orderBy) q = q.order(c, { ascending: true });
+        return q.range(from, to);
+      },
+      table,
+      50_000,
+    );
+  } catch (e) {
+    const msg = dbMessage(e, table);
+    if (missingTable(msg, table)) return [];
+    throw new Error(`${table}: ${msg}`);
   }
-  return (data ?? []) as unknown as Row[];
 }
 
 async function loadWorld(mi: Mi, os: Os): Promise<{ world: World; records: Map<string, ClientRecord> }> {
-  const [portalsRes, clientRows, routes, team, blocks] = await Promise.all([
-    mi.from("clients").select("id, name, slug, aliases"),
+  const [portalRows, clientRows, routes, team, blocks] = await Promise.all([
+    readAll(
+      (from, to, first) => mi.from("clients").select("id, name, slug, aliases", first ? { count: "exact" } : undefined).order("id", { ascending: true }).range(from, to),
+      "clients",
+      20_000,
+    ),
     loadClientRows(os),
-    optionalRows(os, "os_campaign_portals", "platform, campaign_id, os_client_id, mi_client_id"),
-    optionalRows(os, "os_relay_campaigns", "platform, campaign_id, os_client_id, ignored"),
-    optionalRows(os, "os_portal_blocks", "os_client_id, mode, lifted_at"),
+    optionalRows(os, "os_campaign_portals", "platform, campaign_id, os_client_id, mi_client_id", ["platform", "campaign_id"]),
+    optionalRows(os, "os_relay_campaigns", "platform, campaign_id, os_client_id, ignored", ["platform", "campaign_id"]),
+    optionalRows(os, "os_portal_blocks", "id, os_client_id, mode, lifted_at", ["id"]),
   ]);
-  if (portalsRes.error) throw new Error(`clients: ${portalsRes.error.message}`);
   const blocked = new Set(blocks.filter((b) => b.mode === "blocked" && !b.lifted_at).map((b) => String(b.os_client_id)));
   const records = new Map<string, ClientRecord>();
   for (const r of clientRows) {
@@ -241,7 +270,7 @@ async function loadWorld(mi: Mi, os: Os): Promise<{ world: World; records: Map<s
     });
   }
   const world: World = {
-    portals: ((portalsRes.data ?? []) as Row[]).map((p) => ({
+    portals: portalRows.map((p) => ({
       id: String(p.id),
       name: String(p.name ?? ""),
       slug: str(p.slug),

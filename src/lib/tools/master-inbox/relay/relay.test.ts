@@ -922,3 +922,19 @@ test("later replies: found past a server page limit, and only conversations with
   assert.equal(loaded.size, 3);
   assertContained();
 });
+
+test("the campaign → portal routes are read in full: a route past the first page still decides the brokerage (review fix)", async () => {
+  seed();
+  db.seed("os_campaign_portals", [
+    ...Array.from({ length: 5 }, (_, i) => ({ platform: "emailbison", campaign_id: `00${i}`, os_client_id: C.jeff, mi_client_id: P.jeff })),
+    { platform: "emailbison", campaign_id: "900", os_client_id: C.wag, mi_client_id: P.wag },
+  ]);
+  db.missingTables.add("os_portal_blocks"); // a table a migration has not created yet reads as empty
+  db.pageLimit = 2;
+  const { thread } = conversation({ portal: P.unknown, campaign: "Template Zillow Flex", campaignId: "900" });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  const rec = recordFor(thread.id);
+  assert.deepEqual([rec.status, rec.resolved_by, rec.os_client_id], ["practice", "campaign_portal", C.wag]);
+  assertContained();
+});
