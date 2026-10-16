@@ -584,7 +584,7 @@ the 30-minute window).
 
 **Migrations (Master Inbox database), in order:** `0035_brokerage_relay.sql`,
 `0036_client_pipeline_entry.sql`. Both purely additive (pinned by
-`relay/migrations.test.ts`). Tests: `relay/*.test.ts` (109), every write
+`relay/migrations.test.ts`). Tests: `relay/*.test.ts` (110), every write
 asserted to be `os_*` and no request to any other host.
 
 **The email, for deliverability ("make sure it doesn't land in spam"):**
