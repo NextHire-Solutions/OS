@@ -563,8 +563,8 @@ a Master Inbox table, a portal, Follow Up Boss, EmailBison or Instantly — only
 `os_*` (the four relay tables, `os_notifications`, and `os_clients`'
 `relay_settings`/`pipeline_entry` from Settings).
 
-**Review, 17 Oct — what was found and fixed** (each with a test; 16/16
-mutations caught): a double press / two tabs / two replicas / a press racing
+**Review, 17 Oct — what was found and fixed** (each with a test; 18/18
+reverted fixes caught by a failing test): a double press / two tabs / two replicas / a press racing
 the sweep could send twice (send lock); a practice button could send for real
 after the locks opened, and Check again could send in one-click mode; DNC
 missed "Jr."/accented names (raw last-word query, 200-row cap), un-normalised
@@ -576,13 +576,15 @@ sender address; a Postmark 5xx / unreadable 2xx counted as "refused" (freed
 the slot → possible duplicate on Try again); out-of-office "bounces" marked
 hand-offs bounced; capped pages everywhere (labels 200, re-checks 25 with
 starvation, later replies 100, campaign answers 100, bounces 100, held list
-500); `From` accepted `x@y.com@leads…`; the broadcast stream could be
-configured; the conversation line had no date. Load: a quiet minute is now
-reads only (it used to upsert every label in the 30-minute window).
+500, and the campaign → portal routes behind every decision); `From` accepted
+`x@y.com@leads…`; the broadcast stream could be configured; the conversation
+line had no date; a failed read of a later reply's hand-off skipped it for
+good. Load: a quiet minute is now reads only (it used to upsert every label in
+the 30-minute window).
 
 **Migrations (Master Inbox database), in order:** `0035_brokerage_relay.sql`,
 `0036_client_pipeline_entry.sql`. Both purely additive (pinned by
-`relay/migrations.test.ts`). Tests: `relay/*.test.ts` (107), every write
+`relay/migrations.test.ts`). Tests: `relay/*.test.ts` (109), every write
 asserted to be `os_*` and no request to any other host.
 
 **The email, for deliverability ("make sure it doesn't land in spam"):**
