@@ -72,6 +72,12 @@ export class FakePostgrest {
    * reports a short read instead of calling it the end. Cleared by reset.
    */
   readonly claimedTotals = new Map<string, number>();
+  /**
+   * When set and it returns true for a request, that request fails as a
+   * database error would (500) — to prove what a failed read leaves behind.
+   * Cleared by reset.
+   */
+  failWhen: ((call: { method: string; table: string; query: URLSearchParams }) => boolean) | null = null;
 
   /** Seeds a table (replacing it) and returns the rows, each with an id. */
   seed(table: string, rows: Row[]): Array<Row & { id: string }> {
@@ -91,6 +97,7 @@ export class FakePostgrest {
     this.nextProviderResponses.length = 0;
     this.pageLimit = null;
     this.claimedTotals.clear();
+    this.failWhen = null;
   }
   writes(table: string, method: "POST" | "PATCH" | "DELETE") {
     return this.calls.filter((c) => c.table === table && c.method === method);
@@ -183,6 +190,9 @@ export class FakePostgrest {
     const table = parts[0] === "rpc" ? `rpc:${parts[1]}` : parts[0];
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     this.calls.push({ method, table, query: url.searchParams, body, headers });
+    if (this.failWhen?.({ method, table, query: url.searchParams })) {
+      return new Response(JSON.stringify({ code: "XX000", message: "injected failure" }), { status: 500, headers: { "content-type": "application/json" } });
+    }
 
     const respond = (rows: Row[], status = 200) => {
       const wantsObject = (headers.get("accept") ?? "").includes("vnd.pgrst.object+json");

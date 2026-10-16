@@ -502,7 +502,10 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
   let resolvedBy: ResolvedBy | "hand-off";
   let parent: Row | null = null;
   if (rec.kind === "follow_up") {
-    const { data } = await ctx.os("os_brokerage_relays").select("*").eq("id", rec.parentId ?? "").maybeSingle();
+    if (!rec.parentId) return stop("skipped", "no_agent_reply", { ...base, detail: "the hand-off it follows is gone" });
+    const { data, error: pErr } = await ctx.os("os_brokerage_relays").select("*").eq("id", rec.parentId).maybeSingle();
+    // A read that failed is not "gone": held, and checked again.
+    if (pErr) return stop("held", "read_error", { ...base, detail: `the hand-off it follows: ${pErr.message.slice(0, 200)}` });
     parent = (data as Row | null) ?? null;
     if (!parent || !str(parent.os_client_id)) return stop("skipped", "no_agent_reply", { ...base, detail: "the hand-off it follows is gone" });
     osClientId = String(parent.os_client_id);

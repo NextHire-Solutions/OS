@@ -938,3 +938,20 @@ test("the campaign → portal routes are read in full: a route past the first pa
   assert.deepEqual([rec.status, rec.resolved_by, rec.os_client_id], ["practice", "campaign_portal", C.wag]);
   assertContained();
 });
+
+test("a later reply whose hand-off cannot be read right now is held and tried again — not skipped as 'gone' (review fix)", async () => {
+  seed({ forward_later_replies: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  const parentId = String(recordFor(thread.id).id);
+  add("messages", [{ thread_id: thread.id, direction: "inbound", sender: "jordan@coastal.test", sender_name: "Jordan Ellis", subject: "Re: Quick question, Jordan", body_text: "Also free Thursday.", sent_at: at(5) }]);
+  db.failWhen = (c) => c.table === "os_brokerage_relays" && c.method === "GET" && c.query.get("id") === `eq.${parentId}`;
+  await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 10 * 60_000), deps());
+  const f = () => records().find((x) => x.kind === "follow_up")!;
+  assert.deepEqual([f().status, f().reason], ["held", "read_error"]);
+  db.failWhen = null;
+  await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 16 * 60_000), deps());
+  assert.equal(f().status, "practice", "checked again once the read works");
+  assertContained();
+});
