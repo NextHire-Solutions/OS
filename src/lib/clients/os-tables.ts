@@ -47,6 +47,13 @@ export const OS_TABLES = [
   "os_notifications",
   "os_portal_blocks",
   "os_client_saved_views",
+  // Interested replies → the brokerage, by Postmark: the switches, every
+  // hand-off considered, once-per-agent claims and the team's campaign
+  // answers — see migrations/0035_brokerage_relay.sql.
+  "os_relay_settings",
+  "os_brokerage_relays",
+  "os_brokerage_relay_agents",
+  "os_relay_campaigns",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

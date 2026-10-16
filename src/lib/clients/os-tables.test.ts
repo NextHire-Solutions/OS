@@ -40,6 +40,11 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_notifications",
     "os_portal_blocks",
     "os_client_saved_views",
+    // Added 2026-10-16: the brokerage hand-off (0035).
+    "os_relay_settings",
+    "os_brokerage_relays",
+    "os_brokerage_relay_agents",
+    "os_relay_campaigns",
   ]);
 });
 

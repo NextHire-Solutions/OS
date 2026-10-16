@@ -106,7 +106,9 @@ export class FakePostgrest {
       } else if (v === "not.is.null") {
         if (str === null) return false;
       } else if (v.startsWith("ilike.")) {
-        const pattern = v.slice(6).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/\*/g, ".*");
+        // `%` and `*` are both "any run" — replaced in ONE pass: replacing `%` with `.*` and then `*` again
+        // turned "%x%" into "..*x..*", which needs a character after x and so never matched at the end.
+        const pattern = v.slice(6).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/[%*]/g, ".*");
         if (str === null || !new RegExp(`^${pattern}$`, "i").test(str)) return false;
       } else if (v.startsWith("in.(")) {
         const wanted = v

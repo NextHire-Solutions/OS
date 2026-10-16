@@ -32,7 +32,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Lowercase, strip every non-alphanumeric run to a single space, trim →
 // token array. "C21 Results - Elite Team" → ["c21","results","elite","team"]
-function tokenize(s: string): string[] {
+export function tokenize(s: string): string[] {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -43,7 +43,7 @@ function tokenize(s: string): string[] {
 
 // Score how well a needle (client name / alias) matches a campaign's
 // tokens. Higher = better; 0 = no match.
-function matchScore(needleTokens: string[], campaignTokens: string[]): number {
+export function matchScore(needleTokens: string[], campaignTokens: string[]): number {
   if (needleTokens.length === 0 || campaignTokens.length === 0) return 0;
 
   // (a) full contiguous appearance anywhere in the campaign.
