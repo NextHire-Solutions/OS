@@ -62,10 +62,12 @@ export function AgentPanel({
   entry: e,
   placement,
   onClose,
+  onEdit,
 }: {
   entry: PipelineEntry;
   placement: Placement;
   onClose: () => void;
+  onEdit: () => void;
 }) {
   useEscape(onClose);
   const focus = usePanelFocus();
@@ -87,7 +89,7 @@ export function AgentPanel({
             <div style={{ fontSize: 17, fontWeight: 600 }}>{name}</div>
             <span style={{ display: "inline-flex", marginTop: 6 }}><Source entry={e} /></span>
           </div>
-          <button type="button" className={k("btn sm")} {...RO}><Icon name="pencil" size={14} />Edit</button>
+          <button type="button" className={k("btn sm")} onClick={onEdit}><Icon name="pencil" size={14} />Edit</button>
           <button type="button" className={k("ib")} aria-label="Close" style={{ marginLeft: 2 }} onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <dl className={k("pf")}>

@@ -82,11 +82,15 @@ export const UNIT_PRESETS = [1, 4, 10, 20] as const;
 export const YEAR_PRESETS = [1, 2, 5, 10] as const;
 export const TITLES = ["Salesperson", "Team Leader", "Managing Broker"] as const;
 export const PAGE_SIZE = 50;
-const MAX_PAGE = 200; // 10,000 rows deep; past that, narrow the filter.
+/** The Setup wizard's tables show eight agents a page (Setup-2-Agents, Setup-4-Target). */
+export const SETUP_PAGE_SIZE = 8;
+const MAX_ROWS = 10_000; // this deep at most; past that, narrow the filter.
 
 export interface MarketQuery {
   list: MarketList;
   page: number;
+  /** Rows a page: 50, or the Setup wizard's 8. */
+  per: number;
   q: string;
   minVolume: number | null;
   minUnits: number | null;
@@ -106,9 +110,11 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
   const text = (k: string, max: number) => (p.get(k) ?? "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, max) || null;
   const page = Math.floor(Number(p.get("page")));
   const title = text("title", 40);
+  const per = p.get("per") === String(SETUP_PAGE_SIZE) ? SETUP_PAGE_SIZE : PAGE_SIZE;
   return {
     list: p.get("list") === "prospects" ? "prospects" : "market",
-    page: Number.isFinite(page) && page >= 1 ? Math.min(page, MAX_PAGE) : 1,
+    page: Number.isFinite(page) && page >= 1 ? Math.min(page, MAX_ROWS / per) : 1,
+    per,
     q: text("q", 80) ?? "",
     minVolume: pick(p.get("minVolume"), VOLUME_PRESETS),
     minUnits: pick(p.get("minUnits"), UNIT_PRESETS),

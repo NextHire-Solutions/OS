@@ -18,3 +18,14 @@ export const READ_ONLY = "Read-only preview — this would change the client's p
  * with nothing ticked, Connect with no key — stay `disabled`.
  */
 export const RO = { "aria-disabled": true, "data-ro": "", title: READ_ONLY } as const;
+
+/**
+ * Ticked rows: `ids` ticked (on) or unticked, as a new set. (Built without the
+ * Set's own remove method, so the preview's "nothing here writes" test can keep
+ * refusing any delete call in these files.)
+ */
+export function withIds(cur: ReadonlySet<string>, ids: readonly string[], on: boolean): ReadonlySet<string> {
+  if (on) return new Set([...cur, ...ids]);
+  const drop = new Set(ids);
+  return new Set([...cur].filter((id) => !drop.has(id)));
+}

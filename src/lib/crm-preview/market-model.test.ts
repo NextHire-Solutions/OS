@@ -37,7 +37,7 @@ test("MLS codes: exact code or alias only; anything else is named, never guessed
 
 test("the query string is held to the chips' presets", () => {
   const q = parseMarketQuery(new URLSearchParams("list=prospects&page=3&q=  smith &minVolume=2000000&minUnits=4&minYears=2&brokerage=Keller Williams&county=Cobb, GA&title=Team Leader"));
-  assert.deepEqual(q, { list: "prospects", page: 3, q: "smith", minVolume: 2_000_000, minUnits: 4, minYears: 2, brokerage: "Keller Williams", county: "Cobb, GA", title: "Team Leader" });
+  assert.deepEqual(q, { list: "prospects", page: 3, per: 50, q: "smith", minVolume: 2_000_000, minUnits: 4, minYears: 2, brokerage: "Keller Williams", county: "Cobb, GA", title: "Team Leader" });
   const bad = parseMarketQuery(new URLSearchParams("list=drop&page=-1&minVolume=7&minUnits=1e9&title=CEO&q=" + "x".repeat(200)));
   assert.equal(bad.list, "market");
   assert.equal(bad.page, 1);
@@ -46,6 +46,9 @@ test("the query string is held to the chips' presets", () => {
   assert.equal(bad.title, null);
   assert.equal(bad.q.length, 80);
   assert.equal(parseMarketQuery(new URLSearchParams("page=99999")).page, 200, "deep pages are capped");
+  assert.equal(parseMarketQuery(new URLSearchParams("per=8")).per, 8, "the Setup wizard's eight a page");
+  assert.equal(parseMarketQuery(new URLSearchParams("per=8&page=99999")).page, 1250, "the same depth, eight at a time");
+  assert.equal(parseMarketQuery(new URLSearchParams("per=5000")).per, 50, "no other page size");
 });
 
 test("the chips as the Database app's filters, on top of the market or the client's lists", () => {

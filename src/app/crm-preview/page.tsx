@@ -23,7 +23,7 @@
  */
 
 import type { Metadata } from "next";
-import { Inter_Tight } from "next/font/google";
+import localFont from "next/font/local";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
@@ -58,7 +58,20 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-const interTight = Inter_Tight({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--crx-font", display: "swap" });
+/*
+ * The design's own font files (the handoff's assets/fonts: Inter Tight 400, 500
+ * and 600, the only weights it uses), so every letter is the one the client
+ * drew with — not a newer cut of the family from Google.
+ */
+const interTight = localFont({
+  src: [
+    { path: "./fonts/inter-tight-latin-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/inter-tight-latin-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/inter-tight-latin-600.woff2", weight: "600", style: "normal" },
+  ],
+  variable: "--crx-font",
+  display: "swap",
+});
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -73,6 +86,9 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
   const clientId = one(params.client);
   const viewParam = one(params.view);
   const view: PreviewView = (PREVIEW_VIEWS as readonly string[]).includes(viewParam) ? (viewParam as PreviewView) : "pipeline";
+  // The Setup wizard's step (1–6).
+  const stepParam = Math.floor(Number(one(params.step)));
+  const step = stepParam >= 1 && stepParam <= 6 ? stepParam : 1;
 
   const admin = createAdminSupabase();
   const { data: portalRows } = await admin
@@ -127,9 +143,9 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       return [];
     }),
     // The client's record, for the person the design shows in the sidebar's footer.
-    osTable("os_clients").select("id, name, aliases, mi_client_id, mls_codes, orch_client_id, contact_name").then((r) => (r.data ?? []) as unknown as Array<OsClientRow & { contact_name: string | null }>),
+    osTable("os_clients").select("id, name, aliases, mi_client_id, mls_codes, orch_client_id, contact_name, areas").then((r) => (r.data ?? []) as unknown as Array<OsClientRow & { contact_name: string | null; areas: string[] | null }>),
   ]);
-  const record = clientForPortal({ id: client.id as string, name: (client.name as string | null) ?? "" }, records) as (OsClientRow & { contact_name: string | null }) | null;
+  const record = clientForPortal({ id: client.id as string, name: (client.name as string | null) ?? "" }, records) as (OsClientRow & { contact_name: string | null; areas: string[] | null }) | null;
   const stages = previewStages(defs);
   const tagKeys = new Set(stages.filter((s) => s.role === "tag").map((s) => s.key));
   const tagged = new Set(entries.filter((e) => tagKeys.has(e.custom_stage_key ?? e.stage)).map((e) => e.id));
@@ -143,6 +159,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
         // Whether a Follow Up Boss key is saved — never the key itself.
         fubConnected: Boolean((client as { fub_api_key?: string | null }).fub_api_key),
         contactName: record?.contact_name?.trim() || null,
+        // What the record covers, for the Setup wizard's welcome line: its areas, else its MLS.
+        coverage: (record?.areas ?? []).filter(Boolean).join(", ") || (record?.mls_codes ?? []).filter(Boolean).join(", ") || null,
       }}
       portals={portals}
       stages={stages}
@@ -152,6 +170,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       dnc={dnc}
       team={team}
       initialView={view}
+      initialStep={step}
       now={new Date().toISOString()}
     />,
   );

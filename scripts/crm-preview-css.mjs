@@ -56,33 +56,45 @@ for (const r of list) {
 }
 
 /*
- * The page screens' rules that differ from the board's. Only the bulk bar is
- * used by the preview (read-only: no dialogs, drop zones or select-all), and it
- * is a different element there — a plain row, not a card — so it gets its own
- * name rather than overriding the board's.
+ * The handoff's 55 screens come in families, each with its own stylesheet; a
+ * few names mean different things in different families (checked: 17 of 432
+ * selectors). Where a family's rule differs from the board's, that family's
+ * name is renamed — in every one of its selectors — so each screen keeps its
+ * own look and neither restyles the other:
+ *   pages   (My Agents, DNC, Team, Integrations, Help, their dialogs): the bulk
+ *           bar, select-all strip, dialog, overlay, two-column grid and drop
+ *           zone → .abulk .aselall .adlg .aov .ag2 .adrop
+ *   setup   (the Setup wizard): bulk bar, actions, lists, sections, form
+ *           labels → .sbulk .sacts .snx .ssec .slb (the last only to keep it
+ *           off My Agents' KPI labels, which are also .lb)
+ *   market  (Market, Prospects): menus and links → .mmenu .mlnk
+ *   reports its chart legend `.lg` (the board's `.lg` is the sidebar logo) → .rlg
+ * The pipeline family (board, list, panels, its dialogs, chat) keeps the
+ * names. Anything else that differs stops the script.
  */
-const PAGE_RENAMES = { ".bulk": ".abulk", ".bulk.on": ".abulk.on", ".bulk .acts": ".abulk .acts" };
-const PAGE_UNUSED = new Set([".selall", ".selall b", ".selall button", ".ov", ".dlg", ".dlg .dh", ".dlg .dh h2", ".dlg .df", ".g2", ".drop", ".drop code", ".drop .dt", ".drop .dc"]);
-const pageRename = (s) => PAGE_RENAMES[s] ?? s;
+const renamer = (pairs) => (s) => pairs.reduce((acc, [from, to]) => acc.replace(new RegExp(`\\.${from}(?![\\w-])`, "g"), `.${to}`), s);
+const PAGES = renamer([["bulk", "abulk"], ["selall", "aselall"], ["dlg", "adlg"], ["ov", "aov"], ["g2", "ag2"], ["drop", "adrop"]]);
+const SETUP = renamer([["bulk", "sbulk"], ["acts", "sacts"], ["nx", "snx"], ["sec", "ssec"], ["lb", "slb"]]);
+const MARKET = renamer([["menu", "mmenu"], ["lnk", "mlnk"]]);
+const REPORTS = (s) => s.replace(/^\.lg\b/, ".rlg");
+const SAME = (s) => s;
 
-/*
- * The other screens, each merged onto the board's rules in turn. Where a screen
- * uses a name the board already uses for something else, its rules get a name
- * of their own, so neither restyles the other:
- *   Reports  `.lg` is its chart legend; the board's `.lg` is the sidebar logo
- *            (`.rail .lg`, kept as is) — the legend becomes `.rlg`.
- *   Market   its menus and links (`.menu`, `.lnk`) differ from the board's time
- *            menu — they become `.mmenu` and `.mlnk`.
- * Anything else that differs stops the script.
- */
-const SCREENS = [
-  { screen: "Your-Agents", rename: pageRename, unused: PAGE_UNUSED },
-  { screen: "Pipeline-Empty", rename: (s) => s, unused: new Set() },
-  { screen: "Campaign", rename: (s) => s, unused: new Set() },
-  { screen: "Help", rename: pageRename, unused: PAGE_UNUSED },
-  { screen: "Reports", rename: (s) => s.replace(/^\.lg\b/, ".rlg"), unused: new Set() },
-  { screen: "Market", rename: (s) => s.replace(/\.menu\b/g, ".mmenu").replace(/\.lnk\b/g, ".mlnk"), unused: new Set([".toast", ".toast button"]) },
-];
+const FAMILY = {
+  pipeline: ["Pipeline-List", "Pipeline-Board-Collapsed", "Pipeline-Board-Panel", "Stages", "Pipeline-Conversation", "Pipeline-Notes", "Pipeline-Add", "Pipeline-Upload", "Pipeline-Board-Edit", "Pipeline-Board-AddField", "Pipeline-List-Edit", "Pipeline-List-AddField", "Pipeline-Selected", "Pipeline-Selected-Move", "Pipeline-Selected-Assign", "Chat"],
+  pages: ["Your-Agents", "Your-Agents-Add", "Your-Agents-Import", "Your-Agents-Selected", "Do-Not-Contact", "DNC-Add-Agent", "DNC-Add-Company", "DNC-Import", "DNC-Selected", "Team", "Team-Add", "Team-Import", "Team-Selected", "Integrations", "Help"],
+  other: ["Pipeline-Empty", "MyAgents-Empty", "DNC-Empty", "Prospects-Empty", "Campaign"],
+  reports: ["Reports", "Reports-Interested"],
+  market: ["Market", "Market-Target", "Market-Row", "Market-Selected", "Market-NoResults"],
+  setup: ["Setup-1-Team", "Setup-1-Team-Empty", "Setup-2-Agents", "Setup-2-Agents-Empty", "Setup-3-DNC", "Setup-3-DNC-Empty", "Setup-4-Target", "Setup-4-Target-Empty", "Setup-5-Offer", "Setup-5-Offer-Empty", "Setup-6-Done"],
+};
+const RENAME = { pipeline: SAME, pages: PAGES, other: SAME, reports: REPORTS, market: MARKET, setup: SETUP };
+const SCREENS = Object.entries(FAMILY).flatMap(([family, screens]) => screens.map((screen) => ({ screen, rename: RENAME[family], unused: new Set() })));
+// Every screen of the handoff, exactly once.
+const listed = new Set(SCREENS.map((x) => x.screen).concat("Pipeline-Board"));
+for (const f of fs.readdirSync(path.join(handoff, "screens"))) {
+  const name = f.replace(/\.html$/, "");
+  if (f.endsWith(".html") && !listed.has(name)) throw new Error(`the handoff has a screen this script does not know: ${name}`);
+}
 
 const merged = [...board];
 const have = new Map(base);
@@ -112,8 +124,10 @@ function transformSelector(sel) {
       const s = part.trim();
       if (s === "body") return ".crx-root";
       const prefixed = s.replace(/\.([A-Za-z_][\w-]*)/g, ".crx-$1");
-      // An element rule from the handoff (`a`, `button.pill`) applies inside the preview only.
-      if (/^[a-z]/.test(prefixed)) return `.crx-root ${prefixed}`;
+      // An element rule from the handoff (`a`, `button.pill`) applies inside the preview only —
+      // scoped with :where() so it keeps the handoff's own specificity. (`.crx-root a` would
+      // outrank `.ri`, and every link would take its parent's colour instead of its own.)
+      if (/^[a-z]/.test(prefixed)) return `:where(.crx-root) ${prefixed}`;
       return prefixed;
     })
     .join(",");

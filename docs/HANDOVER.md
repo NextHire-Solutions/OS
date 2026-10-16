@@ -332,8 +332,15 @@ then every page of the design's sidebar: Pipeline (board and list, stage and
 tag chips, the five time ranges, search, the agent panel, the read-only
 conversation, notes, Manage stages opened read-only), Reports (All market and
 Interested only), Campaigns (a coming-soon page in the design too), Market,
-Prospects, My Agents, DNC List, Team, Integrations and Help. Only Billing (a
-link to Stripe) and the support chat are not drawn.
+Prospects, My Agents, DNC List, Team, Integrations and Help — and since the
+evening of 16 Oct every one of the handoff's 55 screens: its pop-ups (Add
+agent, Upload CSV, Edit lead with Add field, My Agents / Team / DNC add and
+import), ticked-row states (the bulk bars, Move to, Assign to, Select all),
+Market's row menu, selection bar and no-results state, Prospects' empty state,
+the support chat, and the six-step Setup wizard (top bar › Setup wizard;
+`view=setup&step=1…6`, on the client's real team, lists, market and
+prospects). Fields take typing and menus open; every Add, Save, Import, Move,
+Delete and Send is inert. Only Billing (a link to Stripe) is not drawn.
 
 **Market, Prospects and Reports** (added later on 16 Oct) read the agent
 database — the Database project's Supabase — through two Owner-only GET routes,
@@ -375,11 +382,20 @@ first stage, with the tag under the name. A stage chip
 counts everyone at the stage, a tag chip shows that tag's agents in their
 columns. Nothing is moved — read, not written.
 
-**Fidelity (audited 16 Oct, screen by screen against the handoff's 20
-matching screenshots):** every fixed text of the design is on the preview and
-nothing else is (copy compared both ways by script), every element's computed
-style was compared with the handoff's in the same browser, and a second
-reviewer compared the screenshots independently. The OS's global styles
+**Fidelity (audited 16 Oct, screen by screen against the handoff's 55
+screenshots):** every fixed text of the design is on the preview and nothing
+else is (copy compared both ways by script), every element's computed style
+was compared with the handoff's in the same browser, the handoff's own pages
+and the preview were compared pixel by pixel in the same browser (the
+sidebar, headers, toolbars, Reports, My Agents, DNC and Team identical), and a
+second reviewer compared the screenshots independently. The preview uses the
+handoff's own font files (Inter Tight 400/500/600, `app/crm-preview/fonts`),
+not Google's newer cut. `scripts/crm-preview-css.mjs` merges all 55 screens'
+stylesheets: four families define a few names differently (`.dlg`, `.ov`,
+`.drop`, `.bulk`, `.sec`…), so each family's are renamed (.adlg/.aov/.adrop/
+.abulk for the list pages, .sbulk/.ssec/.snx/.sacts for Setup, .mmenu/.mlnk for
+Market, .rlg for Reports) and its element rules are scoped with `:where()` so
+they keep the handoff's specificity. The OS's global styles
 (Tailwind's reset, workspace.css, ds.css) had leaked into the design — line
 height, box sizing, form controls, table header and row borders, antialiased
 text; `preview.css` puts the design back on the browser's defaults (icons
@@ -393,10 +409,11 @@ client); the board scrolls sideways to every column (the mockup clips at four)
 and holds to the window's height; a picked chip is highlighted; long tables
 (My Agents, DNC) page 50 at a time with the design's own list footer; DNC
 companies are listed under the agents (the design only counts them); an email
-is shown as text from its HTML part without the quoted history. Not drawn:
-the add/edit/import/upload dialogs and ticked-row states, the Setup wizard,
-the support chat window, Market's row menu and no-results state, and Billing
-(a link to Stripe). The audit drove a real Chrome on production, GETs only.
+is shown as text from its HTML part without the quoted history; the chat's
+example conversation is marked "Example conversation" (the design: "Today"),
+since no chat exists; the Setup welcome line shows the client's areas (the
+design: "Done For You · Atlanta" — no plan is on record). Not drawn: Billing (a
+link to Stripe). The audit drove a real Chrome, GETs only.
 
 Eddy's decisions (16 Oct, two rounds): stages → tags **yes**, and a tagged
 agent stays at the furthest forward stage on record — **approved** (of 971

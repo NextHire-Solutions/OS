@@ -13,15 +13,16 @@ import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared"
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
 import { formatPhone, initials, LIST_PAGE_SIZE } from "@/lib/crm-preview/model";
 
+import { DncAddDialog, ImportDialog, MyAgentAddDialog, TeamAddForm } from "./dialogs";
 import { Icon, type IconName } from "./icons";
-import { k, RO } from "./k";
+import { k, RO, withIds } from "./k";
 import fubLogo from "./follow-up-boss.png";
 
 const AV = { width: 30, height: 30, fontSize: 11, background: "#eef2fa", color: "#2f55a8" } as const;
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
-/* `add` names the page's primary action; without it (an empty page, Integrations) the header is the title alone, as designed. */
-function Header({ title, add }: { title: string; add?: string }) {
+/* `add` names the page's primary action; without it (an empty page, Integrations) the header is the title alone, as designed. Export is inert; Import and Add open their pop-ups. */
+function Header({ title, add, onAdd, onImport }: { title: string; add?: string; onAdd?: () => void; onImport?: () => void }) {
   return (
     <header className={k("top")}>
       <div className={k("ttl")}><h1>{title}</h1></div>
@@ -29,8 +30,8 @@ function Header({ title, add }: { title: string; add?: string }) {
         {add ? (
           <>
             <button type="button" className={k("btn")} {...RO}><Icon name="download" size={15} />Export CSV</button>
-            <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Import CSV</button>
-            <button type="button" className={k("btn pri")} {...RO}><Icon name="plus" size={15} />{add}</button>
+            <button type="button" className={k("btn")} onClick={onImport}><Icon name="upload" size={15} />Import CSV</button>
+            <button type="button" className={k("btn pri")} onClick={onAdd}><Icon name="plus" size={15} />{add}</button>
           </>
         ) : null}
       </div>
@@ -51,16 +52,46 @@ function Search({ id, label, value, onChange, count }: { id: string; label: stri
   );
 }
 
-function BulkOff() {
+/* The bulk bar: off until rows are ticked, then the design's "N selected" (its actions inert; Cancel clears). */
+function Bulk({ count, onCancel }: { count: number; onCancel: () => void }) {
+  if (count === 0) {
+    return (
+      <div className={k("abulk")}>
+        <span>Bulk actions: tick rows below to enable</span>
+        <div className={k("acts")}>
+          <button type="button" className={k("btn sm")} disabled><Icon name="download" size={14} />Export selected</button>
+          <button type="button" className={k("btn sm")} disabled><Icon name="trash" size={14} />Delete selected</button>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className={k("abulk")}>
-      <span>Bulk actions: tick rows below to enable</span>
+    <div className={k("abulk on")}>
+      <span>{count.toLocaleString("en-US")} selected</span>
       <div className={k("acts")}>
-        <button type="button" className={k("btn sm")} disabled><Icon name="download" size={14} />Export selected</button>
-        <button type="button" className={k("btn sm")} disabled><Icon name="trash" size={14} />Delete selected</button>
+        <button type="button" className={k("btn sm")} {...RO}><Icon name="download" size={14} />Export selected</button>
+        <button type="button" className={k("btn sm dout")} {...RO}><Icon name="trash" size={14} />Delete selected</button>
+        <button type="button" className={k("btn sm")} style={{ borderColor: "transparent" }} onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );
+}
+
+/* "All 50 agents on this page are selected. Select all 398 agents" — when a whole page of a longer list is ticked. */
+function SelAll({ onPage, total, onAll }: { onPage: number; total: number; onAll: () => void }) {
+  return (
+    <div className={k("aselall")}>
+      All{" "}<b>{onPage.toLocaleString("en-US")}</b>{" "}agents on this page are selected.
+      <button type="button" onClick={onAll}>Select all {total.toLocaleString("en-US")} agents</button>
+    </div>
+  );
+}
+
+/* Ticked rows of one list. */
+function usePicked() {
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const pick = (ids: readonly string[], on: boolean) => setPicked((cur) => withIds(cur, ids, on));
+  return { picked, pick, clear: () => setPicked(new Set()) };
 }
 
 function RowActions({ name }: { name: string }) {
@@ -103,7 +134,7 @@ function Pager({ page, pages, total, onPage }: { page: number; pages: number; to
   );
 }
 
-function Empty({ icon, title, text, red = false, actions }: { icon: IconName; title: string; text: string; red?: boolean; actions?: string[] }) {
+function Empty({ icon, title, text, red = false, actions, onActions }: { icon: IconName; title: string; text: string; red?: boolean; actions?: string[]; onActions?: Array<() => void> }) {
   return (
     <div className={k("es")}>
       <section className={k("card ec")}>
@@ -113,7 +144,7 @@ function Empty({ icon, title, text, red = false, actions }: { icon: IconName; ti
         {actions?.length ? (
           <div className={k("ea")}>
             {actions.map((a, i) => (
-              <button key={a} type="button" className={k(i === 0 ? "btn pri" : "btn")} {...RO}>
+              <button key={a} type="button" className={k(i === 0 ? "btn pri" : "btn")} {...(onActions?.[i] ? { onClick: onActions[i] } : RO)}>
                 <Icon name={i === 0 ? "plus" : "upload"} size={15} />{a}
               </button>
             ))}
@@ -134,14 +165,20 @@ const has = (q: string, ...vals: Array<string | null | undefined>) => {
 export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
   const [q, setQ] = useState("");
   const [pageNo, setPageNo] = useState(1);
+  const [dialog, setDialog] = useState<"add" | "import" | null>(null);
+  const { picked, pick, clear } = usePicked();
   const found = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
   const shown = pageOf(found, pageNo);
+  const pageIds = shown.rows.map((a) => a.id);
+  const pageAll = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const count = found.filter((a) => picked.has(a.id)).length;
+  const close = () => setDialog(null);
   return (
     <>
-      <Header title="My Agents" add={agents.length ? "Add agent" : undefined} />
+      <Header title="My Agents" add={agents.length ? "Add agent" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} />
       <div className={k("content")}>
         {agents.length === 0 ? (
-          <Empty icon="users" title="No agents added yet" text={"Add the agents already on your team so we never reach out to\u00a0them."} actions={["Add agents", "Import CSV"]} />
+          <Empty icon="users" title="No agents added yet" text={"Add the agents already on your team so we never reach out to\u00a0them."} actions={["Add agents", "Import CSV"]} onActions={[() => setDialog("add"), () => setDialog("import")]} />
         ) : (
           <>
             <p className={k("lede")}>Your brokerage&apos;s own agents. We never reach out to anyone on this&nbsp;list.</p>
@@ -153,12 +190,13 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
               </div>
             </div>
             <Search id="crx-agents-search" label="Search agents..." value={q} onChange={(v) => { setQ(v); setPageNo(1); }} count={`${found.length.toLocaleString("en-US")} of ${agents.length.toLocaleString("en-US")}`} />
-            <BulkOff />
+            <Bulk count={count} onCancel={clear} />
+            {pageAll && found.length > pageIds.length ? <SelAll onPage={pageIds.length} total={found.length} onAll={() => pick(found.map((a) => a.id), true)} /> : null}
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all agents" {...RO} /></th>
+                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all agents" checked={pageAll} onChange={() => pick(pageIds, !pageAll)} /></th>
                     <th scope="col" style={{ width: "36%" }}>Agent</th>
                     <th scope="col" style={{ width: "28%" }}>Email</th>
                     <th scope="col">Phone</th>
@@ -167,8 +205,8 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
                 </thead>
                 <tbody>
                   {shown.rows.map((a) => (
-                    <tr key={a.id}>
-                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${a.name}`} {...RO} /></td>
+                    <tr key={a.id} className={picked.has(a.id) ? k("sel") : undefined}>
+                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${a.name}`} checked={picked.has(a.id)} onChange={() => pick([a.id], !picked.has(a.id))} /></td>
                       <td><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className={k("av")} style={AV}>{initials(a.name)}</span><span className={k("nm")}>{a.name}</span></div></td>
                       <td>{a.email || <Dash />}</td>
                       <td>{formatPhone(a.phone) ?? <Dash />}</td>
@@ -182,6 +220,8 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
           </>
         )}
       </div>
+      {dialog === "add" ? <MyAgentAddDialog onClose={close} /> : null}
+      {dialog === "import" ? <ImportDialog kind="agents" onClose={close} /> : null}
     </>
   );
 }
@@ -191,17 +231,23 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
 export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const [q, setQ] = useState("");
   const [pageNo, setPageNo] = useState(1);
+  const [dialog, setDialog] = useState<"add" | "import" | null>(null);
+  const { picked, pick, clear } = usePicked();
+  const close = () => setDialog(null);
   const people = useMemo(() => dnc.filter((d) => d.kind === "agent"), [dnc]);
   const companies = useMemo(() => dnc.filter((d) => d.kind === "company"), [dnc]);
   const foundPeople = useMemo(() => people.filter((d) => has(q, d.name, d.email, d.phone, d.brokerage)), [people, q]);
   const foundCompanies = useMemo(() => companies.filter((d) => has(q, d.name, d.domain, d.notes)), [companies, q]);
   const shown = pageOf(foundPeople, pageNo);
+  const pageIds = shown.rows.map((d) => d.id);
+  const pageAll = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const count = foundPeople.filter((d) => picked.has(d.id)).length;
   return (
     <>
-      <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} />
+      <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} />
       <div className={k("content")}>
         {dnc.length === 0 ? (
-          <Empty icon="ban" red title="Your DNC List is empty" text={"Add agents or whole companies you never want contacted. They are excluded from all\u00a0outreach."} actions={["Add to DNC", "Import CSV"]} />
+          <Empty icon="ban" red title="Your DNC List is empty" text={"Add agents or whole companies you never want contacted. They are excluded from all\u00a0outreach."} actions={["Add to DNC", "Import CSV"]} onActions={[() => setDialog("add"), () => setDialog("import")]} />
         ) : (
           <>
             <p className={k("lede")}>Agents and companies we should never reach out&nbsp;to.</p>
@@ -222,13 +268,14 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
               </div>
             </div>
             <Search id="crx-dnc-search" label="Search agents or companies..." value={q} onChange={(v) => { setQ(v); setPageNo(1); }} />
-            <BulkOff />
+            <Bulk count={count} onCancel={clear} />
+            {pageAll && foundPeople.length > pageIds.length ? <SelAll onPage={pageIds.length} total={foundPeople.length} onAll={() => pick(foundPeople.map((d) => d.id), true)} /> : null}
             <div className={k("sec")}>Agents<span>{foundPeople.length.toLocaleString("en-US")}</span></div>
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all DNC agents" {...RO} /></th>
+                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all DNC agents" checked={pageAll} onChange={() => pick(pageIds, !pageAll)} /></th>
                     <th scope="col" style={{ width: "30%" }}>Agent</th>
                     <th scope="col" style={{ width: "26%" }}>Brokerage</th>
                     <th scope="col">Email / Phone</th>
@@ -237,8 +284,8 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                 </thead>
                 <tbody>
                   {shown.rows.map((d) => (
-                    <tr key={d.id}>
-                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} {...RO} /></td>
+                    <tr key={d.id} className={picked.has(d.id) ? k("sel") : undefined}>
+                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} checked={picked.has(d.id)} onChange={() => pick([d.id], !picked.has(d.id))} /></td>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span className={k("av")} style={AV}>{initials(d.name)}</span>
@@ -300,6 +347,8 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
           </>
         )}
       </div>
+      {dialog === "add" ? <DncAddDialog onClose={close} /> : null}
+      {dialog === "import" ? <ImportDialog kind="dnc" onClose={close} /> : null}
     </>
   );
 }
@@ -308,23 +357,30 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
 
 export function TeamScreen({ team }: { team: TeamMember[] }) {
   const [q, setQ] = useState("");
+  const [dialog, setDialog] = useState<"add" | "import" | null>(null);
+  const { picked, pick, clear } = usePicked();
   const found = useMemo(() => team.filter((m) => has(q, m.name, m.email, m.title, m.phone)), [team, q]);
+  const ids = found.map((m) => m.id);
+  const all = ids.length > 0 && ids.every((id) => picked.has(id));
+  const count = found.filter((m) => picked.has(m.id)).length;
+  const close = () => setDialog(null);
   return (
     <>
-      <Header title="Team" add="Add member" />
+      <Header title="Team" add="Add member" onAdd={() => setDialog("add")} onImport={() => setDialog("import")} />
       <div className={k("content")}>
         <p className={k("lede")}>Who receives intro notifications and&nbsp;how.</p>
+        {dialog === "add" ? <TeamAddForm onClose={close} /> : null}
         {team.length === 0 ? (
           <Empty icon="user" title="No team members yet" text="Add the people who should receive interested agents by email." />
         ) : (
           <>
             <Search id="crx-team-search" label="Search team..." value={q} onChange={setQ} count={`${found.length} of ${team.length}`} />
-            <BulkOff />
+            <Bulk count={count} onCancel={clear} />
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all team members" {...RO} /></th>
+                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all team members" checked={all} onChange={() => pick(ids, !all)} /></th>
                     <th scope="col" style={{ width: "24%" }}>Member</th>
                     <th scope="col" style={{ width: "22%" }}>Title</th>
                     <th scope="col">Email / Phone</th>
@@ -334,8 +390,8 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
                 </thead>
                 <tbody>
                   {found.map((m) => (
-                    <tr key={m.id} style={{ height: 60 }}>
-                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${m.name}`} {...RO} /></td>
+                    <tr key={m.id} style={{ height: 60 }} className={picked.has(m.id) ? k("sel") : undefined}>
+                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${m.name}`} checked={picked.has(m.id)} onChange={() => pick([m.id], !picked.has(m.id))} /></td>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span className={k("avw")}>
@@ -364,6 +420,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
           </>
         )}
       </div>
+      {dialog === "import" ? <ImportDialog kind="team" onClose={close} /> : null}
     </>
   );
 }

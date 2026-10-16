@@ -30,6 +30,9 @@ const SHAPES = {
   download: <><path d="M12 4v12M7 11l5 5 5-5" /><path d="M4 20h16" /></>,
   trash: <><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></>,
   chat: <><path d="M21 12a8 8 0 01-11.6 7.1L4 20l1-4.6A8 8 0 1121 12z" /></>,
+  arrowLeft: <><path d="M19 12H5M11 6l-6 6 6 6" /></>,
+  file: <><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v4h4" /></>,
+  bot: <><path d="M12 3v3" /><rect x="4" y="7" width="16" height="12" rx="4" /><circle cx="9" cy="13" r="1.2" /><circle cx="15" cy="13" r="1.2" /><path d="M2 12v2M22 12v2" /></>,
   pencil: <><path d="M4 20h4L19 9l-4-4L4 16v4z" /></>,
   note: <><path d="M5 4h10l4 4v12H5z" /><path d="M15 4v4h4M8 13h8M8 17h5" /></>,
   chevRight: <><path d="M9 6l6 6-6 6" /></>,
@@ -49,9 +52,10 @@ const SHAPES = {
 
 export type IconName = keyof typeof SHAPES;
 
-export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
+/** `stroke`: the line width — 1.8 everywhere in the design except the chat button (1.9), the chat's send (2) and the setup ticks (2.4). */
+export function Icon({ name, size = 16, stroke = 1.8 }: { name: IconName; size?: number; stroke?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {SHAPES[name]}
     </svg>
   );

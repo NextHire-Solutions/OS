@@ -4,17 +4,18 @@
  * The redesign's Market and Prospects (one table, two lists) and Reports, on
  * the client's real market — read from the agent database through the
  * preview's own GET routes (src/app/api/crm-preview). Moving agents between
- * lists, importing and exporting are drawn disabled.
+ * lists, importing and exporting are drawn as designed and inert; ticking rows
+ * and a row's list menu open as the design draws them.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
-import { interestedReport, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ReportGroup } from "@/lib/crm-preview/market-model";
+import { interestedReport, LIST_PILL, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type ReportGroup } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
-import { k, RO } from "./k";
+import { k, RO, withIds } from "./k";
 
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
@@ -35,37 +36,44 @@ function definition(list: "market" | "prospects", client: string | null, mls: Ml
 
 // ---------------------------------------------------------------- Market ---
 
-type Row = {
+export type Row = {
   id: string; name: string; title: string | null; brokerage: string | null; officeCity: string | null;
   mostTransactedCity: string | null; salesVolume: number | null; units: number | null; list: string; pill: string;
+  office?: string | null; years?: number | null; email?: string | null;
 };
-type Filters = { minVolume: number | null; minUnits: number | null; minYears: number | null; brokerage: string | null; county: string | null; title: string | null };
-const NO_FILTERS: Filters = { minVolume: null, minUnits: null, minYears: null, brokerage: null, county: null, title: null };
+export type Filters = { minVolume: number | null; minUnits: number | null; minYears: number | null; brokerage: string | null; county: string | null; title: string | null };
+export const NO_FILTERS: Filters = { minVolume: null, minUnits: null, minYears: null, brokerage: null, county: null, title: null };
 
 type Loaded = { total: number; page: number; rows: Row[]; client: string | null; mls: Mls | null };
 
-function Chip<T extends string | number>({
-  id, label, value, show, choices, open, onOpen, onPick, hint,
+/*
+ * A filter chip and its menu. The menu's items carry the design's leading tick
+ * (as its other menus do). `bold`: the Setup wizard writes a set chip as
+ * "Location: <b>11 counties</b>"; Market as "Location: Cobb, Fulton".
+ */
+export function Chip<T extends string | number>({
+  id, label, value, show, choices, open, onOpen, onPick, hint, bold = false,
 }: {
   id: string; label: string; value: T | null; show: (v: T) => string; choices: readonly T[];
-  open: boolean; onOpen: (id: string | null) => void; onPick: (v: T | null) => void; hint?: string;
+  open: boolean; onOpen: (id: string | null) => void; onPick: (v: T | null) => void; hint?: string; bold?: boolean;
 }) {
+  const tick = (on: boolean) => <span style={{ width: 14, display: "inline-flex", color: "#3e6bd1" }}>{on ? <Icon name="check" size={14} /> : null}</span>;
   return (
     <span style={{ position: "relative", display: "inline-flex" }} data-chip={id}>
       <button type="button" className={k(value !== null ? "dd set" : "dd")} aria-haspopup="menu" aria-expanded={open} onClick={() => onOpen(open ? null : id)}>
-        {value !== null ? `${label}: ${show(value)}` : label}
+        {value === null ? label : bold ? <>{label}:{" "}<b>{show(value)}</b></> : `${label}: ${show(value)}`}
         <Icon name="chevDown" size={14} />
       </button>
       {open ? (
         <div className={k("mmenu")} role="menu" style={{ top: "calc(100% + 4px)", left: 0, maxHeight: 320, overflowY: "auto" }}>
           {hint ? <div style={{ padding: "6px 10px 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{hint}</div> : null}
           <button type="button" role="menuitemradio" aria-checked={value === null} className={value === null ? k("hv") : undefined} onClick={() => onPick(null)}>
-            Any{value === null ? <span style={{ marginLeft: "auto", display: "inline-flex" }}><Icon name="check" size={14} /></span> : null}
+            {tick(value === null)}Any
           </button>
           {choices.map((c) => (
             <button key={String(c)} type="button" role="menuitemradio" aria-checked={value === c} className={value === c ? k("hv") : undefined} onClick={() => onPick(c)}>
+              {tick(value === c)}
               <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{show(c)}</span>
-              {value === c ? <span style={{ marginLeft: "auto", display: "inline-flex" }}><Icon name="check" size={14} /></span> : null}
             </button>
           ))}
           {choices.length === 0 ? <div style={{ padding: "6px 10px", fontSize: 12, color: "#6b7280" }}>Loading…</div> : null}
@@ -75,7 +83,10 @@ function Chip<T extends string | number>({
   );
 }
 
-export function MarketScreen({ clientId, list, onContext }: { clientId: string; list: "market" | "prospects"; onContext?: (text: string | null) => void }) {
+/* The lists a row can be moved to, in the design's order (Market-Row). */
+const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agents", "DNC List"];
+
+export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clientId: string; list: "market" | "prospects"; onContext?: (text: string | null) => void; onOpenMarket?: () => void }) {
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
   const [f, setF] = useState<Filters>(NO_FILTERS);
@@ -84,6 +95,9 @@ export function MarketScreen({ clientId, list, onContext }: { clientId: string; 
   const [state, setState] = useState<{ loading: boolean; error: string | null; unavailable: string | null; data: Loaded | null }>({ loading: true, error: null, unavailable: null, data: null });
   const [options, setOptions] = useState<{ brokerages: string[]; counties: string[] } | null>(null);
   const bar = useRef<HTMLDivElement>(null);
+  // Ticked rows and an open row menu (the design's Market-Selected and Market-Row); moving anyone is inert.
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [rowMenu, setRowMenu] = useState<string | null>(null);
 
   // Search waits for a pause in typing.
   useEffect(() => {
@@ -119,6 +133,18 @@ export function MarketScreen({ clientId, list, onContext }: { clientId: string; 
   }, [clientId, list, page, q, f]);
 
   useEffect(() => {
+    if (!rowMenu) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element)?.closest?.("[data-rowmenu]")) setRowMenu(null);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [rowMenu]);
+  // A new list, search or filter starts with nothing ticked.
+  useEffect(() => setPicked(new Set()), [list, q, f]);
+
+  useEffect(() => {
     if (!menu) return;
     const close = (e: MouseEvent | KeyboardEvent) => {
       if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element)?.closest?.("[data-chip]")) setMenu(null);
@@ -137,6 +163,62 @@ export function MarketScreen({ clientId, list, onContext }: { clientId: string; 
   const from = total === 0 ? 0 : (shownPage - 1) * 50 + 1;
   const to = Math.min(shownPage * 50, total);
   const title = list === "market" ? "Market" : "Prospects";
+  const rowIds = (data?.rows ?? []).map((r) => String(r.id));
+  const pageAll = rowIds.length > 0 && rowIds.every((id) => picked.has(id));
+  const pickRows = (ids: string[], on: boolean) => setPicked((cur) => withIds(cur, ids, on));
+  const clearAll = () => { setSearch(""); setQ(""); setF(NO_FILTERS); setPage(1); };
+
+  // Nothing matches a search or filter (Market-NoResults); or the client has no prospects yet (Prospects-Empty).
+  if (data && !state.loading && total === 0 && (q || any)) {
+    return (
+      <>
+        <header className={k("top")}><div className={k("ttl")}><h1>{title}</h1></div><div className={k("hr")} /></header>
+        <div className={k("content")}>
+          <div className={k("es")}>
+            <div className={k("tbar")} style={{ marginBottom: 14 }}>
+              <label className={k("srch")} style={{ width: 260 }}>
+                <Icon name="search" size={15} />
+                <input id={`crx-${list}-search`} type="search" aria-label="Search agents" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </label>
+              {f.county ? <button type="button" className={k("dd set")} onClick={() => set("county", null)}>Location: {f.county}{" "}<Icon name="chevDown" size={14} /></button> : null}
+              {f.minVolume ? <button type="button" className={k("dd set")} onClick={() => set("minVolume", null)}>Sales volume: {abbrevUsd(f.minVolume)}+{" "}<Icon name="chevDown" size={14} /></button> : null}
+              {f.minUnits ? <button type="button" className={k("dd set")} onClick={() => set("minUnits", null)}>Units: {f.minUnits}+{" "}<Icon name="chevDown" size={14} /></button> : null}
+              {f.minYears ? <button type="button" className={k("dd set")} onClick={() => set("minYears", null)}>Years licensed: {f.minYears}+{" "}<Icon name="chevDown" size={14} /></button> : null}
+              {f.brokerage ? <button type="button" className={k("dd set")} onClick={() => set("brokerage", null)}>Brokerage: {f.brokerage}{" "}<Icon name="chevDown" size={14} /></button> : null}
+              {f.title ? <button type="button" className={k("dd set")} onClick={() => set("title", null)}>Title: {f.title}{" "}<Icon name="chevDown" size={14} /></button> : null}
+            </div>
+            <section className={k("card ec")}>
+              <span className={k("ei")}><Icon name="search" size={22} /></span>
+              <h2>No agents match</h2>
+              <p>Nothing matches your search and filters. Try a different name or remove a&nbsp;filter.</p>
+              <div className={k("ea")}>
+                <button type="button" className={k("btn pri")} onClick={clearAll}><Icon name="x" size={15} />Clear filters</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </>
+    );
+  }
+  if (data && !state.loading && total === 0 && list === "prospects") {
+    return (
+      <>
+        <header className={k("top")}><div className={k("ttl")}><h1>{title}</h1></div><div className={k("hr")} /></header>
+        <div className={k("content")}>
+          <div className={k("es")}>
+            <section className={k("card ec")}>
+              <span className={k("ei")}><Icon name="target" size={22} /></span>
+              <h2>No prospects yet</h2>
+              <p>Prospects are the agents we reach out to. Open Market, filter agents and add the ones you want to&nbsp;Prospects.</p>
+              <div className={k("ea")}>
+                <button type="button" className={k("btn pri")} onClick={onOpenMarket}><Icon name="search" size={15} />Open Market</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -190,17 +272,31 @@ export function MarketScreen({ clientId, list, onContext }: { clientId: string; 
                 ) : state.loading ? "Counting…" : null}
               </span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: "1px solid #ebedf0", fontSize: 12, color: "#555a64" }}>
-              <Icon name="info" size={14} />
-              {q
-                ? "Agents matching your search are listed first; the count is the whole list, as in the Database app."
-                : <>Tick agents to move them to your prospects, My Agents or DNC List. To move one agent, click its list in the List&nbsp;column.</>}
-            </div>
-            <div style={{ overflow: "visible", borderTop: "1px solid #ebedf0", opacity: state.loading && data ? 0.55 : 1 }}>
+            {picked.size > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, padding: "8px 14px", background: "#f5f7fc", borderTop: "1px solid #e4e9f5", borderBottom: "1px solid #e4e9f5" }}>
+                <span style={{ fontWeight: 600 }}>{picked.size.toLocaleString("en-US")} selected</span>
+                <span style={{ width: 1, height: 18, background: "#d9e1f2", margin: "0 4px" }} />
+                <span style={{ fontSize: 12, color: "#555a64" }}>Move to</span>
+                <button className={k("btn sm pri")} type="button" {...RO}><Icon name="plus" size={13} />Prospects</button>
+                <button className={k("btn sm")} type="button" {...RO}><Icon name="users" size={13} />My Agents</button>
+                <button className={k("btn sm")} type="button" style={{ color: "#b42318" }} {...RO}><Icon name="ban" size={13} />DNC List</button>
+                <button className={k("btn sm")} type="button" {...RO}><Icon name="x" size={13} />Remove from all lists</button>
+                <span style={{ flexGrow: 1 }} />
+                <button type="button" className={k("dd")} style={{ height: 30, fontSize: 12, color: "#555a64" }} onClick={() => setPicked(new Set())}><Icon name="x" size={13} />Clear selection</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: "1px solid #ebedf0", fontSize: 12, color: "#555a64" }}>
+                <Icon name="info" size={14} />
+                {q
+                  ? "Agents matching your search are listed first; the count is the whole list, as in the Database app."
+                  : <>Tick agents to move them to your prospects, My Agents or DNC List. To move one agent, click its list in the List&nbsp;column.</>}
+              </div>
+            )}
+            <div style={{ overflow: "visible", ...(picked.size > 0 ? {} : { borderTop: "1px solid #ebedf0" }), opacity: state.loading && data ? 0.55 : 1 }}>
               <table className={k("tb mkt")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label="Select all" {...RO} /></th>
+                    <th scope="col" style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label="Select all" checked={pageAll} onChange={() => pickRows(rowIds, !pageAll)} /></th>
                     <th scope="col">Name</th>
                     <th scope="col">Title</th>
                     <th scope="col">Brokerage</th>
@@ -220,8 +316,8 @@ export function MarketScreen({ clientId, list, onContext }: { clientId: string; 
                     <tr><td /><td colSpan={8} className="cpv-muted" style={{ padding: "18px 0" }}>No agents match.</td></tr>
                   ) : (
                     data.rows.map((r) => (
-                      <tr key={r.id}>
-                        <td style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label={`Select ${r.name}`} {...RO} /></td>
+                      <tr key={r.id} className={picked.has(String(r.id)) || rowMenu === String(r.id) ? k("sel") : undefined}>
+                        <td style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label={`Select ${r.name}`} checked={picked.has(String(r.id))} onChange={() => pickRows([String(r.id)], !picked.has(String(r.id)))} /></td>
                         <td><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className={k("av")}>{initials(r.name)}</span><span className={k("nm")}>{r.name}</span></div></td>
                         <td>{r.title ?? <span className={k("dash")}>&ndash;</span>}</td>
                         <td>{r.brokerage ?? <span className={k("dash")}>&ndash;</span>}</td>
@@ -229,11 +325,22 @@ export function MarketScreen({ clientId, list, onContext }: { clientId: string; 
                         <td>{r.mostTransactedCity ?? <span className={k("dash")}>&ndash;</span>}</td>
                         <td className={k("r")}><span className={k("num")} style={{ fontWeight: 500 }}>{r.salesVolume !== null ? abbrevUsd(r.salesVolume) : "–"}</span></td>
                         <td className={k("r")}>{r.units ?? "–"}</td>
-                        <td style={{ position: "relative" }}>
-                          <button type="button" className={k("lsel")} aria-label={`Change list for ${r.name}`} aria-haspopup="menu" {...RO}>
+                        <td style={{ position: "relative" }} data-rowmenu="">
+                          <button type="button" className={k("lsel")} aria-label={`Change list for ${r.name}`} aria-haspopup="menu" aria-expanded={rowMenu === String(r.id)} onClick={() => setRowMenu((m) => (m === String(r.id) ? null : String(r.id)))}>
                             <span className={k(`pill ${r.pill}`)}>{r.list}</span>
                             <Icon name="chevDown" size={12} />
                           </button>
+                          {rowMenu === String(r.id) ? (
+                            <div className={k("mmenu")} role="menu" style={{ top: 36, right: "0", width: 200 }}>
+                              <div style={{ padding: "6px 10px 4px", fontSize: 11, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.04em" }}>Move to list</div>
+                              {MOVE_LISTS.map((l) => (
+                                <button key={l} type="button" role="menuitemradio" aria-checked={r.list === l} className={r.list === l ? k("hv") : undefined} {...RO}>
+                                  <span style={{ width: 14, display: "inline-flex", color: "#3e6bd1" }}>{r.list === l ? <Icon name="check" size={14} /> : null}</span>
+                                  <span className={k(`pill ${LIST_PILL[l]}`)}>{l}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ))

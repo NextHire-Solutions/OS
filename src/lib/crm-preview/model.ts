@@ -30,7 +30,7 @@ import { formatPortalFieldValue } from "@/components/master-inbox/portals-ui/cus
 export const PREVIEW_TZ = "America/New_York";
 
 /** The design's sidebar pages, as `?view=` names them. Billing is a link out, so not one. */
-export const PREVIEW_VIEWS = ["pipeline", "reports", "campaigns", "market", "prospects", "agents", "dnc", "team", "integrations", "help"] as const;
+export const PREVIEW_VIEWS = ["pipeline", "reports", "campaigns", "market", "prospects", "agents", "dnc", "team", "integrations", "help", "setup"] as const;
 export type PreviewView = (typeof PREVIEW_VIEWS)[number];
 
 export type PillTone = "int" | "ph" | "iv" | "hi" | "nu" | "no" | "nr";

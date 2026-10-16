@@ -14,6 +14,8 @@ import { initials, type PreviewStage, type PreviewView } from "@/lib/crm-preview
 
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
+import { ChatWindow } from "./chat";
+import { SetupWizard } from "./setup";
 import { PipelineScreen } from "./pipeline";
 import { DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
 import { MarketScreen, ReportsScreen } from "./market";
@@ -27,6 +29,8 @@ export interface PreviewClient {
   fubConnected: boolean;
   /** The client's main contact (os_clients.contact_name), shown where the design shows the signed-in person. */
   contactName: string | null;
+  /** The client record's areas (else MLS), for the Setup wizard's welcome line. */
+  coverage: string | null;
 }
 
 type RailItem = { view: PreviewView | "billing"; label: string; icon: IconName; badge?: string };
@@ -61,6 +65,7 @@ export function CrmPreview({
   dnc,
   team,
   initialView,
+  initialStep,
   now,
 }: {
   client: PreviewClient;
@@ -73,9 +78,12 @@ export function CrmPreview({
   dnc: DncEntry[];
   team: TeamMember[];
   initialView: PreviewView;
+  initialStep: number;
   now: string;
 }) {
   const [view, setView] = useState<PreviewView>(initialView);
+  const [step, setStep] = useState(initialStep);
+  const [chat, setChat] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   // What the page shows is explained up here, in the preview's own bar — never inside the design.
   const [context, setContext] = useState<string | null>(null);
@@ -103,9 +111,15 @@ export function CrmPreview({
   const go = (v: PreviewView) => {
     setView(v);
     setContext(null);
-    window.history.replaceState(null, "", hrefFor(v));
+    window.history.replaceState(null, "", v === "setup" ? `${hrefFor(v)}&step=${step}` : hrefFor(v));
     window.scrollTo(0, 0);
   };
+  const goStep = (n: number) => {
+    setStep(n);
+    window.history.replaceState(null, "", `${hrefFor("setup")}&step=${n}`);
+    window.scrollTo(0, 0);
+  };
+  const toastNote = toast ? <div className="cpv-toast" role="status">Read-only preview — nothing here changes {client.name}&apos;s portal.</div> : null;
 
   return (
     <>
@@ -115,6 +129,8 @@ export function CrmPreview({
         <span className="cpv-note">Read-only · private: not visible to clients or the team · {client.name}&apos;s live portal is unchanged</span>
         {context ? <span className="cpv-note cpv-context">{context}</span> : null}
         <span className="cpv-right">
+          {/* The design doesn't say where a client meets its Setup wizard (a first sign-in); the preview opens it from here. */}
+          {view === "setup" ? <a href={hrefFor("pipeline")} onClick={(e) => { e.preventDefault(); go("pipeline"); }}>Close the Setup wizard</a> : <a href={`${hrefFor("setup")}&step=1`} onClick={(e) => { e.preventDefault(); setStep(1); setView("setup"); setContext(null); window.history.replaceState(null, "", `${hrefFor("setup")}&step=1`); window.scrollTo(0, 0); }}>Setup wizard</a>}
           <select
             id="cpv-client"
             aria-label="Preview another client"
@@ -129,6 +145,15 @@ export function CrmPreview({
         </span>
       </div>
 
+      {view === "setup" ? (
+        // The Setup wizard is a page of its own in the design: no sidebar, no chat button.
+        <div onClickCapture={onClickCapture}>
+          <SetupWizard client={{ id: client.id, name: client.name, contactName: client.contactName, coverage: client.coverage }} team={team} agents={agents} dnc={dnc} step={step} onStep={goStep} onExit={() => go("pipeline")} />
+          {toastNote}
+        </div>
+      ) : (
+      /* The handoff's list pages sit in .wrap, which their pop-ups cover; the other screens are the same with or without it. */
+      <div className={k("wrap")}>
       <div className={k("app")} data-view={view} onClickCapture={onClickCapture}>
         <nav className={k(collapsed ? "rail cl" : "rail")} aria-label="Main">
           <div className={k("lg")}>
@@ -196,9 +221,9 @@ export function CrmPreview({
 
         <div className={k("main")}>
           {view === "pipeline" ? (
-            <PipelineScreen entries={entries} stages={stages} furthest={furthest} token={client.token} now={today} />
+            <PipelineScreen entries={entries} stages={stages} furthest={furthest} team={team} token={client.token} now={today} />
           ) : view === "market" || view === "prospects" ? (
-            <MarketScreen key={view} clientId={client.id} list={view} onContext={setContext} />
+            <MarketScreen key={view} clientId={client.id} list={view} onContext={setContext} onOpenMarket={() => go("market")} />
           ) : view === "reports" ? (
             <ReportsScreen clientId={client.id} entries={entries} onContext={setContext} />
           ) : view === "campaigns" ? (
@@ -215,19 +240,29 @@ export function CrmPreview({
             <IntegrationsScreen fubConnected={client.fubConnected} />
           )}
         </div>
-        {/* The design's support chat, on every page. The chat itself is not built yet. */}
+        {/* The design's support chat, on every page: the button opens the chat window (Chat), and closes it. */}
+        {chat ? <ChatWindow onClose={() => setChat(false)} /> : null}
         <a
           className={k("aiask")}
-          {...RO}
-          aria-label="Open support chat"
-          title="Support chat — not built yet"
+          href="#"
+          onClick={(e) => { e.preventDefault(); setChat((o) => !o); }}
+          aria-label={chat ? "Close support chat" : "Open support chat"}
+          title="Support"
           style={{ position: "fixed", right: 24, bottom: 24, zIndex: 13, width: 56, height: 56, borderRadius: 99, background: "#3e6bd1", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 24px rgba(62,107,209,0.35)", textDecoration: "none", color: "#fff" }}
         >
-          <Icon name="chat" size={24} />
-          <span style={{ position: "absolute", top: 2, right: 2, width: 12, height: 12, borderRadius: 99, background: "#22c55e", border: "2px solid #fff" }} />
+          {chat ? (
+            <Icon name="x" size={22} stroke={2} />
+          ) : (
+            <>
+              <Icon name="chat" size={24} stroke={1.9} />
+              <span style={{ position: "absolute", top: 2, right: 2, width: 12, height: 12, borderRadius: 99, background: "#22c55e", border: "2px solid #fff" }} />
+            </>
+          )}
         </a>
-        {toast ? <div className="cpv-toast" role="status">Read-only preview — nothing here changes {client.name}&apos;s portal.</div> : null}
+        {toastNote}
       </div>
+      </div>
+      )}
     </>
   );
 }

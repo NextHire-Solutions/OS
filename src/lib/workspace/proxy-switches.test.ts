@@ -15,9 +15,14 @@ const { SWITCH_SPLIT_AT } = await import("./switch-transition.ts");
 const { proxy } = await import("@/proxy");
 const { NextRequest } = await import("next/server");
 
-/* Signed after the split unless a test says otherwise — the switches, read as they are. */
+/*
+ * Signed after the split unless a test says otherwise — the switches, read as they are.
+ * The sessions are signed at a fixed moment, so they live long enough to still be valid
+ * whenever the suite runs (a 24-hour session from 15 Oct expired on 16 Oct, 16:01 UTC,
+ * and the proxy sent every request to the login instead of testing the switches).
+ */
 async function as(grants: string[], path: string, method = "GET", signedAt = SWITCH_SPLIT_AT + 60_000) {
-  const token = await mintSso(process.env.AUTH_SECRET!, { email: "teammate@brokerstaffer.com", grants: grants as never, ver: 1, now: signedAt, ttlMs: 24 * 3600_000 });
+  const token = await mintSso(process.env.AUTH_SECRET!, { email: "teammate@brokerstaffer.com", grants: grants as never, ver: 1, now: signedAt, ttlMs: 20 * 365 * 24 * 3600_000 });
   const req = new NextRequest(new URL(path, "https://os.brokerstaffer.com"), { method, headers: { cookie: `bs_sso=${token}` } });
   const res = await proxy(req);
   if (res.headers.get("x-middleware-next") === "1") return "open";

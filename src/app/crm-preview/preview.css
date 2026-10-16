@@ -110,7 +110,7 @@
  * link — none of a button's own padding, border, background or font. Zero
  * specificity, so every design rule still wins.
  */
-:where(.crx-root button.crx-kc, .crx-root button.crx-ms, .crx-root button.crx-chip, .crx-root .crx-pnh > button.crx-ib, .crx-root .crx-ph1 > button.crx-ib, .crx-root td.crx-vt .crx-acts > button.crx-ib) {
+:where(.crx-root button.crx-kc, .crx-root button.crx-ms, .crx-root button.crx-chip, .crx-root .crx-pnh > button.crx-ib, .crx-root .crx-ph1 > button.crx-ib, .crx-root td.crx-vt .crx-acts > button.crx-ib, .crx-root .crx-dh > button.crx-ib) {
   padding: 0; border: 0; margin: 0; background: none; font: inherit; color: inherit; text-align: inherit; cursor: pointer;
 }
 /* A chip's 24px is its content, as a link's is (a button's would include its border). */
@@ -188,3 +188,20 @@
 .cpv-bar .cpv-context { color: #c9d6f5; }
 /* A panel takes focus when it opens (for the keyboard); the design draws no ring round the whole panel. */
 .cpv-shell aside[tabindex="-1"]:focus { outline: none; }
+
+/*
+ * Real fields in the pop-ups. The design pictures a focused field (.in.focus)
+ * and the pipeline dialogs' placeholders (.ph-t); a real field gets the same
+ * look when it has focus, and the same grey for its placeholder.
+ */
+.cpv-shell .crx-in:focus, .cpv-shell .crx-ta:focus { outline: 0; border-color: #3e6bd1; box-shadow: 0 0 0 3px #e3eafa; }
+.cpv-shell .crx-dlg .crx-in::placeholder { color: #a0a7b4; opacity: 1; }
+/* The pipeline's pop-ups draw their fields as text under a 500-weight label, and the text keeps that weight. */
+.cpv-shell .crx-dlg input.crx-in { font-weight: 500; }
+/*
+ * The handoff draws its overlays — the pop-ups, the agent's panels, the
+ * support chat — outside .app, so without .app's tabular figures (which, in
+ * Inter Tight, also narrow commas and full stops). The preview draws them
+ * inside it; they go back to the font's own figures.
+ */
+.cpv-shell :is(.crx-ov, .crx-aov, .crx-pnl-ov, .crx-pnl, section[aria-label="Support chat"]) { font-variant-numeric: normal; }

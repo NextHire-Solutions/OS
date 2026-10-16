@@ -8,7 +8,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
 
 import {
-  bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, PAGE_SIZE, rangeFilter, resolveMls, SALES_BANDS,
+  bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type ReportGroup,
 } from "./market-model";
 
@@ -129,6 +129,16 @@ export interface MarketRow {
   mostTransactedCity: string | null;
   salesVolume: number | null;
   units: number | null;
+  /** The office's own name (the Setup wizard's Office column). */
+  office: string | null;
+  /** Whole years in the industry, where the database records it (about 1 agent in 80). */
+  years: number | null;
+  /**
+   * Only on the Setup wizard's eight-a-page tables, whose design has an Email
+   * column; Market and Prospects (50 a page) keep emails on the server, where
+   * they are only matched against the client's lists.
+   */
+  email?: string | null;
   list: string;
   pill: string;
 }
@@ -141,7 +151,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
   const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
-  const page = await search(marketFilters(base, q), PAGE_SIZE, (q.page - 1) * PAGE_SIZE);
+  const page = await search(marketFilters(base, q), q.per, (q.page - 1) * q.per);
   const ids = page.rows.map((r) => String(r.id));
   const [prospects, myAgents, dnc, pipeline] = await Promise.all([
     q.list === "prospects" ? Promise.resolve(new Set(ids)) : inClientLists(ctx.orchClientId ?? "", ctx.orchClientId ? ids : []),
@@ -161,11 +171,14 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
       mostTransactedCity: str(r.most_transacted_city),
       salesVolume: num(r.sales_volume),
       units: num(r.units),
+      office: str(r.office_name),
+      years: num(r.est_time_in_industry_months) !== null ? Math.floor((num(r.est_time_in_industry_months) as number) / 12) : null,
+      ...(q.per === SETUP_PAGE_SIZE ? { email: str(r.preferred_email) ?? str(r.enriched_email) } : {}),
       list,
       pill: LIST_PILL[list],
     };
   });
-  return { total: page.total, page: q.page, pageSize: PAGE_SIZE, rows };
+  return { total: page.total, page: q.page, pageSize: q.per, rows };
 }
 
 /** The chips' choices for a market: its brokerages and counties, largest first. */

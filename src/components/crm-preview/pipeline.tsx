@@ -8,7 +8,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
-import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
+import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
   TIME_RANGES,
   abbrevUsd,
@@ -26,12 +26,13 @@ import {
 } from "@/lib/crm-preview/model";
 
 import { Icon } from "./icons";
-import { k, RO } from "./k";
+import { k, RO, withIds } from "./k";
+import { EditLeadDialog, PipelineAddDialog, PipelineUploadDialog } from "./dialogs";
 import { AgentPanel, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
 
-type Open = { kind: "agent" | "conversation" | "notes"; entry: PipelineEntry } | null;
+type Open = { kind: "agent" | "conversation" | "notes" | "edit"; entry: PipelineEntry } | { kind: "add" | "upload" } | null;
 
-export function PipelineScreen({ entries, stages, furthest, token, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; token: string; now: Date }) {
+export function PipelineScreen({ entries, stages, furthest, team, token, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; team: TeamMember[]; token: string; now: Date }) {
   const [mode, setMode] = useState<"board" | "list">("board");
   const [range, setRange] = useState<TimeRange>("all");
   const [search, setSearch] = useState("");
@@ -40,12 +41,33 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
   const [open, setOpen] = useState<Open>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const menuRef = useRef<HTMLSpanElement>(null);
+  // Ticked rows (the list's checkboxes): the bulk bar switches on as the design's Pipeline-Selected; its actions are inert.
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [bulkMenu, setBulkMenu] = useState<"move" | "assign" | null>(null);
+  const bulkRef = useRef<HTMLDivElement>(null);
 
   const view = useMemo(() => pipelineView(entries, stages, { range, search, chip, now }, furthest), [entries, stages, range, search, chip, now, furthest]);
   const [listPageNo, setListPageNo] = useState(1);
   const page = useMemo(() => listPage(view.shown, listPageNo), [view.shown, listPageNo]);
   // A new filter starts the list again at its first page.
   useEffect(() => setListPageNo(1), [range, search, chip]);
+  const pageIds = useMemo(() => page.groups.flatMap((g) => g.rows.map((x) => x.id)), [page]);
+  const pageAllPicked = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  // Only ticked rows still on screen count (a filter can hide one).
+  const pickedShown = useMemo(() => view.shown.filter((x) => picked.has(x.id)), [view.shown, picked]);
+  const pick = (ids: readonly string[], on: boolean) => setPicked((cur) => withIds(cur, ids, on));
+  useEffect(() => {
+    if (!bulkMenu) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !bulkRef.current?.contains(e.target as Node)) setBulkMenu(null);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [bulkMenu]);
   const rangeLabel = TIME_RANGES.find((r) => r.id === range)?.label ?? "All time";
   const forward = stages.filter((s) => s.role === "stage");
   const tags = stages.filter((s) => s.role === "tag");
@@ -105,7 +127,7 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                   {rangeLabel} <Icon name="chevDown" size={12} />
                 </button>
                 {menuOpen ? (
-                  <div className={k("menu")} role="menu">
+                  <div className={k("menu")} role="menu" style={{ minWidth: 170 }}>
                     {TIME_RANGES.map((r) => (
                       <button
                         key={r.id}
@@ -115,8 +137,8 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                         className={r.id === range ? k("hv") : undefined}
                         onClick={() => { setRange(r.id); setMenuOpen(false); }}
                       >
+                        <span style={{ width: 14, display: "inline-flex", color: "#3e6bd1" }}>{r.id === range ? <Icon name="check" size={14} /> : null}</span>
                         {r.label}
-                        {r.id === range ? <span style={{ marginLeft: "auto", display: "inline-flex" }}><Icon name="check" size={14} /></span> : null}
                       </button>
                     ))}
                   </div>
@@ -127,8 +149,8 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                 <button type="button" className={mode === "board" ? k("on") : undefined} aria-pressed={mode === "board"} onClick={() => setMode("board")}><Icon name="board" size={14} />Board</button>
                 <button type="button" className={mode === "list" ? k("on") : undefined} aria-pressed={mode === "list"} onClick={() => setMode("list")}><Icon name="list" size={14} />List</button>
               </div>
-              <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Upload CSV</button>
-              <button type="button" className={k("btn pri")} {...RO}><Icon name="plus" size={15} />Add agent</button>
+              <button type="button" className={k("btn")} onClick={() => setOpen({ kind: "upload" })}><Icon name="upload" size={15} />Upload CSV</button>
+              <button type="button" className={k("btn pri")} onClick={() => setOpen({ kind: "add" })}><Icon name="plus" size={15} />Add agent</button>
             </div>
 
             <div className={k("chips")} aria-label="Stages">
@@ -151,16 +173,57 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
               ) : null}
             </div>
 
-            <div className={k("card bulk")}>
-              <span className={k("l")}>Bulk actions: tick rows below to enable</span>
-              <button type="button" className={k("btn sm dis")} disabled>Move to... <Icon name="chevDown" size={12} /></button>
-              <button type="button" className={k("btn sm dis")} disabled>Add tag... <Icon name="chevDown" size={12} /></button>
-              <button type="button" className={k("btn sm dis")} disabled>Assign to... <Icon name="chevDown" size={12} /></button>
-              <button type="button" className={k("btn sm dis")} disabled><Icon name="copy" size={14} />Copy names</button>
-              <button type="button" className={k("btn sm dis")} disabled><Icon name="copy" size={14} />Copy emails</button>
-              <button type="button" className={k("btn sm dis")} disabled><Icon name="download" size={14} />Export CSV</button>
-              <button type="button" className={k("btn sm dis")} disabled><Icon name="trash" size={14} />Delete</button>
-            </div>
+            {pickedShown.length === 0 ? (
+              <div className={k("card bulk")}>
+                <span className={k("l")}>Bulk actions: tick rows below to enable</span>
+                <button type="button" className={k("btn sm dis")} disabled>Move to... <Icon name="chevDown" size={12} /></button>
+                <button type="button" className={k("btn sm dis")} disabled>Add tag... <Icon name="chevDown" size={12} /></button>
+                <button type="button" className={k("btn sm dis")} disabled>Assign to... <Icon name="chevDown" size={12} /></button>
+                <button type="button" className={k("btn sm dis")} disabled><Icon name="copy" size={14} />Copy names</button>
+                <button type="button" className={k("btn sm dis")} disabled><Icon name="copy" size={14} />Copy emails</button>
+                <button type="button" className={k("btn sm dis")} disabled><Icon name="download" size={14} />Export CSV</button>
+                <button type="button" className={k("btn sm dis")} disabled><Icon name="trash" size={14} />Delete</button>
+              </div>
+            ) : (
+              <>
+                <div className={k("card bulk on")} ref={bulkRef}>
+                  <span className={k("l")}>{pickedShown.length.toLocaleString("en-US")} selected</span>
+                  <span className={k("ddw")}>
+                    <button type="button" className={k("btn sm")} aria-haspopup="menu" aria-expanded={bulkMenu === "move"} onClick={() => setBulkMenu((m) => (m === "move" ? null : "move"))}>Move to...{" "}<Icon name="chevDown" size={12} /></button>
+                    {bulkMenu === "move" ? (
+                      <div className={k("menu")} role="menu">
+                        {forward.map((st, i) => (
+                          <button key={st.key} type="button" role="menuitem" className={i === 0 ? k("hv") : undefined} {...RO}>
+                            <span className={k("dot")} style={{ background: st.dot }} />{st.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </span>
+                  <button type="button" className={k("btn sm")} {...RO}>Add tag...{" "}<Icon name="chevDown" size={12} /></button>
+                  <span className={k("ddw")}>
+                    <button type="button" className={k("btn sm")} aria-haspopup="menu" aria-expanded={bulkMenu === "assign"} onClick={() => setBulkMenu((m) => (m === "assign" ? null : "assign"))}>Assign to...{" "}<Icon name="chevDown" size={12} /></button>
+                    {bulkMenu === "assign" ? (
+                      <div className={k("menu")} role="menu">
+                        <button type="button" role="menuitem" className={k("mut")} {...RO}>Unassigned</button>
+                        {team.map((m, i) => <button key={m.id} type="button" role="menuitem" className={i === 0 ? k("hv") : undefined} {...RO}>{m.name}</button>)}
+                      </div>
+                    ) : null}
+                  </span>
+                  <button type="button" className={k("btn sm")} {...RO}><Icon name="copy" size={14} />Copy names</button>
+                  <button type="button" className={k("btn sm")} {...RO}><Icon name="copy" size={14} />Copy emails</button>
+                  <button type="button" className={k("btn sm")} {...RO}><Icon name="download" size={14} />Export CSV</button>
+                  <button type="button" className={k("btn sm del")} {...RO}><Icon name="trash" size={14} />Delete</button>
+                  <button type="button" className={k("btn sm ghost")} onClick={() => { setPicked(new Set()); setBulkMenu(null); }}>Clear</button>
+                </div>
+                {pageAllPicked && view.shown.length > pageIds.length ? (
+                  <div className={k("selall")}>
+                    <span>All{" "}<b>{pageIds.length}</b>{" "}leads on this page are selected.</span>
+                    <a href="#" onClick={(ev) => { ev.preventDefault(); setPicked(new Set(view.shown.map((x) => x.id))); }}>Select all {view.shown.length.toLocaleString("en-US")} leads</a>
+                  </div>
+                ) : null}
+              </>
+            )}
 
             <div className={k("sumr")}>
               <span><b>{view.shown.length.toLocaleString("en-US")}</b> agents</span>
@@ -207,7 +270,7 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                 <table className={k("tb lt")}>
                   <thead>
                     <tr>
-                      <th scope="col" style={{ width: 20 }}><input type="checkbox" aria-label="Select all on this page" {...RO} /></th>
+                      <th scope="col" style={{ width: 20 }}><input type="checkbox" aria-label="Select all on this page" checked={pageAllPicked} onChange={() => pick(pageIds, !pageAllPicked)} /></th>
                       <th scope="col">Name</th>
                       <th scope="col">Phone</th>
                       <th scope="col">Office</th>
@@ -228,7 +291,7 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                     return (
                       <Fragment key={g.key}>
                         <tr className={k("grp")}>
-                          <td><input type="checkbox" aria-label={`Select all in ${g.label}`} {...RO} /></td>
+                          <td><input type="checkbox" aria-label={`Select all in ${g.label}`} checked={g.rows.every((x) => picked.has(x.id))} onChange={() => pick(g.rows.map((x) => x.id), !g.rows.every((x) => picked.has(x.id)))} /></td>
                           <th scope="rowgroup" colSpan={7}>
                             <span className={k("gm")}>{g.label}</span>
                             <span className={k("gs")}>{g.monthTotal} {g.monthTotal === 1 ? "agent" : "agents"}</span>
@@ -240,7 +303,9 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                             entry={e}
                             placement={placeOf(e)}
                             now={now}
-                            onAgent={() => openAgent(e)}
+                            picked={picked.has(e.id)}
+                            onPick={() => pick([e.id], !picked.has(e.id))}
+                            onEdit={() => setOpen({ kind: "edit", entry: e })}
                             onConversation={() => setOpen({ kind: "conversation", entry: e })}
                             onNotes={() => setOpen({ kind: "notes", entry: e })}
                           />
@@ -283,8 +348,12 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
           entry={open.entry}
           placement={placeOf(open.entry)}
           onClose={() => setOpen(null)}
+          onEdit={() => setOpen({ kind: "edit", entry: open.entry })}
         />
       ) : null}
+      {open?.kind === "edit" ? <EditLeadDialog entry={open.entry} placement={placeOf(open.entry)} onClose={() => setOpen(null)} /> : null}
+      {open?.kind === "add" ? <PipelineAddDialog now={now} onClose={() => setOpen(null)} /> : null}
+      {open?.kind === "upload" ? <PipelineUploadDialog onClose={() => setOpen(null)} /> : null}
       {open?.kind === "conversation" ? (
         <ConversationPanel entry={open.entry} placement={placeOf(open.entry)} token={token} now={now} onClose={() => setOpen(null)} />
       ) : null}
@@ -384,14 +453,18 @@ function ListRow({
   entry: e,
   placement,
   now,
-  onAgent,
+  picked,
+  onPick,
+  onEdit,
   onConversation,
   onNotes,
 }: {
   entry: PipelineEntry;
   placement: Placement;
   now: Date;
-  onAgent: () => void;
+  picked: boolean;
+  onPick: () => void;
+  onEdit: () => void;
   onConversation: () => void;
   onNotes: () => void;
 }) {
@@ -400,11 +473,12 @@ function ListRow({
   const owner = e.assigned_team_member?.name ?? null;
   const notes = e.notes_log.length;
   return (
-    <tr>
-      <td className={k("vt")}><input type="checkbox" aria-label={`Select ${name}`} {...RO} /></td>
+    <tr className={picked ? k("sel") : undefined}>
+      <td className={k("vt")}><input type="checkbox" aria-label={`Select ${name}`} checked={picked} onChange={onPick} /></td>
       <td className={k("vt")}>
         <div className={k("nmc")}>
-          <a href="#" onClick={(ev) => { ev.preventDefault(); onAgent(); }}>{name}</a>
+          {/* The design's list opens Edit lead from the name, as from the pencil. */}
+          <a href="#" onClick={(ev) => { ev.preventDefault(); onEdit(); }}>{name}</a>
           {e.lead_email ? <span className={k("em")}>{e.lead_email}</span> : null}
           <div className={k("nx")}>
             {e.thread_id ? (
@@ -446,7 +520,7 @@ function ListRow({
       <td className={k("vt")}>{shortDate(e.introduced_at, now)}</td>
       <td className={k("vt r")}>
         <div className={k("acts")}>
-          <button type="button" className={k("ib")} aria-label={`Edit ${name}`} {...RO}><Icon name="pencil" size={15} /></button>
+          <button type="button" className={k("ib")} aria-label={`Edit ${name}`} title="Edit" onClick={onEdit}><Icon name="pencil" size={15} /></button>
           <button type="button" className={k("btn sm")} style={{ marginLeft: 4 }} onClick={onNotes}>
             <Icon name="note" size={13} />Add note
           </button>
