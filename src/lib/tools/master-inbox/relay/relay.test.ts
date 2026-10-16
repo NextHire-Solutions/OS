@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { configureFakeEnvironment, FakePostgrest, type Row } from "../test/fake-postgrest.ts";
 import type { RelayEmail } from "./message.ts";
 import type { SendResult, Transport } from "./postmark.ts";
+import type { Env } from "./gate.ts";
 
 configureFakeEnvironment("MASTER_INBOX_");
 for (const v of ["OS_BROKERAGE_RELAY_LIVE_SEND", "POSTMARK_SERVER_TOKEN", "OS_BROKERAGE_RELAY_FROM", "OS_BROKERAGE_RELAY"]) delete process.env[v];
@@ -125,7 +126,7 @@ function label(labelId: string, threadId: string, when = at(-2)) {
 }
 
 const CHARLESTON = "Jeff Cook Real Estate + Charleston, SC + ZF NS1";
-const deps = (env: NodeJS.ProcessEnv = {}) => ({ ws: WS, transport, env });
+const deps = (env: Env = {}) => ({ ws: WS, transport, env });
 const records = () => db.rows("os_brokerage_relays");
 const recordFor = (threadId: string) => records().find((r) => r.thread_id === threadId)!;
 
@@ -563,6 +564,22 @@ test("later replies: off by default; when switched on, relayed once each to the 
   await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 12 * 60_000), deps());
   assert.equal(records().filter((x) => x.kind === "follow_up").length, 1);
   assertContained();
+});
+
+test("a later reply to a hand-off that was only PRACTISED never goes live, even once the pilot is on", async () => {
+  seed({ forward_later_replies: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  assert.equal(recordFor(thread.id).status, "practice");
+  // The pilot starts for this brokerage; the agent writes again.
+  db.seed("os_relay_settings", db.rows("os_relay_settings").map((r) => ({ ...r, practice_mode: false })));
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, relay_settings: { enabled: true } } : r)));
+  add("messages", [{ thread_id: thread.id, direction: "inbound", sender: "jordan@coastal.test", sender_name: "Jordan Ellis", subject: "Re: Quick question, Jordan", body_text: "Any news?", sent_at: at(5) }]);
+  await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 10 * 60_000), deps(LIVE));
+  const f = records().find((x) => x.kind === "follow_up")!;
+  assert.equal(f.status, "practice", "the brokerage never received the first one");
+  assert.equal(handed.length, 0);
 });
 
 /* ============================================================ bounces + the record */

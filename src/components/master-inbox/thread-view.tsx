@@ -21,6 +21,7 @@ import { Composer } from "@/components/master-inbox/composer";
 import { LabelPickerButton } from "@/components/master-inbox/label-picker";
 import { SnoozeButton } from "@/components/master-inbox/snooze-button";
 import { MoveAgentMenu } from "@/components/master-inbox/move-agent-menu";
+import { BrokerageRelayStrip } from "@/components/master-inbox/brokerage-relay-strip";
 import { cn } from "@/lib/tools/master-inbox/utils";
 import { sanitizeEmailHtml } from "@/lib/tools/master-inbox/inbox/sanitize-email-html";
 import { fullStamp } from "@/lib/workspace/dates";
@@ -304,6 +305,10 @@ export function ThreadView({
           armed={armDelete}
         />
       </div>
+
+      {/* The brokerage hand-off, when there is one: "Sent to Angela at 10:42".
+          Renders nothing on every other conversation. */}
+      <BrokerageRelayStrip key={detail.id} threadId={detail.id} />
 
       {/* Messages — oldest first, newest at bottom. `.msgs` is the design's
           scrolling column; inbound cards sit flush left and outbound flush

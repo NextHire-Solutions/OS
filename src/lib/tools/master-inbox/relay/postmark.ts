@@ -1,4 +1,4 @@
-import { isRelayAddress, LIVE_SEND_ENV, liveSendAllowed, messageStream, postmarkToken, TOKEN_ENV } from "./gate.ts";
+import { isRelayAddress, LIVE_SEND_ENV, liveSendAllowed, messageStream, postmarkToken, TOKEN_ENV, type Env } from "./gate.ts";
 import type { RelayEmail } from "./message.ts";
 
 /*
@@ -65,7 +65,7 @@ export function postmarkPayload(email: RelayEmail, stream: string): Record<strin
 
 export interface TransportDeps {
   fetch?: typeof fetch;
-  env?: NodeJS.ProcessEnv;
+  env?: Env;
 }
 
 export function createPostmarkTransport(deps: TransportDeps = {}): Transport {

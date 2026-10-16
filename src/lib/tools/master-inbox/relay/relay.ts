@@ -6,7 +6,7 @@ import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
 import { escapeLike } from "../portals/stop-person-plan.ts";
 import { getMasterInboxSupabase, workspaceId } from "../supabase";
 
-import { fromAddress, liveSendAllowed, postmarkToken, sweepSwitchedOff } from "./gate.ts";
+import { fromAddress, liveSendAllowed, postmarkToken, sweepSwitchedOff, type Env } from "./gate.ts";
 import { agentDisplayName, buildRelayEmail, messageIdFromPayload, replyText, type RelayEmail } from "./message.ts";
 import { createPostmarkTransport, fetchBounces, type PostmarkBounce, type Transport } from "./postmark.ts";
 import { campaignKey, portalsOfClient, resolveBrokerage, type OsClientRef, type ResolvedBy, type World } from "./resolve.ts";
@@ -112,7 +112,7 @@ export interface RelayDeps {
   os?: Os;
   ws?: string;
   transport?: Transport;
-  env?: NodeJS.ProcessEnv;
+  env?: Env;
   bounces?: (since: Date) => Promise<{ ok: true; bounces: PostmarkBounce[] } | { ok: false; error: string }>;
 }
 
@@ -129,7 +129,7 @@ interface Ctx {
   os: Os;
   ws: string;
   transport: Transport;
-  env: NodeJS.ProcessEnv;
+  env: Env;
   global: GlobalRelaySettings;
   world: World;
   records: Map<string, ClientRecord>;
@@ -255,13 +255,15 @@ async function loadThread(mi: Mi, ws: string, threadId: string): Promise<ThreadF
     lead = { id: str(l?.id), fullName: str(l?.full_name), email: str(l?.email) };
   }
 
+  // The newest 200 (a conversation that long still hands over its latest reply), oldest first below.
   const { data: msgs, error: mErr } = await mi
     .from("messages")
     .select("id, direction, sender, sender_name, subject, body_text, body_html, sent_at")
     .eq("thread_id", threadId)
-    .order("sent_at", { ascending: true })
+    .order("sent_at", { ascending: false })
     .limit(200);
   if (mErr) throw new Error(`messages: ${mErr.message}`);
+  const ordered = ((msgs ?? []) as Row[]).reverse();
 
   const { data: assigns, error: aErr } = await mi
     .from("label_assignments")
@@ -286,7 +288,7 @@ async function loadThread(mi: Mi, ws: string, threadId: string): Promise<ThreadF
     subject: str(thread.subject),
     lead,
     labels,
-    messages: ((msgs ?? []) as Row[]).map((m) => ({
+    messages: ordered.map((m) => ({
       id: String(m.id),
       direction: m.direction === "inbound" ? "inbound" : "outbound",
       sender: str(m.sender),
@@ -847,7 +849,7 @@ export class RelayActionError extends Error {
 export async function sendToBrokerage(relayId: string, threadId: string, who: string, deps: RelayDeps = {}, now = new Date()): Promise<RelayRecordView> {
   const { ctx, off } = await makeCtx(now, deps);
   if (!ctx) throw new RelayActionError(`The brokerage hand-off is off (${off}).`, 409);
-  const { data, error } = await ctx.os("os_brokerage_relays").select("*").eq("id", relayId).eq("thread_id", threadId).maybeSingle();
+  const { data, error } = await ctx.os("os_brokerage_relays").select("*").eq("workspace_id", ctx.ws).eq("id", relayId).eq("thread_id", threadId).maybeSingle();
   if (error) throw new RelayActionError(error.message, 502);
   if (!data) throw new RelayActionError("No such hand-off on this conversation.", 404);
   const rec = relayRowFrom(data as Row);
@@ -972,7 +974,8 @@ export async function saveBrokerageSettings(osClientId: string, body: unknown, d
 /** Every hand-off on one conversation, newest first. Reads only. */
 export async function threadRelays(threadId: string, deps: RelayDeps = {}): Promise<{ available: boolean; records: RelayRecordView[] }> {
   const os: Os = deps.os ?? osTable;
-  const { data, error } = await os("os_brokerage_relays").select("*").eq("thread_id", threadId).order("created_at", { ascending: false }).limit(20);
+  const ws = deps.ws ?? (await workspaceId());
+  const { data, error } = await os("os_brokerage_relays").select("*").eq("workspace_id", ws).eq("thread_id", threadId).order("created_at", { ascending: false }).limit(20);
   if (error) {
     if (missingTable(error.message, "os_brokerage_relays")) return { available: false, records: [] };
     throw new Error(error.message);

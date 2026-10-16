@@ -214,4 +214,34 @@ export async function register() {
   const sweepLateSafely = () => { sweepLate().catch((e) => console.error("[late-introductions] failed:", e instanceof Error ? e.message : e)); };
   setTimeout(sweepLateSafely, 40_000).unref?.();
   setInterval(sweepLateSafely, 60_000).unref?.();
+
+  /*
+   * Interested replies → the brokerage, by Postmark (the approved plan, Oct
+   * 2026; lib/tools/master-inbox/relay/). Every minute. Does NOTHING until
+   * migration 0035 has run and the switch in Inbox → Settings → Brokerage
+   * hand-off is on — and then only PRACTISES (records what it would have sent,
+   * to whom) until practice mode is off there, the brokerage's own switch is
+   * on, POSTMARK_SERVER_TOKEN is set and OS_BROKERAGE_RELAY_LIVE_SEND=1.
+   * Railway only: a local server never runs it. OS_BROKERAGE_RELAY=0 stops it.
+   */
+  let relayRunning = false;
+  const sweepRelay = async () => {
+    if (relayRunning) return;
+    if (process.env.OS_BROKERAGE_RELAY === "0") return;
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    relayRunning = true;
+    try {
+      const { sweepBrokerageRelay } = await import("./lib/tools/master-inbox/relay/relay");
+      const r = await sweepBrokerageRelay();
+      if (r.claimed || r.rechecked || r.followUps || r.bounced || r.errors.length) {
+        const outcomes = Object.entries(r.outcomes).map(([k, v]) => `${v} ${k}`).join(" · ") || "nothing decided";
+        console.log(`[brokerage-relay] ${outcomes}${r.bounced ? ` · ${r.bounced} bounced` : ""}${r.errors.length ? ` · ${r.errors.join(" | ")}` : ""}`);
+      }
+    } finally {
+      relayRunning = false;
+    }
+  };
+  const sweepRelaySafely = () => { sweepRelay().catch((e) => console.error("[brokerage-relay] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(sweepRelaySafely, 50_000).unref?.();
+  setInterval(sweepRelaySafely, 60_000).unref?.();
 }

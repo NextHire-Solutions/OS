@@ -19,6 +19,9 @@
  * reply agent's live gate uses the same rule, for the same reason.
  */
 
+/** The environment, as these functions read it (a plain map, so tests can pass one). */
+export type Env = Readonly<Record<string, string | undefined>>;
+
 export const LIVE_SEND_ENV = "OS_BROKERAGE_RELAY_LIVE_SEND";
 export const SWEEP_OFF_ENV = "OS_BROKERAGE_RELAY";
 export const TOKEN_ENV = "POSTMARK_SERVER_TOKEN";
@@ -30,21 +33,21 @@ export const RELAY_DOMAIN = "leads.brokerstaffer.com";
 /** Placeholder local part until the client picks one (open question). */
 export const DEFAULT_FROM_ADDRESS = `agents@${RELAY_DOMAIN}`;
 
-export function liveSendAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+export function liveSendAllowed(env: Env = process.env): boolean {
   return env[LIVE_SEND_ENV]?.trim() === "1";
 }
 
 /** OS_BROKERAGE_RELAY=0 stops the sweep outright, whatever the database says. */
-export function sweepSwitchedOff(env: NodeJS.ProcessEnv = process.env): boolean {
+export function sweepSwitchedOff(env: Env = process.env): boolean {
   return env[SWEEP_OFF_ENV]?.trim() === "0";
 }
 
-export function postmarkToken(env: NodeJS.ProcessEnv = process.env): string | null {
+export function postmarkToken(env: Env = process.env): string | null {
   const t = env[TOKEN_ENV]?.trim();
   return t ? t : null;
 }
 
-export function messageStream(env: NodeJS.ProcessEnv = process.env): string {
+export function messageStream(env: Env = process.env): string {
   return env[STREAM_ENV]?.trim() || "outbound";
 }
 
@@ -59,7 +62,7 @@ export function isRelayAddress(address: string | null | undefined): boolean {
  * ignored rather than trusted: the plan promises the normal @brokerstaffer.com
  * mail and the cold-email inboxes are never used.
  */
-export function fromAddress(env: NodeJS.ProcessEnv = process.env): string {
+export function fromAddress(env: Env = process.env): string {
   const v = env[FROM_ENV]?.trim().toLowerCase();
   return v && isRelayAddress(v) ? v : DEFAULT_FROM_ADDRESS;
 }

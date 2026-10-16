@@ -769,3 +769,44 @@
   .mi-conv > .mi-conv-rail { display: none; }
   .mi-prospect { max-width: 320px; }
 }
+
+/* The brokerage hand-off on a conversation (lib/tools/master-inbox/relay,
+   plan §3.5): one quiet line per hand-off under the toolbar — "Sent to Angela
+   at 10:42", "Practice — would have gone to…", "Held — …". Conversations
+   without a hand-off render nothing here. */
+.mi-conv .mi-relay {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mi-conv .mi-relay-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-radius: var(--r-md, 8px);
+  font-size: 12.5px;
+  line-height: 1.35;
+  background: var(--inset);
+  color: var(--ink-2);
+}
+.mi-conv .mi-relay-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mi-conv .mi-relay-sent { background: var(--green-bg); color: var(--green); }
+.mi-conv .mi-relay-practice { background: var(--blue-pale); color: var(--blue-ink); }
+.mi-conv .mi-relay-waiting { background: var(--amber-pale); color: var(--ink); }
+.mi-conv .mi-relay-stopped { background: var(--inset); color: var(--muted); }
+.mi-conv .mi-relay-problem { background: var(--red-bg); color: var(--red); }
+.mi-conv .mi-relay-btn {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mi-conv .mi-relay-btn:disabled { opacity: 0.5; cursor: default; }

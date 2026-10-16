@@ -1,6 +1,7 @@
 import { SettingsLabels } from "./settings-tabs/labels";
 import { SettingsTemplates } from "./settings-tabs/templates";
 import { SettingsAiLabeling } from "./settings-tabs/ai-labeling";
+import { SettingsBrokerageRelay } from "./settings-tabs/brokerage-relay";
 /*
  * Webhooks is not offered in the workspace, at the user's request. The tab and
  * its panel are gone from the strip; the component and its route are left in
@@ -46,6 +47,8 @@ export const SETTINGS_TABS = [
   { id: "labels", label: "Labels" },
   { id: "templates", label: "Templates" },
   { id: "ai-labeling", label: "AI Labeling" },
+  // Interested replies → the brokerage, by Postmark (relay/). Admins only.
+  { id: "brokerage-relay", label: "Brokerage hand-off" },
 ] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -60,7 +63,7 @@ export function isSettingsTab(value: string | undefined): value is SettingsTab {
  * and Templates. The
  * APIs behind these tabs refuse a teammate too — hiding a tab is not the gate.
  */
-const ADMIN_TABS = new Set<SettingsTab>(["ai-labeling"]);
+const ADMIN_TABS = new Set<SettingsTab>(["ai-labeling", "brokerage-relay"]);
 
 export async function MasterInboxSettingsScreen({ tab = "labels", admin = false }: { tab?: string; admin?: boolean }) {
   const tabs = SETTINGS_TABS.filter((t) => admin || !ADMIN_TABS.has(t.id));
@@ -85,6 +88,7 @@ export async function MasterInboxSettingsScreen({ tab = "labels", admin = false 
         {active === "labels" ? <SettingsLabels /> : null}
         {active === "templates" ? <SettingsTemplates /> : null}
         {active === "ai-labeling" ? <SettingsAiLabeling /> : null}
+        {active === "brokerage-relay" ? <SettingsBrokerageRelay /> : null}
       </div>
     </div>
   );
