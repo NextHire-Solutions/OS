@@ -6,13 +6,15 @@
  * is drawn disabled (see src/app/crm-preview/page.tsx).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
   TIME_RANGES,
   abbrevUsd,
-  groupByMonth,
+  formatPhone,
+  listPage,
+  ROWS_PER_MONTH,
   initials,
   pipelineView,
   salesVolumeOf,
@@ -24,13 +26,12 @@ import {
 } from "@/lib/crm-preview/model";
 
 import { Icon } from "./icons";
-import { k, READ_ONLY } from "./k";
+import { k, RO } from "./k";
 import { AgentPanel, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
 
 type Open = { kind: "agent" | "conversation" | "notes"; entry: PipelineEntry } | null;
 
 const CARDS_PER_COLUMN = 40;
-const ROWS_PER_MONTH = 10;
 
 export function PipelineScreen({ entries, stages, furthest, token, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; token: string; now: Date }) {
   const [mode, setMode] = useState<"board" | "list">("board");
@@ -43,7 +44,10 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
   const menuRef = useRef<HTMLSpanElement>(null);
 
   const view = useMemo(() => pipelineView(entries, stages, { range, search, chip, now }, furthest), [entries, stages, range, search, chip, now, furthest]);
-  const groups = useMemo(() => groupByMonth(view.shown), [view.shown]);
+  const [listPageNo, setListPageNo] = useState(1);
+  const page = useMemo(() => listPage(view.shown, listPageNo), [view.shown, listPageNo]);
+  // A new filter starts the list again at its first page.
+  useEffect(() => setListPageNo(1), [range, search, chip]);
   const rangeLabel = TIME_RANGES.find((r) => r.id === range)?.label ?? "All time";
   const forward = stages.filter((s) => s.role === "stage");
   const tags = stages.filter((s) => s.role === "tag");
@@ -70,13 +74,13 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
       <header className={k("top")}>
         <div className={k("ttl")}>
           <h1>Pipeline</h1>
-          <span className={k("hsub")}>Every agent who replied interested, from first reply to&nbsp;hire.</span>
+          {entries.length ? <span className={k("hsub")}>Every agent who replied interested, from first reply to&nbsp;hire.</span> : null}
         </div>
         <div className={k("hr")} />
       </header>
 
       <div className={k("content")}>
-        <ManageStages stages={stages} tagCounts={tagCounts(view.placement)} />
+        {entries.length ? <ManageStages stages={stages} tagCounts={tagCounts(view.placement)} /> : null}
 
         {entries.length === 0 ? (
           <div className={k("es")}>
@@ -85,8 +89,8 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
               <h2>No agents in your pipeline yet</h2>
               <p>When an agent replies interested to your outreach, they show up here. You can also add one&nbsp;yourself.</p>
               <div className={k("ea")}>
-                <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}><Icon name="plus" size={15} />Add agent</button>
-                <button type="button" className={k("btn")} disabled title={READ_ONLY}><Icon name="upload" size={15} />Upload CSV</button>
+                <button type="button" className={k("btn pri")} {...RO}><Icon name="plus" size={15} />Add agent</button>
+                <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Upload CSV</button>
               </div>
             </section>
           </div>
@@ -125,8 +129,8 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                 <button type="button" className={mode === "board" ? k("on") : undefined} aria-pressed={mode === "board"} onClick={() => setMode("board")}><Icon name="board" size={14} />Board</button>
                 <button type="button" className={mode === "list" ? k("on") : undefined} aria-pressed={mode === "list"} onClick={() => setMode("list")}><Icon name="list" size={15} />List</button>
               </div>
-              <button type="button" className={k("btn")} disabled title={READ_ONLY}><Icon name="upload" size={15} />Upload CSV</button>
-              <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}><Icon name="plus" size={15} />Add agent</button>
+              <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Upload CSV</button>
+              <button type="button" className={k("btn pri")} {...RO}><Icon name="plus" size={15} />Add agent</button>
             </div>
 
             <div className={k("chips")} aria-label="Stages">
@@ -150,7 +154,7 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
             </div>
 
             <div className={k("card bulk")}>
-              <span className={k("l")}>Bulk actions: off in this preview</span>
+              <span className={k("l")}>Bulk actions: tick rows below to enable</span>
               <button type="button" className={k("btn sm dis")} disabled>Move to... <Icon name="chevDown" size={12} /></button>
               <button type="button" className={k("btn sm dis")} disabled>Add tag... <Icon name="chevDown" size={12} /></button>
               <button type="button" className={k("btn sm dis")} disabled>Assign to... <Icon name="chevDown" size={12} /></button>
@@ -213,7 +217,7 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                 <table className={k("tb lt")}>
                   <thead>
                     <tr>
-                      <th scope="col" style={{ width: 20 }}><input type="checkbox" aria-label="Select all on this page" disabled /></th>
+                      <th scope="col" style={{ width: 20 }}><input type="checkbox" aria-label="Select all on this page" {...RO} /></th>
                       <th scope="col">Name</th>
                       <th scope="col">Phone</th>
                       <th scope="col">Office</th>
@@ -223,22 +227,21 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                       <th scope="col" className={k("r")}><span className={k("sr")}>Actions</span></th>
                     </tr>
                   </thead>
-                  {groups.length === 0 ? (
-                    <tbody>
-                      <tr><td /><td colSpan={7} className="cpv-muted" style={{ padding: "18px 0" }}>No agents match.</td></tr>
-                    </tbody>
+                  <tbody>
+                  {page.groups.length === 0 ? (
+                    <tr><td /><td colSpan={7} className="cpv-muted" style={{ padding: "18px 0" }}>No agents match.</td></tr>
                   ) : null}
-                  {groups.map((g) => {
-                    const showAll = expanded[`month:${g.key}`];
-                    const rows = showAll ? g.entries : g.entries.slice(0, ROWS_PER_MONTH);
+                  {page.groups.map((g) => {
+                    const openKey = `month:${page.page}:${g.key}`;
+                    const rows = expanded[openKey] ? g.rows : g.rows.slice(0, ROWS_PER_MONTH);
                     const month = g.label.split(" ")[0];
                     return (
-                      <tbody key={g.key}>
+                      <Fragment key={g.key}>
                         <tr className={k("grp")}>
-                          <td><input type="checkbox" aria-label={`Select all in ${g.label}`} disabled /></td>
+                          <td><input type="checkbox" aria-label={`Select all in ${g.label}`} {...RO} /></td>
                           <th scope="rowgroup" colSpan={7}>
                             <span className={k("gm")}>{g.label}</span>
-                            <span className={k("gs")}>{g.entries.length} {g.entries.length === 1 ? "agent" : "agents"}</span>
+                            <span className={k("gs")}>{g.monthTotal} {g.monthTotal === 1 ? "agent" : "agents"}</span>
                           </th>
                         </tr>
                         {rows.map((e) => (
@@ -252,22 +255,32 @@ export function PipelineScreen({ entries, stages, furthest, token, now }: { entr
                             onNotes={() => setOpen({ kind: "notes", entry: e })}
                           />
                         ))}
-                        {g.entries.length > rows.length ? (
+                        {g.rows.length > rows.length ? (
                           <tr className={k("morer")}>
                             <td />
                             <td colSpan={7}>
-                              <a href="#" onClick={(ev) => { ev.preventDefault(); setExpanded((x) => ({ ...x, [`month:${g.key}`]: true })); }}>
-                                Show {g.entries.length - rows.length} more from {month}
+                              <a href="#" onClick={(ev) => { ev.preventDefault(); setExpanded((x) => ({ ...x, [openKey]: true })); }}>
+                                Show {g.rows.length - rows.length} more from {month}
                               </a>
                             </td>
                           </tr>
                         ) : null}
-                      </tbody>
+                      </Fragment>
                     );
                   })}
+                  </tbody>
                 </table>
                 <div className={k("tf")}>
-                  <span><b style={{ color: "#1f2124", fontWeight: 600 }}>{view.shown.length.toLocaleString("en-US")}</b> agents</span>
+                  <span>
+                    <b style={{ color: "#1f2124", fontWeight: 600 }}>{page.from.toLocaleString("en-US")}&ndash;{page.to.toLocaleString("en-US")}</b> of {page.total.toLocaleString("en-US")} agents
+                  </span>
+                  <div className={k("pg")} style={{ alignItems: "center" }}>
+                    <button type="button" className={k(page.page <= 1 ? "btn sm dis" : "btn sm")} disabled={page.page <= 1} onClick={() => setListPageNo(page.page - 1)}>Previous</button>
+                    <span>Page {page.page} / {page.pages}</span>
+                    <button type="button" className={k(page.page >= page.pages ? "btn sm dis" : "btn sm")} disabled={page.page >= page.pages} onClick={() => setListPageNo(page.page + 1)}>
+                      Next <Icon name="chevRight" size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -325,9 +338,9 @@ function ManageStages({ stages, tagCounts: counts }: { stages: PreviewStage[]; t
   }
   const row = (s: PreviewStage, end: React.ReactNode) => (
     <div key={s.key} className={k("stg")}>
-      <button type="button" className={k("ib")} aria-label={`Reorder ${s.label}`} title={READ_ONLY} disabled><Icon name="reorder" size={16} /></button>
+      <button type="button" className={k("ib")} aria-label={`Reorder ${s.label}`} {...RO} style={{ cursor: "grab" }}><Icon name="reorder" size={16} /></button>
       <span className={k("dot")} style={{ background: s.dot }} />
-      <input value={s.label} aria-label={`Rename ${s.label}`} style={NAME_INPUT} readOnly title={READ_ONLY} />
+      <input value={s.label} aria-label={`Rename ${s.label}`} style={NAME_INPUT} readOnly {...RO} />
       {end}
     </div>
   );
@@ -339,15 +352,21 @@ function ManageStages({ stages, tagCounts: counts }: { stages: PreviewStage[]; t
           // The design keeps the first and the last (Hired) always shown.
           const always = i === 0 || s.key === "hired";
           return row(s, (
-            <button type="button" className={k("ib")} disabled aria-label={always ? `${s.label} is always shown` : `Hide ${s.label}`} title={always ? "Always shown" : READ_ONLY} style={always ? { color: "#c2c7d0", cursor: "default" } : undefined}>
-              <Icon name="eyeOutline" size={16} />
-            </button>
+            always ? (
+              <button type="button" className={k("ib")} disabled aria-label={`${s.label} is always shown`} title="Always shown" style={{ color: "#c2c7d0", cursor: "default" }}>
+                <Icon name="eyeOutline" size={16} />
+              </button>
+            ) : (
+              <button type="button" className={k("ib")} aria-label={`Hide ${s.label}`} {...RO}>
+                <Icon name="eyeOutline" size={16} />
+              </button>
+            )
           ));
         })}
-        <button type="button" className={k("addb")} disabled title={READ_ONLY}><Icon name="plus" size={14} />Add stage</button>
+        <button type="button" className={k("addb")} {...RO}><Icon name="plus" size={14} />Add stage</button>
         <div className={k("svr")}>
           <span>Custom stages are for your team&apos;s workflow. They don&apos;t change your&nbsp;reporting.</span>
-          <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}>Save changes</button>
+          <button type="button" className={k("btn pri")} {...RO}>Save changes</button>
         </div>
         {tags.length ? (
           <>
@@ -358,13 +377,13 @@ function ManageStages({ stages, tagCounts: counts }: { stages: PreviewStage[]; t
             {tags.map((t) => row(t, (
               <>
                 <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{(counts.get(t.key) ?? 0).toLocaleString("en-US")} agents</span>
-                <button type="button" className={k("ib")} aria-label={`Delete tag ${t.label}`} title={READ_ONLY} disabled><Icon name="x" size={15} /></button>
+                <button type="button" className={k("ib")} aria-label={`Delete tag ${t.label}`} {...RO}><Icon name="x" size={15} /></button>
               </>
             )))}
-            <button type="button" className={k("addb")} disabled title={READ_ONLY}><Icon name="plus" size={14} />Add tag</button>
+            <button type="button" className={k("addb")} {...RO}><Icon name="plus" size={14} />Add tag</button>
             <div className={k("svr")}>
               <span>Tags are shared with everyone on your&nbsp;team.</span>
-              <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}>Save changes</button>
+              <button type="button" className={k("btn pri")} {...RO}>Save changes</button>
             </div>
           </>
         ) : null}
@@ -394,7 +413,7 @@ function ListRow({
   const notes = e.notes_log.length;
   return (
     <tr>
-      <td className={k("vt")}><input type="checkbox" aria-label={`Select ${name}`} disabled /></td>
+      <td className={k("vt")}><input type="checkbox" aria-label={`Select ${name}`} {...RO} /></td>
       <td className={k("vt")}>
         <div className={k("nmc")}>
           <a href="#" onClick={(ev) => { ev.preventDefault(); onAgent(); }}>{name}</a>
@@ -413,7 +432,7 @@ function ListRow({
       <td className={k("vt")}>
         {e.lead_phone ? (
           <span className={k("ph")}>
-            {e.lead_phone}
+            {formatPhone(e.lead_phone)}
             <button className={k("mini")} type="button" aria-label="Copy phone number" title="Copy phone number" onClick={() => void navigator.clipboard?.writeText(e.lead_phone ?? "")}>
               <Icon name="copy" size={12} />
             </button>
@@ -423,7 +442,12 @@ function ListRow({
         )}
       </td>
       <td className={k("vt")}><div className={k("coc")}>{e.current_brokerage || <span className={k("dash")}>&ndash;</span>}</div></td>
-      <td className={k("vt")}><StageCell stage={placement.stage} /></td>
+      <td className={k("vt")}>
+        {/* The design's stage picker: a pill that opens the stages — drawn, not usable here. */}
+        <button type="button" className={k(`pill p-${placement.stage.pill}`)} {...RO}>
+          {placement.stage.label} <Icon name="chevDown" size={12} />
+        </button>
+      </td>
       <td className={k("vt")}>
         {owner ? (
           <span className={k("own")}><span className={k("av")}>{initials(owner)}</span>{owner}</span>
@@ -434,9 +458,9 @@ function ListRow({
       <td className={k("vt")}>{shortDate(e.introduced_at, now)}</td>
       <td className={k("vt r")}>
         <div className={k("acts")}>
-          <button type="button" className={k("ib")} aria-label={`Edit ${name}`} title={READ_ONLY} disabled><Icon name="pencil" size={15} /></button>
+          <button type="button" className={k("ib")} aria-label={`Edit ${name}`} {...RO}><Icon name="pencil" size={15} /></button>
           <button type="button" className={k("btn sm")} style={{ marginLeft: 4 }} onClick={onNotes}>
-            <Icon name="note" size={14} />Notes{notes ? ` (${notes})` : ""}
+            <Icon name="note" size={14} />Add note
           </button>
         </div>
       </td>

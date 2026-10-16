@@ -9,10 +9,10 @@
 import { useEffect, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
-import { initials, longDate, messageText, panelFields, shortDate, sourceLabel, stamp, type Placement, type PreviewStage } from "@/lib/crm-preview/model";
+import { formatPhone, initials, longDate, messageText, panelFields, shortDate, sourceLabel, stamp, type Placement, type PreviewStage } from "@/lib/crm-preview/model";
 
 import { Icon } from "./icons";
-import { k, READ_ONLY } from "./k";
+import { k, RO } from "./k";
 
 function useEscape(onClose: () => void) {
   useEffect(() => {
@@ -84,16 +84,16 @@ export function AgentPanel({
             <div style={{ fontSize: 17, fontWeight: 600 }}>{name}</div>
             <span style={{ display: "inline-flex", marginTop: 6 }}><Source entry={e} /></span>
           </div>
-          <button type="button" className={k("btn sm")} disabled title={READ_ONLY}><Icon name="pencil" size={14} />Edit</button>
+          <button type="button" className={k("btn sm")} {...RO}><Icon name="pencil" size={14} />Edit</button>
           <button type="button" className={k("ib")} aria-label="Close" style={{ marginLeft: 2 }} onClick={onClose} autoFocus><Icon name="x" size={16} /></button>
         </div>
         <dl className={k("pf")}>
           {row("Stage", <StageWhy placement={placement} />)}
           {row("Tags", placement.tag ? <TagChip stage={placement.tag} /> : (
-            <button type="button" className={k("btn sm")} style={{ height: 24 }} disabled title={READ_ONLY}>Add tag <Icon name="chevDown" size={12} /></button>
+            <button type="button" className={k("btn sm")} style={{ height: 24 }} {...RO}>Add tag <Icon name="chevDown" size={12} /></button>
           ))}
           {row("Email", e.lead_email || "–")}
-          {row("Phone", e.lead_phone || "–")}
+          {row("Phone", formatPhone(e.lead_phone) ?? "–")}
           {row("Company", e.current_brokerage || "–")}
           {row("Source", sourceLabel(e))}
           {row("Owner", e.assigned_team_member?.name ?? "Unassigned")}
@@ -242,11 +242,11 @@ export function NotesPanel({ entry: e, onClose }: { entry: PipelineEntry; onClos
         <div className={k("pf")} style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
           <label className={k("fl")} htmlFor="crx-note">
             Add a note
-            <textarea id="crx-note" className={k("ta")} rows={4} placeholder="Notes can't be added in this preview." disabled />
+            <textarea id="crx-note" className={k("ta")} rows={4} placeholder={`Write a note about ${(e.lead_name || "this agent").split(" ")[0]}...`} readOnly {...RO} />
           </label>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button type="button" className={k("btn")} onClick={onClose}>Close</button>
-            <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}>Save note</button>
+            <button type="button" className={k("btn")} onClick={onClose}>Cancel</button>
+            <button type="button" className={k("btn pri")} {...RO}>Save note</button>
           </div>
         </div>
       </aside>

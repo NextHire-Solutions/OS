@@ -43,6 +43,8 @@ import { loadClientStageRows } from "@/lib/tools/master-inbox/portals/load-stage
 import { canonicalStageDefs, MANAGE_STAGES_FLAG, resolveStageDefs } from "@/lib/tools/master-inbox/portals/stage-config";
 import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
 import { CrmPreview } from "@/components/crm-preview/crm-preview";
+import { clientForPortal, type OsClientRow } from "@/lib/crm-preview/market-model";
+import { osTable } from "@/lib/clients/os-db";
 import { ClientPicker } from "@/components/crm-preview/client-picker";
 import { SessionKeeper } from "@/components/shell/session-keeper";
 
@@ -111,7 +113,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
     ? resolveStageDefs(stageClient, await loadClientStageRows(client.id as string))
     : canonicalStageDefs(stageClient);
 
-  const [entries, agents, dnc, team, history] = await Promise.all([
+  const [entries, agents, dnc, team, history, records] = await Promise.all([
     loadPipelineEntries(client.id as string),
     loadAgentEntries(client.id as string),
     loadDncEntries(client.id as string),
@@ -124,7 +126,10 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       console.error("[crm-preview] stage history", err);
       return [];
     }),
+    // The client's record, for the person the design shows in the sidebar's footer.
+    osTable("os_clients").select("id, name, aliases, mi_client_id, mls_codes, orch_client_id, contact_name").then((r) => (r.data ?? []) as unknown as Array<OsClientRow & { contact_name: string | null }>),
   ]);
+  const record = clientForPortal({ id: client.id as string, name: (client.name as string | null) ?? "" }, records) as (OsClientRow & { contact_name: string | null }) | null;
   const stages = previewStages(defs);
   const tagKeys = new Set(stages.filter((s) => s.role === "tag").map((s) => s.key));
   const tagged = new Set(entries.filter((e) => tagKeys.has(e.custom_stage_key ?? e.stage)).map((e) => e.id));
@@ -137,6 +142,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
         token: client.portal_token as string,
         // Whether a Follow Up Boss key is saved — never the key itself.
         fubConnected: Boolean((client as { fub_api_key?: string | null }).fub_api_key),
+        contactName: record?.contact_name?.trim() || null,
       }}
       portals={portals}
       stages={stages}

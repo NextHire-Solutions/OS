@@ -14,23 +14,23 @@ import { abbrevUsd, initials } from "@/lib/crm-preview/model";
 import { interestedReport, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ReportGroup } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
-import { k, READ_ONLY } from "./k";
+import { k, RO } from "./k";
 
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
 type Mls = { matched: Array<{ code: string; name: string }>; unmatched: string[] };
 
-function Definition({ list, client, mls }: { list: "market" | "prospects"; client: string | null; mls: Mls | null }) {
+/*
+ * What the page counts, for the preview's bar (never inside the design): the
+ * design does not say where a client's market comes from (market-model.ts).
+ */
+function definition(list: "market" | "prospects", client: string | null, mls: Mls | null): string | null {
   if (!client) return null;
-  if (list === "prospects") return <p className={k("lede")}>The agents in {client}&apos;s lists in the agent database — its campaign leads.</p>;
+  if (list === "prospects") return `Prospects here = the agents in ${client}'s lists in the agent database (its campaign leads).`;
   if (!mls) return null;
-  return (
-    <p className={k("lede")}>
-      Every agent in the agent database who belongs to an MLS on {client}&apos;s record
-      {mls.matched.length ? `: ${mls.matched.map((m) => `${m.code} (${m.name})`).join(", ")}` : ""}.
-      {mls.unmatched.length ? ` Not in the agent database, so not counted: ${mls.unmatched.join(", ")}.` : ""}
-    </p>
-  );
+  const codes = mls.matched.map((m) => m.code).join(", ");
+  const missing = mls.unmatched.length ? ` Not in the agent database, so not counted: ${mls.unmatched.join(", ")}.` : "";
+  return `Market here = every agent in the MLS on ${client}'s record${codes ? ` (${codes})` : ""}.${missing}`;
 }
 
 // ---------------------------------------------------------------- Market ---
@@ -75,7 +75,7 @@ function Chip<T extends string | number>({
   );
 }
 
-export function MarketScreen({ clientId, list }: { clientId: string; list: "market" | "prospects" }) {
+export function MarketScreen({ clientId, list, onContext }: { clientId: string; list: "market" | "prospects"; onContext?: (text: string | null) => void }) {
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
   const [f, setF] = useState<Filters>(NO_FILTERS);
@@ -101,7 +101,7 @@ export function MarketScreen({ clientId, list }: { clientId: string; list: "mark
     if (f.brokerage) sp.set("brokerage", f.brokerage);
     if (f.county) sp.set("county", f.county);
     if (f.title) sp.set("title", f.title);
-    if (!options && list === "market") sp.set("options", "1");
+    if (!options) sp.set("options", "1");
     setState((s) => ({ ...s, loading: true, error: null }));
     fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
@@ -110,6 +110,7 @@ export function MarketScreen({ clientId, list }: { clientId: string; list: "mark
         if (j.options) setOptions(j.options);
         if (j.unavailable) return setState({ loading: false, error: null, unavailable: j.unavailable, data: null });
         setState({ loading: false, error: null, unavailable: null, data: { total: j.total ?? 0, page: j.page ?? 1, rows: j.rows ?? [], client: j.client ?? null, mls: j.mls ?? null } });
+        onContext?.(definition(list, j.client ?? null, j.mls ?? null));
       })
       .catch((err) => { if (err?.name !== "AbortError") setState((s) => ({ ...s, loading: false, error: "Couldn't reach the server." })); });
     return () => ctrl.abort();
@@ -142,12 +143,11 @@ export function MarketScreen({ clientId, list }: { clientId: string; list: "mark
       <header className={k("top")}>
         <div className={k("ttl")}><h1>{title}</h1></div>
         <div className={k("hr")}>
-          <button type="button" className={k("btn")} disabled title={READ_ONLY}><Icon name="upload" size={15} />Import CSV</button>
-          <button type="button" className={k("btn")} disabled title={READ_ONLY}><Icon name="download" size={15} />Export</button>
+          <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Import CSV</button>
+          <button type="button" className={k("btn")} {...RO}><Icon name="download" size={15} />Export</button>
         </div>
       </header>
       <div className={k("content")}>
-        <Definition list={list} client={data?.client ?? null} mls={data?.mls ?? null} />
         {state.unavailable ? (
           <div className={k("es")}>
             <section className={k("card ec")}>
@@ -164,7 +164,7 @@ export function MarketScreen({ clientId, list }: { clientId: string; list: "mark
                 <span style={HIDDEN}>Search agents</span>
                 <input id={`crx-${list}-search`} type="search" placeholder="Search agents" value={search} onChange={(e) => setSearch(e.target.value)} />
               </label>
-              {list === "market" ? (
+              {(
                 <>
                   <Chip id="county" label="Location" value={f.county} show={(v) => v} choices={options?.counties ?? []} open={menu === "county"} onOpen={setMenu} onPick={(v) => set("county", v)} />
                   <Chip id="volume" label="Sales volume" value={f.minVolume} show={(v) => `${abbrevUsd(v)}+`} choices={VOLUME_PRESETS} open={menu === "volume"} onOpen={setMenu} onPick={(v) => set("minVolume", v)} />
@@ -175,25 +175,32 @@ export function MarketScreen({ clientId, list }: { clientId: string; list: "mark
                   />
                   <Chip id="brokerage" label="Brokerage" value={f.brokerage} show={(v) => v} choices={options?.brokerages ?? []} open={menu === "brokerage"} onOpen={setMenu} onPick={(v) => set("brokerage", v)} />
                   <Chip id="title" label="Title" value={f.title} show={(v) => v} choices={TITLES} open={menu === "title"} onOpen={setMenu} onPick={(v) => set("title", v)} />
-                  {any ? <button type="button" className={k("dd")} style={{ color: "#3e6bd1" }} onClick={() => { setF(NO_FILTERS); setPage(1); }}>Clear</button> : null}
+                  <button type="button" className={k("dd")} style={{ color: "#3e6bd1" }} onClick={() => { if (any) { setF(NO_FILTERS); setPage(1); } }}>Clear</button>
                 </>
-              ) : null}
+              )}
               <span style={{ flexGrow: 1 }} />
               <span className={k("cnt")} role="status">
-                {data ? <><span className={k("num")}>{total.toLocaleString("en-US")}</span> match</> : state.loading ? "Counting…" : null}
+                {data ? (
+                  <>
+                    <span className={k("num")}>{total.toLocaleString("en-US")}</span> match ·{" "}
+                    <button type="button" className={k("mlnk")} {...RO} style={{ border: 0, background: "transparent", padding: 0, color: "#3e6bd1", fontWeight: 500, cursor: "pointer", fontSize: 12 }}>
+                      Select all {total.toLocaleString("en-US")}
+                    </button>
+                  </>
+                ) : state.loading ? "Counting…" : null}
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: "1px solid #ebedf0", fontSize: 12, color: "#555a64" }}>
               <Icon name="info" size={14} />
               {q
                 ? "Agents matching your search are listed first; the count is the whole list, as in the Database app."
-                : "Moving agents between Prospects, My Agents and the DNC List is off in this preview."}
+                : <>Tick agents to move them to your prospects, My Agents or DNC List. To move one agent, click its list in the List&nbsp;column.</>}
             </div>
             <div style={{ overflow: "visible", borderTop: "1px solid #ebedf0", opacity: state.loading && data ? 0.55 : 1 }}>
               <table className={k("tb mkt")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label="Select all" disabled /></th>
+                    <th scope="col" style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label="Select all" {...RO} /></th>
                     <th scope="col">Name</th>
                     <th scope="col">Title</th>
                     <th scope="col">Brokerage</th>
@@ -214,7 +221,7 @@ export function MarketScreen({ clientId, list }: { clientId: string; list: "mark
                   ) : (
                     data.rows.map((r) => (
                       <tr key={r.id}>
-                        <td style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label={`Select ${r.name}`} disabled /></td>
+                        <td style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label={`Select ${r.name}`} {...RO} /></td>
                         <td><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className={k("av")}>{initials(r.name)}</span><span className={k("nm")}>{r.name}</span></div></td>
                         <td>{r.title ?? <span className={k("dash")}>&ndash;</span>}</td>
                         <td>{r.brokerage ?? <span className={k("dash")}>&ndash;</span>}</td>
@@ -223,8 +230,9 @@ export function MarketScreen({ clientId, list }: { clientId: string; list: "mark
                         <td className={k("r")}><span className={k("num")} style={{ fontWeight: 500 }}>{r.salesVolume !== null ? abbrevUsd(r.salesVolume) : "–"}</span></td>
                         <td className={k("r")}>{r.units ?? "–"}</td>
                         <td style={{ position: "relative" }}>
-                          <button type="button" className={k("lsel")} aria-label={`${r.name} is on: ${r.list}`} title={READ_ONLY} disabled>
+                          <button type="button" className={k("lsel")} aria-label={`Change list for ${r.name}`} aria-haspopup="menu" {...RO}>
                             <span className={k(`pill ${r.pill}`)}>{r.list}</span>
+                            <Icon name="chevDown" size={12} />
                           </button>
                         </td>
                       </tr>
@@ -274,7 +282,7 @@ function ReportCard({ group, interested, all }: { group: ReportGroup; interested
           ) : rows.map((r) => (
             <tr key={r.label}>
               <th scope="row" className={k("bl")} title={r.label}>{r.label}</th>
-              <td className={k("bt")}><span className={k("bar")}><span style={{ width: `${((r.n / max) * 100).toFixed(1)}%` }} /></span></td>
+              <td className={k("bt")}><span className={k("bar")}><span style={{ width: `${((r.n / max) * 100).toFixed(1)}%`, ...(interested ? { background: "#1a9a47" } : {}) }} /></span></td>
               <td className={k(interested ? "r bi" : "r br")}>{r.n.toLocaleString("en-US")}</td>
             </tr>
           ))}
@@ -297,7 +305,7 @@ function ReportCard({ group, interested, all }: { group: ReportGroup; interested
   );
 }
 
-export function ReportsScreen({ clientId, entries }: { clientId: string; entries: PipelineEntry[] }) {
+export function ReportsScreen({ clientId, entries, onContext }: { clientId: string; entries: PipelineEntry[]; onContext?: (text: string | null) => void }) {
   const [mode, setMode] = useState<"all" | "interested">("all");
   const [rep, setRep] = useState<{ loading: boolean; error: string | null; unavailable: string | null; data: { total: number; groups: ReportGroup[]; allBrokerages: GroupRow[]; client: string | null; mls: Mls } | null }>({ loading: true, error: null, unavailable: null, data: null });
   const interested = useMemo(() => interestedReport(entries), [entries]);
@@ -312,6 +320,7 @@ export function ReportsScreen({ clientId, entries }: { clientId: string; entries
         if (!ok) return setRep({ loading: false, error: j?.error ?? "The agent database could not be read.", unavailable: null, data: null });
         if (j.unavailable) return setRep({ loading: false, error: null, unavailable: j.unavailable, data: null });
         setRep({ loading: false, error: null, unavailable: null, data: { total: j.total, groups: j.groups ?? [], allBrokerages: j.allBrokerages ?? [], client: j.client ?? null, mls: j.mls } });
+        onContext?.(definition("market", j.client ?? null, j.mls ?? null));
       })
       .catch(() => { if (!cancelled) setRep({ loading: false, error: "Couldn't reach the server.", unavailable: null, data: null }); });
     return () => { cancelled = true; };
@@ -329,8 +338,8 @@ export function ReportsScreen({ clientId, entries }: { clientId: string; entries
           </div>
           <span className={k("cnt")}>
             {mode === "all"
-              ? <>Every agent in your market, by group{rep.data ? <> — {rep.data.total.toLocaleString("en-US")} agents</> : null}.</>
-              : <>Agents interested in talking, by&nbsp;group — the {interested.total.toLocaleString("en-US")} in the pipeline.</>}
+              ? <>Every agent in your market, by group.</>
+              : <>Agents interested in talking, by&nbsp;group.</>}
           </span>
         </div>
         {mode === "all" ? (
@@ -341,12 +350,9 @@ export function ReportsScreen({ clientId, entries }: { clientId: string; entries
           ) : !rep.data ? (
             <p className="cpv-muted" role="status">Counting the market… a large market takes about 20 seconds the first time.</p>
           ) : (
-            <>
-              <Definition list="market" client={rep.data.client} mls={rep.data.mls} />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, alignItems: "stretch" }}>
-                {rep.data.groups.map((g) => <ReportCard key={g.title} group={g} interested={false} all={g.title === "Current brokerage" ? rep.data!.allBrokerages : undefined} />)}
-              </div>
-            </>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, alignItems: "stretch" }}>
+              {rep.data.groups.map((g) => <ReportCard key={g.title} group={g} interested={false} all={g.title === "Current brokerage" ? rep.data!.allBrokerages : undefined} />)}
+            </div>
           )
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, alignItems: "stretch" }}>

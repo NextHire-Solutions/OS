@@ -416,3 +416,44 @@ export function panelFields(e: Pick<PipelineEntry, "lead_detail">): PanelField[]
   }
   return out;
 }
+
+/** A US phone number as the design writes it — (678) 884-4475 — or as it came when it is not one. */
+export function formatPhone(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  const digits = s.replace(/\D/g, "");
+  const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return ten.length === 10 ? `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}` : s;
+}
+
+// ------------------------------------------------------------ list pages ---
+
+export const LIST_PAGE_SIZE = 50;
+/** Each month opens with this many agents, then "Show N more from <month>" (the design's list). */
+export const ROWS_PER_MONTH = 3;
+
+export interface ListPage {
+  page: number;
+  pages: number;
+  from: number;
+  to: number;
+  total: number;
+  /** The months on this page; `monthTotal` is the whole month, as the design's group line counts it. */
+  groups: Array<{ key: string; label: string; monthTotal: number; rows: PipelineEntry[] }>;
+}
+
+/** One page of the list view: 50 agents, newest first, in their months. */
+export function listPage(entries: readonly PipelineEntry[], page: number): ListPage {
+  const months = groupByMonth(entries);
+  const flat = months.flatMap((g) => g.entries.map((e) => ({ g, e })));
+  const total = flat.length;
+  const pages = Math.max(1, Math.ceil(total / LIST_PAGE_SIZE));
+  const p = Math.min(Math.max(1, Math.floor(page) || 1), pages);
+  const groups: ListPage["groups"] = [];
+  for (const { g, e } of flat.slice((p - 1) * LIST_PAGE_SIZE, p * LIST_PAGE_SIZE)) {
+    const last = groups[groups.length - 1];
+    if (!last || last.key !== g.key) groups.push({ key: g.key, label: g.label, monthTotal: g.entries.length, rows: [e] });
+    else last.rows.push(e);
+  }
+  return { page: p, pages, from: total ? (p - 1) * LIST_PAGE_SIZE + 1 : 0, to: Math.min(p * LIST_PAGE_SIZE, total), total, groups };
+}

@@ -3,23 +3,25 @@
 /*
  * The redesign's other pages on the client's real lists — My Agents, DNC List,
  * Team, Integrations — and a placeholder for the pages this preview does not
- * draw yet. Adding, importing, editing and deleting are shown disabled.
+ * draw yet. Adding, importing, editing and deleting are drawn as designed and
+ * inert (k.ts RO); the bulk bar is disabled, as the design shows it untouched.
  */
 
 import { useMemo, useState } from "react";
 
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { initials } from "@/lib/crm-preview/model";
+import { formatPhone, initials } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
-import { k, READ_ONLY } from "./k";
+import { k, RO } from "./k";
 import fubLogo from "./follow-up-boss.png";
 
 const PAGE = 100;
 const AV = { width: 30, height: 30, fontSize: 11, background: "#eef2fa", color: "#2f55a8" } as const;
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
+/* `add` names the page's primary action; without it (an empty page, Integrations) the header is the title alone, as designed. */
 function Header({ title, add }: { title: string; add?: string }) {
   return (
     <header className={k("top")}>
@@ -27,9 +29,9 @@ function Header({ title, add }: { title: string; add?: string }) {
       <div className={k("hr")}>
         {add ? (
           <>
-            <button type="button" className={k("btn")} disabled title={READ_ONLY}><Icon name="download" size={15} />Export CSV</button>
-            <button type="button" className={k("btn")} disabled title={READ_ONLY}><Icon name="upload" size={15} />Import CSV</button>
-            <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}><Icon name="plus" size={15} />{add}</button>
+            <button type="button" className={k("btn")} {...RO}><Icon name="download" size={15} />Export CSV</button>
+            <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Import CSV</button>
+            <button type="button" className={k("btn pri")} {...RO}><Icon name="plus" size={15} />{add}</button>
           </>
         ) : null}
       </div>
@@ -53,7 +55,7 @@ function Search({ id, label, value, onChange, count }: { id: string; label: stri
 function BulkOff() {
   return (
     <div className={k("abulk")}>
-      <span>Bulk actions: off in this preview</span>
+      <span>Bulk actions: tick rows below to enable</span>
       <div className={k("acts")}>
         <button type="button" className={k("btn sm")} disabled><Icon name="download" size={14} />Export selected</button>
         <button type="button" className={k("btn sm")} disabled><Icon name="trash" size={14} />Delete selected</button>
@@ -65,8 +67,8 @@ function BulkOff() {
 function RowActions({ name }: { name: string }) {
   return (
     <td className={k("acts")}>
-      <button type="button" className={k("ib")} aria-label={`Edit ${name}`} title={READ_ONLY} disabled><Icon name="pencil" size={15} /></button>
-      <button type="button" className={k("ib")} aria-label={`Delete ${name}`} title={READ_ONLY} disabled><Icon name="trash" size={15} /></button>
+      <button type="button" className={k("ib")} aria-label={`Edit ${name}`} {...RO}><Icon name="pencil" size={15} /></button>
+      <button type="button" className={k("ib")} aria-label={`Delete ${name}`} {...RO}><Icon name="trash" size={15} /></button>
     </td>
   );
 }
@@ -84,13 +86,22 @@ function ShowMore({ shown, total, onMore }: { shown: number; total: number; onMo
   );
 }
 
-function Empty({ icon, title, text, red = false }: { icon: IconName; title: string; text: string; red?: boolean }) {
+function Empty({ icon, title, text, red = false, actions }: { icon: IconName; title: string; text: string; red?: boolean; actions?: string[] }) {
   return (
     <div className={k("es")}>
       <section className={k("card ec")}>
         <span className={k(red ? "ei r" : "ei")}><Icon name={icon} size={22} /></span>
         <h2>{title}</h2>
         <p>{text}</p>
+        {actions?.length ? (
+          <div className={k("ea")}>
+            {actions.map((a, i) => (
+              <button key={a} type="button" className={k(i === 0 ? "btn pri" : "btn")} {...RO}>
+                <Icon name={i === 0 ? "plus" : "upload"} size={15} />{a}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </section>
     </div>
   );
@@ -109,13 +120,13 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
   const found = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
   return (
     <>
-      <Header title="My Agents" add="Add agent" />
+      <Header title="My Agents" add={agents.length ? "Add agent" : undefined} />
       <div className={k("content")}>
-        <p className={k("lede")}>Your brokerage&apos;s own agents. We never reach out to anyone on this&nbsp;list.</p>
         {agents.length === 0 ? (
-          <Empty icon="users" title="No agents on your list yet" text="Add your brokerage's agents so we never reach out to them." />
+          <Empty icon="users" title="No agents added yet" text={"Add the agents already on your team so we never reach out to\u00a0them."} actions={["Add agents", "Import CSV"]} />
         ) : (
           <>
+            <p className={k("lede")}>Your brokerage&apos;s own agents. We never reach out to anyone on this&nbsp;list.</p>
             <div className={k("kpis")}>
               <div className={k("card kpi")}>
                 <div className={k("k")}><span className={k("lb")}>My Agents</span><span className={k("ki")}><Icon name="shield" size={16} /></span></div>
@@ -129,7 +140,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
               <table className={k("tb")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all agents" disabled /></th>
+                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all agents" {...RO} /></th>
                     <th scope="col" style={{ width: "36%" }}>Agent</th>
                     <th scope="col" style={{ width: "28%" }}>Email</th>
                     <th scope="col">Phone</th>
@@ -139,10 +150,10 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
                 <tbody>
                   {found.slice(0, limit).map((a) => (
                     <tr key={a.id}>
-                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${a.name}`} disabled /></td>
+                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${a.name}`} {...RO} /></td>
                       <td><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className={k("av")} style={AV}>{initials(a.name)}</span><span className={k("nm")}>{a.name}</span></div></td>
                       <td>{a.email || <Dash />}</td>
-                      <td>{a.phone || <Dash />}</td>
+                      <td>{formatPhone(a.phone) ?? <Dash />}</td>
                       <RowActions name={a.name} />
                     </tr>
                   ))}
@@ -168,20 +179,20 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const foundCompanies = useMemo(() => companies.filter((d) => has(q, d.name, d.domain, d.notes)), [companies, q]);
   return (
     <>
-      <Header title="DNC List" add="Add to DNC" />
+      <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} />
       <div className={k("content")}>
-        <p className={k("lede")}>Agents and companies we should never reach out&nbsp;to.</p>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", border: "1px solid #f6d5d2", borderRadius: 10, background: "#fef6f5", color: "#7a271a" }}>
-          <span style={{ width: 30, height: 30, borderRadius: 99, background: "#fdeeed", color: "#b42318", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="ban" size={16} /></span>
-          <span><b style={{ color: "#b42318" }}>Do not contact.</b> Everyone on this list, and every agent at these companies, is excluded from all&nbsp;outreach.</span>
-        </div>
         {dnc.length === 0 ? (
-          <Empty icon="ban" red title="Nobody on your DNC list" text="Add agents or whole companies we should never reach out to." />
+          <Empty icon="ban" red title="Your DNC List is empty" text={"Add agents or whole companies you never want contacted. They are excluded from all\u00a0outreach."} actions={["Add to DNC", "Import CSV"]} />
         ) : (
           <>
+            <p className={k("lede")}>Agents and companies we should never reach out&nbsp;to.</p>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", border: "1px solid #f6d5d2", borderRadius: 10, background: "#fef6f5", color: "#7a271a" }}>
+              <span style={{ width: 30, height: 30, borderRadius: 99, background: "#fdeeed", color: "#b42318", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="ban" size={16} /></span>
+              <span><b style={{ color: "#b42318" }}>Do not contact.</b> Everyone on this list, and every agent at these companies, is excluded from all&nbsp;outreach.</span>
+            </div>
             <div className={k("kpis")}>
               <div className={k("card kpi")}>
-                <div className={k("k")}><span className={k("lb")}>DNC agents</span><span className={k("ki")}><Icon name="ban" size={16} /></span></div>
+                <div className={k("k")}><span className={k("lb")}>DNC agents</span><span className={k("ki")}><Icon name="users" size={16} /></span></div>
                 <span className={k("v")} style={{ color: "#3e6bd1" }}>{people.length.toLocaleString("en-US")}</span>
                 <span className={k("s")}>never contacted in any outreach</span>
               </div>
@@ -198,7 +209,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
               <table className={k("tb")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all DNC agents" disabled /></th>
+                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all DNC agents" {...RO} /></th>
                     <th scope="col" style={{ width: "30%" }}>Agent</th>
                     <th scope="col" style={{ width: "26%" }}>Brokerage</th>
                     <th scope="col">Email / Phone</th>
@@ -208,7 +219,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                 <tbody>
                   {foundPeople.slice(0, limit).map((d) => (
                     <tr key={d.id}>
-                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} disabled /></td>
+                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} {...RO} /></td>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span className={k("av")} style={AV}>{initials(d.name)}</span>
@@ -221,7 +232,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                         {d.email || d.phone ? (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                             {d.email ? <span>{d.email}</span> : null}
-                            {d.phone ? <span className={k("sub")} style={{ fontSize: 12 }}>{d.phone}</span> : null}
+                            {d.phone ? <span className={k("sub")} style={{ fontSize: 12 }}>{formatPhone(d.phone)}</span> : null}
                           </div>
                         ) : <Dash />}
                       </td>
@@ -240,7 +251,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                   <table className={k("tb")}>
                     <thead>
                       <tr>
-                        <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all DNC companies" disabled /></th>
+                        <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all DNC companies" {...RO} /></th>
                         <th scope="col" style={{ width: "30%" }}>Company</th>
                         <th scope="col" style={{ width: "26%" }}>Email domain</th>
                         <th scope="col">Notes</th>
@@ -250,7 +261,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                     <tbody>
                       {foundCompanies.map((d) => (
                         <tr key={d.id}>
-                          <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} disabled /></td>
+                          <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} {...RO} /></td>
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                               <span className={k("av")} style={{ ...AV, background: "#f1f3f6", color: "#555a64" }}><Icon name="building" size={14} /></span>
@@ -294,7 +305,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
               <table className={k("tb")}>
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all team members" disabled /></th>
+                    <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all team members" {...RO} /></th>
                     <th scope="col" style={{ width: "24%" }}>Member</th>
                     <th scope="col" style={{ width: "22%" }}>Title</th>
                     <th scope="col">Email / Phone</th>
@@ -305,7 +316,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
                 <tbody>
                   {found.map((m) => (
                     <tr key={m.id} style={{ height: 60 }}>
-                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${m.name}`} disabled /></td>
+                      <td><input type="checkbox" className={k("ck")} aria-label={`Select ${m.name}`} {...RO} /></td>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span className={k("avw")}>
@@ -319,11 +330,11 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
                       <td>
                         <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "8px 0" }}>
                           <span style={{ color: "#1f2124" }}>{m.email}</span>
-                          {m.phone ? <span className={k("sub")} style={{ fontSize: 12 }}>{m.phone}</span> : null}
+                          {m.phone ? <span className={k("sub")} style={{ fontSize: 12 }}>{formatPhone(m.phone)}</span> : null}
                         </div>
                       </td>
                       <td>
-                        <span className={k(m.active ? "sw" : "sw off")} role="switch" aria-checked={m.active} aria-disabled="true" aria-label={`${m.name} receives intro emails`} title={READ_ONLY} />
+                        <span className={k(m.active ? "sw" : "sw off")} role="switch" aria-checked={m.active} aria-label={`${m.name} receives intro emails`} {...RO} />
                       </td>
                       <RowActions name={m.name} />
                     </tr>
@@ -363,8 +374,8 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
             <div style={{ padding: "18px 20px 20px", borderTop: "1px solid #ebedf0", display: "flex", flexDirection: "column", gap: 8 }}>
               <label className={k("fl")} htmlFor="crx-fubkey">API key</label>
               <div className={k("inw")}>
-                <input id="crx-fubkey" className={k("in")} type="password" placeholder={fubConnected ? "A key is saved for this client" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} disabled />
-                <button type="button" className={k("ib")} aria-label="Show API key" disabled><Icon name="eye" size={15} /></button>
+                <input id="crx-fubkey" className={k("in")} type="password" placeholder={fubConnected ? "A key is saved for this client" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} readOnly {...RO} />
+                <button type="button" className={k("ib")} aria-label="Show API key" {...RO}><Icon name="eye" size={15} /></button>
               </div>
               <p className={k("hint")}>
                 Find it in Follow Up Boss under <b style={{ color: "#1f2124", fontWeight: 500 }}>My Settings &rarr; API</b>.{" "}
@@ -373,7 +384,7 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
                 </a>
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-                <button type="button" className={k("btn pri dim")} disabled title={READ_ONLY}>{fubConnected ? "Update key" : "Connect"}</button>
+                <button type="button" className={k("btn pri dim")} {...RO}>{fubConnected ? "Update key" : "Connect"}</button>
               </div>
             </div>
           </section>

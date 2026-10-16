@@ -82,7 +82,7 @@ test("the page checks the Owner before it reads anything", () => {
   const gate = src.indexOf("canSeeCrmPreview(");
   assert.ok(gate > 0, "the page calls the gate");
   assert.match(src.slice(gate, gate + 200), /notFound\(\)/, "and shows Not found to anyone else");
-  for (const load of ["loadPipelineEntries(", "loadAgentEntries(", "loadDncEntries(", "loadTeamMembers(", ".from(\"clients\")"]) {
+  for (const load of ["loadPipelineEntries(", "loadAgentEntries(", "loadDncEntries(", "loadTeamMembers(", ".from(\"clients\")", "osTable(", "pipeline_outcome_events"]) {
     const at = src.indexOf(load);
     assert.ok(at === -1 || at > gate, `${load} only after the gate`);
   }

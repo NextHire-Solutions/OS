@@ -5,10 +5,12 @@ import type { PipelineEntry, PipelineStage } from "@/lib/tools/master-inbox/port
 import { canonicalStageDefs, resolveStageDefs, type ClientStageRow } from "@/lib/tools/master-inbox/portals/stage-config";
 import {
   abbrevUsd,
+  formatPhone,
   furthestStages,
   groupByMonth,
   inRange,
   initials,
+  listPage,
   messageText,
   panelFields,
   pipelineView,
@@ -236,4 +238,33 @@ test("initials", () => {
   assert.equal(initials("Cher"), "C");
   assert.equal(initials("  "), "?");
   assert.equal(initials("Mary Ann van Dyke"), "MD");
+});
+
+test("phones as the design writes them; anything else as it came", () => {
+  assert.equal(formatPhone("6788844475"), "(678) 884-4475");
+  assert.equal(formatPhone("678.341.4921"), "(678) 341-4921");
+  assert.equal(formatPhone("+1 (404) 555-0182"), "(404) 555-0182");
+  assert.equal(formatPhone("1-404-555-0182"), "(404) 555-0182");
+  assert.equal(formatPhone("+44 20 7946 0958"), "+44 20 7946 0958");
+  assert.equal(formatPhone("ext 12"), "ext 12");
+  assert.equal(formatPhone("  "), null);
+  assert.equal(formatPhone(null), null);
+});
+
+test("the list in pages of 50: newest first, months kept together, each month counted whole", () => {
+  const at = (iso: string) => entry("introduction", { introduced_at: iso });
+  const entries = [
+    ...Array.from({ length: 9 }, (_, i) => at(`2026-10-0${i + 1}T15:00:00Z`)),
+    ...Array.from({ length: 27 }, (_, i) => at(`2026-09-${String(i + 1).padStart(2, "0")}T15:00:00Z`)),
+    ...Array.from({ length: 31 }, (_, i) => at(`2026-08-${String(i + 1).padStart(2, "0")}T15:00:00Z`)),
+  ];
+  const p1 = listPage(entries, 1);
+  assert.deepEqual([p1.page, p1.pages, p1.from, p1.to, p1.total], [1, 2, 1, 50, 67]);
+  assert.deepEqual(p1.groups.map((g) => [g.label, g.rows.length, g.monthTotal]), [["October 2026", 9, 9], ["September 2026", 27, 27], ["August 2026", 14, 31]]);
+  assert.equal(p1.groups[0].rows[0].introduced_at, "2026-10-09T15:00:00Z", "newest first");
+  const p2 = listPage(entries, 2);
+  assert.deepEqual([p2.from, p2.to], [51, 67]);
+  assert.deepEqual(p2.groups.map((g) => [g.label, g.rows.length, g.monthTotal]), [["August 2026", 17, 31]]);
+  assert.equal(listPage(entries, 99).page, 2, "past the end: the last page");
+  assert.deepEqual([listPage([], 1).from, listPage([], 1).to, listPage([], 1).pages], [0, 0, 1]);
 });

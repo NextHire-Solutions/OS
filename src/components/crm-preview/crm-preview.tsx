@@ -6,14 +6,14 @@
  * who may see it and why it is read-only.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
 import { initials, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
-import { k } from "./k";
+import { k, RO } from "./k";
 import { PipelineScreen } from "./pipeline";
 import { DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
 import { MarketScreen, ReportsScreen } from "./market";
@@ -25,6 +25,8 @@ export interface PreviewClient {
   name: string;
   token: string;
   fubConnected: boolean;
+  /** The client's main contact (os_clients.contact_name), shown where the design shows the signed-in person. */
+  contactName: string | null;
 }
 
 type RailItem = { view: PreviewView | "billing"; label: string; icon: IconName; badge?: string };
@@ -75,12 +77,32 @@ export function CrmPreview({
 }) {
   const [view, setView] = useState<PreviewView>(initialView);
   const [collapsed, setCollapsed] = useState(false);
+  // What the page shows is explained up here, in the preview's own bar — never inside the design.
+  const [context, setContext] = useState<string | null>(null);
+  // The note a read-only control gives when it is clicked.
+  const [toast, setToast] = useState(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  /*
+   * Every control that would change something carries data-ro (k.ts RO): it is
+   * drawn as the design draws it, and its click stops here — before any
+   * handler, a checkbox toggle or a link — with a note instead.
+   */
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (!(e.target as Element).closest?.("[data-ro]")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setToast(true);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(false), 2600);
+  };
   // The server's clock, so the first draw in the browser matches the server's.
   const today = useMemo(() => new Date(now), [now]);
 
   const hrefFor = (v: PreviewView) => `/crm-preview?client=${encodeURIComponent(client.id)}&view=${v}`;
   const go = (v: PreviewView) => {
     setView(v);
+    setContext(null);
     window.history.replaceState(null, "", hrefFor(v));
     window.scrollTo(0, 0);
   };
@@ -91,6 +113,7 @@ export function CrmPreview({
         <span className="cpv-tag">PREVIEW</span>
         <b>New client portal design</b>
         <span className="cpv-note">Read-only · private: not visible to clients or the team · {client.name}&apos;s live portal is unchanged</span>
+        {context ? <span className="cpv-note cpv-context">{context}</span> : null}
         <span className="cpv-right">
           <select
             id="cpv-client"
@@ -106,7 +129,7 @@ export function CrmPreview({
         </span>
       </div>
 
-      <div className={k("app")}>
+      <div className={k("app")} onClickCapture={onClickCapture}>
         <nav className={k(collapsed ? "rail cl" : "rail")} aria-label="Main">
           <div className={k("lg")}>
             <span className={k("lw")}>
@@ -130,7 +153,7 @@ export function CrmPreview({
                 if (item.view === "billing") {
                   // The client's Stripe page in the design; nothing to open from a preview.
                   return (
-                    <span key="billing" className={k("ri")} title="Billing opens the client's Stripe page — not in this preview" aria-disabled="true">
+                    <span key="billing" className={k("ri")} {...RO} title="Billing opens the client's Stripe page — not in this preview">
                       <Icon name={item.icon} size={17} />
                       <span className={k("t")}>{item.label}</span>
                       <span className={k("ex")}><Icon name="external" size={13} /></span>
@@ -162,10 +185,10 @@ export function CrmPreview({
           ))}
           <div className={k("ft")}>
             <div className={k("usr")}>
-              <i>{initials(client.name)}</i>
+              <i>{initials(client.contactName ?? client.name)}</i>
               <span>
-                {client.name}
-                <small>Portal preview</small>
+                {client.contactName ?? client.name}
+                <small>{client.contactName ? client.name : "Portal preview"}</small>
               </span>
             </div>
           </div>
@@ -175,9 +198,9 @@ export function CrmPreview({
           {view === "pipeline" ? (
             <PipelineScreen entries={entries} stages={stages} furthest={furthest} token={client.token} now={today} />
           ) : view === "market" || view === "prospects" ? (
-            <MarketScreen key={view} clientId={client.id} list={view} />
+            <MarketScreen key={view} clientId={client.id} list={view} onContext={setContext} />
           ) : view === "reports" ? (
-            <ReportsScreen clientId={client.id} entries={entries} />
+            <ReportsScreen clientId={client.id} entries={entries} onContext={setContext} />
           ) : view === "campaigns" ? (
             <CampaignsScreen />
           ) : view === "help" ? (
@@ -192,6 +215,18 @@ export function CrmPreview({
             <IntegrationsScreen fubConnected={client.fubConnected} />
           )}
         </div>
+        {/* The design's support chat, on every page. The chat itself is not built yet. */}
+        <a
+          className={k("aiask")}
+          {...RO}
+          aria-label="Open support chat"
+          title="Support chat — not built yet"
+          style={{ position: "fixed", right: 24, bottom: 24, zIndex: 13, width: 56, height: 56, borderRadius: 99, background: "#3e6bd1", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 24px rgba(62,107,209,0.35)", textDecoration: "none", color: "#fff" }}
+        >
+          <Icon name="chat" size={24} />
+          <span style={{ position: "absolute", top: 2, right: 2, width: 12, height: 12, borderRadius: 99, background: "#22c55e", border: "2px solid #fff" }} />
+        </a>
+        {toast ? <div className="cpv-toast" role="status">Read-only preview — nothing here changes {client.name}&apos;s portal.</div> : null}
       </div>
     </>
   );

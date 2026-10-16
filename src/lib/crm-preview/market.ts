@@ -227,9 +227,12 @@ export const marketReport = ttlCache(async (ctx: MarketContext): Promise<MarketR
     if (all.total > known) m.set("Unknown", all.total - known);
     return bandRows(m, labels);
   };
-  // "City, ST" kept whole: a market can cross states (ChuckTown's Columbia is SC, not MO).
+  // City names as the design shows them ("Atlanta"); "City, ST" only when the market crosses states
+  // (ChuckTown's Columbia is SC, and another market's could be MO).
+  const states = new Set(candidates.map((v) => (/,\s*([A-Z]{2})$/.exec(v)?.[1] ?? "")));
+  const oneState = states.size === 1 && !states.has("");
   const cityRows = candidates
-    .map((v, i) => ({ label: v, n: cityCounts[i] }))
+    .map((v, i) => ({ label: oneState ? v.replace(/,\s*[A-Z]{2}$/, "") : v, n: cityCounts[i] }))
     .filter((r) => r.n > 0)
     .sort((a, b) => b.n - a.n)
     .slice(0, 8);
