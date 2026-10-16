@@ -47,14 +47,26 @@ export function postmarkToken(env: Env = process.env): string | null {
   return t ? t : null;
 }
 
+/** Postmark's transactional stream — one-to-one mail, no unsubscribe footer, its own reputation. */
+export const DEFAULT_STREAM = "outbound";
+
+/*
+ * The message stream. A hand-off is one person's email to another, so it
+ * goes on a TRANSACTIONAL stream. Postmark's default broadcast stream is
+ * named "broadcast"; it is for bulk mail and adds an unsubscribe footer to
+ * the agent's words, so it is refused here whatever the environment says.
+ */
 export function messageStream(env: Env = process.env): string {
-  return env[STREAM_ENV]?.trim() || "outbound";
+  const v = env[STREAM_ENV]?.trim();
+  if (!v || !/^[a-z0-9-]{1,30}$/i.test(v) || /^broadcasts?$/i.test(v)) return DEFAULT_STREAM;
+  return v;
 }
 
-/** True for an address on the relay's own domain — the only kind it may send From. */
+const RELAY_ADDRESS = new RegExp(`^[a-z0-9._%+-]+@${RELAY_DOMAIN.replace(/\./g, "\\.")}$`);
+
+/** True for an address on the relay's own domain — the only kind it may send From. Exactly one @. */
 export function isRelayAddress(address: string | null | undefined): boolean {
-  const a = (address ?? "").trim().toLowerCase();
-  return /^[a-z0-9._%+-]+@/.test(a) && a.endsWith(`@${RELAY_DOMAIN}`);
+  return RELAY_ADDRESS.test((address ?? "").trim().toLowerCase());
 }
 
 /**

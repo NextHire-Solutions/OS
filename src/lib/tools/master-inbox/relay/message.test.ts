@@ -17,7 +17,7 @@ import {
   relaySubject,
   type RelayEmail,
 } from "./message.ts";
-import { createPostmarkTransport, fetchBounces, postmarkPayload, POSTMARK_API } from "./postmark.ts";
+import { bounceKind, createPostmarkTransport, fetchBounces, postmarkPayload, POSTMARK_API } from "./postmark.ts";
 import type { MessageFacts } from "./rules.ts";
 
 const m = (over: Partial<MessageFacts>): MessageFacts => ({
@@ -192,11 +192,50 @@ test("a refusal is definite; a dropped connection is not (it may have been sent 
 });
 
 test("bounces are a read (GET /bounces), and need the token", async () => {
-  const { f, calls } = spyFetch({ status: 200, body: { Bounces: [{ ID: 1, Type: "HardBounce", MessageID: "pm-1", Email: "a@b.test" }] } });
+  const { f, calls } = spyFetch({ status: 200, body: { Bounces: [{ ID: 1, Type: "HardBounce", MessageID: "pm-1", Email: "a@b.test" }], TotalCount: 1 } });
   assert.equal((await fetchBounces(new Date("2026-10-10T00:00:00.000Z"), { fetch: f, env: {} })).ok, false);
   const r = await fetchBounces(new Date("2026-10-10T00:00:00.000Z"), { fetch: f, env: { POSTMARK_SERVER_TOKEN: "t" } });
   assert.equal(r.ok && r.bounces.length, 1);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].init?.method, "GET");
-  assert.equal(calls[0].url, `${POSTMARK_API}/bounces?count=100&offset=0&fromdate=2026-10-10`);
+  assert.equal(calls[0].url, `${POSTMARK_API}/bounces?count=500&offset=0&fromdate=2026-10-10`);
+});
+
+/* ------------------------------------------------------------------ review fixes (17 Oct) */
+
+const LIVE_ENV = { OS_BROKERAGE_RELAY_LIVE_SEND: "1", POSTMARK_SERVER_TOKEN: "server-token-test" };
+
+test("only a 4xx is a definite refusal; a 5xx or an unreadable 2xx may have been sent (review fix)", async () => {
+  const send = (status: number, body: unknown) => createPostmarkTransport({ fetch: spyFetch({ status, body }).f, env: LIVE_ENV }).send(build());
+  const fiveHundred = await send(500, { ErrorCode: 0, Message: "Internal" });
+  assert.equal(!fiveHundred.ok && fiveHundred.definite, false, "500: Postmark may have accepted it");
+  const garbled = await send(200, "<html>proxy page</html>");
+  assert.equal(!garbled.ok && garbled.definite, false, "200 with no MessageID: unknown, never 'refused'");
+  const tooMany = await send(429, { ErrorCode: 429, Message: "Rate limit" });
+  assert.equal(!tooMany.ok && tooMany.definite, true);
+  const badToken = await send(401, { ErrorCode: 10, Message: "Bad or missing API token" });
+  assert.equal(!badToken.ok && badToken.definite, true);
+});
+
+test("every page of bounces is read — a capped first page is not the whole list (review fix)", async () => {
+  const calls: string[] = [];
+  const page = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ ID: from + i, Type: "HardBounce", MessageID: `pm-${from + i}`, Email: "a@b.test" }));
+  const f = (async (url: RequestInfo | URL) => {
+    calls.push(String(url));
+    const offset = Number(new URL(String(url)).searchParams.get("offset"));
+    const rows = offset === 0 ? page(500, 0) : page(3, 500);
+    return new Response(JSON.stringify({ Bounces: rows, TotalCount: 503 }), { status: 200 });
+  }) as typeof fetch;
+  const r = await fetchBounces(new Date("2026-10-10T00:00:00.000Z"), { fetch: f, env: { POSTMARK_SERVER_TOKEN: "t" } });
+  assert.equal(r.ok && r.bounces.length, 503);
+  assert.deepEqual(calls.map((u) => new URL(u).searchParams.get("offset")), ["0", "500"]);
+  const endless = (async () => new Response(JSON.stringify({ Bounces: page(500, 0), TotalCount: 99999 }), { status: 200 })) as typeof fetch;
+  const capped = await fetchBounces(new Date("2026-10-10T00:00:00.000Z"), { fetch: endless, env: { POSTMARK_SERVER_TOKEN: "t" } });
+  assert.equal(capped.ok, false, "too many to read in full is an error, not a silent cut");
+});
+
+test("an out-of-office or a delay is not a bounce; a spam report is its own kind (review fix)", () => {
+  for (const t of ["AutoResponder", "Transient", "AddressChange", "Subscribe", "ChallengeVerification", "OpenRelayTest"]) assert.equal(bounceKind(t), "ignore", t);
+  for (const t of ["SpamComplaint", "SpamNotification"]) assert.equal(bounceKind(t), "spam", t);
+  for (const t of ["HardBounce", "SoftBounce", "BadEmailAddress", "DnsError", "Blocked", "ManuallyDeactivated", "Unsubscribe", "DMARCPolicy", "Unknown", ""]) assert.equal(bounceKind(t), "bounce", t);
 });

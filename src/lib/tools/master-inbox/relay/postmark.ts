@@ -94,11 +94,18 @@ export function createPostmarkTransport(deps: TransportDeps = {}): Transport {
         if (res.ok && body?.ErrorCode === 0 && body.MessageID) {
           return { ok: true, messageId: body.MessageID, submittedAt: body.SubmittedAt ?? null };
         }
+        /*
+         * Only a 4xx is a definite "not accepted" (422 invalid / inactive
+         * recipient, 401 bad token, 429 too many). A 5xx, or a 2xx we cannot
+         * read, may have been accepted — treated like a dropped connection, so
+         * the agent's slot is kept and nothing is retried by itself.
+         */
+        const definite = res.status >= 400 && res.status < 500;
         return {
           ok: false,
           gated: null,
-          error: `Postmark refused (${res.status}, code ${body?.ErrorCode ?? "?"}): ${String(body?.Message ?? "no answer").slice(0, 300)}`,
-          definite: true,
+          error: `${definite ? "Postmark refused" : "Postmark's answer was unclear"} (${res.status}, code ${body?.ErrorCode ?? "?"}): ${String(body?.Message ?? "no answer").slice(0, 300)}`,
+          definite,
         };
       } catch (e) {
         return { ok: false, gated: null, error: `Postmark did not answer: ${e instanceof Error ? e.message : String(e)}`, definite: false };
@@ -118,9 +125,31 @@ export interface PostmarkBounce {
 }
 
 /*
+ * Which of Postmark's bounce records mean the hand-off did NOT reach someone
+ * (or reached them and was reported as spam). Postmark lists more than
+ * failures under /bounces: an out-of-office from Angela ("AutoResponder"), a
+ * delay it is still retrying ("Transient"), a forwarding notice
+ * ("AddressChange") — the email arrived, so those are not bounces here.
+ */
+const NOT_A_FAILURE = new Set(["Transient", "AutoResponder", "AddressChange", "Subscribe", "ChallengeVerification", "OpenRelayTest"]);
+const SPAM_REPORT = new Set(["SpamComplaint", "SpamNotification"]);
+
+export function bounceKind(type: string | null | undefined): "ignore" | "spam" | "bounce" {
+  const t = String(type ?? "").trim();
+  if (NOT_A_FAILURE.has(t)) return "ignore";
+  return SPAM_REPORT.has(t) ? "spam" : "bounce";
+}
+
+/** Postmark's page size limit for GET /bounces. */
+const BOUNCE_PAGE = 500;
+const MAX_BOUNCE_PAGES = 10;
+
+/*
  * Bounces since a date — a READ (GET /bounces), used for the plan's "an alert
  * if any email bounces" without opening a public webhook in the proxy. Only
- * called when something was actually sent.
+ * called when something was actually sent. Every page is read (a capped first
+ * page is never taken for the whole list); more than 5,000 in the window is
+ * an error rather than a silent cut.
  */
 export async function fetchBounces(
   since: Date,
@@ -131,15 +160,22 @@ export async function fetchBounces(
   if (!token) return { ok: false, error: `${TOKEN_ENV} is not set` };
   const doFetch = deps.fetch ?? fetch;
   const fromdate = since.toISOString().slice(0, 10);
+  const all: PostmarkBounce[] = [];
   try {
-    const res = await doFetch(`${POSTMARK_API}/bounces?count=100&offset=0&fromdate=${fromdate}`, {
-      method: "GET",
-      headers: { Accept: "application/json", "X-Postmark-Server-Token": token },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) return { ok: false, error: `Postmark answered ${res.status}` };
-    const body = (await res.json().catch(() => null)) as { Bounces?: PostmarkBounce[] } | null;
-    return { ok: true, bounces: Array.isArray(body?.Bounces) ? body!.Bounces : [] };
+    for (let page = 0; page < MAX_BOUNCE_PAGES; page++) {
+      const res = await doFetch(`${POSTMARK_API}/bounces?count=${BOUNCE_PAGE}&offset=${page * BOUNCE_PAGE}&fromdate=${fromdate}`, {
+        method: "GET",
+        headers: { Accept: "application/json", "X-Postmark-Server-Token": token },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return { ok: false, error: `Postmark answered ${res.status}` };
+      const body = (await res.json().catch(() => null)) as { Bounces?: PostmarkBounce[]; TotalCount?: number } | null;
+      const rows = Array.isArray(body?.Bounces) ? body!.Bounces : [];
+      all.push(...rows);
+      const total = typeof body?.TotalCount === "number" ? body.TotalCount : null;
+      if (rows.length < BOUNCE_PAGE || (total !== null && all.length >= total)) return { ok: true, bounces: all };
+    }
+    return { ok: false, error: `more than ${MAX_BOUNCE_PAGES * BOUNCE_PAGE} bounces since ${fromdate} — not read in full` };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

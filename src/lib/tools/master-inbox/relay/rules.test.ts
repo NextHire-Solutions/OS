@@ -20,7 +20,7 @@ import {
   pipelineEntryFrom,
   RelaySettingsError,
 } from "./settings.ts";
-import { DEFAULT_FROM_ADDRESS, fromAddress, isRelayAddress, liveSendAllowed, sweepSwitchedOff } from "./gate.ts";
+import { DEFAULT_FROM_ADDRESS, fromAddress, isRelayAddress, liveSendAllowed, messageStream, sweepSwitchedOff } from "./gate.ts";
 import { campaignKey, osClientForPortal, portalsOfClient, resolveBrokerage, type World } from "./resolve.ts";
 import {
   dncHit,
@@ -127,6 +127,23 @@ test("gate: live send only on exactly '1'; From only on leads.brokerstaffer.com"
   assert.equal(fromAddress({ OS_BROKERAGE_RELAY_FROM: "nicole.c@brokerstaffer.com" }), DEFAULT_FROM_ADDRESS, "never the normal mail");
   assert.equal(fromAddress({ OS_BROKERAGE_RELAY_FROM: "Intros@Leads.BrokerStaffer.com" }), "intros@leads.brokerstaffer.com");
   assert.equal(isRelayAddress("x@evil-leads.brokerstaffer.com.attacker.test"), false);
+});
+
+test("gate: From has exactly one @, on leads.brokerstaffer.com itself (review fix)", () => {
+  // Used to pass: it began like an address and ended in "@leads.brokerstaffer.com".
+  assert.equal(isRelayAddress("x@attacker.test@leads.brokerstaffer.com"), false);
+  assert.equal(fromAddress({ OS_BROKERAGE_RELAY_FROM: "x@attacker.test@leads.brokerstaffer.com" }), DEFAULT_FROM_ADDRESS);
+  assert.equal(isRelayAddress("agents@sub.leads.brokerstaffer.com"), false);
+  assert.equal(isRelayAddress("agents@leadsxbrokerstaffer.com"), false, "the dot is literal");
+  assert.equal(isRelayAddress(" Agents@Leads.BrokerStaffer.com "), true);
+});
+
+test("gate: the transactional stream always — the broadcast stream is refused (review fix)", () => {
+  assert.equal(messageStream({}), "outbound");
+  assert.equal(messageStream({ POSTMARK_MESSAGE_STREAM: "broadcast" }), "outbound");
+  assert.equal(messageStream({ POSTMARK_MESSAGE_STREAM: "Broadcasts" }), "outbound");
+  assert.equal(messageStream({ POSTMARK_MESSAGE_STREAM: "out bound" }), "outbound", "not a stream id");
+  assert.equal(messageStream({ POSTMARK_MESSAGE_STREAM: "brokerage-relay" }), "brokerage-relay");
 });
 
 /* ------------------------------------------------------------------ resolve */
