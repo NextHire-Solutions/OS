@@ -187,11 +187,21 @@ async function campaignsFor(clientIds: string[]): Promise<CampaignRow[]> {
     .filter((r) => !(r as { excluded?: boolean }).excluded)
     .map((r) => String(r.campaign_id));
 
+  /*
+   * Only campaigns that still exist on their platform — the same rows the
+   * pause itself reads (Analytics' campaigns_unified: EmailBison deleted_at IS
+   * NULL, Instantly archived_at IS NULL). A campaign deleted in EmailBison
+   * keeps its last status here ("active"), so without this it was planned for
+   * a pause the pause step then refused as unknown — a false "could not be
+   * paused" on Oz Group's status change (19 Oct), and a client that could
+   * never be deleted. A deleted or archived campaign cannot send.
+   */
   if (bisonIds.length) {
     const { data, error } = await db
       .from("campaigns")
       .select("id, name, status")
-      .in("id", bisonIds);
+      .in("id", bisonIds)
+      .is("deleted_at", null);
     if (error) throw new Error(error.message);
     for (const c of (data ?? []) as { id: unknown; name: string; status: unknown }[]) {
       out.push({
@@ -206,7 +216,8 @@ async function campaignsFor(clientIds: string[]): Promise<CampaignRow[]> {
     const { data, error } = await db
       .from("instantly_campaigns")
       .select("id, name, status")
-      .in("id", instantlyIds);
+      .in("id", instantlyIds)
+      .is("archived_at", null);
     if (error) throw new Error(error.message);
     for (const c of (data ?? []) as { id: unknown; name: string; status: unknown }[]) {
       out.push({

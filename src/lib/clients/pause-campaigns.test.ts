@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   PAUSABLE_STATUSES,
@@ -155,4 +156,14 @@ test("matchPauseResults: a campaign with no result is a failure, not assumed pau
   const out = matchPauseResults([{ platform: "emailbison", id: "1" }], []);
   assert.equal(out[0].ok, false);
   assert.match(out[0].error ?? "", /no result/);
+});
+
+test("a client's campaigns are only those still on their platform — the rows the pause itself reads (deleted / archived ones are never planned)", () => {
+  // The pause step (applyCampaignAction) reads Analytics' campaigns_unified, which
+  // hides EmailBison rows with deleted_at and Instantly rows with archived_at. The
+  // client lookup must hide the same, or a deleted campaign still saying "active"
+  // is planned and then refused as unknown (Oz Group, 19 Oct).
+  const src = readFileSync(new URL("./pause-campaigns.ts", import.meta.url), "utf8");
+  assert.match(src, /from\("campaigns"\)[\s\S]{0,120}\.is\("deleted_at", null\)/);
+  assert.match(src, /from\("instantly_campaigns"\)[\s\S]{0,120}\.is\("archived_at", null\)/);
 });
