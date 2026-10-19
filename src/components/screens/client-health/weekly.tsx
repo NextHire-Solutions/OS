@@ -314,7 +314,7 @@ function Row({
    * running; ⏸ disabled when nothing is. Distinct from the client's status,
    * which is the lifecycle on the Clients page.
    */
-  // Held = paused from here AND still not running: one resumed elsewhere is live, so it gets ⏸, not ▶ (20 Oct).
+  // Held = paused from here AND still paused — not resumed elsewhere, not finished since (20 Oct).
   const held = stillHeld(c).length;
   // Nothing running and everything paused/finished — paused somewhere else.
   // ▶ still resumes: the dialog previews the live-paused ones first.

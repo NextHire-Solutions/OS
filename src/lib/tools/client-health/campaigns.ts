@@ -48,20 +48,29 @@ export function activeCampaigns(c: DashboardClient): AnyCampaign[] {
 }
 
 /*
- * The campaigns the Play/Pause button paused that are STILL not running (20
- * Oct). One resumed somewhere else — in EmailBison or Instantly directly — is
- * running again, so it is no longer held: Howe Realty's #351 was paused from
- * the button on 9 Oct, resumed in EmailBison later, and the row went on
- * offering ▶ beside "1 active campaign". The stored list is left as it is (the
- * next press tidies it: a resume skips and drops campaigns already running);
- * this only stops the button showing a resume for a campaign that is live.
+ * The campaigns the Play/Pause button paused that are STILL paused (20 Oct) —
+ * the ones a ▶ could actually resume. Two kinds on the stored list are not:
+ *
+ *   - resumed somewhere else (in EmailBison or Instantly directly) and running
+ *     again — Howe Realty's #351, The Toll Group's #308, PRG's #271;
+ *   - finished since (out of leads) — a finished campaign is never restarted
+ *     by this button — while the client's NEW campaigns run (Bastion, Norvell,
+ *     The Rafeh Group, Douglas Elliman Las Vegas…).
+ *
+ * Each left those rows offering ▶ beside "N active campaigns". The stored list
+ * is left as it is (the next press tidies it: a resume skips and drops
+ * campaigns running or finished); this only decides what the button offers.
+ * A held campaign whose status is unknown stays held.
  */
 export function stillHeld(c: Pick<DashboardClient, "toggle_paused_campaigns" | "campaigns" | "bisonCampaigns">): ToggledCampaign[] {
-  const running = new Set([
-    ...c.campaigns.filter((x) => x.status === "running").map((x) => `instantly:${x.id}`),
-    ...c.bisonCampaigns.filter((x) => x.status === "running").map((x) => `bison:${x.id}`),
+  const status = new Map<string, string | null>([
+    ...c.campaigns.map((x): [string, string | null] => [`instantly:${x.id}`, x.status]),
+    ...c.bisonCampaigns.map((x): [string, string | null] => [`bison:${x.id}`, x.status]),
   ]);
-  return (c.toggle_paused_campaigns ?? []).filter((h) => !running.has(`${h.platform}:${h.id}`));
+  return (c.toggle_paused_campaigns ?? []).filter((h) => {
+    const s = status.get(`${h.platform}:${h.id}`);
+    return s !== "running" && s !== "finished";
+  });
 }
 
 /** True when any campaign was ever launched — the "Campaign Paused" test. */

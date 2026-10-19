@@ -252,6 +252,12 @@ test("stillHeld: a campaign paused from the button but running again elsewhere i
   assert.equal(stillHeld({ toggle_paused_campaigns: [held("b351")], campaigns: [], bisonCampaigns: [bison("b351", "paused")] }).length, 1);
   // Same id on the other platform is a different campaign.
   assert.equal(stillHeld({ toggle_paused_campaigns: [held("b351", "instantly")], campaigns: [], bisonCampaigns: [bison("b351", "running")] }).length, 1);
+  // Bastion: #284 paused from the button, FINISHED since; two new campaigns run → nothing to resume, ⏸.
+  assert.deepEqual(stillHeld({ toggle_paused_campaigns: [held("b284")], campaigns: [], bisonCampaigns: [bison("b284", "finished"), bison("b378", "running"), bison("b377", "running")] }), []);
+  // ChuckTown: paused from the button, still paused → ▶ resumes them.
+  assert.equal(stillHeld({ toggle_paused_campaigns: ["b265", "b285"].map((id) => held(id)), campaigns: [], bisonCampaigns: [bison("b265", "paused"), bison("b285", "paused")] }).length, 2);
+  // Not found among the linked campaigns: unknown, so still held (never hidden on a guess).
+  assert.equal(stillHeld({ toggle_paused_campaigns: [held("gone")], campaigns: [], bisonCampaigns: [] }).length, 1);
   // Nothing held, or no list at all.
   assert.deepEqual(stillHeld({ toggle_paused_campaigns: [], campaigns: [], bisonCampaigns: [bison("x", "running")] }), []);
   assert.deepEqual(stillHeld({ toggle_paused_campaigns: null as never, campaigns: [], bisonCampaigns: [] }), []);
