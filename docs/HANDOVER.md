@@ -660,7 +660,7 @@ only matters in the first minute after a restart.
 The lasting fix for the three is to type the right anchor on their records
 (a data write, not done); Rise needs its interval corrected by a person.
 
-### The client record's Billing tab (19 Oct — built, NOT deployed)
+### The client record's Billing tab (LIVE 20 Oct — 313fc06, deployed with 4c84071)
 
 Eddy, 17 Oct: "a centralized Billing section for each client … synced with
 Stripe". A **Billing** tab on the client record (Clients → open a client):
@@ -698,7 +698,7 @@ last read). Invoice and receipt links go through `/billing/document`, which
 checks the document is the client's, reads the link from Stripe at the click
 and follows only a `stripe.com` address.
 
-Tested 19 Oct on a local build against production data (background jobs off,
+Tested 19 Oct on a local build and again on production after the deploy (20 Oct, 28/28 + 8/8 access; background jobs off locally,
 every browser write stopped): all 54 clients' totals agree with the Stripe
 control; 46 clients' payments and invoices equal Stripe's own per-customer
 lists (6 on shared cards checked by the ownership rules instead); screens for
