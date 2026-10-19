@@ -3,6 +3,7 @@ import type {
   CampaignSource,
   DashboardClient,
   InstantlyCampaign,
+  ToggledCampaign,
 } from "./types.ts";
 
 /*
@@ -44,6 +45,23 @@ export function activeCampaigns(c: DashboardClient): AnyCampaign[] {
     ...c.campaigns.filter((x) => x.status === "running"),
     ...c.bisonCampaigns.filter((x) => x.status === "running"),
   ];
+}
+
+/*
+ * The campaigns the Play/Pause button paused that are STILL not running (20
+ * Oct). One resumed somewhere else — in EmailBison or Instantly directly — is
+ * running again, so it is no longer held: Howe Realty's #351 was paused from
+ * the button on 9 Oct, resumed in EmailBison later, and the row went on
+ * offering ▶ beside "1 active campaign". The stored list is left as it is (the
+ * next press tidies it: a resume skips and drops campaigns already running);
+ * this only stops the button showing a resume for a campaign that is live.
+ */
+export function stillHeld(c: Pick<DashboardClient, "toggle_paused_campaigns" | "campaigns" | "bisonCampaigns">): ToggledCampaign[] {
+  const running = new Set([
+    ...c.campaigns.filter((x) => x.status === "running").map((x) => `instantly:${x.id}`),
+    ...c.bisonCampaigns.filter((x) => x.status === "running").map((x) => `bison:${x.id}`),
+  ]);
+  return (c.toggle_paused_campaigns ?? []).filter((h) => !running.has(`${h.platform}:${h.id}`));
 }
 
 /** True when any campaign was ever launched — the "Campaign Paused" test. */

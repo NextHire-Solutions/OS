@@ -239,3 +239,20 @@ test("a row's funnel sums the loaded weeks, matching the column that sorts it", 
 test("a client nobody has replied to has no conversion rate", () => {
   assert.equal(clientFunnel(client()).ratePct, null);
 });
+
+/* ---- the Play/Pause button's "held" (20 Oct, Howe Realty) ---- */
+
+test("stillHeld: a campaign paused from the button but running again elsewhere is not held — the row offers ⏸, not ▶", async () => {
+  const { stillHeld } = await import("./campaigns.ts");
+  const bison = (id: string, status: "running" | "paused" | "finished") => ({ id, name: id, status, emails_sent_total: 0, campaign_size: 0, progress_pct: 0, reply_count: 0, interested_count: 0 });
+  const held = (id: string, platform: "bison" | "instantly" = "bison") => ({ platform, id, int_id: 351, name: id, paused_at: "2026-10-09T22:09:35.013Z" });
+  // Howe: #351 paused from the button on 9 Oct, resumed in EmailBison since.
+  assert.deepEqual(stillHeld({ toggle_paused_campaigns: [held("b351")], campaigns: [], bisonCampaigns: [bison("b351", "running"), bison("b275", "finished")] }), []);
+  // Still paused: still held.
+  assert.equal(stillHeld({ toggle_paused_campaigns: [held("b351")], campaigns: [], bisonCampaigns: [bison("b351", "paused")] }).length, 1);
+  // Same id on the other platform is a different campaign.
+  assert.equal(stillHeld({ toggle_paused_campaigns: [held("b351", "instantly")], campaigns: [], bisonCampaigns: [bison("b351", "running")] }).length, 1);
+  // Nothing held, or no list at all.
+  assert.deepEqual(stillHeld({ toggle_paused_campaigns: [], campaigns: [], bisonCampaigns: [bison("x", "running")] }), []);
+  assert.deepEqual(stillHeld({ toggle_paused_campaigns: null as never, campaigns: [], bisonCampaigns: [] }), []);
+});

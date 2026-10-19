@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 import { Badge, Panel, StatusPill, isLifecycleStatus, type LifecycleStatus } from "@/components/ds";
 import {
-  activeCampaigns, campaignProgress, campaignsLabel, clientFunnel,
+  activeCampaigns, campaignProgress, campaignsLabel, clientFunnel, stillHeld,
 } from "@/lib/tools/client-health/campaigns";
 import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
@@ -314,7 +314,8 @@ function Row({
    * running; ⏸ disabled when nothing is. Distinct from the client's status,
    * which is the lifecycle on the Clients page.
    */
-  const held = c.toggle_paused_campaigns?.length ?? 0;
+  // Held = paused from here AND still not running: one resumed elsewhere is live, so it gets ⏸, not ▶ (20 Oct).
+  const held = stillHeld(c).length;
   // Nothing running and everything paused/finished — paused somewhere else.
   // ▶ still resumes: the dialog previews the live-paused ones first.
   const pausedElsewhere = held === 0 && active.length === 0 && label === "Campaign Paused";
