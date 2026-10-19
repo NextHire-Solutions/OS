@@ -158,7 +158,7 @@ export function ClientRecord({
   /** Opened from a tool's Client view: show only that tool's §8 fields. */
   view?: ToolViewId;
   /**
-   * The Billing tab (19 Oct): admin@outreachify.io and Eddy only (billing-access.ts). For
+   * The Billing tab (19 Oct): the people named in billing-access.ts only. For
    * everyone else the record is exactly as before — the Stripe control and the
    * billing fields on the Record tab — and the tab's routes answer 404.
    */

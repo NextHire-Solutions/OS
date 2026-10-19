@@ -12,7 +12,7 @@ import { billingTabUser } from "@/lib/clients/billing-user";
  *   GET ?clientId=…            the shared Stripe snapshot (ten minutes old at most)
  *   GET ?clientId=…&fresh=1    re-read Stripe first ("Refresh from Stripe")
  *
- * admin@outreachify.io and Eddy only (billing-access.ts) — anyone else gets a bare 404.
+ * the people named in billing-access.ts only — anyone else gets a bare 404.
  * Having the Clients page is not enough.
  */
 export const dynamic = "force-dynamic";

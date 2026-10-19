@@ -226,13 +226,14 @@ test("the snapshot's Stripe reads are all GETs, and the new lists cannot take bi
 
 /* ------------------------------------------- who sees the tab (19 Oct) --- */
 
-test("the Billing tab: admin@outreachify.io and Eddy, by name — nobody else, not even another Owner", () => {
-  assert.deepEqual([...BILLING_TAB_PEOPLE], ["admin@outreachify.io", "eddy@brokerstaffer.com"], "exactly two people, changed only on the user's word");
+test("the Billing tab: admin@outreachify.io, Eddy and Amy, by name — nobody else, not even another Owner", () => {
+  assert.deepEqual([...BILLING_TAB_PEOPLE], ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"], "exactly these people, changed only on the user's word (Amy added 20 Oct)");
+  assert.equal(canSeeBillingTab("Amy@BrokerStaffer.com"), true);
   assert.equal(canSeeBillingTab("admin@outreachify.io"), true);
   assert.equal(canSeeBillingTab("  Admin@Outreachify.io "), true, "case and spaces do not matter");
   assert.equal(canSeeBillingTab("eddy@brokerstaffer.com"), true);
   assert.equal(canSeeBillingTab("Eddy@BrokerStaffer.com"), true);
-  for (const who of ["amy@brokerstaffer.com", "bharati@outreachify.io", "owner2@outreachify.io", "admin@outreachify.io.evil.com", "xadmin@outreachify.io", "eddy@brokerstaffer.co", "", null, undefined]) {
+  for (const who of ["amy@brokerstaffer.co", "amy.anderes@brokerstaffer.com", "bharati@outreachify.io", "owner2@outreachify.io", "admin@outreachify.io.evil.com", "xadmin@outreachify.io", "eddy@brokerstaffer.co", "", null, undefined]) {
     assert.equal(canSeeBillingTab(who), false, String(who));
   }
   const src = readFileSync("src/lib/clients/billing-access.ts", "utf8");

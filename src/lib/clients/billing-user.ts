@@ -29,7 +29,7 @@ export async function billingUser(request: Request): Promise<{ email: string; ad
 }
 
 /*
- * The Billing tab's own routes (19 Oct): admin@outreachify.io and Eddy only,
+ * The Billing tab's own routes (19 Oct): the people named in billing-access.ts only,
  * by name (billing-access.ts). Anyone else — signed in or not — gets a bare 404, so
  * the routes do not even say they exist. Not billingUser's rule: having the
  * Clients page is NOT enough here.

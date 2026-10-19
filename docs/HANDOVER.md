@@ -847,9 +847,11 @@ Stripe". A **Billing** tab on the client record (Clients → open a client):
 - Under them, **Subscriptions and Stripe** — the existing control (pause,
   resume, link, payment links) and the billing fields, moved from Record.
 
-**Who sees it: admin@outreachify.io and eddy@brokerstaffer.com, by name —
-nobody else** (`lib/clients/billing-access.ts`, the user's rule of 19 Oct:
-"only admin@outreachify and eddy's email address … no one else"). Not the
+**Who sees it: admin@outreachify.io, eddy@brokerstaffer.com and (20 Oct, on
+the user's word) amy@brokerstaffer.com, by name — nobody else**
+(`lib/clients/billing-access.ts`, the user's rule of 19 Oct: "only
+admin@outreachify and eddy's email address … no one else"; 20 Oct: "enable Amy
+to see this section for all clients"). Not the
 ADMIN_EMAILS list (an Owner added later does not get it), no role, no switch;
 change the list only on the user's word. The page decides it on the server
 (`[[...slug]]/page.tsx` → `ClientsScreen billingTab`); the tab's two routes

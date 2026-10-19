@@ -63,7 +63,7 @@ export type ChangeKind = "stripe" | undefined;
 
 function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
   data: MasterClientList;
-  /** The record's Billing tab — admin@outreachify.io and Eddy only. */
+  /** The record's Billing tab — the people named in billing-access.ts only. */
   billingTab?: boolean;
   onChanged: (kind?: ChangeKind) => void;
   /** Show a saved change at once, before the list's refresh lands. */
@@ -435,7 +435,7 @@ function DictGroup({ cat, clients }: { cat: FieldCategory; clients: MasterClient
 export function ClientsScreen({ initial, only, billingTab = false }: {
   initial: MasterClientList | null;
   only?: ToolViewId;
-  /** The record's Billing tab — admin@outreachify.io and Eddy only (billing-access.ts), decided by the page. */
+  /** The record's Billing tab — the people named in billing-access.ts only, decided by the page. */
   billingTab?: boolean;
 }) {
   const [data, setData] = useState<MasterClientList | null>(initial);

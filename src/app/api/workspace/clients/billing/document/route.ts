@@ -11,7 +11,7 @@ import { billingTabUser } from "@/lib/clients/billing-user";
  *   GET ?clientId=…&id=in_…&as=pdf     the invoice PDF, to download
  *   GET ?clientId=…&id=ch_…            the payment's receipt
  *
- * admin@outreachify.io and Eddy only, as the tab (billing-access.ts): anyone else gets a
+ * the people named in billing-access.ts only, as the tab: anyone else gets a
  * bare 404. Only a document that is the client's by the tab's own rules, so a changed
  * id cannot open another client's invoice. The link is read from Stripe at the
  * moment of the click (a GET — nothing is written), so it is never a stale

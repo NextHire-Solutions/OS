@@ -341,7 +341,7 @@ export default async function WorkspacePage({
         ),
         performance: <PerformanceScreen initial={performance} />,
         "billing-calendar": <BillingCalendarScreen initial={performance} />,
-        // The record's Billing tab: admin@outreachify.io and Eddy only (billing-access.ts, 19 Oct). Its routes refuse everyone else too.
+        // The record's Billing tab: the people named in billing-access.ts only (19 Oct). Its routes refuse everyone else too.
         roster: <ClientsScreen initial={clientsOverview} billingTab={canSeeBillingTab(email)} />,
         // Reads everything itself on open; nothing to pass from the server.
         consistency: <DiscrepanciesScreen />,
