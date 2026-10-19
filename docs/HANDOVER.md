@@ -487,13 +487,28 @@ need a system to control things from here".
 Order used: portal app, then OS, then the migration — nothing could change a
 URL before old links forward.
 
-### 16–17 October: Interested replies → the brokerage, by Postmark — BUILT, REVIEWED, NOT LIVE
+### 16–17 October: Interested replies → the brokerage, by Postmark — DEPLOYED 20 Oct, OFF, NOT LIVE
 
 The approved client plan ("Interested replies, straight to the brokerage").
-**State: local branch `wip/postmark-relay` only — not pushed, not deployed,
-migrations not run, nothing has ever been sent.** Built 16 Oct; reviewed and
-hardened 17 Oct (below). Practice is the default everywhere; a send needs every
-lock below opened by a person.
+**State (20 Oct): merged and deployed, switched off — migrations 0035/0036 not
+run yet, `OS_BROKERAGE_RELAY_LIVE_SEND` unset. Nothing has ever gone to a
+brokerage.** Built 16 Oct; reviewed and hardened 17 Oct (below). Practice is
+the default everywhere; a send needs every lock below opened by a person.
+
+**20 Oct — test sends and the email's look.** The user: "do not make this
+live… test properly with our own email address like admin@outreachify.io. no
+testing with clients". Settings → Brokerage hand-off → *Send a sample to
+admin@outreachify.io* (made-up words) and *Test copy* on a prepared hand-off:
+to `TEST_RECIPIENTS` only (the transport refuses anything else), needs only
+`POSTMARK_SERVER_TOKEN` — never the live switch — and changes no hand-off,
+slot or cap (`relay/test-send.ts`). Postmark: domain leads.brokerstaffer.com
+verified (DKIM + Return-Path), account approved on server **21106882** (its
+token is the one on Railway `os`; an earlier token was for an unapproved
+server). The first sample reached Gmail **spam** with SPF/DKIM/DMARC all PASS
+("similar to messages identified as spam") — so the email became a
+**notification**: subject "<Agent> is interested — reply to reach them" (no
+fake "Re:"), one line from BrokerStaffer on top, then the agent's own words;
+our cold outreach is no longer quoted. Reply-To is still the agent.
 
 **Eddy's answers (17 Oct):** sending address "either way — just make sure it
 doesn't land in spam" → `agents@leads.brokerstaffer.com` (a subdomain keeps

@@ -12,6 +12,8 @@ import {
   agentDisplayName,
   buildRelayEmail,
   cleanDisplayName,
+  handoffIntro,
+  handoffSubject,
   messageIdFromPayload,
   providerSaysAutomatic,
   quotedHistory,
@@ -64,20 +66,31 @@ test("From is '<Agent> via BrokerStaffer' on leads.brokerstaffer.com; Reply-To i
   assert.equal(e.from, '"Jordan Ellis via BrokerStaffer" <agents@leads.brokerstaffer.com>');
   assert.equal(e.replyTo, '"Jordan Ellis" <jordan.ellis@coastalrealty.test>');
   assert.equal(e.toHeader, '"Angela Oakes" <angela@brokerage.test>');
-  assert.equal(e.subject, "Re: Quick question, Jordan");
+  assert.equal(e.subject, "Jordan Ellis is interested — reply to reach them");
 });
 
-test("the body is the agent's reply first — nothing on top — then the earlier messages quoted", () => {
+test("notification style (20 Oct): BrokerStaffer's one line, then the agent's reply — our cold outreach is never quoted", () => {
   const e = build();
-  assert.ok(e.textBody.startsWith("Sure, happy to chat. Mornings work best for me — (843) 555-0142.\n— Jordan\n\n"), e.textBody);
-  assert.match(e.textBody, /On Mon, Oct 5, 2026, 10:00 AM, Nicole Collins wrote:\n> Hi Jordan, I came across your listings in Charlotte/);
-  // The agent's own quoting of our email is not repeated, and a LATER message is never included.
-  assert.equal(e.textBody.match(/I came across your listings/g)?.length, 1);
-  assert.doesNotMatch(e.textBody, /Also free Thursday/);
-  assert.ok(e.htmlBody.startsWith("<div><p>Sure, happy to chat."), e.htmlBody);
-  assert.match(e.htmlBody, /<div class="gmail_quote">.*<blockquote/);
-  // No tracking, nothing added: the HTML is the agent's text and the quote, escaped.
+  assert.ok(
+    e.textBody.startsWith("Jordan Ellis replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach Jordan directly.\n\n----------\n\nSure, happy to chat. Mornings work best for me — (843) 555-0142.\n— Jordan"),
+    e.textBody,
+  );
+  // The outreach the spam filters know is not in the brokerage's copy, and neither is any later message.
+  assert.doesNotMatch(e.textBody, /I came across your listings|Nicole Collins wrote|Also free Thursday/);
+  assert.doesNotMatch(e.htmlBody, /I came across your listings|gmail_quote|<blockquote/);
+  assert.match(e.htmlBody, /^<div style="color:#444"><p>Jordan Ellis replied to your BrokerStaffer recruiting campaign and is interested\.<br>Reply to this email to reach Jordan directly\.<\/p><\/div><hr /);
+  assert.match(e.htmlBody, /Sure, happy to chat\./);
+  // No tracking, nothing added.
   assert.doesNotMatch(e.htmlBody, /<img|<script|unsubscribe/i);
+});
+
+test("the subject is a notification, never a fake Re:, and safe as a header", () => {
+  assert.equal(handoffSubject("Jordan Ellis"), "Jordan Ellis is interested — reply to reach them");
+  assert.equal(handoffSubject(null), "An agent is interested — reply to reach them");
+  assert.equal(handoffSubject("Evil\r\nBcc: x@y.test"), "Evil Bcc: x is interested — reply to reach them");
+  assert.doesNotMatch(handoffSubject("A\r\nB"), /[\r\n]/);
+  assert.ok(handoffSubject("x".repeat(400)).length <= 205);
+  assert.equal(handoffIntro(null), "An agent replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach them directly.");
 });
 
 test("quoted: only messages before the reply, newest first — never the reply itself or anything later", () => {

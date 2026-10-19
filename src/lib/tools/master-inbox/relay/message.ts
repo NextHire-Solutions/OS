@@ -200,25 +200,41 @@ export interface BuildInput {
   agentMessageId: string | null;
 }
 
+/*
+ * The subject, as a notification (20 Oct): "<Agent> is interested — reply to
+ * reach them". Not a "Re:" — the brokerage has no earlier conversation, and a
+ * "Re:" from a sender they have never written to is a well-known spam sign
+ * (the first test landed in Gmail's spam: "similar to messages identified as
+ * spam"). One line, control characters removed, cut at a word.
+ */
+export function handoffSubject(agentName: string | null | undefined): string {
+  const name = cleanDisplayName(agentName) || "An agent";
+  const s = `${name} is interested — reply to reach them`;
+  return s.length > MAX_SUBJECT ? `${s.slice(0, MAX_SUBJECT).replace(/\s+\S*$/, "")}…` : s;
+}
+
+/** BrokerStaffer's one line at the top, so the brokerage (and its mail filter) know what this is. */
+export function handoffIntro(agentName: string | null | undefined): string {
+  const name = cleanDisplayName(agentName) || "An agent";
+  const first = name === "An agent" ? "them" : name.split(/\s+/)[0];
+  return `${name} replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach ${first} directly.`;
+}
+
 export function buildRelayEmail(input: BuildInput): RelayEmail {
   const fromName = `${cleanDisplayName(input.agentName) || "An agent"} ${VIA}`;
   const own = replyText(input.reply);
-  const quoted = quotedHistory(input.messages, input.reply).map((m) => ({
-    header: quoteHeader(m),
-    text: clip(ownText(m) || String(m.bodyText ?? "").trim()),
-  }));
-
-  const textParts = [own];
-  for (const q of quoted) {
-    textParts.push(`${q.header}\n${q.text.split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n")}`);
-  }
-  const textBody = textParts.join("\n\n");
-
-  const blockquote = 'style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"';
-  const htmlQuoted = quoted
-    .map((q) => `<div>${plainTextToHtml(q.header)}<blockquote ${blockquote}>${plainTextToHtml(q.text)}</blockquote></div>`)
-    .join("");
-  const htmlBody = `<div>${plainTextToHtml(own)}</div>${htmlQuoted ? `<br><div class="gmail_quote">${htmlQuoted}</div>` : ""}`;
+  /*
+   * The agent's own words under one line from BrokerStaffer — and NOT our cold
+   * outreach quoted below them (20 Oct, the user chose "notification style"):
+   * that quote is the part spam filters have seen marked as spam millions of
+   * times, and the brokerage needs the agent's reply, not our pitch.
+   */
+  const intro = handoffIntro(input.agentName);
+  const textBody = `${intro}\n\n----------\n\n${own}`;
+  const htmlBody =
+    `<div style="color:#444">${plainTextToHtml(intro)}</div>` +
+    `<hr style="border:0;border-top:1px solid #ddd;margin:14px 0">` +
+    `<div>${plainTextToHtml(own)}</div>`;
 
   const headers: RelayEmail["headers"] = [];
   if (input.agentMessageId) {
@@ -233,7 +249,7 @@ export function buildRelayEmail(input: BuildInput): RelayEmail {
     to: input.recipients,
     toHeader: input.recipients.map((r) => addressHeader(r.name, r.email)).join(", "),
     replyTo: addressHeader(input.agentName, input.replyTo),
-    subject: relaySubject(input.threadSubject, input.reply.subject),
+    subject: handoffSubject(input.agentName),
     textBody,
     htmlBody,
     headers,

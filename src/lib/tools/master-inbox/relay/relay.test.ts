@@ -157,9 +157,10 @@ test("PRACTICE (the default): decided, recorded with the full message, and the t
   assert.equal(rec.from_address, "agents@leads.brokerstaffer.com");
   assert.equal(rec.from_name, "Jordan Ellis via BrokerStaffer");
   assert.equal(rec.reply_to, '"Jordan Ellis" <jordan@coastal.test>');
-  assert.equal(rec.subject, "Re: Quick question, Jordan");
-  assert.ok(String(rec.text_body).startsWith("Sure, happy to chat."));
-  assert.match(String(rec.text_body), /Nicole Collins wrote:\n> Hi Jordan/);
+  assert.equal(rec.subject, "Jordan Ellis is interested — reply to reach them");
+  // Notification style (20 Oct): BrokerStaffer's line, then the agent's words — our outreach is not quoted.
+  assert.ok(String(rec.text_body).startsWith("Jordan Ellis replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach Jordan directly.\n\n----------\n\nSure, happy to chat."), String(rec.text_body));
+  assert.doesNotMatch(String(rec.text_body), /Nicole Collins wrote|I came across your listings/);
   assert.deepEqual(rec.headers, [{ Name: "In-Reply-To", Value: "<agent-1@mail.test>" }, { Name: "References", Value: "<agent-1@mail.test>" }]);
   assert.equal(rec.pipeline_action, "none", "an existing client keeps entering at Introduction");
   assert.equal(rec.counts_as_introduction, false);
@@ -232,7 +233,7 @@ test("LIVE only with every lock open: handed to Postmark once, exactly as the pl
   assert.equal(e.from, '"Jordan Ellis via BrokerStaffer" <agents@leads.brokerstaffer.com>');
   assert.equal(e.toHeader, '"Lance Overstreet" <lance@jeffcook.test>, "Stan Taylor" <stan@jeffcook.test>');
   assert.equal(e.replyTo, '"Jordan Ellis" <jordan@coastal.test>');
-  assert.equal(e.subject, "Re: Quick question, Jordan");
+  assert.equal(e.subject, "Jordan Ellis is interested — reply to reach them");
   const rec = recordFor(thread.id);
   assert.equal(rec.status, "sent");
   assert.equal(rec.practice, false);
@@ -345,8 +346,9 @@ test("never twice: the same agent's second conversation with the same brokerage 
   assert.equal(recordFor(b.thread.id).status, "skipped");
   assert.equal(recordFor(b.thread.id).reason, "already_delivered");
   assert.equal(recordFor(c.thread.id).status, "practice");
-  // Only that conversation: Wagner's hand-off quotes Wagner's conversation, never Jeff Cook's.
-  assert.equal(recordFor(c.thread.id).subject, "Re: Wagner?");
+  // Only that conversation: Wagner's hand-off carries Wagner's reply, and nothing of Jeff Cook's conversation.
+  assert.match(String(recordFor(c.thread.id).text_body), /Sure, happy to chat/);
+  assert.doesNotMatch(String(recordFor(c.thread.id).text_body), /Jeff Cook|Charleston|I came across your listings/);
   assert.deepEqual((recordFor(c.thread.id).recipients as Row[]).map((x) => x.email), ["wendy@wagner.test"]);
   assertContained();
 });
@@ -598,7 +600,7 @@ test("later replies: off by default; when switched on, relayed once each to the 
   const f = records().find((x) => x.kind === "follow_up")!;
   assert.equal(f.status, "practice", "a practised hand-off's later reply is practice too");
   assert.deepEqual((f.recipients as Row[]).map((x) => x.email), ["lance@jeffcook.test", "stan@jeffcook.test"]);
-  assert.ok(String(f.text_body).startsWith("Also free Thursday."));
+  assert.ok(String(f.text_body).startsWith("Jordan Ellis replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach Jordan directly.\n\n----------\n\nAlso free Thursday."), String(f.text_body));
   await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 12 * 60_000), deps());
   assert.equal(records().filter((x) => x.kind === "follow_up").length, 1);
   assertContained();
@@ -818,7 +820,7 @@ test("a short reply's quote header (Outlook's From:/Sent:) is not passed on as t
   label(L.interested, thread.id);
   await relay.sweepBrokerageRelay(NOW, deps());
   const rec = recordFor(thread.id);
-  assert.ok(String(rec.text_body).startsWith("Yes, interested.\n\nOn "), String(rec.text_body));
+  assert.equal(String(rec.text_body), "Jordan Ellis replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach Jordan directly.\n\n----------\n\nYes, interested.", "only the agent's own words, under BrokerStaffer's line");
   assert.doesNotMatch(String(rec.text_body), /nicole\.c@brokerstaffer\.com|^From:/m, "our sender inbox never appears in the brokerage's copy");
   assert.doesNotMatch(String(rec.html_body), /nicole\.c@brokerstaffer\.com/);
 });
