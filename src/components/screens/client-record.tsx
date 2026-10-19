@@ -22,6 +22,7 @@ import { TIME_ZONES } from "@/lib/tools/client-health/types";
 import { ClientPeople } from "./clients-people";
 import { DeleteClient } from "./clients-delete";
 import { MarketsPanel } from "./markets-panel";
+import { ClientBillingTab } from "./client-billing";
 import type { ChangeKind, ClientPatch } from "./clients";
 import type { ClientBilling } from "@/lib/clients/billing-model";
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
@@ -44,10 +45,11 @@ import type { ClientView } from "@/lib/clients/saved-views-match";
  * words are shown when it refuses. Status asks before it saves (§10).
  */
 
-type Tab = "record" | "campaigns" | "people" | "markets" | "introduce" | "tools";
+type Tab = "record" | "billing" | "campaigns" | "people" | "markets" | "introduce" | "tools";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "record", label: "Record" },
+  { id: "billing", label: "Billing" },
   { id: "campaigns", label: "Campaigns" },
   { id: "people", label: "Team · Agents · DNC" },
   { id: "markets", label: "Markets" },
@@ -150,11 +152,17 @@ const MANAGED_IN: Record<string, Tab> = {
 };
 
 export function ClientRecord({
-  client: c, view, onClose, onChanged, onPatch, onDeleted, onPrev, onNext, position,
+  client: c, view, billingTab = false, onClose, onChanged, onPatch, onDeleted, onPrev, onNext, position,
 }: {
   client: MasterClient;
   /** Opened from a tool's Client view: show only that tool's §8 fields. */
   view?: ToolViewId;
+  /**
+   * The Billing tab (19 Oct): admin@outreachify.io and Eddy only (billing-access.ts). For
+   * everyone else the record is exactly as before — the Stripe control and the
+   * billing fields on the Record tab — and the tab's routes answer 404.
+   */
+  billingTab?: boolean;
   onClose: () => void;
   /** Refresh the list; "stripe" when a Stripe id changed, so Stripe's figures are read again. */
   onChanged: (kind?: ChangeKind) => void;
@@ -253,7 +261,8 @@ export function ClientRecord({
   const comp = completeness(c);
   const signup = effectiveSignup(c);
   const fixIt = (k: ProfileCheck) => {
-    setTab(k.tab);
+    // Billing fields live on the Billing tab only for those who have it; for everyone else they are on Record.
+    setTab(k.tab === "billing" && !billingTab ? "record" : k.tab);
     setTimeout(() => {
       const el = document.getElementById(k.field ? `rx-f-${k.field}` : `rx-t-${k.key}`);
       if (!el) return;
@@ -397,7 +406,7 @@ export function ClientRecord({
               </div>
             ) : null}
             <nav className="rx-tabs" aria-label="Sections">
-              {TABS.map((t) => (
+              {TABS.filter((t) => t.id !== "billing" || billingTab).map((t) => (
                 <button key={t.id} type="button" className={tab === t.id ? "on" : ""} aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>
                   {t.label}
                   {t.id === "campaigns" && c.campaigns ? <span className="n">{c.campaigns.length}</span> : null}
@@ -437,13 +446,35 @@ export function ClientRecord({
                     <h3>Status<span>changes every tool, the portal, campaigns and billing</span></h3>
                     <StatusField id={c.id} status={c.status} onChanged={onChanged} onPatch={onPatch} />
                   </section>
-                  {CATEGORIES.map((cat) => (
+                  {CATEGORIES.map((cat) => cat === "billing" && billingTab ? (
+                    /* Billing has its own tab (Eddy, 17 Oct): everything billing in one place. */
                     <section key={cat} className={`rx-sec cat-${cat}`}>
                       <h3><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</h3>
+                      <div className="rx-row">
+                        <div className="rx-static" style={{ minHeight: 40 }}>
+                          <span className="rx-hint" style={{ margin: 0 }}>Plan, payments, invoices and the Stripe controls are on the Billing tab.</span>
+                          <button type="button" className="rx-go" onClick={() => setTab("billing")}>Open Billing →</button>
+                        </div>
+                      </div>
+                    </section>
+                  ) : (
+                    <section key={cat} className={`rx-sec cat-${cat}`}>
+                      <h3><i aria-hidden="true" />{CATEGORY_LABEL[cat]}</h3>
+                      {/* Without the Billing tab: the Stripe control here, exactly as before 19 Oct. */}
                       {cat === "billing" ? <BillingControl clientId={c.id} onChanged={() => onChanged("stripe")} /> : null}
                       {fieldsIn(cat).filter((f) => f.key !== "status").map((f) => row(f.key, f.label, f))}
                     </section>
                   ))}
+                </>
+              ) : null}
+              {tab === "billing" && billingTab ? (
+                <>
+                  <ClientBillingTab clientId={c.id} clientName={c.name} plan={c.plan ? planLabel(c.plan) : null} />
+                  <section className="rx-sec cat-billing">
+                    <h3><i aria-hidden="true" />Subscriptions and Stripe<span>pause, resume, link and the billing fields</span></h3>
+                    <BillingControl clientId={c.id} onChanged={() => onChanged("stripe")} />
+                    {fieldsIn("billing").map((f) => row(f.key, f.label, f))}
+                  </section>
                 </>
               ) : null}
               {tab === "campaigns" ? (

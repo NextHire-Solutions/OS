@@ -411,6 +411,49 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx-bill-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .rx-bill-row small { color: var(--x-faint); }
 .rx-bill-row em { font-style: normal; color: var(--x-mute); }
+/* The Billing tab (Eddy, 17 Oct): current billing, totals, history, invoices. */
+.rb-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.rb-sync { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; color: var(--x-faint); }
+.rb-sync button { appearance: none; border: 0; background: none; padding: 0; font: inherit; color: var(--x-accent); cursor: pointer; }
+.rb-sync button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+.rb-sync button:disabled { color: var(--x-faint); cursor: default; }
+.rb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 1px; margin: 8px 0 14px;
+  background: var(--x-line); border: 1px solid var(--x-line); border-radius: 10px; overflow: hidden; }
+.rb-grid > div { display: grid; gap: 4px; align-content: start; padding: 12px 14px; background: var(--x-surface); min-width: 0; }
+.rb-grid small { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--x-faint); }
+.rb-grid b { font-size: 17px; font-weight: 500; letter-spacing: -.02em; color: var(--x-ink); font-variant-numeric: tabular-nums; line-height: 1.2; overflow-wrap: anywhere; }
+.rb-grid span { font-size: 12px; color: var(--x-mute); line-height: 1.35; overflow-wrap: anywhere; }
+.rb-tone.good { color: var(--st-active); }
+.rb-tone.warn { color: var(--st-paused); }
+.rb-tone.bad { color: var(--st-churned); }
+.rb-tone.mute { color: var(--x-mute); }
+.rb-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 8px 0 10px; }
+.rb-tools .sp { flex: 1; }
+.rb-chip { appearance: none; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--x-line); background: var(--x-surface);
+  font: inherit; font-size: 12px; color: var(--x-mute); cursor: pointer; font-variant-numeric: tabular-nums; }
+.rb-chip:hover { background: var(--x-hover); }
+.rb-chip[aria-pressed="true"] { color: var(--x-ink); border-color: var(--x-ink); }
+.rb-chip:focus-visible, .rb-sync button:focus-visible, .rb-links a:focus-visible { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+.rb-scroll { overflow-x: auto; }
+.rb-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 12.5px; }
+.rb-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--x-mute); padding: 4px 8px 6px; background: none; border-bottom: 1px solid var(--x-line); white-space: nowrap; }
+.rb-table td { padding: 8px; font-size: 13px; border-bottom: 1px solid var(--x-line-2); vertical-align: top; color: var(--x-ink); }
+.rb-table th:first-child, .rb-table td:first-child { padding-left: 0; }
+.rb-table th:last-child, .rb-table td:last-child { padding-right: 0; }
+.rb-table td small { display: block; margin-top: 2px; color: var(--x-faint); font-size: 11.5px; line-height: 1.35; }
+.rb-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rb-table .day { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--x-ink-2); }
+.rb-table tr.k-refund .num, .rb-table tr.k-failed .num { color: var(--x-mute); }
+.rb-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.rb-pill.good { color: var(--st-active); background: var(--st-active-soft); }
+.rb-pill.warn { color: var(--st-paused); background: var(--st-paused-soft); }
+.rb-pill.bad { color: var(--st-churned); background: var(--st-churned-soft); }
+.rb-pill.mute { color: var(--x-mute); background: var(--x-line-2); }
+.rb-links { text-align: right; white-space: nowrap; }
+.rb-links a { color: var(--x-accent); text-decoration: none; font-size: 12px; }
+.rb-links a + a { margin-left: 10px; }
+.rb-links a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rb-more { margin-top: 10px; }
 /* Profile completeness (6 Oct). */
 .cx-pct { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12.5px; }
 .cx-pct-bar { width: 46px; height: 6px; border-radius: 999px; background: var(--x-line); overflow: hidden; }

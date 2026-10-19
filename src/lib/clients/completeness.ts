@@ -11,7 +11,7 @@ import { effectiveSignup } from "./signup";
  * until they do those checks are `pending`, never counted as missing.
  */
 
-export type FixTab = "record" | "markets" | "introduce" | "campaigns";
+export type FixTab = "record" | "billing" | "markets" | "introduce" | "campaigns";
 
 export interface ProfileCheck {
   key: string;
@@ -45,8 +45,8 @@ export function profileChecks(c: MasterClient): ProfileCheck[] {
     { key: "pocName", label: "POC name", ok: has(c.pocName), tab: "record", field: "pocName", how: "Enter the client's point of contact on the Record tab." },
     { key: "pocEmail", label: "POC email", ok: has(c.pocEmail), tab: "record", field: "pocEmail", how: "Enter the point of contact's email on the Record tab." },
     { key: "timezone", label: "Timezone", ok: has(c.timezone), tab: "record", field: "timezone", how: "Choose it on the Record tab (needs the client linked to Client Health)." },
-    { key: "billing", label: "Billing schedule", ok: has(c.billingInterval) && has(c.billingAnchorDate), tab: "record", field: "billingAnchorDate",
-      how: "Set the billing interval and anchor date on the Record tab (needs Client Health)." },
+    { key: "billing", label: "Billing schedule", ok: has(c.billingInterval) && has(c.billingAnchorDate), tab: "billing", field: "billingAnchorDate",
+      how: "Set the billing interval and anchor date under Billing (needs Client Health)." },
     { key: "monthlyTarget", label: "Monthly intro target", ok: typeof c.monthlyTarget === "number" && c.monthlyTarget > 0, tab: "record", field: "monthlyTarget", how: "Enter it on the Record tab." },
     { key: "market", label: "Markets", ok: !!m && typeof m.markets === "number" && m.markets > 0, tab: "markets", how: "Enter how many markets on the Markets tab." },
     { key: "mls", label: "MLS", ok: !!m && m.mls.length > 0, tab: "markets", how: "Add the MLS boards on the Markets tab." },
@@ -55,8 +55,8 @@ export function profileChecks(c: MasterClient): ProfileCheck[] {
       tab: "introduce", how: "Add the first person's name, role and email on the Introduce to tab." },
     { key: "brokerage", label: "Brokerage", ok: has(c.contact.brokerage), tab: "introduce", how: "Enter the brokerage named in introductions on the Introduce to tab." },
     { key: "stripe", label: "Stripe subscription", ok: has(c.stripeSubscriptionId) || (c.stripe?.subscriptions ?? 0) > 0,
-      pending: stripePending && !has(c.stripeSubscriptionId), tab: "record", field: "stripeSubscriptionId",
-      how: "Link the Stripe subscription in Billing on the Record tab, or create one there with a payment link." },
+      pending: stripePending && !has(c.stripeSubscriptionId), tab: "billing", field: "stripeSubscriptionId",
+      how: "Link the Stripe subscription under Billing, or create one there with a payment link." },
     { key: "savedViews", label: "Saved view", ok: (c.savedViews?.length ?? 0) > 0, pending: viewsPending, tab: "campaigns",
       how: "Save a view in the Database named after the client, or link an existing one under Saved views on the Campaigns tab." },
     { key: "leads", label: "Leads assigned", ok: typeof c.assignedLeads === "number" && c.assignedLeads > 0, tab: "campaigns",

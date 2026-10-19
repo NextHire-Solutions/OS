@@ -7,6 +7,7 @@ import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
 import {
   billingTotals,
   buildBilling,
+  clientBillingDetail,
   monthsPaidByClient,
   revenueByDay,
   subscriptionRows,
@@ -15,6 +16,7 @@ import {
   type AccountSnapshot,
   type BillingClientRef,
   type ClientBilling,
+  type ClientBillingDetail,
   type StripeLinkRow,
   type SubscriptionRow,
   type UnattributedCustomer,
@@ -62,23 +64,43 @@ type RawSub = {
   discount?: { coupon?: { percent_off?: number | null } } | null;
   discounts?: Array<{ coupon?: { percent_off?: number | null } } | string>;
   metadata?: Record<string, string>;
-  items: { data: Array<{ quantity?: number; current_period_end?: number; price?: { unit_amount?: number | null; recurring?: { interval?: string; interval_count?: number } } }> };
+  items: { data: Array<{ quantity?: number; current_period_end?: number; price?: { unit_amount?: number | null; product?: string | { id: string } | null; recurring?: { interval?: string; interval_count?: number } } }> };
 };
 type RawInvoice = {
   id: string; customer: string; status: string; attempt_count: number; next_payment_attempt: number | null;
   amount_due: number; amount_remaining: number; created: number; number: string | null; hosted_invoice_url: string | null;
   subscription?: string | null; parent?: { subscription_details?: { subscription?: string | null } | null } | null;
+  total?: number; amount_paid?: number; invoice_pdf?: string | null; period_start?: number; period_end?: number;
+  status_transitions?: { paid_at?: number | null } | null; lines?: { data?: Array<{ description?: string | null }> } | null;
 };
-type RawCharge = { id: string; customer: string | null; status: string; amount: number; amount_refunded: number; created: number; payment_intent: string | null; failure_message: string | null };
+type RawCharge = {
+  id: string; customer: string | null; status: string; amount: number; amount_refunded: number; created: number; payment_intent: string | null; failure_message: string | null;
+  description?: string | null; receipt_url?: string | null; payment_method_details?: { type?: string; card?: { brand?: string | null; last4?: string | null } | null } | null;
+};
 type RawInvoicePayment = { id: string; invoice: string; payment?: { payment_intent?: string | null } };
+type RawRefund = { id: string; charge: string | null; amount: number; created: number; status: string; reason: string | null };
+
+/** "Visa •••• 4242", or the payment method's type when it is not a card. */
+function cardOf(c: RawCharge): string | null {
+  const card = c.payment_method_details?.card;
+  if (card?.last4) {
+    const brand = (card.brand ?? "card").replace(/^amex$/, "American Express").replace(/^\w/, (x) => x.toUpperCase());
+    return `${brand} •••• ${card.last4}`;
+  }
+  const type = c.payment_method_details?.type;
+  return type ? type.replace(/_/g, " ") : null;
+}
 
 async function loadSnapshot(): Promise<AccountSnapshot> {
-  const [customers, subs, charges, invoices, payments] = await Promise.all([
+  const [customers, subs, charges, invoices, payments, refunds, products] = await Promise.all([
     all<{ id: string; name: string | null; email: string | null; created: number }>("customers"),
     all<RawSub>("subscriptions?status=all"),
     all<RawCharge>("charges"),
     all<RawInvoice>("invoices"),
     all<RawInvoicePayment>("invoice_payments"),
+    // For the Billing tab (19 Oct). A failure here never takes billing down: the tab shows payments without refund rows or plan names.
+    all<RawRefund>("refunds").catch(() => null),
+    all<{ id: string; name: string }>("products").catch(() => null),
   ]);
   const invoiceSub = new Map(invoices.map((i) => [i.id, i.parent?.subscription_details?.subscription ?? i.subscription ?? null]));
   const piInvoice = new Map(payments.filter((p) => p.payment?.payment_intent).map((p) => [p.payment!.payment_intent!, p.invoice]));
@@ -96,6 +118,7 @@ async function loadSnapshot(): Promise<AccountSnapshot> {
           interval: it.price?.recurring?.interval ?? "month",
           intervalCount: it.price?.recurring?.interval_count ?? 1,
           quantity: it.quantity ?? 1,
+          product: typeof it.price?.product === "string" ? it.price.product : it.price?.product?.id ?? null,
         })),
         percentOff: off ?? 0,
         osClientId: s.metadata?.os_client_id ?? null,
@@ -106,13 +129,22 @@ async function loadSnapshot(): Promise<AccountSnapshot> {
       return {
         id: c.id, customer: c.customer, status: c.status, amount: c.amount / 100, refunded: (c.amount_refunded ?? 0) / 100,
         created: c.created, subscription: inv ? invoiceSub.get(inv) ?? null : null, failureMessage: c.failure_message,
+        description: c.description ?? null, invoice: inv ?? null, card: cardOf(c), hasReceipt: !!c.receipt_url,
       };
     }),
     invoices: invoices.map((i) => ({
       id: i.id, customer: i.customer, subscription: invoiceSub.get(i.id) ?? null, status: i.status,
       attemptCount: i.attempt_count ?? 0, nextAttempt: i.next_payment_attempt, amountDue: i.amount_due / 100,
       amountRemaining: i.amount_remaining / 100, created: i.created, number: i.number, url: i.hosted_invoice_url,
+      total: typeof i.total === "number" ? i.total / 100 : undefined,
+      amountPaid: typeof i.amount_paid === "number" ? i.amount_paid / 100 : undefined,
+      pdf: i.invoice_pdf ?? null, paidAt: i.status_transitions?.paid_at ?? null,
+      periodStart: i.period_start ?? null, periodEnd: i.period_end ?? null,
+      description: i.lines?.data?.[0]?.description ?? null,
     })),
+    ...(refunds ? { refunds: refunds.map((r) => ({ id: r.id, charge: r.charge, amount: r.amount / 100, created: r.created, status: r.status, reason: r.reason })) } : {}),
+    ...(products ? { products: products.map((p) => ({ id: p.id, name: p.name })) } : {}),
+    readAt: Date.now(),
   };
 }
 
@@ -167,6 +199,20 @@ export async function getAccountBilling(): Promise<AccountBilling> {
     monthsPaid: monthsPaidByClient(refs, snapshot, links),
     revenueByDay: revenueByDay(snapshot),
   };
+}
+
+/**
+ * One client's Billing tab (19 Oct). `fresh` re-reads Stripe first — the
+ * tab's Refresh — unless the copy is under 30 seconds old (a double click, or
+ * two people refreshing together, reads Stripe once).
+ */
+export async function getClientBillingDetail(clientId: string, fresh = false): Promise<ClientBillingDetail | null> {
+  if (fresh) {
+    const cached = await getStripeSnapshot();
+    if (!cached.readAt || Date.now() - cached.readAt > 30_000) getStripeSnapshot.invalidate();
+  }
+  const [snapshot, refs, { links }] = await Promise.all([getStripeSnapshot(), clientRefs(), listStripeLinks()]);
+  return clientBillingDetail(refs, snapshot, links, clientId);
 }
 
 /**

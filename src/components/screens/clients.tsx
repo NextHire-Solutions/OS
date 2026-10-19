@@ -61,8 +61,10 @@ function sortValue(k: string, c: MasterClient): string | number {
 /** What a save tells the list: just refresh, or also re-read Stripe (a Stripe id changed). */
 export type ChangeKind = "stripe" | undefined;
 
-function ClientsView({ data, onChanged, onPatch, only }: {
+function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
   data: MasterClientList;
+  /** The record's Billing tab — admin@outreachify.io and Eddy only. */
+  billingTab?: boolean;
   onChanged: (kind?: ChangeKind) => void;
   /** Show a saved change at once, before the list's refresh lands. */
   onPatch: (id: string, patch: ClientPatch) => void;
@@ -323,6 +325,7 @@ function ClientsView({ data, onChanged, onPatch, only }: {
         <ClientRecord
           client={open}
           view={only ?? (view ? view.id : undefined)}
+          billingTab={billingTab}
           onClose={close}
           onChanged={onChanged}
           onPatch={(patch) => onPatch(open.id, patch)}
@@ -429,7 +432,12 @@ function DictGroup({ cat, clients }: { cat: FieldCategory; clients: MasterClient
  * server-renders from the warm cache with no loading state. Saves refresh the
  * list in place, and the record stays open on the same client.
  */
-export function ClientsScreen({ initial, only }: { initial: MasterClientList | null; only?: ToolViewId }) {
+export function ClientsScreen({ initial, only, billingTab = false }: {
+  initial: MasterClientList | null;
+  only?: ToolViewId;
+  /** The record's Billing tab — admin@outreachify.io and Eddy only (billing-access.ts), decided by the page. */
+  billingTab?: boolean;
+}) {
   const [data, setData] = useState<MasterClientList | null>(initial);
   const [error, setError] = useState<string | null>(null);
   /*
@@ -500,7 +508,7 @@ export function ClientsScreen({ initial, only }: { initial: MasterClientList | n
           <button type="button" className="ds-btn sm" onClick={() => void refresh(true)}>Retry</button>
         </div>
       ) : null}
-      <ClientsView data={withViews(withStripe(data, stripe), views)} only={only} onPatch={patch}
+      <ClientsView data={withViews(withStripe(data, stripe), views)} only={only} billingTab={billingTab} onPatch={patch}
         onChanged={(kind) => { void refresh(true); if (kind === "stripe") loadStripe(); }} />
     </>
   );

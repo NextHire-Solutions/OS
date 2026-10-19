@@ -44,7 +44,7 @@ export interface StripeSubscription {
   pause: { behavior: string; resumesAt: number | null } | null;
   /** The next charge (the current period's end). */
   periodEnd: number | null;
-  items: { amount: number; interval: string; intervalCount: number; quantity: number }[];
+  items: { amount: number; interval: string; intervalCount: number; quantity: number; product?: string | null }[];
   percentOff: number;
   /** metadata.os_client_id — set on subscriptions the OS created. */
   osClientId: string | null;
@@ -60,6 +60,22 @@ export interface StripeCharge {
   /** The subscription the charge paid for, through its invoice; null for one-offs. */
   subscription: string | null;
   failureMessage: string | null;
+  /* For the Billing tab (19 Oct). */
+  description?: string | null;
+  /** The invoice the charge paid, through invoice_payments. */
+  invoice?: string | null;
+  /** "Visa •••• 4242". */
+  card?: string | null;
+  hasReceipt?: boolean;
+}
+export interface StripeRefund {
+  id: string;
+  charge: string | null;
+  /** Dollars. */
+  amount: number;
+  created: number;
+  status: string;
+  reason: string | null;
 }
 export interface StripeInvoice {
   id: string;
@@ -73,12 +89,26 @@ export interface StripeInvoice {
   created: number;
   number: string | null;
   url: string | null;
+  /* For the Billing tab (19 Oct). */
+  total?: number;
+  amountPaid?: number;
+  pdf?: string | null;
+  paidAt?: number | null;
+  periodStart?: number | null;
+  periodEnd?: number | null;
+  /** The first line's description: "1 × RECRUITING SERVICES (at $750.00 / every 14 days)". */
+  description?: string | null;
 }
 export interface AccountSnapshot {
   customers: StripeCustomer[];
   subscriptions: StripeSubscription[];
   charges: StripeCharge[];
   invoices: StripeInvoice[];
+  /* For the Billing tab (19 Oct). */
+  refunds?: StripeRefund[];
+  products?: { id: string; name: string }[];
+  /** When Stripe was read (ms). */
+  readAt?: number;
 }
 export interface BillingClientRef {
   id: string;
@@ -281,6 +311,273 @@ export function buildBilling(
     });
   }
   return out;
+}
+
+/* ------------------------------------------------ the Billing tab (19 Oct) --- */
+
+/*
+ * Eddy, 17 Oct: "a centralized Billing section for each client" — current
+ * billing, total billed, every past charge including failed payments and
+ * refunds, and every invoice to view and download, "synced with Stripe".
+ *
+ * Read from the same snapshot by the same ownership rules as `buildBilling`,
+ * so the tab's total is the client's Total spend to the cent, and a shared
+ * card's payments are split the same way everywhere.
+ */
+
+export type PayState =
+  | "paid" | "failed" | "past_due" | "open" | "uncollectible" | "paused" | "cancelled" | "trial" | "incomplete" | "collecting";
+export type BillingTone = "good" | "warn" | "bad" | "mute";
+
+export interface BillingNowView {
+  subscriptionId: string;
+  /** The Stripe product: "RECRUITING SERVICES", "Recruiting Services - Minimum Tier". */
+  product: string | null;
+  /** What each charge is, after any discount. */
+  amount: number;
+  /** Before the discount, when there is one. */
+  listAmount: number | null;
+  percentOff: number;
+  every: string;
+  /** The next charge (collecting), or the day collection resumes (paused). Eastern day. */
+  nextBilling: string | null;
+  since: string;
+  canceled: string | null;
+  state: PayState;
+  tone: BillingTone;
+  /** Owed on invoices Stripe failed to collect, and how many. */
+  unpaid: number;
+  failedInvoices: number;
+  /** What the open invoice asks for, when the latest is open but not yet tried. */
+  due: number | null;
+}
+
+export interface BillingHistoryRow {
+  /** ch_… for a payment, re_… for a refund. */
+  id: string;
+  kind: "payment" | "failed" | "pending" | "refund";
+  date: string;
+  at: number;
+  /** Dollars, always positive — `kind` says which way it went. */
+  amount: number;
+  description: string;
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  card: string | null;
+  /** Why it failed, why it was refunded, "Refunded in full"… */
+  note: string | null;
+  /** A Stripe receipt can be opened (a successful payment). */
+  receipt: boolean;
+  /** A refund: the payment it gave back. */
+  chargeId?: string;
+}
+
+export interface BillingInvoiceRow {
+  id: string;
+  number: string | null;
+  date: string;
+  at: number;
+  status: string;
+  label: string;
+  tone: BillingTone;
+  total: number;
+  paid: number;
+  remaining: number;
+  description: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  paidOn: string | null;
+  attempts: number;
+  /** Can be viewed (Stripe's invoice page) / downloaded (the PDF). A draft can do neither. */
+  page: boolean;
+  pdf: boolean;
+}
+
+export interface ClientBillingDetail {
+  clientId: string;
+  /** The current subscription; null when the client has none in Stripe. */
+  now: BillingNowView | null;
+  subscriptions: number;
+  /** Subscriptions besides the current one that are not cancelled. */
+  otherLive: number;
+  totals: {
+    /** Paid, less refunds — the client's Total spend. */
+    net: number;
+    /** Every successful payment, before refunds. */
+    charged: number;
+    refunded: number;
+    payments: number;
+    failed: number;
+    /** Still owed on open invoices. */
+    unpaid: number;
+    firstPayment: string | null;
+    lastPayment: { date: string; amount: number } | null;
+  };
+  /** Newest first. */
+  history: BillingHistoryRow[];
+  /** Newest first. */
+  invoices: BillingInvoiceRow[];
+  /** When Stripe was read (ms). */
+  readAt: number | null;
+}
+
+const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const REFUND_REASON: Record<string, string> = {
+  duplicate: "Duplicate payment",
+  requested_by_customer: "Requested by the client",
+  fraudulent: "Fraudulent",
+  expired_uncaptured_charge: "Expired",
+};
+
+/** Stripe's invoice line, without the "1 × " of a single item. */
+export function lineText(s: string | null | undefined): string | null {
+  const t = (s ?? "").trim();
+  return t ? t.replace(/^1\s*×\s*/, "") : null;
+}
+
+function invoiceLook(inv: StripeInvoice): { label: string; tone: BillingTone } {
+  if (inv.status === "paid") return { label: "Paid", tone: "good" };
+  if (inv.status === "open") return inv.attemptCount > 0 ? { label: "Payment failed", tone: "bad" } : { label: "Open", tone: "warn" };
+  if (inv.status === "uncollectible") return { label: "Uncollectible", tone: "bad" };
+  if (inv.status === "void") return { label: "Void", tone: "mute" };
+  if (inv.status === "draft") return { label: "Draft", tone: "mute" };
+  return { label: inv.status, tone: "mute" };
+}
+
+/** One client's Billing tab. Null when the client is not in `clients`. */
+export function clientBillingDetail(
+  clients: BillingClientRef[],
+  snap: AccountSnapshot,
+  links: StripeLinkRow[],
+  clientId: string,
+): ClientBillingDetail | null {
+  if (!clients.some((c) => c.id === clientId)) return null;
+  const b = buildBilling(clients, snap, links).get(clientId)!;
+  const { subById, primary, subClient, chargeClient } = resolveOwnership(clients, snap, links);
+  const product = new Map((snap.products ?? []).map((p) => [p.id, p.name]));
+
+  // --- the invoices, by the rule failedInvoices uses: the subscription's owner, else the customer's first client
+  const invoiceOwner = (inv: StripeInvoice): string | null => {
+    const s = inv.subscription ? subById.get(inv.subscription) : undefined;
+    return s ? subClient(s) : primary.get(inv.customer) ?? null;
+  };
+  const myInvoices = snap.invoices.filter((inv) => invoiceOwner(inv) === clientId).sort((a, b2) => b2.created - a.created || a.id.localeCompare(b2.id));
+  const invoiceById = new Map(snap.invoices.map((i) => [i.id, i]));
+
+  // --- payments, failed payments and refunds
+  const myCharges = snap.charges.filter((ch) => chargeClient(ch) === clientId);
+  const chargeById = new Map(myCharges.map((ch) => [ch.id, ch]));
+  const history: BillingHistoryRow[] = [];
+  const describe = (ch: StripeCharge) => {
+    const inv = ch.invoice ? invoiceById.get(ch.invoice) : undefined;
+    return lineText(inv?.description) ?? lineText(ch.description) ?? "Payment";
+  };
+  for (const ch of myCharges) {
+    const inv = ch.invoice ? invoiceById.get(ch.invoice) : undefined;
+    const kind = ch.status === "succeeded" ? "payment" : ch.status === "failed" ? "failed" : "pending";
+    const note = kind === "failed" ? ch.failureMessage || "The payment failed"
+      : kind === "pending" ? "Processing"
+      : ch.refunded > 0 ? (cents(ch.refunded) >= cents(ch.amount) ? "Refunded in full" : `${usd(ch.refunded)} refunded`)
+      : null;
+    history.push({
+      id: ch.id, kind, date: etDay(ch.created), at: ch.created, amount: cents(ch.amount), description: describe(ch),
+      invoiceId: inv?.id ?? null, invoiceNumber: inv?.number ?? null, card: ch.card ?? null, note,
+      receipt: kind === "payment" && ch.hasReceipt === true,
+    });
+  }
+  for (const r of snap.refunds ?? []) {
+    const ch = r.charge ? chargeById.get(r.charge) : undefined;
+    if (!ch) continue;
+    const inv = ch.invoice ? invoiceById.get(ch.invoice) : undefined;
+    const why = r.reason ? REFUND_REASON[r.reason] ?? r.reason : null;
+    const state = r.status === "succeeded" ? null : r.status === "pending" ? "Processing" : r.status === "failed" ? "Refund failed" : r.status === "canceled" ? "Refund cancelled" : r.status;
+    history.push({
+      id: r.id, kind: "refund", date: etDay(r.created), at: r.created, amount: cents(r.amount), description: describe(ch),
+      invoiceId: inv?.id ?? null, invoiceNumber: inv?.number ?? null, card: ch.card ?? null,
+      note: [why, state].filter(Boolean).join(" · ") || null, receipt: false, chargeId: ch.id,
+    });
+  }
+  history.sort((a, c) => c.at - a.at || a.id.localeCompare(c.id));
+
+  // --- the totals: the same charges and the same sum as Total spend
+  const ok = myCharges.filter((ch) => ch.status === "succeeded").sort((a, c) => a.created - c.created);
+  const last = ok[ok.length - 1];
+  const unpaid = cents(myInvoices.filter((i) => i.status === "open").reduce((t, i) => t + i.amountRemaining, 0));
+
+  // --- what the client is on now
+  const cur = b.current ? subById.get(b.current) ?? null : null;
+  let now: BillingNowView | null = null;
+  if (cur) {
+    const view = b.subscriptions.find((s) => s.id === cur.id)!;
+    const gross = cur.items.reduce((t, it) => t + it.amount * it.quantity, 0);
+    const failedUnpaid = cents(b.failedInvoices.reduce((t, i) => t + i.amountRemaining, 0));
+    const latest = myInvoices.find((i) => i.subscription === cur.id && i.status !== "draft" && i.status !== "void");
+    const ended = cur.status === "canceled" || cur.status === "incomplete_expired";
+    const [state, tone]: [PayState, BillingTone] =
+      ended ? ["cancelled", "mute"]
+      : cur.pause ? ["paused", "warn"]
+      : b.failedInvoices.length ? ["failed", "bad"]
+      : cur.status === "past_due" || cur.status === "unpaid" ? ["past_due", "bad"]
+      : cur.status === "incomplete" ? ["incomplete", "bad"]
+      : cur.status === "trialing" ? ["trial", "mute"]
+      : latest?.status === "paid" ? ["paid", "good"]
+      : latest?.status === "open" ? ["open", "warn"]
+      : latest?.status === "uncollectible" ? ["uncollectible", "bad"]
+      : ["collecting", "good"];
+    now = {
+      subscriptionId: cur.id,
+      product: product.get(cur.items[0]?.product ?? "") ?? null,
+      amount: cents(gross * (1 - cur.percentOff / 100)),
+      listAmount: cur.percentOff ? cents(gross) : null,
+      percentOff: cur.percentOff,
+      every: view.every,
+      nextBilling: ended ? null : view.nextCharge,
+      since: view.created,
+      canceled: view.canceled,
+      state,
+      tone,
+      unpaid: failedUnpaid,
+      failedInvoices: b.failedInvoices.length,
+      due: state === "open" && latest ? cents(latest.amountRemaining) : null,
+    };
+  }
+
+  return {
+    clientId,
+    now,
+    subscriptions: b.subscriptions.length,
+    otherLive: b.subscriptions.filter((s) => s.id !== b.current && !["canceled", "incomplete_expired"].includes(s.status)).length,
+    totals: {
+      net: b.totalSpend,
+      charged: cents(ok.reduce((t, ch) => t + ch.amount, 0)),
+      refunded: cents(ok.reduce((t, ch) => t + ch.refunded, 0)),
+      payments: ok.length,
+      failed: myCharges.filter((ch) => ch.status === "failed").length,
+      unpaid,
+      firstPayment: ok[0] ? etDay(ok[0].created) : null,
+      lastPayment: last ? { date: etDay(last.created), amount: cents(last.amount) } : null,
+    },
+    history,
+    invoices: myInvoices.map((inv) => {
+      const look = invoiceLook(inv);
+      const total = inv.total ?? inv.amountDue;
+      return {
+        id: inv.id, number: inv.number, date: etDay(inv.created), at: inv.created, status: inv.status, label: look.label, tone: look.tone,
+        total: cents(total),
+        paid: cents(inv.amountPaid ?? (inv.status === "paid" ? total : 0)),
+        remaining: cents(inv.amountRemaining),
+        description: lineText(inv.description),
+        periodStart: inv.periodStart ? etDay(inv.periodStart) : null,
+        periodEnd: inv.periodEnd ? etDay(inv.periodEnd) : null,
+        paidOn: inv.paidAt ? etDay(inv.paidAt) : null,
+        attempts: inv.attemptCount,
+        page: inv.status !== "draft" && !!inv.url,
+        pdf: inv.status !== "draft" && !!inv.pdf,
+      };
+    }),
+    readAt: snap.readAt ?? null,
+  };
 }
 
 /* ------------------------------------------------------------- the business --- */
