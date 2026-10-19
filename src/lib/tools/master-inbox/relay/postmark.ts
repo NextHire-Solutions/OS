@@ -1,5 +1,6 @@
 import { isRelayAddress, LIVE_SEND_ENV, liveSendAllowed, messageStream, postmarkToken, TOKEN_ENV, type Env } from "./gate.ts";
 import type { RelayEmail } from "./message.ts";
+import { isTestRecipient } from "./test-send.ts";
 
 /*
  * Postmark — the only code that can put a hand-off in a brokerage's inbox.
@@ -112,6 +113,40 @@ export function createPostmarkTransport(deps: TransportDeps = {}): Transport {
       }
     },
   };
+}
+
+/*
+ * A TEST send (test-send.ts) — the one Postmark call that does not need
+ * OS_BROKERAGE_RELAY_LIVE_SEND, so testing never means switching the hand-off
+ * live. In exchange it refuses, before any request is built, anything that is
+ * not exactly one recipient on TEST_RECIPIENTS with Reply-To the same address:
+ * it cannot reach a brokerage or an agent, whatever a caller passes it.
+ */
+export async function sendTest(email: RelayEmail, deps: TransportDeps = {}): Promise<SendResult> {
+  const env = deps.env ?? process.env;
+  const token = postmarkToken(env);
+  if (!token) return { ok: false, gated: "no_token", error: `${TOKEN_ENV} is not set — nothing was sent`, definite: true };
+  if (!isRelayAddress(email.fromAddress)) {
+    return { ok: false, gated: "bad_from", error: "From is not on leads.brokerstaffer.com — nothing was sent", definite: true };
+  }
+  const replyTo = (/<([^>]+)>\s*$/.exec(email.replyTo)?.[1] ?? email.replyTo).trim();
+  if (email.to.length !== 1 || !isTestRecipient(email.to[0].email) || email.toHeader.trim().toLowerCase() !== email.to[0].email.trim().toLowerCase() || !isTestRecipient(replyTo)) {
+    return { ok: false, gated: "no_recipients", error: "A test goes only to our own test address — nothing was sent", definite: true };
+  }
+  const doFetch = deps.fetch ?? fetch;
+  try {
+    const res = await doFetch(`${POSTMARK_API}/email`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", "X-Postmark-Server-Token": token },
+      body: JSON.stringify({ ...postmarkPayload(email, messageStream(env)), Headers: [], Tag: "brokerage-relay-test" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = (await res.json().catch(() => null)) as { ErrorCode?: number; Message?: string; MessageID?: string; SubmittedAt?: string } | null;
+    if (res.ok && body?.ErrorCode === 0 && body.MessageID) return { ok: true, messageId: body.MessageID, submittedAt: body.SubmittedAt ?? null };
+    return { ok: false, gated: null, error: `Postmark (${res.status}, code ${body?.ErrorCode ?? "?"}): ${String(body?.Message ?? "no answer").slice(0, 300)}`, definite: res.status >= 400 && res.status < 500 };
+  } catch (e) {
+    return { ok: false, gated: null, error: `Postmark did not answer: ${e instanceof Error ? e.message : String(e)}`, definite: false };
+  }
 }
 
 /** One bounce as Postmark's GET /bounces lists it (the fields used here). */

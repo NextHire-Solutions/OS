@@ -7,8 +7,9 @@ import { escapeLike } from "../portals/stop-person-plan.ts";
 import { getMasterInboxSupabase, workspaceId } from "../supabase";
 
 import { fromAddress, liveSendAllowed, postmarkToken, sweepSwitchedOff, type Env } from "./gate.ts";
-import { agentDisplayName, buildRelayEmail, messageIdFromPayload, providerSaysAutomatic, replyText, type RelayEmail } from "./message.ts";
-import { bounceKind, createPostmarkTransport, fetchBounces, type PostmarkBounce, type Transport } from "./postmark.ts";
+import { agentDisplayName, buildRelayEmail, cleanDisplayName, messageIdFromPayload, providerSaysAutomatic, replyText, type RelayEmail } from "./message.ts";
+import { bounceKind, createPostmarkTransport, fetchBounces, sendTest, type PostmarkBounce, type Transport } from "./postmark.ts";
+import { asTest, sampleEmail, takeTestSend, TEST_DAILY_CAP, TEST_RECIPIENTS } from "./test-send.ts";
 import { campaignKey, portalsOfClient, resolveBrokerage, type OsClientRef, type ResolvedBy, type World } from "./resolve.ts";
 import {
   agentEmailOf,
@@ -154,6 +155,8 @@ export interface RelayDeps {
   transport?: Transport;
   env?: Env;
   bounces?: (since: Date) => Promise<{ ok: true; bounces: PostmarkBounce[] } | { ok: false; error: string }>;
+  /** For tests of the test send (sendRelayTest): Postmark's fetch. */
+  testFetch?: typeof fetch;
 }
 
 interface ClientRecord extends OsClientRef {
@@ -1231,6 +1234,46 @@ export async function assignCampaign(
     outcomes[s] = (outcomes[s] ?? 0) + 1;
   }
   return { rechecked, outcomes, queued: Math.max(0, held.length - ASSIGN_INLINE) };
+}
+
+/**
+ * A TEST send to our own address (test-send.ts; user, 20 Oct: "test this
+ * properly with our own email address like admin@outreachify.io. no testing
+ * with clients"). No relayId: a sample with made-up words. A relayId: a copy
+ * of that prepared hand-off's email, as a test.
+ *
+ * Reads only: the hand-off is not changed, no agent's slot is taken, no cap
+ * is counted. Needs the Postmark token, never OS_BROKERAGE_RELAY_LIVE_SEND.
+ */
+export async function sendRelayTest(relayId: string | null, who: string, deps: RelayDeps = {}): Promise<{ to: string; messageId: string; kind: "sample" | "copy" }> {
+  const env = deps.env ?? process.env;
+  const to = TEST_RECIPIENTS[0];
+  if (!postmarkToken(env)) throw new RelayActionError("The Postmark token is not set on this server, so a test cannot be sent.", 409);
+  let email: RelayEmail;
+  if (!relayId) {
+    email = sampleEmail(fromAddress(env), to);
+  } else {
+    const os: Os = deps.os ?? osTable;
+    const ws = deps.ws ?? (await workspaceId());
+    const { data, error } = await os("os_brokerage_relays").select("*").eq("workspace_id", ws).eq("id", relayId).maybeSingle();
+    if (error) throw new RelayActionError(error.message, 502);
+    if (!data) throw new RelayActionError("No such hand-off.", 404);
+    const r = data as Row;
+    const subject = str(r.subject), text = str(r.text_body), html = str(r.html_body);
+    if (!subject || !text || !html) throw new RelayActionError("This hand-off has no prepared email — only one that was prepared or practised can be sent as a test.", 409);
+    const fromName = cleanDisplayName(str(r.from_name)) || "An agent via BrokerStaffer";
+    const fromAddr = str(r.from_address) ?? fromAddress(env);
+    email = asTest(
+      { fromName, fromAddress: fromAddr, from: `"${fromName}" <${fromAddr}>`, subject, textBody: text, htmlBody: html },
+      to,
+      { intended: recordView(r).recipients, agentReplyTo: str(r.reply_to), source: "A copy of a prepared hand-off." },
+    );
+  }
+  if (!takeTestSend()) throw new RelayActionError(`Today's ${TEST_DAILY_CAP} test sends have been used. It resets tomorrow.`, 429);
+  const res = await sendTest(email, { env, fetch: deps.testFetch });
+  if (!res.ok) throw new RelayActionError(res.error, res.definite ? 409 : 502);
+  console.log(`[brokerage-relay] TEST ${relayId ? `copy of ${relayId}` : "sample"} sent to ${to} by ${who} (Postmark ${res.messageId})`);
+  return { to, messageId: res.messageId, kind: relayId ? "copy" : "sample" };
 }
 
 /** The global switches (admins). Switching on records when, so nothing labelled earlier is relayed. */

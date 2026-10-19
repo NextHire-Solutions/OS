@@ -7,6 +7,7 @@ import { Switch } from "@/components/mi-ui/switch";
 import type { BrokerageRow, RelayOverview } from "@/lib/tools/master-inbox/relay/relay";
 import type { PipelineEntry, RecipientMode, RelayMode } from "@/lib/tools/master-inbox/relay/settings";
 import { REASON_TEXT, relayLine, stamp } from "@/lib/tools/master-inbox/relay/wording";
+import { TEST_RECIPIENTS } from "@/lib/tools/master-inbox/relay/test-send";
 
 import { Btn, ConfirmButton, Field, Section, ToastHost, ToggleRow, useShowToast } from "./ui";
 
@@ -47,12 +48,15 @@ function Panel({ data }: { data: RelayOverview }) {
 
   if (!data.available) {
     return (
-      <Section title="Not set up yet">
-        <p className="mut">
-          Run migration <b>0035_brokerage_relay.sql</b> (and 0036) in the Master Inbox database first. Until then the hand-off does
-          nothing at all.
-        </p>
-      </Section>
+      <>
+        <Section title="Not set up yet">
+          <p className="mut">
+            Run migration <b>0035_brokerage_relay.sql</b> (and 0036) in the Master Inbox database first. Until then the hand-off does
+            nothing at all.
+          </p>
+        </Section>
+        <TestSends tokenSet={data.server.tokenSet} />
+      </>
     );
   }
 
@@ -140,10 +144,61 @@ function Panel({ data }: { data: RelayOverview }) {
         </div>
       </Section>
 
+      <TestSends tokenSet={data.server.tokenSet} />
       <Held data={data} />
       <Brokerages rows={data.brokerages} liveGlobally={s.enabled && !s.practiceMode && data.server.liveSendAllowed && data.server.tokenSet} />
       <Recent data={data} />
     </>
+  );
+}
+
+/*
+ * Test sends (20 Oct): to our own address only, never a brokerage or an agent,
+ * and without switching anything live (relay/test-send.ts).
+ */
+function TestSends({ tokenSet }: { tokenSet: boolean }) {
+  const show = useShowToast();
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    const r = await send("/api/tools/master-inbox/relay/test", "POST", {});
+    setBusy(false);
+    show(r.ok ? { text: `Test sent to ${String(r.to)} — check that inbox` } : { text: r.error ?? "Could not send the test", bad: true });
+  };
+  return (
+    <Section title="Test with our own address" sub={`Sends only to ${TEST_RECIPIENTS.join(", ")} — never to a brokerage or an agent, and without switching anything live.`}>
+      <p className="mut">
+        A sample hand-off with made-up words, exactly as a brokerage would receive one, marked TEST. To see a real one, use <b>Test copy</b> on a
+        prepared hand-off under Recent hand-offs.
+      </p>
+      <div className="mis-act" style={{ alignItems: "center", gap: 10 }}>
+        <Btn primary onClick={run} disabled={busy || !tokenSet}>
+          {busy ? "Sending…" : `Send a sample to ${TEST_RECIPIENTS[0]}`}
+        </Btn>
+        {!tokenSet ? <span className="mut">The Postmark token is not set on this server.</span> : null}
+      </div>
+    </Section>
+  );
+}
+
+function TestCopy({ relayId }: { relayId: string }) {
+  const show = useShowToast();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className="mi-relay-btn"
+      disabled={busy}
+      title={`Send a copy of this hand-off, marked TEST, to ${TEST_RECIPIENTS[0]} only`}
+      onClick={async () => {
+        setBusy(true);
+        const r = await send("/api/tools/master-inbox/relay/test", "POST", { relayId });
+        setBusy(false);
+        show(r.ok ? { text: `Test copy sent to ${String(r.to)}` } : { text: r.error ?? "Could not send the test", bad: true });
+      }}
+    >
+      {busy ? "Sending…" : "Test copy"}
+    </button>
   );
 }
 
@@ -386,6 +441,7 @@ function Recent({ data }: { data: RelayOverview }) {
                 <th>Agent</th>
                 <th>Brokerage</th>
                 <th>What happened</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -403,6 +459,7 @@ function Recent({ data }: { data: RelayOverview }) {
                     {relayLine(r, data.now).text}
                     {r.pipelineAction === "enter_at_interested" ? <div className="mut">Pipeline: would enter at Interested (not written)</div> : null}
                   </td>
+                  <td>{r.subject && r.recipients.length ? <TestCopy relayId={r.id} /> : null}</td>
                 </tr>
               ))}
             </tbody>
