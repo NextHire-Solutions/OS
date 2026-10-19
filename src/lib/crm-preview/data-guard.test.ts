@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { admit, fromOwnPage, LIMITS, resetGuard, served } from "./data-guard.ts";
+import { admit, fromOwnClick, fromOwnPage, LIMITS, resetGuard, served } from "./data-guard.ts";
 
 const own = new Headers({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" });
 const T0 = Date.UTC(2026, 9, 17, 12, 0, 0);
@@ -77,4 +77,48 @@ test("a market agent's or a prospect's email never reaches the browser — only 
   assert.match(src, /q\.per === SETUP_PAGE_SIZE && OWN_LISTS\.has\(list\) \? \{ email:/);
   assert.match(src, /new Set\(\["My Agents", "DNC List", "In your pipeline"\]\)/);
   assert.equal((src.match(/email: str\(/g) ?? []).length, 1, "no other place sends an email");
+});
+
+/* ---------------------------------------------- the chat and Billing (19 Oct) --- */
+
+const click = new Headers({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-user": "?1", "sec-fetch-dest": "document" });
+
+test("Billing opens only on a person's own click in the portal — not a prefetch, a script, a typed address or a fetch", () => {
+  resetGuard();
+  assert.equal(fromOwnClick(click), true);
+  for (const h of [
+    new Headers(), // curl, a script
+    new Headers({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate" }), // a prefetch: no user activation
+    new Headers({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-user": "?1" }), // typed into the address bar
+    new Headers({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-user": "?1" }), // a link on another site
+    own, // a fetch from the page
+  ]) {
+    assert.equal(admit("eddy@brokerstaffer.com", "staff", "billing", h, T0).ok, false);
+  }
+  assert.equal(admit("eddy@brokerstaffer.com", "staff", "billing", click, T0).ok, true);
+  assert.equal(admit("eddy@brokerstaffer.com", "staff", "chat", click, T0).ok, false, "the chat is a fetch, never a navigation");
+});
+
+test("chat messages and Billing openings are capped per person per day", () => {
+  resetGuard();
+  const who = "client@brokerage.com";
+  for (let i = 0; i < LIMITS.client.chatsPerDay; i++) served(who, "chat", 0, T0);
+  const chat = admit(who, "client", "chat", own, T0 + 1);
+  assert.equal(chat.ok === false && chat.reason, "chats-per-day");
+  for (let i = 0; i < LIMITS.client.billingPerDay; i++) served(who, "billing", 0, T0);
+  const bill = admit(who, "client", "billing", click, T0 + 1);
+  assert.equal(bill.ok === false && bill.reason, "billing-per-day");
+  assert.equal(admit(who, "client", "market", own, T0 + 1).ok, true, "each counts apart");
+  assert.equal(admit(who, "client", "chat", own, T0 + 24 * 3_600_000 + 5).ok, true, "the next day");
+});
+
+test("the chat and Billing routes check who, then admit, before they read anything", () => {
+  const chat = readFileSync("src/app/api/crm-preview/chat/route.ts", "utf8");
+  assert.ok(chat.indexOf("canSeeCrmPreview(") < chat.indexOf("admit("));
+  assert.ok(chat.indexOf("admit(") < chat.indexOf("loadPortalChatData("), "the chat admits before loading the portal");
+  assert.match(chat, /served\(who, "chat", 0\)/);
+  assert.ok((chat.match(/NO_STORE_HEADERS/g) ?? []).length >= 4, "never cached");
+  const bill = readFileSync("src/app/api/crm-preview/billing/route.ts", "utf8");
+  assert.ok(bill.indexOf("admit(") < bill.indexOf("marketContext("), "Billing admits before reading");
+  assert.match(bill, /served\(who, "billing", 0\)/);
 });

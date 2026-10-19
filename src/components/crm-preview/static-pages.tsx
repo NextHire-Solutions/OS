@@ -14,7 +14,7 @@ import { k, RO } from "./k";
 const NOT_YET = "Not built yet — part of the redesign, not of this preview";
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
-export function CampaignsScreen() {
+export function CampaignsScreen({ onChat }: { onChat: () => void }) {
   return (
     <>
       <header className={k("top")}>
@@ -33,7 +33,7 @@ export function CampaignsScreen() {
               <li><span><Icon name="plus" size={18} /></span><b>Create campaigns</b><small>Launch a new campaign for a different group of&nbsp;agents.</small></li>
               <li><span><Icon name="mail" size={18} /></span><b>Preview before sending</b><small>See each email exactly as agents will receive&nbsp;it.</small></li>
             </ul>
-            <button type="button" className={k("btn")} {...RO} title={NOT_YET}><Icon name="chat" size={15} />Ask support for a change</button>
+            <button type="button" className={k("btn")} onClick={onChat}><Icon name="chat" size={15} />Ask support for a change</button>
           </section>
         </div>
       </div>
@@ -56,7 +56,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   { q: "How do I add a teammate?", a: "Go to Team and click Add member. Active members receive every agent who replies interested." },
 ];
 
-export function HelpScreen() {
+export function HelpScreen({ onChat }: { onChat: () => void }) {
   const [q, setQ] = useState("");
   const term = q.trim().toLowerCase();
   const topics = useMemo(
@@ -110,7 +110,7 @@ export function HelpScreen() {
               </div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button type="button" className={k("btn pri")} style={{ justifyContent: "center" }} {...RO} title={NOT_YET}><Icon name="chat" size={15} />Chat with support</button>
+              <button type="button" className={k("btn pri")} style={{ justifyContent: "center" }} onClick={onChat}><Icon name="chat" size={15} />Chat with support</button>
               <button type="button" className={k("btn")} style={{ justifyContent: "center" }} {...RO} title={NOT_YET}><Icon name="spark" size={15} />Take the tour</button>
             </div>
           </section>

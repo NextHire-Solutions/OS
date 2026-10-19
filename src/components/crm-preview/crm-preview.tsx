@@ -176,13 +176,13 @@ export function CrmPreview({
               <div className={k("sl")}>{group.section}</div>
               {group.items.map((item) => {
                 if (item.view === "billing") {
-                  // The client's Stripe page in the design; nothing to open from a preview.
+                  // The client's own Stripe billing page, in a new tab (19 Oct; api/crm-preview/billing).
                   return (
-                    <span key="billing" className={k("ri")} {...RO} title="Billing opens the client's Stripe page — not in this preview">
+                    <a key="billing" className={k("ri")} href={`/api/crm-preview/billing?client=${encodeURIComponent(client.id)}`} target="_blank" rel="noopener" title={`Opens ${client.name}'s Stripe billing page — real changes`}>
                       <Icon name={item.icon} size={17} />
                       <span className={k("t")}>{item.label}</span>
                       <span className={k("ex")}><Icon name="external" size={13} /></span>
-                    </span>
+                    </a>
                   );
                 }
                 const v = item.view;
@@ -227,9 +227,9 @@ export function CrmPreview({
           ) : view === "reports" ? (
             <ReportsScreen clientId={client.id} entries={entries} onContext={setContext} />
           ) : view === "campaigns" ? (
-            <CampaignsScreen />
+            <CampaignsScreen onChat={() => setChat(true)} />
           ) : view === "help" ? (
-            <HelpScreen />
+            <HelpScreen onChat={() => setChat(true)} />
           ) : view === "agents" ? (
             <MyAgentsScreen agents={agents} />
           ) : view === "dnc" ? (
@@ -241,7 +241,7 @@ export function CrmPreview({
           )}
         </div>
         {/* The design's support chat, on every page: the button opens the chat window (Chat), and closes it. */}
-        {chat ? <ChatWindow onClose={() => setChat(false)} /> : null}
+        {chat ? <ChatWindow client={{ id: client.id, contactName: client.contactName }} onClose={() => setChat(false)} /> : null}
         <a
           className={k("aiask")}
           href="#"

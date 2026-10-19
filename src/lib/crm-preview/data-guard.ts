@@ -1,6 +1,8 @@
 /*
  * Protection against bulk extraction — scrapers, crawlers, scripts — for the
- * new portal's agent-database data: Market, Prospects and Reports. The user,
+ * new portal's agent-database data: Market, Prospects and Reports; and a
+ * per-person cap on the assistant chat and on opening the Stripe billing page
+ * (19 Oct). The user,
  * 17 Oct: "no one should be able to extract data from this new client
  * portals".
  *
@@ -20,13 +22,14 @@
  * in the database and alert staff — see docs/HANDOVER.md.
  */
 
-export type GuardKind = "market" | "report";
+/** market/report: agent-database data. chat: one message to the assistant. billing: one Stripe billing page opened. */
+export type GuardKind = "market" | "report" | "chat" | "billing";
 export type GuardRole = "staff" | "client";
 
 /** Per person. Staff (the preview's reviewers) can audit freely; clients get the strict limits. */
-export const LIMITS: Record<GuardRole, { perMinute: number; rowsPerDay: number; reportsPerDay: number }> = {
-  staff: { perMinute: 120, rowsPerDay: 60_000, reportsPerDay: 500 },
-  client: { perMinute: 30, rowsPerDay: 2_000, reportsPerDay: 20 },
+export const LIMITS: Record<GuardRole, { perMinute: number; rowsPerDay: number; reportsPerDay: number; chatsPerDay: number; billingPerDay: number }> = {
+  staff: { perMinute: 120, rowsPerDay: 60_000, reportsPerDay: 500, chatsPerDay: 300, billingPerDay: 50 },
+  client: { perMinute: 30, rowsPerDay: 2_000, reportsPerDay: 20, chatsPerDay: 60, billingPerDay: 10 },
 };
 
 const MINUTE = 60_000;
@@ -39,6 +42,8 @@ interface Person {
   dayStart: number;
   rows: number;
   reports: number;
+  chats: number;
+  billing: number;
 }
 
 const store: Map<string, Person> = ((globalThis as Record<string, unknown>).__crmPreviewGuard ??= new Map<string, Person>()) as Map<string, Person>;
@@ -46,7 +51,7 @@ const store: Map<string, Person> = ((globalThis as Record<string, unknown>).__cr
 function person(who: string, now: number): Person {
   let p = store.get(who);
   if (!p || now - p.dayStart >= DAY) {
-    p = { recent: p?.recent ?? [], dayStart: now, rows: 0, reports: 0 };
+    p = { recent: p?.recent ?? [], dayStart: now, rows: 0, reports: 0, chats: 0, billing: 0 };
     store.set(who, p);
   }
   p.recent = p.recent.filter((t) => now - t < MINUTE);
@@ -65,6 +70,16 @@ export function fromOwnPage(headers: { get(name: string): string | null }): bool
   return headers.get("sec-fetch-site") === "same-origin" && headers.get("sec-fetch-mode") === "cors";
 }
 
+/**
+ * A person's own click on a link in the page — the Billing link, which opens
+ * Stripe in a new tab. Same origin, a navigation, and user-activated
+ * (Sec-Fetch-User), so a prefetch, a link scanner, a script or a typed URL is
+ * not one.
+ */
+export function fromOwnClick(headers: { get(name: string): string | null }): boolean {
+  return headers.get("sec-fetch-site") === "same-origin" && headers.get("sec-fetch-mode") === "navigate" && headers.get("sec-fetch-user") === "?1";
+}
+
 /** Before serving: refused if the request is not the page's own, or the person is over a limit. */
 export function admit(
   who: string,
@@ -73,7 +88,7 @@ export function admit(
   headers: { get(name: string): string | null },
   now = Date.now(),
 ): Allowed | Refusal {
-  if (!fromOwnPage(headers)) {
+  if (!(kind === "billing" ? fromOwnClick(headers) : fromOwnPage(headers))) {
     return { ok: false, status: 403, reason: "not-own-page", message: "This data is only available inside the portal." };
   }
   const limits = LIMITS[role];
@@ -87,6 +102,12 @@ export function admit(
   if (kind === "report" && p.reports >= limits.reportsPerDay) {
     return { ok: false, status: 429, reason: "reports-per-day", message: "Today's limit on reports is reached. It resets tomorrow." };
   }
+  if (kind === "chat" && p.chats >= limits.chatsPerDay) {
+    return { ok: false, status: 429, reason: "chats-per-day", message: "Today's limit on chat messages is reached. It resets tomorrow." };
+  }
+  if (kind === "billing" && p.billing >= limits.billingPerDay) {
+    return { ok: false, status: 429, reason: "billing-per-day", message: "The billing page has been opened too many times today. Try again tomorrow." };
+  }
   p.recent.push(now);
   return { ok: true };
 }
@@ -95,7 +116,9 @@ export function admit(
 export function served(who: string, kind: GuardKind, rows: number, now = Date.now()): void {
   const p = person(who, now);
   if (kind === "market") p.rows += Math.max(0, rows);
-  else p.reports += 1;
+  else if (kind === "report") p.reports += 1;
+  else if (kind === "chat") p.chats += 1;
+  else p.billing += 1;
 }
 
 /** What every data response carries: never cached anywhere, never indexed. */

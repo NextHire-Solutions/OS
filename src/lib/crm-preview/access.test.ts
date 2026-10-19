@@ -51,16 +51,18 @@ function filesUnder(dir: string): string[] {
 const ROUTES = filesUnder("src/app/api/crm-preview");
 const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
 
-test("the preview's data routes: Owners only, checked first; GET only; anyone else a bare 404", () => {
-  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["market/route.ts", "report/route.ts"]);
+test("the preview's routes: Owners and Eddy only, checked first; anyone else a bare 404; GET, except the chat's POST", () => {
+  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing/route.ts", "chat/route.ts", "market/route.ts", "report/route.ts"]);
   for (const r of ROUTES) {
     const src = read(r);
-    assert.deepEqual([...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["GET"], `${r}: GET only`);
+    const methods = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
+    assert.deepEqual(methods, [r.includes("/chat/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
     const gate = src.indexOf("canSeeCrmPreview(");
     assert.ok(gate > 0, `${r} calls the gate`);
     assert.match(src.slice(gate, gate + 160), /new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for anyone else`);
-    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "searchParams"]) {
-      const at = src.indexOf(load, src.indexOf("export async function GET"));
+    const start = src.indexOf(`export async function ${methods[0]}`);
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl("]) {
+      const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > gate, `${r}: ${load} only after the gate`);
     }
   }
@@ -88,23 +90,42 @@ test("the page checks the Owner before it reads anything", () => {
   }
 });
 
-test("read-only: nothing in the preview writes, posts or calls a server action", () => {
+test("read-only: nothing in the preview writes to a database or calls a server action", () => {
   assert.ok(PREVIEW_FILES.length >= 4, PREVIEW_FILES.join(", "));
-  const WRITES = [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /method\s*:/, /["'](POST|PUT|PATCH|DELETE)["']/, /["']use server["']/, /formAction/, /navigator\.sendBeacon/];
-  // The requests the browser makes: the portal's own read-only conversation feed and the preview's two GET routes.
-  const READS = [
-    /^\/api\/tools\/master-inbox\/portal\/\$\{[^}]+\}\/conversation\/\$\{[^}]+\}$/,
-    /^\/api\/crm-preview\/market\?\$\{[^}]+\}$/,
-    /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
-  ];
+  const WRITES = [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /["']use server["']/, /formAction/, /navigator\.sendBeacon/];
+  for (const f of PREVIEW_FILES) for (const w of WRITES) assert.doesNotMatch(read(f), w, `${f} matches ${w}`);
+});
+
+/*
+ * Every request the preview makes, by file. Reads, plus exactly the two the
+ * user asked for on 19 Oct: the chat (the browser POSTs a question; the server
+ * asks OpenAI — nothing is written anywhere) and the Billing link (one Stripe
+ * customer-portal session, the client's own page).
+ */
+const BROWSER_REQUESTS = [
+  /^\/api\/tools\/master-inbox\/portal\/\$\{[^}]+\}\/conversation\/\$\{[^}]+\}$/,
+  /^\/api\/crm-preview\/market\?\$\{[^}]+\}$/,
+  /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
+  /^\/api\/crm-preview\/chat$/,
+];
+const SERVER_REQUESTS: Record<string, RegExp[]> = {
+  "src/lib/crm-preview/chat.ts": [/^https:\/\/api\.openai\.com\/v1\/chat\/completions$/],
+  "src/lib/crm-preview/billing-portal.ts": [/^\$\{STRIPE\}\/billing_portal\/configurations\?limit=100&active=true$/, /^\$\{STRIPE\}\/billing_portal\/sessions$/],
+};
+const POSTS: Record<string, number> = { "src/components/crm-preview/chat.tsx": 1, "src/lib/crm-preview/chat.ts": 1, "src/lib/crm-preview/billing-portal.ts": 1 };
+
+test("requests: the preview's reads, the chat's one POST, OpenAI from the server, and Stripe's billing page — nothing else", () => {
   for (const f of PREVIEW_FILES) {
     const src = read(f);
-    for (const w of WRITES) assert.doesNotMatch(src, w, `${f} matches ${w}`);
-    for (const m of src.matchAll(/fetch\(\s*`([^`]*)`/g)) {
-      assert.ok(READS.some((r) => r.test(m[1])), `${f}: fetch ${m[1]} is not one of the preview's reads`);
-    }
-    assert.doesNotMatch(src, /fetch\(\s*["']/, `${f}: only the preview's reads are fetched`);
+    const allowed = SERVER_REQUESTS[f] ?? BROWSER_REQUESTS;
+    const urls = [...src.matchAll(/fetch\(\s*[`"']([^`"']*)[`"']/g)].map((m) => m[1]);
+    for (const u of urls) assert.ok(allowed.some((r) => r.test(u)), `${f}: fetch ${u} is not one of its requests`);
+    const posts = (src.match(/method\s*:\s*"POST"/g) ?? []).length;
+    assert.equal(posts, POSTS[f] ?? 0, `${f}: ${posts} POST(s)`);
+    assert.doesNotMatch(src, /method\s*:\s*["'](PUT|PATCH|DELETE)["']/, f);
   }
+  const chatUi = read("src/components/crm-preview/chat.tsx");
+  assert.match(chatUi, /fetch\(`\/api\/crm-preview\/chat`, \{\s*method: "POST"/, "the chat window POSTs only to the chat route");
 });
 
 test("not a product: no menu item, no Team access switch, no grant, nothing opened in the proxy", () => {

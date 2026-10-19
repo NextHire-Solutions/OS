@@ -370,6 +370,8 @@ database — the Database project's Supabase — through two Owner-only GET rout
 | The live portal (portal.brokerstaffer.com, the standalone app) is untouched — no code, URL, stage or lead changed | — |
 | The Follow Up Boss key never reaches the browser, only whether one is saved | `page.tsx` |
 | The two data routes: Owners only, checked first, GET only, a bare 404 for anyone else; the agent database only through the read-only guard and only its two search functions | `api/crm-preview/*`, test `access.test.ts` |
+| **19 Oct — Billing works** (the user chose "Full Stripe page now"): the sidebar's Billing opens the client's own Stripe customer portal in a new tab — invoices, update the card, cancel at the end of the paid period (REAL changes). Stripe settings created 19 Oct, labelled `metadata.os_purpose=crm-client-portal` (they are the account's default). Only on a real click (`fromOwnClick`), capped per person; never a card another client shares (Raintown + JPAR → "handled by our team") | `api/crm-preview/billing`, `lib/crm-preview/billing-pick.ts`, `billing-portal.ts` |
+| **19 Oct — the chat works**: answers from ONE client's portal (Pipeline, My Agents, DNC, Team) plus market TOTALS only (counts by brokerage/city/bands, never an agent). Its tools take no client or id — the server loads the one portal and the tools read only that. OpenAI with the workspace key (same as the OS assistant), its own call and tools. Reads only; "Ask for a person" gives `SUPPORT_EMAIL` (nicole.c@ — confirm with the user). Capped per person a day | `api/crm-preview/chat`, `lib/crm-preview/chat.ts`, `chat-tools.ts`, test `chat-tools.test.ts` |
 | The design's CSS is generated from the handoff with every class prefixed `crx-`, so it and the OS's `.app`/`.rail`/`.card` never meet. Re-run on a new handoff: `node scripts/crm-preview-css.mjs <folder>` | `app/crm-preview/crm-preview.css` (generated), `preview.css` (the preview's own) |
 
 How the design is read on today's data (`lib/crm-preview/model.ts`): the
@@ -657,6 +659,54 @@ only matters in the first minute after a restart.
 
 The lasting fix for the three is to type the right anchor on their records
 (a data write, not done); Rise needs its interval corrected by a person.
+
+### The client record's Billing tab (19 Oct — built, NOT deployed)
+
+Eddy, 17 Oct: "a centralized Billing section for each client … synced with
+Stripe". A **Billing** tab on the client record (Clients → open a client):
+
+- **Current billing** — plan (the record's) and the Stripe product, amount
+  after any discount, frequency, next billing date (or the day a paused
+  subscription resumes), payment status (Paid / Payment failed / Past due /
+  Invoice open / Paused / Cancelled …).
+- **Total billed** — paid less refunds (the same number as Total spend, to the
+  cent), charged, refunded, failed payments, unpaid now.
+- **Billing history** — every payment, failed payment (with Stripe's reason)
+  and refund (on its own date, with the reason); filters, Show all, CSV.
+- **Invoices** — every invoice with its period and status; *View* (Stripe's
+  page) and *PDF* (download), plus CSV.
+- Under them, **Subscriptions and Stripe** — the existing control (pause,
+  resume, link, payment links) and the billing fields, moved from Record.
+
+**Who sees it: admin@outreachify.io and eddy@brokerstaffer.com, by name —
+nobody else** (`lib/clients/billing-access.ts`, the user's rule of 19 Oct:
+"only admin@outreachify and eddy's email address … no one else"). Not the
+ADMIN_EMAILS list (an Owner added later does not get it), no role, no switch;
+change the list only on the user's word. The page decides it on the server
+(`[[...slug]]/page.tsx` → `ClientsScreen billingTab`); the tab's two routes
+(`/api/workspace/clients/billing/history`, `/billing/document`) answer a bare
+404 to anyone else (`billingTabUser`). Everyone else's record is exactly as
+before: the Stripe control and billing fields on the Record tab, under
+`billingUser`'s old rule (admins + the Clients page), and "Fix →" on a billing
+check opens Record for them.
+
+Read-only. Data: the shared Stripe snapshot (`billing-account.ts`, now also
+refunds, products, invoice PDFs, card and receipt), shaped by
+`clientBillingDetail` in `billing-model.ts` with the same ownership rules as
+every other money figure. *Refresh* re-reads Stripe (not within 30 s of the
+last read). Invoice and receipt links go through `/billing/document`, which
+checks the document is the client's, reads the link from Stripe at the click
+and follows only a `stripe.com` address.
+
+Tested 19 Oct on a local build against production data (background jobs off,
+every browser write stopped): all 54 clients' totals agree with the Stripe
+control; 46 clients' payments and invoices equal Stripe's own per-customer
+lists (6 on shared cards checked by the ownership rules instead); screens for
+paid, failed, paused, cancelled, shared-card and no-Stripe clients; filters,
+CSV, Refresh, 700 px width; PDF/page/receipt redirects; another client's
+invoice refused; admin@outreachify.io and Eddy see it, the two other team members with the
+Clients page do not (no tab, routes 404, their Record tab unchanged). Tests:
+`billing-detail.test.ts`.
 
 ### Inboxes: where each column comes from
 
