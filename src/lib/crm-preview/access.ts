@@ -13,8 +13,10 @@
  * said "Do not launch this new CRM until we've reviewed it on Demo Portal or
  * on a staging environment", and the user chose to open this preview to him
  * — only him, not every admin. Add a reviewer here, never by role or switch.
+ * 20 Oct, the user: "can we make this new client portal available to amy?" —
+ * Amy Anderes (amy@brokerstaffer.com), added by name.
  */
-export const PREVIEW_REVIEWERS: readonly string[] = ["eddy@brokerstaffer.com"];
+export const PREVIEW_REVIEWERS: readonly string[] = ["eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
 
 export function canSeeCrmPreview(email: string | null | undefined, owners: readonly string[]): boolean {
   if (!email) return false;

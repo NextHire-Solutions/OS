@@ -364,7 +364,7 @@ database — the Database project's Supabase — through two Owner-only GET rout
 
 | Rule | Where |
 |---|---|
-| **Owners only** (`ADMIN_EMAILS`), **plus Eddy by name** as its reviewer (16 Oct — he asked to review before any launch; the user chose to open the preview to him, not to every admin: `PREVIEW_REVIEWERS`). Not other admins, not account managers. Anyone else gets Not found. Owners fail closed when `ADMIN_EMAILS` is unset | `lib/crm-preview/access.ts`, `app/crm-preview/page.tsx` |
+| **Owners only** (`ADMIN_EMAILS`), **plus Eddy and (20 Oct) Amy by name** as its reviewers (16 Oct — Eddy asked to review before any launch; the user chose to open the preview to him, not to every admin; 20 Oct the user added amy@brokerstaffer.com: `PREVIEW_REVIEWERS`). Not other admins, not account managers. Anyone else gets Not found. Owners fail closed when `ADMIN_EMAILS` is unset | `lib/crm-preview/access.ts`, `app/crm-preview/page.tsx` |
 | Not a product: no menu item, no Team access switch, no grant, nothing in the proxy | test `access.test.ts` |
 | **Read-only**: reads what the portal reads (`portal-data.ts`); every add/edit/delete/save is drawn exactly as the design draws it (not greyed) and is inert — `RO` in `k.ts` marks it, the preview's frame catches the click and says "read-only" (what the design itself shows disabled, like the bulk bar, stays disabled); the browser's requests are GETs only (the conversation feed and the two data routes). A test fails on any write call in the preview's files | `access.test.ts`, `components/crm-preview/k.ts` |
 | The live portal (portal.brokerstaffer.com, the standalone app) is untouched — no code, URL, stage or lead changed | — |

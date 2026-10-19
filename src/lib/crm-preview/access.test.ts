@@ -18,14 +18,16 @@ test("an Owner sees it, whatever the address's case", () => {
   assert.equal(canSeeCrmPreview(" Admin@Outreachify.io ", OWNERS), true);
 });
 
-test("Eddy, by name — the reviewer the user chose (16 Oct) — and no one else by being an admin", () => {
-  assert.deepEqual(PREVIEW_REVIEWERS, ["eddy@brokerstaffer.com"], "a reviewer is added here, deliberately");
+test("Eddy and Amy, by name — the reviewers the user chose (16 and 20 Oct) — and no one else by being an admin", () => {
+  assert.deepEqual(PREVIEW_REVIEWERS, ["eddy@brokerstaffer.com", "amy@brokerstaffer.com"], "a reviewer is added here, deliberately (Amy 20 Oct)");
+  assert.equal(canSeeCrmPreview("Amy@BrokerStaffer.com", OWNERS), true);
+  assert.equal(canSeeCrmPreview("amy@brokerstaffer.com", []), true, "by name, whatever the Owners list");
   assert.equal(canSeeCrmPreview("eddy@brokerstaffer.com", OWNERS), true);
   assert.equal(canSeeCrmPreview(" Eddy@BrokerStaffer.com", OWNERS), true);
 });
 
 test("nobody else: not another admin, not an account manager, not a salesperson, not a client", () => {
-  for (const email of ["amy@brokerstaffer.com", "gabriel@brokerstaffer.com", "client@brokerage.com", "eddy@brokerstaffer.co", "eddy@brokerstaffer.com.evil.io"]) {
+  for (const email of ["amy@brokerstaffer.co", "amy.anderes@brokerstaffer.com", "gabriel@brokerstaffer.com", "client@brokerage.com", "eddy@brokerstaffer.co", "eddy@brokerstaffer.com.evil.io"]) {
     assert.equal(canSeeCrmPreview(email, OWNERS), false, email);
   }
 });
