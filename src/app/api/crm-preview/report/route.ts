@@ -1,10 +1,12 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
 import { canSeeCrmPreview } from "@/lib/crm-preview/access";
 import { marketContext, marketReport } from "@/lib/crm-preview/market";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
+import { recordUse } from "@/lib/portal-usage/usage";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 
 /*
  * GET /api/crm-preview/report?client=<portal id>
@@ -37,6 +39,8 @@ export async function GET(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: "No such client portal." }, { status: 404, headers: NO_STORE_HEADERS });
     const report = await marketReport(ctx);
     served(who, "report", 0);
+    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
+    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "report", rows: 0, now: new Date() }));
     console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "report", who, client }));
     return NextResponse.json({ ...report, mls: ctx.mls, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
   } catch (err) {

@@ -446,9 +446,10 @@ is refused by the server and noticed (`lib/crm-preview/data-guard.ts`, tests
 - only the page's own fetch is served — a request without the browser's
   same-origin fetch headers (curl, a script, a scraping tool, even one holding
   a copied session cookie) gets 403; signed out gets 401 at the proxy;
-- per person: requests a minute and agent rows a day (staff 120/min,
-  60,000/day; the client limits, 30/min, 2,000/day, 20 reports/day, are
-  defined for the client build);
+- per person, for our own team: requests a minute and agent rows a day
+  (120/min, 60,000/day). **Clients are never refused for how much they read**
+  (21 Oct, the user: "we should not pause any funtionality in the client
+  portal. just alert in OS should work") — see *Usage alerts* below;
 - one search goes 1,000 agents deep at most (`MAX_ROWS`, 20 pages of 50) —
   past that, narrow the filters;
 - a market agent's or a prospect's email never leaves the server; only
@@ -457,13 +458,30 @@ is refused by the server and noticed (`lib/crm-preview/data-guard.ts`, tests
 - every data response is `no-store` and `noindex`; every request is logged
   (`[crm-preview] data`), every refusal warned (`[crm-preview] refused`).
 
+**Usage alerts (21 Oct; migration 0038, `lib/portal-usage/usage.ts`).** Every
+served Market/Prospects page, report, chat message, Billing opening and
+conversation is counted in `os_portal_usage` — per day, per person, per
+portal — after the answer has gone (`after()`), so it never slows a page.
+Nothing is refused, paused or slowed; the OS bell (admins) rings instead:
+- **Heavy use today** (warning), once a day each, when a person or a whole
+  portal passes the day's usual amount: agents viewed 2,000 / 5,000, reports
+  20 / 50, chat messages 60 / 150, Billing openings 10 / 20, conversations
+  500 / 1,500 (person / portal; `HEAVY_USE`);
+- **Looks automated** (critical), once a day per person: 25 Market pages
+  inside 5 minutes — faster than anyone reads.
+Our own team is counted, never alerted on — so today, in the preview,
+everything is counted and nothing rings; the client build passes
+`role: "client"`. If 0038 is not yet run, counting is skipped and logged
+(`[portal-usage] record failed`); nothing else changes.
+
 Must-haves before ANY client sees the new portal's Market / Prospects: every
-person signs in (no data behind a shareable link, unlike today's portals);
-the counters move to the database (one per person and per client) with an
-alert to staff and an automatic lock when exceeded or when paging looks
-automated; no export of the market or prospects (exports only of the client's
-own lists); a bot challenge on suspicious use; a few canary agents per client
-so a leaked list can be traced; an anti-scraping clause in the client terms.
+person signs in (no data behind a shareable link, unlike today's portals —
+built 21 Oct, `lib/portal-login`); usage counted with alerts to staff (built
+21 Oct, above; **no automatic lock** — the user's decision); no export of the
+market or prospects (exports only of the client's own lists); a bot challenge
+on sign-in (Cloudflare Turnstile — waiting on the client's keys); an
+anti-scraping clause in the client terms. Canary agents: **no** (the user,
+21 Oct).
 
 Eddy's decisions (16 Oct, two rounds): stages → tags **yes**, and a tagged
 agent stays at the furthest forward stage on record — **approved** (of 971

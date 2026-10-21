@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
@@ -6,6 +6,8 @@ import { canSeeCrmPreview } from "@/lib/crm-preview/access";
 import { marketContext, marketFacet, marketOptions, marketPage, type FacetKind } from "@/lib/crm-preview/market";
 import { parseMarketQuery } from "@/lib/crm-preview/market-model";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
+import { recordUse } from "@/lib/portal-usage/usage";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 
 /*
  * GET /api/crm-preview/market?client=<portal id>&list=market|prospects&page=…
@@ -45,6 +47,7 @@ export async function GET(request: NextRequest) {
     if (facet === "brand" || facet === "city" || facet === "county") {
       const out = await marketFacet(ctx, q, facet as FacetKind, params.get("fq") ?? "");
       served(who, "market", 0);
+      after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "market", rows: 0, now: new Date() }));
       console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "facet", who, client, list: q.list, facet, fq: params.get("fq") ? "set" : "" }));
       return NextResponse.json(out, { headers: NO_STORE_HEADERS });
     }
@@ -54,6 +57,8 @@ export async function GET(request: NextRequest) {
     ]);
     const rows = "rows" in page && page.rows ? page.rows.length : 0;
     served(who, "market", rows);
+    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
+    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "market", rows, page: q.page, now: new Date() }));
     console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "market", who, client, list: q.list, page: q.page, per: q.per, rows, q: q.q ? "set" : "", sort: `${q.sort}:${q.dir}`, filters: [q.volume.min, q.volume.max, q.units.min, q.units.max, q.years.min, q.years.max, q.title].filter((v) => v !== null).length + q.brokerages.length + q.cities.length + q.counties.length }));
     return NextResponse.json({ ...page, options, mls: ctx.mls, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
   } catch (err) {

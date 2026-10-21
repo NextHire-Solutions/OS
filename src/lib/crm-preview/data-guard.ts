@@ -7,32 +7,40 @@
  * portals".
  *
  * Nothing shown on a screen can be made uncopyable by hand. What this layer
- * guarantees is that taking the data in BULK is refused by the server, and
- * noticed:
+ * does is make taking the data in BULK hard, and noticed:
  *   - only the portal's own page may ask: a request without a browser's
  *     same-origin fetch headers is refused. This stops other sites, typed
  *     addresses, prefetches and casual scripts — but a determined script
  *     with a copied session can send the same headers (browsers forbid only
  *     PAGE scripts from setting them), so it is a first line, not the wall;
- *   - limits per person, keyed by the signed-in email — THE wall: requests a
- *     minute, and agent rows served a day;
+ *   - limits per person, keyed by the signed-in email — for our own team
+ *     only: requests a minute, and agent rows served a day. Clients are never
+ *     refused for how much they read (21 Oct, see LIMITS); their use is
+ *     counted in the database and alerted on in the OS instead
+ *     (lib/portal-usage/usage.ts, migration 0038);
  *   - a depth cap per search (market-model MAX_ROWS) — past it, narrow the
  *     filters;
  *   - every request is logged, every refusal logged as a warning.
  *
- * Counters live in this server's memory (one Railway instance; shared across
- * Next bundles through globalThis). The client-facing build should keep them
- * in the database and alert staff — see docs/HANDOVER.md.
+ * These counters live in this server's memory (one Railway instance; shared
+ * across Next bundles through globalThis).
  */
 
 /** market/report: agent-database data. chat: one message to the assistant. billing: one Stripe billing page opened. conversation: one pipeline entry's email thread; demo: one save on the Demo Portal (both per-minute limit only). */
 export type GuardKind = "market" | "report" | "chat" | "billing" | "conversation" | "demo";
 export type GuardRole = "staff" | "client";
 
-/** Per person. Staff (the preview's reviewers) can audit freely; clients get the strict limits. */
+/*
+ * Per person. Staff (the preview's reviewers) have generous limits. Clients
+ * have NONE that refuse (21 Oct, the user: "we should not pause any
+ * funtionality in the client portal. just alert in OS should work"): their use
+ * is counted in the database and heavy or automated-looking use rings the OS
+ * bell (lib/portal-usage/usage.ts). What still applies to them: only the
+ * portal's own pages may ask, and one search goes 1,000 agents deep.
+ */
 export const LIMITS: Record<GuardRole, { perMinute: number; rowsPerDay: number; reportsPerDay: number; chatsPerDay: number; billingPerDay: number }> = {
   staff: { perMinute: 120, rowsPerDay: 60_000, reportsPerDay: 500, chatsPerDay: 300, billingPerDay: 50 },
-  client: { perMinute: 30, rowsPerDay: 2_000, reportsPerDay: 20, chatsPerDay: 60, billingPerDay: 10 },
+  client: { perMinute: Infinity, rowsPerDay: Infinity, reportsPerDay: Infinity, chatsPerDay: Infinity, billingPerDay: Infinity },
 };
 
 const MINUTE = 60_000;

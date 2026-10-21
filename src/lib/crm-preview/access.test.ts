@@ -106,6 +106,26 @@ test("read-only: nothing in the preview writes to a database or calls a server a
 });
 
 /*
+ * The one write the data routes make (21 Oct): a usage count, after serving,
+ * through lib/portal-usage — outside the preview, so the rule above still
+ * holds for every preview file. It never refuses anything (usage.test.ts).
+ */
+test("usage is counted after serving, in the background — on every data route, and never before the gate", () => {
+  for (const [r, kind] of [["market", "market"], ["report", "report"], ["chat", "chat"], ["billing", "billing"], ["conversation", "conversation"]] as const) {
+    const src = read(`src/app/api/crm-preview/${r}/route.ts`);
+    assert.match(src, /^import \{ recordUse \} from "@\/lib\/portal-usage\/usage";$/m, r);
+    const uses = [...src.matchAll(/after\(\(\) => recordUse\(createAdminSupabase\(\), \{ who, role: "staff", portalId: client, kind: "(\w+)"/g)];
+    assert.ok(uses.length >= 1 && uses.every((u) => u[1] === kind), `${r}: counted as ${kind}`);
+    assert.equal(uses.length, (src.match(/recordUse\(/g) ?? []).length, `${r}: only ever in after()`);
+    for (const u of uses) {
+      assert.ok(u.index! > src.indexOf("canSeeCrmPreview("), `${r}: after the gate`);
+      assert.ok(u.index! > src.indexOf("admit("), `${r}: after the guard`);
+    }
+  }
+  assert.doesNotMatch(read("src/app/api/crm-preview/demo/route.ts"), /recordUse/, "Demo saves are not reads");
+});
+
+/*
  * Every request the preview makes, by file. Reads, plus exactly the two the
  * user asked for on 19 Oct: the chat (the browser POSTs a question; the server
  * asks OpenAI — nothing is written anywhere) and the Billing link (one Stripe

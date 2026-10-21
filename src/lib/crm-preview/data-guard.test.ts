@@ -23,41 +23,39 @@ test("only the portal's own page may ask: a script, curl, a cross-site page or a
   }
 });
 
-test("requests a minute: the limit refuses, and a minute later it lets through again", () => {
+test("requests a minute (staff): the limit refuses, and a minute later it lets through again", () => {
   resetGuard();
-  const who = "client@brokerage.com";
-  for (let i = 0; i < LIMITS.client.perMinute; i++) assert.equal(admit(who, "client", "market", own, T0 + i).ok, true, `request ${i + 1}`);
-  const over = admit(who, "client", "market", own, T0 + 100);
+  const who = "eddy@brokerstaffer.com";
+  for (let i = 0; i < LIMITS.staff.perMinute; i++) assert.equal(admit(who, "staff", "market", own, T0 + i).ok, true, `request ${i + 1}`);
+  const over = admit(who, "staff", "market", own, T0 + 100);
   assert.equal(over.ok, false);
   assert.equal(over.ok === false && over.status, 429);
-  assert.equal(admit(who, "client", "market", own, T0 + 61_000).ok, true, "a minute later");
-  assert.equal(admit("someone.else@brokerage.com", "client", "market", own, T0 + 100).ok, true, "one person's limit is not another's");
+  assert.equal(admit(who, "staff", "market", own, T0 + 61_000).ok, true, "a minute later");
+  assert.equal(admit("amy@brokerstaffer.com", "staff", "market", own, T0 + 100).ok, true, "one person's limit is not another's");
 });
 
-test("agents served a day: past the day's rows, market pages are refused until the next day", () => {
+test("agents served a day (staff): past the day's rows, refused until the next day", () => {
   resetGuard();
-  const who = "client@brokerage.com";
-  served(who, "market", LIMITS.client.rowsPerDay - 50, T0);
-  assert.equal(admit(who, "client", "market", own, T0 + 1_000).ok, true);
+  const who = "eddy@brokerstaffer.com";
+  served(who, "market", LIMITS.staff.rowsPerDay - 50, T0);
+  assert.equal(admit(who, "staff", "market", own, T0 + 1_000).ok, true);
   served(who, "market", 50, T0 + 1_000);
-  const over = admit(who, "client", "market", own, T0 + 2_000);
+  const over = admit(who, "staff", "market", own, T0 + 2_000);
   assert.equal(over.ok === false && over.reason, "rows-per-day");
-  assert.equal(admit(who, "client", "report", own, T0 + 2_000).ok, true, "reports count apart");
-  assert.equal(admit(who, "client", "market", own, T0 + 24 * 3_600_000 + 5_000).ok, true, "the next day");
+  assert.equal(admit(who, "staff", "report", own, T0 + 2_000).ok, true, "reports count apart");
+  assert.equal(admit(who, "staff", "market", own, T0 + 24 * 3_600_000 + 5_000).ok, true, "the next day");
 });
 
-test("reports a day are limited too", () => {
+test("a CLIENT is never refused for how much they read — only alerted on in the OS (21 Oct, the user)", () => {
   resetGuard();
   const who = "client@brokerage.com";
-  for (let i = 0; i < LIMITS.client.reportsPerDay; i++) served(who, "report", 0, T0);
-  const over = admit(who, "client", "report", own, T0 + 1);
-  assert.equal(over.ok === false && over.reason, "reports-per-day");
-});
-
-test("clients get the strict limits; staff (the preview's reviewers) can audit", () => {
-  assert.ok(LIMITS.client.perMinute < LIMITS.staff.perMinute);
-  assert.ok(LIMITS.client.rowsPerDay <= 2_000, "a client sees at most 2,000 market agents a day");
-  assert.ok(LIMITS.client.rowsPerDay < LIMITS.staff.rowsPerDay);
+  for (const v of Object.values(LIMITS.client)) assert.equal(v, Infinity);
+  for (let i = 0; i < 1_000; i++) assert.equal(admit(who, "client", "market", own, T0 + i).ok, true, `request ${i + 1}`);
+  served(who, "market", 1_000_000, T0);
+  for (let i = 0; i < 500; i++) served(who, "report", 0, T0);
+  for (const kind of ["market", "report", "chat", "billing", "conversation"] as const) assert.equal(admit(who, "client", kind, kind === "billing" ? { get: (n: string) => ({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-user": "?1" } as Record<string, string>)[n] ?? null } : own, T0 + 5_000).ok, true, kind);
+  // What still applies: only the portal's own pages may ask.
+  assert.equal(admit(who, "client", "market", { get: () => null }, T0).ok, false);
 });
 
 test("both data routes admit before they read, count what they serve, and never let a response be cached or indexed", () => {
@@ -99,17 +97,17 @@ test("Billing opens only on a person's own click in the portal — not a prefetc
   assert.equal(admit("eddy@brokerstaffer.com", "staff", "chat", click, T0).ok, false, "the chat is a fetch, never a navigation");
 });
 
-test("chat messages and Billing openings are capped per person per day", () => {
+test("chat messages and Billing openings are capped per person per day (staff)", () => {
   resetGuard();
-  const who = "client@brokerage.com";
-  for (let i = 0; i < LIMITS.client.chatsPerDay; i++) served(who, "chat", 0, T0);
-  const chat = admit(who, "client", "chat", own, T0 + 1);
+  const who = "eddy@brokerstaffer.com";
+  for (let i = 0; i < LIMITS.staff.chatsPerDay; i++) served(who, "chat", 0, T0);
+  const chat = admit(who, "staff", "chat", own, T0 + 1);
   assert.equal(chat.ok === false && chat.reason, "chats-per-day");
-  for (let i = 0; i < LIMITS.client.billingPerDay; i++) served(who, "billing", 0, T0);
-  const bill = admit(who, "client", "billing", click, T0 + 1);
+  for (let i = 0; i < LIMITS.staff.billingPerDay; i++) served(who, "billing", 0, T0);
+  const bill = admit(who, "staff", "billing", click, T0 + 1);
   assert.equal(bill.ok === false && bill.reason, "billing-per-day");
-  assert.equal(admit(who, "client", "market", own, T0 + 1).ok, true, "each counts apart");
-  assert.equal(admit(who, "client", "chat", own, T0 + 24 * 3_600_000 + 5).ok, true, "the next day");
+  assert.equal(admit(who, "staff", "market", own, T0 + 1).ok, true, "each counts apart");
+  assert.equal(admit(who, "staff", "chat", own, T0 + 24 * 3_600_000 + 5).ok, true, "the next day");
 });
 
 test("the chat and Billing routes check who, then admit, before they read anything", () => {

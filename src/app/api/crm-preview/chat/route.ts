@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
@@ -7,6 +7,8 @@ import { answer, loadPortalChatData } from "@/lib/crm-preview/chat";
 import { parseTurns, type MarketTotals } from "@/lib/crm-preview/chat-tools";
 import { marketContext, marketReport } from "@/lib/crm-preview/market";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
+import { recordUse } from "@/lib/portal-usage/usage";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 
 /*
  * The portal assistant (19 Oct). POST { client, messages: [{ role, text }] }
@@ -44,6 +46,8 @@ export async function POST(request: NextRequest) {
     const data = await loadPortalChatData(client);
     if (!data) return NextResponse.json({ error: "No such client portal." }, { status: 404, headers: NO_STORE_HEADERS });
     served(who, "chat", 0);
+    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
+    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "chat", rows: 0, now: new Date() }));
 
     // The same portal's market report the Reports page draws — group names and counts. Bounded as a whole
     // (finding the market included): a cold report still counting after MARKET_WAIT_MS says so, and finishes into the cache.

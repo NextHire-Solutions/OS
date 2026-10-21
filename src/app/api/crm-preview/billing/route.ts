@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
@@ -9,6 +9,8 @@ import { billingPortalUrl, portalConfiguration } from "@/lib/crm-preview/billing
 import { portalClient } from "@/lib/crm-preview/market";
 import { publicOrigin } from "@/lib/mcp/oauth";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
+import { recordUse } from "@/lib/portal-usage/usage";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 
 /*
  * The portal's Billing link (19 Oct): GET ?client=<portal id>, opened in a new
@@ -64,6 +66,8 @@ export async function GET(request: NextRequest) {
     const back = `${publicOrigin()}/crm-preview?client=${encodeURIComponent(client)}`;
     const url = await billingPortalUrl(pick.customer, back, configuration);
     served(who, "billing", 0);
+    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
+    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "billing", rows: 0, now: new Date() }));
     console.info(JSON.stringify({ at: "[crm-preview] billing opened", who, client, customer: pick.customer }));
     return NextResponse.redirect(url, { status: 303, headers: NO_STORE_HEADERS });
   } catch (e) {
