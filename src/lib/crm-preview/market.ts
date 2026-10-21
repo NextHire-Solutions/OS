@@ -151,7 +151,7 @@ export interface MarketRow {
   units: number | null;
   /** The office's own name (the Setup wizard's Office column). */
   office: string | null;
-  /** Whole years in the industry, where the database records it (about 1 agent in 80). */
+  /** Whole years in the industry, where the database records it. */
   years: number | null;
   /**
    * Only on the Setup wizard's eight-a-page tables (their design has an Email

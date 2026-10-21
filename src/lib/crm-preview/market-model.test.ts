@@ -60,7 +60,8 @@ test("the chips as the Database app's filters, on top of the market or the clien
     mls: { include: ["m1"], exclude: [] },
     salesVolume: { side: "all", buckets: [], min: "2000000", max: "" },
     closedUnits: { side: "all", buckets: [], min: "4", max: "" },
-    estTimeInIndustry: { buckets: [], min: "24", max: "" },
+    // Years, as the Database app sends them — the SQL makes months (21 Oct: "2+" had filtered 24+ years; the Atlanta market 1,455 instead of 91,804).
+    estTimeInIndustry: { buckets: [], min: "2", max: "" },
     officeSearch: { brand: { include: ["Compass"], exclude: [] }, office: { include: [], exclude: [] } },
     location: { field: "county", appliesTo: ["office", "home", "transacted"], values: ["Cobb, GA"], excludeValues: [], excludeField: "county" },
     title: { include: ["Salesperson"], exclude: [] },

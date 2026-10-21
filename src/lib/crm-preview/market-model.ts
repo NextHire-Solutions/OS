@@ -136,7 +136,8 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
   const f: Record<string, unknown> = { ...base };
   if (q.minVolume) f.salesVolume = { side: "all", buckets: [], min: String(q.minVolume), max: "" };
   if (q.minUnits) f.closedUnits = { side: "all", buckets: [], min: String(q.minUnits), max: "" };
-  if (q.minYears) f.estTimeInIndustry = { buckets: [], min: String(q.minYears * 12), max: "" };
+  // In YEARS: fn_agent_where turns them into months itself (Database 0109). Sending months filtered 2+ years as 24+ (21 Oct).
+  if (q.minYears) f.estTimeInIndustry = { buckets: [], min: String(q.minYears), max: "" };
   if (q.brokerage) f.officeSearch = { brand: { include: [q.brokerage], exclude: [] }, office: { include: [], exclude: [] } };
   if (q.county) f.location = { field: "county", appliesTo: ["office", "home", "transacted"], values: [q.county], excludeValues: [], excludeField: "county" };
   if (q.title) f.title = { include: [q.title], exclude: [] };

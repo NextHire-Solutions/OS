@@ -253,7 +253,6 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                   <Chip id="units" label="Units" value={f.minUnits} show={(v) => `${v}+`} choices={UNIT_PRESETS} open={menu === "units"} onOpen={setMenu} onPick={(v) => set("minUnits", v)} />
                   <Chip
                     id="years" label="Years licensed" value={f.minYears} show={(v) => `${v}+`} choices={YEAR_PRESETS} open={menu === "years"} onOpen={setMenu} onPick={(v) => set("minYears", v)}
-                    hint="Recorded for few agents in the database (about 1 in 80), so this keeps only agents with a recorded figure."
                   />
                   <Chip id="brokerage" label="Brokerage" value={f.brokerage} show={(v) => v} choices={options?.brokerages ?? []} open={menu === "brokerage"} onOpen={setMenu} onPick={(v) => set("brokerage", v)} />
                   <Chip id="title" label="Title" value={f.title} show={(v) => v} choices={TITLES} open={menu === "title"} onOpen={setMenu} onPick={(v) => set("title", v)} />
