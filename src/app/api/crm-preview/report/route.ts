@@ -38,6 +38,8 @@ export async function GET(request: NextRequest) {
     const ctx = await marketContext(client);
     if (!ctx) return NextResponse.json({ error: "No such client portal." }, { status: 404, headers: NO_STORE_HEADERS });
     const report = await marketReport(ctx);
+    // A report that could not be counted ("unavailable") is not a report served (22 Oct audit).
+    if ("unavailable" in report) return NextResponse.json({ ...report, mls: ctx.mls, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
     served(who, "report", 0);
     // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
     after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "report", rows: 0, now: new Date() }));

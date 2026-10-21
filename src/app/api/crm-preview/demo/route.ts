@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
   const who = (me?.email ?? "").toLowerCase();
 
   const body = (await request.json().catch(() => null)) as { client?: unknown; action?: unknown } | null;
+  // A body that can't be read (a very large file is cut off on the way in) says so — not "only the Demo Portal" (22 Oct audit).
+  if (!body) return NextResponse.json({ error: "That request couldn't be read. If it was a large file, split it into smaller files and import each one." }, { status: 400, headers: NO_STORE_HEADERS });
   if (!isDemoPortal(typeof body?.client === "string" ? body.client : null)) {
     return NextResponse.json({ error: "Only the Demo Portal can be changed from the preview. Every other portal here is read-only." }, { status: 403, headers: NO_STORE_HEADERS });
   }

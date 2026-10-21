@@ -69,7 +69,8 @@ export const DEMO_MARKET_MLS: readonly string[] = ["FMLS", "GAMLS"];
 
 const STAGES = STAGE_ORDER as [PipelineStage, ...PipelineStage[]];
 const id = z.string().uuid();
-const ids = z.array(id).min(1).max(500);
+// "Select all" on a long list: up to 5,000 at once, written in chunks (eachChunk).
+const ids = z.array(id).min(1).max(5000);
 const text = (max: number) => z.string().trim().max(max);
 const optional = (max: number) => text(max).nullable().optional().transform((v) => (v ? v : null));
 const email = z.string().trim().email().max(200);
@@ -94,8 +95,18 @@ const stageRow = z.object({
   canonical_stage: z.string().trim().nullable().optional(),
   hidden: z.boolean().optional().default(false),
 });
+/* NUL characters out of every text before anything is checked: the database refuses them, and one in a file failed the whole batch (22 Oct audit). */
+const noNul = (v: unknown): unknown =>
+  typeof v === "string" ? v.replace(/\u0000/g, "")
+  : Array.isArray(v) ? v.map(noNul)
+  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, noNul(x)]))
+  : v;
+
+/* The spreadsheet's own line number of each row the browser sends (blank lines are dropped by the parser, so it can't be counted here). */
+const lines = z.array(z.number().int().min(1).max(10_000_000)).max(MAX_IMPORT_ROWS).optional();
+
 /** Every save the Demo Portal can make — what its screens' buttons do. */
-export const demoAction = z.discriminatedUnion("type", [
+export const demoAction = z.preprocess(noNul, z.discriminatedUnion("type", [
   z.object({
     type: z.literal("entry.add"),
     lead_name: text(200).min(1),
@@ -138,12 +149,12 @@ export const demoAction = z.discriminatedUnion("type", [
   z.object({ type: z.literal("team.edit"), id, name: text(120).min(1), email, title: optional(120), phone: optional(40) }),
   z.object({ type: z.literal("team.active"), id, active: z.boolean() }),
   z.object({ type: z.literal("team.delete"), ids }),
-  z.object({ type: z.literal("entry.import"), rows: csvRows }),
-  z.object({ type: z.literal("agent.import"), rows: csvRows }),
-  z.object({ type: z.literal("dnc.import"), rows: csvRows }),
-  z.object({ type: z.literal("team.import"), rows: csvRows }),
+  z.object({ type: z.literal("entry.import"), rows: csvRows, lines }),
+  z.object({ type: z.literal("agent.import"), rows: csvRows, lines }),
+  z.object({ type: z.literal("dnc.import"), rows: csvRows, lines }),
+  z.object({ type: z.literal("team.import"), rows: csvRows, lines }),
   z.object({ type: z.literal("stages.save"), stages: z.array(stageRow).min(1).max(30) }),
-]);
+]));
 
 export type DemoAction = z.infer<typeof demoAction>;
 export type DemoResult = { ok: true; id?: string; message?: string } | { ok: false; status: 400 | 404 | 409; error: string };
@@ -160,8 +171,25 @@ export function companyDomain(raw: string | null): string | null {
 /** The slice of a Supabase client used here, so the tests can hand in a fake one. */
 type Db = { from(table: string): any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-type Res = { data: unknown; error: { message: string } | null };
-const failed = (r: Res): DemoResult | null => (r.error ? { ok: false, status: 400, error: "That could not be saved. Please try again." } : null);
+type Res = { data: unknown; error: { message: string; code?: string } | null };
+const failed = (r: Res): DemoResult | null =>
+  !r.error ? null
+  // The database's own duplicate refusal (an address or domain already on the list) says so, rather than "try again" (22 Oct audit).
+  : r.error.code === "23505" ? { ok: false, status: 409, error: "That's already on the list." }
+  : { ok: false, status: 400, error: "That could not be saved. Please try again." };
+
+/*
+ * Every id-list write in chunks of 200 (22 Oct audit): a longer
+ * `id=in.(…)` passes the gateway's URL limit (~16 KB, about 400 ids —
+ * intro-leads.ts) and failed every time, so a big list could not be cleared.
+ */
+async function eachChunk(all: readonly string[], write: (part: string[]) => PromiseLike<Res>): Promise<DemoResult | null> {
+  for (let i = 0; i < all.length; i += 200) {
+    const r = await write(all.slice(i, i + 200));
+    if (r.error) return failed(r);
+  }
+  return null;
+}
 const now = () => new Date().toISOString();
 
 // ------------------------------------------------------------ CSV imports ---
@@ -193,14 +221,22 @@ function rowReader(raw: CsvIn) {
   return { get, email, problems, flag: (key: string) => raw?.[key] === true };
 }
 
-/* A stage as a file may write it: the key ("phone_screen") or its name ("Phone Screen", "We/They Rejected"). */
-function stageFromCsv(raw: string): PipelineStage | null {
-  const key = raw.trim().toLowerCase().replace(/[\s/-]+/g, "_");
-  return (STAGE_ORDER as string[]).includes(key) ? (key as PipelineStage) : null;
-}
+/* A stage name as the file writes it, made comparable: "We/They Rejected" → "we_they_rejected". */
+const stageWord = (s: string) => s.trim().toLowerCase().replace(/[\s/-]+/g, "_");
+type CsvStage = { stage: PipelineStage; custom: string | null };
 
-/* The spreadsheet's own row number: the header is row 1. */
-const rowNo = (i: number) => i + 2;
+/*
+ * A stage as a file may write it: the key ("phone_screen"), its default name
+ * ("Phone Screen"), or the portal's OWN name for a stage — renamed ("Nurture")
+ * or custom ("Invited to sales meeting"), as the preview's own Export writes
+ * them (22 Oct audit: an export did not import back). A custom stage sits on
+ * top of Introduction, as the board places one.
+ */
+function stageFromCsv(raw: string, own: ReadonlyMap<string, CsvStage>): CsvStage | null {
+  const word = stageWord(raw);
+  if ((STAGE_ORDER as string[]).includes(word)) return { stage: word as PipelineStage, custom: null };
+  return own.get(word) ?? null;
+}
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
 function imported(saved: number, dupes: number, skipped: Skip[], noun: [string, string]): DemoResult {
@@ -214,14 +250,27 @@ function imported(saved: number, dupes: number, skipped: Skip[], noun: [string, 
 }
 
 /* Inserts in batches; a failure part-way says how many were saved (a re-import then skips them, bar pipeline rows). */
-async function insertAll(db: Db, table: string, rows: Array<Record<string, unknown>>): Promise<{ saved: number; error?: DemoResult }> {
+async function insertAll(db: Db, table: string, rows: Array<Record<string, unknown>>): Promise<{ saved: number; dupes: number; error?: DemoResult }> {
   let saved = 0;
+  let dupes = 0;
+  const partway = (): DemoResult => ({ ok: false, status: 400, error: saved ? `${plural(saved, "row was", "rows were")} saved, then the rest could not be. Please try again.` : "That file could not be saved. Please try again." });
   for (let i = 0; i < rows.length; i += 500) {
-    const r: Res = await db.from(table).insert(rows.slice(i, i + 500)).select("id");
-    if (r.error) return { saved, error: { ok: false, status: 400, error: saved ? `${plural(saved, "row was", "rows were")} saved, then the rest could not be. Please try again.` : "That file could not be saved. Please try again." } };
-    saved += ((r.data as unknown[]) ?? []).length;
+    const batch = rows.slice(i, i + 500);
+    const r: Res = await db.from(table).insert(batch).select("id");
+    if (!r.error) {
+      saved += ((r.data as unknown[]) ?? []).length;
+      continue;
+    }
+    // Something on the list since it was read (another save, the live portal): this batch row by row, its duplicates skipped (22 Oct audit).
+    if (r.error.code !== "23505") return { saved, dupes, error: partway() };
+    for (const one of batch) {
+      const o: Res = await db.from(table).insert(one).select("id");
+      if (!o.error) saved += 1;
+      else if (o.error.code === "23505") dupes += 1;
+      else return { saved, dupes, error: partway() };
+    }
   }
-  return { saved };
+  return { saved, dupes };
 }
 
 /* The Demo Portal's existing rows of a list, every page of them. */
@@ -230,32 +279,47 @@ const existing = <T,>(db: Db, table: string, columns: string) =>
 
 async function runImport(db: Db, a: Extract<DemoAction, { rows: unknown }>): Promise<DemoResult> {
   const C = DEMO_PORTAL_ID;
+  // The spreadsheet's own row number: as the browser counted it, else the header is row 1 and no line was blank.
+  const rowNo = (i: number) => a.lines?.[i] ?? i + 2;
   const skipped: Skip[] = [];
   const out: Array<Record<string, unknown>> = [];
   let dupes = 0;
   switch (a.type) {
     case "entry.import": {
+      const st: Res = await db.from("client_pipeline_stages").select("key, label, kind, canonical_stage").eq("client_id", C);
+      if (st.error) return failed(st)!;
+      const own = new Map<string, CsvStage>();
+      for (const r of (st.data ?? []) as Array<{ key: string; label: string; kind: string; canonical_stage: string | null }>) {
+        const at: CsvStage = r.kind === "canonical" && r.canonical_stage ? { stage: r.canonical_stage as PipelineStage, custom: null } : { stage: "introduction", custom: r.key };
+        own.set(stageWord(r.label), at);
+        own.set(stageWord(r.key), at);
+      }
+      for (const g of GLOBAL_CUSTOM_STAGE_KEYS) if (!own.has(g)) own.set(g, { stage: "introduction", custom: g });
+      for (const [g, label] of [["phone_screen_no_show", "Phone screen no show"], ["interview_no_show", "Interview no show"]] as const) if (!own.has(stageWord(label))) own.set(stageWord(label), { stage: "introduction", custom: g });
       a.rows.forEach((raw, i) => {
         const f = rowReader(raw);
         const name = f.get("lead_name", 200, "the name");
         if (!name) return void skipped.push({ row: rowNo(i), reason: "no name" });
         const lead_email = f.email("lead_email");
         const stageText = f.get("stage", 64, "the stage");
-        const stage = stageText ? stageFromCsv(stageText) : "introduction";
-        if (!stage) f.problems.push(`"${stageText!.slice(0, 40)}" is not a pipeline stage`);
+        const placed = stageText ? stageFromCsv(stageText, own) : { stage: "introduction" as PipelineStage, custom: null };
+        if (!placed) f.problems.push(`"${stageText!.slice(0, 40)}" is not one of this portal's stages`);
         const dateText = f.get("introduced_at", 64, "the date");
-        const date = dateText ? new Date(dateText) : null;
-        if (date && Number.isNaN(date.getTime())) f.problems.push(`"${dateText}" is not a date`);
+        const parsed = dateText ? new Date(dateText) : null;
+        // A real calendar date only: a spreadsheet's date number ("45212") reads as the year 45212, which the database refuses — and it failed the whole batch (22 Oct audit).
+        const date = parsed && !Number.isNaN(parsed.getTime()) && parsed.getUTCFullYear() >= 1900 && parsed.getUTCFullYear() <= 2100 ? parsed : null;
+        if (dateText && !date) f.problems.push(`"${dateText.slice(0, 40)}" is not a date (use a date like 2026-10-01)`);
         const row = {
           client_id: C,
-          stage,
+          stage: placed?.stage ?? "introduction",
+          custom_stage_key: placed?.custom ?? null,
           needs_replacement: f.flag("needs_replacement"),
           lead_name: name,
           lead_email,
           lead_phone: f.get("lead_phone", 80, "the phone"),
           current_brokerage: f.get("current_brokerage", 200, "the brokerage"),
           agent_profile_url: f.get("agent_profile_url", 500, "the profile link"),
-          introduced_at: date && !Number.isNaN(date.getTime()) ? date.toISOString() : now(),
+          introduced_at: date ? date.toISOString() : now(),
           source: "Client Entry",
         };
         if (f.problems.length) return void skipped.push({ row: rowNo(i), reason: f.problems[0] });
@@ -263,7 +327,7 @@ async function runImport(db: Db, a: Extract<DemoAction, { rows: unknown }>): Pro
       });
       if (!out.length) return imported(0, 0, skipped, ["agent", "agents"]);
       const r = await insertAll(db, "client_pipeline_entries", out);
-      return r.error ?? imported(r.saved, 0, skipped, ["agent", "agents"]);
+      return r.error ?? imported(r.saved, r.dupes, skipped, ["agent", "agents"]);
     }
     case "agent.import": {
       const have = new Set((await existing<{ email: string | null }>(db, "client_agents", "id, email")).map((x) => (x.email ?? "").toLowerCase()).filter(Boolean));
@@ -279,7 +343,7 @@ async function runImport(db: Db, a: Extract<DemoAction, { rows: unknown }>): Pro
       });
       if (!out.length) return imported(0, dupes, skipped, ["agent", "agents"]);
       const r = await insertAll(db, "client_agents", out);
-      return r.error ?? imported(r.saved, dupes, skipped, ["agent", "agents"]);
+      return r.error ?? imported(r.saved, dupes + r.dupes, skipped, ["agent", "agents"]);
     }
     case "dnc.import": {
       const have = new Set((await existing<{ kind: string; email: string | null; domain: string | null }>(db, "client_dnc_entries", "id, kind, email, domain")).map((x) => (x.kind === "company" ? `c:${(x.domain ?? "").toLowerCase()}` : `a:${(x.email ?? "").toLowerCase()}`)));
@@ -313,7 +377,7 @@ async function runImport(db: Db, a: Extract<DemoAction, { rows: unknown }>): Pro
       });
       if (!out.length) return imported(0, dupes, skipped, ["entry", "entries"]);
       const r = await insertAll(db, "client_dnc_entries", out);
-      return r.error ?? imported(r.saved, dupes, skipped, ["entry", "entries"]);
+      return r.error ?? imported(r.saved, dupes + r.dupes, skipped, ["entry", "entries"]);
     }
     case "team.import": {
       const key = (name: string, email: string) => `${name.trim().toLowerCase()}|${email.trim().toLowerCase()}`;
@@ -334,7 +398,7 @@ async function runImport(db: Db, a: Extract<DemoAction, { rows: unknown }>): Pro
       });
       if (!out.length) return imported(0, dupes, skipped, ["team member", "team members"]);
       const r = await insertAll(db, "client_team_members", out);
-      return r.error ?? imported(r.saved, dupes, skipped, ["team member", "team members"]);
+      return r.error ?? imported(r.saved, dupes + r.dupes, skipped, ["team member", "team members"]);
     }
   }
 }
@@ -437,8 +501,7 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
     }
     case "entry.stage": {
       // A move clears a custom-stage placement, as the live portal does for manage_stages clients (the Demo Portal is one).
-      const r: Res = await db.from("client_pipeline_entries").update({ stage: a.stage, custom_stage_key: null, updated_at: now() }).eq("client_id", C).in("id", a.ids).select("id");
-      return failed(r) ?? { ok: true };
+      return (await eachChunk(a.ids, (part) => db.from("client_pipeline_entries").update({ stage: a.stage, custom_stage_key: null, updated_at: now() }).eq("client_id", C).in("id", part).select("id"))) ?? { ok: true };
     }
     case "entry.customStage": {
       if (a.key !== null && !(GLOBAL_CUSTOM_STAGE_KEYS as readonly string[]).includes(a.key)) {
@@ -446,8 +509,7 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
         if (st.error) return failed(st)!;
         if (!st.data) return { ok: false, status: 400, error: "That stage no longer exists." };
       }
-      const r: Res = await db.from("client_pipeline_entries").update({ custom_stage_key: a.key, updated_at: now() }).eq("client_id", C).in("id", a.ids).select("id");
-      return failed(r) ?? { ok: true };
+      return (await eachChunk(a.ids, (part) => db.from("client_pipeline_entries").update({ custom_stage_key: a.key, updated_at: now() }).eq("client_id", C).in("id", part).select("id"))) ?? { ok: true };
     }
     case "entry.assign": {
       if (a.member) {
@@ -455,8 +517,7 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
         if (m.error) return failed(m)!;
         if (!m.data) return { ok: false, status: 404, error: "That team member is not on this portal." };
       }
-      const r: Res = await db.from("client_pipeline_entries").update({ assigned_team_member_id: a.member, updated_at: now() }).eq("client_id", C).in("id", a.ids).select("id");
-      return failed(r) ?? { ok: true };
+      return (await eachChunk(a.ids, (part) => db.from("client_pipeline_entries").update({ assigned_team_member_id: a.member, updated_at: now() }).eq("client_id", C).in("id", part).select("id"))) ?? { ok: true };
     }
     case "entry.edit": {
       const r: Res = await db
@@ -469,8 +530,7 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
       return (r.data as unknown[]).length ? { ok: true } : { ok: false, status: 404, error: "That agent is not on this portal." };
     }
     case "entry.delete": {
-      const r: Res = await db.from("client_pipeline_entries").delete().eq("client_id", C).in("id", a.ids);
-      return failed(r) ?? { ok: true };
+      return (await eachChunk(a.ids, (part) => db.from("client_pipeline_entries").delete().eq("client_id", C).in("id", part))) ?? { ok: true };
     }
     case "note.add": {
       // The note's entry must be the Demo Portal's: client_pipeline_notes has no client column of its own.
@@ -495,8 +555,7 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
       return (r.data as unknown[]).length ? { ok: true } : { ok: false, status: 404, error: "That agent is not on this portal." };
     }
     case "agent.delete": {
-      const r: Res = await db.from("client_agents").delete().eq("client_id", C).in("id", a.ids);
-      return failed(r) ?? { ok: true };
+      return (await eachChunk(a.ids, (part) => db.from("client_agents").delete().eq("client_id", C).in("id", part))) ?? { ok: true };
     }
     case "dnc.add": {
       const domain = a.kind === "company" ? companyDomain(a.domain) : null;
@@ -532,15 +591,15 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
       const r: Res = await db
         .from("client_dnc_entries")
         // An agent entry's domain is left as it is (it is not a block, and the form doesn't show it).
-        .update({ name: a.name, email: a.email, phone: a.phone, brokerage: company ? null : a.brokerage, ...(company ? { domain } : {}), notes: a.notes })
+        // A company's form has no email or phone: they are kept as they are (22 Oct audit: an edit erased them).
+        .update({ name: a.name, ...(company ? { domain } : { email: a.email, phone: a.phone, brokerage: a.brokerage }), notes: a.notes })
         .eq("client_id", C)
         .eq("id", a.id)
         .select("id");
       return failed(r) ?? { ok: true };
     }
     case "dnc.delete": {
-      const r: Res = await db.from("client_dnc_entries").delete().eq("client_id", C).in("id", a.ids);
-      return failed(r) ?? { ok: true };
+      return (await eachChunk(a.ids, (part) => db.from("client_dnc_entries").delete().eq("client_id", C).in("id", part))) ?? { ok: true };
     }
     case "team.add": {
       // An exact name + email repeat is refused, as live.
@@ -558,18 +617,18 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
       return failed(r) ?? { ok: true, id: String((r.data as { id: string }).id) };
     }
     case "team.edit": {
-      const r: Res = await db.from("client_team_members").update({ name: a.name, email: a.email, title: a.title, phone: a.phone }).eq("client_id", C).eq("id", a.id).select("id");
+      // Texts off on every Demo save, not only on add (22 Oct audit): a member made before 0077 defaulted to on.
+      const r: Res = await db.from("client_team_members").update({ name: a.name, email: a.email, title: a.title, phone: a.phone, receives_sms: false }).eq("client_id", C).eq("id", a.id).select("id");
       if (failed(r)) return failed(r)!;
       return (r.data as unknown[]).length ? { ok: true } : { ok: false, status: 404, error: "That person is not on this portal's team." };
     }
     case "team.active": {
-      const r: Res = await db.from("client_team_members").update({ active: a.active }).eq("client_id", C).eq("id", a.id).select("id");
+      const r: Res = await db.from("client_team_members").update({ active: a.active, receives_sms: false }).eq("client_id", C).eq("id", a.id).select("id");
       return failed(r) ?? { ok: true };
     }
     case "team.delete": {
       // Their agents become unassigned by the database itself (0043: on delete set null), as live.
-      const r: Res = await db.from("client_team_members").delete().eq("client_id", C).in("id", a.ids);
-      return failed(r) ?? { ok: true };
+      return (await eachChunk(a.ids, (part) => db.from("client_team_members").delete().eq("client_id", C).in("id", part))) ?? { ok: true };
     }
   }
 }

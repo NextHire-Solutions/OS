@@ -53,7 +53,8 @@ export async function postDemo(client: string, action: DemoAction): Promise<{ ok
     const j = (await res.json().catch(() => ({}))) as { id?: string; error?: string; message?: string };
     return res.ok ? { ok: true, id: j.id, message: j.message } : { ok: false, error: j.error ?? "That could not be saved." };
   } catch {
-    return { ok: false, error: "Couldn't reach the server — nothing was saved." };
+    // An import may have finished on the server after the browser stopped waiting (22 Oct audit): say so, so it isn't simply run twice.
+    return { ok: false, error: action.type.endsWith(".import") ? "No answer within two minutes — the import may still have finished. Check the list before importing the file again." : "Couldn't reach the server — nothing was saved." };
   }
 }
 
@@ -76,7 +77,17 @@ export async function importCsv(file: File, map: (row: CsvRow) => object | null,
     demo.say("That file is over 5 MB. Split it into smaller files and import each one.", true);
     return false;
   }
-  const rows = parseCsv(await file.text()).map(map);
+  let text: string;
+  try {
+    text = await file.text();
+  } catch {
+    demo.say("That file couldn't be read. Save it again as CSV and try once more.", true);
+    return false;
+  }
+  // A cell longer than any field allows is cut just past the limit, so the server names its row instead of refusing the whole file (22 Oct audit).
+  const clip = (r: object | null) => (r ? Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" && v.length > 20_001 ? v.slice(0, 20_001) : v])) : null);
+  const rows = parseCsv(text).map(map).map(clip);
+  const lines = csvRowLines(text);
   if (!rows.length) {
     demo.say("That file has no rows under its header row.", true);
     return false;
@@ -85,19 +96,95 @@ export async function importCsv(file: File, map: (row: CsvRow) => object | null,
     demo.say(`That file has ${rows.length.toLocaleString("en-US")} rows; 5,000 is the most at a time. Split it and import each part.`, true);
     return false;
   }
-  return demo.save({ type, rows });
+  // The spreadsheet's own line numbers, when they line up with the rows (they always should — parseCsv's rules, followed in csvRowLines).
+  return demo.save({ type, rows, ...(lines.length === rows.length ? { lines } : {}) });
+}
+
+/**
+ * The spreadsheet line each data row starts on, splitting and dropping rows
+ * exactly as parseCsv does (quoted line breaks, blank and comma-only lines),
+ * so a skipped row is named by the line a person sees (22 Oct audit: one
+ * blank line put every later row number off by one).
+ */
+export function csvRowLines(text: string): number[] {
+  const src = text.replace(/^\uFEFF/, "");
+  const starts: number[] = [];
+  const filled: boolean[] = [];
+  let line = 1;
+  let recordStart = 1;
+  let inQuotes = false;
+  let cell = "";
+  let row: string[] = [];
+  const end = () => {
+    if (cell.length > 0 || row.length > 0) {
+      row.push(cell);
+      starts.push(recordStart);
+      filled.push(row.some((c) => c.trim().length > 0));
+    }
+    row = [];
+    cell = "";
+  };
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (src[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else inQuotes = false;
+      } else {
+        if (c === "\n" || (c === "\r" && src[i + 1] !== "\n")) line++;
+        cell += c;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (c === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (c === "\n" || c === "\r") {
+      end();
+      if (c === "\r" && src[i + 1] === "\n") i++;
+      line++;
+      recordStart = line;
+      continue;
+    }
+    cell += c;
+  }
+  end();
+  // The first record is the header; then only rows with something in them, as parseCsv keeps them.
+  return starts.slice(1).filter((_, k) => filled[k + 1]);
 }
 
 /** Rows as a CSV the browser saves — the client's own lists only (never Market or Prospects). */
 export function saveCsv(filename: string, header: string[], rows: Array<Array<string | null | undefined>>): void {
-  const cell = (v: string | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const cell = (v: string | null | undefined) => `"${csvSafe(String(v ?? "")).replace(/"/g, '""')}"`;
   const text = [header.map(cell).join(","), ...rows.map((r) => r.map(cell).join(","))].join("\n");
   const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  // In the page and revoked a moment later: some browsers drop a download whose link is gone at once (22 Oct audit).
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * A cell a spreadsheet would run as a formula ("=HYPERLINK(…)", "@SUM(…)",
+ * "+cmd|…") is kept as text (22 Oct audit). A phone number or a plain number
+ * ("+1 (843) 555-0142", "-5") is left as it is, so it imports back unchanged.
+ */
+export function csvSafe(v: string): string {
+  if (/^[=@\t\r]/.test(v)) return `'${v}`;
+  if (/^[+-]/.test(v) && !/^[+-][\d\s().-]*$/.test(v)) return `'${v}`;
+  return v;
 }
 
 /** A form's named fields, trimmed (inputs and text areas inside `root`). */

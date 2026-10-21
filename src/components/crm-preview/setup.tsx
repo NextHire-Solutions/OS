@@ -127,9 +127,13 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
     if (f.county) sp.set("county", f.county);
     setState((s) => ({ ...s, loading: true }));
     fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((j) => setState({ total: j.unavailable ? 0 : j.total ?? 0, rows: j.rows ?? [], loading: false, unavailable: j.unavailable ?? null }))
-      .catch((err) => { if (err?.name !== "AbortError") setState((s) => ({ ...s, loading: false })); });
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        // A refusal or a server error is said, never shown as "no agents" with a count of 0 (22 Oct audit) — the total stays unknown.
+        if (!r.ok) return setState({ total: null, rows: [], loading: false, unavailable: j.error ?? "The agent database could not be read just now. Please try again." });
+        setState({ total: j.unavailable ? 0 : j.total ?? 0, rows: j.rows ?? [], loading: false, unavailable: j.unavailable ?? null });
+      })
+      .catch((err) => { if (err?.name !== "AbortError") setState({ total: null, rows: [], loading: false, unavailable: "Couldn't reach the server. Please try again." }); });
     return () => ctrl.abort();
   }, [clientId, list, page, q, f, enabled]);
   return state;
@@ -278,8 +282,10 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
     const on = !ids.every((id) => (tab === "mine" ? picked : marked).has(id));
     (tab === "mine" ? setPicked : setMarked)((cur) => withIds(cur, ids, on));
   };
+  // Only ticked agents still in the list (search can hide a ticked one — 22 Oct audit: hidden ticks were deleted too).
+  const pickedShown = mine.filter((a) => picked.has(a.id)).map((a) => a.id);
   const removePicked = async () => {
-    const ids = [...picked];
+    const ids = pickedShown;
     if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "agent" : "agents"} from My Agents?`)) await save({ type: "agent.delete", ids });
   };
   const marketOnly = () => demo.say("On the Demo, agents ticked from the market are shown only — they are real agents, so they're never saved to its lists. Import a CSV to add agents.");
@@ -314,8 +320,8 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
           </div>
         ) : tab === "mine" ? (
           <div className={k("sbulk")}>
-            <span className={k("bt")}><b className={k("num")}>{fmt(n)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{live && picked.size ? `${fmt(picked.size)} selected` : `all ${fmt(n)} added to My Agents`}</span></span>
-            <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(), disabled: picked.size === 0 } : RO)}>Remove selected</button>
+            <span className={k("bt")}><b className={k("num")}>{fmt(n)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{live && pickedShown.length ? `${fmt(pickedShown.length)} selected` : `all ${fmt(n)} added to My Agents`}</span></span>
+            <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(), disabled: pickedShown.length === 0 } : RO)}>Remove selected</button>
           </div>
         ) : (
           <div className={k("sbulk idle")}>
@@ -382,8 +388,9 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
       onSave={(v) => save({ type: "dnc.add", kind: v.kind === "company" ? "company" : "agent", name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: v.domain, notes: v.notes })}
     />
   ) : null;
-  const removePicked = async () => {
-    const ids = [...picked];
+  // Only ticked entries on the tab and search shown (22 Oct audit: ticks on the other tab were deleted too).
+  const pickedIn = (rows: DncEntry[]) => rows.filter((d) => picked.has(d.id)).map((d) => d.id);
+  const removePicked = async (ids: string[]) => {
     if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "entry" : "entries"} from the DNC List?`)) await save({ type: "dnc.delete", ids });
   };
   if (dnc.length === 0) {
@@ -434,8 +441,8 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
           <button className={k("clr")} type="button" onClick={() => setQ("")}>Clear all</button>
         </div>
         <div className={k("sbulk idle")}>
-          <span className={k("bt")}><b className={k("num")}>{fmt(people.length)}</b>{" "}agents ·{" "}<b className={k("num")}>{fmt(companies.length)}</b>{" "}companies blocked{blocked}{live && picked.size ? <> · <span className={k("sub")}>{fmt(picked.size)} selected</span></> : null}</span>
-          <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(), disabled: picked.size === 0 } : RO)}>Remove selected</button>
+          <span className={k("bt")}><b className={k("num")}>{fmt(people.length)}</b>{" "}agents ·{" "}<b className={k("num")}>{fmt(companies.length)}</b>{" "}companies blocked{blocked}{live && pickedIn(list).length ? <> · <span className={k("sub")}>{fmt(pickedIn(list).length)} selected</span></> : null}</span>
+          <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(pickedIn(list)), disabled: pickedIn(list).length === 0 } : RO)}>Remove selected</button>
         </div>
         <table className={k("tb")}>
           <thead>

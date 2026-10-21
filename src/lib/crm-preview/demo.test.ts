@@ -163,7 +163,7 @@ test("CSV import, Pipeline: Client Entries; a stage by key or by name; a bad sta
   seed();
   const csv = "Candidate Name,Email,Company,Stage,Introduction Date,Needs Replacement\nJo Park,jo@x.test,Compass,Phone Screen,2026-10-01,yes\nRay Diaz,,,we/they rejected,,\nNew Lead,,,,,\nOdd Stage,,,Onboarding,,\nOdd Date,,,,not a date,\n";
   const r = await run({ type: "entry.import", rows: fileRows(csv, csvRowToPipeline) });
-  assert.deepEqual(r, { ok: true, message: 'Imported 3 agents. 2 rows skipped — row 5: "onboarding" is not a pipeline stage; row 6: "not a date" is not a date.' });
+  assert.deepEqual(r, { ok: true, message: 'Imported 3 agents. 2 rows skipped — row 5: "onboarding" is not one of this portal\'s stages; row 6: "not a date" is not a date (use a date like 2026-10-01).' });
   const added = demoRows("client_pipeline_entries").filter((e) => e.lead_name !== "Demo Agent");
   assert.deepEqual(added.map((e) => [e.lead_name, e.stage, e.source, e.needs_replacement, e.current_brokerage]), [
     ["Jo Park", "phone_screen", "Client Entry", true, "Compass"],
@@ -248,7 +248,7 @@ test("input is checked before anything is read", () => {
   assert.equal(demoAction.safeParse({ type: "entry.stage", ids: [], stage: "hired" }).success, false);
   assert.equal(demoAction.safeParse({ type: "entry.stage", ids: ["not-a-uuid"], stage: "hired" }).success, false);
   assert.equal(demoAction.safeParse({ type: "entry.stage", ids: [OTHER], stage: "made_up" }).success, false);
-  assert.equal(demoAction.safeParse({ type: "entry.delete", ids: Array.from({ length: 501 }, () => OTHER) }).success, false);
+  assert.equal(demoAction.safeParse({ type: "entry.delete", ids: Array.from({ length: 5001 }, () => OTHER) }).success, false);
   assert.equal(demoAction.safeParse({ type: "team.add", name: "X", email: "not an email" }).success, false);
   assert.equal(demoAction.safeParse({ type: "agent.add", name: "" }).success, false);
   assert.equal(companyDomain("@kw.com"), "kw.com");
@@ -278,4 +278,82 @@ test("the Demo Portal's sample market: the design's own (C21 Results' MLSs) — 
   const at = market.indexOf("isDemoPortal(p.id)");
   assert.ok(at > 0 && market.indexOf("!client && isDemoPortal(p.id)") > 0, "only when the portal has no client record of its own");
   assert.match(market.slice(at, at + 400), /orchClientId: null/, "no client's lists in a demo");
+});
+
+/* ---------------------------------------------------------- 22 Oct audit --- */
+
+/* A database client whose requests pass `hook` first (it may answer one itself), for one test. */
+function hooked(hook: (url: string, init: RequestInit | undefined) => Response | null) {
+  const wrapped = (async (url: string | URL | Request, init?: RequestInit) => hook(String(url), init) ?? fake.fetch(url as never, init)) as typeof fetch;
+  const client = createClient("https://supabase.test", "fake", { auth: { persistSession: false }, global: { fetch: wrapped } });
+  return (a: unknown) => {
+    const parsed = demoAction.safeParse(a);
+    assert.ok(parsed.success, JSON.stringify(parsed.error?.issues));
+    return runDemoAction(client, parsed.data as DemoAction);
+  };
+}
+
+test("a long list is written in chunks of 200 — 450 deletes are three requests, all done, none of another client's", async () => {
+  seed();
+  const many = fake.seed("client_agents", [...fake.rows("client_agents"), ...Array.from({ length: 450 }, (_, i) => ({ client_id: DEMO_PORTAL_ID, name: `A${i}`, email: `a${i}@x.test` }))]).filter((r) => r.client_id === DEMO_PORTAL_ID);
+  let deletes = 0;
+  const counted = hooked((url, init) => { if (init?.method === "DELETE" && url.includes("/client_agents")) deletes++; return null; });
+  assert.deepEqual(await counted({ type: "agent.delete", ids: many.map((r) => r.id) }), { ok: true });
+  assert.equal(deletes, 3);
+  assert.equal(demoRows("client_agents").length, 0);
+  assert.equal(fake.rows("client_agents").filter((r) => r.client_id === OTHER).length, 1);
+});
+
+test("a spreadsheet's date number or a NUL character no longer sinks the import: the date names its row, the NUL is dropped", async () => {
+  seed();
+  const r = await run({ type: "entry.import", rows: [{ lead_name: "Serial Date", introduced_at: "45212" }, { lead_name: "Nul\u0000Name", introduced_at: "2026-10-01" }, { lead_name: "Fine" }], lines: [2, 4, 5] });
+  assert.deepEqual(r, { ok: true, message: 'Imported 2 agents. 1 row skipped — row 2: "45212" is not a date (use a date like 2026-10-01).' });
+  assert.ok(demoRows("client_pipeline_entries").some((e) => e.lead_name === "NulName"));
+  // The row numbers are the spreadsheet's own (the browser counts blank lines the parser drops).
+  const bad = await run({ type: "agent.import", rows: [{ name: "Ok", email: "ok@x.test" }, { name: "Bad", email: "nope" }], lines: [2, 7] });
+  assert.equal(bad.ok && bad.message, 'Imported 1 agent. 1 row skipped — row 7: "nope" is not a valid email.');
+});
+
+test("an export imports back: the portal's own stage names, renamed and custom", async () => {
+  seed();
+  fake.seed("client_pipeline_stages", [
+    { client_id: DEMO_PORTAL_ID, key: "keep_warm", label: "Nurture", kind: "canonical", canonical_stage: "keep_warm", hidden: false, sort_order: 0 },
+    { client_id: DEMO_PORTAL_ID, key: "custom_apw2pau5", label: "Invited to sales meeting", kind: "custom", canonical_stage: null, hidden: false, sort_order: 1 },
+    { client_id: OTHER, key: "custom_theirs", label: "Theirs Only", kind: "custom", canonical_stage: null, hidden: false, sort_order: 0 },
+  ]);
+  const r = await run({ type: "entry.import", rows: [{ lead_name: "A", stage: "Nurture" }, { lead_name: "B", stage: "Invited to sales meeting" }, { lead_name: "C", stage: "Interview no show" }, { lead_name: "D", stage: "Theirs Only" }] });
+  assert.equal(r.ok && r.message, 'Imported 3 agents. 1 row skipped — row 5: "Theirs Only" is not one of this portal\'s stages.');
+  const by = (n: string) => demoRows("client_pipeline_entries").find((e) => e.lead_name === n)!;
+  assert.deepEqual([by("A").stage, by("A").custom_stage_key], ["keep_warm", null]);
+  assert.deepEqual([by("B").stage, by("B").custom_stage_key], ["introduction", "custom_apw2pau5"]);
+  assert.deepEqual([by("C").stage, by("C").custom_stage_key], ["introduction", "interview_no_show"]);
+});
+
+test("a duplicate the database refuses mid-import is skipped, not a failed file; on its own it says 'already on the list'", async () => {
+  seed();
+  const dupe = (url: string, init: RequestInit | undefined) => {
+    if (init?.method !== "POST" || !url.includes("/client_agents")) return null;
+    const body = JSON.parse(String(init.body));
+    const rows = Array.isArray(body) ? body : [body];
+    return rows.some((x: { email?: string }) => x.email === "taken@x.test") ? new Response(JSON.stringify({ code: "23505", message: "duplicate key value violates unique constraint" }), { status: 409, headers: { "content-type": "application/json" } }) : null;
+  };
+  const runDupe = hooked(dupe);
+  const r = await runDupe({ type: "agent.import", rows: [{ name: "One", email: "one@x.test" }, { name: "Taken", email: "taken@x.test" }, { name: "Two", email: "two@x.test" }] });
+  assert.deepEqual(r, { ok: true, message: "Imported 2 agents. 1 duplicate skipped." });
+  assert.deepEqual(await runDupe({ type: "agent.add", name: "Taken", email: "taken@x.test" }), { ok: false, status: 409, error: "That's already on the list." });
+  assert.deepEqual(demoRows("client_agents").map((a) => a.email).sort(), ["one@x.test", "two@x.test"]);
+});
+
+test("editing a DNC company keeps its email and phone; a Demo team edit keeps texts off", async () => {
+  seed();
+  const [co] = fake.seed("client_dnc_entries", [...fake.rows("client_dnc_entries"), { client_id: DEMO_PORTAL_ID, kind: "company", name: "Acme", email: "info@acme.test", phone: "555-0100", domain: "acme.test" }]).slice(-1);
+  assert.deepEqual(await run({ type: "dnc.edit", id: co.id, name: "Acme Realty", domain: "acme.test" }), { ok: true });
+  assert.deepEqual([row("client_dnc_entries", co.id).name, row("client_dnc_entries", co.id).email, row("client_dnc_entries", co.id).phone], ["Acme Realty", "info@acme.test", "555-0100"]);
+  const s = seed();
+  row("client_team_members", s.demoMember.id).receives_sms = true;
+  await run({ type: "team.edit", id: s.demoMember.id, name: "Eddy", email: "eddy@brokerstaffer.com", phone: "555-0199" });
+  assert.equal(row("client_team_members", s.demoMember.id).receives_sms, false);
+  row("client_team_members", s.demoMember.id).receives_sms = true;
+  await run({ type: "team.active", id: s.demoMember.id, active: true });
+  assert.equal(row("client_team_members", s.demoMember.id).receives_sms, false);
 });

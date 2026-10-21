@@ -62,13 +62,28 @@ function CsvDrop({ className, onFile, onClose, busyText, children }: { className
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
+  // While the dialog is open, a file dropped anywhere but the zone does nothing — the browser would otherwise leave the page to open it (22 Oct audit).
+  useEffect(() => {
+    const stop = (e: DragEvent) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); };
+    window.addEventListener("dragover", stop);
+    window.addEventListener("drop", stop);
+    return () => {
+      window.removeEventListener("dragover", stop);
+      window.removeEventListener("drop", stop);
+    };
+  }, []);
   if (!onFile) return <button className={k(className)} type="button" {...RO}>{children}</button>;
   const take = async (file: File | undefined) => {
     if (!file || busy) return;
     setBusy(true);
-    const ok = await onFile(file);
-    setBusy(false);
-    if (input.current) input.current.value = "";
+    let ok = false;
+    try {
+      ok = await onFile(file);
+    } finally {
+      // Never left on "Importing…", whatever happened.
+      setBusy(false);
+      if (input.current) input.current.value = "";
+    }
     if (ok) onClose();
   };
   return (

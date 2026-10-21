@@ -560,7 +560,9 @@ function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string
   // After a save the page reloads its stages: take them as saved (a section just saved now matches them), keeping edits not yet saved in the other section.
   useEffect(() => {
     const next = sections(JSON.parse(sig) as ManagedStage[]);
-    const take = (d: Draft[], part: Part) => (same(d, baseRef.current[part]) || same(d, next[part]) ? next[part] : d);
+    // Read before it is replaced below: the draft is compared with the stages as they were (22 Oct audit — not left to when React runs the update).
+    const prev = baseRef.current;
+    const take = (d: Draft[], part: Part) => (same(d, prev[part]) || same(d, next[part]) ? next[part] : d);
     setDraft((d) => ({ stages: take(d.stages, "stages"), tags: take(d.tags, "tags") }));
     baseRef.current = next;
     setBase(next);
@@ -595,7 +597,19 @@ function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string
     setBusy(part);
     const trimmed = draft[part].map((s) => ({ ...s, label: s.label.trim() }));
     setPart(part, trimmed);
-    await save({ type: "stages.save", stages: payload(part === "stages" ? [...trimmed, ...base.tags] : [...base.stages, ...trimmed]) });
+    const saved = await save({ type: "stages.save", stages: payload(part === "stages" ? [...trimmed, ...baseRef.current.tags] : [...baseRef.current.stages, ...trimmed]) });
+    if (saved) {
+      /*
+       * Taken as saved at once (22 Oct audit): the page's reload lands a moment
+       * later, and a Save of the other section in between sent this section as
+       * it was BEFORE — undoing the save just made.
+       */
+      const done = trimmed.map(({ fresh: _fresh, ...rest }) => rest);
+      const next = { ...baseRef.current, [part]: done };
+      baseRef.current = next;
+      setBase(next);
+      setPart(part, done);
+    }
     setBusy(null);
   };
 

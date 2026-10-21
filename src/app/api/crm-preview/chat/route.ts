@@ -45,9 +45,6 @@ export async function POST(request: NextRequest) {
   try {
     const data = await loadPortalChatData(client);
     if (!data) return NextResponse.json({ error: "No such client portal." }, { status: 404, headers: NO_STORE_HEADERS });
-    served(who, "chat", 0);
-    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
-    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "chat", rows: 0, now: new Date() }));
 
     // The same portal's market report the Reports page draws — group names and counts. Bounded as a whole
     // (finding the market included): a cold report still counting after MARKET_WAIT_MS says so, and finishes into the cache.
@@ -62,6 +59,9 @@ export async function POST(request: NextRequest) {
     };
 
     const out = await answer(turns, data, marketTotals);
+    // Counted once answered (22 Oct audit: a failed answer counted too).
+    served(who, "chat", 0);
+    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "chat", rows: 0, now: new Date() }));
     console.info(JSON.stringify({ at: "[crm-preview] chat", who, client, turns: turns.length, tools: out.tools, tokens: out.tokens }));
     return NextResponse.json({ reply: out.reply }, { headers: NO_STORE_HEADERS });
   } catch (e) {

@@ -480,7 +480,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
                           aria-checked={m.active}
                           aria-label={`${m.name} receives intro emails`}
                           {...lock(live)}
-                          {...(live ? { tabIndex: 0, style: { cursor: "pointer" }, onClick: () => void save({ type: "team.active", id: m.id, active: !m.active }) } : {})}
+                          {...(live ? { tabIndex: 0, style: { cursor: "pointer" }, onClick: () => void save({ type: "team.active", id: m.id, active: !m.active }), onKeyDown: (e: React.KeyboardEvent) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); void save({ type: "team.active", id: m.id, active: !m.active }); } } } : {})}
                         />
                       </td>
                       <RowActions name={m.name} onEdit={live ? () => setDialog({ edit: m }) : undefined} onDelete={live ? () => void remove([m.id], m.name) : undefined} />
