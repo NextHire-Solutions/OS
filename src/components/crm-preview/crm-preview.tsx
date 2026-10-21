@@ -97,7 +97,8 @@ export function CrmPreview({
   const flash = useCallback((text: string, bad = false) => {
     setToast({ text, bad });
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), bad ? 5000 : 2600);
+    // Long enough to read: an import's summary runs longer than "Saved".
+    toastTimer.current = setTimeout(() => setToast(null), Math.min(9000, Math.max(bad ? 5000 : 2600, text.length * 55)));
   }, []);
   const router = useRouter();
   const save = useCallback(
@@ -108,13 +109,13 @@ export function CrmPreview({
         flash(r.error, true);
         return false;
       }
-      flash("Saved on the Demo Portal.");
+      flash(r.message ?? "Saved on the Demo Portal.");
       router.refresh();
       return true;
     },
     [client.demo, client.id, flash, router],
   );
-  const demo = useMemo(() => ({ live: client.demo, save }), [client.demo, save]);
+  const demo = useMemo(() => ({ live: client.demo, save, say: flash }), [client.demo, save, flash]);
   /*
    * Every control that would change something carries data-ro (k.ts RO): it is
    * drawn as the design draws it, and its click stops here — before any

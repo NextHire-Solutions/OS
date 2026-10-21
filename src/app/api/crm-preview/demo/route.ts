@@ -44,9 +44,9 @@ export async function POST(request: NextRequest) {
   try {
     const out = await runDemoAction(createAdminSupabase(), parsed.data);
     const a = parsed.data;
-    console.info(JSON.stringify({ tag: "[crm-preview] demo save", who, type: a.type, ids: "ids" in a ? a.ids.length : 1, ok: out.ok }));
+    console.info(JSON.stringify({ tag: "[crm-preview] demo save", who, type: a.type, ids: "ids" in a ? a.ids.length : "rows" in a ? a.rows.length : 1, ok: out.ok }));
     if (!out.ok) return NextResponse.json({ error: out.error }, { status: out.status, headers: NO_STORE_HEADERS });
-    return NextResponse.json({ ok: true, ...(out.id ? { id: out.id } : {}) }, { headers: NO_STORE_HEADERS });
+    return NextResponse.json({ ok: true, ...(out.id ? { id: out.id } : {}), ...(out.message ? { message: out.message } : {}) }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.error("[crm-preview] demo save", err);
     return NextResponse.json({ error: "That could not be saved just now. Please try again." }, { status: 500, headers: NO_STORE_HEADERS });

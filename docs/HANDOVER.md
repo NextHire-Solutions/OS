@@ -471,7 +471,8 @@ Nothing is refused, paused or slowed; the OS bell (admins) rings instead:
   inside 5 minutes — faster than anyone reads.
 Our own team is counted, never alerted on — so today, in the preview,
 everything is counted and nothing rings; the client build passes
-`role: "client"`. If 0038 is not yet run, counting is skipped and logged
+`role: "client"`. 0038 was run 22 Oct (verified: the table answers, the
+function is listed). Should a count ever fail, it is skipped and logged
 (`[portal-usage] record failed`); nothing else changes.
 
 Must-haves before ANY client sees the new portal's Market / Prospects: every

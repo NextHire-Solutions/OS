@@ -5,7 +5,8 @@
  * Filters, views and panels work; everything that would change the pipeline
  * is drawn disabled (see src/app/crm-preview/page.tsx) — except on the Demo
  * Portal, where moving, tagging, assigning, adding, editing, notes and
- * deleting save (demo-save.ts). Upload CSV and Manage stages are drawn only.
+ * deleting save (demo-save.ts), and Upload CSV imports (22 Oct). Manage
+ * stages is drawn only.
  */
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -26,12 +27,13 @@ import {
   type PreviewStage,
   type TimeRange,
 } from "@/lib/crm-preview/model";
+import { csvRowToPipeline } from "@/lib/tools/master-inbox/portals/csv";
 
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
 import { EditLeadDialog, PipelineAddDialog, PipelineUploadDialog } from "./dialogs";
 import { AgentPanel, ChooseMenu, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
-import { lock, moveTo, saveCsv, useDemo, type DemoAction } from "./demo-save";
+import { importCsv, lock, moveTo, saveCsv, useDemo, type DemoAction } from "./demo-save";
 
 type Open = { kind: "agent" | "conversation" | "notes" | "edit"; entry: PipelineEntry } | { kind: "add" | "upload" } | null;
 
@@ -49,7 +51,8 @@ export function PipelineScreen({ entries, stages, furthest, team, clientId, now 
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [bulkMenu, setBulkMenu] = useState<"move" | "tag" | "assign" | null>(null);
   // The Demo Portal saves (demo-save.ts); every other client stays read-only.
-  const { live, save } = useDemo();
+  const demo = useDemo();
+  const { live, save } = demo;
   const bulkRef = useRef<HTMLDivElement>(null);
 
   const view = useMemo(() => pipelineView(entries, stages, { range, search, chip, now }, furthest), [entries, stages, range, search, chip, now, furthest]);
@@ -125,7 +128,7 @@ export function PipelineScreen({ entries, stages, furthest, team, clientId, now 
               <p>When an agent replies interested to your outreach, they show up here. You can also add one&nbsp;yourself.</p>
               <div className={k("ea")}>
                 <button type="button" className={k("btn pri")} {...lock(live)} onClick={live ? () => setOpen({ kind: "add" }) : undefined}><Icon name="plus" size={15} />Add agent</button>
-                <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Upload CSV</button>
+                <button type="button" className={k("btn")} {...lock(live)} onClick={live ? () => setOpen({ kind: "upload" }) : undefined}><Icon name="upload" size={15} />Upload CSV</button>
               </div>
             </section>
           </div>
@@ -407,7 +410,7 @@ export function PipelineScreen({ entries, stages, furthest, team, clientId, now 
           onSave={live ? (v) => save({ type: "entry.add", lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }) : undefined}
         />
       ) : null}
-      {open?.kind === "upload" ? <PipelineUploadDialog onClose={() => setOpen(null)} /> : null}
+      {open?.kind === "upload" ? <PipelineUploadDialog onClose={() => setOpen(null)} onFile={live ? (f) => importCsv(f, csvRowToPipeline, "entry.import", demo) : undefined} /> : null}
       {open?.kind === "conversation" ? (
         <ConversationPanel entry={open.entry} placement={placeOf(open.entry)} clientId={clientId} now={now} onClose={() => setOpen(null)} />
       ) : null}

@@ -5,7 +5,8 @@
  * Pipeline-Upload, Pipeline-Board-Edit / -AddField, Your-Agents-Add / -Import,
  * Team-Add / -Import, DNC-Add-Agent / -Company / -Import). Fields can be typed
  * in — nothing is kept; every Add, Save and Import, and the file chooser, is
- * inert (k.ts RO) and the preview's frame says so.
+ * inert (k.ts RO) and the preview's frame says so — except on the Demo Portal
+ * (21–22 Oct), where they save, imports included (`onSave`, `onFile`).
  *
  * Two families, as in the handoff: the pipeline's dialogs (.ov/.dlg, over the
  * whole window) and the list pages' (.aov/.adlg — the pages family's names,
@@ -50,6 +51,44 @@ function useSaving(onSave: OnSave | undefined, onClose: () => void) {
 function SaveButton({ onSave, busy, ready = true, className, onClick, children }: { onSave?: OnSave; busy: boolean; ready?: boolean; className: string; onClick: () => void; children: ReactNode }) {
   if (!onSave) return <button type="button" className={k(ready ? className : `${className} dim`)} {...RO}>{children}</button>;
   return <button type="button" className={k(ready && !busy ? className : `${className} dim`)} disabled={!ready || busy} onClick={onClick}>{busy ? "Saving…" : children}</button>;
+}
+
+/*
+ * The CSV drop zone. On the Demo Portal (`onFile`) a click opens the file
+ * chooser and a file can be dropped on it; the dialog closes once imported.
+ * Without `onFile` it stays inert (RO), as before.
+ */
+function CsvDrop({ className, onFile, onClose, busyText, children }: { className: string; onFile?: (file: File) => Promise<boolean>; onClose: () => void; busyText: ReactNode; children: ReactNode }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [over, setOver] = useState(false);
+  if (!onFile) return <button className={k(className)} type="button" {...RO}>{children}</button>;
+  const take = async (file: File | undefined) => {
+    if (!file || busy) return;
+    setBusy(true);
+    const ok = await onFile(file);
+    setBusy(false);
+    if (input.current) input.current.value = "";
+    if (ok) onClose();
+  };
+  return (
+    <>
+      <button
+        className={k(className)}
+        type="button"
+        disabled={busy}
+        aria-busy={busy}
+        style={over ? { borderColor: "#3e6bd1", background: "#f5f8fe" } : undefined}
+        onClick={() => input.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); void take(e.dataTransfer.files[0]); }}
+      >
+        {busy ? busyText : children}
+      </button>
+      <input ref={input} type="file" accept=".csv,text/csv" hidden aria-hidden="true" tabIndex={-1} onChange={(e) => void take(e.target.files?.[0])} />
+    </>
+  );
 }
 
 function useEscape(onClose: () => void) {
@@ -135,15 +174,15 @@ export function PipelineAddDialog({ now, onClose, onSave }: { now: Date; onClose
   );
 }
 
-export function PipelineUploadDialog({ onClose }: { onClose: () => void }) {
+export function PipelineUploadDialog({ onClose, onFile }: { onClose: () => void; onFile?: (file: File) => Promise<boolean> }) {
   return (
     <PipelineDialog title="Import agents from CSV" width={640} onClose={onClose} foot={<button type="button" className={k("btn")} onClick={onClose}>Cancel</button>}>
-      <button className={k("drop")} type="button" {...RO}>
+      <CsvDrop className="drop" onFile={onFile} onClose={onClose} busyText={<><Icon name="file" size={26} /><b>Importing…</b></>}>
         <Icon name="file" size={26} />
         <b>Click to choose a CSV file</b>
         <span>Columns we recognise:{" "}<code>name</code>,{" "}<code>email</code>,{" "}<code>phone</code>,{" "}<code>brokerage</code></span>
         <span>Headers don&apos;t need to match exactly, e.g.{" "}<code>Full Name</code>,{" "}<code>Email Address</code>,{" "}<code>Phone Number</code>&nbsp;all&nbsp;work.</span>
-      </button>
+      </CsvDrop>
     </PipelineDialog>
   );
 }
@@ -299,10 +338,10 @@ export function DncAddDialog({ initial = "agent", onClose, onSave, entry }: { in
 
 const IMPORT_TITLE = { agents: "Import agents from CSV", team: "Import team members from CSV", dnc: "Import DNC entries from CSV" } as const;
 
-export function ImportDialog({ kind, onClose }: { kind: keyof typeof IMPORT_TITLE; onClose: () => void }) {
+export function ImportDialog({ kind, onClose, onFile }: { kind: keyof typeof IMPORT_TITLE; onClose: () => void; onFile?: (file: File) => Promise<boolean> }) {
   return (
     <PageDialog title={IMPORT_TITLE[kind]} width={720} top={230} onClose={onClose} foot={<button type="button" className={k("btn")} onClick={onClose}>Cancel</button>}>
-      <button className={k("adrop")} type="button" {...RO}>
+      <CsvDrop className="adrop" onFile={onFile} onClose={onClose} busyText={<><span style={{ color: "#6b7280" }}><Icon name="file" size={26} /></span><span className={k("dt")}>Importing…</span></>}>
         <span style={{ color: "#6b7280" }}><Icon name="file" size={26} /></span>
         <span className={k("dt")}>Click to choose a CSV file</span>
         {kind === "agents" ? (
@@ -310,9 +349,9 @@ export function ImportDialog({ kind, onClose }: { kind: keyof typeof IMPORT_TITL
         ) : kind === "team" ? (
           <span className={k("dc")}>Columns we recognise:{" "}<code>name</code>,{" "}<code>email</code>,{" "}<code>title</code>,{" "}<code>phone</code><br />Headers don&apos;t need to match exactly, e.g.{" "}<code>Full Name</code>,{" "}<code>Email Address</code>,{" "}<code>Job Title</code>,{" "}<code>Phone Number</code>{" "}all&nbsp;work.</span>
         ) : (
-          <span className={k("dc")}>Columns we recognise:{" "}<code>name</code>,{" "}<code>email</code>,{" "}<code>phone</code>,{" "}<code>brokerage</code>,{" "}<code>domain</code>,{" "}<code>kind</code>{" "}(agent or company),{" "}<code>notes</code><br />Headers don&apos;t need to match exactly, e.g.{" "}<code>Full Name</code>,{" "}<code>Email Address</code>,{" "}<code>Current Brokerage</code>{" "}all&nbsp;work.<br />For company rows the{" "}<code>domain</code>{" "}is blocked at every provider; if a row only has an email we extract the domain from&nbsp;it.</span>
+          <span className={k("dc")}>Columns we recognise:{" "}<code>name</code>,{" "}<code>email</code>,{" "}<code>phone</code>,{" "}<code>brokerage</code>,{" "}<code>domain</code>,{" "}<code>kind</code>{" "}(agent or company),{" "}<code>notes</code><br />Headers don&apos;t need to match exactly, e.g.{" "}<code>Full Name</code>,{" "}<code>Email Address</code>,{" "}<code>Current Brokerage</code>{" "}all&nbsp;work.<br />{onFile ? <>On the Demo Portal company rows are saved to its list only — not sent to the email providers; if a row only has an email we extract the domain from&nbsp;it.</> : <>For company rows the{" "}<code>domain</code>{" "}is blocked at every provider; if a row only has an email we extract the domain from&nbsp;it.</>}</span>
         )}
-      </button>
+      </CsvDrop>
     </PageDialog>
   );
 }

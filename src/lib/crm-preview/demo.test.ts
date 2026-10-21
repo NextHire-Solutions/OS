@@ -9,7 +9,8 @@ import fs from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 
 import { FakePostgrest } from "../tools/master-inbox/test/fake-postgrest.ts";
-import { companyDomain, DEMO_MARKET_MLS, DEMO_PORTAL_ID, demoAction, isDemoPortal, runDemoAction, type DemoAction } from "./demo.ts";
+import { csvRowToAgent, csvRowToDnc, csvRowToPipeline, csvRowToTeam, parseCsv, type CsvRow } from "../tools/master-inbox/portals/csv.ts";
+import { companyDomain, DEMO_MARKET_MLS, DEMO_PORTAL_ID, demoAction, isDemoPortal, MAX_IMPORT_ROWS, runDemoAction, type DemoAction } from "./demo.ts";
 
 const fake = new FakePostgrest();
 globalThis.fetch = fake.fetch as typeof fetch;
@@ -113,6 +114,77 @@ test("nothing is pushed anywhere: My Agents and DNC rows say not pushed; a new t
   assert.deepEqual(fake.blocked, []);
 });
 
+/* What the browser sends: the file read by the live portal's own parser and header matching. */
+const fileRows = (text: string, map: (r: CsvRow) => object | null) => parseCsv(text).map(map);
+const demoRows = (t: string) => fake.rows(t).filter((r) => r.client_id === DEMO_PORTAL_ID);
+
+test("CSV import, My Agents: the file's own headers, duplicates skipped by email, bad rows named — Demo rows only, nothing pushed", async () => {
+  seed();
+  fake.seed("client_agents", [...fake.rows("client_agents"), { client_id: DEMO_PORTAL_ID, name: "Already Here", email: "here@demo.test" }]);
+  const csv = 'Full Name,Email Address,Phone Number\r\n"Lee, Jordan",Jordan@Coastal.test,555-0101\r\nAlready Again,HERE@demo.test,\r\nPat Kim,pat@x.test,\r\nPat Twice,pat@x.test,\r\n,nobody@x.test,\r\nBad Mail,not-an-email,\r\nkept@brokerage.test Owner,kept@brokerage.test,\r\n';
+  const r = await run({ type: "agent.import", rows: fileRows(csv, csvRowToAgent) });
+  assert.deepEqual(r, { ok: true, message: 'Imported 3 agents. 2 duplicates skipped. 2 rows skipped — row 6: no name; row 7: "not-an-email" is not a valid email.' });
+  const mine = demoRows("client_agents");
+  assert.deepEqual(mine.map((a) => a.email).sort(), ["here@demo.test", "jordan@coastal.test", "kept@brokerage.test", "pat@x.test"]);
+  assert.equal(mine.find((a) => a.email === "jordan@coastal.test")!.name, "Lee, Jordan");
+  assert.ok(mine.every((a) => a.pushed_to_instantly !== true && a.pushed_to_emailbison !== true));
+  assert.equal(fake.rows("client_agents").filter((a) => a.client_id === OTHER).length, 1, "another client's list: untouched (its same email is no duplicate here)");
+  assert.deepEqual(fake.blocked, []);
+});
+
+test("CSV import, DNC: companies by domain (or the email's), agents by email; nothing sent to a blocklist", async () => {
+  seed();
+  const csv = "Name,Email,Brokerage,Domain,Kind,Notes\nKeller Williams,,,https://www.KW.com/x,company,\nKW again,,,kw.com,company,\nAcme,info@acme.test,,,Company,from email\nJane Roe,Jane@Roe.test,Compass,,,\nBad Co,,,not a domain,company,\n";
+  const r = await run({ type: "dnc.import", rows: fileRows(csv, csvRowToDnc) });
+  assert.deepEqual(r, { ok: true, message: 'Imported 3 entries. 1 duplicate skipped. 1 row skipped — row 6: "not a domain" is not a website domain.' });
+  const mine = demoRows("client_dnc_entries");
+  assert.deepEqual(mine.map((d) => [d.kind, d.name, d.domain, d.email, d.brokerage, d.added_by]), [
+    ["company", "Keller Williams", "kw.com", null, null, "client"],
+    ["company", "Acme", "acme.test", "info@acme.test", null, "client"],
+    ["agent", "Jane Roe", null, "jane@roe.test", "Compass", "client"],
+  ]);
+  assert.equal(fake.rows("client_dnc_entries").length, 4, "the other client's entry is still there");
+  assert.deepEqual(fake.blocked, []);
+});
+
+test("CSV import, Team: name + email together decide a duplicate (a shared inbox is allowed, as live); never texted", async () => {
+  seed();
+  const csv = "Full Name,Email Address,Job Title,Mobile\nEddy,eddy@brokerstaffer.com,,\nSam Rivera,sam@demo.test,Recruiter,555-0100\nAlex Front,eddy@brokerstaffer.com,Front desk,\nNo Mail,,,\n";
+  const r = await run({ type: "team.import", rows: fileRows(csv, csvRowToTeam) });
+  assert.deepEqual(r, { ok: true, message: "Imported 2 team members. 1 duplicate skipped. 1 row skipped — row 5: needs a name and an email." });
+  const added = demoRows("client_team_members").filter((m) => m.name !== "Eddy");
+  assert.deepEqual(added.map((m) => [m.name, m.email, m.title, m.active, m.receives_sms]), [
+    ["Sam Rivera", "sam@demo.test", "Recruiter", true, false],
+    ["Alex Front", "eddy@brokerstaffer.com", "Front desk", true, false],
+  ]);
+});
+
+test("CSV import, Pipeline: Client Entries; a stage by key or by name; a bad stage or date names its row; no Introduction texts", async () => {
+  seed();
+  const csv = "Candidate Name,Email,Company,Stage,Introduction Date,Needs Replacement\nJo Park,jo@x.test,Compass,Phone Screen,2026-10-01,yes\nRay Diaz,,,we/they rejected,,\nNew Lead,,,,,\nOdd Stage,,,Onboarding,,\nOdd Date,,,,not a date,\n";
+  const r = await run({ type: "entry.import", rows: fileRows(csv, csvRowToPipeline) });
+  assert.deepEqual(r, { ok: true, message: 'Imported 3 agents. 2 rows skipped — row 5: "onboarding" is not a pipeline stage; row 6: "not a date" is not a date.' });
+  const added = demoRows("client_pipeline_entries").filter((e) => e.lead_name !== "Demo Agent");
+  assert.deepEqual(added.map((e) => [e.lead_name, e.stage, e.source, e.needs_replacement, e.current_brokerage]), [
+    ["Jo Park", "phone_screen", "Client Entry", true, "Compass"],
+    ["Ray Diaz", "we_they_rejected", "Client Entry", false, null],
+    ["New Lead", "introduction", "Client Entry", false, null],
+  ]);
+  assert.equal(added[0].introduced_at, new Date("2026-10-01").toISOString());
+  assert.ok(typeof added[2].introduced_at === "string", "no date: today, as live");
+  assert.deepEqual(fake.blocked, []);
+});
+
+test("CSV import: a file where nothing can be saved says why; the size is bounded", async () => {
+  seed();
+  assert.deepEqual(await run({ type: "agent.import", rows: [null, { name: "", email: "x@x.test" }] }), { ok: false, status: 400, error: "Nothing was imported — row 2: no name; row 3: no name." });
+  assert.equal(demoAction.safeParse({ type: "agent.import", rows: [] }).success, false);
+  assert.equal(demoAction.safeParse({ type: "agent.import", rows: Array.from({ length: MAX_IMPORT_ROWS + 1 }, () => ({ name: "A" })) }).success, false);
+  assert.equal(demoAction.safeParse({ type: "dnc.import", rows: [{ name: { $ne: 1 } }] }).success, false, "cells are text, yes/no or empty — nothing else");
+  assert.equal(demoRows("client_agents").length, 0);
+  assert.match(fs.readFileSync("src/components/crm-preview/demo-save.ts", "utf8"), new RegExp(`const MAX_ROWS = ${MAX_IMPORT_ROWS};`), "the browser's limit is the server's");
+});
+
 test("input is checked before anything is read", () => {
   assert.equal(demoAction.safeParse({ type: "client.delete" }).success, false);
   assert.equal(demoAction.safeParse({ type: "entry.stage", ids: [], stage: "hired" }).success, false);
@@ -132,7 +204,7 @@ test("the save path imports nothing that reaches outside the database, and the r
     const src = read(f);
     const imports = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
     const allowed = f.endsWith("demo.ts")
-      ? ["zod", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config"]
+      ? ["zod", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config"]
       : ["next/server", "@/lib/bs-auth", "@/lib/identity/admin", "@/lib/crm-preview/access", "@/lib/crm-preview/data-guard", "@/lib/crm-preview/demo", "@/lib/supabase/admin"];
     assert.deepEqual(imports.filter((i) => !allowed.includes(i)), [], `${f}: only the database and the preview's own checks — no blocklist, stop, Slack, texts, Follow Up Boss`);
     assert.doesNotMatch(src, /\bfetch\(|import\(/, `${f}: no outside requests, no dynamic imports`);

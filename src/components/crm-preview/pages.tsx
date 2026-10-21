@@ -6,7 +6,8 @@
  * draw yet. Adding, importing, editing and deleting are drawn as designed and
  * inert (k.ts RO); the bulk bar is disabled, as the design shows it untouched.
  * On the Demo Portal (21 Oct) adding, editing, deleting, exporting and Team's
- * Active switch save (demo-save.ts); Import CSV and Integrations stay drawn.
+ * Active switch save (demo-save.ts), and Import CSV imports (22 Oct);
+ * Integrations stay drawn.
  */
 
 import { useMemo, useState } from "react";
@@ -18,7 +19,9 @@ import { formatPhone, initials, LIST_PAGE_SIZE } from "@/lib/crm-preview/model";
 import { DncAddDialog, ImportDialog, MyAgentAddDialog, TeamAddForm } from "./dialogs";
 import { Icon, type IconName } from "./icons";
 import { k, RO, withIds } from "./k";
-import { lock, saveCsv, useDemo } from "./demo-save";
+import { csvRowToAgent, csvRowToDnc, csvRowToTeam } from "@/lib/tools/master-inbox/portals/csv";
+
+import { importCsv, lock, saveCsv, useDemo } from "./demo-save";
 import fubLogo from "./follow-up-boss.png";
 
 const AV = { width: 30, height: 30, fontSize: 11, background: "#eef2fa", color: "#2f55a8" } as const;
@@ -173,7 +176,8 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
   const [pageNo, setPageNo] = useState(1);
   const [dialog, setDialog] = useState<"add" | "import" | { edit: AgentEntry } | null>(null);
   const { picked, pick, clear } = usePicked();
-  const { live, save } = useDemo();
+  const demo = useDemo();
+  const { live, save } = demo;
   const csv = (rows: AgentEntry[]) => saveCsv("my-agents.csv", ["Name", "Email", "Phone"], rows.map((a) => [a.name, a.email, a.phone]));
   const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "agent.delete", ids }))) clear(); };
   const found = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
@@ -242,7 +246,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
           onSave={(v) => save({ type: "agent.edit", id: dialog.edit.id, name: v.name, email: v.email, phone: v.phone, license: dialog.edit.license })}
         />
       ) : null}
-      {dialog === "import" ? <ImportDialog kind="agents" onClose={close} /> : null}
+      {dialog === "import" ? <ImportDialog kind="agents" onClose={close} onFile={live ? (f) => importCsv(f, csvRowToAgent, "agent.import", demo) : undefined} /> : null}
     </>
   );
 }
@@ -254,7 +258,8 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const [pageNo, setPageNo] = useState(1);
   const [dialog, setDialog] = useState<"add" | "import" | { edit: DncEntry } | null>(null);
   const { picked, pick, clear } = usePicked();
-  const { live, save } = useDemo();
+  const demo = useDemo();
+  const { live, save } = demo;
   const csv = (rows: DncEntry[]) => saveCsv("dnc-list.csv", ["Kind", "Name", "Email", "Phone", "Brokerage", "Domain", "Notes"], rows.map((d) => [d.kind, d.name, d.email, d.phone, d.brokerage, d.domain, d.notes]));
   const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "dnc.delete", ids }))) clear(); };
   const close = () => setDialog(null);
@@ -391,7 +396,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
           onSave={(v) => save({ type: "dnc.edit", id: dialog.edit.id, name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: v.domain, notes: v.notes })}
         />
       ) : null}
-      {dialog === "import" ? <ImportDialog kind="dnc" onClose={close} /> : null}
+      {dialog === "import" ? <ImportDialog kind="dnc" onClose={close} onFile={live ? (f) => importCsv(f, csvRowToDnc, "dnc.import", demo) : undefined} /> : null}
     </>
   );
 }
@@ -402,7 +407,8 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
   const [q, setQ] = useState("");
   const [dialog, setDialog] = useState<"add" | "import" | { edit: TeamMember } | null>(null);
   const { picked, pick, clear } = usePicked();
-  const { live, save } = useDemo();
+  const demo = useDemo();
+  const { live, save } = demo;
   const csv = (rows: TeamMember[]) => saveCsv("team.csv", ["Name", "Title", "Email", "Phone", "Active"], rows.map((m) => [m.name, m.title, m.email, m.phone, m.active ? "yes" : "no"]));
   const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "team.delete", ids }))) clear(); };
   const found = useMemo(() => team.filter((m) => has(q, m.name, m.email, m.title, m.phone)), [team, q]);
@@ -486,7 +492,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
           </>
         )}
       </div>
-      {dialog === "import" ? <ImportDialog kind="team" onClose={close} /> : null}
+      {dialog === "import" ? <ImportDialog kind="team" onClose={close} onFile={live ? (f) => importCsv(f, csvRowToTeam, "team.import", demo) : undefined} /> : null}
     </>
   );
 }

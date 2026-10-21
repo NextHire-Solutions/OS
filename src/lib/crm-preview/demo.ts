@@ -24,10 +24,20 @@
  * What a Demo save still reaches, by design of the database: the reply
  * agent's safety check reads every client's DNC addresses, so a Demo DNC
  * email also stops automatic replies to that address — the cautious way.
+ *
+ * CSV imports (22 Oct): the browser reads the file with the live portal's own
+ * parser and header matching (portals/csv.ts) and sends the rows. Each row is
+ * checked again here with the live import routes' rules; a row that cannot be
+ * saved is skipped and named, instead of failing the whole file. Duplicates
+ * are skipped as live: My Agents by email, DNC by email (agents) or domain
+ * (companies), Team by name + email; pipeline rows are not de-duplicated (nor
+ * are they live). Nothing a live import sets off happens here either — no
+ * blocklists, no stop, no Slack, no Introduction texts, no Follow Up Boss.
  */
 
 import { z } from "zod";
 
+import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { STAGE_ORDER, type PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { GLOBAL_CUSTOM_STAGE_KEYS } from "@/lib/tools/master-inbox/portals/stage-config";
 
@@ -57,6 +67,11 @@ const optionalEmail = z
   .union([email, z.literal(""), z.null()])
   .optional()
   .transform((v) => (v ? v.toLowerCase() : null));
+
+/** At most this many rows in one file, as live. */
+export const MAX_IMPORT_ROWS = 5000;
+/* An imported file's rows as the browser mapped them (portals/csv.ts); null where a row had nothing the mapper could read. */
+const csvRows = z.array(z.record(z.string().max(64), z.union([z.string().max(20_000), z.boolean(), z.null()])).nullable()).min(1).max(MAX_IMPORT_ROWS);
 
 /** Every save the Demo Portal can make — what its screens' buttons do. */
 export const demoAction = z.discriminatedUnion("type", [
@@ -102,10 +117,14 @@ export const demoAction = z.discriminatedUnion("type", [
   z.object({ type: z.literal("team.edit"), id, name: text(120).min(1), email, title: optional(120), phone: optional(40) }),
   z.object({ type: z.literal("team.active"), id, active: z.boolean() }),
   z.object({ type: z.literal("team.delete"), ids }),
+  z.object({ type: z.literal("entry.import"), rows: csvRows }),
+  z.object({ type: z.literal("agent.import"), rows: csvRows }),
+  z.object({ type: z.literal("dnc.import"), rows: csvRows }),
+  z.object({ type: z.literal("team.import"), rows: csvRows }),
 ]);
 
 export type DemoAction = z.infer<typeof demoAction>;
-export type DemoResult = { ok: true; id?: string } | { ok: false; status: 400 | 404 | 409; error: string };
+export type DemoResult = { ok: true; id?: string; message?: string } | { ok: false; status: 400 | 404 | 409; error: string };
 
 /** The domain a company entry blocks, normalised as the live portal does (enforce-blocklist.ts normalizeDomain). */
 export function companyDomain(raw: string | null): string | null {
@@ -123,10 +142,190 @@ type Res = { data: unknown; error: { message: string } | null };
 const failed = (r: Res): DemoResult | null => (r.error ? { ok: false, status: 400, error: "That could not be saved. Please try again." } : null);
 const now = () => new Date().toISOString();
 
+// ------------------------------------------------------------ CSV imports ---
+
+type CsvIn = Record<string, string | boolean | null> | null;
+type Skip = { row: number; reason: string };
+const EMAIL = z.string().email();
+
+/* One row's fields, trimmed and bounded as the live routes bound them; the first problem names why the row is skipped. */
+function rowReader(raw: CsvIn) {
+  const problems: string[] = [];
+  const get = (key: string, max: number, what: string): string | null => {
+    const v = raw && typeof raw[key] === "string" ? (raw[key] as string).trim() : "";
+    if (!v) return null;
+    if (v.length > max) {
+      problems.push(`${what} is longer than ${max} characters`);
+      return null;
+    }
+    return v;
+  };
+  const email = (key: string): string | null => {
+    const v = get(key, 200, "the email");
+    if (v && !EMAIL.safeParse(v).success) {
+      problems.push(`"${v.slice(0, 60)}" is not a valid email`);
+      return null;
+    }
+    return v ? v.toLowerCase() : null;
+  };
+  return { get, email, problems, flag: (key: string) => raw?.[key] === true };
+}
+
+/* A stage as a file may write it: the key ("phone_screen") or its name ("Phone Screen", "We/They Rejected"). */
+function stageFromCsv(raw: string): PipelineStage | null {
+  const key = raw.trim().toLowerCase().replace(/[\s/-]+/g, "_");
+  return (STAGE_ORDER as string[]).includes(key) ? (key as PipelineStage) : null;
+}
+
+/* The spreadsheet's own row number: the header is row 1. */
+const rowNo = (i: number) => i + 2;
+const plural = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+
+function imported(saved: number, dupes: number, skipped: Skip[], noun: [string, string]): DemoResult {
+  const why = skipped.slice(0, 3).map((s) => `row ${s.row}: ${s.reason}`).join("; ") + (skipped.length > 3 ? "; …" : "");
+  if (saved === 0 && dupes === 0) return { ok: false, status: 400, error: `Nothing was imported — ${why}.` };
+  const parts = [`Imported ${plural(saved, noun[0], noun[1])}.`];
+  // A duplicate: already on the list, or a second row for the same person in the file.
+  if (dupes) parts.push(`${plural(dupes, "duplicate", "duplicates")} skipped.`);
+  if (skipped.length) parts.push(`${plural(skipped.length, "row", "rows")} skipped — ${why}.`);
+  return { ok: true, message: parts.join(" ") };
+}
+
+/* Inserts in batches; a failure part-way says how many were saved (a re-import then skips them, bar pipeline rows). */
+async function insertAll(db: Db, table: string, rows: Array<Record<string, unknown>>): Promise<{ saved: number; error?: DemoResult }> {
+  let saved = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const r: Res = await db.from(table).insert(rows.slice(i, i + 500)).select("id");
+    if (r.error) return { saved, error: { ok: false, status: 400, error: saved ? `${plural(saved, "row was", "rows were")} saved, then the rest could not be. Please try again.` : "That file could not be saved. Please try again." } };
+    saved += ((r.data as unknown[]) ?? []).length;
+  }
+  return { saved };
+}
+
+/* The Demo Portal's existing rows of a list, every page of them. */
+const existing = <T,>(db: Db, table: string, columns: string) =>
+  fetchAllRows<T>(({ from, to }) => db.from(table).select(columns).eq("client_id", DEMO_PORTAL_ID).order("id").range(from, to));
+
+async function runImport(db: Db, a: Extract<DemoAction, { rows: unknown }>): Promise<DemoResult> {
+  const C = DEMO_PORTAL_ID;
+  const skipped: Skip[] = [];
+  const out: Array<Record<string, unknown>> = [];
+  let dupes = 0;
+  switch (a.type) {
+    case "entry.import": {
+      a.rows.forEach((raw, i) => {
+        const f = rowReader(raw);
+        const name = f.get("lead_name", 200, "the name");
+        if (!name) return void skipped.push({ row: rowNo(i), reason: "no name" });
+        const lead_email = f.email("lead_email");
+        const stageText = f.get("stage", 64, "the stage");
+        const stage = stageText ? stageFromCsv(stageText) : "introduction";
+        if (!stage) f.problems.push(`"${stageText!.slice(0, 40)}" is not a pipeline stage`);
+        const dateText = f.get("introduced_at", 64, "the date");
+        const date = dateText ? new Date(dateText) : null;
+        if (date && Number.isNaN(date.getTime())) f.problems.push(`"${dateText}" is not a date`);
+        const row = {
+          client_id: C,
+          stage,
+          needs_replacement: f.flag("needs_replacement"),
+          lead_name: name,
+          lead_email,
+          lead_phone: f.get("lead_phone", 80, "the phone"),
+          current_brokerage: f.get("current_brokerage", 200, "the brokerage"),
+          agent_profile_url: f.get("agent_profile_url", 500, "the profile link"),
+          introduced_at: date && !Number.isNaN(date.getTime()) ? date.toISOString() : now(),
+          source: "Client Entry",
+        };
+        if (f.problems.length) return void skipped.push({ row: rowNo(i), reason: f.problems[0] });
+        out.push(row);
+      });
+      if (!out.length) return imported(0, 0, skipped, ["agent", "agents"]);
+      const r = await insertAll(db, "client_pipeline_entries", out);
+      return r.error ?? imported(r.saved, 0, skipped, ["agent", "agents"]);
+    }
+    case "agent.import": {
+      const have = new Set((await existing<{ email: string | null }>(db, "client_agents", "id, email")).map((x) => (x.email ?? "").toLowerCase()).filter(Boolean));
+      a.rows.forEach((raw, i) => {
+        const f = rowReader(raw);
+        const name = f.get("name", 160, "the name");
+        if (!name) return void skipped.push({ row: rowNo(i), reason: "no name" });
+        const row = { client_id: C, name, email: f.email("email"), phone: f.get("phone", 40, "the phone"), license: f.get("license", 80, "the license"), pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null };
+        if (f.problems.length) return void skipped.push({ row: rowNo(i), reason: f.problems[0] });
+        if (row.email && have.has(row.email)) return void dupes++;
+        if (row.email) have.add(row.email);
+        out.push(row);
+      });
+      if (!out.length) return imported(0, dupes, skipped, ["agent", "agents"]);
+      const r = await insertAll(db, "client_agents", out);
+      return r.error ?? imported(r.saved, dupes, skipped, ["agent", "agents"]);
+    }
+    case "dnc.import": {
+      const have = new Set((await existing<{ kind: string; email: string | null; domain: string | null }>(db, "client_dnc_entries", "id, kind, email, domain")).map((x) => (x.kind === "company" ? `c:${(x.domain ?? "").toLowerCase()}` : `a:${(x.email ?? "").toLowerCase()}`)));
+      a.rows.forEach((raw, i) => {
+        const f = rowReader(raw);
+        const name = f.get("name", 160, "the name");
+        if (!name) return void skipped.push({ row: rowNo(i), reason: "no name" });
+        const kind = raw?.kind === "company" ? "company" : "agent";
+        const domainText = kind === "company" ? f.get("domain", 255, "the domain") : null;
+        const domain = companyDomain(domainText);
+        if (domainText && !domain) f.problems.push(`"${domainText.slice(0, 60)}" is not a website domain`);
+        const row = {
+          client_id: C,
+          kind,
+          name,
+          email: f.email("email"),
+          phone: f.get("phone", 40, "the phone"),
+          brokerage: kind === "agent" ? f.get("brokerage", 160, "the brokerage") : null,
+          domain,
+          notes: f.get("notes", 2000, "the notes"),
+          added_by: "client",
+          pushed_to_instantly: false,
+          pushed_to_emailbison: false,
+          push_error: null,
+        };
+        if (f.problems.length) return void skipped.push({ row: rowNo(i), reason: f.problems[0] });
+        const key = kind === "company" ? (domain ? `c:${domain}` : null) : row.email ? `a:${row.email}` : null;
+        if (key && have.has(key)) return void dupes++;
+        if (key) have.add(key);
+        out.push(row);
+      });
+      if (!out.length) return imported(0, dupes, skipped, ["entry", "entries"]);
+      const r = await insertAll(db, "client_dnc_entries", out);
+      return r.error ?? imported(r.saved, dupes, skipped, ["entry", "entries"]);
+    }
+    case "team.import": {
+      const key = (name: string, email: string) => `${name.trim().toLowerCase()}|${email.trim().toLowerCase()}`;
+      const have = new Set((await existing<{ name: string | null; email: string | null }>(db, "client_team_members", "id, name, email")).map((x) => key(x.name ?? "", x.email ?? "")));
+      a.rows.forEach((raw, i) => {
+        const f = rowReader(raw);
+        const name = f.get("name", 120, "the name");
+        const email = f.email("email");
+        const title = f.get("title", 120, "the title");
+        const phone = f.get("phone", 40, "the phone");
+        if (f.problems.length) return void skipped.push({ row: rowNo(i), reason: f.problems[0] });
+        if (!name || !email) return void skipped.push({ row: rowNo(i), reason: "needs a name and an email" });
+        // Texts off, as every Demo team member.
+        const row = { client_id: C, name, email, title, phone, active: true, receives_sms: false };
+        if (have.has(key(row.name, row.email))) return void dupes++;
+        have.add(key(row.name, row.email));
+        out.push(row);
+      });
+      if (!out.length) return imported(0, dupes, skipped, ["team member", "team members"]);
+      const r = await insertAll(db, "client_team_members", out);
+      return r.error ?? imported(r.saved, dupes, skipped, ["team member", "team members"]);
+    }
+  }
+}
+
 /** Runs one save, on the Demo Portal's rows only. */
 export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> {
   const C = DEMO_PORTAL_ID;
   switch (a.type) {
+    case "entry.import":
+    case "agent.import":
+    case "dnc.import":
+    case "team.import":
+      return runImport(db, a);
     case "entry.add": {
       // The live portal's manual add; the Demo Portal has pipeline_source_split, so it is a Client Entry.
       const r: Res = await db
