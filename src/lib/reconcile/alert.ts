@@ -117,8 +117,7 @@ export function buildReconcileAlert(input: ReconcileAlertInput): ReconcileAlert 
   if (input.aliasDrift > 0) {
     lines.push(
       `:warning: ${plural(input.aliasDrift, "client")} whose name a tool does not recognise. ` +
-        "Campaigns named that way are attributed to nobody — this is how three " +
-        '"Douglas Elliman Los Angeles" campaigns counted for no one.',
+        "Campaigns named that way would be attributed to nobody (it has happened before). Consistency lists which names and tools.",
     );
   }
   if (input.brokenLinks > 0) {

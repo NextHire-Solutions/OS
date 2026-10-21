@@ -49,7 +49,7 @@ const norm = (s: unknown) =>
 /** Rows that are buckets rather than clients — same rule as the roster diff. */
 const PLACEHOLDER = /^(unassigned|unknown|none|n\/?a)$/i;
 
-interface SourceRead {
+export interface SourceRead {
   /** normalised name -> status */
   byName: Map<string, string | null>;
   /** display name, kept so the report shows the name a person would recognise */
@@ -77,7 +77,7 @@ const empty = (): SourceRead => ({
  * Found by hand-reconciling the five rosters: seven "missing" clients turned
  * out to be present under a spelling the master already knew.
  */
-interface OsClientKeys {
+export interface OsClientKeys {
   id: string;
   name: string;
   status: string;
@@ -120,6 +120,21 @@ async function readOsClients(): Promise<{ rows: OsClientKeys[]; unreadable: bool
   } catch {
     return { rows: [], unreadable: true };
   }
+}
+
+/*
+ * Is this client in the tool at all? Under any spelling the master knows — or
+ * by the row os_clients links to, when that row is really there (22 Oct). A
+ * client renamed in the OS ("Douglas Elliman NYC" → "Douglas Elliman New
+ * York") keeps its links while the tools keep the old name; matching by name
+ * alone reported it missing from three tools it is in. A stale link, to a row
+ * since deleted, still reads as absent: the linked row must exist. (A link to
+ * the WRONG row is the link check's to report — gatherLinkReport.)
+ */
+export function presentIn(read: Pick<SourceRead, "byName" | "byId">, client: Pick<OsClientKeys, "keys" | "links">, tool: LinkTool): boolean {
+  if (client.keys.some((k) => read.byName.has(k))) return true;
+  const id = client.links[tool];
+  return !!id && read.byId.has(id);
 }
 
 /** The tool's row for this client, under any spelling the master knows. */
@@ -251,10 +266,11 @@ async function readExceptions(): Promise<ExceptionIndex> {
 /*
  * Which tools hold each client, for §17.
  *
- * Presence is decided by whether the tool's roster actually contains the name,
- * NOT by whether os_clients has an id stored for it. The stored id records
- * what we believe; this screen exists to catch where the belief is wrong, and
- * a stale id pointing at a deleted row would otherwise read as "present".
+ * Presence is decided by what the tool's roster actually holds: the name
+ * under any spelling the master knows, or the row os_clients links to — but
+ * only if that row is really there (presentIn). The stored id alone records
+ * what we believe; a stale id pointing at a deleted row must still read as
+ * absent, and does, because the row is looked for.
  */
 export async function gatherCoverageReport(): Promise<CoverageReport> {
   const [osRows, health, analytics, inbox, onboarding, exceptions] = await Promise.all([
@@ -312,10 +328,10 @@ export async function gatherCoverageReport(): Promise<CoverageReport> {
       name: client.name,
       status: client.status,
       present: {
-        master_inbox: findIn(inbox, client) !== undefined,
-        client_health: findIn(health, client) !== undefined,
-        analytics: findIn(analytics, client) !== undefined,
-        onboarding: findIn(onboarding, client) !== undefined,
+        master_inbox: presentIn(inbox, client, "master_inbox"),
+        client_health: presentIn(health, client, "client_health"),
+        analytics: presentIn(analytics, client, "analytics"),
+        onboarding: presentIn(onboarding, client, "onboarding"),
       },
     });
   }

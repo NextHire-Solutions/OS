@@ -116,7 +116,8 @@ export async function runReconcileCheck(
     unexplainedOneSided: coverage?.withGaps ?? 0,
     duplicates: duplicates?.findings.length ?? 0,
     brokenLinks,
-    aliasDrift: aliases?.findings.length ?? 0,
+    // Clients, not client/tool pairs (22 Oct: two clients unknown to two tools each read "4 clients").
+    aliasDrift: new Set((aliases?.findings ?? []).map((f) => f.client)).size,
     unreadable: [...new Set(unreadable)],
     failedChecks,
     clientsChecked: duplicates?.checked ?? coverage?.rows.length ?? 0,
