@@ -357,3 +357,37 @@ test("editing a DNC company keeps its email and phone; a Demo team edit keeps te
   await run({ type: "team.active", id: s.demoMember.id, active: true });
   assert.equal(row("client_team_members", s.demoMember.id).receives_sms, false);
 });
+
+test("the wizard's offer (22 Oct): saved for the Demo Portal only, once per portal, with who saved it", async () => {
+  seed();
+  fake.seed("os_portal_offers", [{ portal_id: OTHER, offers: ["Path to leadership"], why_join: "Theirs", never_say: null }]);
+  const first = await runDemoAction(db, demoAction.parse({ type: "offer.save", offers: ["Transaction coordinator", "Coaching and training", "Transaction coordinator"], why_join: " Steady leads from day one. ", never_say: "" }) as DemoAction, "eddy@brokerstaffer.com");
+  assert.deepEqual(first, { ok: true, message: "Your offer is saved." });
+  const mine = () => fake.rows("os_portal_offers").filter((r) => r.portal_id === DEMO_PORTAL_ID);
+  assert.equal(mine().length, 1);
+  assert.deepEqual([mine()[0].offers, mine()[0].why_join, mine()[0].never_say, mine()[0].updated_by], [["Transaction coordinator", "Coaching and training"], "Steady leads from day one.", null, "eddy@brokerstaffer.com"]);
+  // Saved again: the same row, changed.
+  await runDemoAction(db, demoAction.parse({ type: "offer.save", offers: ["Path to leadership"], why_join: "Leadership track.", never_say: "No splits." }) as DemoAction, "amy@brokerstaffer.com");
+  assert.equal(mine().length, 1);
+  assert.deepEqual([mine()[0].offers, mine()[0].never_say, mine()[0].updated_by], [["Path to leadership"], "No splits.", "amy@brokerstaffer.com"]);
+  assert.deepEqual(fake.rows("os_portal_offers").find((r) => r.portal_id === OTHER)!.why_join, "Theirs", "another portal's offer: untouched");
+  // Only the design's choices, and a reason.
+  assert.equal(demoAction.safeParse({ type: "offer.save", offers: ["Free yachts"], why_join: "x" }).success, false);
+  assert.equal(demoAction.safeParse({ type: "offer.save", offers: [], why_join: "x" }).success, false);
+  assert.equal(demoAction.safeParse({ type: "offer.save", offers: ["Path to leadership"], why_join: "  " }).success, false);
+  assert.equal(demoAction.safeParse({ type: "offer.save", offers: ["Path to leadership"], why_join: "x".repeat(1001) }).success, false);
+  assert.deepEqual(fake.blocked, []);
+});
+
+test("migration 0039 only adds — one new table; the OS reads it behind the Client Portals switch, GET only", () => {
+  const sql = fs.readFileSync("migrations/0039_portal_offers.sql", "utf8").replace(/--.*$/gm, "");
+  assert.deepEqual([...sql.matchAll(/CREATE TABLE IF NOT EXISTS public\.(\w+)/g)].map((x) => x[1]), ["os_portal_offers"]);
+  assert.doesNotMatch(sql.replace(/ON DELETE CASCADE/g, ""), /\b(DROP|DELETE|UPDATE|TRUNCATE|RENAME)\b/i);
+  for (const a of sql.matchAll(/ALTER TABLE\s+public\.(\w+)/gi)) assert.equal(a[1], "os_portal_offers");
+  assert.match(sql, /BEGIN;[\s\S]*COMMIT;/);
+  const route = fs.readFileSync("src/app/api/tools/master-inbox/portals/offer/route.ts", "utf8");
+  assert.deepEqual([...route.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["GET"]);
+  assert.match(route, /if \(!s \|\| !\(s\.grants\.includes\("portals"\) \|\| \(await isAdminUser\(s\.email\)\)\)\) return NextResponse\.json\(\{ error: "Forbidden" \}, \{ status: 403 \}\);/);
+  assert.ok(route.indexOf("Forbidden") < route.indexOf("os_portal_offers"), "who first, then the read");
+  assert.doesNotMatch(route, /\.(insert|update|upsert|delete)\(/);
+});

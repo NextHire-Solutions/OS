@@ -71,8 +71,25 @@ type RawInvoice = {
   amount_due: number; amount_remaining: number; created: number; number: string | null; hosted_invoice_url: string | null;
   subscription?: string | null; parent?: { subscription_details?: { subscription?: string | null } | null } | null;
   total?: number; amount_paid?: number; invoice_pdf?: string | null; period_start?: number; period_end?: number;
-  status_transitions?: { paid_at?: number | null } | null; lines?: { data?: Array<{ description?: string | null }> } | null;
+  status_transitions?: { paid_at?: number | null } | null; lines?: { data?: Array<{ description?: string | null; period?: { start?: number; end?: number } | null }> } | null;
 };
+/*
+ * What an invoice pays for: its line's service period (22 Oct). The invoice's
+ * own period_start/period_end is not it — a subscription billed in advance
+ * carries the PREVIOUS period there, or an empty one on its first invoice.
+ * The longest line wins (a proration line is shorter than the plan's).
+ */
+function servicePeriod(i: RawInvoice): { serviceStart?: number; serviceEnd?: number } {
+  let best: { start: number; end: number } | null = null;
+  for (const l of i.lines?.data ?? []) {
+    const s = l.period?.start;
+    const e = l.period?.end;
+    if (typeof s !== "number" || typeof e !== "number" || e <= s) continue;
+    if (!best || e - s > best.end - best.start) best = { start: s, end: e };
+  }
+  return best ? { serviceStart: best.start, serviceEnd: best.end } : {};
+}
+
 type RawCharge = {
   id: string; customer: string | null; status: string; amount: number; amount_refunded: number; created: number; payment_intent: string | null; failure_message: string | null;
   description?: string | null; receipt_url?: string | null; payment_method_details?: { type?: string; card?: { brand?: string | null; last4?: string | null } | null } | null;
@@ -141,6 +158,7 @@ async function loadSnapshot(): Promise<AccountSnapshot> {
       pdf: i.invoice_pdf ?? null, paidAt: i.status_transitions?.paid_at ?? null,
       periodStart: i.period_start ?? null, periodEnd: i.period_end ?? null,
       description: i.lines?.data?.[0]?.description ?? null,
+      ...servicePeriod(i),
     })),
     ...(refunds ? { refunds: refunds.map((r) => ({ id: r.id, charge: r.charge, amount: r.amount / 100, created: r.created, status: r.status, reason: r.reason })) } : {}),
     ...(products ? { products: products.map((p) => ({ id: p.id, name: p.name })) } : {}),

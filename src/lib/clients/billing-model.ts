@@ -96,6 +96,9 @@ export interface StripeInvoice {
   paidAt?: number | null;
   periodStart?: number | null;
   periodEnd?: number | null;
+  /** What the invoice pays for — its longest line's period (unix seconds; 22 Oct). */
+  serviceStart?: number;
+  serviceEnd?: number;
   /** The first line's description: "1 × RECRUITING SERVICES (at $750.00 / every 14 days)". */
   description?: string | null;
 }

@@ -26,8 +26,8 @@
  * across Next bundles through globalThis).
  */
 
-/** market/report: agent-database data. chat: one message to the assistant. billing: one Stripe billing page opened. conversation: one pipeline entry's email thread; demo: one save on the Demo Portal (both per-minute limit only). */
-export type GuardKind = "market" | "report" | "chat" | "billing" | "conversation" | "demo";
+/** market/report: agent-database data. chat: one message to the assistant. billing: one Stripe billing page opened. conversation: one pipeline entry's email thread; demo: one save on the Demo Portal; periods: the Billing page's introductions per period (these three: per-minute limit only). */
+export type GuardKind = "market" | "report" | "chat" | "billing" | "conversation" | "demo" | "periods";
 export type GuardRole = "staff" | "client";
 
 /*

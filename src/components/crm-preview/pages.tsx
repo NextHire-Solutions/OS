@@ -10,7 +10,7 @@
  * Integrations stay drawn.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
@@ -537,6 +537,105 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
             </div>
           </section>
         </div>
+      </div>
+    </>
+  );
+}
+
+// --------------------------------------------------------------- Billing ---
+
+type BillingPageData = { ok: true; periods: Array<{ start: string; end: string; invoice: string | null; status: "paid" | "open" | "uncollectible"; introductions: number; current: boolean }>; portals: number } | { ok: false; reason: string };
+
+/* "Oct 1 – Oct 31, 2026", from yyyy-mm-dd days (no time zone to shift them). */
+function periodText(start: string, end: string): string {
+  const d = (s: string) => { const [y, m, day] = s.split("-").map(Number); return new Date(Date.UTC(y, m - 1, day)); };
+  const f = (x: Date, year: boolean) => x.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
+  const a = d(start);
+  const b = d(end);
+  return `${f(a, a.getUTCFullYear() !== b.getUTCFullYear())} – ${f(b, true)}`;
+}
+const STATUS_PILL = { paid: ["Paid", "pill p-live"], open: ["Due", "pill p-nu"], uncollectible: ["Unpaid", "pill p-nu"] } as const;
+
+/*
+ * Billing (22 Oct): the introductions BrokerStaffer made in each billing
+ * period — Eddy's "leads received in each billing cycle"; the user: count the
+ * introductions from our side, never agents the client added themselves.
+ * Eddy's design has Billing open Stripe directly; the user chose a short page
+ * instead, with Stripe one click away ("Manage billing" — the same link as
+ * before: the client's own Stripe page, real changes). Read-only.
+ */
+export function BillingScreen({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const [state, setState] = useState<{ loading: boolean; page: BillingPageData | null; error: string | null }>({ loading: true, page: null, error: null });
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setState({ loading: true, page: null, error: null });
+    fetch(`/api/crm-preview/billing-periods?client=${encodeURIComponent(clientId)}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        const j = (await r.json().catch(() => ({}))) as BillingPageData & { error?: string };
+        setState(r.ok ? { loading: false, page: j, error: null } : { loading: false, page: null, error: j.error ?? "Billing could not be read just now. Please try again." });
+      })
+      .catch((e) => { if (e?.name !== "AbortError") setState({ loading: false, page: null, error: "Couldn't reach the server. Please try again." }); });
+    return () => ctrl.abort();
+  }, [clientId]);
+  const page = state.page;
+  const periods = page && page.ok ? page.periods : [];
+  const now = periods.find((p) => p.current) ?? null;
+  return (
+    <>
+      <header className={k("top")}>
+        <div className={k("ttl")}><h1>Billing</h1></div>
+        <div className={k("hr")}>
+          <a className={k("btn")} href={`/api/crm-preview/billing?client=${encodeURIComponent(clientId)}`} target="_blank" rel="noopener" title={`Opens ${clientName}'s Stripe billing page — real changes`}>
+            <Icon name="external" size={15} />Manage billing
+          </a>
+        </div>
+      </header>
+      <div className={k("content")}>
+        <p className={k("lede")}>Introductions BrokerStaffer made in each billing period. Agents you add yourself aren&apos;t&nbsp;counted.</p>
+        {state.loading ? (
+          <p className={k("sub")} role="status">Loading your billing periods…</p>
+        ) : state.error ? (
+          <p className={k("sub")} role="alert">{state.error}</p>
+        ) : page && !page.ok ? (
+          <p className={k("sub")}>{page.reason}</p>
+        ) : periods.length === 0 ? (
+          <p className={k("sub")}>No billing periods yet. They appear here once the first invoice is issued.</p>
+        ) : (
+          <>
+            {now ? (
+              <div className={k("kpis")}>
+                <div className={k("card kpi")}>
+                  <div className={k("k")}><span className={k("lb")}>This billing period</span><span className={k("ki")}><Icon name="card" size={16} /></span></div>
+                  <span className={k("v")} style={{ color: "#3e6bd1" }}>{now.introductions.toLocaleString("en-US")}</span>
+                  <span className={k("s")}>{now.introductions === 1 ? "introduction" : "introductions"} · {periodText(now.start, now.end)}</span>
+                </div>
+              </div>
+            ) : null}
+            <div className={k("card")} style={{ overflow: "hidden" }}>
+              <table className={k("tb")}>
+                <thead>
+                  <tr>
+                    <th scope="col">Billing period</th>
+                    <th scope="col">Invoice</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" className={k("r")}>Introductions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {periods.map((p) => (
+                    <tr key={`${p.start}:${p.end}`}>
+                      <td><span className={k("nm")}>{periodText(p.start, p.end)}</span>{p.current ? <span className={k("tag")} style={{ marginLeft: 8 }}>Current</span> : null}</td>
+                      <td>{p.invoice ?? <Dash />}</td>
+                      <td><span className={k(STATUS_PILL[p.status][1])}>{STATUS_PILL[p.status][0]}</span></td>
+                      <td className={k("r")} style={{ fontVariantNumeric: "tabular-nums" }}>{p.introductions.toLocaleString("en-US")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {page && page.ok && page.portals > 1 ? <p className={k("hint")}>Counted across all {page.portals} of your portals — one billing covers them.</p> : null}
+          </>
+        )}
       </div>
     </>
   );

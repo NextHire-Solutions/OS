@@ -30,7 +30,7 @@ import { formatPortalFieldValue } from "@/components/master-inbox/portals-ui/cus
 export const PREVIEW_TZ = "America/New_York";
 
 /** The design's sidebar pages, as `?view=` names them. Billing is a link out, so not one. */
-export const PREVIEW_VIEWS = ["pipeline", "reports", "campaigns", "market", "prospects", "agents", "dnc", "team", "integrations", "help", "setup"] as const;
+export const PREVIEW_VIEWS = ["pipeline", "reports", "campaigns", "market", "prospects", "agents", "dnc", "team", "integrations", "billing", "help", "setup"] as const;
 export type PreviewView = (typeof PREVIEW_VIEWS)[number];
 
 export type PillTone = "int" | "ph" | "iv" | "hi" | "nu" | "no" | "nr";
@@ -63,6 +63,26 @@ const NO_SHOW_TAG = { dot: "#9a5b00", pill: "nr" as const };
  * shows every custom stage; the new design draws it as a tag.
  */
 export const CUSTOM_TAG_PREFIX = "custom_tag_";
+
+/** What a client gives agents who join — the Setup wizard's choices (Setup-5-Offer, Eddy's design). */
+export const SETUP_OFFERS = [
+  "Leads, including Zillow Preferred",
+  "Transaction coordinator",
+  "Coaching and training",
+  "Competitive commission split",
+  "Marketing done for them",
+  "Tech and CRM included",
+  "Team culture and events",
+  "Path to leadership",
+] as const;
+
+/** A client's offer as saved (migration 0039). */
+export interface PortalOffer {
+  offers: string[];
+  whyJoin: string;
+  neverSay: string | null;
+  updatedAt: string | null;
+}
 
 /** The design keeps these always shown (its Manage stages screen). */
 export const ALWAYS_SHOWN: readonly PipelineStage[] = ["introduction", "hired"];

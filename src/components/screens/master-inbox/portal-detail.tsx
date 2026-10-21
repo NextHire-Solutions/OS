@@ -50,6 +50,7 @@ import {
 import { CLIENT_PORTALS_ENABLED } from "@/lib/tools/master-inbox/portals/flag";
 import { PortalsComingSoon } from "@/components/master-inbox/portals-ui/portals-coming-soon";
 import { PortalLogins } from "@/components/master-inbox/portals-ui/portal-logins";
+import { PortalOffer } from "@/components/master-inbox/portals-ui/portal-offer";
 
 // Internal drill-down — staff view of one client's Recruiting Pipeline.
 // Renders the same pipeline surface the public portal uses so what staff
@@ -191,6 +192,8 @@ export async function PortalDetail({ clientId }: { clientId: string }) {
         </div>
         {/* Who may sign in to the new client portal (21 Oct). */}
         <PortalLogins portalId={client.id as string} portalName={client.name as string} />
+        {/* What the client gave in their portal's setup — their offer (22 Oct, migration 0039). */}
+        <PortalOffer portalId={client.id as string} portalName={client.name as string} />
         {portalPublicUrl ? (
           <a href={portalPublicUrl} target="_blank" rel="noopener" className="open-live">
             Open live portal

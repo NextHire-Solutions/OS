@@ -46,7 +46,7 @@
 
 import { z } from "zod";
 
-import { ALWAYS_SHOWN } from "@/lib/crm-preview/model";
+import { ALWAYS_SHOWN, SETUP_OFFERS } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { STAGE_LABEL_MAX_LEN, STAGE_ORDER, type PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { GLOBAL_CUSTOM_STAGE_KEYS, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
@@ -154,6 +154,12 @@ export const demoAction = z.preprocess(noNul, z.discriminatedUnion("type", [
   z.object({ type: z.literal("dnc.import"), rows: csvRows, lines }),
   z.object({ type: z.literal("team.import"), rows: csvRows, lines }),
   z.object({ type: z.literal("stages.save"), stages: z.array(stageRow).min(1).max(30) }),
+  z.object({
+    type: z.literal("offer.save"),
+    offers: z.array(z.enum(SETUP_OFFERS)).min(1).max(SETUP_OFFERS.length),
+    why_join: text(1000).min(1),
+    never_say: optional(1000),
+  }),
 ]));
 
 export type DemoAction = z.infer<typeof demoAction>;
@@ -468,10 +474,20 @@ async function saveStages(db: Db, stages: Array<z.infer<typeof stageRow>>): Prom
   return { ok: true, message: moved ? `Saved. ${plural(moved, "agent", "agents")} moved back to ${moved === 1 ? "its" : "their"} pipeline stage.` : "Saved on the Demo Portal." };
 }
 
-/** Runs one save, on the Demo Portal's rows only. */
-export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> {
+/** Runs one save, on the Demo Portal's rows only. `who` is the signed-in person, from the server — never the browser. */
+export async function runDemoAction(db: Db, a: DemoAction, who: string | null = null): Promise<DemoResult> {
   const C = DEMO_PORTAL_ID;
   switch (a.type) {
+    case "offer.save": {
+      // The wizard's "Tell us your offer" (migration 0039): one row per portal — the Demo's.
+      const row = { offers: [...new Set(a.offers)], why_join: a.why_join, never_say: a.never_say, updated_by: who, updated_at: now() };
+      const had: Res = await db.from("os_portal_offers").select("portal_id").eq("portal_id", C).maybeSingle();
+      if (had.error) return failed(had)!;
+      const r: Res = had.data
+        ? await db.from("os_portal_offers").update(row).eq("portal_id", C).select("portal_id")
+        : await db.from("os_portal_offers").insert({ portal_id: C, ...row }).select("portal_id");
+      return failed(r) ?? { ok: true, message: "Your offer is saved." };
+    }
     case "entry.import":
     case "agent.import":
     case "dnc.import":

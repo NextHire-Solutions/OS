@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const out = await runDemoAction(createAdminSupabase(), parsed.data);
+    const out = await runDemoAction(createAdminSupabase(), parsed.data, who);
     const a = parsed.data;
     console.info(JSON.stringify({ tag: "[crm-preview] demo save", who, type: a.type, ids: "ids" in a ? a.ids.length : "rows" in a ? a.rows.length : 1, ok: out.ok }));
     if (!out.ok) return NextResponse.json({ error: out.error }, { status: out.status, headers: NO_STORE_HEADERS });

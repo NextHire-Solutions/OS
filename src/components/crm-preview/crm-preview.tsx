@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 
 import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { initials, type ManagedStage, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
+import { initials, type ManagedStage, type PortalOffer, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
@@ -19,7 +19,7 @@ import { ChatWindow } from "./chat";
 import { DemoContext, postDemo, type DemoAction } from "./demo-save";
 import { SetupWizard } from "./setup";
 import { PipelineScreen } from "./pipeline";
-import { DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
+import { BillingScreen, DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
 import { MarketScreen, ReportsScreen } from "./market";
 import { CampaignsScreen, HelpScreen } from "./static-pages";
 import logo from "./brokerstaffer-logo.png";
@@ -63,6 +63,7 @@ export function CrmPreview({
   portals,
   stages,
   allStages,
+  offer,
   furthest,
   entries,
   agents,
@@ -77,6 +78,8 @@ export function CrmPreview({
   stages: PreviewStage[];
   /** Every stage, hidden ones too — the Demo Portal's Manage stages only. */
   allStages?: ManagedStage[];
+  /** The wizard's saved offer — the Demo Portal only (null: not filled in yet). */
+  offer?: PortalOffer | null;
   /** For agents in Nurture / Not a Fit / No Response: the furthest forward stage on record. */
   furthest: Record<string, string>;
   entries: PipelineEntry[];
@@ -178,7 +181,7 @@ export function CrmPreview({
       {view === "setup" ? (
         // The Setup wizard is a page of its own in the design: no sidebar, no chat button.
         <div onClickCapture={onClickCapture}>
-          <SetupWizard client={{ id: client.id, name: client.name, contactName: client.contactName, coverage: client.coverage }} team={team} agents={agents} dnc={dnc} step={step} onStep={goStep} onExit={() => go("pipeline")} />
+          <SetupWizard client={{ id: client.id, name: client.name, contactName: client.contactName, coverage: client.coverage }} team={team} agents={agents} dnc={dnc} offer={offer ?? null} step={step} onStep={goStep} onExit={() => go("pipeline")} />
           {toastNote}
         </div>
       ) : (
@@ -205,16 +208,7 @@ export function CrmPreview({
             <div key={group.section} style={{ display: "contents" }}>
               <div className={k("sl")}>{group.section}</div>
               {group.items.map((item) => {
-                if (item.view === "billing") {
-                  // The client's own Stripe billing page, in a new tab (19 Oct; api/crm-preview/billing).
-                  return (
-                    <a key="billing" className={k("ri")} href={`/api/crm-preview/billing?client=${encodeURIComponent(client.id)}`} target="_blank" rel="noopener" title={`Opens ${client.name}'s Stripe billing page — real changes`}>
-                      <Icon name={item.icon} size={17} />
-                      <span className={k("t")}>{item.label}</span>
-                      <span className={k("ex")}><Icon name="external" size={13} /></span>
-                    </a>
-                  );
-                }
+                // Billing is a page of its own since 22 Oct (introductions per billing period); Stripe opens from its "Manage billing".
                 const v = item.view;
                 const on = view === v;
                 return (
@@ -266,6 +260,8 @@ export function CrmPreview({
             <DncScreen dnc={dnc} />
           ) : view === "team" ? (
             <TeamScreen team={team} />
+          ) : view === "billing" ? (
+            <BillingScreen clientId={client.id} clientName={client.name} />
           ) : (
             <IntegrationsScreen fubConnected={client.fubConnected} />
           )}

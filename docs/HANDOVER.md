@@ -431,6 +431,32 @@ user, 22 Oct — open). Real Chrome 25/25; the Demo's lists back to their size. 
 client's portal token to the browser (a token alone opens that live portal) —
 the conversation panel reads `/api/crm-preview/conversation` by id.
 
+**22 October — the portal's Billing page, and the client's offer saved.**
+- *Billing* (Eddy, 21 Oct: "leads received in each billing cycle"; the user,
+  22 Oct: count "the introductions that came from masterinbox (our side)", and
+  a small Billing page rather than the Reports page). Eddy's design has
+  Billing open Stripe directly; now the sidebar's Billing opens a page: our
+  introductions in each billing period (every entry we put in the client's
+  portals, never their own "Client Entry" candidates), newest first, 12 at
+  most, with the current period on top. A period is what an invoice PAYS FOR
+  — its line's service period (`billing-account.ts servicePeriod`), not the
+  invoice's own period fields — so a client billed every 14 days sees 14-day
+  periods; draft and void invoices are not periods. Counted across every
+  portal of the client (one subscription covers them: Properties & Estates
+  Boston + Florida). Same customer rule as the Billing link
+  (`billing-pick.ts` — a shared card shows "handled by our team"). "Manage
+  billing" on the page is the old link (the client's own Stripe page, real
+  changes). `lib/crm-preview/billing-periods.ts` (+ test), `billing-page.ts`,
+  `GET /api/crm-preview/billing-periods`. Checked on every portal with the
+  live Stripe data; C21's current period (Oct 14–27: 9) matches a direct
+  count. Locally the Stripe key comes from `~/.brokerstaffer/stripe.env`.
+- *The offer* (the wizard's "Tell us your offer"; the user: "yes please save
+  the data"): migration **0039** (`os_portal_offers`, one row per portal) —
+  saved by "Finish setup" on the Demo Portal (the only portal that saves
+  until launch), shown read-only in the OS on the portal's page (Client
+  Portals → the portal → "Their offer"). Only the design's eight choices, a
+  reason (≤ 1,000 characters) and an optional "never say".
+
 **Market, Prospects and Reports** (added later on 16 Oct) read the agent
 database — the Database project's Supabase — through two Owner-only GET routes,
 `/api/crm-preview/market` and `/api/crm-preview/report` (`lib/crm-preview/market.ts`):
@@ -549,9 +575,10 @@ person signs in (no data behind a shareable link, unlike today's portals —
 built 21 Oct, `lib/portal-login`); usage counted with alerts to staff (built
 21 Oct, above; **no automatic lock** — the user's decision); no export of the
 market or prospects (exports only of the client's own lists); a bot challenge
-on sign-in (Cloudflare Turnstile — waiting on the client's keys); an
-anti-scraping clause in the client terms. Canary agents: **no** (the user,
-21 Oct).
+on sign-in (Cloudflare Turnstile — waiting on the client's keys). Canary
+agents: **no** (the user, 21 Oct). An anti-scraping clause in the client
+terms: **not added** — it is not in Eddy's design (the user, 22 Oct: "if no
+then do not add please").
 
 Eddy's decisions (16 Oct, two rounds): stages → tags **yes**, and a tagged
 agent stays at the furthest forward stage on record — **approved** (of 971

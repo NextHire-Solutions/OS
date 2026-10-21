@@ -54,7 +54,7 @@ const ROUTES = filesUnder("src/app/api/crm-preview");
 const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
 
 test("the preview's routes: Owners and Eddy only, checked first; anyone else a bare 404; GET, except the chat's POST", () => {
-  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing/route.ts", "chat/route.ts", "conversation/route.ts", "demo/route.ts", "market/route.ts", "report/route.ts"]);
+  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "demo/route.ts", "market/route.ts", "report/route.ts"]);
   for (const r of ROUTES) {
     const src = read(r);
     const methods = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
@@ -63,7 +63,7 @@ test("the preview's routes: Owners and Eddy only, checked first; anyone else a b
     assert.ok(gate > 0, `${r} calls the gate`);
     assert.match(src.slice(gate, gate + 160), /new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for anyone else`);
     const start = src.indexOf(`export async function ${methods[0]}`);
-    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "createAdminSupabase("]) {
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "createAdminSupabase(", "portalBillingPage("]) {
       const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > gate, `${r}: ${load} only after the gate`);
     }
@@ -133,6 +133,7 @@ test("usage is counted after serving, in the background — on every data route,
  */
 const BROWSER_REQUESTS = [
   /^\/api\/crm-preview\/conversation\?\$\{[^}]+\}$/,
+  /^\/api\/crm-preview\/billing-periods\?client=\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/market\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/chat$/,

@@ -31,7 +31,7 @@ import { notFound } from "next/navigation";
 import { SSO_COOKIE, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
 import { canSeeCrmPreview } from "@/lib/crm-preview/access";
-import { furthestStages, managedStages, PREVIEW_VIEWS, previewStages, type PreviewView } from "@/lib/crm-preview/model";
+import { furthestStages, managedStages, PREVIEW_VIEWS, previewStages, type PortalOffer, type PreviewView } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
@@ -78,6 +78,14 @@ const interTight = localFont({
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Search = Promise<Record<string, string | string[] | undefined>>;
+
+/* A portal's saved offer (migration 0039); none yet — or the table not there yet — is null, never an error. */
+async function loadOffer(portalId: string): Promise<PortalOffer | null> {
+  const { data, error } = await createAdminSupabase().from("os_portal_offers").select("offers, why_join, never_say, updated_at").eq("portal_id", portalId).maybeSingle();
+  if (error || !data) return null;
+  const r = data as { offers: string[] | null; why_join: string; never_say: string | null; updated_at: string | null };
+  return { offers: r.offers ?? [], whyJoin: r.why_join, neverSay: r.never_say, updatedAt: r.updated_at };
+}
 
 export default async function CrmPreviewPage({ searchParams }: { searchParams: Search }) {
   const me = await verifySso(process.env.AUTH_SECRET ?? "", (await cookies()).get(SSO_COOKIE)?.value);
@@ -168,6 +176,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       stages={stages}
       // Every stage, hidden ones too — only where Manage stages saves (the Demo Portal); everyone else's panel is drawn from `stages`.
       allStages={isDemoPortal(client.id as string) && manageStages ? managedStages(defs) : undefined}
+      // The wizard's "Tell us your offer", as saved (0039) — only where it saves (the Demo Portal).
+      offer={isDemoPortal(client.id as string) ? await loadOffer(client.id as string) : undefined}
       furthest={furthestStages(history, tagged)}
       entries={entries}
       agents={agents}

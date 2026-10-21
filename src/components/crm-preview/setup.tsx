@@ -24,7 +24,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { abbrevUsd, formatPhone, initials } from "@/lib/crm-preview/model";
+import { abbrevUsd, formatPhone, initials, SETUP_OFFERS, type PortalOffer } from "@/lib/crm-preview/model";
 import { maxPage, SETUP_PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } from "@/lib/crm-preview/market-model";
 
 import { csvRowToAgent, csvRowToDnc } from "@/lib/tools/master-inbox/portals/csv";
@@ -572,22 +572,14 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
   );
 }
 
-const OFFERS = [
-  "Leads, including Zillow Preferred",
-  "Transaction coordinator",
-  "Coaching and training",
-  "Competitive commission split",
-  "Marketing done for them",
-  "Tech and CRM included",
-  "Team culture and events",
-  "Path to leadership",
-] as const;
+const OFFERS = SETUP_OFFERS;
 
 /* The client's offer is not on record anywhere yet, so the step opens empty (Setup-5-Offer-Empty); ticking and typing work, nothing is kept. */
-function OfferStep({ onReady }: { onReady: (ready: boolean) => void }) {
-  const [on, setOn] = useState<ReadonlySet<string>>(new Set());
-  const [why, setWhy] = useState("");
-  useEffect(() => onReady(on.size > 0 && !!why.trim()), [on, why, onReady]);
+type OfferDraft = { offers: string[]; whyJoin: string; neverSay: string };
+
+/* Controlled by the wizard, so "Finish setup" can save it (the Demo Portal, 22 Oct); opens with what was saved, else empty (Setup-5-Offer-Empty). */
+function OfferStep({ value, onChange }: { value: OfferDraft; onChange: (v: OfferDraft) => void }) {
+  const on = new Set(value.offers);
   return (
     <>
       <Head step={5} title="Tell us your offer" text={"We write your emails from this. You'll see them and approve them before anything goes\u00a0out."} />
@@ -597,7 +589,7 @@ function OfferStep({ onReady }: { onReady: (ready: boolean) => void }) {
           <div className={k("ckg")}>
             {OFFERS.map((o) => (
               <label key={o} className={k(on.has(o) ? "ckl on" : "ckl")}>
-                <input type="checkbox" checked={on.has(o)} onChange={() => setOn((cur) => withIds(cur, [o], !cur.has(o)))} />
+                <input type="checkbox" checked={on.has(o)} onChange={() => onChange({ ...value, offers: on.has(o) ? value.offers.filter((x) => x !== o) : OFFERS.filter((x) => x === o || on.has(x)) })} />
                 {o}
               </label>
             ))}
@@ -605,11 +597,11 @@ function OfferStep({ onReady }: { onReady: (ready: boolean) => void }) {
         </fieldset>
         <label className={k("slb")}>
           In a sentence or two, why do agents join you?
-          <textarea className={k("ta")} rows={3} placeholder="e.g. Steady leads from day one and a TC who handles every file" value={why} onChange={(e) => setWhy(e.target.value)} />
+          <textarea className={k("ta")} rows={3} maxLength={1000} placeholder="e.g. Steady leads from day one and a TC who handles every file" value={value.whyJoin} onChange={(e) => onChange({ ...value, whyJoin: e.target.value })} />
         </label>
         <label className={k("slb")}>
           <span>Anything we should never say?{" "}<small>Optional. Competitors you don&apos;t want named, claims to avoid.</small></span>
-          <textarea className={k("ta")} rows={2} placeholder="e.g. Don't mention splits in the first email" />
+          <textarea className={k("ta")} rows={2} maxLength={1000} placeholder="e.g. Don't mention splits in the first email" value={value.neverSay} onChange={(e) => onChange({ ...value, neverSay: e.target.value })} />
         </label>
       </div>
     </>
@@ -646,6 +638,7 @@ export function SetupWizard({
   team,
   agents,
   dnc,
+  offer,
   step,
   onStep,
   onExit,
@@ -654,12 +647,31 @@ export function SetupWizard({
   team: TeamMember[];
   agents: AgentEntry[];
   dnc: DncEntry[];
+  /** The saved offer (the Demo Portal; null — not filled in yet). */
+  offer: PortalOffer | null;
   step: number;
   onStep: (n: number) => void;
   onExit: () => void;
 }) {
   const [prospects, setProspects] = useState<number | null>(null);
-  const [offerReady, setOfferReady] = useState(false);
+  const [offerDraft, setOfferDraft] = useState<OfferDraft>({ offers: offer?.offers ?? [], whyJoin: offer?.whyJoin ?? "", neverSay: offer?.neverSay ?? "" });
+  const offerReady = offerDraft.offers.length > 0 && !!offerDraft.whyJoin.trim();
+  const { live, save } = useDemo();
+  const [finishing, setFinishing] = useState(false);
+  /*
+   * "Finish setup" on the Demo Portal saves the offer first (the user, 22 Oct:
+   * "yes please save the data"); it moves on only once saved. Everywhere else
+   * it moves on, as drawn.
+   */
+  const finish = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!live) return onStep(6);
+    if (finishing) return;
+    setFinishing(true);
+    const ok = await save({ type: "offer.save", offers: offerDraft.offers, why_join: offerDraft.whyJoin.trim(), never_say: offerDraft.neverSay.trim() });
+    setFinishing(false);
+    if (ok) onStep(6);
+  };
   const link = (n: number) => (e: React.MouseEvent) => { e.preventDefault(); onStep(n); };
   // The design's -Empty variants: a step with nothing on its list offers "Skip for now", and can't be saved.
   const empty = step === 2 ? agents.length === 0 : step === 3 ? dnc.length === 0 : step === 4 ? prospects === 0 : step === 5 ? !offerReady : false;
@@ -694,7 +706,7 @@ export function SetupWizard({
               : step === 2 ? <AgentsStep clientId={client.id} agents={agents} />
               : step === 3 ? <DncStep dnc={dnc} />
               : step === 4 ? <TargetStep clientId={client.id} onProspects={setProspects} />
-              : step === 5 ? <OfferStep onReady={setOfferReady} />
+              : step === 5 ? <OfferStep value={offerDraft} onChange={setOfferDraft} />
               : <DoneStep client={client} onExit={onExit} />}
           </div>
           {step === 1 ? (
@@ -709,7 +721,7 @@ export function SetupWizard({
                 {empty ? (
                   <button className={k("btn pri")} type="button" disabled style={{ opacity: 0.5, cursor: "default", color: "#fff", borderColor: "#3e6bd1" }}>{next}</button>
                 ) : (
-                  <a className={k("btn pri")} href="#" onClick={link(step + 1)}>{next}</a>
+                  <a className={k("btn pri")} href="#" onClick={step === 5 ? (e) => void finish(e) : link(step + 1)} aria-busy={finishing}>{step === 5 && finishing ? "Saving…" : next}</a>
                 )}
               </div>
             </footer>
