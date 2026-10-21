@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 
 import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { initials, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
+import { initials, type ManagedStage, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
@@ -62,6 +62,7 @@ export function CrmPreview({
   client,
   portals,
   stages,
+  allStages,
   furthest,
   entries,
   agents,
@@ -74,6 +75,8 @@ export function CrmPreview({
   client: PreviewClient;
   portals: Array<{ id: string; name: string }>;
   stages: PreviewStage[];
+  /** Every stage, hidden ones too — the Demo Portal's Manage stages only. */
+  allStages?: ManagedStage[];
   /** For agents in Nurture / Not a Fit / No Response: the furthest forward stage on record. */
   furthest: Record<string, string>;
   entries: PipelineEntry[];
@@ -248,7 +251,7 @@ export function CrmPreview({
 
         <div className={k("main")}>
           {view === "pipeline" ? (
-            <PipelineScreen entries={entries} stages={stages} furthest={furthest} team={team} clientId={client.id} now={today} />
+            <PipelineScreen entries={entries} stages={stages} allStages={allStages} furthest={furthest} team={team} clientId={client.id} now={today} />
           ) : view === "market" || view === "prospects" ? (
             <MarketScreen key={view} clientId={client.id} list={view} onContext={setContext} onOpenMarket={() => go("market")} />
           ) : view === "reports" ? (

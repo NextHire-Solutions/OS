@@ -5,14 +5,16 @@
  * Filters, views and panels work; everything that would change the pipeline
  * is drawn disabled (see src/app/crm-preview/page.tsx) — except on the Demo
  * Portal, where moving, tagging, assigning, adding, editing, notes and
- * deleting save (demo-save.ts), and Upload CSV imports (22 Oct). Manage
- * stages is drawn only.
+ * deleting save (demo-save.ts), and Upload CSV imports and Manage stages
+ * save (22 Oct).
  */
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
+  ALWAYS_SHOWN,
+  CUSTOM_TAG_PREFIX,
   TIME_RANGES,
   abbrevUsd,
   formatPhone,
@@ -23,11 +25,13 @@ import {
   salesVolumeOf,
   shortDate,
   sourceLabel,
+  type ManagedStage,
   type Placement,
   type PreviewStage,
   type TimeRange,
 } from "@/lib/crm-preview/model";
 import { csvRowToPipeline } from "@/lib/tools/master-inbox/portals/csv";
+import { GLOBAL_CUSTOM_STAGE_KEYS, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
 
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
@@ -38,7 +42,7 @@ import { importCsv, lock, moveTo, saveCsv, useDemo, type DemoAction } from "./de
 type Open = { kind: "agent" | "conversation" | "notes" | "edit"; entry: PipelineEntry } | { kind: "add" | "upload" } | null;
 
 
-export function PipelineScreen({ entries, stages, furthest, team, clientId, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; team: TeamMember[]; clientId: string; now: Date }) {
+export function PipelineScreen({ entries, stages, allStages, furthest, team, clientId, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; allStages?: ManagedStage[]; furthest: Record<string, string>; team: TeamMember[]; clientId: string; now: Date }) {
   const [mode, setMode] = useState<"board" | "list">("board");
   const [range, setRange] = useState<TimeRange>("all");
   const [search, setSearch] = useState("");
@@ -118,7 +122,7 @@ export function PipelineScreen({ entries, stages, furthest, team, clientId, now 
       </header>
 
       <div className={k("content")}>
-        {entries.length ? <ManageStages stages={stages} tagCounts={tagCounts(view.placement)} /> : null}
+        {entries.length ? <ManageStages stages={stages} all={live ? allStages : undefined} counts={placeCounts(view.placement)} /> : null}
 
         {entries.length === 0 ? (
           <div className={k("es")}>
@@ -420,23 +424,29 @@ export function PipelineScreen({ entries, stages, furthest, team, clientId, now 
 }
 
 /** How many agents carry each tag — all of them, whatever the filters. */
-function tagCounts(placement: Map<string, Placement>): Map<string, number> {
+/* Agents at each stage or tag, by key (a tagged agent counts at its tag). */
+function placeCounts(placement: Map<string, Placement>): Map<string, number> {
   const out = new Map<string, number>();
-  for (const p of placement.values()) if (p.tag) out.set(p.tag.key, (out.get(p.tag.key) ?? 0) + 1);
+  for (const p of placement.values()) {
+    const key = p.tag ? p.tag.key : p.stage.key;
+    out.set(key, (out.get(key) ?? 0) + 1);
+  }
   return out;
 }
 
 const NAME_INPUT = { flex: 1, border: 0, outline: 0, background: "transparent", fontSize: 13, color: "#1f2124", fontWeight: 500 } as const;
+const ALWAYS = new Set<string>(ALWAYS_SHOWN);
+const agentsText = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "agent" : "agents"}`;
 
 /*
  * Manage stages, as the design draws it open (its Stages screen): the client's
- * stages and tags with their own names and colours. Renaming, reordering,
- * hiding, adding and saving are drawn disabled; opening and closing it works.
+ * stages and tags with their own names and colours. For every client but the
+ * Demo Portal, renaming, reordering, hiding, adding and saving are drawn
+ * disabled; opening and closing it works. On the Demo Portal (`all`, 22 Oct)
+ * they work and save (lib/crm-preview/demo.ts saveStages).
  */
-function ManageStages({ stages, tagCounts: counts }: { stages: PreviewStage[]; tagCounts: Map<string, number> }) {
+function ManageStages({ stages, all, counts }: { stages: PreviewStage[]; all?: ManagedStage[]; counts: Map<string, number> }) {
   const [open, setOpen] = useState(false);
-  const forward = stages.filter((s) => s.role === "stage");
-  const tags = stages.filter((s) => s.role === "tag");
   const head = (
     <>
       <span className={k("mi")}><Icon name="stages" size={17} /></span>
@@ -450,6 +460,18 @@ function ManageStages({ stages, tagCounts: counts }: { stages: PreviewStage[]; t
   if (!open) {
     return <button type="button" className={k("card ms")} aria-expanded={false} onClick={() => setOpen(true)}>{head}</button>;
   }
+  return (
+    <section className={k("card")}>
+      <button type="button" className={k("ms msx")} aria-expanded onClick={() => setOpen(false)} aria-label="Collapse manage stages">{head}</button>
+      {all ? <StagesEditor all={all} counts={counts} /> : <StagesDrawn stages={stages} counts={counts} />}
+    </section>
+  );
+}
+
+/* Every client but the Demo Portal: the panel as the design draws it, inert. */
+function StagesDrawn({ stages, counts }: { stages: PreviewStage[]; counts: Map<string, number> }) {
+  const forward = stages.filter((s) => s.role === "stage");
+  const tags = stages.filter((s) => s.role === "tag");
   const row = (s: PreviewStage, end: React.ReactNode) => (
     <div key={s.key} className={k("stg")}>
       <button type="button" className={k("ib")} aria-label={`Reorder ${s.label}`} {...RO} style={{ cursor: "grab" }}><Icon name="reorder" size={16} /></button>
@@ -459,50 +481,248 @@ function ManageStages({ stages, tagCounts: counts }: { stages: PreviewStage[]; t
     </div>
   );
   return (
-    <section className={k("card")}>
-      <button type="button" className={k("ms msx")} aria-expanded onClick={() => setOpen(false)} aria-label="Collapse manage stages">{head}</button>
-      <div className={k("stl")}>
-        {forward.map((s, i) => {
-          // The design keeps the first and the last (Hired) always shown.
-          const always = i === 0 || s.key === "hired";
-          return row(s, (
-            always ? (
-              <button type="button" className={k("ib")} disabled aria-label={`${s.label} is always shown`} title="Always shown" style={{ color: "#c2c7d0", cursor: "default" }}>
-                <Icon name="eyeOutline" size={16} />
-              </button>
-            ) : (
-              <button type="button" className={k("ib")} aria-label={`Hide ${s.label}`} {...RO}>
-                <Icon name="eyeOutline" size={16} />
-              </button>
-            )
-          ));
-        })}
-        <button type="button" className={k("addb")} {...RO}><Icon name="plus" size={14} />Add stage</button>
-        <div className={k("svr")}>
-          <span>Custom stages are for your team&apos;s workflow. They don&apos;t change your&nbsp;reporting.</span>
-          <button type="button" className={k("btn pri")} {...RO}>Save changes</button>
-        </div>
-        {tags.length ? (
-          <>
-            <div style={{ padding: "18px 0 4px", borderTop: "1px solid #ebedf0", marginTop: 10 }}>
-              <div style={{ fontWeight: 600 }}>Tags</div>
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Tag an agent without moving them through your pipeline. Stages only move&nbsp;forward.</div>
-            </div>
-            {tags.map((t) => row(t, (
-              <>
-                <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{(counts.get(t.key) ?? 0).toLocaleString("en-US")} agents</span>
-                <button type="button" className={k("ib")} aria-label={`Delete tag ${t.label}`} {...RO}><Icon name="x" size={15} /></button>
-              </>
-            )))}
-            <button type="button" className={k("addb")} {...RO}><Icon name="plus" size={14} />Add tag</button>
-            <div className={k("svr")}>
-              <span>Tags are shared with everyone on your&nbsp;team.</span>
-              <button type="button" className={k("btn pri")} {...RO}>Save changes</button>
-            </div>
-          </>
-        ) : null}
+    <div className={k("stl")}>
+      {forward.map((s) => row(s, (
+        ALWAYS.has(s.key) ? (
+          <button type="button" className={k("ib")} disabled aria-label={`${s.label} is always shown`} title="Always shown" style={{ color: "#c2c7d0", cursor: "default" }}>
+            <Icon name="eyeOutline" size={16} />
+          </button>
+        ) : (
+          <button type="button" className={k("ib")} aria-label={`Hide ${s.label}`} {...RO}>
+            <Icon name="eyeOutline" size={16} />
+          </button>
+        )
+      )))}
+      <button type="button" className={k("addb")} {...RO}><Icon name="plus" size={14} />Add stage</button>
+      <div className={k("svr")}>
+        <span>Custom stages are for your team&apos;s workflow. They don&apos;t change your&nbsp;reporting.</span>
+        <button type="button" className={k("btn pri")} {...RO}>Save changes</button>
       </div>
-    </section>
+      {tags.length ? (
+        <>
+          <TagsHead />
+          {tags.map((t) => row(t, (
+            <>
+              <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{agentsText(counts.get(t.key) ?? 0)}</span>
+              <button type="button" className={k("ib")} aria-label={`Delete tag ${t.label}`} {...RO}><Icon name="x" size={15} /></button>
+            </>
+          )))}
+          <button type="button" className={k("addb")} {...RO}><Icon name="plus" size={14} />Add tag</button>
+          <div className={k("svr")}>
+            <span>Tags are shared with everyone on your&nbsp;team.</span>
+            <button type="button" className={k("btn pri")} {...RO}>Save changes</button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function TagsHead() {
+  return (
+    <div style={{ padding: "18px 0 4px", borderTop: "1px solid #ebedf0", marginTop: 10 }}>
+      <div style={{ fontWeight: 600 }}>Tags</div>
+      <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Tag an agent without moving them through your pipeline. Stages only move&nbsp;forward.</div>
+    </div>
+  );
+}
+
+type Part = "stages" | "tags";
+type Draft = ManagedStage & { fresh?: boolean };
+type Sections = Record<Part, Draft[]>;
+const sections = (all: ManagedStage[]): Sections => ({ stages: all.filter((s) => s.role === "stage"), tags: all.filter((s) => s.role === "tag") });
+/* What a save sends — the live route's row shape. */
+const payload = (list: Draft[]) => list.map((s) => ({ key: s.key, label: s.label.trim(), color: s.color, kind: s.kind, canonical_stage: s.canonical, hidden: s.hidden }));
+const same = (a: Draft[], b: Draft[]) => JSON.stringify(payload(a)) === JSON.stringify(payload(b));
+const builtInTag = (s: Draft) => s.kind === "canonical" || (GLOBAL_CUSTOM_STAGE_KEYS as readonly string[]).includes(s.key);
+
+/* A new custom stage's key, as the live portal makes them ("custom_apw2pau5"); a tag's starts "custom_tag_". */
+function newKey(prefix: string): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return prefix + [...bytes].map((b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+}
+
+/*
+ * The Demo Portal's working panel. Each section saves on its own (the design
+ * has a Save changes for stages and one for tags): its edits, with the other
+ * section as last saved. Names, order and show/hide are kept as typed until
+ * saved; a new stage or tag can be dropped before it is saved. Built-in tags
+ * (the pipeline's own, and the two no-show tags every portal has) can be
+ * renamed, not deleted; Introduction and Hired are always shown.
+ */
+function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string, number> }) {
+  const { save } = useDemo();
+  const sig = JSON.stringify(all);
+  const [base, setBase] = useState<Sections>(() => sections(all));
+  const [draft, setDraft] = useState<Sections>(() => sections(all));
+  const baseRef = useRef(base);
+  // After a save the page reloads its stages: take them as saved (a section just saved now matches them), keeping edits not yet saved in the other section.
+  useEffect(() => {
+    const next = sections(JSON.parse(sig) as ManagedStage[]);
+    const take = (d: Draft[], part: Part) => (same(d, baseRef.current[part]) || same(d, next[part]) ? next[part] : d);
+    setDraft((d) => ({ stages: take(d.stages, "stages"), tags: take(d.tags, "tags") }));
+    baseRef.current = next;
+    setBase(next);
+  }, [sig]);
+  const [busy, setBusy] = useState<Part | null>(null);
+  const [drag, setDrag] = useState<{ part: Part; key: string } | null>(null);
+  const focus = useRef<{ key: string; what: "name" | "handle" } | null>(null);
+  useEffect(() => {
+    if (!focus.current) return;
+    const { key, what } = focus.current;
+    focus.current = null;
+    document.querySelector<HTMLElement>(`[data-stage="${CSS.escape(key)}"] ${what === "name" ? "input" : "[data-handle]"}`)?.focus();
+  });
+
+  const setPart = (part: Part, list: Draft[]) => setDraft((d) => ({ ...d, [part]: list }));
+  const edit = (part: Part, key: string, patch: Partial<Draft>) => setPart(part, draft[part].map((s) => (s.key === key ? { ...s, ...patch } : s)));
+  const move = (part: Part, from: number, to: number) => {
+    const list = [...draft[part]];
+    const [it] = list.splice(from, 1);
+    list.splice(to, 0, it);
+    setPart(part, list);
+  };
+  const add = (part: Part) => {
+    const color = STAGE_COLOR_PALETTE[(draft.stages.length + draft.tags.length) % STAGE_COLOR_PALETTE.length];
+    const s: Draft = { key: newKey(part === "tags" ? CUSTOM_TAG_PREFIX : "custom_"), label: "", color, dot: color, kind: "custom", canonical: null, hidden: false, role: part === "tags" ? "tag" : "stage", fresh: true };
+    focus.current = { key: s.key, what: "name" };
+    setPart(part, [...draft[part], s]);
+  };
+  const ready = (part: Part) => !busy && !same(draft[part], base[part]) && draft[part].every((s) => s.label.trim().length > 0);
+  const commit = async (part: Part) => {
+    if (!ready(part)) return;
+    setBusy(part);
+    const trimmed = draft[part].map((s) => ({ ...s, label: s.label.trim() }));
+    setPart(part, trimmed);
+    await save({ type: "stages.save", stages: payload(part === "stages" ? [...trimmed, ...base.tags] : [...base.stages, ...trimmed]) });
+    setBusy(null);
+  };
+
+  const row = (part: Part, s: Draft, i: number, end: React.ReactNode) => {
+    const name = s.label.trim() || (part === "tags" ? "new tag" : "new stage");
+    const list = draft[part];
+    return (
+      <div
+        key={s.key}
+        data-stage={s.key}
+        className={k("stg")}
+        style={{ ...(s.hidden ? { opacity: 0.55 } : {}), ...(drag?.key === s.key ? { background: "#f5f8fe" } : {}) }}
+        onDragOver={(e) => { if (drag?.part === part) e.preventDefault(); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          // The dragged stage's key travels with the drag; only a row of the same section moves.
+          const from = list.findIndex((x) => x.key === (e.dataTransfer.getData("text/plain") || drag?.key));
+          if (from >= 0 && from !== i) move(part, from, i);
+          setDrag(null);
+        }}
+      >
+        <button
+          type="button"
+          className={k("ib")}
+          data-handle=""
+          draggable
+          aria-label={`Reorder ${name}`}
+          title="Drag to reorder, or use the arrow keys"
+          style={{ cursor: "grab" }}
+          onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", s.key); setDrag({ part, key: s.key }); }}
+          onDragEnd={() => setDrag(null)}
+          onKeyDown={(e) => {
+            const to = e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : -1;
+            if (to < 0 || to >= list.length) return;
+            e.preventDefault();
+            focus.current = { key: s.key, what: "handle" };
+            move(part, i, to);
+          }}
+        >
+          <Icon name="reorder" size={16} />
+        </button>
+        <span className={k("dot")} style={{ background: s.dot }} />
+        <input
+          value={s.label}
+          maxLength={40}
+          placeholder={part === "tags" ? "Tag name" : "Stage name"}
+          aria-label={`Rename ${name}`}
+          style={NAME_INPUT}
+          onChange={(e) => edit(part, s.key, { label: e.target.value })}
+          onKeyDown={(e) => { if (e.key === "Enter") void commit(part); }}
+        />
+        {end}
+      </div>
+    );
+  };
+  const drop = (part: Part, s: Draft) => (
+    <button type="button" className={k("ib")} aria-label={`Remove ${s.label.trim() || (part === "tags" ? "new tag" : "new stage")}`} title="Not saved yet — remove it" onClick={() => setPart(part, draft[part].filter((x) => x.key !== s.key))}>
+      <Icon name="x" size={15} />
+    </button>
+  );
+  const showHide = (part: Part, s: Draft) => (
+    <button
+      type="button"
+      className={k("ib")}
+      aria-label={`${s.hidden ? "Show" : "Hide"} ${s.label}`}
+      aria-pressed={s.hidden}
+      title={s.hidden ? "Hidden — click to show" : "Shown — click to hide"}
+      onClick={() => {
+        const n = counts.get(s.key) ?? 0;
+        if (!s.hidden && n > 0 && !window.confirm(`${agentsText(n)} ${n === 1 ? "is" : "are"} at ${s.label}. While it is hidden, they don't show on the board. Hide it?`)) return;
+        edit(part, s.key, { hidden: !s.hidden });
+      }}
+    >
+      <Icon name={s.hidden ? "eyeOff" : "eyeOutline"} size={16} />
+    </button>
+  );
+  const saveRow = (part: Part, text: React.ReactNode) => {
+    const named = draft[part].every((s) => s.label.trim().length > 0);
+    return (
+      <div className={k("svr")}>
+        <span>{named ? text : <>Give every {part === "tags" ? "tag" : "stage"} a name to&nbsp;save.</>}</span>
+        <button type="button" className={k(ready(part) ? "btn pri" : "btn pri dim")} disabled={!ready(part)} onClick={() => void commit(part)}>
+          {busy === part ? "Saving…" : "Save changes"}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div className={k("stl")}>
+      {draft.stages.map((s, i) => row("stages", s, i, (
+        ALWAYS.has(s.key) ? (
+          <button type="button" className={k("ib")} disabled aria-label={`${s.label} is always shown`} title="Always shown" style={{ color: "#c2c7d0", cursor: "default" }}>
+            <Icon name="eyeOutline" size={16} />
+          </button>
+        ) : s.fresh ? drop("stages", s) : showHide("stages", s)
+      )))}
+      <button type="button" className={k("addb")} onClick={() => add("stages")}><Icon name="plus" size={14} />Add stage</button>
+      {saveRow("stages", <>Custom stages are for your team&apos;s workflow. They don&apos;t change your&nbsp;reporting.</>)}
+      <TagsHead />
+      {draft.tags.map((t, i) => row("tags", t, i, (
+        <>
+          <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{agentsText(counts.get(t.key) ?? 0)}</span>
+          {t.hidden ? showHide("tags", t) : null}
+          {t.fresh ? drop("tags", t) : builtInTag(t) ? (
+            <button type="button" className={k("ib")} disabled aria-label={`${t.label} is a built-in tag`} title="A built-in tag — rename it; it can't be deleted" style={{ color: "#c2c7d0", cursor: "default" }}>
+              <Icon name="x" size={15} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={k("ib")}
+              aria-label={`Delete tag ${t.label}`}
+              onClick={() => {
+                const n = counts.get(t.key) ?? 0;
+                if (n > 0 && !window.confirm(`${agentsText(n)} ${n === 1 ? "has" : "have"} the tag ${t.label}. Deleting it takes the tag off them when you save; they stay at their stage. Delete it?`)) return;
+                setPart("tags", draft.tags.filter((x) => x.key !== t.key));
+              }}
+            >
+              <Icon name="x" size={15} />
+            </button>
+          )}
+        </>
+      )))}
+      <button type="button" className={k("addb")} onClick={() => add("tags")}><Icon name="plus" size={14} />Add tag</button>
+      {saveRow("tags", <>Tags are shared with everyone on your&nbsp;team.</>)}
+    </div>
   );
 }
 

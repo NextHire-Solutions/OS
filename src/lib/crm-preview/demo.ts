@@ -33,13 +33,23 @@
  * (companies), Team by name + email; pipeline rows are not de-duplicated (nor
  * are they live). Nothing a live import sets off happens here either — no
  * blocklists, no stop, no Slack, no Introduction texts, no Follow Up Boss.
+ *
+ * Manage stages (22 Oct): the live portal's own save (Master Inbox
+ * app/api/portal/[token]/stages, behind `manage_stages` — a flag only the
+ * Demo Portal has) with its rules: every pipeline stage stays, exactly once
+ * (it can be renamed, moved or hidden, never removed); a removed custom stage
+ * first takes its agents back to their pipeline stage. It writes only the
+ * Demo's `client_pipeline_stages` rows and clears only the Demo's entries'
+ * custom-stage placement — never an entry's stage, so no Introduction or
+ * Hired is ever set off.
  */
 
 import { z } from "zod";
 
+import { ALWAYS_SHOWN } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
-import { STAGE_ORDER, type PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
-import { GLOBAL_CUSTOM_STAGE_KEYS } from "@/lib/tools/master-inbox/portals/stage-config";
+import { STAGE_LABEL_MAX_LEN, STAGE_ORDER, type PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
+import { GLOBAL_CUSTOM_STAGE_KEYS, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
 
 /** The Demo Portal (Master Inbox `clients`, slug demo-portal). The only portal the preview can change. */
 export const DEMO_PORTAL_ID = "00ef116c-646d-43b4-a323-680548ea7126";
@@ -73,6 +83,17 @@ export const MAX_IMPORT_ROWS = 5000;
 /* An imported file's rows as the browser mapped them (portals/csv.ts); null where a row had nothing the mapper could read. */
 const csvRows = z.array(z.record(z.string().max(64), z.union([z.string().max(20_000), z.boolean(), z.null()])).nullable()).min(1).max(MAX_IMPORT_ROWS);
 
+/* A custom stage's key, as the live portal makes them ("custom_apw2pau5"); a tag the new design adds is "custom_tag_…" (model.ts). */
+const CUSTOM_KEY = /^custom_[a-z0-9_]{1,56}$/;
+const HEX = /^#[0-9a-fA-F]{6}$/;
+const stageRow = z.object({
+  key: z.string().trim().min(1).max(64),
+  label: z.string().trim().min(1).max(STAGE_LABEL_MAX_LEN),
+  color: z.string().trim().max(9).nullable().optional(),
+  kind: z.enum(["canonical", "custom"]),
+  canonical_stage: z.string().trim().nullable().optional(),
+  hidden: z.boolean().optional().default(false),
+});
 /** Every save the Demo Portal can make — what its screens' buttons do. */
 export const demoAction = z.discriminatedUnion("type", [
   z.object({
@@ -121,6 +142,7 @@ export const demoAction = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent.import"), rows: csvRows }),
   z.object({ type: z.literal("dnc.import"), rows: csvRows }),
   z.object({ type: z.literal("team.import"), rows: csvRows }),
+  z.object({ type: z.literal("stages.save"), stages: z.array(stageRow).min(1).max(30) }),
 ]);
 
 export type DemoAction = z.infer<typeof demoAction>;
@@ -317,6 +339,71 @@ async function runImport(db: Db, a: Extract<DemoAction, { rows: unknown }>): Pro
   }
 }
 
+// ---------------------------------------------------------- Manage stages ---
+
+/* The live route's structural rules, plus the design's: Introduction and Hired are never hidden. */
+function stagesProblem(stages: Array<z.infer<typeof stageRow>>): string | null {
+  const keys = new Set<string>();
+  const canonical = new Set<string>();
+  for (const s of stages) {
+    if (keys.has(s.key)) return `"${s.label}" is in the list twice.`;
+    keys.add(s.key);
+    if (s.color && !HEX.test(s.color) && !(STAGE_COLOR_PALETTE as readonly string[]).includes(s.color)) return `"${s.label}" has a colour that isn't one of the stage colours.`;
+    if (s.kind === "canonical") {
+      if (!s.canonical_stage || s.key !== s.canonical_stage || !(STAGE_ORDER as string[]).includes(s.key)) return `"${s.label}" is not a pipeline stage.`;
+      canonical.add(s.key);
+      if ((ALWAYS_SHOWN as string[]).includes(s.key) && s.hidden) return `"${s.label}" is always shown.`;
+    } else if (s.canonical_stage || !(CUSTOM_KEY.test(s.key) || (GLOBAL_CUSTOM_STAGE_KEYS as readonly string[]).includes(s.key))) {
+      return `"${s.label}" is not a stage this portal can keep.`;
+    }
+  }
+  const missing = STAGE_ORDER.filter((c) => !canonical.has(c));
+  return missing.length ? `Every pipeline stage stays — ${missing.join(", ")} is missing.` : null;
+}
+
+async function saveStages(db: Db, stages: Array<z.infer<typeof stageRow>>): Promise<DemoResult> {
+  const C = DEMO_PORTAL_ID;
+  const problem = stagesProblem(stages);
+  if (problem) return { ok: false, status: 400, error: problem };
+  const have: Res = await db.from("client_pipeline_stages").select("key, kind").eq("client_id", C);
+  if (have.error) return failed(have)!;
+  const existing = (have.data ?? []) as Array<{ key: string; kind: string }>;
+  const wanted = new Set(stages.map((s) => s.key));
+  // A custom stage taken out: its agents go back to their pipeline stage first (only the placement is cleared), then it goes.
+  const removed = existing.filter((r) => r.kind === "custom" && !wanted.has(r.key)).map((r) => r.key);
+  const at = now();
+  let moved = 0;
+  if (removed.length) {
+    const back: Res = await db.from("client_pipeline_entries").update({ custom_stage_key: null, updated_at: at }).eq("client_id", C).in("custom_stage_key", removed).select("id");
+    if (back.error) return failed(back)!;
+    moved = ((back.data as unknown[]) ?? []).length;
+    const gone: Res = await db.from("client_pipeline_stages").delete().eq("client_id", C).in("key", removed);
+    if (gone.error) return failed(gone)!;
+  }
+  const row = (s: z.infer<typeof stageRow>, i: number) => ({
+    label: s.label,
+    color: s.color ? s.color : null,
+    sort_order: i,
+    kind: s.kind,
+    canonical_stage: s.kind === "canonical" ? s.canonical_stage : null,
+    hidden: s.hidden ?? false,
+    updated_at: at,
+  });
+  const known = new Set(existing.map((r) => r.key));
+  for (const [i, s] of stages.entries()) {
+    if (!known.has(s.key)) continue;
+    const r: Res = await db.from("client_pipeline_stages").update(row(s, i)).eq("client_id", C).eq("key", s.key).select("key");
+    if (r.error) return failed(r)!;
+  }
+  const fresh = stages.map((s, i) => ({ s, i })).filter(({ s }) => !known.has(s.key)).map(({ s, i }) => ({ client_id: C, key: s.key, ...row(s, i) }));
+  if (fresh.length) {
+    const r: Res = await db.from("client_pipeline_stages").insert(fresh).select("key");
+    if (r.error) return failed(r)!;
+  }
+  // Agents on a removed stage or tag are said so; otherwise it is an ordinary save.
+  return { ok: true, message: moved ? `Saved. ${plural(moved, "agent", "agents")} moved back to ${moved === 1 ? "its" : "their"} pipeline stage.` : "Saved on the Demo Portal." };
+}
+
 /** Runs one save, on the Demo Portal's rows only. */
 export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> {
   const C = DEMO_PORTAL_ID;
@@ -326,6 +413,8 @@ export async function runDemoAction(db: Db, a: DemoAction): Promise<DemoResult> 
     case "dnc.import":
     case "team.import":
       return runImport(db, a);
+    case "stages.save":
+      return saveStages(db, a.stages);
     case "entry.add": {
       // The live portal's manual add; the Demo Portal has pipeline_source_split, so it is a Client Entry.
       const r: Res = await db

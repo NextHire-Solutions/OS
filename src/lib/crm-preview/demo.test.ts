@@ -185,6 +185,64 @@ test("CSV import: a file where nothing can be saved says why; the size is bounde
   assert.match(fs.readFileSync("src/components/crm-preview/demo-save.ts", "utf8"), new RegExp(`const MAX_ROWS = ${MAX_IMPORT_ROWS};`), "the browser's limit is the server's");
 });
 
+/* The Demo Portal's stage list as it is on 22 Oct: the pipeline's nine (its own order) and one custom stage. */
+const DEMO_STAGES = [
+  ["phone_screen_scheduled", "Phone Screen Scheduled"], ["phone_screen", "Phone Screen"], ["introduction", "Introduction"], ["interview_scheduled", "Interview Scheduled"],
+  ["interview", "Interview"], ["hired", "Hired"], ["keep_warm", "Nurture"], ["we_they_rejected", "Not a Fit"], ["no_show", "No Response"],
+].map(([key, label]) => ({ key, label, color: null, kind: "canonical", canonical_stage: key, hidden: false }));
+const CUSTOM = { key: "custom_apw2pau5", label: "Invited to sales meeting", color: "#e23a3a", kind: "custom", canonical_stage: null, hidden: false };
+function seedStages() {
+  const s = seed();
+  fake.seed("client_pipeline_stages", [
+    ...[...DEMO_STAGES, CUSTOM].map((r, i) => ({ client_id: DEMO_PORTAL_ID, sort_order: i, ...r })),
+    { client_id: OTHER, key: "custom_theirs", label: "Theirs", kind: "custom", canonical_stage: null, hidden: false, sort_order: 0 },
+  ]);
+  return s;
+}
+const stagesOf = (c: string) => fake.rows("client_pipeline_stages").filter((r) => r.client_id === c).sort((a, b) => Number(a.sort_order) - Number(b.sort_order));
+
+test("Manage stages: rename, reorder, hide and a new tag — the Demo Portal's stage rows only", async () => {
+  seedStages();
+  const list = [DEMO_STAGES[2], DEMO_STAGES[0], { ...DEMO_STAGES[1], label: "Phone call", hidden: true }, ...DEMO_STAGES.slice(3), CUSTOM, { key: "custom_tag_ab12cd34", label: "Top producer", color: "#0f766e", kind: "custom", canonical_stage: null, hidden: false }];
+  assert.deepEqual(await run({ type: "stages.save", stages: list }), { ok: true, message: "Saved on the Demo Portal." });
+  const mine = stagesOf(DEMO_PORTAL_ID);
+  assert.deepEqual(mine.map((r) => r.key), list.map((r) => r.key), "saved in the order given");
+  assert.deepEqual(mine.map((r) => r.sort_order), list.map((_, i) => i));
+  const phone = mine.find((r) => r.key === "phone_screen")!;
+  assert.deepEqual([phone.label, phone.hidden, phone.kind, phone.canonical_stage], ["Phone call", true, "canonical", "phone_screen"]);
+  assert.deepEqual(stagesOf(OTHER).map((r) => [r.key, r.label, r.sort_order]), [["custom_theirs", "Theirs", 0]], "another client's stages untouched");
+  assert.equal(row("client_pipeline_entries", fake.rows("client_pipeline_entries").find((e) => e.client_id === DEMO_PORTAL_ID)!.id as string).stage, "introduction", "no entry's stage moved");
+  assert.deepEqual(fake.blocked, []);
+});
+
+test("Manage stages: taking out a custom stage sends its agents back to their pipeline stage — the Demo's only", async () => {
+  const s = seedStages();
+  row("client_pipeline_entries", s.mine.id).custom_stage_key = "custom_apw2pau5";
+  row("client_pipeline_entries", s.theirs.id).custom_stage_key = "custom_apw2pau5";
+  const r = await run({ type: "stages.save", stages: DEMO_STAGES });
+  assert.deepEqual(r, { ok: true, message: "Saved. 1 agent moved back to its pipeline stage." });
+  assert.ok(!stagesOf(DEMO_PORTAL_ID).some((x) => x.key === "custom_apw2pau5"));
+  assert.equal(row("client_pipeline_entries", s.mine.id).custom_stage_key, null);
+  assert.equal(row("client_pipeline_entries", s.mine.id).stage, "introduction", "back at its own stage");
+  assert.equal(row("client_pipeline_entries", s.theirs.id).custom_stage_key, "custom_apw2pau5", "another client's entry: untouched");
+  assert.equal(stagesOf(OTHER).length, 1);
+});
+
+test("Manage stages: the live route's rules — every pipeline stage stays once; Introduction and Hired are always shown", async () => {
+  seedStages();
+  const without = DEMO_STAGES.filter((x) => x.key !== "keep_warm");
+  assert.deepEqual(await run({ type: "stages.save", stages: without }), { ok: false, status: 400, error: "Every pipeline stage stays — keep_warm is missing." });
+  assert.deepEqual(await run({ type: "stages.save", stages: DEMO_STAGES.map((x) => (x.key === "hired" ? { ...x, hidden: true } : x)) }), { ok: false, status: 400, error: '"Hired" is always shown.' });
+  assert.deepEqual(await run({ type: "stages.save", stages: [...DEMO_STAGES, DEMO_STAGES[0]] }), { ok: false, status: 400, error: '"Phone Screen Scheduled" is in the list twice.' });
+  assert.deepEqual(await run({ type: "stages.save", stages: [...DEMO_STAGES, { ...CUSTOM, key: "made-up" }] }), { ok: false, status: 400, error: '"Invited to sales meeting" is not a stage this portal can keep.' });
+  assert.deepEqual(await run({ type: "stages.save", stages: [...DEMO_STAGES, { ...CUSTOM, kind: "custom", canonical_stage: "hired" }] }), { ok: false, status: 400, error: '"Invited to sales meeting" is not a stage this portal can keep.' });
+  assert.deepEqual(await run({ type: "stages.save", stages: DEMO_STAGES.map((x) => (x.key === "interview" ? { ...x, key: "interview_x" } : x)) }), { ok: false, status: 400, error: '"Interview" is not a pipeline stage.' });
+  assert.deepEqual(await run({ type: "stages.save", stages: [...DEMO_STAGES, { ...CUSTOM, color: "red" }] }), { ok: false, status: 400, error: `"Invited to sales meeting" has a colour that isn't one of the stage colours.` });
+  assert.equal(demoAction.safeParse({ type: "stages.save", stages: [{ ...CUSTOM, label: "x".repeat(41) }] }).success, false, "names are 40 characters at most, as live");
+  assert.equal(stagesOf(DEMO_PORTAL_ID).length, 10, "nothing changed");
+  assert.equal(stagesOf(DEMO_PORTAL_ID).find((x) => x.key === "custom_apw2pau5")?.label, "Invited to sales meeting");
+});
+
 test("input is checked before anything is read", () => {
   assert.equal(demoAction.safeParse({ type: "client.delete" }).success, false);
   assert.equal(demoAction.safeParse({ type: "entry.stage", ids: [], stage: "hired" }).success, false);
@@ -204,7 +262,7 @@ test("the save path imports nothing that reaches outside the database, and the r
     const src = read(f);
     const imports = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
     const allowed = f.endsWith("demo.ts")
-      ? ["zod", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config"]
+      ? ["zod", "@/lib/crm-preview/model", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config"]
       : ["next/server", "@/lib/bs-auth", "@/lib/identity/admin", "@/lib/crm-preview/access", "@/lib/crm-preview/data-guard", "@/lib/crm-preview/demo", "@/lib/supabase/admin"];
     assert.deepEqual(imports.filter((i) => !allowed.includes(i)), [], `${f}: only the database and the preview's own checks — no blocklist, stop, Slack, texts, Follow Up Boss`);
     assert.doesNotMatch(src, /\bfetch\(|import\(/, `${f}: no outside requests, no dynamic imports`);

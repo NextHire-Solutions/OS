@@ -31,7 +31,7 @@ import { notFound } from "next/navigation";
 import { SSO_COOKIE, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
 import { canSeeCrmPreview } from "@/lib/crm-preview/access";
-import { furthestStages, PREVIEW_VIEWS, previewStages, type PreviewView } from "@/lib/crm-preview/model";
+import { furthestStages, managedStages, PREVIEW_VIEWS, previewStages, type PreviewView } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
@@ -166,6 +166,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       }}
       portals={portals}
       stages={stages}
+      // Every stage, hidden ones too — only where Manage stages saves (the Demo Portal); everyone else's panel is drawn from `stages`.
+      allStages={isDemoPortal(client.id as string) && manageStages ? managedStages(defs) : undefined}
       furthest={furthestStages(history, tagged)}
       entries={entries}
       agents={agents}

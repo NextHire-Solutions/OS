@@ -11,6 +11,7 @@ import {
   inRange,
   initials,
   listPage,
+  managedStages,
   messageText,
   panelFields,
   pipelineView,
@@ -267,4 +268,30 @@ test("the list in pages of 50: newest first, months kept together, each month co
   assert.deepEqual(p2.groups.map((g) => [g.label, g.rows.length, g.monthTotal]), [["August 2026", 17, 31]]);
   assert.equal(listPage(entries, 99).page, 2, "past the end: the last page");
   assert.deepEqual([listPage([], 1).from, listPage([], 1).to, listPage([], 1).pages], [0, 0, 1]);
+});
+
+test("Manage stages (Demo): a tag added there is a tag; hidden stages are still listed for editing", () => {
+  const rows: ClientStageRow[] = [
+    { key: "introduction", label: "Introduction", color: null, sort_order: 0, kind: "canonical", canonical_stage: "introduction", hidden: false },
+    { key: "phone_screen", label: "Phone call", color: null, sort_order: 1, kind: "canonical", canonical_stage: "phone_screen", hidden: true },
+    { key: "custom_apw2pau5", label: "Invited to sales meeting", color: "#e23a3a", sort_order: 2, kind: "custom", canonical_stage: null, hidden: false },
+    { key: "custom_tag_ab12cd34", label: "Top producer", color: "#0f766e", sort_order: 3, kind: "custom", canonical_stage: null, hidden: false },
+    { key: "keep_warm", label: "Nurture", color: null, sort_order: 4, kind: "canonical", canonical_stage: "keep_warm", hidden: false },
+  ];
+  const defs = resolveStageDefs({}, rows);
+  const shown = previewStages(defs);
+  assert.ok(!shown.some((s) => s.key === "phone_screen"), "hidden: not on the board");
+  assert.equal(shown.find((s) => s.key === "custom_tag_ab12cd34")?.role, "tag");
+  assert.equal(shown.find((s) => s.key === "custom_apw2pau5")?.role, "stage", "the live portal's own custom stages stay stages");
+  const all = managedStages(defs);
+  assert.deepEqual(all.map((s) => [s.key, s.role, s.hidden]), [
+    ["introduction", "stage", false],
+    ["phone_screen", "stage", true],
+    ["custom_apw2pau5", "stage", false],
+    ["custom_tag_ab12cd34", "tag", false],
+    ["keep_warm", "tag", false],
+    ["phone_screen_no_show", "tag", false],
+    ["interview_no_show", "tag", false],
+  ]);
+  assert.equal(all.find((s) => s.key === "keep_warm")?.dot, shown.find((s) => s.key === "keep_warm")?.dot, "drawn in the design's colours, as on the board");
 });

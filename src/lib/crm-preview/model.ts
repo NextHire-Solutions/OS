@@ -57,6 +57,22 @@ const DESIGN: Record<PipelineStage, { dot: string; pill: PillTone; tag: boolean 
 };
 const NO_SHOW_TAG = { dot: "#9a5b00", pill: "nr" as const };
 
+/**
+ * A tag added in the Demo Portal's Manage stages (22 Oct): a custom stage
+ * whose key starts so. The live board shows it as a custom stage, as it
+ * shows every custom stage; the new design draws it as a tag.
+ */
+export const CUSTOM_TAG_PREFIX = "custom_tag_";
+
+/** The design keeps these always shown (its Manage stages screen). */
+export const ALWAYS_SHOWN: readonly PipelineStage[] = ["introduction", "hired"];
+
+/** Is this stage one of the design's tags (a side list), rather than a forward stage? */
+export function isTagStage(d: Pick<StageDef, "key" | "canonicalStage">): boolean {
+  if (d.canonicalStage) return DESIGN[d.canonicalStage].tag;
+  return (GLOBAL_CUSTOM_STAGE_KEYS as readonly string[]).includes(d.key) || d.key.startsWith(CUSTOM_TAG_PREFIX);
+}
+
 /** The client's visible stages, in their order, each marked as a design stage or tag. */
 export function previewStages(defs: readonly StageDef[]): PreviewStage[] {
   return defs
@@ -69,8 +85,36 @@ export function previewStages(defs: readonly StageDef[]): PreviewStage[] {
       if ((GLOBAL_CUSTOM_STAGE_KEYS as readonly string[]).includes(d.key)) {
         return { key: d.key, label: d.label, role: "tag", ...NO_SHOW_TAG };
       }
+      if (d.key.startsWith(CUSTOM_TAG_PREFIX)) return { key: d.key, label: d.label, role: "tag", dot: d.color, pill: "nr" };
       return { key: d.key, label: d.label, role: "stage", dot: d.color, pill: "nu" };
     });
+}
+
+/** Every stage, hidden ones too, as Manage stages edits them (the Demo Portal only). */
+export interface ManagedStage {
+  key: string;
+  label: string;
+  color: string;
+  kind: "canonical" | "custom";
+  canonical: PipelineStage | null;
+  hidden: boolean;
+  role: "stage" | "tag";
+  /** Its colour as the design draws its dot. */
+  dot: string;
+}
+
+export function managedStages(defs: readonly StageDef[]): ManagedStage[] {
+  const shown = new Map(previewStages(defs.map((d) => ({ ...d, hidden: false }))).map((p) => [p.key, p.dot]));
+  return defs.map((d) => ({
+    key: d.key,
+    label: d.label,
+    color: d.color,
+    kind: d.kind,
+    canonical: d.canonicalStage,
+    hidden: d.hidden,
+    role: isTagStage(d) ? "tag" : "stage",
+    dot: shown.get(d.key) ?? d.color,
+  }));
 }
 
 /** Where an entry sits: its Demo-only custom stage if set, else its stage (as the live board reads it). */
