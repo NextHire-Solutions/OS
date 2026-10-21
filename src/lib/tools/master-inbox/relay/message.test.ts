@@ -10,13 +10,12 @@ import assert from "node:assert/strict";
 import {
   addressHeader,
   agentDisplayName,
-  firstNameOf,
   buildRelayEmail,
   cleanDisplayName,
-  handoffIntro,
-  handoffSubject,
   messageIdFromPayload,
   providerSaysAutomatic,
+  quotedHistory,
+  relaySubject,
   type RelayEmail,
 } from "./message.ts";
 import { bounceKind, createPostmarkTransport, fetchBounces, postmarkPayload, POSTMARK_API } from "./postmark.ts";
@@ -65,31 +64,46 @@ test("From is '<Agent> via BrokerStaffer' on leads.brokerstaffer.com; Reply-To i
   assert.equal(e.from, '"Jordan Ellis via BrokerStaffer" <agents@leads.brokerstaffer.com>');
   assert.equal(e.replyTo, '"Jordan Ellis" <jordan.ellis@coastalrealty.test>');
   assert.equal(e.toHeader, '"Angela Oakes" <angela@brokerage.test>');
-  assert.equal(e.subject, "Jordan Ellis is interested — reply to reach them");
+  // The conversation's own subject, as agreed (plan §2) — the brokerage's answer stays in the agent's thread.
+  assert.equal(e.subject, "Re: Quick question, Jordan");
 });
 
-test("notification style (20 Oct): BrokerStaffer's one line, then the agent's reply — our cold outreach is never quoted", () => {
+test("the body is the agent's reply first — nothing on top — then the earlier messages quoted (plan §2; 21 Oct: the agreed format, restored)", () => {
   const e = build();
-  assert.ok(
-    e.textBody.startsWith("Jordan Ellis replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach Jordan directly.\n\n----------\n\nSure, happy to chat. Mornings work best for me — (843) 555-0142.\n— Jordan"),
-    e.textBody,
-  );
-  // The outreach the spam filters know is not in the brokerage's copy, and neither is any later message.
-  assert.doesNotMatch(e.textBody, /I came across your listings|Nicole Collins wrote|Also free Thursday/);
-  assert.doesNotMatch(e.htmlBody, /I came across your listings|gmail_quote|<blockquote/);
-  assert.match(e.htmlBody, /^<div style="color:#444"><p>Jordan Ellis replied to your BrokerStaffer recruiting campaign and is interested\.<br>Reply to this email to reach Jordan directly\.<\/p><\/div><hr /);
-  assert.match(e.htmlBody, /Sure, happy to chat\./);
-  // No tracking, nothing added.
+  assert.ok(e.textBody.startsWith("Sure, happy to chat. Mornings work best for me — (843) 555-0142.\n— Jordan\n\n"), e.textBody);
+  assert.match(e.textBody, /On Mon, Oct 5, 2026, 10:00 AM, Nicole Collins wrote:\n> Hi Jordan, I came across your listings in Charlotte/);
+  // The agent's own quoting of our email is not repeated, and a LATER message is never included.
+  assert.equal(e.textBody.match(/I came across your listings/g)?.length, 1);
+  assert.doesNotMatch(e.textBody, /Also free Thursday/);
+  assert.ok(e.htmlBody.startsWith("<div><p>Sure, happy to chat."), e.htmlBody);
+  assert.match(e.htmlBody, /<div class="gmail_quote">.*<blockquote/);
+  // Nothing from BrokerStaffer on top, no tracking: the agent's text and the quote, escaped.
+  assert.doesNotMatch(e.textBody + e.htmlBody, /BrokerStaffer recruiting campaign|is interested/);
   assert.doesNotMatch(e.htmlBody, /<img|<script|unsubscribe/i);
 });
 
-test("the subject is a notification, never a fake Re:, and safe as a header", () => {
-  assert.equal(handoffSubject("Jordan Ellis"), "Jordan Ellis is interested — reply to reach them");
-  assert.equal(handoffSubject(null), "An agent is interested — reply to reach them");
-  assert.equal(handoffSubject("Evil\r\nBcc: x@y.test"), "Evil Bcc: x is interested — reply to reach them");
-  assert.doesNotMatch(handoffSubject("A\r\nB"), /[\r\n]/);
-  assert.ok(handoffSubject("x".repeat(400)).length <= 205);
-  assert.equal(handoffIntro(null), "An agent replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach them directly.");
+test("our own quoted email reads by name, never our sending inbox's address, and keeps its paragraphs (21 Oct, real data)", () => {
+  const ours = m({ id: "o1", direction: "outbound", sender: "nicole@realtynowpro.test", senderName: null, bodyText: "Hey James,Given your experience, I thought it made sense.", bodyHtml: "<div>Hey James,</div><div><br></div><div>Given your experience, I thought it made sense.</div>", sentAt: "2026-10-05T14:00:00.000Z" });
+  const e = build({ messages: [ours, conversation[1]] });
+  assert.match(e.textBody, /On Mon, Oct 5, 2026, 10:00 AM, Nicole wrote:\n> Hey James,\n(>\n)*> Given your experience/);
+  assert.doesNotMatch(e.textBody + e.htmlBody, /realtynowpro/, "our campaign domain stays out of the brokerage's copy");
+  // A name that can't be read from the address: ours says BrokerStaffer.
+  const odd = build({ messages: [{ ...ours, sender: "x1@realtynowpro.test" }, conversation[1]] });
+  assert.match(odd.textBody, /BrokerStaffer wrote:/);
+  assert.doesNotMatch(odd.textBody, /x1@/);
+});
+
+test("quoted: only messages before the reply, newest first — never the reply itself or anything later", () => {
+  const first = m({ id: "o0", direction: "outbound", bodyText: "First touch", sentAt: "2026-10-01T00:00:00.000Z" });
+  const q = quotedHistory([...conversation, first], conversation[1]);
+  assert.deepEqual(q.map((x) => x.id), ["o1", "o0"]);
+});
+
+test("subject: exactly one Re:, from the conversation's subject", () => {
+  assert.equal(relaySubject("Re: RE: Fwd: Quick question", null), "Re: Quick question");
+  assert.equal(relaySubject(null, "Re: Hello"), "Re: Hello");
+  assert.equal(relaySubject("Line\r\nBreak", null), "Re: Line Break");
+  assert.equal(relaySubject("", ""), "Re: (no subject)");
 });
 
 test("the agent's words are escaped in HTML, so a reply cannot inject markup", () => {
@@ -109,15 +123,7 @@ test("display names cannot break the header or pass for an address", () => {
   assert.equal(agentDisplayName({ id: null, fullName: null, email: "jordan.ellis@x.test" }, null), "Jordan Ellis");
 });
 
-test("names read right: past a title, from 'Last, First', never a mailbox, no hidden characters (21 Oct review)", () => {
-  assert.equal(firstNameOf("Dr. Jane Smith"), "Jane");
-  assert.equal(firstNameOf("Smith, John"), "John");
-  assert.equal(firstNameOf("John Smith, Realtor"), "John");
-  assert.equal(firstNameOf("J. Smith"), "them", "an initial: no telling");
-  assert.equal(firstNameOf("An agent"), "them");
-  assert.equal(firstNameOf("Jean-Luc O'Neil"), "Jean-Luc");
-  assert.equal(handoffIntro("Dr. Jane Smith"), "Dr. Jane Smith replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach Jane directly.");
-
+test("names read right: never a mailbox, no hidden characters (21 Oct review)", () => {
   const fromAddress = (email: string) => agentDisplayName({ id: null, fullName: null, email }, null);
   assert.equal(fromAddress("info@coastal.test"), "An agent");
   assert.equal(fromAddress("jsmith1985@gmail.test"), "An agent");
@@ -303,11 +309,11 @@ test("EmailBison's own 'automatic reply' flag is read from the reply (review fix
   assert.equal(providerSaysAutomatic(undefined), false);
 });
 
-test("subject: control characters never reach the header, and a runaway name is cut at a word (review fix)", () => {
-  assert.equal(handoffSubject("Jordan\u0000Ellis\u0007"), "Jordan Ellis is interested — reply to reach them");
-  const long = handoffSubject(`${"word ".repeat(80)}end`);
+test("subject: control characters never reach the header, and a runaway subject is cut at a word (review fix)", () => {
+  assert.equal(relaySubject("Quick\u0000question\u0007\tJordan", null), "Re: Quick question Jordan");
+  const long = relaySubject(`${"word ".repeat(80)}end`, null);
   assert.ok(long.length <= 205, String(long.length));
-  assert.doesNotMatch(long, /[\r\n]/);
+  assert.match(long, /^Re: word word .* word…$/);
 });
 
 test("an out-of-office or a delay is not a bounce; a spam report is its own kind (review fix)", () => {

@@ -3,15 +3,23 @@ import { plainTextToHtml } from "../inbox/plain-text-html.ts";
 import { ownText, type LeadFacts, type MessageFacts, type Recipient } from "./rules.ts";
 
 /*
- * The email the brokerage receives — a notification (20 Oct, the user chose
- * "notification style" after the first test landed in spam):
+ * The email the brokerage receives — exactly as the approved plan draws it
+ * (plan §2, "What the brokerage sees"):
  *
  *   From      Jordan Ellis via BrokerStaffer <agents@leads.brokerstaffer.com>
  *   To        the brokerage's people for this agent's market
  *   Reply-To  the agent's own address — Reply goes straight to them
- *   Subject   Jordan Ellis is interested — reply to reach them
- *   Body      one line from BrokerStaffer, then the agent's own words only.
- *             Our outreach is never quoted under them.
+ *   Subject   Re: <the conversation's subject>
+ *   Body      the agent's reply, then the earlier messages of THIS
+ *             conversation quoted underneath. "We add nothing on top."
+ *
+ * With the agent's Message-ID in In-Reply-To / References, the brokerage's
+ * answer lands in the agent's same conversation, under the same subject.
+ *
+ * 21 Oct: the "notification" version of 20 Oct (its own subject, a line from
+ * BrokerStaffer on top, nothing quoted) was never agreed with the client and
+ * is undone. Eddy: "The whole point was to continue the conversation in the
+ * same thread. With same subject."
  *
  * Pure. Built from the conversation's own messages only — never another
  * conversation with the same agent (plan §4: "Each brokerage only ever
@@ -19,6 +27,9 @@ import { ownText, type LeadFacts, type MessageFacts, type Recipient } from "./ru
  */
 
 export const VIA = "via BrokerStaffer";
+/** Earlier messages quoted under the reply, newest first. */
+export const MAX_QUOTED = 10;
+const MAX_QUOTED_CHARS = 5000;
 
 export interface RelayEmail {
   fromName: string;
@@ -80,24 +91,6 @@ export function agentDisplayName(lead: LeadFacts, reply: Pick<MessageFacts, "sen
   );
 }
 
-const TITLE = /^(dr|mr|mrs|ms|miss|mx|prof|sir|rev)\.?$/i;
-
-/*
- * The first name for "reach <first> directly" (21 Oct review): past a title
- * ("Dr. Jane Smith" → Jane), from "Smith, John" (→ John), and "them" when
- * there is no telling (an initial, a digit, the unknown agent).
- */
-export function firstNameOf(name: string | null | undefined): string {
-  const n = cleanDisplayName(name);
-  if (!n || n === NO_NAME) return "them";
-  const comma = n.split(",").map((p) => p.trim()).filter(Boolean);
-  // "Smith, John" — one word before the comma; "John Smith, Realtor" keeps John.
-  const given = comma.length === 2 && !/\s/.test(comma[0]) ? comma[1] : comma[0] ?? n;
-  const words = given.split(/\s+/).filter((w) => !TITLE.test(w));
-  const first = words[0] ?? "";
-  return /^\p{L}[\p{L}'’-]+$/u.test(first) ? first : "them";
-}
-
 /** `"Name" <address>`, or the bare address when there is no name. */
 export function addressHeader(name: string | null | undefined, email: string): string {
   const n = cleanDisplayName(name);
@@ -105,6 +98,92 @@ export function addressHeader(name: string | null | undefined, email: string): s
 }
 
 const MAX_SUBJECT = 200;
+
+/**
+ * "Re: <subject>", with exactly one Re: however many the conversation piled
+ * up. Control characters (CR/LF included) become spaces, and a runaway
+ * subject is cut at a word: one line, nothing a header could be split on.
+ */
+export function relaySubject(threadSubject: string | null | undefined, replySubject: string | null | undefined): string {
+  let base = String((threadSubject ?? "").trim() || (replySubject ?? "").trim())
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  for (let i = 0; i < 10; i++) {
+    const next = base.replace(/^(re|fw|fwd|aw|sv)\s*(\[\d+\])?\s*:\s*/i, "");
+    if (next === base) break;
+    base = next.trim();
+  }
+  if (base.length > MAX_SUBJECT) base = `${base.slice(0, MAX_SUBJECT).replace(/\s+\S*$/, "")}…`;
+  return `Re: ${base || "(no subject)"}`;
+}
+
+const QUOTE_DATE = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+/* "nicole.c@…" → "Nicole": the name part of an address, letters only. */
+function nameFromLocalPart(email: string | null | undefined): string {
+  const local = String(email ?? "").split("@")[0] ?? "";
+  return local
+    .split(/[._+-]+/)
+    .filter((p) => /^[a-z]{2,}$/i.test(p) && !MAILBOX_WORDS.has(p.toLowerCase()))
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/*
+ * Who wrote a quoted message. Ours by name — never the sending inbox's address
+ * (21 Oct: no outbound message carries a stored name, and our campaign domains
+ * must stay out of the brokerage's copy): "nicole@…" reads "Nicole", as the
+ * plan's example reads "Nicole Collins wrote:". The agent's, by name or address.
+ */
+function quoteName(m: Pick<MessageFacts, "senderName" | "sender" | "direction">): string {
+  const named = cleanDisplayName(m.senderName);
+  if (named) return named;
+  if (m.direction === "outbound") return nameFromLocalPart(m.sender) || "BrokerStaffer";
+  return (m.sender ?? "").trim() || "The agent";
+}
+
+/** "On Mon, Oct 5, 2026, 10:42 AM, Nicole Collins wrote:" — how mail clients introduce a quote. */
+export function quoteHeader(m: Pick<MessageFacts, "sentAt" | "senderName" | "sender" | "direction">): string {
+  const who = quoteName(m);
+  const t = m.sentAt ? Date.parse(m.sentAt) : NaN;
+  return Number.isFinite(t) ? `On ${QUOTE_DATE.format(new Date(t))}, ${who} wrote:` : `${who} wrote:`;
+}
+
+/*
+ * A quoted message's text. Our own emails are read from their HTML: the
+ * providers' plain-text copy runs the paragraphs together ("Hey James,Given
+ * your experience…", 21 Oct), the HTML keeps them.
+ */
+function quoteText(m: MessageFacts): string {
+  const fromHtml = m.direction === "outbound" && m.bodyHtml ? ownText({ bodyText: null, bodyHtml: m.bodyHtml }) : "";
+  return clip(fromHtml || ownText(m) || String(m.bodyText ?? "").trim());
+}
+
+/** The earlier messages to quote: this conversation's, before the reply, newest first. */
+export function quotedHistory(messages: MessageFacts[], reply: MessageFacts): MessageFacts[] {
+  const at = reply.sentAt ? Date.parse(reply.sentAt) : NaN;
+  return messages
+    .filter((m) => m.id !== reply.id)
+    .filter((m) => {
+      const t = m.sentAt ? Date.parse(m.sentAt) : NaN;
+      return Number.isFinite(at) && Number.isFinite(t) && t < at;
+    })
+    .sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)))
+    .slice(0, MAX_QUOTED);
+}
+
+function clip(text: string): string {
+  return text.length > MAX_QUOTED_CHARS ? `${text.slice(0, MAX_QUOTED_CHARS).trimEnd()}…` : text;
+}
 
 /*
  * The agent's own words — and nothing else (21 Oct review). It used to fall
@@ -175,46 +254,28 @@ export interface BuildInput {
   recipients: Recipient[];
   threadSubject: string | null;
   reply: MessageFacts;
-  /** Every message of THIS conversation (none is quoted any more — the agent's reply is picked from them by the caller). */
+  /** Every message of THIS conversation; the earlier ones are quoted. */
   messages: MessageFacts[];
   agentMessageId: string | null;
-}
-
-/*
- * The subject, as a notification (20 Oct): "<Agent> is interested — reply to
- * reach them". Not a "Re:" — the brokerage has no earlier conversation, and a
- * "Re:" from a sender they have never written to is a well-known spam sign
- * (the first test landed in Gmail's spam: "similar to messages identified as
- * spam"). One line, control characters removed, cut at a word.
- */
-export function handoffSubject(agentName: string | null | undefined): string {
-  const name = cleanDisplayName(agentName) || NO_NAME;
-  const s = `${name} is interested — reply to reach them`;
-  return s.length > MAX_SUBJECT ? `${s.slice(0, MAX_SUBJECT).replace(/\s+\S*$/, "")}…` : s;
-}
-
-/** BrokerStaffer's one line at the top, so the brokerage (and its mail filter) know what this is. */
-export function handoffIntro(agentName: string | null | undefined): string {
-  const name = cleanDisplayName(agentName) || NO_NAME;
-  const first = firstNameOf(name);
-  return `${name} replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach ${first} directly.`;
 }
 
 export function buildRelayEmail(input: BuildInput): RelayEmail {
   const fromName = `${cleanDisplayName(input.agentName) || NO_NAME} ${VIA}`;
   const own = replyText(input.reply);
-  /*
-   * The agent's own words under one line from BrokerStaffer — and NOT our cold
-   * outreach quoted below them (20 Oct, the user chose "notification style"):
-   * that quote is the part spam filters have seen marked as spam millions of
-   * times, and the brokerage needs the agent's reply, not our pitch.
-   */
-  const intro = handoffIntro(input.agentName);
-  const textBody = `${intro}\n\n----------\n\n${own}`;
-  const htmlBody =
-    `<div style="color:#444">${plainTextToHtml(intro)}</div>` +
-    `<hr style="border:0;border-top:1px solid #ddd;margin:14px 0">` +
-    `<div>${plainTextToHtml(own)}</div>`;
+  // The agent's words first — nothing on top — then this conversation's earlier messages, quoted as a mail client quotes them.
+  const quoted = quotedHistory(input.messages, input.reply).map((m) => ({ header: quoteHeader(m), text: quoteText(m) }));
+
+  const textParts = [own];
+  for (const q of quoted) {
+    textParts.push(`${q.header}\n${q.text.split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n")}`);
+  }
+  const textBody = textParts.join("\n\n");
+
+  const blockquote = 'style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"';
+  const htmlQuoted = quoted
+    .map((q) => `<div>${plainTextToHtml(q.header)}<blockquote ${blockquote}>${plainTextToHtml(q.text)}</blockquote></div>`)
+    .join("");
+  const htmlBody = `<div>${plainTextToHtml(own)}</div>${htmlQuoted ? `<br><div class="gmail_quote">${htmlQuoted}</div>` : ""}`;
 
   const headers: RelayEmail["headers"] = [];
   if (input.agentMessageId) {
@@ -229,7 +290,7 @@ export function buildRelayEmail(input: BuildInput): RelayEmail {
     to: input.recipients,
     toHeader: input.recipients.map((r) => addressHeader(r.name, r.email)).join(", "),
     replyTo: addressHeader(input.agentName, input.replyTo),
-    subject: handoffSubject(input.agentName),
+    subject: relaySubject(input.threadSubject, input.reply.subject),
     textBody,
     htmlBody,
     headers,

@@ -526,10 +526,21 @@ slot or cap (`relay/test-send.ts`). Postmark: domain leads.brokerstaffer.com
 verified (DKIM + Return-Path), account approved on server **21106882** (its
 token is the one on Railway `os`; an earlier token was for an unapproved
 server). The first sample reached Gmail **spam** with SPF/DKIM/DMARC all PASS
-("similar to messages identified as spam") — so the email became a
-**notification**: subject "<Agent> is interested — reply to reach them" (no
-fake "Re:"), one line from BrokerStaffer on top, then the agent's own words;
-our cold outreach is no longer quoted. Reply-To is still the agent.
+("similar to messages identified as spam") — so on 20 Oct the email was made
+a "notification" (its own subject, a line from BrokerStaffer on top, nothing
+quoted). **21 Oct: undone.** That change was never agreed with the client.
+Eddy: "Basically, agent's reply will be sent to the brokerage automatically
+with same subject and reply with full conversation … is what we agreed on" —
+"The whole point was to continue the conversation in the same thread. With
+same subject." The email is again exactly plan §2: the conversation's own
+subject (`Re: …`), the agent's words first, the earlier messages of that
+conversation quoted underneath, nothing added on top. Two things kept from the
+review: our quoted emails are attributed by NAME ("Nicole wrote:"), never by
+the sending inbox's address — no outbound message stores a sender name, and
+our campaign domains must stay out of the brokerage's copy — and they are
+quoted from their HTML, which keeps the paragraphs the plain-text copy loses.
+Inbox placement is to be tested on Gmail and Outlook (plan §5) before the
+pilot; if a filter flags it, options go to Eddy before anything changes.
 
 **Eddy's answers (17 Oct):** sending address "either way — just make sure it
 doesn't land in spam" → `agents@leads.brokerstaffer.com` (a subdomain keeps
@@ -545,9 +556,10 @@ person, either app), a minute sweep (`instrumentation.ts`, like the Slack alert)
 decides, records and — only when live — sends the agent's own reply through
 Postmark: From `"<Agent> via BrokerStaffer" <agents@leads.brokerstaffer.com>`,
 Reply-To the address the agent wrote from, To the brokerage's people, subject
-`<Agent> is interested — reply to reach them`, one line from BrokerStaffer and
-then the agent's own words only — nothing of ours quoted (tracking off;
-In-Reply-To/References when the provider stored the agent's Message-ID).
+`Re: <conversation subject>`, the agent's words then this conversation's earlier
+messages quoted (nothing on top, tracking off; In-Reply-To/References when the
+provider stored the agent's Message-ID, so the brokerage's answer lands in the
+agent's same conversation).
 
 | Rule | How (`src/lib/tools/master-inbox/relay/`) |
 |---|---|
@@ -638,8 +650,8 @@ retry, check Postmark first); the test send's Reply-To check read only the last
 billing blocks, campaign answers, campaign routes or client columns read as an
 empty list (now stops the sweep; every migration they need is run); a team
 answer could never clear a campaign conflict; curly apostrophes hid
-out-of-office and opt-out phrases; names ("Dr. Jane Smith" → "reach Dr.",
-"Smith, John", "Info", hidden right-to-left characters); a stale Settings tab
+out-of-office and opt-out phrases; names (mailbox guesses like "Info" or
+"Jsmith1985", hidden right-to-left characters); a stale Settings tab
 could silently undo the kill switch or practice mode (saves now send only
 what changed, with the version seen; 409 if it moved).
 
@@ -655,8 +667,8 @@ text part + a plain HTML part with the same words (agent's text escaped, no
 images, no added links, no tracking pixel — `TrackOpens: false`, `TrackLinks:
 None`, also off on the Postmark server itself); From `"<Agent> via
 BrokerStaffer" <agents@leads.brokerstaffer.com>`; Reply-To the agent; Subject
-`<Agent> is interested — reply to reach them` (no fake "Re:" — 20 Oct, after
-the first sample reached spam); In-Reply-To/References only with the agent's
+`Re: <conversation subject>` (as agreed — the 20 Oct notification subject was
+undone on 21 Oct); In-Reply-To/References only with the agent's
 real Message-ID (EmailBison `raw_message_id`, Instantly email `message_id`),
 otherwise left out; Postmark's transactional `outbound` stream (broadcast is
 refused). Known, accepted signal: Reply-To is often a free-mail address
