@@ -38,6 +38,15 @@ export function isDemoPortal(id: string | null | undefined): boolean {
   return id === DEMO_PORTAL_ID;
 }
 
+/*
+ * The Demo Portal's sample market (21 Oct, the user: "yes you can add the demo
+ * market in demo portal"). It has no client record, so no market of its own;
+ * it shows the Atlanta market the design's own sample data comes from (C21
+ * Results' MLSs). Market and Reports read it; Prospects stay unavailable —
+ * those are one real client's own lists and never appear in a demo.
+ */
+export const DEMO_MARKET_MLS: readonly string[] = ["FMLS", "GAMLS"];
+
 const STAGES = STAGE_ORDER as [PipelineStage, ...PipelineStage[]];
 const id = z.string().uuid();
 const ids = z.array(id).min(1).max(500);

@@ -6,6 +6,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { readOnly } from "@/lib/tools/assistant/read-only";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
+import { DEMO_MARKET_MLS, isDemoPortal } from "@/lib/crm-preview/demo";
 
 import {
   bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
@@ -97,6 +98,10 @@ export async function marketContext(portalId: string): Promise<MarketContext | n
   ]);
   if (error) throw new Error(error.message);
   const client = clientForPortal({ id: p.id, name: p.name ?? "" }, (rows ?? []) as unknown as OsClientRow[]);
+  // The Demo Portal has no client record: a sample market (demo.ts), and no lists of anyone's.
+  if (!client && isDemoPortal(p.id)) {
+    return { portal: { id: p.id, name: p.name ?? "Demo Portal" }, client: { id: "demo-portal", name: p.name ?? "Demo Portal" }, mls: resolveMls([...DEMO_MARKET_MLS], mls), orchClientId: null };
+  }
   return {
     portal: { id: p.id, name: p.name ?? "Unnamed client" },
     client: client ? { id: client.id, name: client.name } : null,

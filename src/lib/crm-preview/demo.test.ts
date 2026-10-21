@@ -9,7 +9,7 @@ import fs from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 
 import { FakePostgrest } from "../tools/master-inbox/test/fake-postgrest.ts";
-import { companyDomain, DEMO_PORTAL_ID, demoAction, isDemoPortal, runDemoAction, type DemoAction } from "./demo.ts";
+import { companyDomain, DEMO_MARKET_MLS, DEMO_PORTAL_ID, demoAction, isDemoPortal, runDemoAction, type DemoAction } from "./demo.ts";
 
 const fake = new FakePostgrest();
 globalThis.fetch = fake.fetch as typeof fetch;
@@ -140,4 +140,12 @@ test("the save path imports nothing that reaches outside the database, and the r
   const route = read("src/app/api/crm-preview/demo/route.ts");
   const refuse = route.indexOf("isDemoPortal(");
   assert.ok(refuse > route.indexOf("canSeeCrmPreview(") && refuse < route.indexOf("runDemoAction(") && refuse < route.indexOf("createAdminSupabase()"), "who first, then Demo-only, then the save");
+});
+
+test("the Demo Portal's sample market: the design's own (C21 Results' MLSs) — and never anyone's lists as Prospects", () => {
+  assert.deepEqual([...DEMO_MARKET_MLS], ["FMLS", "GAMLS"]);
+  const market = fs.readFileSync("src/lib/crm-preview/market.ts", "utf8");
+  const at = market.indexOf("isDemoPortal(p.id)");
+  assert.ok(at > 0 && market.indexOf("!client && isDemoPortal(p.id)") > 0, "only when the portal has no client record of its own");
+  assert.match(market.slice(at, at + 400), /orchClientId: null/, "no client's lists in a demo");
 });
