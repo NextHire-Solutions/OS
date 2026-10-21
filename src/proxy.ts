@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { grantsForRequest } from "@/lib/workspace/tool-paths";
-import { isPreSplitSession, preSplitToolGrants } from "@/lib/workspace/switch-transition";
+import { preSplitToolGrants } from "@/lib/workspace/switch-transition";
 import { tokenRouteOpen } from "@/lib/http/token-routes";
 import { PROXY_ALLOWLIST as MASTER_INBOX_PUBLIC } from "@/lib/tools/master-inbox/webhooks/public-paths";
 
@@ -51,20 +51,40 @@ const CRON_BEARER_ROUTES = new Set([
  */
 
 /*
- * /portal-signin and its API (21 Oct): the CLIENTS' sign-in for the new portal —
- * not staff, so not behind bs_sso. Each route checks for itself (only the
- * sign-in pages' own requests; one answer for every address); nothing staff
- * can see is under these paths.
+ * The pages and routes anyone may reach without a session — EXACT paths, never
+ * "this and everything below it" (22 Oct audit). With a prefix, an unknown
+ * address under it (/portal-signin/x, /login/x) skipped the session check and
+ * fell through to the staff app's catch-all page, which rendered Home to
+ * anyone. Each entry here is a real page or route (proxy-public.test.ts checks
+ * both ways, so a new one must be listed on purpose):
+ *   - the staff sign-in page and its four API routes, each checking for itself;
+ *   - the healthcheck (Railway's has no credential);
+ *   - /portal-signin and its API (21 Oct): the CLIENTS' sign-in for the new
+ *     portal, not behind bs_sso; each route checks for itself (only the
+ *     sign-in pages' own requests; one answer for every address).
  */
-const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/health", "/portal-signin", "/api/portal-signin"];
+export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
+  "/login",
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/api/auth/password",
+  "/api/auth/refresh",
+  "/api/health",
+  "/portal-signin",
+  "/portal-signin/check",
+  "/portal-signin/confirm",
+  "/portal-signin/done",
+  "/api/portal-signin/request",
+  "/api/portal-signin/code",
+  "/api/portal-signin/confirm",
+  "/api/portal-signin/signout",
+]);
 
 /** The Claude connector's token-checked endpoints. Exact paths — see the block in proxy(). */
 const CLAUDE_CONNECTOR_PUBLIC = new Set(["/api/mcp", "/api/oauth/token", "/api/oauth/register"]);
 
 function isPublic(pathname: string): boolean {
-  return PUBLIC_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+  return PUBLIC_PATHS.has(pathname);
 }
 
 export async function proxy(request: NextRequest) {
@@ -178,7 +198,6 @@ export async function proxy(request: NextRequest) {
    * so a fetch() caller can tell "not allowed" from "not signed in".
    */
   // A session signed before the 15 Oct switch split is read as it was meant (switch-transition.ts).
-  const preSplit = isPreSplitSession(session.iat);
   const grants = preSplitToolGrants(session.grants, session.iat);
 
   // Any one of the switches opens it (15 Oct: one tool's sections can have several — tool-paths.ts).
@@ -196,18 +215,24 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(home);
   }
 
-  const response = NextResponse.next();
-  // The shell reads these to build the sidebar, so an ungranted tool is never
-  // rendered either. Presentation on top of the enforcement above.
-  response.headers.set("x-bs-user", session.email);
-  response.headers.set("x-bs-grants", grants.join(","));
-  // Always set, so a request can never bring its own: the page adds the role-opened pages for these.
-  response.headers.set("x-bs-pre-split", preSplit ? "1" : "0");
-  return response;
+  /*
+   * Nothing is handed to the page in headers any more (22 Oct audit): the page
+   * read who was asking from x-bs-user / x-bs-grants, and a request that
+   * skipped this proxy could bring its own. The page now verifies the signed
+   * cookie itself (app/[[...slug]]/page.tsx).
+   */
+  return NextResponse.next();
 }
 
+/*
+ * Runs on EVERY request except Next's own build files and the three real
+ * static files (public/brokerstaffer-logo.webp, app/favicon.ico, app/icon.png),
+ * each matched exactly. It used to skip any path ending in an image extension
+ * (.png, .svg …), so /portals/x.png reached the staff pages with no session
+ * at all — found in the 22 Oct audit.
+ */
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!_next/static/|_next/image$|favicon\\.ico$|icon\\.png$|brokerstaffer-logo\\.webp$).*)",
   ],
 };

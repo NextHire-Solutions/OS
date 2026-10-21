@@ -42,10 +42,8 @@ test("the email: the link, the code, how long it works — and escaped", () => {
 
 test("only the sign-in paths are public — exact paths, never the staff pages", () => {
   const proxy = read("src/proxy.ts");
-  const m = /const PUBLIC_PREFIXES = \[([^\]]+)\]/.exec(proxy);
-  assert.ok(m);
-  assert.deepEqual(m![1].split(",").map((x) => x.trim().replace(/"/g, "")), ["/login", "/api/auth", "/api/health", "/portal-signin", "/api/portal-signin"]);
-  assert.match(proxy, /pathname === prefix \|\| pathname\.startsWith\(`\$\{prefix\}\/`\)/, "an exact path or below it — /portal-signinX and /clients stay private");
+  assert.match(proxy, /function isPublic\(pathname: string\): boolean \{\n  return PUBLIC_PATHS\.has\(pathname\);\n\}/, "exact paths only — nothing below them (22 Oct audit; proxy-public.test.ts)");
+  for (const p of ["/portal-signin", "/portal-signin/check", "/portal-signin/confirm", "/portal-signin/done", "/api/portal-signin/request", "/api/portal-signin/code", "/api/portal-signin/confirm", "/api/portal-signin/signout"]) assert.ok(proxy.includes(`"${p}",`), p);
 });
 
 test("each public route checks for itself, and the request answers the same for every address", () => {
