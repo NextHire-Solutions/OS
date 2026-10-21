@@ -549,6 +549,7 @@ function AgentEditor({
                     key={c.id}
                     type="button"
                     className="pill"
+                    aria-pressed={on}
                     style={{
                       cursor: "pointer",
                       background: on ? "var(--blue-bg, #EAF1FB)" : "var(--inset-2)",
@@ -739,6 +740,7 @@ function AgentEditor({
                       key={d}
                       type="button"
                       className="pill"
+                      aria-pressed={on}
                       style={{
                         cursor: "pointer",
                         background: on ? "var(--blue-bg, #EAF1FB)" : "var(--inset-2)",
