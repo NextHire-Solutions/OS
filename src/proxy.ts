@@ -50,7 +50,13 @@ const CRON_BEARER_ROUTES = new Set([
  * store and re-reads from it.
  */
 
-const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/health"];
+/*
+ * /portal-signin and its API (21 Oct): the CLIENTS' sign-in for the new portal —
+ * not staff, so not behind bs_sso. Each route checks for itself (only the
+ * sign-in pages' own requests; one answer for every address); nothing staff
+ * can see is under these paths.
+ */
+const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/health", "/portal-signin", "/api/portal-signin"];
 
 /** The Claude connector's token-checked endpoints. Exact paths — see the block in proxy(). */
 const CLAUDE_CONNECTOR_PUBLIC = new Set(["/api/mcp", "/api/oauth/token", "/api/oauth/register"]);
