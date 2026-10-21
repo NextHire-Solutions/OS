@@ -13,6 +13,7 @@ import { formatPhone, initials, longDate, messageText, panelFields, shortDate, s
 
 import { Icon } from "./icons";
 import { k, RO } from "./k";
+import { useDemo } from "./demo-save";
 
 function useEscape(onClose: () => void) {
   useEffect(() => {
@@ -33,6 +34,53 @@ function usePanelFocus() {
 function Paragraphs({ text }: { text: string }) {
   const parts = text.split(/\n[ \t]*\n+/).map((t) => t.trim()).filter(Boolean);
   return <>{parts.map((t, i) => <p key={i} className="cpv-para">{t}</p>)}</>;
+}
+
+/*
+ * A button that opens a short menu of stages or tags (the design's stage
+ * picker and Add tag) — only where a choice can be saved: the Demo Portal.
+ */
+export function ChooseMenu({
+  className,
+  label,
+  options,
+  onChoose,
+  style,
+}: {
+  className: string;
+  label: React.ReactNode;
+  options: PreviewStage[];
+  onChoose: (key: string) => void;
+  style?: React.CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  return (
+    <span className={k("ddw")} ref={ref}>
+      <button type="button" className={className} style={style} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{label}</button>
+      {open ? (
+        <div className={k("menu")} role="menu" style={{ minWidth: 190, zIndex: 30 }}>
+          {options.map((o) => (
+            <button key={o.key} type="button" role="menuitem" onClick={() => { setOpen(false); onChoose(o.key); }}>
+              <span className={k("dot")} style={{ background: o.dot }} />{o.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </span>
+  );
 }
 
 export function TagChip({ stage }: { stage: PreviewStage }) {
@@ -61,11 +109,16 @@ const LABEL = { fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTran
 export function AgentPanel({
   entry: e,
   placement,
+  tags,
+  onTag,
   onClose,
   onEdit,
 }: {
   entry: PipelineEntry;
   placement: Placement;
+  /** The portal's tags, and what choosing one does — only on the Demo Portal. */
+  tags: PreviewStage[];
+  onTag?: (key: string) => void;
   onClose: () => void;
   onEdit: () => void;
 }) {
@@ -94,7 +147,9 @@ export function AgentPanel({
         </div>
         <dl className={k("pf")}>
           {row("Stage", <StageCell stage={placement.stage} />)}
-          {row("Tags", placement.tag ? <TagChip stage={placement.tag} /> : (
+          {row("Tags", placement.tag ? <TagChip stage={placement.tag} /> : onTag ? (
+            <ChooseMenu className={k("btn sm")} style={{ height: 24 }} label={<>Add tag <Icon name="chevDown" size={12} /></>} options={tags} onChoose={onTag} />
+          ) : (
             <button type="button" className={k("btn sm")} style={{ height: 24 }} {...RO}>Add tag <Icon name="chevDown" size={12} /></button>
           ))}
           {row("Email", e.lead_email || "–")}
@@ -128,13 +183,13 @@ const bare = (s: string | null) => (s ?? "").replace(/^\s*((re|fwd?|fw)\s*:\s*)+
 export function ConversationPanel({
   entry: e,
   placement,
-  token,
+  clientId,
   now,
   onClose,
 }: {
   entry: PipelineEntry;
   placement: Placement;
-  token: string;
+  clientId: string;
   now: Date;
   onClose: () => void;
 }) {
@@ -145,8 +200,9 @@ export function ConversationPanel({
 
   useEffect(() => {
     let cancelled = false;
-    // The live portal's own read-only feed (a GET; it changes nothing).
-    fetch(`/api/tools/master-inbox/portal/${encodeURIComponent(token)}/conversation/${encodeURIComponent(e.id)}`)
+    // The preview's own read-only feed, by client and entry — the portal's secret link never reaches the browser (21 Oct).
+    const q = new URLSearchParams({ client: clientId, entry: e.id });
+    fetch(`/api/crm-preview/conversation?${q}`)
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
         if (cancelled) return;
@@ -155,7 +211,7 @@ export function ConversationPanel({
       })
       .catch(() => { if (!cancelled) setState({ loading: false, error: "Couldn't reach the server", messages: [], noThread: false }); });
     return () => { cancelled = true; };
-  }, [token, e.id]);
+  }, [clientId, e.id]);
 
   return (
     <>
@@ -214,6 +270,16 @@ export function NotesPanel({ entry: e, onClose }: { entry: PipelineEntry; onClos
   useEscape(onClose);
   const focus = usePanelFocus();
   const name = e.lead_name || "Unnamed agent";
+  // On the Demo Portal a note is saved (and the panel shows it once the page has reloaded).
+  const { live, save } = useDemo();
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const saveNote = async () => {
+    if (!note.trim() || busy) return;
+    setBusy(true);
+    if (await save({ type: "note.add", entry: e.id, body: note.trim() })) setNote("");
+    setBusy(false);
+  };
   return (
     <>
       <button type="button" className={k("ov")} style={{ zIndex: 10 }} aria-label="Close notes" onClick={onClose} />
@@ -241,11 +307,19 @@ export function NotesPanel({ entry: e, onClose }: { entry: PipelineEntry; onClos
         <div className={k("pf")} style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
           <label className={k("fl")} htmlFor="crx-note">
             Add a note
-            <textarea id="crx-note" className={k("ta")} rows={4} placeholder={`Write a note about ${(e.lead_name || "this agent").split(" ")[0]}...`} readOnly {...RO} />
+            {live ? (
+              <textarea id="crx-note" className={k("ta")} rows={4} placeholder={`Write a note about ${(e.lead_name || "this agent").split(" ")[0]}...`} value={note} onChange={(ev) => setNote(ev.target.value)} />
+            ) : (
+              <textarea id="crx-note" className={k("ta")} rows={4} placeholder={`Write a note about ${(e.lead_name || "this agent").split(" ")[0]}...`} readOnly {...RO} />
+            )}
           </label>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button type="button" className={k("btn")} onClick={onClose}>Cancel</button>
-            <button type="button" className={k("btn pri")} {...RO}>Save note</button>
+            {live ? (
+              <button type="button" className={k(note.trim() && !busy ? "btn pri" : "btn pri dim")} disabled={!note.trim() || busy} onClick={() => void saveNote()}>{busy ? "Saving…" : "Save note"}</button>
+            ) : (
+              <button type="button" className={k("btn pri")} {...RO}>Save note</button>
+            )}
           </div>
         </div>
       </aside>

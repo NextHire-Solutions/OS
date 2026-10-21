@@ -18,8 +18,9 @@
  *     live portal's code, URLs, stages and leads are not touched.
  *   - Read-only. It reads what the live portal reads (portal-data.ts) and
  *     writes nothing; every button that would change something is shown
- *     disabled. The browser's one request is the portal's own read-only
- *     conversation feed.
+ *     disabled. The browser asks only the preview's own routes
+ *     (api/crm-preview) — never with a portal's token, which stays on the
+ *     server (21 Oct: a token alone opens that client's live portal).
  */
 
 import type { Metadata } from "next";
@@ -44,6 +45,7 @@ import { canonicalStageDefs, MANAGE_STAGES_FLAG, resolveStageDefs } from "@/lib/
 import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
 import { CrmPreview } from "@/components/crm-preview/crm-preview";
 import { clientForPortal, type OsClientRow } from "@/lib/crm-preview/market-model";
+import { isDemoPortal } from "@/lib/crm-preview/demo";
 import { osTable } from "@/lib/clients/os-db";
 import { ClientPicker } from "@/components/crm-preview/client-picker";
 import { SessionKeeper } from "@/components/shell/session-keeper";
@@ -155,7 +157,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       client={{
         id: client.id as string,
         name: (client.name as string | null) ?? "Unnamed client",
-        token: client.portal_token as string,
+        demo: isDemoPortal(client.id as string),
         // Whether a Follow Up Boss key is saved — never the key itself.
         fubConnected: Boolean((client as { fub_api_key?: string | null }).fub_api_key),
         contactName: record?.contact_name?.trim() || null,

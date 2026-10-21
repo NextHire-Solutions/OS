@@ -342,6 +342,26 @@ the support chat, and the six-step Setup wizard (top bar › Setup wizard;
 prospects). Fields take typing and menus open; every Add, Save, Import, Move,
 Delete and Send is inert. Only Billing (a link to Stripe) is not drawn.
 
+**21 October — the Demo Portal works; everyone else stays read-only.** The
+user: make it "fully working (real saves …) for the Demo Portal ONLY". On the
+Demo Portal (`lib/crm-preview/demo.ts`, fixed by id on the server) the
+pipeline's add, edit, stage pill, Move to, Add tag, Assign to, notes, copy,
+export and delete save, and so do My Agents, DNC and Team add / edit / delete
+/ export and Team's Active switch — through one route,
+`POST /api/crm-preview/demo`, which refuses any other portal. It writes the
+same rows as the live portal but sets off NOTHING the live portal does around
+a save (a survey found those reach real clients: a DNC company goes on the
+EmailBison/Instantly blocklists every campaign shares and is never removed, a
+DNC agent is unsubscribed across every client's campaigns, My Agents emails
+are blocked workspace-wide, Slack posts, and Introductions text Eddy, Ryan and
+Amy) — `demo.test.ts` pins the imports; new team members are saved with texts
+off. Still drawn only on the Demo: CSV imports, Manage stages, the Setup
+wizard, Integrations, and Market/Prospects/Reports (the Demo Portal has no
+client record, so no market). Tested in a real Chrome against a local server
+(42/42; every test row removed). Also 21 Oct: the page no longer hands any
+client's portal token to the browser (a token alone opens that live portal) —
+the conversation panel reads `/api/crm-preview/conversation` by id.
+
 **Market, Prospects and Reports** (added later on 16 Oct) read the agent
 database — the Database project's Supabase — through two Owner-only GET routes,
 `/api/crm-preview/market` and `/api/crm-preview/report` (`lib/crm-preview/market.ts`):

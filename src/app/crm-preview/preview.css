@@ -185,6 +185,7 @@
   font-family: var(--crx-font), "Inter Tight", system-ui, sans-serif; font-size: 13px;
   box-shadow: 0 8px 24px rgba(31, 33, 36, 0.25);
 }
+.cpv-toast.cpv-bad { background: #b42318; }
 .cpv-bar .cpv-context { color: #c9d6f5; }
 /* A panel takes focus when it opens (for the keyboard); the design draws no ring round the whole panel. */
 .cpv-shell aside[tabindex="-1"]:focus { outline: none; }

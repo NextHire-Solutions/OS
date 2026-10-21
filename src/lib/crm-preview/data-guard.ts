@@ -25,8 +25,8 @@
  * in the database and alert staff — see docs/HANDOVER.md.
  */
 
-/** market/report: agent-database data. chat: one message to the assistant. billing: one Stripe billing page opened. */
-export type GuardKind = "market" | "report" | "chat" | "billing";
+/** market/report: agent-database data. chat: one message to the assistant. billing: one Stripe billing page opened. conversation: one pipeline entry's email thread; demo: one save on the Demo Portal (both per-minute limit only). */
+export type GuardKind = "market" | "report" | "chat" | "billing" | "conversation" | "demo";
 export type GuardRole = "staff" | "client";
 
 /** Per person. Staff (the preview's reviewers) can audit freely; clients get the strict limits. */
@@ -121,7 +121,7 @@ export function served(who: string, kind: GuardKind, rows: number, now = Date.no
   if (kind === "market") p.rows += Math.max(0, rows);
   else if (kind === "report") p.reports += 1;
   else if (kind === "chat") p.chats += 1;
-  else p.billing += 1;
+  else if (kind === "billing") p.billing += 1;
 }
 
 /** What every data response carries: never cached anywhere, never indexed. */

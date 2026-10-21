@@ -1,0 +1,74 @@
+"use client";
+
+/*
+ * The Demo Portal's saves, from the page (21 Oct). Every client in the preview
+ * is read-only except the Demo Portal; there, the design's buttons work and
+ * each one sends one action to /api/crm-preview/demo (lib/crm-preview/demo.ts
+ * says what it writes — the Demo Portal's own rows, nothing outside).
+ *
+ * `live` is the server's word (page.tsx: isDemoPortal), and the route checks
+ * the portal again on every save — the browser cannot widen it.
+ */
+
+import { createContext, useContext } from "react";
+
+import { STAGE_ORDER } from "@/lib/tools/master-inbox/portals/stages-shared";
+
+import { RO } from "./k";
+
+export type DemoAction = { type: string } & Record<string, unknown>;
+
+export interface DemoCtx {
+  /** True only on the Demo Portal. */
+  live: boolean;
+  /** One save; true when it was saved (the page then reloads its data). */
+  save: (action: DemoAction) => Promise<boolean>;
+}
+
+export const DemoContext = createContext<DemoCtx>({ live: false, save: async () => false });
+export const useDemo = () => useContext(DemoContext);
+
+/** The read-only marks (k.ts RO) where the portal cannot be changed; none on the Demo Portal. */
+export const lock = (live: boolean) => (live ? {} : RO);
+
+const CANONICAL = new Set<string>(STAGE_ORDER);
+
+/** Moving agents to a stage or tag: a pipeline stage, or one of the portal's own (custom) stages. */
+export function moveTo(ids: readonly string[], key: string): DemoAction {
+  return CANONICAL.has(key) ? { type: "entry.stage", ids: [...ids], stage: key } : { type: "entry.customStage", ids: [...ids], key };
+}
+
+export async function postDemo(client: string, action: DemoAction): Promise<{ ok: true; id?: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`/api/crm-preview/demo`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client, action }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+    return res.ok ? { ok: true, id: j.id } : { ok: false, error: j.error ?? "That could not be saved." };
+  } catch {
+    return { ok: false, error: "Couldn't reach the server — nothing was saved." };
+  }
+}
+
+/** Rows as a CSV the browser saves — the client's own lists only (never Market or Prospects). */
+export function saveCsv(filename: string, header: string[], rows: Array<Array<string | null | undefined>>): void {
+  const cell = (v: string | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const text = [header.map(cell).join(","), ...rows.map((r) => r.map(cell).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** A form's named fields, trimmed (inputs and text areas inside `root`). */
+export function fieldValues(root: HTMLElement | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!root) return out;
+  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input[name], textarea[name]")) out[el.name] = el.value.trim();
+  return out;
+}

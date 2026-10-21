@@ -5,6 +5,8 @@
  * Team, Integrations — and a placeholder for the pages this preview does not
  * draw yet. Adding, importing, editing and deleting are drawn as designed and
  * inert (k.ts RO); the bulk bar is disabled, as the design shows it untouched.
+ * On the Demo Portal (21 Oct) adding, editing, deleting, exporting and Team's
+ * Active switch save (demo-save.ts); Import CSV and Integrations stay drawn.
  */
 
 import { useMemo, useState } from "react";
@@ -16,20 +18,21 @@ import { formatPhone, initials, LIST_PAGE_SIZE } from "@/lib/crm-preview/model";
 import { DncAddDialog, ImportDialog, MyAgentAddDialog, TeamAddForm } from "./dialogs";
 import { Icon, type IconName } from "./icons";
 import { k, RO, withIds } from "./k";
+import { lock, saveCsv, useDemo } from "./demo-save";
 import fubLogo from "./follow-up-boss.png";
 
 const AV = { width: 30, height: 30, fontSize: 11, background: "#eef2fa", color: "#2f55a8" } as const;
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
 /* `add` names the page's primary action; without it (an empty page, Integrations) the header is the title alone, as designed. Export is inert; Import and Add open their pop-ups. */
-function Header({ title, add, onAdd, onImport }: { title: string; add?: string; onAdd?: () => void; onImport?: () => void }) {
+function Header({ title, add, onAdd, onImport, onExport }: { title: string; add?: string; onAdd?: () => void; onImport?: () => void; onExport?: () => void }) {
   return (
     <header className={k("top")}>
       <div className={k("ttl")}><h1>{title}</h1></div>
       <div className={k("hr")}>
         {add ? (
           <>
-            <button type="button" className={k("btn")} {...RO}><Icon name="download" size={15} />Export CSV</button>
+            <button type="button" className={k("btn")} {...(onExport ? { onClick: onExport } : RO)}><Icon name="download" size={15} />Export CSV</button>
             <button type="button" className={k("btn")} onClick={onImport}><Icon name="upload" size={15} />Import CSV</button>
             <button type="button" className={k("btn pri")} onClick={onAdd}><Icon name="plus" size={15} />{add}</button>
           </>
@@ -53,7 +56,7 @@ function Search({ id, label, value, onChange, count }: { id: string; label: stri
 }
 
 /* The bulk bar: off until rows are ticked, then the design's "N selected" (its actions inert; Cancel clears). */
-function Bulk({ count, onCancel }: { count: number; onCancel: () => void }) {
+function Bulk({ count, onCancel, onExport, onDelete }: { count: number; onCancel: () => void; onExport?: () => void; onDelete?: () => void }) {
   if (count === 0) {
     return (
       <div className={k("abulk")}>
@@ -69,8 +72,8 @@ function Bulk({ count, onCancel }: { count: number; onCancel: () => void }) {
     <div className={k("abulk on")}>
       <span>{count.toLocaleString("en-US")} selected</span>
       <div className={k("acts")}>
-        <button type="button" className={k("btn sm")} {...RO}><Icon name="download" size={14} />Export selected</button>
-        <button type="button" className={k("btn sm dout")} {...RO}><Icon name="trash" size={14} />Delete selected</button>
+        <button type="button" className={k("btn sm")} {...(onExport ? { onClick: onExport } : RO)}><Icon name="download" size={14} />Export selected</button>
+        <button type="button" className={k("btn sm dout")} {...(onDelete ? { onClick: onDelete } : RO)}><Icon name="trash" size={14} />Delete selected</button>
         <button type="button" className={k("btn sm")} style={{ borderColor: "transparent" }} onClick={onCancel}>Cancel</button>
       </div>
     </div>
@@ -94,14 +97,17 @@ function usePicked() {
   return { picked, pick, clear: () => setPicked(new Set()) };
 }
 
-function RowActions({ name }: { name: string }) {
+function RowActions({ name, onEdit, onDelete }: { name: string; onEdit?: () => void; onDelete?: () => void }) {
   return (
     <td className={k("acts")}>
-      <button type="button" className={k("ib")} aria-label={`Edit ${name}`} {...RO}><Icon name="pencil" size={15} /></button>
-      <button type="button" className={k("ib")} aria-label={`Delete ${name}`} {...RO}><Icon name="trash" size={15} /></button>
+      <button type="button" className={k("ib")} aria-label={`Edit ${name}`} {...(onEdit ? { onClick: onEdit } : RO)}><Icon name="pencil" size={15} /></button>
+      <button type="button" className={k("ib")} aria-label={`Delete ${name}`} {...(onDelete ? { onClick: onDelete } : RO)}><Icon name="trash" size={15} /></button>
     </td>
   );
 }
+
+/* "Delete …?" before a Demo Portal delete. */
+const sure = (what: string) => window.confirm(`Delete ${what} from the Demo Portal?`);
 
 function Dash() {
   return <span className={k("dash")}>&ndash;</span>;
@@ -165,8 +171,11 @@ const has = (q: string, ...vals: Array<string | null | undefined>) => {
 export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
   const [q, setQ] = useState("");
   const [pageNo, setPageNo] = useState(1);
-  const [dialog, setDialog] = useState<"add" | "import" | null>(null);
+  const [dialog, setDialog] = useState<"add" | "import" | { edit: AgentEntry } | null>(null);
   const { picked, pick, clear } = usePicked();
+  const { live, save } = useDemo();
+  const csv = (rows: AgentEntry[]) => saveCsv("my-agents.csv", ["Name", "Email", "Phone"], rows.map((a) => [a.name, a.email, a.phone]));
+  const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "agent.delete", ids }))) clear(); };
   const found = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
   const shown = pageOf(found, pageNo);
   const pageIds = shown.rows.map((a) => a.id);
@@ -175,7 +184,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
   const close = () => setDialog(null);
   return (
     <>
-      <Header title="My Agents" add={agents.length ? "Add agent" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} />
+      <Header title="My Agents" add={agents.length ? "Add agent" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} onExport={live ? () => csv(agents) : undefined} />
       <div className={k("content")}>
         {agents.length === 0 ? (
           <Empty icon="users" title="No agents added yet" text={"Add the agents already on your team so we never reach out to\u00a0them."} actions={["Add agents", "Import CSV"]} onActions={[() => setDialog("add"), () => setDialog("import")]} />
@@ -190,7 +199,12 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
               </div>
             </div>
             <Search id="crx-agents-search" label="Search agents..." value={q} onChange={(v) => { setQ(v); setPageNo(1); }} count={`${found.length.toLocaleString("en-US")} of ${agents.length.toLocaleString("en-US")}`} />
-            <Bulk count={count} onCancel={clear} />
+            <Bulk
+              count={count}
+              onCancel={clear}
+              onExport={live ? () => csv(found.filter((a) => picked.has(a.id))) : undefined}
+              onDelete={live ? () => void remove(found.filter((a) => picked.has(a.id)).map((a) => a.id), `${count} ${count === 1 ? "agent" : "agents"}`) : undefined}
+            />
             {pageAll && found.length > pageIds.length ? <SelAll onPage={pageIds.length} total={found.length} onAll={() => pick(found.map((a) => a.id), true)} /> : null}
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
@@ -210,7 +224,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
                       <td><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className={k("av")} style={AV}>{initials(a.name)}</span><span className={k("nm")}>{a.name}</span></div></td>
                       <td>{a.email || <Dash />}</td>
                       <td>{formatPhone(a.phone) ?? <Dash />}</td>
-                      <RowActions name={a.name} />
+                      <RowActions name={a.name} onEdit={live ? () => setDialog({ edit: a }) : undefined} onDelete={live ? () => void remove([a.id], a.name) : undefined} />
                     </tr>
                   ))}
                 </tbody>
@@ -220,7 +234,14 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
           </>
         )}
       </div>
-      {dialog === "add" ? <MyAgentAddDialog onClose={close} /> : null}
+      {dialog === "add" ? <MyAgentAddDialog onClose={close} onSave={live ? (v) => save({ type: "agent.add", name: v.name, email: v.email, phone: v.phone }) : undefined} /> : null}
+      {dialog && typeof dialog === "object" ? (
+        <MyAgentAddDialog
+          initial={dialog.edit}
+          onClose={close}
+          onSave={(v) => save({ type: "agent.edit", id: dialog.edit.id, name: v.name, email: v.email, phone: v.phone, license: dialog.edit.license })}
+        />
+      ) : null}
       {dialog === "import" ? <ImportDialog kind="agents" onClose={close} /> : null}
     </>
   );
@@ -231,8 +252,11 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
 export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const [q, setQ] = useState("");
   const [pageNo, setPageNo] = useState(1);
-  const [dialog, setDialog] = useState<"add" | "import" | null>(null);
+  const [dialog, setDialog] = useState<"add" | "import" | { edit: DncEntry } | null>(null);
   const { picked, pick, clear } = usePicked();
+  const { live, save } = useDemo();
+  const csv = (rows: DncEntry[]) => saveCsv("dnc-list.csv", ["Kind", "Name", "Email", "Phone", "Brokerage", "Domain", "Notes"], rows.map((d) => [d.kind, d.name, d.email, d.phone, d.brokerage, d.domain, d.notes]));
+  const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "dnc.delete", ids }))) clear(); };
   const close = () => setDialog(null);
   const people = useMemo(() => dnc.filter((d) => d.kind === "agent"), [dnc]);
   const companies = useMemo(() => dnc.filter((d) => d.kind === "company"), [dnc]);
@@ -244,7 +268,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const count = foundPeople.filter((d) => picked.has(d.id)).length;
   return (
     <>
-      <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} />
+      <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} onExport={live ? () => csv(dnc) : undefined} />
       <div className={k("content")}>
         {dnc.length === 0 ? (
           <Empty icon="ban" red title="Your DNC List is empty" text={"Add agents or whole companies you never want contacted. They are excluded from all\u00a0outreach."} actions={["Add to DNC", "Import CSV"]} onActions={[() => setDialog("add"), () => setDialog("import")]} />
@@ -268,7 +292,12 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
               </div>
             </div>
             <Search id="crx-dnc-search" label="Search agents or companies..." value={q} onChange={(v) => { setQ(v); setPageNo(1); }} />
-            <Bulk count={count} onCancel={clear} />
+            <Bulk
+              count={count}
+              onCancel={clear}
+              onExport={live ? () => csv(foundPeople.filter((d) => picked.has(d.id))) : undefined}
+              onDelete={live ? () => void remove(foundPeople.filter((d) => picked.has(d.id)).map((d) => d.id), `${count} ${count === 1 ? "entry" : "entries"}`) : undefined}
+            />
             <div className={k("sec")}>Agents<span>{foundPeople.length.toLocaleString("en-US")}</span></div>
             {pageAll && foundPeople.length > pageIds.length ? <SelAll onPage={pageIds.length} total={foundPeople.length} onAll={() => pick(foundPeople.map((d) => d.id), true)} /> : null}
             <div className={k("card")} style={{ overflow: "hidden" }}>
@@ -302,7 +331,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                           </div>
                         ) : <Dash />}
                       </td>
-                      <RowActions name={d.name} />
+                      <RowActions name={d.name} onEdit={live ? () => setDialog({ edit: d }) : undefined} onDelete={live ? () => void remove([d.id], d.name) : undefined} />
                     </tr>
                   ))}
                 </tbody>
@@ -337,7 +366,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                           <td>{d.domain ? `@${d.domain}` : <Dash />}</td>
                           {/* The design's cells don't wrap; a company's note can be a paragraph (Maltos: two sentences), so this one does. */}
                           <td style={{ whiteSpace: "normal", overflowWrap: "anywhere", minWidth: 220 }}>{d.notes || <Dash />}</td>
-                          <RowActions name={d.name} />
+                          <RowActions name={d.name} onEdit={live ? () => setDialog({ edit: d }) : undefined} onDelete={live ? () => void remove([d.id], d.name) : undefined} />
                         </tr>
                       ))}
                     </tbody>
@@ -348,7 +377,20 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
           </>
         )}
       </div>
-      {dialog === "add" ? <DncAddDialog onClose={close} /> : null}
+      {dialog === "add" ? (
+        <DncAddDialog
+          onClose={close}
+          onSave={live ? (v) => save({ type: "dnc.add", kind: v.kind, name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: v.domain, notes: v.notes }) : undefined}
+        />
+      ) : null}
+      {dialog && typeof dialog === "object" ? (
+        <DncAddDialog
+          initial={dialog.edit.kind === "company" ? "company" : "agent"}
+          entry={dialog.edit}
+          onClose={close}
+          onSave={(v) => save({ type: "dnc.edit", id: dialog.edit.id, name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: v.domain, notes: v.notes })}
+        />
+      ) : null}
       {dialog === "import" ? <ImportDialog kind="dnc" onClose={close} /> : null}
     </>
   );
@@ -358,8 +400,11 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
 
 export function TeamScreen({ team }: { team: TeamMember[] }) {
   const [q, setQ] = useState("");
-  const [dialog, setDialog] = useState<"add" | "import" | null>(null);
+  const [dialog, setDialog] = useState<"add" | "import" | { edit: TeamMember } | null>(null);
   const { picked, pick, clear } = usePicked();
+  const { live, save } = useDemo();
+  const csv = (rows: TeamMember[]) => saveCsv("team.csv", ["Name", "Title", "Email", "Phone", "Active"], rows.map((m) => [m.name, m.title, m.email, m.phone, m.active ? "yes" : "no"]));
+  const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "team.delete", ids }))) clear(); };
   const found = useMemo(() => team.filter((m) => has(q, m.name, m.email, m.title, m.phone)), [team, q]);
   const ids = found.map((m) => m.id);
   const all = ids.length > 0 && ids.every((id) => picked.has(id));
@@ -367,16 +412,29 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
   const close = () => setDialog(null);
   return (
     <>
-      <Header title="Team" add="Add member" onAdd={() => setDialog("add")} onImport={() => setDialog("import")} />
+      <Header title="Team" add="Add member" onAdd={() => setDialog("add")} onImport={() => setDialog("import")} onExport={live ? () => csv(team) : undefined} />
       <div className={k("content")}>
         <p className={k("lede")}>Who receives intro notifications and&nbsp;how.</p>
-        {dialog === "add" ? <TeamAddForm onClose={close} /> : null}
+        {dialog === "add" ? <TeamAddForm onClose={close} onSave={live ? (v) => save({ type: "team.add", name: v.name, title: v.title, email: v.email, phone: v.phone }) : undefined} /> : null}
+        {dialog && typeof dialog === "object" ? (
+          <TeamAddForm
+            key={dialog.edit.id}
+            initial={dialog.edit}
+            onClose={close}
+            onSave={(v) => save({ type: "team.edit", id: dialog.edit.id, name: v.name, title: v.title, email: v.email, phone: v.phone })}
+          />
+        ) : null}
         {team.length === 0 ? (
           <Empty icon="user" title="No team members yet" text="Add the people who should receive interested agents by email." />
         ) : (
           <>
             <Search id="crx-team-search" label="Search team..." value={q} onChange={setQ} count={`${found.length} of ${team.length}`} />
-            <Bulk count={count} onCancel={clear} />
+            <Bulk
+              count={count}
+              onCancel={clear}
+              onExport={live ? () => csv(found.filter((m) => picked.has(m.id))) : undefined}
+              onDelete={live ? () => void remove(found.filter((m) => picked.has(m.id)).map((m) => m.id), `${count} team ${count === 1 ? "member" : "members"}`) : undefined}
+            />
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
                 <thead>
@@ -410,9 +468,16 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
                         </div>
                       </td>
                       <td>
-                        <span className={k(m.active ? "sw" : "sw off")} role="switch" aria-checked={m.active} aria-label={`${m.name} receives intro emails`} {...RO} />
+                        <span
+                          className={k(m.active ? "sw" : "sw off")}
+                          role="switch"
+                          aria-checked={m.active}
+                          aria-label={`${m.name} receives intro emails`}
+                          {...lock(live)}
+                          {...(live ? { tabIndex: 0, style: { cursor: "pointer" }, onClick: () => void save({ type: "team.active", id: m.id, active: !m.active }) } : {})}
+                        />
                       </td>
-                      <RowActions name={m.name} />
+                      <RowActions name={m.name} onEdit={live ? () => setDialog({ edit: m }) : undefined} onDelete={live ? () => void remove([m.id], m.name) : undefined} />
                     </tr>
                   ))}
                 </tbody>

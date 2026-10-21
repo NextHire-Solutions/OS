@@ -6,7 +6,8 @@
  * who may see it and why it is read-only.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
@@ -15,6 +16,7 @@ import { initials, type PreviewStage, type PreviewView } from "@/lib/crm-preview
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
 import { ChatWindow } from "./chat";
+import { DemoContext, postDemo, type DemoAction } from "./demo-save";
 import { SetupWizard } from "./setup";
 import { PipelineScreen } from "./pipeline";
 import { DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
@@ -25,7 +27,8 @@ import logo from "./brokerstaffer-logo.png";
 export interface PreviewClient {
   id: string;
   name: string;
-  token: string;
+  /** The Demo Portal: its buttons save (21 Oct). Every other client is read-only. Decided on the server. */
+  demo: boolean;
   fubConnected: boolean;
   /** The client's main contact (os_clients.contact_name), shown where the design shows the signed-in person. */
   contactName: string | null;
@@ -87,10 +90,31 @@ export function CrmPreview({
   const [collapsed, setCollapsed] = useState(false);
   // What the page shows is explained up here, in the preview's own bar — never inside the design.
   const [context, setContext] = useState<string | null>(null);
-  // The note a read-only control gives when it is clicked.
-  const [toast, setToast] = useState(false);
+  // The note a read-only control gives when it is clicked — and, on the Demo Portal, what a save did.
+  const [toast, setToast] = useState<{ text: string; bad?: boolean } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  const flash = useCallback((text: string, bad = false) => {
+    setToast({ text, bad });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), bad ? 5000 : 2600);
+  }, []);
+  const router = useRouter();
+  const save = useCallback(
+    async (action: DemoAction) => {
+      if (!client.demo) return false;
+      const r = await postDemo(client.id, action);
+      if (!r.ok) {
+        flash(r.error, true);
+        return false;
+      }
+      flash("Saved on the Demo Portal.");
+      router.refresh();
+      return true;
+    },
+    [client.demo, client.id, flash, router],
+  );
+  const demo = useMemo(() => ({ live: client.demo, save }), [client.demo, save]);
   /*
    * Every control that would change something carries data-ro (k.ts RO): it is
    * drawn as the design draws it, and its click stops here — before any
@@ -100,9 +124,7 @@ export function CrmPreview({
     if (!(e.target as Element).closest?.("[data-ro]")) return;
     e.preventDefault();
     e.stopPropagation();
-    setToast(true);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(false), 2600);
+    flash(client.demo ? "Not built yet on the Demo Portal — this one is drawn only." : `Read-only preview — nothing here changes ${client.name}'s portal.`);
   };
   // The server's clock, so the first draw in the browser matches the server's.
   const today = useMemo(() => new Date(now), [now]);
@@ -119,14 +141,18 @@ export function CrmPreview({
     window.history.replaceState(null, "", `${hrefFor("setup")}&step=${n}`);
     window.scrollTo(0, 0);
   };
-  const toastNote = toast ? <div className="cpv-toast" role="status">Read-only preview — nothing here changes {client.name}&apos;s portal.</div> : null;
+  const toastNote = toast ? <div className={toast.bad ? "cpv-toast cpv-bad" : "cpv-toast"} role={toast.bad ? "alert" : "status"}>{toast.text}</div> : null;
 
   return (
-    <>
+    <DemoContext.Provider value={demo}>
       <div className="cpv-bar" role="note">
         <span className="cpv-tag">PREVIEW</span>
         <b>New client portal design</b>
-        <span className="cpv-note">Read-only · private: not visible to clients or the team · {client.name}&apos;s live portal is unchanged</span>
+        {client.demo ? (
+          <span className="cpv-note">Working copy · private · saves change the Demo Portal&apos;s own records only — nothing goes to campaigns, Slack, texts or Follow Up Boss</span>
+        ) : (
+          <span className="cpv-note">Read-only · private: not visible to clients or the team · {client.name}&apos;s live portal is unchanged</span>
+        )}
         {context ? <span className="cpv-note cpv-context">{context}</span> : null}
         <span className="cpv-right">
           {/* The design doesn't say where a client meets its Setup wizard (a first sign-in); the preview opens it from here. */}
@@ -221,7 +247,7 @@ export function CrmPreview({
 
         <div className={k("main")}>
           {view === "pipeline" ? (
-            <PipelineScreen entries={entries} stages={stages} furthest={furthest} team={team} token={client.token} now={today} />
+            <PipelineScreen entries={entries} stages={stages} furthest={furthest} team={team} clientId={client.id} now={today} />
           ) : view === "market" || view === "prospects" ? (
             <MarketScreen key={view} clientId={client.id} list={view} onContext={setContext} onOpenMarket={() => go("market")} />
           ) : view === "reports" ? (
@@ -263,6 +289,6 @@ export function CrmPreview({
       </div>
       </div>
       )}
-    </>
+    </DemoContext.Provider>
   );
 }

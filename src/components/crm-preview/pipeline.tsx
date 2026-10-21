@@ -3,7 +3,9 @@
 /*
  * Pipeline — the redesign's board and list, on the client's real pipeline.
  * Filters, views and panels work; everything that would change the pipeline
- * is drawn disabled (see src/app/crm-preview/page.tsx).
+ * is drawn disabled (see src/app/crm-preview/page.tsx) — except on the Demo
+ * Portal, where moving, tagging, assigning, adding, editing, notes and
+ * deleting save (demo-save.ts). Upload CSV and Manage stages are drawn only.
  */
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -28,11 +30,13 @@ import {
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
 import { EditLeadDialog, PipelineAddDialog, PipelineUploadDialog } from "./dialogs";
-import { AgentPanel, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
+import { AgentPanel, ChooseMenu, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
+import { lock, moveTo, saveCsv, useDemo, type DemoAction } from "./demo-save";
 
 type Open = { kind: "agent" | "conversation" | "notes" | "edit"; entry: PipelineEntry } | { kind: "add" | "upload" } | null;
 
-export function PipelineScreen({ entries, stages, furthest, team, token, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; team: TeamMember[]; token: string; now: Date }) {
+
+export function PipelineScreen({ entries, stages, furthest, team, clientId, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; furthest: Record<string, string>; team: TeamMember[]; clientId: string; now: Date }) {
   const [mode, setMode] = useState<"board" | "list">("board");
   const [range, setRange] = useState<TimeRange>("all");
   const [search, setSearch] = useState("");
@@ -43,7 +47,9 @@ export function PipelineScreen({ entries, stages, furthest, team, token, now }: 
   const menuRef = useRef<HTMLSpanElement>(null);
   // Ticked rows (the list's checkboxes): the bulk bar switches on as the design's Pipeline-Selected; its actions are inert.
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const [bulkMenu, setBulkMenu] = useState<"move" | "assign" | null>(null);
+  const [bulkMenu, setBulkMenu] = useState<"move" | "tag" | "assign" | null>(null);
+  // The Demo Portal saves (demo-save.ts); every other client stays read-only.
+  const { live, save } = useDemo();
   const bulkRef = useRef<HTMLDivElement>(null);
 
   const view = useMemo(() => pipelineView(entries, stages, { range, search, chip, now }, furthest), [entries, stages, range, search, chip, now, furthest]);
@@ -86,6 +92,15 @@ export function PipelineScreen({ entries, stages, furthest, team, token, now }: 
   }, [menuOpen]);
 
   const placeOf = (e: PipelineEntry) => view.placement.get(e.id)!;
+  // An open panel shows the agent as the page last loaded them — after a save, the fresh row.
+  const fresh = (e: PipelineEntry) => entries.find((x) => x.id === e.id) ?? e;
+  const pickedIds = pickedShown.map((x) => x.id);
+  const bulk = async (a: DemoAction) => {
+    if (await save(a)) {
+      setPicked(new Set());
+      setBulkMenu(null);
+    }
+  };
   const toggleChip = (key: string) => setChip((c) => (c === key ? null : key));
   const openAgent = (entry: PipelineEntry) => setOpen({ kind: "agent", entry });
 
@@ -109,7 +124,7 @@ export function PipelineScreen({ entries, stages, furthest, team, token, now }: 
               <h2>No agents in your pipeline yet</h2>
               <p>When an agent replies interested to your outreach, they show up here. You can also add one&nbsp;yourself.</p>
               <div className={k("ea")}>
-                <button type="button" className={k("btn pri")} {...RO}><Icon name="plus" size={15} />Add agent</button>
+                <button type="button" className={k("btn pri")} {...lock(live)} onClick={live ? () => setOpen({ kind: "add" }) : undefined}><Icon name="plus" size={15} />Add agent</button>
                 <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Upload CSV</button>
               </div>
             </section>
@@ -193,27 +208,49 @@ export function PipelineScreen({ entries, stages, furthest, team, token, now }: 
                     {bulkMenu === "move" ? (
                       <div className={k("menu")} role="menu">
                         {forward.map((st, i) => (
-                          <button key={st.key} type="button" role="menuitem" className={i === 0 ? k("hv") : undefined} {...RO}>
+                          <button key={st.key} type="button" role="menuitem" className={i === 0 ? k("hv") : undefined} {...lock(live)} onClick={live ? () => void bulk(moveTo(pickedIds, st.key)) : undefined}>
                             <span className={k("dot")} style={{ background: st.dot }} />{st.label}
                           </button>
                         ))}
                       </div>
                     ) : null}
                   </span>
-                  <button type="button" className={k("btn sm")} {...RO}>Add tag...{" "}<Icon name="chevDown" size={12} /></button>
+                  {live ? (
+                    <span className={k("ddw")}>
+                      <button type="button" className={k("btn sm")} aria-haspopup="menu" aria-expanded={bulkMenu === "tag"} onClick={() => setBulkMenu((m) => (m === "tag" ? null : "tag"))}>Add tag...{" "}<Icon name="chevDown" size={12} /></button>
+                      {bulkMenu === "tag" ? (
+                        <div className={k("menu")} role="menu">
+                          {tags.map((t) => (
+                            <button key={t.key} type="button" role="menuitem" onClick={() => void bulk(moveTo(pickedIds, t.key))}>
+                              <span className={k("dot")} style={{ background: t.dot }} />{t.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <button type="button" className={k("btn sm")} {...RO}>Add tag...{" "}<Icon name="chevDown" size={12} /></button>
+                  )}
                   <span className={k("ddw")}>
                     <button type="button" className={k("btn sm")} aria-haspopup="menu" aria-expanded={bulkMenu === "assign"} onClick={() => setBulkMenu((m) => (m === "assign" ? null : "assign"))}>Assign to...{" "}<Icon name="chevDown" size={12} /></button>
                     {bulkMenu === "assign" ? (
                       <div className={k("menu")} role="menu">
-                        <button type="button" role="menuitem" className={k("mut")} {...RO}>Unassigned</button>
-                        {team.map((m, i) => <button key={m.id} type="button" role="menuitem" className={i === 0 ? k("hv") : undefined} {...RO}>{m.name}</button>)}
+                        <button type="button" role="menuitem" className={k("mut")} {...lock(live)} onClick={live ? () => void bulk({ type: "entry.assign", ids: pickedIds, member: null }) : undefined}>Unassigned</button>
+                        {team.map((m, i) => <button key={m.id} type="button" role="menuitem" className={i === 0 ? k("hv") : undefined} {...lock(live)} onClick={live ? () => void bulk({ type: "entry.assign", ids: pickedIds, member: m.id }) : undefined}>{m.name}</button>)}
                       </div>
                     ) : null}
                   </span>
-                  <button type="button" className={k("btn sm")} {...RO}><Icon name="copy" size={14} />Copy names</button>
-                  <button type="button" className={k("btn sm")} {...RO}><Icon name="copy" size={14} />Copy emails</button>
-                  <button type="button" className={k("btn sm")} {...RO}><Icon name="download" size={14} />Export CSV</button>
-                  <button type="button" className={k("btn sm del")} {...RO}><Icon name="trash" size={14} />Delete</button>
+                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => void navigator.clipboard?.writeText(pickedShown.map((x) => x.lead_name ?? "").filter(Boolean).join("\n")) : undefined}><Icon name="copy" size={14} />Copy names</button>
+                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => void navigator.clipboard?.writeText(pickedShown.map((x) => x.lead_email ?? "").filter(Boolean).join("\n")) : undefined}><Icon name="copy" size={14} />Copy emails</button>
+                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => saveCsv("pipeline.csv", ["Name", "Email", "Phone", "Company", "Stage", "Introduced"], pickedShown.map((x) => [x.lead_name, x.lead_email, x.lead_phone, x.current_brokerage, placeOf(x).stage.label, (x.introduced_at ?? "").slice(0, 10)])) : undefined}><Icon name="download" size={14} />Export CSV</button>
+                  <button
+                    type="button"
+                    className={k("btn sm del")}
+                    {...lock(live)}
+                    onClick={live ? () => { if (window.confirm(`Delete ${pickedIds.length} ${pickedIds.length === 1 ? "agent" : "agents"} from the Demo Portal's pipeline?`)) void bulk({ type: "entry.delete", ids: pickedIds }); } : undefined}
+                  >
+                    <Icon name="trash" size={14} />Delete
+                  </button>
                   <button type="button" className={k("btn sm ghost")} onClick={() => { setPicked(new Set()); setBulkMenu(null); }}>Clear</button>
                 </div>
                 {pageAllPicked && view.shown.length > pageIds.length ? (
@@ -308,6 +345,8 @@ export function PipelineScreen({ entries, stages, furthest, team, token, now }: 
                             onEdit={() => setOpen({ kind: "edit", entry: e })}
                             onConversation={() => setOpen({ kind: "conversation", entry: e })}
                             onNotes={() => setOpen({ kind: "notes", entry: e })}
+                            stages={forward}
+                            onMove={live ? (key) => void save(moveTo([e.id], key)) : undefined}
                           />
                         ))}
                         {g.rows.length > rows.length ? (
@@ -345,19 +384,34 @@ export function PipelineScreen({ entries, stages, furthest, team, token, now }: 
 
       {open?.kind === "agent" ? (
         <AgentPanel
-          entry={open.entry}
-          placement={placeOf(open.entry)}
+          entry={fresh(open.entry)}
+          placement={placeOf(fresh(open.entry))}
+          tags={tags}
+          onTag={live ? (key) => void save(moveTo([open.entry.id], key)) : undefined}
           onClose={() => setOpen(null)}
-          onEdit={() => setOpen({ kind: "edit", entry: open.entry })}
+          onEdit={() => setOpen({ kind: "edit", entry: fresh(open.entry) })}
         />
       ) : null}
-      {open?.kind === "edit" ? <EditLeadDialog entry={open.entry} placement={placeOf(open.entry)} onClose={() => setOpen(null)} /> : null}
-      {open?.kind === "add" ? <PipelineAddDialog now={now} onClose={() => setOpen(null)} /> : null}
+      {open?.kind === "edit" ? (
+        <EditLeadDialog
+          entry={open.entry}
+          placement={placeOf(fresh(open.entry))}
+          onClose={() => setOpen(null)}
+          onSave={live ? (v) => save({ type: "entry.edit", id: open.entry.id, lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }) : undefined}
+        />
+      ) : null}
+      {open?.kind === "add" ? (
+        <PipelineAddDialog
+          now={now}
+          onClose={() => setOpen(null)}
+          onSave={live ? (v) => save({ type: "entry.add", lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }) : undefined}
+        />
+      ) : null}
       {open?.kind === "upload" ? <PipelineUploadDialog onClose={() => setOpen(null)} /> : null}
       {open?.kind === "conversation" ? (
-        <ConversationPanel entry={open.entry} placement={placeOf(open.entry)} token={token} now={now} onClose={() => setOpen(null)} />
+        <ConversationPanel entry={open.entry} placement={placeOf(open.entry)} clientId={clientId} now={now} onClose={() => setOpen(null)} />
       ) : null}
-      {open?.kind === "notes" ? <NotesPanel entry={open.entry} onClose={() => setOpen(null)} /> : null}
+      {open?.kind === "notes" ? <NotesPanel entry={fresh(open.entry)} onClose={() => setOpen(null)} /> : null}
     </>
   );
 }
@@ -458,6 +512,8 @@ function ListRow({
   onEdit,
   onConversation,
   onNotes,
+  stages,
+  onMove,
 }: {
   entry: PipelineEntry;
   placement: Placement;
@@ -467,6 +523,9 @@ function ListRow({
   onEdit: () => void;
   onConversation: () => void;
   onNotes: () => void;
+  /** The forward stages, and what choosing one does — only on the Demo Portal. */
+  stages: PreviewStage[];
+  onMove?: (key: string) => void;
 }) {
   const name = e.lead_name || "Unnamed agent";
   const src = sourceLabel(e);
@@ -505,10 +564,14 @@ function ListRow({
       </td>
       <td className={k("vt")}><div className={k("coc")}>{e.current_brokerage || <span className={k("dash")}>&ndash;</span>}</div></td>
       <td className={k("vt")}>
-        {/* The design's stage picker: a pill that opens the stages — drawn, not usable here. */}
-        <button type="button" className={k(`pill p-${placement.stage.pill}`)} {...RO}>
-          {placement.stage.label} <Icon name="chevDown" size={11} />
-        </button>
+        {/* The design's stage picker: a pill that opens the stages — it moves the agent on the Demo Portal, and is drawn only elsewhere. */}
+        {onMove ? (
+          <ChooseMenu className={k(`pill p-${placement.stage.pill}`)} label={<>{placement.stage.label} <Icon name="chevDown" size={11} /></>} options={stages} onChoose={onMove} />
+        ) : (
+          <button type="button" className={k(`pill p-${placement.stage.pill}`)} {...RO}>
+            {placement.stage.label} <Icon name="chevDown" size={11} />
+          </button>
+        )}
       </td>
       <td className={k("vt")}>
         {owner ? (
