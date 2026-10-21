@@ -6,7 +6,7 @@ import { canSeeCrmPreview } from "@/lib/crm-preview/access";
 import { getAccountBilling } from "@/lib/clients/billing-account";
 import { BILLING_REFUSAL, pickBillingCustomer } from "@/lib/crm-preview/billing-pick";
 import { billingPortalUrl, portalConfiguration } from "@/lib/crm-preview/billing-portal";
-import { marketContext } from "@/lib/crm-preview/market";
+import { portalClient } from "@/lib/crm-preview/market";
 import { publicOrigin } from "@/lib/mcp/oauth";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
 
@@ -49,10 +49,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const ctx = await marketContext(client);
-    if (!ctx) return notice(404, "No such client portal.");
-    if (!ctx.client) return notice(409, BILLING_REFUSAL["no-billing"]);
-    const pick = pickBillingCustomer((await getAccountBilling()).byClient.get(ctx.client.id));
+    const record = await portalClient(client);
+    if (record === undefined) return notice(404, "No such client portal.");
+    if (record === null) return notice(409, BILLING_REFUSAL["no-billing"]);
+    const { byClient } = await getAccountBilling();
+    const pick = pickBillingCustomer(byClient.get(record.id), byClient.values());
     if (!pick.ok) {
       console.info(JSON.stringify({ at: "[crm-preview] billing refused", who, client, reason: pick.reason }));
       return notice(409, BILLING_REFUSAL[pick.reason]);

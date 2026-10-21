@@ -71,6 +71,21 @@ export interface MarketContext {
   orchClientId: string | null;
 }
 
+/**
+ * A portal's client record alone — no market, no agent database — for the
+ * Billing link, which needs no MLS and must not wait on the agent database.
+ * undefined: no such portal; null: a portal no client record is linked to.
+ */
+export async function portalClient(portalId: string): Promise<{ id: string; name: string } | null | undefined> {
+  const { data: portal } = await mi().from("clients").select("id, name, slug, portal_token").eq("id", portalId).maybeSingle();
+  const p = portal as { id: string; name: string | null; slug: string | null; portal_token: string | null } | null;
+  if (!p || p.slug === "unknown" || !p.portal_token) return undefined;
+  const { data: rows, error } = await osTable("os_clients").select("id, name, aliases, mi_client_id, mls_codes, orch_client_id");
+  if (error) throw new Error(error.message);
+  const client = clientForPortal({ id: p.id, name: p.name ?? "" }, (rows ?? []) as unknown as OsClientRow[]);
+  return client ? { id: client.id, name: client.name } : null;
+}
+
 /** A portal's client, its market's MLSs and its id in the agent database. Null for no such portal. */
 export async function marketContext(portalId: string): Promise<MarketContext | null> {
   const { data: portal } = await mi().from("clients").select("id, name, slug, portal_token").eq("id", portalId).maybeSingle();
@@ -235,9 +250,19 @@ async function officeCities(base: Record<string, unknown>): Promise<{ rows: Grou
   return { rows, cities };
 }
 
-export const marketReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport | { unavailable: string }> => {
+/*
+ * The report for a portal — "why not" worked out fresh, and only a REAL report
+ * cached (21 Oct). The cache is keyed by the market's MLS ids; every portal
+ * with no MLS shares the empty key, so a cached "why not" named the first
+ * client's record and MLS codes to the next client's Reports page and chat.
+ */
+export async function marketReport(ctx: MarketContext): Promise<MarketReport | { unavailable: string }> {
   const why = unavailable(ctx, "market");
   if (why) return { unavailable: why };
+  return cachedReport(ctx);
+}
+
+const cachedReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport> => {
   const base = marketBase(ctx);
   const [all, brands, cities] = await Promise.all([
     search(base, 1),

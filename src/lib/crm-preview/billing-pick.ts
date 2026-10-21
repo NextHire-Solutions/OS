@@ -19,7 +19,11 @@ export type BillingPick =
   | { ok: true; customer: string }
   | { ok: false; reason: "no-billing" | "shared" | "ambiguous" };
 
-export function pickBillingCustomer(account: Pick<ClientBilling, "subscriptions" | "customers"> | null | undefined): BillingPick {
+export function pickBillingCustomer(
+  account: Pick<ClientBilling, "clientId" | "subscriptions" | "customers"> | null | undefined,
+  /** Every client's billing (getAccountBilling().byClient): a customer any OTHER client has a subscription on, or claims, is never opened. */
+  everyone: Iterable<Pick<ClientBilling, "clientId" | "subscriptions" | "customers">> = [],
+): BillingPick {
   if (!account || (!account.customers.length && !account.subscriptions.length)) return { ok: false, reason: "no-billing" };
   const current = account.subscriptions.find((s) => s.current);
   const customer = current?.customer ?? (account.customers.length === 1 ? account.customers[0].id : null);
@@ -27,6 +31,17 @@ export function pickBillingCustomer(account: Pick<ClientBilling, "subscriptions"
   const claim = account.customers.find((c) => c.id === customer);
   if (!claim) return { ok: false, reason: "ambiguous" };
   if (claim.shared) return { ok: false, reason: "shared" };
+  /*
+   * "shared" is only "claimed by two clients". A subscription linked to
+   * another client by hand, on a customer that client was excluded from,
+   * would not count (21 Oct review) — and Stripe's page would show that
+   * client's subscription and let it be cancelled. Any other client with a
+   * subscription on, or a claim to, this customer: refused.
+   */
+  for (const other of everyone) {
+    if (other.clientId === account.clientId) continue;
+    if (other.subscriptions.some((s) => s.customer === customer) || other.customers.some((c) => c.id === customer)) return { ok: false, reason: "shared" };
+  }
   return { ok: true, customer };
 }
 

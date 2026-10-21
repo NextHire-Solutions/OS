@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ...page, options, mls: ctx.mls, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.error("[crm-preview] market", err);
-    return NextResponse.json({ error: err instanceof Error ? err.message : "The agent database could not be read." }, { status: 500, headers: NO_STORE_HEADERS });
+    // The reason is logged above; the browser gets the plain words, never a database message.
+    return NextResponse.json({ error: "The agent database could not be read just now. Please try again." }, { status: 500, headers: NO_STORE_HEADERS });
   }
 }

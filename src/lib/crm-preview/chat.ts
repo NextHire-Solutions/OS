@@ -78,6 +78,8 @@ type Message =
 
 const MAX_ROUNDS = 5;
 const MAX_TOOL_CHARS = 12_000;
+/** The whole answer, every round together — a person is waiting. */
+const ANSWER_DEADLINE_MS = 60_000;
 
 export interface ChatAnswer { reply: string; tools: string[]; tokens: number }
 
@@ -93,14 +95,24 @@ export async function answer(turns: ChatTurn[], data: PortalChatData, marketTota
   ];
   const used: string[] = [];
   let tokens = 0;
+  const deadline = Date.now() + ANSWER_DEADLINE_MS;
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    const left = deadline - Date.now();
+    if (left < 2_000) break;
+    /*
+     * The first round MUST call a tool (21 Oct): in testing the model now and
+     * then answered a follow-up question from nothing and made a number up
+     * ("15 in Hired" for 6). With a tool forced, every answer rests on this
+     * portal's data read in this answer; later rounds may then answer.
+     */
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages, tools: CHAT_TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 700 }),
-      signal: AbortSignal.timeout(45_000),
+      body: JSON.stringify({ model, messages, tools: CHAT_TOOLS, tool_choice: round === 0 ? "required" : "auto", temperature: 0, max_tokens: 700 }),
+      signal: AbortSignal.timeout(Math.min(45_000, left)),
     });
-    if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    // The status only: OpenAI's error body can echo part of the key.
+    if (!res.ok) throw new Error(`OpenAI ${res.status}`);
     const body = (await res.json()) as {
       choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }>;
       usage?: { total_tokens?: number };
@@ -112,10 +124,14 @@ export async function answer(turns: ChatTurn[], data: PortalChatData, marketTota
     messages.push({ role: "assistant", content: msg?.content ?? null, tool_calls: calls.map((c) => ({ id: c.id, type: "function", function: c.function })) });
     for (const c of calls) {
       used.push(c.function.name);
-      const out = await runTool(c.function.name, c.function.arguments, data, marketTotals).catch((e) => ({ error: e instanceof Error ? e.message : "The tool failed." }));
+      // A failed read is logged here and reaches the model only as "could not be read" — never a database message.
+      const out = await runTool(c.function.name, c.function.arguments, data, marketTotals).catch((e) => {
+        console.error(JSON.stringify({ at: "[crm-preview] chat tool failed", tool: c.function.name, error: e instanceof Error ? e.message.slice(0, 200) : "unknown" }));
+        return { error: "That could not be read just now." };
+      });
       const text = JSON.stringify(out);
       messages.push({ role: "tool", tool_call_id: c.id, content: text.length > MAX_TOOL_CHARS ? `${text.slice(0, MAX_TOOL_CHARS)}…(cut)` : text });
     }
   }
-  return { reply: "Sorry — that took too many steps. Could you ask it a simpler way?", tools: used, tokens };
+  return { reply: "Sorry — that took too long. Could you ask it a simpler way?", tools: used, tokens };
 }

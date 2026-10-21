@@ -10,9 +10,12 @@
  * guarantees is that taking the data in BULK is refused by the server, and
  * noticed:
  *   - only the portal's own page may ask: a request without a browser's
- *     same-origin fetch headers (curl, a script, a scraping tool — even one
- *     holding a copied session cookie) is refused;
- *   - limits per person: requests a minute, and agent rows served a day;
+ *     same-origin fetch headers is refused. This stops other sites, typed
+ *     addresses, prefetches and casual scripts — but a determined script
+ *     with a copied session can send the same headers (browsers forbid only
+ *     PAGE scripts from setting them), so it is a first line, not the wall;
+ *   - limits per person, keyed by the signed-in email — THE wall: requests a
+ *     minute, and agent rows served a day;
  *   - a depth cap per search (market-model MAX_ROWS) — past it, narrow the
  *     filters;
  *   - every request is logged, every refusal logged as a warning.

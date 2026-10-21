@@ -63,7 +63,7 @@ test("the preview's routes: Owners and Eddy only, checked first; anyone else a b
     assert.ok(gate > 0, `${r} calls the gate`);
     assert.match(src.slice(gate, gate + 160), /new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for anyone else`);
     const start = src.indexOf(`export async function ${methods[0]}`);
-    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl("]) {
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl("]) {
       const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > gate, `${r}: ${load} only after the gate`);
     }
@@ -142,4 +142,13 @@ test("the Follow Up Boss key never reaches the browser — only whether one is s
   for (const f of PREVIEW_FILES.filter((f) => f.startsWith("src/components/"))) {
     assert.doesNotMatch(read(f), /fub_api_key/, f);
   }
+});
+
+test("an account that holds access by name (Eddy, Amy, the Billing people) cannot be taken over by an ordinary admin (21 Oct review)", () => {
+  const src = read("src/app/api/admin/users/route.ts");
+  assert.match(src, /const NAMED = new Set\(\[\.\.\.PREVIEW_REVIEWERS, \.\.\.BILLING_TAB_PEOPLE\]/);
+  assert.match(src, /NAMED\.has\(target\.trim\(\)\.toLowerCase\(\)\) && !isAdmin\(actor\) && !NAMED\.has\(actor/);
+  // reset password / deactivate, change email (from and to), invite, delete
+  assert.equal((src.match(/namedRefused\(/g) ?? []).length, 5, "reset/deactivate, email from + to, invite, delete");
+  assert.match(src, /namedRefused\(email, session\.email\) \|\| namedRefused\(body\.newEmail, session\.email\)/);
 });

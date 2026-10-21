@@ -5,6 +5,21 @@ import { generateTemporaryPassword } from "@/lib/identity/user-table";
 import { sha256Hex } from "@/lib/bs-auth";
 import { coerceTools, describeAdmins, GRANTABLE_TOOLS, isAdmin } from "@/lib/identity/admin";
 import { isAdminUser } from "@/lib/identity/admin-db";
+import { PREVIEW_REVIEWERS } from "@/lib/crm-preview/access";
+import { BILLING_TAB_PEOPLE } from "@/lib/clients/billing-access";
+
+/*
+ * People who hold access BY THEIR ADDRESS — the portal preview's reviewers
+ * and the Billing tab's people (21 Oct review). Taking over such an account —
+ * a new temporary password, deactivating it, changing its email, deleting
+ * it, or inviting or renaming someone onto that address — is for an Owner or
+ * one of those named people only, exactly as an Owner's own account is.
+ * (Named people already hold that access, so one acting on another gains
+ * nothing; any other admin could otherwise sign in as Eddy and get both.)
+ */
+const NAMED = new Set([...PREVIEW_REVIEWERS, ...BILLING_TAB_PEOPLE].map((e) => e.trim().toLowerCase()));
+const namedRefused = (target: string, actor: string) =>
+  NAMED.has(target.trim().toLowerCase()) && !isAdmin(actor) && !NAMED.has(actor.trim().toLowerCase());
 import {
   changeEmail, renameMember, salespersonRecords, setAccountManager, setAdmin, setSalesperson, TeamRoleError,
 } from "@/lib/identity/team-roles";
@@ -192,6 +207,9 @@ export async function PATCH(request: Request) {
       }
       if (typeof body.newEmail === "string" && body.newEmail.trim().toLowerCase() !== email) {
         if (self) return NextResponse.json({ error: "Change your own email from your Account page." }, { status: 400 });
+        if (namedRefused(email, session.email) || namedRefused(body.newEmail, session.email)) {
+          return NextResponse.json({ error: "That address holds access granted by name; only an Owner can change it." }, { status: 403 });
+        }
         if (person.source !== "db" || owner) return NextResponse.json({ error: `${email} is managed in Railway; its email cannot change here.` }, { status: 409 });
         await changeEmail(email, body.newEmail);
       }
@@ -221,6 +239,9 @@ export async function PATCH(request: Request) {
     // that signs in as them.
     if (isAdmin(email) && !isAdmin(session.email)) {
       return NextResponse.json({ error: `${email} is an Owner; only an Owner can do this.` }, { status: 403 });
+    }
+    if (namedRefused(email, session.email)) {
+      return NextResponse.json({ error: `${email} holds access granted by name; only an Owner can do this.` }, { status: 403 });
     }
     try {
       if (typeof body.active === "boolean") {
@@ -270,6 +291,7 @@ export async function DELETE(request: Request) {
   if (!email) return NextResponse.json({ error: "email is required" }, { status: 400 });
   if (email === session.email) return NextResponse.json({ error: "You cannot delete your own account." }, { status: 400 });
   if (isAdmin(email)) return NextResponse.json({ error: `${email} is an Owner and cannot be deleted.` }, { status: 409 });
+  if (namedRefused(email, session.email)) return NextResponse.json({ error: `${email} holds access granted by name; only an Owner can delete it.` }, { status: 403 });
   const store = grantStore();
   const people = store instanceof DbGrantStore ? await store.listMerged() : [];
   const person = people.find((p) => p.email === email);
@@ -340,6 +362,9 @@ export async function POST(request: Request) {
   // one-time password, so only an Owner may do it.
   if (isAdmin(email) && !isAdmin(session.email)) {
     return NextResponse.json({ error: `${email} is an Owner address; only an Owner can invite it.` }, { status: 403 });
+  }
+  if (namedRefused(email, session.email)) {
+    return NextResponse.json({ error: `${email} holds access granted by name; only an Owner can invite it.` }, { status: 403 });
   }
   const everyone = store instanceof DbGrantStore ? await store.listMerged() : await store.listUsers();
   const existing = everyone.find((u) => u.email === email);

@@ -119,6 +119,6 @@ test("the chat and Billing routes check who, then admit, before they read anythi
   assert.match(chat, /served\(who, "chat", 0\)/);
   assert.ok((chat.match(/NO_STORE_HEADERS/g) ?? []).length >= 4, "never cached");
   const bill = readFileSync("src/app/api/crm-preview/billing/route.ts", "utf8");
-  assert.ok(bill.indexOf("admit(") < bill.indexOf("marketContext("), "Billing admits before reading");
+  assert.ok(bill.indexOf("admit(") > 0 && bill.indexOf("admit(") < bill.indexOf("portalClient("), "Billing admits before reading");
   assert.match(bill, /served\(who, "billing", 0\)/);
 });

@@ -40,21 +40,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: gate.message }, { status: gate.status, headers: NO_STORE_HEADERS });
   }
 
-  const data = await loadPortalChatData(client);
-  if (!data) return NextResponse.json({ error: "No such client portal." }, { status: 404, headers: NO_STORE_HEADERS });
-  served(who, "chat", 0);
-
-  // The same portal's market report the Reports page draws — group names and counts. A cold one is
-  // still counting after MARKET_WAIT_MS: say so, and let it finish into the cache for the next ask.
-  const marketTotals = async (): Promise<MarketTotals> => {
-    const ctx = await marketContext(client);
-    if (!ctx) return { unavailable: "This portal has no market." };
-    const report = marketReport(ctx).then((r) => ("unavailable" in r ? r : { total: r.total, groups: r.groups }));
-    const wait = new Promise<MarketTotals>((done) => setTimeout(() => done({ unavailable: "The market totals are still being counted — ask again in a minute." }), MARKET_WAIT_MS));
-    return Promise.race([report, wait]);
-  };
-
   try {
+    const data = await loadPortalChatData(client);
+    if (!data) return NextResponse.json({ error: "No such client portal." }, { status: 404, headers: NO_STORE_HEADERS });
+    served(who, "chat", 0);
+
+    // The same portal's market report the Reports page draws — group names and counts. Bounded as a whole
+    // (finding the market included): a cold report still counting after MARKET_WAIT_MS says so, and finishes into the cache.
+    const marketTotals = async (): Promise<MarketTotals> => {
+      const report = marketContext(client).then(async (ctx): Promise<MarketTotals> => {
+        if (!ctx) return { unavailable: "This portal has no market." };
+        const r = await marketReport(ctx);
+        return "unavailable" in r ? r : { total: r.total, groups: r.groups };
+      });
+      const wait = new Promise<MarketTotals>((done) => setTimeout(() => done({ unavailable: "The market totals are still being counted — ask again in a minute." }), MARKET_WAIT_MS));
+      return Promise.race([report, wait]);
+    };
+
     const out = await answer(turns, data, marketTotals);
     console.info(JSON.stringify({ at: "[crm-preview] chat", who, client, turns: turns.length, tools: out.tools, tokens: out.tokens }));
     return NextResponse.json({ reply: out.reply }, { headers: NO_STORE_HEADERS });

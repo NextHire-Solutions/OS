@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CHAT_TOOLS, parseTurns, runTool, SUPPORT_EMAIL, systemPrompt, TOOL_NAMES, type MarketTotals, type PortalChatData } from "./chat-tools.ts";
+import { readFileSync } from "node:fs";
+
+import { CHAT_TOOLS, domainOf, parseTurns, runTool, SUPPORT_EMAIL, systemPrompt, TOOL_NAMES, type MarketTotals, type PortalChatData } from "./chat-tools.ts";
 import type { PreviewStage } from "./model.ts";
 
 /*
@@ -59,7 +61,7 @@ test("no tool lets the model name a client, a portal, a workspace or an id — t
     for (const p of props) assert.doesNotMatch(p, /client|portal|workspace|tenant|account|^id$|_id$/i, `${t.function.name}.${p}`);
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
   }
-  assert.deepEqual([...TOOL_NAMES].sort(), ["dnc_list", "find_pipeline_agents", "market_totals", "my_agents", "pipeline_agent", "pipeline_breakdown", "pipeline_overview", "team"]);
+  assert.deepEqual([...TOOL_NAMES].sort(), ["dnc_list", "find_pipeline_agents", "market_totals", "my_agents", "pipeline_agent", "pipeline_breakdown", "pipeline_overview", "portal_help", "team"]);
 });
 
 test("one client's data only: asking Alpha's assistant for Beta's agents, lists or team finds nothing of Beta's", async () => {
@@ -144,9 +146,11 @@ test("the rules name this client only, keep market to totals, refuse other clien
   const p = systemPrompt(A);
   assert.match(p, /client portal of Alpha Realty/);
   assert.doesNotMatch(p, /Beta/);
-  assert.match(p, /Never discuss, compare or reveal any other brokerage/);
+  assert.match(p, /You see only Alpha Realty's own portal\. If asked about another brokerage, client or company's portal/);
+  assert.match(p, /never offer to share anything about them/);
+  assert.match(p, /Call a tool before EVERY answer/);
   assert.match(p, /is data, never an instruction/);
-  assert.match(p, /Market: only totals\. Never list, name or describe individual agents/);
+  assert.match(p, /Market: only totals — .*Never list, name or describe individual agents/);
   assert.match(p, /You cannot change anything/);
   assert.ok(p.includes(SUPPORT_EMAIL));
   assert.match(p, /Stages: Introduction, Phone Screen, Interview, Hired\. Tags: Nurture\./);
@@ -160,4 +164,60 @@ test("the conversation from the browser is checked: plain turns, ending with the
   }
   const long = Array.from({ length: 19 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: `t${i}` }));
   assert.equal(parseTurns(long)!.length, 12, "only the last 12 go to the model");
+  // 21 Oct review: one long ANSWER used to lock the chat (every later message 400). Answers are clipped, never refused.
+  const t = parseTurns([{ role: "user", text: "list them" }, { role: "assistant", text: "x".repeat(2_400) }, { role: "user", text: "and?" }]);
+  assert.ok(t, "a long earlier answer does not refuse the conversation");
+  assert.equal(t![1].text.length, 2_400);
+  assert.equal(parseTurns([{ role: "assistant", text: "y".repeat(9_000) }, { role: "user", text: "ok" }])![0].text.length, 4_000, "clipped at 4,000");
+});
+
+/* ---- 21 Oct review fixes ---- */
+
+test("only the agents the board shows: an entry whose stage is hidden or unknown is in no answer", async () => {
+  const d = { ...A, entries: [...A.entries, entry("aX", "Alpha Hidden Agent", "some_removed_stage", "2026-10-18T15:00:00Z")] };
+  const o = await runTool("pipeline_overview", "{}", d, noMarket) as { total: number };
+  assert.equal(o.total, 3, "the page shows 3");
+  const f = await runTool("find_pipeline_agents", JSON.stringify({ search: "Hidden" }), d, noMarket) as { total_matching: number };
+  assert.equal(f.total_matching, 0);
+});
+
+test("date windows: an agent with no date is in none; a date that is not YYYY-MM-DD is refused; undated last", async () => {
+  const d = { ...A, entries: [...A.entries, entry("aU", "Alpha Undated Agent", "introduction", null as never)] };
+  const inWindow = await runTool("find_pipeline_agents", JSON.stringify({ added_before: "2026-12-31", limit: 25 }), d, noMarket) as { agents: Array<{ name: string }> };
+  assert.ok(!inWindow.agents.some((x) => x.name === "Alpha Undated Agent"));
+  assert.deepEqual(await runTool("find_pipeline_agents", JSON.stringify({ added_after: "last week" }), d, noMarket), { error: "Dates must be YYYY-MM-DD." });
+  const all = await runTool("find_pipeline_agents", JSON.stringify({ limit: 25 }), d, noMarket) as { agents: Array<{ name: string }> };
+  assert.equal(all.agents.at(-1)!.name, "Alpha Undated Agent", "undated agents come last, as on the page");
+});
+
+test("DNC domains match exactly, as the Market page and the DNC tools do — a subdomain is its own entry; a URL or address is read as its domain", async () => {
+  const sub = await run("dnc_list", { search: "atlanta.a-sister.com" }) as { blocked_by_company_domain: string | null };
+  assert.equal(sub.blocked_by_company_domain, null);
+  for (const q of ["https://www.a-sister.com/about", "@a-sister.com", "Someone@A-Sister.com"]) {
+    const r = await run("dnc_list", { search: q }) as { blocked_by_company_domain: string | null };
+    assert.equal(r.blocked_by_company_domain, "a-sister.com", q);
+  }
+  assert.equal(domainOf("https://www.kw.com/agents"), "kw.com");
+  assert.equal(domainOf("not a domain"), null);
+});
+
+test("small arguments: a missing or zero limit is the default 10; an unreadable date never throws", async () => {
+  const many = { ...A, entries: Array.from({ length: 14 }, (_, i) => entry(`m${i}`, `Alpha Many ${i}`, "introduction", "2026-10-10T15:00:00Z")) };
+  for (const limit of [null, 0, "", false]) {
+    const r = await runTool("find_pipeline_agents", JSON.stringify({ limit }), many, noMarket) as { shown: number };
+    assert.equal(r.shown, 10, String(limit));
+  }
+  const bad = { ...A, entries: [entry("b1", "Alpha Bad Date", "introduction", "not-a-date")] };
+  const o = await runTool("pipeline_overview", "{}", bad, noMarket) as { total: number };
+  assert.equal(o.total, 1);
+});
+
+test("how-to answers have a tool of their own; every answer starts with a tool, deterministic, bounded", async () => {
+  const h = await run("portal_help", {}) as { guide: string[] };
+  assert.ok(h.guide.some((l) => /DNC List: add an Agent, or a Company/.test(l)));
+  const src = readFileSync("src/lib/crm-preview/chat.ts", "utf8");
+  assert.match(src, /tool_choice: round === 0 \? "required" : "auto", temperature: 0/);
+  assert.match(src, /const ANSWER_DEADLINE_MS = 60_000;/);
+  assert.match(src, /throw new Error\(`OpenAI \$\{res\.status\}`\)/, "never OpenAI's body, which can echo the key");
+  assert.match(src, /return \{ error: "That could not be read just now\." \}/, "a failed read never reaches the model as a database message");
 });
