@@ -181,12 +181,24 @@ export async function planToggle(clientId: string, action: ToggleAction): Promis
   const client = await loadClient(clientId);
   const sb = getSupabase();
 
-  let candidates: Omit<PlannedCampaign, 'status'>[];
   const held = client.toggle_paused_campaigns ?? [];
   if (action === 'resume' && held.length) {
     // Resume exactly what this toggle paused.
-    candidates = held.map((c) => ({ platform: c.platform, id: c.id, int_id: c.int_id ?? null, name: c.name }));
-  } else {
+    const mine = held.map((c) => ({ platform: c.platform, id: c.id, int_id: c.int_id ?? null, name: c.name }));
+    const withStatus: PlannedCampaign[] = await Promise.all(mine.map(async (c) => ({ ...c, status: await liveStatus(c) })));
+    const plan = classify(action, withStatus);
+    if (plan.willChange.length) return { clientId, clientName: client.name, action, ...plan };
+    /*
+     * Nothing this toggle held is still paused — finished, or resumed
+     * elsewhere (22 Oct audit). Then plan as if nothing were held, so a
+     * campaign paused directly in EmailBison can still be resumed from ▶;
+     * the stale held entries come back as skipped, and applyToggle's
+     * nextHeld drops them.
+     */
+  }
+
+  let candidates: Omit<PlannedCampaign, 'status'>[];
+  {
     /*
      * Pause: every linked campaign. Resume with nothing held here: every
      * linked campaign too — campaigns paused ELSEWHERE (in EmailBison, or by a

@@ -73,6 +73,11 @@ export function stillHeld(c: Pick<DashboardClient, "toggle_paused_campaigns" | "
   });
 }
 
+/** True when any campaign is paused right now (not merely finished) — what ▶ can act on (22 Oct audit). */
+export function anyPaused(c: DashboardClient): boolean {
+  return [...c.campaigns, ...c.bisonCampaigns].some((x) => x.status === "paused");
+}
+
 /** True when any campaign was ever launched — the "Campaign Paused" test. */
 export function hasLaunched(c: DashboardClient): boolean {
   return [...c.campaigns, ...c.bisonCampaigns].some(

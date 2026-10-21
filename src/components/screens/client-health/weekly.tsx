@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 import { Badge, Panel, StatusPill, isLifecycleStatus, type LifecycleStatus } from "@/components/ds";
 import {
-  activeCampaigns, campaignProgress, campaignsLabel, clientFunnel, stillHeld,
+  activeCampaigns, anyPaused, campaignProgress, campaignsLabel, clientFunnel, stillHeld,
 } from "@/lib/tools/client-health/campaigns";
 import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
@@ -316,9 +316,9 @@ function Row({
    */
   // Held = paused from here AND still paused — not resumed elsewhere, not finished since (20 Oct).
   const held = stillHeld(c).length;
-  // Nothing running and everything paused/finished — paused somewhere else.
+  // Nothing running and at least one campaign PAUSED (not every one finished) — paused somewhere else.
   // ▶ still resumes: the dialog previews the live-paused ones first.
-  const pausedElsewhere = held === 0 && active.length === 0 && label === "Campaign Paused";
+  const pausedElsewhere = held === 0 && active.length === 0 && label === "Campaign Paused" && anyPaused(c);
   const campToggle = pausedElsewhere ? (
     <button
       type="button"

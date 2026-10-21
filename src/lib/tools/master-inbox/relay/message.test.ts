@@ -321,3 +321,40 @@ test("an out-of-office or a delay is not a bounce; a spam report is its own kind
   for (const t of ["SpamComplaint", "SpamNotification"]) assert.equal(bounceKind(t), "spam", t);
   for (const t of ["HardBounce", "SoftBounce", "BadEmailAddress", "DnsError", "Blocked", "ManuallyDeactivated", "Unsubscribe", "DMARCPolicy", "Unknown", ""]) assert.equal(bounceKind(t), "bounce", t);
 });
+
+/* ---------------------------------------------------------- 22 Oct audit --- */
+
+test("a quoted message that is all quote is left out — its raw body would carry our sending address", () => {
+  const quoteOnly = m({ id: "q", sender: "jordan.ellis@coastalrealty.test", bodyText: "On Wed, Oct 1, 2026 at 9:00 AM Nicole Collins <nicole.c@recruit-mail-xyz.test> wrote:\n> Hi Jordan, our outreach", sentAt: "2026-10-05T18:00:00.000Z" });
+  const e = build({ messages: [conversation[0], quoteOnly, conversation[1]] });
+  assert.doesNotMatch(e.textBody + e.htmlBody, /recruit-mail-xyz/);
+  assert.match(e.textBody, /Nicole Collins wrote:\n> Hi Jordan/, "the real earlier message is still quoted");
+});
+
+test("our quoted email is never named after a domain, even when the provider stored one as the sender's name", () => {
+  const ours = m({ id: "o1", direction: "outbound", sender: "nicole@realtynowpro.test", senderName: "recruit-mail-xyz.com", bodyText: "Hi there.", sentAt: "2026-10-05T14:00:00.000Z" });
+  const e = build({ messages: [ours, conversation[1]] });
+  assert.match(e.textBody, /Nicole wrote:/);
+  assert.doesNotMatch(e.textBody + e.htmlBody, /recruit-mail-xyz|realtynowpro/);
+  // A person's name stored by the provider is kept.
+  assert.match(build({ messages: [{ ...ours, senderName: "Nicole Collins" }, conversation[1]] }).textBody, /Nicole Collins wrote:/);
+});
+
+test("character references in our quoted HTML read as the characters, once — never double-escaped", () => {
+  const ours = m({ id: "o1", direction: "outbound", sender: "nicole@brokerstaffer.test", senderName: null, bodyText: null, bodyHtml: "<p>We&#8217;re growing &mdash; fast&hellip; &ldquo;Join&rdquo; &#x27;us&#x27; &amp;lt;tag&amp;gt; &unknown;</p>", sentAt: "2026-10-05T14:00:00.000Z" });
+  const e = build({ messages: [ours, conversation[1]] });
+  assert.match(e.textBody, /> We’re growing — fast… “Join” 'us' &lt;tag&gt; &unknown;/);
+  assert.doesNotMatch(e.htmlBody, /&amp;#8217;|&amp;mdash;/);
+});
+
+test("a long agent name keeps ' via BrokerStaffer' — the From name is 80 characters at most", () => {
+  const long = "Alexandria Catherine Montgomery-Fitzgerald Worthington-Smythe The Third Esquire";
+  const e = build({ agentName: long });
+  assert.ok(e.fromName.endsWith(" via BrokerStaffer"), e.fromName);
+  assert.ok(e.fromName.length <= 80, `${e.fromName.length}`);
+  assert.equal(cleanDisplayName(e.fromName), e.fromName, "Postmark's own clean changes nothing");
+});
+
+test("subject: line and paragraph separators and C1 controls become spaces too", () => {
+  assert.equal(relaySubject("Quick question\u0085Jordan now", null), "Re: Quick question Jordan now");
+});

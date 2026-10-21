@@ -183,9 +183,11 @@ test("the Follow Up Boss key never reaches the browser — only whether one is s
 
 test("an account that holds access by name (Eddy, Amy, the Billing people) cannot be taken over by an ordinary admin (21 Oct review)", () => {
   const src = read("src/app/api/admin/users/route.ts");
-  assert.match(src, /const NAMED = new Set\(\[\.\.\.PREVIEW_REVIEWERS, \.\.\.BILLING_TAB_PEOPLE\]/);
+  assert.match(src, /const NAMED = new Set\(\[\.\.\.PREVIEW_REVIEWERS, \.\.\.BILLING_TAB_PEOPLE, \.\.\.Object\.values\(NAMED_PAGES\)\.flat\(\)\]/, "every by-name list, the pages' too (22 Oct)");
   assert.match(src, /NAMED\.has\(target\.trim\(\)\.toLowerCase\(\)\) && !isAdmin\(actor\) && !NAMED\.has\(actor/);
   // reset password / deactivate, change email (from and to), invite, delete
   assert.equal((src.match(/namedRefused\(/g) ?? []).length, 5, "reset/deactivate, email from + to, invite, delete");
-  assert.match(src, /namedRefused\(email, session\.email\) \|\| namedRefused\(body\.newEmail, session\.email\)/);
+  assert.match(src, /namedRefused\(email, session\.email\) \|\| namedRefused\(body\.newEmail as string, session\.email\)/);
+  // Refused before anything else in the request is saved.
+  assert.ok(src.indexOf("if (changingEmail) {") < src.indexOf("await setAdmin(email, body.admin)"), "the email check comes first");
 });

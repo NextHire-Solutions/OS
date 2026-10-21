@@ -262,3 +262,18 @@ test("stillHeld: a campaign paused from the button but running again elsewhere i
   assert.deepEqual(stillHeld({ toggle_paused_campaigns: [], campaigns: [], bisonCampaigns: [bison("x", "running")] }), []);
   assert.deepEqual(stillHeld({ toggle_paused_campaigns: null as never, campaigns: [], bisonCampaigns: [] }), []);
 });
+
+test("▶ for campaigns paused elsewhere only when one IS paused — every campaign finished shows no ▶ (22 Oct audit)", async () => {
+  const { anyPaused, campaignsLabel } = await import("./campaigns.ts");
+  const bison = (id: string, status: "running" | "paused" | "finished") => ({ id, name: id, status, emails_sent_total: 0, campaign_size: 0, progress_pct: 0, reply_count: 0, interested_count: 0 });
+  const allDone = { campaigns: [], bisonCampaigns: [bison("b284", "finished"), bison("b378", "finished")] } as never;
+  assert.equal(campaignsLabel(allDone), "Campaign Paused", "the label is unchanged");
+  assert.equal(anyPaused(allDone), false, "so the row draws no ▶");
+  assert.equal(anyPaused({ campaigns: [], bisonCampaigns: [bison("b284", "finished"), bison("b300", "paused")] } as never), true);
+  // The row's own condition.
+  const fs = await import("node:fs");
+  assert.match(fs.readFileSync("src/components/screens/client-health/weekly.tsx", "utf8"), /const pausedElsewhere = held === 0 && active\.length === 0 && label === "Campaign Paused" && anyPaused\(c\);/);
+  // And the press: a held list that is all finished or resumed falls back to every linked campaign.
+  const toggle = fs.readFileSync("src/lib/tools/client-health/campaign-toggle.ts", "utf8");
+  assert.match(toggle, /if \(plan\.willChange\.length\) return \{ clientId, clientName: client\.name, action, \.\.\.plan \};/);
+});

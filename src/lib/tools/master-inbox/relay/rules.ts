@@ -169,6 +169,27 @@ export function isStaleReply(replySentAt: string | null | undefined, at: string 
   return ref - sent > REPLY_MAX_AGE_MS;
 }
 
+/*
+ * Character references, as mail HTML uses them (22 Oct audit: "We&#8217;re
+ * growing &mdash;" reached the brokerage as written). Numbers of any kind, and
+ * the named ones mail tools write; anything else is left as it is. One pass,
+ * so "&amp;lt;" becomes "&lt;", never "<".
+ */
+const NAMED: Record<string, string> = {
+  nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201d", ldquo: "\u201c",
+  mdash: "\u2014", ndash: "\u2013", hellip: "\u2026", bull: "\u2022", middot: "\u00b7", copy: "\u00a9", reg: "\u00ae", trade: "\u2122",
+  eacute: "\u00e9", egrave: "\u00e8", aacute: "\u00e1", oacute: "\u00f3", uacute: "\u00fa", iacute: "\u00ed", ntilde: "\u00f1", ccedil: "\u00e7",
+  euro: "\u20ac", pound: "\u00a3", deg: "\u00b0", times: "\u00d7", laquo: "\u00ab", raquo: "\u00bb", zwnj: "", zwj: "", shy: "",
+};
+function decodeEntity(whole: string, body: string): string {
+  if (body[0] === "#") {
+    const n = body[1] === "x" || body[1] === "X" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+    if (!Number.isFinite(n) || n <= 0 || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) return whole;
+    return n === 160 ? " " : String.fromCodePoint(n);
+  }
+  return NAMED[body.toLowerCase()] ?? whole;
+}
+
 /** HTML → readable text. Quoted blocks (blockquote, Gmail/Outlook quote containers) are dropped first. */
 export function htmlToText(html: string): string {
   if (!html) return "";
@@ -180,12 +201,7 @@ export function htmlToText(html: string): string {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0*39;|&rsquo;|&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
+    .replace(/&(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,8});/gi, decodeEntity)
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

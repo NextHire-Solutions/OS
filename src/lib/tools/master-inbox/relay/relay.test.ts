@@ -1034,3 +1034,45 @@ test("a brokerage's switch saves with 0035 run and 0036 not yet; asking for the 
   await assert.rejects(relay.saveBrokerageSettings(C.jeff, { pipelineEntry: "interested" }, { ws: WS }));
   assertContained();
 });
+
+/* ---------------------------------------------------------- 22 Oct audit --- */
+
+test("the reply's stored payload can't be read: held (it would go without threading or the provider's auto-reply check)", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync("src/lib/tools/master-inbox/relay/relay.ts", "utf8");
+  const at = src.indexOf('select("raw_payload")');
+  assert.match(src.slice(at, at + 400), /if \(error\) return stop\("held", "read_error"/);
+  assert.match(src.slice(at, at + 700), /catch \(e\) \{\n    return stop\("held", "read_error"/);
+});
+
+test("no portal found for the brokerage: held — its DNC and agent lists could not be checked", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync("src/lib/tools/master-inbox/relay/relay.ts", "utf8");
+  const held = src.indexOf('if (!portals.length) return stop("held", "no_portal", agent);');
+  assert.ok(held > 0 && held < src.indexOf("const dnc = await loadDnc(ctx.mi, portals);"), "before any list is read");
+  assert.match(src, /const RECHECK_REASONS = \[[^\]]*"no_portal"/, "looked at again on the next sweep");
+  assert.match(fs.readFileSync("src/lib/tools/master-inbox/relay/wording.ts", "utf8"), /no_portal: "No client portal is linked/);
+});
+
+test("a raw_payload read error in the database holds the hand-off (fake database)", async () => {
+  seed();
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  // Break only the payload read.
+  const real = db.fetch;
+  const broken = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).includes("/messages?") && String(url).includes("raw_payload")) return new Response(JSON.stringify({ message: "statement timeout", code: "57014" }), { status: 500, headers: { "content-type": "application/json" } });
+    return real(url as never, init);
+  }) as typeof fetch;
+  const prev = globalThis.fetch;
+  globalThis.fetch = broken;
+  try {
+    await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  } finally {
+    globalThis.fetch = prev;
+  }
+  assert.equal(handed.length, 0, "nothing went");
+  const r = recordFor(thread.id);
+  assert.deepEqual([r.status, r.reason], ["held", "read_error"]);
+  assert.match(String(r.detail), /stored payload/);
+});

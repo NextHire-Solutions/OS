@@ -58,6 +58,7 @@ export const REASON_TEXT: Record<string, string> = {
   already_delivered: "Already handed to this brokerage before — one delivery per agent per brokerage.",
   too_old: "Held too long to send now.",
   read_error: "Something could not be read, so it was held rather than guessed.",
+  no_portal: "No client portal is linked to this brokerage, so its DNC and agent lists couldn't be checked — held rather than sent.",
   empty_reply: "The agent's reply has no text of its own.",
   stale_reply: "The agent's reply is more than two weeks older than the label — an old conversation labelled again, not handed off by itself. Introduce by hand if it should go.",
   send_failed: "Postmark refused it — nothing was sent.",

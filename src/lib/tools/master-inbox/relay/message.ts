@@ -106,7 +106,7 @@ const MAX_SUBJECT = 200;
  */
 export function relaySubject(threadSubject: string | null | undefined, replySubject: string | null | undefined): string {
   let base = String((threadSubject ?? "").trim() || (replySubject ?? "").trim())
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   for (let i = 0; i < 10; i++) {
@@ -146,8 +146,12 @@ function nameFromLocalPart(email: string | null | undefined): string {
  */
 function quoteName(m: Pick<MessageFacts, "senderName" | "sender" | "direction">): string {
   const named = cleanDisplayName(m.senderName);
+  if (m.direction === "outbound") {
+    // A stored From name that is a domain or an address ("recruit-mail-xyz.com") would name our sending domain (22 Oct audit).
+    const person = named && !/@|\.[a-z]{2,}\b/i.test(named) ? named : "";
+    return person || nameFromLocalPart(m.sender) || "BrokerStaffer";
+  }
   if (named) return named;
-  if (m.direction === "outbound") return nameFromLocalPart(m.sender) || "BrokerStaffer";
   return (m.sender ?? "").trim() || "The agent";
 }
 
@@ -165,7 +169,8 @@ export function quoteHeader(m: Pick<MessageFacts, "sentAt" | "senderName" | "sen
  */
 function quoteText(m: MessageFacts): string {
   const fromHtml = m.direction === "outbound" && m.bodyHtml ? ownText({ bodyText: null, bodyHtml: m.bodyHtml }) : "";
-  return clip(fromHtml || ownText(m) || String(m.bodyText ?? "").trim());
+  // Never the raw body (22 Oct audit): a message that is all quote would bring its own "On … <sender@our-domain> wrote:" with it. Nothing left → not quoted.
+  return clip(fromHtml || ownText(m));
 }
 
 /** The earlier messages to quote: this conversation's, before the reply, newest first. */
@@ -260,10 +265,11 @@ export interface BuildInput {
 }
 
 export function buildRelayEmail(input: BuildInput): RelayEmail {
-  const fromName = `${cleanDisplayName(input.agentName) || NO_NAME} ${VIA}`;
+  // The name is cut to leave room for " via BrokerStaffer": the From name is 80 characters at most (postmark.ts cleans it again).
+  const fromName = `${(cleanDisplayName(input.agentName) || NO_NAME).slice(0, 80 - VIA.length - 1).trim()} ${VIA}`;
   const own = replyText(input.reply);
   // The agent's words first — nothing on top — then this conversation's earlier messages, quoted as a mail client quotes them.
-  const quoted = quotedHistory(input.messages, input.reply).map((m) => ({ header: quoteHeader(m), text: quoteText(m) }));
+  const quoted = quotedHistory(input.messages, input.reply).map((m) => ({ header: quoteHeader(m), text: quoteText(m) })).filter((q) => q.text);
 
   const textParts = [own];
   for (const q of quoted) {

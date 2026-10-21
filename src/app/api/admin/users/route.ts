@@ -7,6 +7,7 @@ import { coerceTools, describeAdmins, GRANTABLE_TOOLS, isAdmin } from "@/lib/ide
 import { isAdminUser } from "@/lib/identity/admin-db";
 import { PREVIEW_REVIEWERS } from "@/lib/crm-preview/access";
 import { BILLING_TAB_PEOPLE } from "@/lib/clients/billing-access";
+import { NAMED_PAGES } from "@/lib/identity/named-pages";
 
 /*
  * People who hold access BY THEIR ADDRESS — the portal preview's reviewers
@@ -17,7 +18,8 @@ import { BILLING_TAB_PEOPLE } from "@/lib/clients/billing-access";
  * (Named people already hold that access, so one acting on another gains
  * nothing; any other admin could otherwise sign in as Eddy and get both.)
  */
-const NAMED = new Set([...PREVIEW_REVIEWERS, ...BILLING_TAB_PEOPLE].map((e) => e.trim().toLowerCase()));
+// Every list that grants access by address — the page lists too (22 Oct audit: the Reply agent's was missing).
+const NAMED = new Set([...PREVIEW_REVIEWERS, ...BILLING_TAB_PEOPLE, ...Object.values(NAMED_PAGES).flat()].map((e) => e.trim().toLowerCase()));
 const namedRefused = (target: string, actor: string) =>
   NAMED.has(target.trim().toLowerCase()) && !isAdmin(actor) && !NAMED.has(actor.trim().toLowerCase());
 import {
@@ -186,6 +188,15 @@ export async function PATCH(request: Request) {
     if (!person) return NextResponse.json({ error: `${email} is not a workspace user.` }, { status: 404 });
     const owner = isAdmin(email);
     const self = email === session.email;
+    // An email change is refused BEFORE anything else in the request is saved (22 Oct audit: a refused one left the rest half-applied).
+    const changingEmail = typeof body.newEmail === "string" && body.newEmail.trim().toLowerCase() !== email;
+    if (changingEmail) {
+      if (self) return NextResponse.json({ error: "Change your own email from your Account page." }, { status: 400 });
+      if (namedRefused(email, session.email) || namedRefused(body.newEmail as string, session.email)) {
+        return NextResponse.json({ error: "That address holds access granted by name; only an Owner can change it." }, { status: 403 });
+      }
+      if (person.source !== "db" || owner) return NextResponse.json({ error: `${email} is managed in Railway; its email cannot change here.` }, { status: 409 });
+    }
     try {
       let clientsRenamed = 0;
       if (typeof body.admin === "boolean") {
@@ -205,14 +216,8 @@ export async function PATCH(request: Request) {
         if (person.source !== "db") return NextResponse.json({ error: `${email} signs in through AUTH_USERS; manage that account in Railway.` }, { status: 409 });
         clientsRenamed = (await renameMember(email, person.name, body.name, session.email)).clients;
       }
-      if (typeof body.newEmail === "string" && body.newEmail.trim().toLowerCase() !== email) {
-        if (self) return NextResponse.json({ error: "Change your own email from your Account page." }, { status: 400 });
-        if (namedRefused(email, session.email) || namedRefused(body.newEmail, session.email)) {
-          return NextResponse.json({ error: "That address holds access granted by name; only an Owner can change it." }, { status: 403 });
-        }
-        if (person.source !== "db" || owner) return NextResponse.json({ error: `${email} is managed in Railway; its email cannot change here.` }, { status: 409 });
-        await changeEmail(email, body.newEmail);
-      }
+      // Checked above, before anything was saved.
+      if (changingEmail) await changeEmail(email, body.newEmail as string);
       return NextResponse.json({ ok: true, email, clientsRenamed });
     } catch (e) {
       const status = e instanceof TeamRoleError ? 400 : 500;

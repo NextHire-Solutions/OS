@@ -103,7 +103,7 @@ export const SWEEP_WINDOW_MS = 30 * 60 * 1000;
 /** Later replies are relayed for this long after the hand-off (when that is switched on). */
 const FOLLOW_UP_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 /** Held reasons the sweep re-checks by itself. The others wait for the team. */
-const RECHECK_REASONS = ["hourly_cap", "hourly_cap_click", "no_recipients", "read_error", "evaluating"];
+const RECHECK_REASONS = ["hourly_cap", "hourly_cap_click", "no_recipients", "read_error", "no_portal", "evaluating"];
 /** Held reasons a team answer for the campaign can clear. */
 const CAMPAIGN_REASONS = ["unknown_campaign", "ambiguous_campaign", "no_roster_record", "campaign_conflict"];
 /** A held hand-off is checked again at most this often (and an interrupted "evaluating" one after this long). */
@@ -587,12 +587,18 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
   }
 
   // What the provider stored with the reply: EmailBison's own "automatic reply" verdict, and the Message-ID for threading.
+  /*
+   * A read that FAILS holds the hand-off (22 Oct audit): carrying on sent it
+   * without threading, and without the provider's own "automatic reply"
+   * check. Only a read that works and finds no Message-ID goes on without it.
+   */
   let payload: unknown = null;
   try {
     const { data, error } = await ctx.mi.from("messages").select("raw_payload").eq("id", reply.id).maybeSingle();
-    if (!error) payload = (data as Row | null)?.raw_payload ?? null;
-  } catch {
-    /* both are extras: the text checks below still run, and the headers are simply left out */
+    if (error) return stop("held", "read_error", { ...agent, detail: `the reply's stored payload: ${error.message.slice(0, 200)}` });
+    payload = (data as Row | null)?.raw_payload ?? null;
+  } catch (e) {
+    return stop("held", "read_error", { ...agent, detail: `the reply's stored payload: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` });
   }
 
   const own = replyText(reply);
@@ -601,6 +607,12 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
   if (looksLikeOptOut(own)) return stop("skipped", "unsubscribe", agent);
 
   const portals = [...new Set([...portalsOfClient(osClientId, ctx.world), ...(portalId ? [portalId] : [])])];
+  /*
+   * No portal found for the brokerage: its DNC, My Agents, team and pipeline
+   * could not be checked at all, so it is held, never sent (22 Oct audit —
+   * every check below used to be skipped, i.e. passed).
+   */
+  if (!portals.length) return stop("held", "no_portal", agent);
   try {
     if (rec.kind === "handoff") {
       if (hasIntroductionLabel(facts.labels)) return stop("skipped", "already_introduced", { ...agent, detail: "Introduction label" });
