@@ -1,5 +1,5 @@
 import { isRelayAddress, LIVE_SEND_ENV, liveSendAllowed, messageStream, postmarkToken, TOKEN_ENV, type Env } from "./gate.ts";
-import type { RelayEmail } from "./message.ts";
+import { addressHeader, type RelayEmail } from "./message.ts";
 import { isTestRecipient } from "./test-send.ts";
 
 /*
@@ -40,6 +40,8 @@ export type SendResult =
        * may have been sent, so it must not be retried automatically.
        */
       definite: boolean;
+      /** Postmark refused some of several addresses as inactive: the others may have received it (unknown, like a timeout). */
+      partial?: true;
     };
 
 export interface Transport {
@@ -49,7 +51,8 @@ export interface Transport {
 /** Postmark's /email body. Open and link tracking off: nothing is added to the agent's words. */
 export function postmarkPayload(email: RelayEmail, stream: string): Record<string, unknown> {
   return {
-    From: email.from,
+    // Built here from the address the locks checked — never a caller's From header (21 Oct review).
+    From: addressHeader(email.fromName, email.fromAddress),
     To: email.toHeader,
     ReplyTo: email.replyTo,
     Subject: email.subject,
@@ -101,13 +104,18 @@ export function createPostmarkTransport(deps: TransportDeps = {}): Transport {
          * read, may have been accepted — treated like a dropped connection, so
          * the agent's slot is kept and nothing is retried by itself.
          */
+        const detail = `(${res.status}, code ${body?.ErrorCode ?? "?"}): ${String(body?.Message ?? "no answer").slice(0, 300)}`;
+        /*
+         * 406 is "inactive recipient" (an earlier hard bounce or spam report).
+         * With several people on it, Postmark does not say whether the others
+         * still got it (21 Oct review) — so not definite: no slot freed, no
+         * "Try again", a person checks Postmark's activity first.
+         */
+        if (body?.ErrorCode === 406 && email.to.length > 1) {
+          return { ok: false, gated: null, error: `Postmark refused an inactive address ${detail}`, definite: false, partial: true };
+        }
         const definite = res.status >= 400 && res.status < 500;
-        return {
-          ok: false,
-          gated: null,
-          error: `${definite ? "Postmark refused" : "Postmark's answer was unclear"} (${res.status}, code ${body?.ErrorCode ?? "?"}): ${String(body?.Message ?? "no answer").slice(0, 300)}`,
-          definite,
-        };
+        return { ok: false, gated: null, error: `${definite ? "Postmark refused" : "Postmark's answer was unclear"} ${detail}`, definite };
       } catch (e) {
         return { ok: false, gated: null, error: `Postmark did not answer: ${e instanceof Error ? e.message : String(e)}`, definite: false };
       }
@@ -120,7 +128,8 @@ export function createPostmarkTransport(deps: TransportDeps = {}): Transport {
  * OS_BROKERAGE_RELAY_LIVE_SEND, so testing never means switching the hand-off
  * live. In exchange it refuses, before any request is built, anything that is
  * not exactly one recipient on TEST_RECIPIENTS with Reply-To the same address:
- * it cannot reach a brokerage or an agent, whatever a caller passes it.
+ * it cannot reach a brokerage or an agent, whatever a caller passes it. From
+ * is built from the checked address (postmarkPayload), as for a live send.
  */
 export async function sendTest(email: RelayEmail, deps: TransportDeps = {}): Promise<SendResult> {
   const env = deps.env ?? process.env;
@@ -129,8 +138,8 @@ export async function sendTest(email: RelayEmail, deps: TransportDeps = {}): Pro
   if (!isRelayAddress(email.fromAddress)) {
     return { ok: false, gated: "bad_from", error: "From is not on leads.brokerstaffer.com — nothing was sent", definite: true };
   }
-  const replyTo = (/<([^>]+)>\s*$/.exec(email.replyTo)?.[1] ?? email.replyTo).trim();
-  if (email.to.length !== 1 || !isTestRecipient(email.to[0].email) || email.toHeader.trim().toLowerCase() !== email.to[0].email.trim().toLowerCase() || !isTestRecipient(replyTo)) {
+  // Reply-To exactly the bare test address: no name, no list (a "someone@x.com, <admin@…>" read only its last <…> — 21 Oct review).
+  if (email.to.length !== 1 || !isTestRecipient(email.to[0].email) || email.toHeader.trim().toLowerCase() !== email.to[0].email.trim().toLowerCase() || !isTestRecipient(email.replyTo)) {
     return { ok: false, gated: "no_recipients", error: "A test goes only to our own test address — nothing was sent", definite: true };
   }
   const doFetch = deps.fetch ?? fetch;

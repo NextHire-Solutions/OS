@@ -29,7 +29,8 @@ async function send(url: string, method: "PUT" | "POST", body: unknown): Promise
 export function BrokerageRelaySettings({ initial }: { initial: RelayOverview }) {
   return (
     <ToastHost>
-      <Panel data={initial} />
+      {/* Keyed by version: after a refresh the form shows what is stored now, never the values this tab loaded. */}
+      <Panel key={initial.settings.updatedAt ?? "new"} data={initial} />
     </ToastHost>
   );
 }
@@ -71,18 +72,20 @@ function Panel({ data }: { data: RelayOverview }) {
         : `Live for ${pilots.length} brokerage${pilots.length === 1 ? "" : "s"}${pilots.length ? ` (${pilots.map((b) => b.name).join(", ")})` : ""}; practice for the rest.`;
 
   const save = async () => {
+    // Only what was changed here, and the version it was changed from: the server refuses if someone saved since (21 Oct review).
+    const changed: Record<string, unknown> = {};
+    if (enabled !== s.enabled) changed.enabled = enabled;
+    if (practice !== s.practiceMode) changed.practiceMode = practice;
+    if (mode !== s.mode) changed.mode = mode;
+    if (Number(cap) !== s.hourlyCap) changed.hourlyCap = Number(cap);
+    if (later !== s.forwardLaterReplies) changed.forwardLaterReplies = later;
+    if (countsIntro !== s.countsAsIntroduction) changed.countsAsIntroduction = countsIntro;
+    if (!Object.keys(changed).length) return show({ text: "Nothing changed" });
     setBusy(true);
-    const r = await send("/api/tools/master-inbox/relay", "PUT", {
-      enabled,
-      practiceMode: practice,
-      mode,
-      hourlyCap: Number(cap),
-      forwardLaterReplies: later,
-      countsAsIntroduction: countsIntro,
-    });
+    const r = await send("/api/tools/master-inbox/relay", "PUT", { ...changed, ifUpdatedAt: s.updatedAt });
     setBusy(false);
     show(r.ok ? { text: "Saved" } : { text: r.error ?? "Could not save", bad: true });
-    if (r.ok) router.refresh();
+    router.refresh();
   };
 
   return (
@@ -321,7 +324,7 @@ function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally
           </thead>
           <tbody>
             {rows.map((b) => (
-              <BrokerageLine key={b.id} row={b} liveGlobally={liveGlobally} />
+              <BrokerageLine key={`${b.id}:${JSON.stringify(b.relay)}:${b.pipelineEntry}`} row={b} liveGlobally={liveGlobally} />
             ))}
           </tbody>
         </table>
@@ -350,19 +353,20 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
 
   const save = async () => {
     setBusy(true);
+    // Only what was changed here, with the settings it was changed from (ifRelay): refused if someone saved since (21 Oct review).
     const r = await send("/api/tools/master-inbox/relay/brokerage", "PUT", {
       osClientId: row.id,
-      enabled,
-      recipients,
-      address: address || null,
-      hourlyCap: cap === "" ? null : Number(cap),
-      mode: mode || null,
-      // Only when changed: without migration 0036 the column is not there, and the other settings must still save.
+      ifRelay: row.relay,
+      ...(enabled !== row.relay.enabled ? { enabled } : {}),
+      ...(recipients !== row.relay.recipients ? { recipients } : {}),
+      ...(address !== (row.relay.address ?? "") ? { address: address || null } : {}),
+      ...(cap !== (row.relay.hourlyCap == null ? "" : String(row.relay.hourlyCap)) ? { hourlyCap: cap === "" ? null : Number(cap) } : {}),
+      ...(mode !== (row.relay.mode ?? "") ? { mode: mode || null } : {}),
       ...(entry !== row.pipelineEntry ? { pipelineEntry: entry } : {}),
     });
     setBusy(false);
     show(r.ok ? { text: `Saved ${row.name}` } : { text: r.error ?? "Could not save", bad: true });
-    if (r.ok) router.refresh();
+    router.refresh();
   };
 
   return (

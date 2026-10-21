@@ -3,7 +3,7 @@ import "server-only";
 import { osTable, type OsTable } from "@/lib/clients/os-db";
 
 import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
-import { escapeLike } from "../portals/stop-person-plan.ts";
+import { escapeLike, sameName } from "../portals/stop-person-plan.ts";
 import { getMasterInboxSupabase, workspaceId } from "../supabase";
 
 import { fromAddress, liveSendAllowed, postmarkToken, sweepSwitchedOff, type Env } from "./gate.ts";
@@ -103,7 +103,7 @@ export const SWEEP_WINDOW_MS = 30 * 60 * 1000;
 /** Later replies are relayed for this long after the hand-off (when that is switched on). */
 const FOLLOW_UP_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 /** Held reasons the sweep re-checks by itself. The others wait for the team. */
-const RECHECK_REASONS = ["hourly_cap", "no_recipients", "read_error", "evaluating"];
+const RECHECK_REASONS = ["hourly_cap", "hourly_cap_click", "no_recipients", "read_error", "evaluating"];
 /** Held reasons a team answer for the campaign can clear. */
 const CAMPAIGN_REASONS = ["unknown_campaign", "ambiguous_campaign", "no_roster_record", "campaign_conflict"];
 /** A held hand-off is checked again at most this often (and an interrupted "evaluating" one after this long). */
@@ -194,54 +194,38 @@ export async function loadGlobalSettings(os: Os, ws: string): Promise<{ settings
   return { settings: globalFromRow(data as Row | null), missing: false };
 }
 
-const OPTIONAL_CLIENT_COLUMNS = ["intro_override", "more_contacts", "contact_territories", "intro_variants", "relay_settings", "pipeline_entry"];
-
-/** The database's own message, without readAll's "<label>: " prefix (which names the table). */
-const dbMessage = (e: unknown, label: string) => (e instanceof Error ? e.message : String(e)).replace(new RegExp(`^${label}: `), "");
-
-/** os_clients with every column the relay reads (every page); a column a migration has not added yet reads as empty. */
+/*
+ * os_clients with every column the relay reads (every page). Strict, like the
+ * tables below (21 Oct review): every migration they need has been run
+ * (0022–0036), so a failed read is a failure — never "this list is empty",
+ * which would drop territories (every contact receives), billing blocks, or
+ * "not a brokerage campaign" answers. A failure stops the sweep before
+ * anything is decided; the next sweep tries again.
+ */
 async function loadClientRows(os: Os): Promise<Row[]> {
-  let cols = `id, aliases, status, mi_client_id, ${INTRO_ROW_COLUMNS}, relay_settings, pipeline_entry`;
-  for (let i = 0; i <= OPTIONAL_CLIENT_COLUMNS.length; i++) {
-    try {
-      const select = cols;
-      return await readAll(
-        (from, to, first) => os("os_clients").select(select, first ? { count: "exact" } : undefined).order("id", { ascending: true }).range(from, to),
-        "os_clients",
-        20_000,
-      );
-    } catch (e) {
-      const msg = dbMessage(e, "os_clients");
-      const missing = OPTIONAL_CLIENT_COLUMNS.find((c) => msg.includes(c) && cols.includes(c));
-      if (!missing) throw new Error(`os_clients: ${msg}`);
-      cols = cols.replace(new RegExp(`,\\s*${missing}\\b`), "");
-    }
-  }
-  throw new Error("os_clients: could not be read");
+  const cols = `id, aliases, status, mi_client_id, ${INTRO_ROW_COLUMNS}, relay_settings, pipeline_entry`;
+  return readAll(
+    (from, to, first) => os("os_clients").select(cols, first ? { count: "exact" } : undefined).order("id", { ascending: true }).range(from, to),
+    "os_clients",
+    20_000,
+  );
 }
 
 /*
- * A table a migration may not have created yet reads as empty; any other
- * failure throws. Every page is read: os_campaign_portals grows with every
- * campaign, and a route missing from a capped page would change which
- * brokerage a conversation resolves to.
+ * Every page: os_campaign_portals grows with every campaign, and a route
+ * missing from a capped page would change which brokerage a conversation
+ * resolves to.
  */
-async function optionalRows(os: Os, table: OsTable, columns: string, orderBy: string[]): Promise<Row[]> {
-  try {
-    return await readAll(
-      (from, to, first) => {
-        let q = os(table).select(columns, first ? { count: "exact" } : undefined);
-        for (const c of orderBy) q = q.order(c, { ascending: true });
-        return q.range(from, to);
-      },
-      table,
-      50_000,
-    );
-  } catch (e) {
-    const msg = dbMessage(e, table);
-    if (missingTable(msg, table)) return [];
-    throw new Error(`${table}: ${msg}`);
-  }
+async function allRows(os: Os, table: OsTable, columns: string, orderBy: string[]): Promise<Row[]> {
+  return readAll(
+    (from, to, first) => {
+      let q = os(table).select(columns, first ? { count: "exact" } : undefined);
+      for (const c of orderBy) q = q.order(c, { ascending: true });
+      return q.range(from, to);
+    },
+    table,
+    50_000,
+  );
 }
 
 async function loadWorld(mi: Mi, os: Os): Promise<{ world: World; records: Map<string, ClientRecord> }> {
@@ -252,9 +236,9 @@ async function loadWorld(mi: Mi, os: Os): Promise<{ world: World; records: Map<s
       20_000,
     ),
     loadClientRows(os),
-    optionalRows(os, "os_campaign_portals", "platform, campaign_id, os_client_id, mi_client_id", ["platform", "campaign_id"]),
-    optionalRows(os, "os_relay_campaigns", "platform, campaign_id, os_client_id, ignored", ["platform", "campaign_id"]),
-    optionalRows(os, "os_portal_blocks", "id, os_client_id, mode, lifted_at", ["id"]),
+    allRows(os, "os_campaign_portals", "platform, campaign_id, os_client_id, mi_client_id", ["platform", "campaign_id"]),
+    allRows(os, "os_relay_campaigns", "platform, campaign_id, os_client_id, ignored", ["platform", "campaign_id"]),
+    allRows(os, "os_portal_blocks", "id, os_client_id, mode, lifted_at", ["id"]),
   ]);
   const blocked = new Set(blocks.filter((b) => b.mode === "blocked" && !b.lifted_at).map((b) => String(b.os_client_id)));
   const records = new Map<string, ClientRecord>();
@@ -398,6 +382,22 @@ async function loadDnc(mi: Mi, portals: string[]): Promise<DncEntry[]> {
   return rows.map((r) => ({ kind: str(r.kind), name: str(r.name), email: str(r.email), domain: str(r.domain) }));
 }
 
+/** On the brokerage's My Agents roster under the same first and last name (sameName). Candidates are read by last name. */
+async function onRosterByName(ctx: Ctx, portals: string[], names: string[]): Promise<boolean> {
+  for (const name of names) {
+    const last = name.trim().split(/\s+/).filter((w) => /^\p{L}[\p{L}'’-]+$/u.test(w)).at(-1);
+    if (!last) continue;
+    // Every page: a capped page could leave out the one that matches.
+    const rows = await readAll(
+      (from, to, first) => ctx.mi.from("client_agents").select("id, name", first ? { count: "exact" } : undefined).in("client_id", portals).ilike("name", `%${escapeLike(last)}%`).order("id", { ascending: true }).range(from, to),
+      "client_agents",
+      20_000,
+    );
+    if (rows.some((r) => sameName(str(r.name), name))) return true;
+  }
+  return false;
+}
+
 async function anyRow(q: PromiseLike<{ data: unknown; error: { message: string } | null }>, label: string): Promise<boolean> {
   const { data, error } = await q;
   if (error) throw new Error(`${label}: ${error.message}`);
@@ -454,26 +454,61 @@ function relayRowFrom(r: Row): RelayRow {
  */
 type Via = { by: "sweep" } | { by: "check"; who: string } | { by: "click"; who: string } | { by: "assign"; who: string };
 
-/** Stamped with the decision's own clock (ctx.now), which the re-check schedule compares against. */
-async function update(ctx: Ctx, id: string, patch: Row): Promise<void> {
-  const { error } = await ctx.os("os_brokerage_relays").update({ ...patch, updated_at: ctx.now.toISOString() }).eq("id", id);
+/** The record as it is NOW — what every decision starts from. */
+async function currentRow(ctx: Ctx, id: string): Promise<RelayRow | null> {
+  const { data, error } = await ctx.os("os_brokerage_relays").select("*").eq("id", id).maybeSingle();
   if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
+  return data ? relayRowFrom(data as Row) : null;
+}
+
+/*
+ * A decision is written only if the record is still EXACTLY what the decision
+ * read — the same status and the same attempts (21 Oct review). A sweep works
+ * through its re-checks one by one from a list it read first; meanwhile a
+ * person could press Check again, then Send, and the sweep's stale copy then
+ * wrote "ready" (or "held") over "sent" — and the next press, or the next
+ * sweep, sent it a second time. Stamped with the decision's own clock
+ * (ctx.now), which the re-check schedule compares against.
+ */
+async function decide(ctx: Ctx, rec: RelayRow, patch: Row): Promise<boolean> {
+  const { data, error } = await ctx
+    .os("os_brokerage_relays")
+    .update({ ...patch, updated_at: ctx.now.toISOString() })
+    .eq("id", rec.id)
+    .eq("status", rec.status)
+    .eq("attempts", rec.attempts)
+    .select("id");
+  if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
+  return ((data ?? []) as Row[]).length > 0;
+}
+
+/** The only states a decision may start from: waiting (held), prepared (ready), or refused outright by Postmark (failed / send_failed). */
+function decidable(r: RelayRow): boolean {
+  return r.status === "held" || r.status === "ready" || (r.status === "failed" && r.reason === "send_failed");
 }
 
 /**
  * Decides one hand-off and records the decision. Returns the status it ended in.
  * Every early return writes WHY, so the conversation and the log can say so.
  */
-async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus> {
+async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatus> {
   const decidedBy = via.by === "sweep" ? "sweep" : via.who;
+  // From the record as it is now. Changed since the caller read it, or no longer decidable (sending, sent,
+  // practised, skipped, bounced, an unknown outcome): left exactly as it is.
+  const rec = await currentRow(ctx, given.id);
+  if (!rec) return given.status;
+  if (rec.status !== given.status || rec.attempts !== given.attempts || !decidable(rec)) return rec.status;
+  /** Writes this decision; when the record moved on meanwhile, nothing is written and its state now is returned. */
+  const settle = async (status: RelayStatus, patch: Row): Promise<RelayStatus> =>
+    (await decide(ctx, rec, { ...patch, status })) ? status : (await currentRow(ctx, rec.id))?.status ?? status;
   // What is known so far goes on the record too; the status and the reason always win.
-  const stop = async (status: "held" | "skipped", reason: string, extra: Row = {}): Promise<RelayStatus> => {
-    await update(ctx, rec.id, { ...extra, status, reason, decided_by: decidedBy, decided_at: ctx.now.toISOString() });
-    return status;
-  };
+  const stop = (status: "held" | "skipped", reason: string, extra: Row = {}): Promise<RelayStatus> =>
+    settle(status, { ...extra, reason, decided_by: decidedBy, decided_at: ctx.now.toISOString() });
 
-  // The kill switch is read for every decision, not once per process.
+  // The kill switch, as this sweep or request read it (and read again right before any send, below).
   if (!ctx.global.enabled) return rec.status;
+  // Later replies switched off: one already waiting is not sent either (21 Oct review).
+  if (rec.kind === "follow_up" && !ctx.global.forwardLaterReplies) return stop("skipped", "later_replies_off");
 
   if (rec.createdAt && ctx.now.getTime() - Date.parse(rec.createdAt) > HOLD_MAX_AGE_MS) return stop("skipped", "too_old");
 
@@ -589,7 +624,12 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
       if (portals.length && (await anyRow(ctx.mi.from("client_agents").select("id").in("client_id", portals).ilike("email", escapeLike(e)).limit(1), "client_agents"))) {
         return stop("skipped", "their_agent", agent);
       }
+      if (portals.length && (await anyRow(ctx.mi.from("client_team_members").select("id").in("client_id", portals).ilike("email", escapeLike(e)).limit(1), "client_team_members"))) {
+        return stop("skipped", "their_staff", agent);
+      }
     }
+    // My Agents by name too, the same strict way as the DNC list (21 Oct review): an agent on the roster under another address.
+    if (portals.length && (await onRosterByName(ctx, portals, names))) return stop("skipped", "their_agent", { ...agent, detail: "by name" });
   } catch (e) {
     // An unreadable list is treated as a list with the agent on it: held, never sent.
     return stop("held", "read_error", { ...agent, detail: e instanceof Error ? e.message.slice(0, 300) : String(e) });
@@ -668,8 +708,7 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
         return stop("held", "read_error", { ...computed, detail: e instanceof Error ? e.message.slice(0, 300) : String(e) });
       }
     }
-    await update(ctx, rec.id, { ...computed, status: "ready", decided_by: decidedBy });
-    return "ready";
+    return settle("ready", { ...computed, decided_by: decidedBy });
   }
 
   /*
@@ -680,8 +719,7 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
    * The same holds for a press that waited out the hourly cap.
    */
   if (via.by === "click" && rec.practice !== practice) {
-    await update(ctx, rec.id, { ...computed, status: "ready", decided_by: decidedBy });
-    return "ready";
+    return settle("ready", { ...computed, decided_by: decidedBy });
   }
 
   // The hourly cap, counted within the same mode (practice counts practice).
@@ -691,11 +729,15 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
     .select("id", { count: "exact", head: true })
     .eq("os_client_id", osClientId)
     .eq("practice", practice)
+    // Not this hand-off itself: its own earlier decision is not another delivery (21 Oct review).
+    .neq("id", rec.id)
     .in("status", [...CAP_STATUSES])
     .gte("decided_at", since);
   if (cErr) return stop("held", "read_error", { ...computed, detail: `cap: ${cErr.message}` });
   const cap = effectiveCap(ctx.global, client.relay);
-  if ((count ?? 0) >= cap) return stop("held", "hourly_cap", { ...computed, detail: `${cap} an hour` });
+  // Held by the cap after a person pressed SEND is marked so (21 Oct review): only that is sent when the hour allows.
+  // A "Check again" or an admin's campaign answer held by the cap was never a Send, and stays a re-check.
+  if ((count ?? 0) >= cap) return stop("held", via.by === "click" ? "hourly_cap_click" : "hourly_cap", { ...computed, detail: `${cap} an hour` });
 
   // Never twice: one delivery per agent per brokerage (a later reply continues its hand-off).
   if (rec.kind === "handoff") {
@@ -722,8 +764,25 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
   }
 
   if (practice) {
-    await update(ctx, rec.id, { ...computed, status: "practice", decided_by: decidedBy, decided_at: ctx.now.toISOString() });
-    return "practice";
+    return settle("practice", { ...computed, decided_by: decidedBy, decided_at: ctx.now.toISOString() });
+  }
+
+  /*
+   * The switches as they are NOW (21 Oct review). A sweep reads them once and
+   * then works through up to 125 hand-offs, and an admin's campaign answer
+   * works through 50: switching the hand-off off, practice back on, a
+   * brokerage off, or automatic back to one click meanwhile must stop what has
+   * not gone yet. If anything changed it is prepared again — waiting for a
+   * press — never sent.
+   */
+  {
+    const { settings: nowGlobal, missing } = await loadGlobalSettings(ctx.os, ctx.ws);
+    const { data: clientRow, error: swErr } = await ctx.os("os_clients").select("relay_settings").eq("id", osClientId).maybeSingle();
+    if (swErr) return stop("held", "read_error", { ...computed, detail: `switches: ${swErr.message}` });
+    const nowBrokerage = brokerageFromJson((clientRow as Row | null)?.relay_settings);
+    const stillLive = !missing && nowGlobal.enabled && deliveryMode(nowGlobal, nowBrokerage, liveSendAllowed(ctx.env)) === "live";
+    const stillMayGo = via.by === "click" || effectiveMode(nowGlobal, nowBrokerage) === "automatic";
+    if (!stillLive || !stillMayGo) return settle("ready", { ...computed, practice: !stillLive, decided_by: decidedBy });
   }
 
   /*
@@ -748,7 +807,7 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
   const res = await ctx.transport.send(email);
   if (res.ok) {
     try {
-      await update(ctx, rec.id, { status: "sent", sent_at: new Date().toISOString(), provider_message_id: res.messageId });
+      await afterSend(ctx, rec.id, { status: "sent", sent_at: new Date().toISOString(), provider_message_id: res.messageId });
     } catch (e) {
       // It WENT. The record stays "sending", which is never retried; this line is how to repair it.
       console.error(`[brokerage-relay] SENT hand-off ${rec.id} (Postmark MessageID ${res.messageId}) but could not record it: ${e instanceof Error ? e.message : String(e)}`);
@@ -760,8 +819,14 @@ async function evaluate(ctx: Ctx, rec: RelayRow, via: Via): Promise<RelayStatus>
     // Definitely not sent: free the agent's slot so "Try again" can claim it.
     await ctx.os("os_brokerage_relay_agents").delete().eq("workspace_id", ctx.ws).eq("os_client_id", osClientId).eq("agent_email", agentEmail).eq("mode", mode);
   }
-  await update(ctx, rec.id, { status: "failed", reason: res.definite ? "send_failed" : "send_unknown", error: res.error.slice(0, 500) });
+  await afterSend(ctx, rec.id, { status: "failed", reason: res.definite ? "send_failed" : res.partial ? "send_partial" : "send_unknown", error: res.error.slice(0, 500) });
   return "failed";
+}
+
+/** The outcome of a send — only onto the record this process moved to "sending" (no other process can be holding it). */
+async function afterSend(ctx: Ctx, id: string, patch: Row): Promise<void> {
+  const { error } = await ctx.os("os_brokerage_relays").update({ ...patch, updated_at: ctx.now.toISOString() }).eq("id", id).eq("status", "sending");
+  if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -816,112 +881,131 @@ export async function sweepBrokerageRelay(now: Date = new Date(), deps: RelayDep
     const since = sweepSince(now, ctx.global.enabledSince);
     if (!since) return { ...result, off: "no go-live time recorded" };
 
-    // 1. New Interested / Meetings Booked labels.
-    const { data: labels, error: labErr } = await ctx.mi.from("labels").select("id, name").eq("workspace_id", ctx.ws);
-    if (labErr) throw new Error(`labels: ${labErr.message}`);
-    const triggerName = new Map(((labels ?? []) as Row[]).filter((l) => isTriggerLabel(str(l.name))).map((l) => [String(l.id), String(l.name)]));
-    if (triggerName.size) {
-      // Every label in the window, not a first page: a burst must not hide the labels after it.
-      const rows = await readAll(
-        (from, to, first) =>
-          ctx.mi
-            .from("label_assignments")
-            .select("target_id, label_id, assigned_at", first ? { count: "exact" } : undefined)
-            .eq("workspace_id", ctx.ws)
-            .eq("target_type", "thread")
-            .in("label_id", [...triggerName.keys()])
-            .gte("assigned_at", since)
-            .order("assigned_at", { ascending: true })
-            .order("target_id", { ascending: true })
-            .range(from, to),
-        "label_assignments",
-        20_000,
-      );
-      const first = new Map<string, Row>();
-      for (const r of rows) if (!first.has(String(r.target_id))) first.set(String(r.target_id), r);
-      result.seen = first.size;
+    // Each step on its own (21 Oct review): one that fails cannot stop the rest — bounce alerts included.
+    const failed = (step: string) => (e: unknown) => result.errors.push(`${step}: ${e instanceof Error ? e.message : String(e)}`);
 
-      // Conversations already recorded are left alone without a write (one read per 50, not an upsert each minute).
-      const recorded = new Set<string>();
-      for (const ids of chunks([...first.keys()])) {
-        const { data: done, error: dErr } = await ctx.os("os_brokerage_relays").select("thread_id").eq("workspace_id", ctx.ws).in("dedupe_key", ids.map((t) => `handoff:${t}`));
-        if (dErr) throw new Error(`os_brokerage_relays: ${dErr.message}`);
-        for (const d of (done ?? []) as Row[]) recorded.add(String(d.thread_id));
-      }
-      const fresh = [...first].filter(([threadId]) => !recorded.has(threadId));
-      // A burst (an AI re-label, say) is worked through a slice a minute; the rest stay unclaimed until then.
-      if (fresh.length > MAX_NEW_PER_SWEEP) result.errors.push(`${fresh.length - MAX_NEW_PER_SWEEP} new label(s) left for the next sweep`);
+    try {
+      // 1. New Interested / Meetings Booked labels.
+      const { data: labels, error: labErr } = await ctx.mi.from("labels").select("id, name").eq("workspace_id", ctx.ws);
+      if (labErr) throw new Error(`labels: ${labErr.message}`);
+      const triggerName = new Map(((labels ?? []) as Row[]).filter((l) => isTriggerLabel(str(l.name))).map((l) => [String(l.id), String(l.name)]));
+      if (triggerName.size) {
+        // Every label in the window, not a first page: a burst must not hide the labels after it.
+        const rows = await readAll(
+          (from, to, first) =>
+            ctx.mi
+              .from("label_assignments")
+              .select("target_id, label_id, assigned_at", first ? { count: "exact" } : undefined)
+              .eq("workspace_id", ctx.ws)
+              .eq("target_type", "thread")
+              .in("label_id", [...triggerName.keys()])
+              .gte("assigned_at", since)
+              .order("assigned_at", { ascending: true })
+              .order("target_id", { ascending: true })
+              .range(from, to),
+          "label_assignments",
+          20_000,
+        );
+        const first = new Map<string, Row>();
+        for (const r of rows) if (!first.has(String(r.target_id))) first.set(String(r.target_id), r);
+        result.seen = first.size;
 
-      for (const [threadId, a] of fresh.slice(0, MAX_NEW_PER_SWEEP)) {
-        const { data: claimed, error: cErr } = await ctx
-          .os("os_brokerage_relays")
-          .upsert(
-            {
-              workspace_id: ctx.ws,
-              dedupe_key: `handoff:${threadId}`,
-              kind: "handoff",
-              thread_id: threadId,
-              trigger: triggerName.get(String(a.label_id)) ?? "Interested",
-              triggered_at: str(a.assigned_at),
-              status: "held",
-              reason: "evaluating",
-              practice: true,
-              // Explicit, not left to the column default: the send lock compares it.
-              attempts: 0,
-              decided_by: "sweep",
-              created_at: now.toISOString(),
-              updated_at: now.toISOString(),
-            },
-            { onConflict: "dedupe_key", ignoreDuplicates: true },
-          )
-          .select("*");
-        if (cErr) throw new Error(`os_brokerage_relays: ${cErr.message}`);
-        const row = ((claimed ?? []) as Row[])[0];
-        if (!row) continue; // handed off already, by this or another sweep
-        result.claimed++;
-        try {
-          tally(await evaluate(ctx, relayRowFrom(row), { by: "sweep" }));
-        } catch (e) {
-          result.errors.push(`${threadId}: ${e instanceof Error ? e.message : String(e)}`);
+        // Conversations already recorded are left alone without a write (one read per 50, not an upsert each minute).
+        const recorded = new Set<string>();
+        for (const ids of chunks([...first.keys()])) {
+          const { data: done, error: dErr } = await ctx.os("os_brokerage_relays").select("thread_id").eq("workspace_id", ctx.ws).in("dedupe_key", ids.map((t) => `handoff:${t}`));
+          if (dErr) throw new Error(`os_brokerage_relays: ${dErr.message}`);
+          for (const d of (done ?? []) as Row[]) recorded.add(String(d.thread_id));
+        }
+        const fresh = [...first].filter(([threadId]) => !recorded.has(threadId));
+        // A burst (an AI re-label, say) is worked through a slice a minute; the rest stay unclaimed until then.
+        if (fresh.length > MAX_NEW_PER_SWEEP) result.errors.push(`${fresh.length - MAX_NEW_PER_SWEEP} new label(s) left for the next sweep`);
+
+        for (const [threadId, a] of fresh.slice(0, MAX_NEW_PER_SWEEP)) {
+          const { data: claimed, error: cErr } = await ctx
+            .os("os_brokerage_relays")
+            .upsert(
+              {
+                workspace_id: ctx.ws,
+                dedupe_key: `handoff:${threadId}`,
+                kind: "handoff",
+                thread_id: threadId,
+                trigger: triggerName.get(String(a.label_id)) ?? "Interested",
+                triggered_at: str(a.assigned_at),
+                status: "held",
+                reason: "evaluating",
+                practice: true,
+                // Explicit, not left to the column default: the send lock compares it.
+                attempts: 0,
+                decided_by: "sweep",
+                created_at: now.toISOString(),
+                updated_at: now.toISOString(),
+              },
+              { onConflict: "dedupe_key", ignoreDuplicates: true },
+            )
+            .select("*");
+          if (cErr) throw new Error(`os_brokerage_relays: ${cErr.message}`);
+          const row = ((claimed ?? []) as Row[])[0];
+          if (!row) continue; // handed off already, by this or another sweep
+          result.claimed++;
+          try {
+            tally(await evaluate(ctx, relayRowFrom(row), { by: "sweep" }));
+          } catch (e) {
+            result.errors.push(`${threadId}: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
       }
+    } catch (e) {
+      failed("new labels")(e);
     }
 
-    /*
-     * 2. Held ones the sweep can clear by itself (the hour passed, a contact
-     * was added, a read failed, an attempt was interrupted). Each is looked at
-     * at most every five minutes, least recently looked at first — every
-     * check stamps updated_at — so a pile that stays held (a brokerage with
-     * nobody to send to) cannot starve the ones behind it.
-     */
-    const { data: held, error: hErr } = await ctx
-      .os("os_brokerage_relays")
-      .select("*")
-      .eq("workspace_id", ctx.ws)
-      .eq("status", "held")
-      .in("reason", RECHECK_REASONS)
-      .gte("created_at", new Date(now.getTime() - HOLD_MAX_AGE_MS).toISOString())
-      .lt("updated_at", new Date(now.getTime() - RECHECK_EVERY_MS).toISOString())
-      .order("updated_at", { ascending: true })
-      .limit(RECHECK_PER_SWEEP);
-    if (hErr) throw new Error(`os_brokerage_relays: ${hErr.message}`);
-    for (const r of (held ?? []) as Row[]) {
-      result.rechecked++;
-      const row = relayRowFrom(r);
-      // Held by the cap after a person pressed Send: it goes when the hour allows, without a second press.
-      const clicked = row.reason === "hourly_cap" && row.decidedBy && row.decidedBy !== "sweep" ? row.decidedBy : null;
-      try {
-        tally(await evaluate(ctx, row, clicked ? { by: "click", who: clicked } : { by: "sweep" }));
-      } catch (e) {
-        result.errors.push(`${String(r.thread_id)}: ${e instanceof Error ? e.message : String(e)}`);
+    try {
+      /*
+       * 2. Held ones the sweep can clear by itself (the hour passed, a contact
+       * was added, a read failed, an attempt was interrupted). Each is looked at
+       * at most every five minutes, least recently looked at first — every
+       * check stamps updated_at — so a pile that stays held (a brokerage with
+       * nobody to send to) cannot starve the ones behind it.
+       */
+      const { data: held, error: hErr } = await ctx
+        .os("os_brokerage_relays")
+        .select("*")
+        .eq("workspace_id", ctx.ws)
+        .eq("status", "held")
+        .in("reason", RECHECK_REASONS)
+        .gte("created_at", new Date(now.getTime() - HOLD_MAX_AGE_MS).toISOString())
+        .lt("updated_at", new Date(now.getTime() - RECHECK_EVERY_MS).toISOString())
+        .order("updated_at", { ascending: true })
+        .limit(RECHECK_PER_SWEEP);
+      if (hErr) throw new Error(`os_brokerage_relays: ${hErr.message}`);
+      for (const r of (held ?? []) as Row[]) {
+        result.rechecked++;
+        const row = relayRowFrom(r);
+        // Held by the cap after a person pressed Send: it goes when the hour allows, without a second press.
+        const clicked = row.reason === "hourly_cap_click" && row.decidedBy && row.decidedBy !== "sweep" ? row.decidedBy : null;
+        try {
+          tally(await evaluate(ctx, row, clicked ? { by: "click", who: clicked } : { by: "sweep" }));
+        } catch (e) {
+          result.errors.push(`${String(r.thread_id)}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
+    } catch (e) {
+      failed("held re-checks")(e);
     }
 
-    // 3. Later replies (off unless switched on — plan §7, open).
-    if (ctx.global.forwardLaterReplies) result.followUps = await sweepFollowUps(ctx, tally, result.errors);
+    try {
+      // 3. Later replies (off unless switched on — plan §7, open).
+      if (ctx.global.forwardLaterReplies) result.followUps = await sweepFollowUps(ctx, tally, result.errors);
+    } catch (e) {
+      failed("later replies")(e);
+    }
 
-    // 4. Bounces of what was really sent.
-    result.bounced = await pollBounces(ctx, deps, result.errors);
+    try {
+      // 4. Bounces of what was really sent.
+      result.bounced = await pollBounces(ctx, deps, result.errors);
+    } catch (e) {
+      failed("bounces")(e);
+    }
   } catch (e) {
     result.errors.push(e instanceof Error ? e.message : String(e));
   }
@@ -1081,7 +1165,14 @@ async function pollBounces(ctx: Ctx, deps: RelayDeps, errors: string[]): Promise
     const spam = bounceKind(b.Type) === "spam";
     const what = `${b.Type}${b.Email ? ` — ${b.Email}` : ""}${b.Description ? `: ${b.Description}` : ""}`.slice(0, 500);
     const error = rec.status === "bounced" && rec.error ? `${String(rec.error)}; ${what}`.slice(0, 1000) : what;
-    await update(ctx, String(rec.id), { status: "bounced", bounced_at: str(rec.bounced_at) ?? b.BouncedAt ?? ctx.now.toISOString(), error });
+    {
+      // Only a record that is sent becomes bounced.
+      const { error: bErr } = await ctx.os("os_brokerage_relays")
+        .update({ status: "bounced", bounced_at: str(rec.bounced_at) ?? b.BouncedAt ?? ctx.now.toISOString(), error, updated_at: ctx.now.toISOString() })
+        .eq("id", String(rec.id))
+        .in("status", ["sent", "bounced"]);
+      if (bErr) throw new Error(`os_brokerage_relays: ${bErr.message}`);
+    }
     rec.status = "bounced";
     rec.error = error;
     rec.bounced_at = str(rec.bounced_at) ?? b.BouncedAt ?? ctx.now.toISOString();
@@ -1289,9 +1380,35 @@ export async function saveGlobalSettings(body: unknown, who: string, deps: Relay
     throw new RelayActionError(e instanceof RelaySettingsError ? e.message : "Invalid settings.");
   }
   const row = globalToRow(ws, settings, patch, who, now);
+  /*
+   * A tab opened earlier must not undo a newer change — the kill switch,
+   * practice back on (21 Oct review). The page says which version it saw
+   * (ifUpdatedAt) and sends only what it changed; the write is conditional
+   * on that version, so two saves at once cannot both win.
+   */
+  const b = body as Record<string, unknown>;
+  if ("ifUpdatedAt" in b) {
+    if ((b.ifUpdatedAt ?? null) !== settings.updatedAt) throw new RelayActionError(STALE_SETTINGS, 409);
+    if (settings.present) {
+      const q = os("os_relay_settings").update(row).eq("workspace_id", ws);
+      const { data, error } = await (settings.updatedAt ? q.eq("updated_at", settings.updatedAt) : q.is("updated_at", null)).select("workspace_id");
+      if (error) throw new RelayActionError(error.message, 502);
+      if (!((data ?? []) as Row[]).length) throw new RelayActionError(STALE_SETTINGS, 409);
+      return globalFromRow(row);
+    }
+  }
   const { error } = await os("os_relay_settings").upsert(row, { onConflict: "workspace_id" });
   if (error) throw new RelayActionError(error.message, 502);
   return globalFromRow(row);
+}
+
+const STALE_SETTINGS = "These settings were changed by someone else since this page was opened — nothing was saved. The page now shows the newest; make your change again.";
+
+/** The brokerage settings a page loaded (ifRelay) are still the stored ones. */
+function sameRelay(stored: BrokerageRelaySettings, seen: unknown): boolean {
+  if (!seen || typeof seen !== "object") return false;
+  const o = seen as Record<string, unknown>;
+  return stored.enabled === o.enabled && (stored.mode ?? null) === (o.mode ?? null) && stored.recipients === o.recipients && (stored.address ?? null) === (o.address ?? null) && (stored.hourlyCap ?? null) === (o.hourlyCap ?? null);
 }
 
 /** One brokerage's switch, recipients, cap, mode and pipeline entry (admins). Writes os_clients only. */
@@ -1303,9 +1420,12 @@ export async function saveBrokerageSettings(osClientId: string, body: unknown, d
     throw new RelayActionError(read.error.message, 502);
   }
   if (!read.data) throw new RelayActionError("No such client.", 404);
+  const stored = brokerageFromJson((read.data as Row).relay_settings);
+  // As for the switches: a page that loaded other settings than these saves nothing (21 Oct review).
+  if (body && typeof body === "object" && "ifRelay" in body && !sameRelay(stored, (body as Row).ifRelay)) throw new RelayActionError(STALE_SETTINGS, 409);
   let parsed;
   try {
-    parsed = parseBrokeragePatch(body, brokerageFromJson((read.data as Row).relay_settings));
+    parsed = parseBrokeragePatch(body, stored);
   } catch (e) {
     throw new RelayActionError(e instanceof RelaySettingsError ? e.message : "Invalid settings.");
   }

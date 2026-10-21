@@ -10,14 +10,13 @@ import assert from "node:assert/strict";
 import {
   addressHeader,
   agentDisplayName,
+  firstNameOf,
   buildRelayEmail,
   cleanDisplayName,
   handoffIntro,
   handoffSubject,
   messageIdFromPayload,
   providerSaysAutomatic,
-  quotedHistory,
-  relaySubject,
   type RelayEmail,
 } from "./message.ts";
 import { bounceKind, createPostmarkTransport, fetchBounces, postmarkPayload, POSTMARK_API } from "./postmark.ts";
@@ -93,12 +92,6 @@ test("the subject is a notification, never a fake Re:, and safe as a header", ()
   assert.equal(handoffIntro(null), "An agent replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach them directly.");
 });
 
-test("quoted: only messages before the reply, newest first — never the reply itself or anything later", () => {
-  const first = m({ id: "o0", direction: "outbound", bodyText: "First touch", sentAt: "2026-10-01T00:00:00.000Z" });
-  const q = quotedHistory([...conversation, first], conversation[1]);
-  assert.deepEqual(q.map((x) => x.id), ["o1", "o0"]);
-});
-
 test("the agent's words are escaped in HTML, so a reply cannot inject markup", () => {
   const e = build({ reply: m({ id: "r1", bodyText: "<b>hi</b> & <script>alert(1)</script>", sentAt: "2026-10-06T14:00:00.000Z" }) });
   assert.match(e.htmlBody, /&lt;b&gt;hi&lt;\/b&gt; &amp; &lt;script&gt;/);
@@ -116,11 +109,29 @@ test("display names cannot break the header or pass for an address", () => {
   assert.equal(agentDisplayName({ id: null, fullName: null, email: "jordan.ellis@x.test" }, null), "Jordan Ellis");
 });
 
-test("subject: exactly one Re:, from the conversation's subject", () => {
-  assert.equal(relaySubject("Re: RE: Fwd: Quick question", null), "Re: Quick question");
-  assert.equal(relaySubject(null, "Re: Hello"), "Re: Hello");
-  assert.equal(relaySubject("Line\r\nBreak", null), "Re: Line Break");
-  assert.equal(relaySubject("", ""), "Re: (no subject)");
+test("names read right: past a title, from 'Last, First', never a mailbox, no hidden characters (21 Oct review)", () => {
+  assert.equal(firstNameOf("Dr. Jane Smith"), "Jane");
+  assert.equal(firstNameOf("Smith, John"), "John");
+  assert.equal(firstNameOf("John Smith, Realtor"), "John");
+  assert.equal(firstNameOf("J. Smith"), "them", "an initial: no telling");
+  assert.equal(firstNameOf("An agent"), "them");
+  assert.equal(firstNameOf("Jean-Luc O'Neil"), "Jean-Luc");
+  assert.equal(handoffIntro("Dr. Jane Smith"), "Dr. Jane Smith replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach Jane directly.");
+
+  const fromAddress = (email: string) => agentDisplayName({ id: null, fullName: null, email }, null);
+  assert.equal(fromAddress("info@coastal.test"), "An agent");
+  assert.equal(fromAddress("jsmith1985@gmail.test"), "An agent");
+  assert.equal(fromAddress("info.sales@coastal.test"), "An agent");
+  assert.equal(fromAddress("jane_smith@coastal.test"), "Jane Smith");
+
+  // Right-to-left override and zero-width characters are removed, not kept to make the From read otherwise.
+  assert.equal(cleanDisplayName("Jordan\u202Ecod.exe\u202C Ellis"), "Jordancod.exe Ellis");
+  assert.equal(cleanDisplayName("Jor\u200Bdan\uFEFF Ellis\u2028"), "Jordan Ellis");
+
+  // No name known: Reply-To is the bare address, never '"An agent" <…>'.
+  const e = build({ agentName: "An agent", replyTo: "jordan@coastal.test" });
+  assert.equal(e.replyTo, "jordan@coastal.test");
+  assert.equal(e.from, '"An agent via BrokerStaffer" <agents@leads.brokerstaffer.com>');
 });
 
 test("threads into the agent's own conversation when the provider gave the Message-ID", () => {
@@ -144,6 +155,7 @@ test("Postmark payload: tracking off, metadata to find it again", () => {
   assert.equal(p.MessageStream, "outbound");
   assert.deepEqual(p.Metadata, { relay_id: "rel-1", thread_id: "th-1" });
   assert.equal(p.From, '"Jordan Ellis via BrokerStaffer" <agents@leads.brokerstaffer.com>');
+  assert.equal(postmarkPayload({ ...build(), from: "someone@else.test" }, "outbound").From, '"Jordan Ellis via BrokerStaffer" <agents@leads.brokerstaffer.com>', "From is rebuilt from the checked address");
 });
 
 /* ------------------------------------------------------------------ transport */
@@ -232,6 +244,19 @@ test("only a 4xx is a definite refusal; a 5xx or an unreadable 2xx may have been
   assert.equal(!badToken.ok && badToken.definite, true);
 });
 
+test("406 with several people on it is NOT a definite refusal — the others may have received it (21 Oct review)", async () => {
+  const body = { ErrorCode: 406, Message: "You tried to send to recipient(s) that have been marked as inactive. Found inactive addresses: angela@brokerage.test." };
+  const two = build({ recipients: [{ name: "Angela Oakes", email: "angela@brokerage.test" }, { name: "Sam Lee", email: "sam@brokerage.test" }] });
+  const several = await createPostmarkTransport({ fetch: spyFetch({ status: 422, body }).f, env: LIVE_ENV }).send(two);
+  assert.equal(several.ok, false);
+  assert.equal(!several.ok && several.definite, false, "unknown: never freed for a retry");
+  assert.equal(!several.ok && several.partial, true);
+  assert.match(!several.ok ? several.error : "", /angela@brokerage\.test/, "names the inactive address");
+  const one = await createPostmarkTransport({ fetch: spyFetch({ status: 422, body }).f, env: LIVE_ENV }).send(build());
+  assert.equal(!one.ok && one.definite, true, "one person, inactive: nobody got it");
+  assert.equal(!one.ok && one.partial, undefined);
+});
+
 test("every page of bounces is read — a capped first page is not the whole list (review fix)", async () => {
   const calls: string[] = [];
   const page = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ ID: from + i, Type: "HardBounce", MessageID: `pm-${from + i}`, Email: "a@b.test" }));
@@ -278,11 +303,11 @@ test("EmailBison's own 'automatic reply' flag is read from the reply (review fix
   assert.equal(providerSaysAutomatic(undefined), false);
 });
 
-test("subject: control characters never reach the header, and a runaway subject is cut at a word (review fix)", () => {
-  assert.equal(relaySubject("Quick\u0000question\u0007\tJordan", null), "Re: Quick question Jordan");
-  const long = relaySubject(`${"word ".repeat(80)}end`, null);
+test("subject: control characters never reach the header, and a runaway name is cut at a word (review fix)", () => {
+  assert.equal(handoffSubject("Jordan\u0000Ellis\u0007"), "Jordan Ellis is interested — reply to reach them");
+  const long = handoffSubject(`${"word ".repeat(80)}end`);
   assert.ok(long.length <= 205, String(long.length));
-  assert.match(long, /^Re: word word .* word…$/);
+  assert.doesNotMatch(long, /[\r\n]/);
 });
 
 test("an out-of-office or a delay is not a bounce; a spam report is its own kind (review fix)", () => {

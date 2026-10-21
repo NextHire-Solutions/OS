@@ -271,6 +271,18 @@ test("a definite Postmark refusal frees the agent's slot so Try again works; an 
   assert.equal(rec.reason, "send_unknown");
   assert.equal(db.rows("os_brokerage_relay_agents").length, 1, "slot kept: it may have been delivered");
   await assert.rejects(relay.sendToBrokerage(String(rec.id), c2.thread.id, "amy@brokerstaffer.com", deps(LIVE), NOW), /check Postmark/);
+
+  // One of several addresses inactive (406): the others may have it — unknown too, said as such (21 Oct review).
+  seed({ practice_mode: false }, { enabled: true });
+  const c3 = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, c3.thread.id);
+  answer = { ok: false, gated: null, error: "Postmark refused an inactive address (422, code 406): Found inactive addresses: angela@jeffcook.test.", definite: false, partial: true };
+  await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  rec = recordFor(c3.thread.id);
+  assert.equal(rec.status, "failed");
+  assert.equal(rec.reason, "send_partial");
+  assert.equal(db.rows("os_brokerage_relay_agents").length, 1, "slot kept");
+  await assert.rejects(relay.sendToBrokerage(String(rec.id), c3.thread.id, "amy@brokerstaffer.com", deps(LIVE), NOW), /check Postmark/);
   assertContained();
 });
 
@@ -447,6 +459,12 @@ test("the campaign says one brokerage, the conversation is filed under another: 
   await relay.sweepBrokerageRelay(NOW, deps());
   assert.equal(recordFor(thread.id).reason, "campaign_conflict");
   assert.equal(recordFor(thread.id).detail, "Wagner Realty");
+
+  // The team says it is the campaign's brokerage: the hold clears (21 Oct review — it used to stay held forever).
+  await relay.assignCampaign({ platform: "emailbison", campaignId: "101", campaignName: CHARLESTON, osClientId: C.jeff, ignore: false }, "amy@brokerstaffer.com", deps(), NOW);
+  const rec = recordFor(thread.id);
+  assert.deepEqual([rec.status, rec.resolved_by, rec.os_client_id], ["practice", "team", C.jeff]);
+  assertContained();
 });
 
 /* ============================================================ the checks */
@@ -494,6 +512,13 @@ test("never for anyone on that brokerage's Do Not Contact list — by address, c
 
 test("not for an agent the brokerage already has, or one the team already introduced", async () => {
   assert.deepEqual(await outcomeOf(() => add("client_agents", [{ client_id: P.jeff, name: "Jordan Ellis", email: "jordan@coastal.test" }])), ["skipped", "their_agent", null]);
+  // On My Agents under another address, or none — matched by first and last name (21 Oct review).
+  assert.deepEqual(await outcomeOf(() => add("client_agents", [{ client_id: P.jeff, name: "Jordan A. Ellis", email: "jellis@old.test" }])), ["skipped", "their_agent", "by name"]);
+  assert.deepEqual(await outcomeOf(() => add("client_agents", [{ client_id: P.jeff, name: "Jordan Ellis", email: null }])), ["skipped", "their_agent", "by name"]);
+  // Another Ellis, or a Jordan on another brokerage's roster: not a match.
+  assert.equal((await outcomeOf(() => add("client_agents", [{ client_id: P.jeff, name: "Sam Ellis", email: null }, { client_id: P.wag, name: "Jordan Ellis", email: null }])))[0], "practice", "handed off (practice)");
+  // The brokerage's own team member.
+  assert.deepEqual(await outcomeOf(() => add("client_team_members", [{ client_id: P.jeff, name: "Jordan Ellis", email: "JORDAN@coastal.test" }])), ["skipped", "their_staff", null]);
   assert.deepEqual(await outcomeOf((t) => label(L.introduction, t.id)), ["skipped", "already_introduced", "Introduction label"]);
   assert.deepEqual(await outcomeOf(() => add("client_pipeline_entries", [{ client_id: P.jeff, lead_email: "jordan@coastal.test", stage: "Introduction" }])), ["skipped", "already_introduced", "in their pipeline"]);
 });
@@ -655,6 +680,30 @@ test("the conversation's record: what reached whom, read without writing", async
   assert.ok(db.calls.slice(before).every((c) => c.method === "GET"));
   db.missingTables.add("os_brokerage_relays");
   assert.deepEqual(await relay.threadRelays(thread.id), { available: false, records: [] });
+});
+
+test("a tab opened earlier cannot undo a newer change: the save says which version it saw, and is refused if it moved (21 Oct review)", async () => {
+  seed();
+  db.seed("os_relay_settings", []);
+  const first = await relay.saveGlobalSettings({ enabled: true, ifUpdatedAt: null }, "eddy@brokerstaffer.com", { ws: WS }, NOW);
+  const seenByTabA = first.updatedAt;
+  // Admin B leaves practice and then hits the kill switch.
+  const later = new Date(NOW.getTime() + 60_000);
+  const b1 = await relay.saveGlobalSettings({ practiceMode: false, ifUpdatedAt: seenByTabA }, "amy@brokerstaffer.com", { ws: WS }, later);
+  await relay.saveGlobalSettings({ enabled: false, ifUpdatedAt: b1.updatedAt }, "amy@brokerstaffer.com", { ws: WS }, new Date(later.getTime() + 60_000));
+  // Admin A, on the tab opened before, changes only the cap: refused, and the kill switch stays.
+  await assert.rejects(relay.saveGlobalSettings({ hourlyCap: 9, ifUpdatedAt: seenByTabA }, "admin@outreachify.io", { ws: WS }, new Date(later.getTime() + 120_000)), (e: Error & { status?: number }) => e.status === 409 && /changed by someone else/.test(e.message));
+  const stored = db.rows("os_relay_settings")[0];
+  assert.deepEqual([stored.enabled, stored.hourly_cap], [false, 5]);
+
+  // One brokerage: the same, by the settings the page loaded.
+  const loaded = (await relay.saveBrokerageSettings(C.jeff, { enabled: false }, { ws: WS })).relay;
+  await relay.saveBrokerageSettings(C.jeff, { ifRelay: loaded, enabled: true }, { ws: WS });
+  await assert.rejects(relay.saveBrokerageSettings(C.jeff, { ifRelay: loaded, hourlyCap: 3 }, { ws: WS }), (e: Error & { status?: number }) => e.status === 409);
+  const row = db.rows("os_clients").find((r) => r.id === C.jeff)!;
+  const kept = row.relay_settings as Row;
+  assert.deepEqual([kept.enabled, kept.hourly_cap], [true, null], "the newer switch stands; the stale cap was not written");
+  assertContained();
 });
 
 test("settings: saving the switches and a brokerage's settings writes only os tables, and switching on stamps the go-live", async () => {
@@ -931,13 +980,29 @@ test("the campaign → portal routes are read in full: a route past the first pa
     ...Array.from({ length: 5 }, (_, i) => ({ platform: "emailbison", campaign_id: `00${i}`, os_client_id: C.jeff, mi_client_id: P.jeff })),
     { platform: "emailbison", campaign_id: "900", os_client_id: C.wag, mi_client_id: P.wag },
   ]);
-  db.missingTables.add("os_portal_blocks"); // a table a migration has not created yet reads as empty
   db.pageLimit = 2;
   const { thread } = conversation({ portal: P.unknown, campaign: "Template Zillow Flex", campaignId: "900" });
   label(L.interested, thread.id);
   await relay.sweepBrokerageRelay(NOW, deps());
   const rec = recordFor(thread.id);
   assert.deepEqual([rec.status, rec.resolved_by, rec.os_client_id], ["practice", "campaign_portal", C.wag]);
+  assertContained();
+});
+
+test("a safety list that cannot be read stops the sweep before anything is decided — never read as empty (21 Oct review)", async () => {
+  for (const table of ["os_portal_blocks", "os_relay_campaigns", "os_campaign_portals", "os_clients"]) {
+    seed({ practice_mode: false }, { enabled: true });
+    const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+    label(L.interested, thread.id);
+    db.missingTables.add(table);
+    const r = await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+    db.missingTables.clear();
+    assert.ok(r.errors.some((e) => e.includes(table)), `${table}: the failure is reported`);
+    assert.equal(r.claimed, 0, `${table}: nothing claimed, so the next sweep decides it`);
+    assert.equal(handed.length, 0, `${table}: nothing sent`);
+    const again = await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 60_000), deps(LIVE));
+    assert.equal(again.claimed, 1, `${table}: decided once the read works`);
+  }
   assertContained();
 });
 

@@ -56,19 +56,32 @@ const AUTO_SUBJECT = /\b(out of (the )?office|automatic reply|auto-?reply|autore
  * does not. Kept to unambiguous ones: "I'm travelling this week but yes,
  * call me" is a real reply and must not match. (Reviewed 17 Oct: added
  * "automated …", "limited access to email", "… upon my return" and "on
- * <kind of> leave".)
+ * <kind of> leave". 21 Oct: "I am currently on vacation", "thank you for your
+ * email … I am away / out", "away until … no access". "I'm away until Monday
+ * but yes" alone is a person, and still does not match.)
  */
-const AUTO_BODY = /\b(i am (currently )?(out of|away from) (the )?office|i'?m (currently )?(out of|away from) (the )?office|i will be out of (the )?office|i am currently away|i'?m currently away|this is an (automatic(ally generated)?|automated) (reply|response|message)|this is an auto-?(reply|response)|auto-?generated (reply|response|message)|do not reply to this (email|message)|this mailbox is (not|no longer) (monitored|active)|delivery (has )?failed|message (could not|couldn't) be delivered|mailer-daemon|limited access to (my )?e-?mail|(respond|reply|get back to you)\b[^.\n]{0,40}\bupon my return|on (annual|maternity|paternity|parental|medical|sick|bereavement) leave)\b/i;
+const AUTO_BODY = /\b(i am (currently )?(out of|away from) (the )?office|(i am|i'?m) currently on (vacation|holiday|pto|annual leave)|thank(s| you) for your (e-?mail|message)\b[^\n]{0,40}\b(i am|i'?m) (currently )?(away|out of|on (vacation|holiday|leave))|(i am|i'?m) (currently )?away until\b[^.\n]{0,60}\b(no|limited) access|i'?m (currently )?(out of|away from) (the )?office|i will be out of (the )?office|i am currently away|i'?m currently away|this is an (automatic(ally generated)?|automated) (reply|response|message)|this is an auto-?(reply|response)|auto-?generated (reply|response|message)|do not reply to this (email|message)|this mailbox is (not|no longer) (monitored|active)|delivery (has )?failed|message (could not|couldn't) be delivered|mailer-daemon|limited access to (my )?e-?mail|(respond|reply|get back to you)\b[^.\n]{0,40}\bupon my return|on (annual|maternity|paternity|parental|medical|sick|bereavement) leave)\b/i;
 const SYSTEM_SENDER = /^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounces?|auto-?reply|autoresponder)([+.@-]|$)/i;
+
+/** Curly apostrophes and quotes as straight ones: phones write "I’m out of the office" and "don’t contact" (21 Oct review). */
+export const straightQuotes = (s: string | null | undefined) => String(s ?? "").replace(/[\u2018\u2019\u201B\u02BC\u2032]/g, "'").replace(/[\u201C\u201D\u201F\u2033]/g, '"');
 
 export function looksAutomatic(subject: string | null | undefined, ownText: string | null | undefined, sender: string | null | undefined): boolean {
   if (SYSTEM_SENDER.test((sender ?? "").trim())) return true;
-  if (AUTO_SUBJECT.test(subject ?? "")) return true;
-  return AUTO_BODY.test(ownText ?? "");
+  if (AUTO_SUBJECT.test(straightQuotes(subject))) return true;
+  return AUTO_BODY.test(straightQuotes(ownText));
 }
 
+/*
+ * The reply agent's opt-out list (ai/safety.ts, shared — left as it is), plus
+ * a few the relay adds for itself: unambiguous ways to say "stop". Hand-offs
+ * err towards not sending.
+ */
+const MORE_OPT_OUT = /\b(stop (messaging|sending|e-?mailing) me|(do not|don'?t) (e-?mail|message|reach out to) me|leave me alone|no more e-?mails)\b/i;
+
 export function looksLikeOptOut(ownText: string | null | undefined): boolean {
-  return looksLikeUnsubscribe(ownText);
+  const t = straightQuotes(ownText);
+  return looksLikeUnsubscribe(t) || MORE_OPT_OUT.test(t);
 }
 
 export const normEmail = (e: string | null | undefined) => (e ?? "").trim().toLowerCase();
@@ -194,7 +207,10 @@ const LABEL_GRACE_MS = 2 * 60 * 1000;
  * The agent's reply that was marked: the newest message from the agent at or
  * before the label, else the newest from the agent at all. Messages from
  * anyone else (the client's own staff reply on introduced conversations) are
- * never the one handed over.
+ * never the one handed over. Of those, the newest a PERSON wrote (21 Oct
+ * review): an out-of-office, or an empty one, after the real "yes" is not the
+ * reply that was marked. Only when every one is automatic or empty is the
+ * newest taken — and then skipped as such.
  */
 export function pickAgentReply(messages: MessageFacts[], lead: LeadFacts, triggeredAt: string | null): MessageFacts | null {
   const mine = messages
@@ -202,11 +218,13 @@ export function pickAgentReply(messages: MessageFacts[], lead: LeadFacts, trigge
     .sort((a, b) => String(a.sentAt ?? "").localeCompare(String(b.sentAt ?? "")));
   if (!mine.length) return null;
   const cutoff = triggeredAt ? Date.parse(triggeredAt) + LABEL_GRACE_MS : NaN;
-  if (Number.isFinite(cutoff)) {
-    const before = mine.filter((m) => m.sentAt && Date.parse(m.sentAt) <= cutoff);
-    if (before.length) return before[before.length - 1];
-  }
-  return mine[mine.length - 1];
+  const before = Number.isFinite(cutoff) ? mine.filter((m) => m.sentAt && Date.parse(m.sentAt) <= cutoff) : [];
+  const pool = before.length ? before : mine;
+  const written = pool.filter((m) => {
+    const own = ownText(m);
+    return own !== "" && !looksAutomatic(m.subject, own, m.sender);
+  });
+  return (written.length ? written : pool).at(-1) ?? null;
 }
 
 /** The agent's address for the once-per-agent rule: the lead record's, else the reply's sender. */
@@ -267,9 +285,10 @@ function blockedDomain(e: DncEntry): string | null {
 
 /*
  * On the brokerage's DNC list by address (any of the agent's), by company
- * domain (a sub-domain counts), or by full name on an entry with no address
- * (68% of all entries carry no address, and a name match is the cautious
- * reading: a miss sends to someone the brokerage said not to). Names compare
+ * domain (a sub-domain counts), or by full name on any person's entry —
+ * with an address or without (68% carry none). An entry's address is not the
+ * only one that person writes from (21 Oct review), and a name match is the
+ * cautious reading: a miss sends to someone the brokerage said not to. Names compare
  * the way the DNC tool's own stop does (sameName: first and last name, case,
  * accents and suffixes like "Jr." ignored).
  *
@@ -289,7 +308,7 @@ export function dncHit(entries: DncEntry[], agent: { emails: string[]; name: str
   }
   for (const e of entries) {
     if ((e.kind ?? "").trim().toLowerCase() === "company") continue;
-    if (!normEmail(e.email) && e.name && sameName(e.name, agent.name)) return { by: "name", entry: e.name };
+    if (e.name && sameName(e.name, agent.name)) return { by: "name", entry: e.name };
   }
   return null;
 }

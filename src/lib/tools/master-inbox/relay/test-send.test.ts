@@ -77,6 +77,10 @@ test("the transport refuses — before any request — a test to anyone else, tw
     { ...good, to: [{ name: null, email: "angela@brokerage.com" }], toHeader: "angela@brokerage.com" },
     { ...good, to: [{ name: null, email: "admin@outreachify.io" }, { name: null, email: "angela@brokerage.com" }] },
     { ...good, replyTo: "Jane <jane@agent.com>" },
+    // 21 Oct review: a list or a name around the test address is not the test address.
+    { ...good, replyTo: '"victim@x.com, <admin@outreachify.io>' },
+    { ...good, replyTo: "victim@x.com, admin@outreachify.io" },
+    { ...good, replyTo: "Someone <admin@outreachify.io>, victim@x.com" },
     { ...good, toHeader: "admin@outreachify.io, angela@brokerage.com" },
     { ...good, fromAddress: "eddy@brokerstaffer.com" },
   ];
@@ -89,6 +93,15 @@ test("the transport refuses — before any request — a test to anyone else, tw
   const { f, calls } = fakeFetch();
   assert.equal((await sendTest(good, { env: {}, fetch: f })).ok, false);
   assert.equal(calls.length, 0);
+});
+
+test("From is built from the checked address — a caller's From header never reaches Postmark (21 Oct review)", async () => {
+  const good = sampleEmail(FROM, "admin@outreachify.io");
+  const { f, calls } = fakeFetch();
+  const r = await sendTest({ ...good, from: '"Eddy" <eddy@brokerstaffer.com>' }, { env: TOKEN_ONLY, fetch: f });
+  assert.equal(r.ok, true);
+  assert.equal(calls[0].body.From, `"Sam Sample via BrokerStaffer" <${FROM}>`);
+  assert.equal(calls[0].body.ReplyTo, "admin@outreachify.io");
 });
 
 test("at most TEST_DAILY_CAP test sends a day", () => {

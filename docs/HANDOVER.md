@@ -490,9 +490,10 @@ URL before old links forward.
 ### 16–17 October: Interested replies → the brokerage, by Postmark — DEPLOYED 20 Oct, OFF, NOT LIVE
 
 The approved client plan ("Interested replies, straight to the brokerage").
-**State (20 Oct): merged and deployed, switched off — migrations 0035/0036 not
-run yet, `OS_BROKERAGE_RELAY_LIVE_SEND` unset. Nothing has ever gone to a
-brokerage.** Built 16 Oct; reviewed and hardened 17 Oct (below). Practice is
+**State (21 Oct): deployed, not live — migrations 0035/0036 run 20 Oct,
+`POSTMARK_SERVER_TOKEN` set on `os` (server 21106882, for test sends to
+admin@outreachify.io), `OS_BROKERAGE_RELAY_LIVE_SEND` unset. Nothing has ever
+gone to a brokerage.** Built 16 Oct; reviewed and hardened 17 Oct (below). Practice is
 the default everywhere; a send needs every lock below opened by a person.
 
 **20 Oct — test sends and the email's look.** The user: "do not make this
@@ -524,17 +525,17 @@ person, either app), a minute sweep (`instrumentation.ts`, like the Slack alert)
 decides, records and — only when live — sends the agent's own reply through
 Postmark: From `"<Agent> via BrokerStaffer" <agents@leads.brokerstaffer.com>`,
 Reply-To the address the agent wrote from, To the brokerage's people, subject
-`Re: <conversation subject>`, the agent's words then this conversation's earlier
-messages quoted (nothing on top, tracking off; In-Reply-To/References when the
-provider stored the agent's Message-ID).
+`<Agent> is interested — reply to reach them`, one line from BrokerStaffer and
+then the agent's own words only — nothing of ours quoted (tracking off;
+In-Reply-To/References when the provider stored the agent's Message-ID).
 
 | Rule | How (`src/lib/tools/master-inbox/relay/`) |
 |---|---|
 | Brokerage from the CAMPAIGN, never the inbox | `resolve.ts`: team's answer (`os_relay_campaigns`) > campaign → portal (0025) > campaign name (derive.ts's own matcher). A tie between clients, or a conversation filed under another client, is HELD |
 | Unknown campaign → short list | Held; Settings → Brokerage hand-off lists them by campaign; an admin assigns (or "not a brokerage campaign") and they are checked again. Never writes `os_campaign_portals` |
 | Active only; never Demo Portal; billing block | `os_clients.status = 'active'`; `os_portal_blocks` mode `blocked` |
-| No OOO / auto-reply / unsubscribe | Stop labels (Unsubscribe, Do Not Contact, OOO Sequence, Not Interested…), EmailBison's own `automated_reply` flag on the reply, subject/body patterns, `looksLikeUnsubscribe` |
-| Brokerage's DNC | The WHOLE `client_dnc_entries` list of all its portals (every page; a short read or > 50,000 rows → held), matched the DNC tool's way: any entry's address; a COMPANY entry's domain (normalised like `normalizeDomain`, sub-domains count — an agent entry's domain is not a block); full name (`sameName`: accents, "Jr." ignored) on an entry with no address. Also skipped: on its My Agents list, already introduced (Introduction label or in its pipeline) |
+| No OOO / auto-reply / unsubscribe | Stop labels (Unsubscribe, Do Not Contact, OOO Sequence, Not Interested…), EmailBison's own `automated_reply` flag on the reply, subject/body patterns (curly apostrophes read as straight), `looksLikeUnsubscribe` plus a few relay-only "stop" phrases. The reply handed over is the agent's newest one a person wrote — an out-of-office after the real "yes" does not hide it |
+| Brokerage's DNC | The WHOLE `client_dnc_entries` list of all its portals (every page; a short read or > 50,000 rows → held), matched the DNC tool's way: any entry's address; a COMPANY entry's domain (normalised like `normalizeDomain`, sub-domains count — an agent entry's domain is not a block); full name (`sameName`: accents, "Jr." ignored) on any person's entry, with an address or without (21 Oct). Also skipped: on its My Agents list (by address or full name), one of its own team (by address), already introduced (Introduction label or in its pipeline) |
 | No old conversations | The agent's reply must be ≤ 14 days older than the label (`isStaleReply`) — an AI re-label or a tidy-up of old threads is not handed off |
 | Once per conversation; once per agent per brokerage; once per send | Unique `dedupe_key`; primary key of `os_brokerage_relay_agents` (practice and live kept apart); the move to `sending` is a compare-and-set on (status, attempts), so a double press, two tabs, two replicas or a press racing the sweep send once |
 | A press does what it said | "Send to brokerage (practice)" never sends for real: if the locks opened since it was prepared, it is prepared again and needs a new press. "Check again" (held) never sends in one-click mode. "Try again" only after a definite refusal (4xx) |
@@ -544,7 +545,8 @@ provider stored the agent's Message-ID).
 | Bounces | GET /bounces (every page) every 10 min while something was sent that week → hand-off marked, OS bell (`os_notifications`, kind `relay_bounce`); an out-of-office / delay is not a bounce; a spam complaint is titled as one |
 
 **Locks — a send needs ALL of them:** `OS_BROKERAGE_RELAY_LIVE_SEND=1` and
-`POSTMARK_SERVER_TOKEN` on Railway `os` (both unset); Settings switch on and
+`POSTMARK_SERVER_TOKEN` on Railway `os` (the token is set for test sends; the
+live switch is unset); Settings switch on and
 practice mode off (`os_relay_settings`, default off / practice); the
 brokerage's own switch (`os_clients.relay_settings.enabled`, default off); in
 one-click mode (default) a person pressing **Send to brokerage**. The transport
@@ -598,16 +600,43 @@ good. Load: a quiet minute is now reads only (it used to upsert every label in
 the 30-minute window).
 
 **Migrations (Master Inbox database), in order:** `0035_brokerage_relay.sql`,
-`0036_client_pipeline_entry.sql`. Both purely additive (pinned by
-`relay/migrations.test.ts`). Tests: `relay/*.test.ts` (110), every write
+`0036_client_pipeline_entry.sql` — both run 20 Oct. Both purely additive
+(pinned by `relay/migrations.test.ts`). Tests: `relay/*.test.ts`, every write
 asserted to be `os_*` and no request to any other host.
+
+**Review, 21 Oct — found and fixed** (each with a test that fails on the old
+code): a sweep's stale copy could turn a SENT hand-off back into ready/held, so
+it went twice (every decision is now a compare-and-set on the row it read, and
+re-reads the record first); the switches were read once per sweep, not right
+before the send; "Check again" held by the cap was later sent as if Send had
+been pressed; later replies still went after their switch was turned off; a
+reply that was only a quote forwarded our outreach; one failing sweep step
+stopped the rest, bounce alerts included; Postmark's 406 (inactive address)
+with several recipients counted as "nobody got it" (now unconfirmed — no
+retry, check Postmark first); the test send's Reply-To check read only the last
+`<…>` and From was not rebuilt from the checked address; a failed read of
+billing blocks, campaign answers, campaign routes or client columns read as an
+empty list (now stops the sweep; every migration they need is run); a team
+answer could never clear a campaign conflict; curly apostrophes hid
+out-of-office and opt-out phrases; names ("Dr. Jane Smith" → "reach Dr.",
+"Smith, John", "Info", hidden right-to-left characters); a stale Settings tab
+could silently undo the kill switch or practice mode (saves now send only
+what changed, with the version seen; 409 if it moved).
+
+**Open follow-ups (not built):** an admin "not sent — release" action for an
+unconfirmed or stuck send (today: check Postmark's activity by `relay_id`,
+then introduce by hand); with two replicas the hourly cap is count-then-write
+and can be exceeded by one; "once per agent" is keyed on the lead's email, so
+one person with two lead records could be handed over twice; Instantly's own
+auto-reply flag is not read (text patterns only).
 
 **The email, for deliverability ("make sure it doesn't land in spam"):**
 text part + a plain HTML part with the same words (agent's text escaped, no
 images, no added links, no tracking pixel — `TrackOpens: false`, `TrackLinks:
 None`, also off on the Postmark server itself); From `"<Agent> via
 BrokerStaffer" <agents@leads.brokerstaffer.com>`; Reply-To the agent; Subject
-`Re: <conversation subject>`; In-Reply-To/References only with the agent's
+`<Agent> is interested — reply to reach them` (no fake "Re:" — 20 Oct, after
+the first sample reached spam); In-Reply-To/References only with the agent's
 real Message-ID (EmailBison `raw_message_id`, Instantly email `message_id`),
 otherwise left out; Postmark's transactional `outbound` stream (broadcast is
 refused). Known, accepted signal: Reply-To is often a free-mail address
@@ -640,8 +669,7 @@ take minutes to hours). 4) Postmark → "Request approval" to leave test mode.
 No DMARC change is needed (quarantine is inherited); do not add an SPF TXT on
 `leads` for this; nothing on brokerstaffer.com itself changes.
 
-**Before the practice week:** run 0035 then 0036 in the Master Inbox Supabase
-project; deploy the OS (`railway up --service os`, from a clean tree); in
+**Before the practice week:** 0035 and 0036 are run (20 Oct); deploy the OS (`railway up --service os`, from a clean tree); in
 Inbox → Settings → Brokerage hand-off switch **Hand-off on**, leave
 **Practice mode** on, mode **one click** (or automatic, to have every
 Interested reply practised without a press — still nothing is sent). No env

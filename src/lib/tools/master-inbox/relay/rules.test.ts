@@ -222,6 +222,15 @@ test("the team's answer wins, and 'not a brokerage campaign' skips", () => {
   assert.equal(!s.ok && s.outcome, "skip");
 });
 
+test("the team's answer settles a conflict — either brokerage — instead of being held against the filing again (21 Oct review)", () => {
+  const conflict = { platform: "emailbison", campaignId: "1", campaignName: "Jeff Cook Real Estate + Columbia", threadPortalId: "p-wag" };
+  const team = (osClientId: string) => ({ ...world, teamCampaigns: [{ platform: "emailbison", campaignId: "1", osClientId, ignored: false }] });
+  assert.deepEqual(resolveBrokerage(conflict, team("c-jeff")), { ok: true, osClientId: "c-jeff", portalId: "p-jeff", source: "team" }, "the campaign's brokerage");
+  assert.deepEqual(resolveBrokerage(conflict, team("c-wag")), { ok: true, osClientId: "c-wag", portalId: "p-wag", source: "team" }, "the filed one");
+  // Without a team answer, still held.
+  assert.equal((resolveBrokerage(conflict, world) as { reason?: string }).reason, "campaign_conflict");
+});
+
 test("portals of a client: its link, its campaign choices, and its exact names", () => {
   assert.deepEqual(portalsOfClient("c-pe", world).sort(), ["p-bos", "p-fl"]);
   assert.equal(osClientForPortal("p-fl", world), "c-pe");
@@ -265,6 +274,40 @@ test("out-of-office and automatic replies are recognised; a real reply is not", 
   assert.equal(looksLikeOptOut("Sure, happy to chat."), false);
 });
 
+test("curly apostrophes and the missed out-of-office / opt-out phrases are recognised — real replies still are not (21 Oct review)", () => {
+  const auto = (text: string, subject = "Re: Quick question") => looksAutomatic(subject, text, "jordan@coastal.test");
+  for (const t of [
+    "I’m out of the office until Monday.",
+    "I’m currently away from the office with limited access.",
+    "I am currently on vacation and will return on the 28th.",
+    "Thank you for your email. I am away from the office until Monday.",
+    "Thanks for your message — I’m out of the office this week.",
+    "I'm away until 3 November with no access to email.",
+  ]) assert.equal(auto(t), true, t);
+  assert.equal(auto("Thanks", "Out of Office: Quick question"), true);
+  for (const t of [
+    "I'm travelling this week but yes, call me Thursday.",
+    "I’m away until Monday but yes, happy to chat after that.",
+    "I'm on vacation this week but definitely interested — email me next week.",
+    "Thanks for your email! Yes, I'd like to hear more.",
+  ]) assert.equal(auto(t), false, t);
+
+  for (const t of ["Please don’t contact me again.", "Stop emailing me.", "Do not email me.", "Leave me alone", "No more emails please"]) assert.equal(looksLikeOptOut(t), true, t);
+  for (const t of ["Sure, happy to chat.", "Don't email my work address — use jordan@gmail.com", "Please stop by the office Tuesday."]) assert.equal(looksLikeOptOut(t), false, t);
+});
+
+test("an out-of-office (or an empty message) after the real 'yes' does not hide it — the newest one a person wrote is handed over (21 Oct review)", () => {
+  const yes = msg({ id: "yes", bodyText: "Yes, interested — call me.", sentAt: "2026-10-15T14:00:00.000Z" });
+  const ooo = msg({ id: "ooo", subject: "Automatic reply: Quick question", bodyText: "I am out of the office until Monday.", sentAt: "2026-10-15T14:30:00.000Z" });
+  const empty = msg({ id: "empty", bodyText: "", bodyHtml: null, sentAt: "2026-10-15T14:40:00.000Z" });
+  assert.equal(pickAgentReply([yes, ooo, empty], lead, "2026-10-15T15:00:00.000Z")?.id, "yes");
+  // Every one automatic: the newest, so it is skipped as automatic rather than guessed.
+  assert.equal(pickAgentReply([ooo], lead, "2026-10-15T15:00:00.000Z")?.id, "ooo");
+  // A later real reply after the label is still not the marked one.
+  const later = msg({ id: "later", bodyText: "Also, Fridays are best.", sentAt: "2026-10-15T18:00:00.000Z" });
+  assert.equal(pickAgentReply([yes, ooo, later], lead, "2026-10-15T15:00:00.000Z")?.id, "yes");
+});
+
 test("the reply handed over is the agent's own words — the quoted email under it is ours", () => {
   const text = ownText(msg({ bodyText: "Sure, happy to chat.\n\nOn Mon, Oct 5, 2026 at 9:00 AM Nicole Collins <n@b.test> wrote:\n> Hi Jordan" }));
   assert.equal(text, "Sure, happy to chat.");
@@ -294,7 +337,9 @@ test("DNC: by address, by company domain (sub-domains too), by full name on name
   assert.deepEqual(dncHit([{ kind: "company", name: "Coastal", email: null, domain: "coastal.test" }], agent), { by: "domain", entry: "coastal.test" });
   assert.deepEqual(dncHit([{ kind: "agent", name: "Jordan A. Ellis", email: null, domain: null }], agent), { by: "name", entry: "Jordan A. Ellis" });
   // A name entry that carries a DIFFERENT address is not a name match — it is another person's address.
-  assert.equal(dncHit([{ kind: "agent", name: "Jordan Ellis", email: "someone@else.test", domain: null }], agent), null);
+  // An entry with an address still stops the same person writing from another one (21 Oct review).
+  assert.deepEqual(dncHit([{ kind: "agent", name: "Jordan Ellis", email: "jordan@old-brokerage.test", domain: null }], agent), { by: "name", entry: "Jordan Ellis" });
+  assert.equal(dncHit([{ kind: "company", name: "Jordan Ellis", email: "x@coastal-other.test", domain: null }], agent), null, "a company entry never matches a person's name");
   assert.equal(dncHit([{ kind: "agent", name: "Jordan Smith", email: null, domain: null }], agent), null);
 });
 
@@ -411,9 +456,10 @@ test("the conversation line carries the date when it was not today, and a stuck 
   assert.equal(stuck.tone, "problem");
   assert.match(stuck.text, /no answer was recorded.*never sent again by itself/);
   assert.match(relayLine(view({ status: "failed", reason: "send_unknown" })).text, /may have been sent/);
+  assert.match(relayLine(view({ status: "failed", reason: "send_partial", error: "Found inactive addresses: a@x.test." })).text, /^Not confirmed — .*may have received it.*a@x\.test/);
   assert.match(relayLine(view({ status: "bounced", error: "HardBounce — a@x.test" })).text, /^Bounced — HardBounce/);
   assert.match(relayLine(view({ status: "bounced", error: "HardBounce — a@x.test", recipients: [{ name: "A", email: "a@x.test" }, { name: "B", email: "b@x.test" }] })).text, /^Did not reach everyone/);
-  for (const reason of ["stale_reply", "send_failed", "send_unknown"]) assert.ok(REASON_TEXT[reason], reason);
+  for (const reason of ["stale_reply", "send_failed", "send_unknown", "send_partial"]) assert.ok(REASON_TEXT[reason], reason);
 });
 
 test("recipients read as first names", () => {

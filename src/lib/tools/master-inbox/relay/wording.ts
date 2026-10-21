@@ -32,6 +32,7 @@ export interface RelayRecordView {
 
 export const REASON_TEXT: Record<string, string> = {
   evaluating: "Being checked.",
+  later_replies_off: "Relaying the agent's later replies is switched off.",
   no_campaign: "The conversation has no campaign, so its brokerage cannot be known — never guessed from the inbox.",
   unknown_campaign: "The campaign does not match a brokerage — waiting for the team to assign it.",
   ambiguous_campaign: "The campaign name matches more than one brokerage — waiting for the team to assign it.",
@@ -50,8 +51,10 @@ export const REASON_TEXT: Record<string, string> = {
   no_agent_email: "The agent has no email address to reply to.",
   dnc: "The agent is on the brokerage's Do Not Contact list.",
   their_agent: "The agent is already on the brokerage's My Agents list.",
+  their_staff: "One of the brokerage's own team — not handed to them.",
   no_recipients: "The brokerage has nobody with an email address to send to for this market — waiting for a contact.",
   hourly_cap: "The brokerage reached its hourly limit — it goes in the next hour.",
+  hourly_cap_click: "Sent to brokerage was pressed, but the brokerage reached its hourly limit — it goes in the next hour.",
   already_delivered: "Already handed to this brokerage before — one delivery per agent per brokerage.",
   too_old: "Held too long to send now.",
   read_error: "Something could not be read, so it was held rather than guessed.",
@@ -59,6 +62,7 @@ export const REASON_TEXT: Record<string, string> = {
   stale_reply: "The agent's reply is more than two weeks older than the label — an old conversation labelled again, not handed off by itself. Introduce by hand if it should go.",
   send_failed: "Postmark refused it — nothing was sent.",
   send_unknown: "Postmark's answer did not come back, so it may have been sent — check Postmark's activity before sending again.",
+  send_partial: "Postmark refused an address as inactive (an earlier bounce or spam report), so the others on it may have received it — check Postmark's activity before sending again.",
 };
 
 /** A send with no answer recorded after this long is reported as such (the record is never retried by itself). */
@@ -133,7 +137,12 @@ export function relayLine(r: RelayRecordView, today?: string | null): { tone: Li
     case "failed":
       return {
         tone: "problem",
-        text: r.reason === "send_unknown" ? `Not confirmed — ${REASON_TEXT.send_unknown}` : `Not delivered — ${r.error ?? REASON_TEXT.send_failed}`,
+        text:
+          r.reason === "send_unknown"
+            ? `Not confirmed — ${REASON_TEXT.send_unknown}`
+            : r.reason === "send_partial"
+              ? `Not confirmed — ${REASON_TEXT.send_partial}${r.error ? ` ${r.error}` : ""}`
+              : `Not delivered — ${r.error ?? REASON_TEXT.send_failed}`,
       };
     case "bounced":
       // With several people on it, the others may well have received it: say whose address failed.

@@ -174,17 +174,22 @@ export function resolveBrokerage(thread: ThreadCampaign, world: World): Resoluti
     found = { osClientId: owners[0], portalId: preferred.id, source: "campaign_name" };
   }
 
-  // The cross-check against where the conversation is filed.
+  /*
+   * The cross-check against where the conversation is filed — but not of the
+   * team's own answer (21 Oct review): that answer is how a conflict is
+   * settled, and checking it against the filing again held it forever.
+   */
   const filed = thread.threadPortalId;
   const filedPortal = filed ? world.portals.find((p) => p.id === filed) : undefined;
   if (filed && !isUnknownPortal(filedPortal)) {
     const mine = portalsOfClient(found.osClientId, world);
-    if (!mine.includes(filed)) {
+    if (mine.includes(filed)) {
+      if (!found.portalId) found.portalId = filed;
+    } else if (found.source !== "team") {
       const other = osClientForPortal(filed, world);
       const otherName = (other && world.clients.find((c) => c.id === other)?.name) || filedPortal?.name || "another portal";
       return { ok: false, outcome: "hold", reason: "campaign_conflict", detail: otherName };
     }
-    if (!found.portalId) found.portalId = filed;
   }
   if (!found.portalId) found.portalId = world.clients.find((c) => c.id === found!.osClientId)?.miClientId ?? null;
 

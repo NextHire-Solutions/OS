@@ -3,14 +3,15 @@ import { plainTextToHtml } from "../inbox/plain-text-html.ts";
 import { ownText, type LeadFacts, type MessageFacts, type Recipient } from "./rules.ts";
 
 /*
- * The email the brokerage receives (plan §2, "What the brokerage sees"):
+ * The email the brokerage receives — a notification (20 Oct, the user chose
+ * "notification style" after the first test landed in spam):
  *
  *   From      Jordan Ellis via BrokerStaffer <agents@leads.brokerstaffer.com>
  *   To        the brokerage's people for this agent's market
  *   Reply-To  the agent's own address — Reply goes straight to them
- *   Subject   Re: <the conversation's subject>
- *   Body      the agent's reply, then the earlier messages of THIS
- *             conversation quoted underneath. "We add nothing on top."
+ *   Subject   Jordan Ellis is interested — reply to reach them
+ *   Body      one line from BrokerStaffer, then the agent's own words only.
+ *             Our outreach is never quoted under them.
  *
  * Pure. Built from the conversation's own messages only — never another
  * conversation with the same agent (plan §4: "Each brokerage only ever
@@ -18,9 +19,6 @@ import { ownText, type LeadFacts, type MessageFacts, type Recipient } from "./ru
  */
 
 export const VIA = "via BrokerStaffer";
-/** Earlier messages quoted under the reply, newest first. */
-export const MAX_QUOTED = 10;
-const MAX_QUOTED_CHARS = 5000;
 
 export interface RelayEmail {
   fromName: string;
@@ -42,21 +40,34 @@ export interface RelayEmail {
  * A display name that cannot break out of its quotes or pass for an address:
  * control characters (CR/LF included), quotes, backslashes and angle brackets
  * are removed, and anything that looks like an address keeps only its name.
+ * Invisible characters too (21 Oct review): right-to-left overrides and
+ * zero-width ones in a sender's own display name can make the From read as
+ * something else.
  */
 export function cleanDisplayName(raw: string | null | undefined): string {
-  let s = String(raw ?? "").replace(/[\u0000-\u001f\u007f]/g, " ");
+  let s = String(raw ?? "")
+    .replace(/[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
   if (s.includes("<")) s = s.slice(0, s.indexOf("<"));
   if (s.includes("@")) s = s.slice(0, s.indexOf("@"));
   return s.replace(/["\\<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
+/** What the brokerage reads when the agent's name is not known. */
+export const NO_NAME = "An agent";
+
+/*
+ * A name guessed from the address only when it reads as one (21 Oct review):
+ * "jordan.ellis@" → "Jordan Ellis", but never "Info" or "Jsmith1985" — a
+ * mailbox, or a run-together name, is "An agent".
+ */
+const MAILBOX_WORDS = new Set(["info", "admin", "contact", "office", "sales", "hello", "hi", "team", "mail", "email", "support", "help", "homes", "realty", "realtor", "realestate", "properties", "listings", "inquiries", "enquiries", "noreply", "reply", "agent", "broker", "home", "me"]);
 function nameFromAddress(email: string | null | undefined): string {
   const local = String(email ?? "").split("@")[0] ?? "";
-  return local
-    .split(/[._-]+/)
-    .filter((p) => p && !/^\d+$/.test(p))
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
-    .join(" ");
+  const parts = local.split(/[._-]+/).filter(Boolean);
+  if (parts.length < 2 || parts.length > 3) return "";
+  if (!parts.every((p) => /^[a-z]{2,}$/i.test(p) && !MAILBOX_WORDS.has(p.toLowerCase()))) return "";
+  return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(" ");
 }
 
 /** The agent's name as the brokerage should read it. */
@@ -65,76 +76,45 @@ export function agentDisplayName(lead: LeadFacts, reply: Pick<MessageFacts, "sen
     cleanDisplayName(lead.fullName) ||
     cleanDisplayName(reply?.senderName) ||
     cleanDisplayName(nameFromAddress(lead.email ?? reply?.sender)) ||
-    "An agent"
+    NO_NAME
   );
+}
+
+const TITLE = /^(dr|mr|mrs|ms|miss|mx|prof|sir|rev)\.?$/i;
+
+/*
+ * The first name for "reach <first> directly" (21 Oct review): past a title
+ * ("Dr. Jane Smith" → Jane), from "Smith, John" (→ John), and "them" when
+ * there is no telling (an initial, a digit, the unknown agent).
+ */
+export function firstNameOf(name: string | null | undefined): string {
+  const n = cleanDisplayName(name);
+  if (!n || n === NO_NAME) return "them";
+  const comma = n.split(",").map((p) => p.trim()).filter(Boolean);
+  // "Smith, John" — one word before the comma; "John Smith, Realtor" keeps John.
+  const given = comma.length === 2 && !/\s/.test(comma[0]) ? comma[1] : comma[0] ?? n;
+  const words = given.split(/\s+/).filter((w) => !TITLE.test(w));
+  const first = words[0] ?? "";
+  return /^\p{L}[\p{L}'’-]+$/u.test(first) ? first : "them";
 }
 
 /** `"Name" <address>`, or the bare address when there is no name. */
 export function addressHeader(name: string | null | undefined, email: string): string {
   const n = cleanDisplayName(name);
-  return n ? `"${n}" <${email}>` : email;
+  return n && n !== NO_NAME ? `"${n}" <${email}>` : email;
 }
 
 const MAX_SUBJECT = 200;
 
-/**
- * "Re: <subject>", with exactly one Re: however many the conversation piled
- * up. Control characters (CR/LF included) become spaces, and a runaway
- * subject is cut at a word: one line, nothing a header could be split on.
+/*
+ * The agent's own words — and nothing else (21 Oct review). It used to fall
+ * back to the whole message when stripping quotes left nothing, so a reply
+ * that was only a quote (an attachment, a bottom-post) sent the brokerage our
+ * cold outreach and our sender's address. Now that is "" — skipped as
+ * empty_reply, for the team to handle by hand.
  */
-export function relaySubject(threadSubject: string | null | undefined, replySubject: string | null | undefined): string {
-  let base = String((threadSubject ?? "").trim() || (replySubject ?? "").trim())
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  for (let i = 0; i < 10; i++) {
-    const next = base.replace(/^(re|fw|fwd|aw|sv)\s*(\[\d+\])?\s*:\s*/i, "");
-    if (next === base) break;
-    base = next.trim();
-  }
-  if (base.length > MAX_SUBJECT) base = `${base.slice(0, MAX_SUBJECT).replace(/\s+\S*$/, "")}…`;
-  return `Re: ${base || "(no subject)"}`;
-}
-
-const QUOTE_DATE = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-/** "On Mon, Oct 5, 2026, 10:42 AM, Nicole Collins wrote:" — how mail clients introduce a quote. */
-export function quoteHeader(m: Pick<MessageFacts, "sentAt" | "senderName" | "sender">): string {
-  const who = cleanDisplayName(m.senderName) || (m.sender ?? "").trim() || "BrokerStaffer";
-  const t = m.sentAt ? Date.parse(m.sentAt) : NaN;
-  return Number.isFinite(t) ? `On ${QUOTE_DATE.format(new Date(t))}, ${who} wrote:` : `${who} wrote:`;
-}
-
-/** The earlier messages to quote: this conversation's, before the reply, newest first. */
-export function quotedHistory(messages: MessageFacts[], reply: MessageFacts): MessageFacts[] {
-  const at = reply.sentAt ? Date.parse(reply.sentAt) : NaN;
-  return messages
-    .filter((m) => m.id !== reply.id)
-    .filter((m) => {
-      const t = m.sentAt ? Date.parse(m.sentAt) : NaN;
-      return Number.isFinite(at) && Number.isFinite(t) && t < at;
-    })
-    .sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)))
-    .slice(0, MAX_QUOTED);
-}
-
-function clip(text: string): string {
-  return text.length > MAX_QUOTED_CHARS ? `${text.slice(0, MAX_QUOTED_CHARS).trimEnd()}…` : text;
-}
-
-/** The agent's own words; when stripping quotes leaves nothing, the message as written. */
 export function replyText(reply: MessageFacts): string {
-  const own = ownText(reply);
-  if (own) return own;
-  return String(reply.bodyText ?? "").replace(/\r\n/g, "\n").trim();
+  return ownText(reply);
 }
 
 type Obj = Record<string, unknown>;
@@ -195,7 +175,7 @@ export interface BuildInput {
   recipients: Recipient[];
   threadSubject: string | null;
   reply: MessageFacts;
-  /** Every message of THIS conversation; the earlier ones are quoted. */
+  /** Every message of THIS conversation (none is quoted any more — the agent's reply is picked from them by the caller). */
   messages: MessageFacts[];
   agentMessageId: string | null;
 }
@@ -208,20 +188,20 @@ export interface BuildInput {
  * spam"). One line, control characters removed, cut at a word.
  */
 export function handoffSubject(agentName: string | null | undefined): string {
-  const name = cleanDisplayName(agentName) || "An agent";
+  const name = cleanDisplayName(agentName) || NO_NAME;
   const s = `${name} is interested — reply to reach them`;
   return s.length > MAX_SUBJECT ? `${s.slice(0, MAX_SUBJECT).replace(/\s+\S*$/, "")}…` : s;
 }
 
 /** BrokerStaffer's one line at the top, so the brokerage (and its mail filter) know what this is. */
 export function handoffIntro(agentName: string | null | undefined): string {
-  const name = cleanDisplayName(agentName) || "An agent";
-  const first = name === "An agent" ? "them" : name.split(/\s+/)[0];
+  const name = cleanDisplayName(agentName) || NO_NAME;
+  const first = firstNameOf(name);
   return `${name} replied to your BrokerStaffer recruiting campaign and is interested.\nReply to this email to reach ${first} directly.`;
 }
 
 export function buildRelayEmail(input: BuildInput): RelayEmail {
-  const fromName = `${cleanDisplayName(input.agentName) || "An agent"} ${VIA}`;
+  const fromName = `${cleanDisplayName(input.agentName) || NO_NAME} ${VIA}`;
   const own = replyText(input.reply);
   /*
    * The agent's own words under one line from BrokerStaffer — and NOT our cold
