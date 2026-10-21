@@ -355,7 +355,8 @@ EmailBison/Instantly blocklists every campaign shares and is never removed, a
 DNC agent is unsubscribed across every client's campaigns, My Agents emails
 are blocked workspace-wide, Slack posts, and Introductions text Eddy, Ryan and
 Amy) — `demo.test.ts` pins the imports; new team members are saved with texts
-off. Still drawn only on the Demo: the Setup wizard and Integrations.
+off. Still drawn only on the Demo: Integrations, and the Setup wizard's
+"Who we email" and "Your offer" steps (below).
 Market and Reports show the design's sample market (C21 Results' MLSs, FMLS +
 GAMLS — the user, 21 Oct); Prospects stay unavailable (a real client's own
 lists). Tested in a real Chrome against a local server (42/42; every test row
@@ -381,7 +382,18 @@ set off). Tags added here are custom stages keyed `custom_tag_…`
 Built-in tags (the pipeline's three, the two no-show tags) rename only. Each
 section (stages, tags) saves on its own; reorder by drag or the arrow keys.
 Real Chrome: imports 24/24, Manage stages 31/31; the Demo's stage list was
-snapshotted and put back exactly, every test row removed. Also 21 Oct: the page no longer hands any
+snapshotted and put back exactly, every test row removed.
+
+The Setup wizard on the Demo (22 Oct): its own lists save as the pages do —
+the team (Add member, edit, remove, the "Gets interested agents" switch), My
+Agents and DNC (Add agent / Add company, Import CSV, tick and Remove
+selected). Ticking agents from the MARKET is on the page only, never saved:
+they are real agents (the Demo's sample market), and a DNC address would also
+stop the reply agent answering that person for every client — the user, 22
+Oct: "Show only, don't save". "Add to My Agents" there says so. "Who we email"
+(prospects — the Demo has none) and "Your offer" stay as drawn: the offer
+answers have nowhere to be kept yet, in the old portal or the OS (asked the
+user, 22 Oct — open). Real Chrome 25/25; the Demo's lists back to their size. Also 21 Oct: the page no longer hands any
 client's portal token to the browser (a token alone opens that live portal) —
 the conversation panel reads `/api/crm-preview/conversation` by id.
 

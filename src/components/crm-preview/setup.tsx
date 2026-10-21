@@ -8,6 +8,14 @@
  * inert (k.ts RO). The design shows each step's "-Empty" variant when its
  * list is empty; so does the preview.
  *
+ * On the Demo Portal (22 Oct) the wizard's own lists save, as the pages do
+ * (demo-save.ts): the team (add, edit, remove, the switch), My Agents and DNC
+ * (add by hand, Import CSV, remove). Ticking agents from the market is shown
+ * on the page only and never saved — those are real agents (the Demo's sample
+ * market), and a DNC address would also stop the reply agent answering that
+ * person for every client (the user, 22 Oct: "Show only, don't save").
+ * "Who we email" (prospects) and "Your offer" stay as drawn.
+ *
  * Names here are the setup family's (scripts/crm-preview-css.mjs): .sbulk
  * .sacts .snx .ssec.
  */
@@ -19,9 +27,13 @@ import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/port
 import { abbrevUsd, formatPhone, initials } from "@/lib/crm-preview/model";
 import { maxPage, SETUP_PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } from "@/lib/crm-preview/market-model";
 
+import { csvRowToAgent, csvRowToDnc } from "@/lib/tools/master-inbox/portals/csv";
+
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
 import { Chip, NO_FILTERS, type Filters, type Row } from "./market";
+import { DncAddDialog, ImportDialog, TeamAddForm } from "./dialogs";
+import { importCsv, useDemo } from "./demo-save";
 import logo from "./brokerstaffer-logo.png";
 
 const STEPS = ["Welcome and your team", "My Agents", "DNC List", "Who we email", "Your offer"] as const;
@@ -152,6 +164,10 @@ function useDebounced(value: string) {
 function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] }) {
   const first = (client.contactName ?? client.name).split(/\s+/)[0];
   const you = (client.contactName ?? "").trim().toLowerCase();
+  const { live, save } = useDemo();
+  const [form, setForm] = useState<"add" | TeamMember | null>(null);
+  const addMember = live ? { onClick: () => setForm("add") } : RO;
+  const remove = async (m: TeamMember) => { if (window.confirm(`Remove ${m.name} from the team?`)) await save({ type: "team.delete", ids: [m.id] }); };
   return (
     <>
       <Head step={1} title={`Welcome to BrokerStaffer, ${first}.`} text={client.coverage ?? client.name} />
@@ -161,8 +177,18 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
             <h2>Your team</h2>
             <p>When an agent replies interested, we forward the email thread to everyone with &quot;Gets interested agents&quot;&nbsp;on.</p>
           </div>
-          <button className={k("btn")} type="button" {...RO}><Icon name="plus" size={15} />Add member</button>
+          <button className={k("btn")} type="button" {...addMember}><Icon name="plus" size={15} />Add member</button>
         </div>
+        {form ? (
+          <div style={{ padding: "0 20px 16px" }}>
+            <TeamAddForm
+              key={form === "add" ? "add" : form.id}
+              initial={form === "add" ? undefined : { name: form.name, email: form.email, title: form.title, phone: form.phone }}
+              onClose={() => setForm(null)}
+              onSave={(v) => (form === "add" ? save({ type: "team.add", name: v.name, email: v.email, title: v.title, phone: v.phone }) : save({ type: "team.edit", id: form.id, name: v.name, email: v.email, title: v.title, phone: v.phone }))}
+            />
+          </div>
+        ) : null}
         <table className={k("tb")} style={{ borderTop: "1px solid #ebedf0" }}>
           <thead>
             <tr>
@@ -189,10 +215,18 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
                   <td>{m.title || "–"}</td>
                   <td>{m.email}</td>
                   <td className={k("sub")}>{formatPhone(m.phone) ?? "–"}</td>
-                  <td><span className={k(m.active ? "sw" : "sw off")} role="switch" aria-checked={m.active} aria-label={`${m.name} gets interested agents`} {...RO} /></td>
+                  <td>
+                    <span
+                      className={k(m.active ? "sw" : "sw off")}
+                      role="switch"
+                      aria-checked={m.active}
+                      aria-label={`${m.name} gets interested agents`}
+                      {...(live ? { tabIndex: 0, style: { cursor: "pointer" }, onClick: () => void save({ type: "team.active", id: m.id, active: !m.active }), onKeyDown: (e: React.KeyboardEvent) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); void save({ type: "team.active", id: m.id, active: !m.active }); } } } : RO)}
+                    />
+                  </td>
                   <td className={k("r")}>
-                    <button className={k("ib")} type="button" aria-label={`Edit ${m.name}`} {...RO}><Icon name="pencil" size={16} /></button>
-                    {isYou ? null : <button className={k("ib")} type="button" aria-label={`Remove ${m.name}`} {...RO}><Icon name="trash" size={16} /></button>}
+                    <button className={k("ib")} type="button" aria-label={`Edit ${m.name}`} {...(live ? { onClick: () => setForm(m) } : RO)}><Icon name="pencil" size={16} /></button>
+                    {isYou ? null : <button className={k("ib")} type="button" aria-label={`Remove ${m.name}`} {...(live ? { onClick: () => void remove(m) } : RO)}><Icon name="trash" size={16} /></button>}
                   </td>
                 </tr>
               );
@@ -202,7 +236,7 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
         {team.length <= 1 ? (
           <div className={k("addrow")}>
             <span>Add the recruiters and managers who should get interested agents by&nbsp;email.</span>
-            <button className={k("btn sm")} type="button" {...RO}><Icon name="plus" size={14} />Add member</button>
+            <button className={k("btn sm")} type="button" {...addMember}><Icon name="plus" size={14} />Add member</button>
           </div>
         ) : null}
       </div>
@@ -224,9 +258,31 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
       : mine.slice((page - 1) * PER, page * PER).map((a) => ({ id: a.id, name: a.name, office: null, city: null, email: a.email, years: null, list: "My Agents" }));
   const total = tab === "market" ? market.total ?? 0 : mine.length;
   const n = agents.length;
-  // As the design draws it: a row is ticked when the agent is on My Agents; ticking or unticking would change the list, so it is inert.
+  const demo = useDemo();
+  const { live, save } = demo;
+  const [importing, setImporting] = useState(false);
+  // On the Demo: market ticks live on the page only (never saved — real agents); My Agents ticks pick rows to remove.
+  const [marked, setMarked] = useState<ReadonlySet<string>>(new Set());
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => setPicked(new Set()), [agents]);
+  // As the design draws it: a row is ticked when the agent is on My Agents; ticking or unticking would change the list, so it is inert (except on the Demo, above).
   const onList = (r: { list: string }) => r.list === "My Agents";
-  const ticked = rows.filter(onList).length;
+  const isTicked = (r: { id: string; list: string }) => (live && tab === "mine" ? picked.has(r.id) : onList(r) || (live && marked.has(r.id)));
+  const ticked = rows.filter(isTicked).length;
+  const tick = (r: { id: string; list: string }) => {
+    if (tab === "mine") setPicked((cur) => withIds(cur, [r.id], !cur.has(r.id)));
+    else if (!onList(r)) setMarked((cur) => withIds(cur, [r.id], !cur.has(r.id)));
+  };
+  const tickAll = () => {
+    const ids = rows.filter((r) => tab === "mine" || !onList(r)).map((r) => r.id);
+    const on = !ids.every((id) => (tab === "mine" ? picked : marked).has(id));
+    (tab === "mine" ? setPicked : setMarked)((cur) => withIds(cur, ids, on));
+  };
+  const removePicked = async () => {
+    const ids = [...picked];
+    if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "agent" : "agents"} from My Agents?`)) await save({ type: "agent.delete", ids });
+  };
+  const marketOnly = () => demo.say("On the Demo, agents ticked from the market are shown only — they are real agents, so they're never saved to its lists. Import a CSV to add agents.");
   const placeholder = `Search all ${fmt(market.total ?? 0)} agents in your market`;
   return (
     <>
@@ -234,8 +290,9 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
         step={2}
         title="Find your agents"
         text={"Everyone already on your team. Search your market by your office, tick your agents and add them. We never email anyone on this\u00a0list."}
-        actions={<button className={k("btn")} type="button" {...RO}><Icon name="upload" size={15} />Import CSV</button>}
+        actions={<button className={k("btn")} type="button" {...(live ? { onClick: () => setImporting(true) } : RO)}><Icon name="upload" size={15} />Import CSV</button>}
       />
+      {importing ? <ImportDialog kind="agents" onClose={() => setImporting(false)} onFile={(f) => importCsv(f, csvRowToAgent, "agent.import", demo)} /> : null}
       <div className={k("card")}>
         <Tabs tabs={[{ id: "market", label: "All agents in your market", count: market.total }, { id: "mine", label: "My Agents", count: n }]} on={tab} onTab={setTab} />
         <div className={k("tbar")}>
@@ -257,19 +314,23 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
           </div>
         ) : tab === "mine" ? (
           <div className={k("sbulk")}>
-            <span className={k("bt")}><b className={k("num")}>{fmt(n)}</b>{" "}agents match ·{" "}<span className={k("sub")}>all {fmt(n)} added to My Agents</span></span>
-            <button className={k("btn sm")} type="button" {...RO}>Remove selected</button>
+            <span className={k("bt")}><b className={k("num")}>{fmt(n)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{live && picked.size ? `${fmt(picked.size)} selected` : `all ${fmt(n)} added to My Agents`}</span></span>
+            <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(), disabled: picked.size === 0 } : RO)}>Remove selected</button>
           </div>
         ) : (
           <div className={k("sbulk idle")}>
             <span className={k("bt")}><b className={k("num")}>{fmt(total)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{fmt(n)} added to My Agents</span></span>
-            <button className={k("btn sm")} type="button" {...RO}>{ticked ? "Remove selected" : "Add to My Agents"}</button>
+            {live ? (
+              <button className={k("btn sm")} type="button" onClick={marketOnly}>Add to My Agents</button>
+            ) : (
+              <button className={k("btn sm")} type="button" {...RO}>{ticked ? "Remove selected" : "Add to My Agents"}</button>
+            )}
           </div>
         )}
         <table className={k("tb")}>
           <thead>
             <tr>
-              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" checked={rows.length > 0 && ticked === rows.length} readOnly {...RO} /></th>
+              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" checked={rows.length > 0 && ticked === rows.length} {...(live ? { onChange: tickAll } : { readOnly: true, ...RO })} /></th>
               <th>Agent</th>
               <th>Office</th>
               <th>City</th>
@@ -281,8 +342,8 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
           <tbody>
             {rows.length === 0 && !(tab === "market" && market.loading) ? <NoRows cols={7} why={tab === "market" ? market.unavailable ?? "No agents match." : "No agents on My Agents yet."} /> : null}
             {rows.map((r) => (
-              <tr key={r.id} className={onList(r) ? k("sel") : undefined}>
-                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={onList(r)} readOnly {...RO} /></td>
+              <tr key={r.id} className={isTicked(r) ? k("sel") : undefined}>
+                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={isTicked(r)} {...(live && !(tab === "market" && onList(r)) ? { onChange: () => tick(r) } : { readOnly: true, ...RO })} /></td>
                 <td className={k("nm")}>{r.name}</td>
                 <td>{r.office ?? "–"}</td>
                 <td>{r.city ?? "–"}</td>
@@ -306,6 +367,25 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
   const people = useMemo(() => dnc.filter((d) => d.kind === "agent"), [dnc]);
   const companies = useMemo(() => dnc.filter((d) => d.kind === "company"), [dnc]);
   useEffect(() => setPage(1), [tab, q]);
+  const demo = useDemo();
+  const { live, save } = demo;
+  const [dialog, setDialog] = useState<"agent" | "company" | "import" | null>(null);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => setPicked(new Set()), [dnc]);
+  const opens = (d: "agent" | "company" | "import") => (live ? { onClick: () => setDialog(d) } : RO);
+  const dialogs = dialog === "import" ? (
+    <ImportDialog kind="dnc" onClose={() => setDialog(null)} onFile={(f) => importCsv(f, csvRowToDnc, "dnc.import", demo)} />
+  ) : dialog ? (
+    <DncAddDialog
+      initial={dialog}
+      onClose={() => setDialog(null)}
+      onSave={(v) => save({ type: "dnc.add", kind: v.kind === "company" ? "company" : "agent", name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: v.domain, notes: v.notes })}
+    />
+  ) : null;
+  const removePicked = async () => {
+    const ids = [...picked];
+    if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "entry" : "entries"} from the DNC List?`)) await save({ type: "dnc.delete", ids });
+  };
   if (dnc.length === 0) {
     return (
       <>
@@ -315,11 +395,12 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
           <h2>Your DNC List is empty</h2>
           <p>Add the agents and companies we should never email. Search your market, block a whole company by its email domain, or import a&nbsp;CSV.</p>
           <div className={k("ea")}>
-            <button className={k("btn")} type="button" {...RO}><Icon name="plus" size={15} />Add agent</button>
-            <button className={k("btn")} type="button" {...RO}><Icon name="ban" size={15} />Add company</button>
-            <button className={k("btn")} type="button" {...RO}><Icon name="upload" size={15} />Import CSV</button>
+            <button className={k("btn")} type="button" {...opens("agent")}><Icon name="plus" size={15} />Add agent</button>
+            <button className={k("btn")} type="button" {...opens("company")}><Icon name="ban" size={15} />Add company</button>
+            <button className={k("btn")} type="button" {...opens("import")}><Icon name="upload" size={15} />Import CSV</button>
           </div>
         </div>
+        {dialogs}
       </>
     );
   }
@@ -333,11 +414,12 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
         title="Your DNC List"
         text={"Sister offices, referral partners, former agents. We never email anyone on this list. Adding a company blocks every agent at its email\u00a0domain."}
         actions={<>
-          <button className={k("btn")} type="button" {...RO}><Icon name="plus" size={15} />Add agent</button>
-          <button className={k("btn")} type="button" {...RO}><Icon name="ban" size={15} />Add company</button>
-          <button className={k("btn")} type="button" {...RO}><Icon name="upload" size={15} />Import CSV</button>
+          <button className={k("btn")} type="button" {...opens("agent")}><Icon name="plus" size={15} />Add agent</button>
+          <button className={k("btn")} type="button" {...opens("company")}><Icon name="ban" size={15} />Add company</button>
+          <button className={k("btn")} type="button" {...opens("import")}><Icon name="upload" size={15} />Import CSV</button>
         </>}
       />
+      {dialogs}
       <div className={k("card")}>
         <Tabs tabs={[{ id: "agents", label: "Agents", count: people.length }, { id: "companies", label: "Companies", count: companies.length }]} on={tab} onTab={setTab} />
         <div className={k("tbar")}>
@@ -352,13 +434,17 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
           <button className={k("clr")} type="button" onClick={() => setQ("")}>Clear all</button>
         </div>
         <div className={k("sbulk idle")}>
-          <span className={k("bt")}><b className={k("num")}>{fmt(people.length)}</b>{" "}agents ·{" "}<b className={k("num")}>{fmt(companies.length)}</b>{" "}companies blocked{blocked}</span>
-          <button className={k("btn sm")} type="button" {...RO}>Remove selected</button>
+          <span className={k("bt")}><b className={k("num")}>{fmt(people.length)}</b>{" "}agents ·{" "}<b className={k("num")}>{fmt(companies.length)}</b>{" "}companies blocked{blocked}{live && picked.size ? <> · <span className={k("sub")}>{fmt(picked.size)} selected</span></> : null}</span>
+          <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(), disabled: picked.size === 0 } : RO)}>Remove selected</button>
         </div>
         <table className={k("tb")}>
           <thead>
             <tr>
-              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" {...RO} /></th>
+              <th style={{ width: 20 }}>{(() => {
+                const ids = list.slice((page - 1) * PER, page * PER).map((d) => d.id);
+                const all = ids.length > 0 && ids.every((id) => picked.has(id));
+                return <input type="checkbox" aria-label="Select all" {...(live ? { checked: all, onChange: () => setPicked((cur) => withIds(cur, ids, !all)) } : RO)} />;
+              })()}</th>
               <th>Agent</th>
               <th>Office</th>
               <th>City</th>
@@ -369,8 +455,8 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
           </thead>
           <tbody>
             {list.slice((page - 1) * PER, page * PER).map((d) => (
-              <tr key={d.id}>
-                <td><input type="checkbox" aria-label={`Select ${d.name}`} {...RO} /></td>
+              <tr key={d.id} className={live && picked.has(d.id) ? k("sel") : undefined}>
+                <td><input type="checkbox" aria-label={`Select ${d.name}`} {...(live ? { checked: picked.has(d.id), onChange: () => setPicked((cur) => withIds(cur, [d.id], !cur.has(d.id))) } : RO)} /></td>
                 <td className={k("nm")}>{d.name}</td>
                 <td>{(d.kind === "agent" ? d.brokerage : null) ?? "–"}</td>
                 <td>–</td>
