@@ -48,9 +48,10 @@ import { CampaignDetailScreen } from "@/components/screens/analytics/campaign-de
 import { AnalyticsScheduleScreen } from "@/components/screens/analytics/schedule";
 import { AnalyticsClientsScreen } from "@/components/screens/analytics/clients";
 import { canSeePage, idForPath, products } from "@/lib/workspace/nav";
-import { preSplitPageGrants } from "@/lib/workspace/switch-transition";
-import { redirect } from "next/navigation";
-import { ALL_TOOLS } from "@/lib/bs-auth";
+import { isPreSplitSession, preSplitPageGrants, preSplitToolGrants } from "@/lib/workspace/switch-transition";
+import { grantsForRequest } from "@/lib/workspace/tool-paths";
+import { notFound, redirect } from "next/navigation";
+import { ALL_TOOLS, readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { viewerRoles } from "@/lib/identity/viewer-roles";
 import { canSeeBillingTab } from "@/lib/clients/billing-access";
 
@@ -174,22 +175,38 @@ export default async function WorkspacePage({
    */
   {
     const s = slug ?? [];
+    /*
+     * Addresses that are never a staff screen: an unknown one under the public
+     * sign-in pages, the API or Next's own files is not found — never Home
+     * (22 Oct audit: /portal-signin/x rendered the staff Home page).
+     */
+    if (["login", "portal-signin", "api", ".well-known", "_next"].includes(s[0] ?? "")) notFound();
     if (s[0] === "inbox" && s[1] === "portals") redirect(s[2] ? `/portals/${s[2]}` : "/portals");
     if (s[0] === "inbox" && s[1] === "client-view") redirect("/portals/client-view");
   }
 
-  const initialId = idForPath(`/${(slug ?? []).join("/")}`);
+  const path = `/${(slug ?? []).join("/")}`;
+  const initialId = idForPath(path);
 
   const requestHeaders = await headers();
   // The side menu, left retracted last time (rail-state.ts).
   const railCollapsed = (await cookies()).get(RAIL_COOKIE)?.value === RAIL_COLLAPSED;
 
-  // Set by the proxy, which has already verified the token. Trusting it here
-  // avoids a second HMAC per render; Next strips inbound headers of these names,
-  // so a client cannot inject them.
-  const email = requestHeaders.get("x-bs-user") ?? "";
-  const claimed = (requestHeaders.get("x-bs-grants") ?? "").split(",").filter(Boolean);
-  const grants = ALL_TOOLS.filter((t) => claimed.includes(t));
+  /*
+   * Who is asking, from the signed cookie itself (22 Oct audit). This used to
+   * trust x-bs-user / x-bs-grants, set by the proxy — but a request the proxy
+   * never saw (an address ending in .png, then skipped by its matcher) brought
+   * its own headers, and anyone could open the staff pages, client portal
+   * links included. So: no valid session, the sign-in page; and the same
+   * switch check the proxy makes, made again here.
+   */
+  const session = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(requestHeaders.get("cookie")));
+  if (!session) redirect(`/login?next=${encodeURIComponent(path)}`);
+  const tokenGrants = preSplitToolGrants(session.grants, session.iat);
+  const needed = grantsForRequest(path, "GET");
+  if (needed && !needed.some((g) => tokenGrants.includes(g))) redirect(`/?denied=${encodeURIComponent(needed[0])}`);
+  const email = session.email;
+  const grants = ALL_TOOLS.filter((t) => tokenGrants.includes(t));
 
   /*
    * Each of these loaders feeds exactly ONE screen, and
@@ -259,7 +276,7 @@ export default async function WorkspacePage({
   const admin = viewer.admin;
   const roles = { accountManager: viewer.accountManager, salesperson: viewer.salesperson };
   // A session signed before the 15 Oct switch split also has the pages its roles opened (switch-transition.ts).
-  const pageGrants = preSplitPageGrants(grants, requestHeaders.get("x-bs-pre-split") === "1", roles);
+  const pageGrants = preSplitPageGrants(grants, isPreSplitSession(session.iat), roles);
   if (!initialId.includes(":") && !canSeePage(initialId, admin, pageGrants, ALL_TOOLS, roles)) redirect("/");
 
   /*
