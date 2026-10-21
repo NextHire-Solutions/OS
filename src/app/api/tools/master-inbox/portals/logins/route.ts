@@ -4,6 +4,7 @@ import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { isAdminUser } from "@/lib/identity/admin-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { addLogin, listLogins, removeLogin } from "@/lib/portal-login/login";
+import { publicOrigin } from "@/lib/mcp/oauth";
 
 /*
  * A portal's sign-in list — who may sign in to the new client portal (21 Oct).
@@ -32,12 +33,30 @@ async function portalOk(id: string): Promise<boolean> {
   return !!data && (data as { slug: string | null }).slug !== "unknown";
 }
 
+/*
+ * Only a missing table means "run the migration" (22 Oct audit): every error
+ * from login.ts names its table, so matching the table name turned outages,
+ * timeouts and clashes into that advice too — and none of them were logged.
+ */
 const failed = (e: unknown) => {
   const msg = e instanceof Error ? e.message : String(e);
-  if (/os_portal_logins|does not exist|schema cache|PGRST205/i.test(msg)) return NextResponse.json({ error: "Run migration 0037 first — the sign-in tables are not there yet." }, { status: 409 });
   console.error("[portal-logins]", msg.slice(0, 200));
+  if (/does not exist|schema cache|PGRST205|42P01/i.test(msg)) return NextResponse.json({ error: "Run migration 0037 first — the sign-in tables are not there yet." }, { status: 409 });
   return NextResponse.json({ error: "That could not be saved just now." }, { status: 502 });
 };
+
+/*
+ * A change to the list comes only from the OS's own page (22 Oct audit): the
+ * staff cookie travels with requests from other brokerstaffer.com sites too,
+ * so a page elsewhere could otherwise add an address to a portal's list.
+ */
+function fromOwnPage(request: NextRequest): boolean {
+  if (!(request.headers.get("content-type") ?? "").startsWith("application/json")) return false;
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin";
+  // The public address: behind Railway's proxy a route sees the container's own (see logout/route.ts).
+  return request.headers.get("origin") === publicOrigin();
+}
 
 export async function GET(request: NextRequest) {
   if (!(await who(request))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -53,6 +72,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const by = await who(request);
   if (!by) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!fromOwnPage(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const body = (await request.json().catch(() => null)) as { portal?: unknown; email?: unknown; name?: unknown } | null;
   const portal = typeof body?.portal === "string" ? body.portal : "";
   if (!(await portalOk(portal))) return NextResponse.json({ error: "No such portal." }, { status: 404 });
@@ -69,6 +89,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const by = await who(request);
   if (!by) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!fromOwnPage(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const body = (await request.json().catch(() => null)) as { portal?: unknown; id?: unknown } | null;
   const portal = typeof body?.portal === "string" ? body.portal : "";
   const id = typeof body?.id === "string" && UUID.test(body.id) ? body.id : "";

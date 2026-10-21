@@ -9,7 +9,7 @@ import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/too
 import { DEMO_MARKET_MLS, isDemoPortal } from "@/lib/crm-preview/demo";
 
 import {
-  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, ownListEmail, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type ReportGroup,
 } from "./market-model";
 
@@ -186,7 +186,8 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   ]);
   const sets = listSets(myAgents, dnc, pipeline, prospects);
   const rows: MarketRow[] = page.rows.map((r) => {
-    const list = listFor({ id: String(r.id), full_name: str(r.full_name), emails: [str(r.preferred_email), str(r.enriched_email)].filter((e): e is string => !!e) }, sets);
+    const emails = [str(r.preferred_email), str(r.enriched_email)].filter((e): e is string => !!e);
+    const list = listFor({ id: String(r.id), full_name: str(r.full_name), emails }, sets);
     return {
       id: String(r.id),
       name: str(r.full_name) ?? "Unnamed agent",
@@ -198,7 +199,8 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
       units: num(r.units),
       office: str(r.office_name),
       years: num(r.est_time_in_industry_months) !== null ? Math.floor((num(r.est_time_in_industry_months) as number) / 12) : null,
-      ...(q.per === SETUP_PAGE_SIZE && OWN_LISTS.has(list) ? { email: str(r.preferred_email) ?? str(r.enriched_email) } : {}),
+      // Only an address the client already has on its own list — never the agent database's (ownListEmail).
+      ...(q.per === SETUP_PAGE_SIZE && OWN_LISTS.has(list) ? { email: ownListEmail(emails, sets) } : {}),
       list,
       pill: LIST_PILL[list],
     };

@@ -39,7 +39,7 @@ export function signInMessage(mail: SignInEmail): { subject: string; text: strin
     `Use this link to sign in to your BrokerStaffer portal. It works once, for the next ${mail.minutes} minutes:`,
     mail.link,
     "",
-    `Or enter this code on the sign-in page: ${code}`,
+    `Or enter this code on the sign-in page ("I already have a code from the email"): ${code}`,
     "",
     "If you didn't ask to sign in, you can ignore this email — nobody can sign in without it.",
     "",
@@ -50,7 +50,7 @@ export function signInMessage(mail: SignInEmail): { subject: string; text: strin
     `<p>Hi,</p>` +
     `<p>Use this button to sign in to your BrokerStaffer portal. It works once, for the next ${mail.minutes}&nbsp;minutes.</p>` +
     `<p style="margin:24px 0"><a href="${esc(mail.link)}" style="background:#3e6bd1;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;display:inline-block">Sign in to BrokerStaffer</a></p>` +
-    `<p>Or enter this code on the sign-in page: <b style="font-size:18px;letter-spacing:2px">${esc(code)}</b></p>` +
+    `<p>Or enter this code on the sign-in page (&ldquo;I already have a code from the email&rdquo;): <b style="font-size:18px;letter-spacing:2px">${esc(code)}</b></p>` +
     `<p style="color:#6b7280;font-size:13px">If you didn't ask to sign in, you can ignore this email — nobody can sign in without it.</p>` +
     `<p>BrokerStaffer</p></div>`;
   return { subject, text, html };

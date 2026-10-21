@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { signInWithCode } from "@/lib/portal-login/login";
-import { clientIp, fromSignInPage, NO_STORE, REASON, sessionCookie, signInSecret } from "@/lib/portal-login/http";
+import { clientIp, CODE_REFUSED, fromSignInPage, NO_STORE, sessionCookie, signInSecret } from "@/lib/portal-login/http";
 
 /* POST /api/portal-signin/code { email, code } — the 6-digit code from the sign-in email → a 30-day session. */
 export const dynamic = "force-dynamic";
@@ -14,7 +14,8 @@ export async function POST(request: NextRequest) {
   const code = typeof body?.code === "string" ? body.code.slice(0, 20) : "";
   try {
     const r = await signInWithCode(createAdminSupabase(), { email, code, now: new Date(), secret: signInSecret(), userAgent: request.headers.get("user-agent"), ip: clientIp(request.headers) });
-    if (!r.ok) return NextResponse.json({ error: REASON[r.reason] }, { status: 400, headers: NO_STORE });
+    // One answer whatever the reason — see CODE_REFUSED.
+    if (!r.ok) return NextResponse.json({ error: CODE_REFUSED }, { status: 400, headers: NO_STORE });
     const res = NextResponse.json({ ok: true }, { headers: NO_STORE });
     res.cookies.set(sessionCookie(r.session));
     console.info(JSON.stringify({ tag: "[portal-signin] signed in", by: "code" }));

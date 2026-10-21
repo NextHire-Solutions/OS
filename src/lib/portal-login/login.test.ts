@@ -147,3 +147,54 @@ test("the list: an address once per portal; taken off and added back is the same
   assert.equal(fake.rows("os_portal_logins").length, 1);
   assert.deepEqual(await removeLogin(db, { portalId: P2, id: row.id, by: "amy", now: later(3) }), { ok: false, status: 404, error: "That address is not on this portal's list." }, "only from its own portal");
 });
+
+/* ---------------------------------------------------------- 22 Oct audit --- */
+
+test("guesses sent all at once: never more than five codes compared — then even the right code is refused", async () => {
+  seed(); mails.length = 0;
+  await addLogin(db, { portalId: P1, email: "angela@brokerage.test", name: "Angela", by: "amy@brokerstaffer.com", now: NOW });
+  await ask("angela@brokerage.test");
+  const right = mails[0].code;
+  const wrong = right === "000000" ? "111111" : "000000";
+  for (let burst = 0; burst < 10; burst++) {
+    const out = await Promise.all(Array.from({ length: 10 }, () => signInWithCode(db, { email: "angela@brokerage.test", code: wrong, now: later(1), secret: SECRET, ...meta })));
+    assert.ok(out.every((r) => !r.ok));
+  }
+  assert.equal(fake.rows("os_portal_login_tokens")[0].attempts, MAX_CODE_ATTEMPTS, "five tries spent, no more");
+  const last = await signInWithCode(db, { email: "angela@brokerage.test", code: right, now: later(2), secret: SECRET, ...meta });
+  assert.deepEqual(last, { ok: false, reason: "too-many-tries" });
+  assert.equal(fake.rows("os_portal_sessions").length, 0);
+});
+
+test("the right code among guesses sent at once signs in only if it is the one compared", async () => {
+  seed(); mails.length = 0;
+  await addLogin(db, { portalId: P1, email: "angela@brokerage.test", name: "Angela", by: "amy@brokerstaffer.com", now: NOW });
+  await ask("angela@brokerage.test");
+  const right = mails[0].code;
+  const wrong = right === "000000" ? "111111" : "000000";
+  const out = await Promise.all([...Array.from({ length: 30 }, () => wrong), right].map((code) => signInWithCode(db, { email: "angela@brokerage.test", code, now: later(1), secret: SECRET, ...meta })));
+  // The burst's first guess spent the one try it had; the rest — the right code at the back included — were never compared.
+  assert.equal(out.filter((r) => r.ok).length, 0, "the right code at the back of a burst is not compared");
+  assert.deepEqual(out.at(-1), { ok: false, reason: "invalid" });
+  assert.equal(Number(fake.rows("os_portal_login_tokens")[0].attempts), 1, "one compare for the whole burst");
+  assert.equal(fake.rows("os_portal_sessions").length, 0);
+  // Sent on its own afterwards, the right code still works (four tries left).
+  assert.equal((await signInWithCode(db, { email: "angela@brokerage.test", code: right, now: later(2), secret: SECRET, ...meta })).ok, true);
+});
+
+test("thirty requests at once: no more than five emails, and only the newest link works", async () => {
+  seed(); mails.length = 0;
+  await addLogin(db, { portalId: P1, email: "angela@brokerage.test", name: "Angela", by: "amy@brokerstaffer.com", now: NOW });
+  await Promise.all(Array.from({ length: 30 }, () => ask("angela@brokerage.test")));
+  assert.ok(mails.length <= PER_EMAIL_PER_HOUR, `${mails.length} emails`);
+  // Two links in hand: the older one no longer works, even if both were sent.
+  seed(); mails.length = 0;
+  await addLogin(db, { portalId: P1, email: "angela@brokerage.test", name: "Angela", by: "amy@brokerstaffer.com", now: NOW });
+  await ask("angela@brokerage.test", NOW);
+  await ask("angela@brokerage.test", later(1));
+  const [first, second] = mails;
+  // Make the first one look live again, as a race could leave it.
+  for (const t of fake.rows("os_portal_login_tokens")) t.expires_at = later(15).toISOString();
+  assert.deepEqual(await signInWithLink(db, { link: linkOf(first), now: later(2), ...meta }), { ok: false, reason: "expired" });
+  assert.equal((await signInWithLink(db, { link: linkOf(second), now: later(2), ...meta })).ok, true);
+});

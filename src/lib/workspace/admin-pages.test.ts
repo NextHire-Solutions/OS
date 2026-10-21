@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { ALL_TOOLS } from "../bs-auth.ts";
 import { canSeePage, PAGE_GRANTS } from "./nav.ts";
 import { holdsPage, NAMED_PAGES, namedPagesFor } from "../identity/named-pages.ts";
+import { liveChangeRefusal } from "../tools/master-inbox/auth/require-reply-agent.ts";
 
 const EVERY = [...ALL_TOOLS];
 const ROLES = [{}, { accountManager: true }, { salesperson: true }, { accountManager: true, salesperson: true }];
@@ -68,4 +69,24 @@ test("the Reply agent page's routes accept the same people — and its other adm
   }
   // Running the agent by hand and releasing held replies stay admins-only.
   for (const f of ["reply-agents/run/route.ts", "reply-agents/release/route.ts"]) assert.match(read(`src/app/api/tools/master-inbox/${f}`), /requireAdminSession\(\)/, f);
+});
+
+test("Live stays with admins (22 Oct audit): a named person can't put an agent live, nor change or delete a live one", async () => {
+  assert.equal(liveChangeRefusal({ admin: false, setsLive: true, currentMode: null }), "Only an admin can put a reply agent live.");
+  assert.equal(liveChangeRefusal({ admin: false, setsLive: true, currentMode: "shadow" }), "Only an admin can put a reply agent live.");
+  assert.equal(liveChangeRefusal({ admin: false, setsLive: false, currentMode: "live" }), "This agent is live — only an admin can change or delete it.");
+  assert.equal(liveChangeRefusal({ admin: false, setsLive: false, currentMode: "shadow" }), null, "Shadow and Paused agents: hers to prepare");
+  assert.equal(liveChangeRefusal({ admin: false, setsLive: false, currentMode: "pause" }), null);
+  assert.equal(liveChangeRefusal({ admin: true, setsLive: true, currentMode: "live" }), null, "admins as before");
+  // Each route asks before it saves or deletes.
+  const fs = await import("node:fs");
+  const create = fs.readFileSync("src/app/api/tools/master-inbox/reply-agents/route.ts", "utf8");
+  assert.ok(create.indexOf('refuseLiveChange(session, { setsLive: parsed.data.run_mode === "live" })') < create.indexOf("await saveAgent(") && create.includes("refuseLiveChange(session"));
+  const one = fs.readFileSync("src/app/api/tools/master-inbox/reply-agents/[id]/route.ts", "utf8");
+  const patch = one.indexOf("export async function PATCH");
+  const del = one.indexOf("export async function DELETE");
+  assert.ok(one.indexOf('refuseLiveChange(session, { setsLive: parsed.data.run_mode === "live", agentId: id })', patch) < one.indexOf("await saveAgent(", patch));
+  assert.ok(one.indexOf("refuseLiveChange(session, { setsLive: false, agentId: id })", del) > del && one.indexOf("refuseLiveChange(session, { setsLive: false, agentId: id })", del) < one.indexOf("await deleteAgent(", del));
+  // Duplicating makes a Paused copy, so it needs no check.
+  assert.match(fs.readFileSync("src/app/api/tools/master-inbox/reply-agents/[id]/duplicate/route.ts", "utf8"), /run_mode: "pause"/);
 });

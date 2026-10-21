@@ -99,6 +99,19 @@ export async function requestSignIn(
     requested_ip: input.ip,
   });
   fail(ins, "os_portal_login_tokens");
+  /*
+   * Counted again AFTER this request's own row is in (22 Oct audit): many
+   * requests at once all passed the count above before any of them had
+   * written, and each sent an email. Now one that finds the hour over its
+   * limit, its own row included, sends nothing and closes its link.
+   */
+  const after: Res = await db.from("os_portal_login_tokens").select("id").eq("email", email).gte("created_at", hourAgo);
+  fail(after, "os_portal_login_tokens");
+  if (((after.data ?? []) as unknown[]).length > PER_EMAIL_PER_HOUR) {
+    const close: Res = await db.from("os_portal_login_tokens").update({ expires_at: iso(input.now) }).eq("link_hash", sha256(linkSecret));
+    fail(close, "os_portal_login_tokens");
+    return { shown: "check-your-email", sent: false, why: "too-many" };
+  }
   await send({ to: email, link: `${input.linkBase}?t=${encodeURIComponent(linkSecret)}`, code, minutes: LINK_MINUTES });
   return { shown: "check-your-email", sent: true };
 }
@@ -114,7 +127,24 @@ export async function signInWithLink(db: Db, input: { link: string; now: Date; u
   if (!t) return { ok: false, reason: "invalid" };
   if (t.used_at) return { ok: false, reason: "used" };
   if (Date.parse(t.expires_at) <= input.now.getTime()) return { ok: false, reason: "expired" };
+  // Only the newest email's link works, even when two were requested at the same moment (22 Oct audit).
+  if ((await newestOpenToken(db, t.email, input.now))?.id !== t.id) return { ok: false, reason: "expired" };
   return useToken(db, t.id, t.email, input);
+}
+
+/* The address's newest link that is neither used nor expired. */
+async function newestOpenToken(db: Db, email: string, now: Date): Promise<{ id: string; email: string; code_hash: string; attempts: number } | null> {
+  const r: Res = await db
+    .from("os_portal_login_tokens")
+    .select("id, email, code_hash, attempts")
+    .eq("email", email)
+    .is("used_at", null)
+    .gt("expires_at", iso(now))
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1);
+  fail(r, "os_portal_login_tokens");
+  return ((r.data ?? []) as Array<{ id: string; email: string; code_hash: string; attempts: number }>)[0] ?? null;
 }
 
 /** The 6-digit code from the same email → a session. Five wrong codes and that email's code is spent. */
@@ -122,22 +152,20 @@ export async function signInWithCode(db: Db, input: { email: string; code: strin
   const email = normEmail(input.email);
   const code = input.code.replace(/\s+/g, "");
   if (!isEmail(email) || !/^\d{6}$/.test(code)) return { ok: false, reason: "invalid" };
-  const r: Res = await db
-    .from("os_portal_login_tokens")
-    .select("id, email, code_hash, expires_at, used_at, attempts")
-    .eq("email", email)
-    .is("used_at", null)
-    .gt("expires_at", iso(input.now))
-    .order("created_at", { ascending: false })
-    .limit(1);
-  fail(r, "os_portal_login_tokens");
-  const t = ((r.data ?? []) as Array<{ id: string; email: string; code_hash: string; attempts: number }>)[0];
+  const t = await newestOpenToken(db, email, input.now);
   if (!t) return { ok: false, reason: "expired" };
   if (t.attempts >= MAX_CODE_ATTEMPTS) return { ok: false, reason: "too-many-tries" };
+  /*
+   * Spend one try BEFORE the code is compared, on the count just read (22 Oct
+   * audit). Guesses sent all at once used to be compared first and counted
+   * after, so fifty could be checked against one count. Now a guess is only
+   * compared if it is the one that moved the count; the others lose the race
+   * and are refused unchecked. So five codes, at most, are ever compared.
+   */
+  const spend: Res = await db.from("os_portal_login_tokens").update({ attempts: t.attempts + 1 }).eq("id", t.id).eq("attempts", t.attempts).select("id");
+  fail(spend, "os_portal_login_tokens");
+  if (!((spend.data ?? []) as unknown[]).length) return { ok: false, reason: "invalid" };
   if (!sameHex(t.code_hash, codeHash(input.secret, email, code))) {
-    // Counted on the row it read: a second wrong guess racing this one cannot both pass the limit.
-    const bump: Res = await db.from("os_portal_login_tokens").update({ attempts: t.attempts + 1 }).eq("id", t.id).eq("attempts", t.attempts);
-    fail(bump, "os_portal_login_tokens");
     return { ok: false, reason: t.attempts + 1 >= MAX_CODE_ATTEMPTS ? "too-many-tries" : "invalid" };
   }
   return useToken(db, t.id, t.email, input);
@@ -145,7 +173,14 @@ export async function signInWithCode(db: Db, input: { email: string; code: strin
 
 async function useToken(db: Db, id: string, email: string, input: { now: Date; userAgent: string | null; ip: string | null }): Promise<SignedIn> {
   // Single use, even with two clicks at once: only the request that marks it used goes on.
-  const used: Res = await db.from("os_portal_login_tokens").update({ used_at: iso(input.now) }).eq("id", id).is("used_at", null).select("id");
+  const used: Res = await db
+    .from("os_portal_login_tokens")
+    .update({ used_at: iso(input.now) })
+    .eq("id", id)
+    .is("used_at", null)
+    .gt("expires_at", iso(input.now))
+    .lte("attempts", MAX_CODE_ATTEMPTS)
+    .select("id");
   fail(used, "os_portal_login_tokens");
   if (!((used.data ?? []) as unknown[]).length) return { ok: false, reason: "used" };
   // Taken off the list since the email went out: no session.

@@ -352,6 +352,20 @@ export function listFor(agent: { id: string; full_name: string | null; emails: s
   return "Not on a list";
 }
 
+/**
+ * The one address the client already holds for this agent: an EXACT match on
+ * one of its own lists (My Agents, DNC, its pipeline), as that list has it —
+ * never from a name or company-domain match, and never another of the
+ * agent's addresses (22 Oct audit: a DNC company domain showed the email of
+ * every agent at that company). Null when there is none.
+ */
+export function ownListEmail(emails: readonly string[], s: ListSets): string | null {
+  for (const e of emails.map((x) => x.trim().toLowerCase()).filter(Boolean)) {
+    if (s.dncEmails.has(e) || s.myAgentEmails.has(e) || s.pipelineEmails.has(e)) return e;
+  }
+  return null;
+}
+
 /** The sets above from the client's My Agents, DNC and pipeline. Names only from entries with no email. */
 export function listSets(
   myAgents: ReadonlyArray<{ name: string; email: string | null }>,

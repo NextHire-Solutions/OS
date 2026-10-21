@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireReplyAgentSession } from "@/lib/tools/master-inbox/auth/require-reply-agent";
+import { refuseLiveChange, requireReplyAgentSession } from "@/lib/tools/master-inbox/auth/require-reply-agent";
 import { saveAgent, deleteAgent, LiveModeNotEnabledError } from "@/lib/tools/master-inbox/ai/agent";
 import { normaliseUpgradeFields, upgradeFieldsSchema } from "@/lib/tools/master-inbox/ai/agent-schema";
 
@@ -44,6 +44,8 @@ export async function PATCH(
       { status: 400 },
     );
   }
+  const live = await refuseLiveChange(session, { setsLive: parsed.data.run_mode === "live", agentId: id });
+  if (live) return live;
   try {
     await saveAgent({
       workspaceId: session.activeWorkspace.id,
@@ -93,6 +95,8 @@ export async function DELETE(
   const { id } = await context.params;
   const session = await requireReplyAgentSession();
   if (session instanceof NextResponse) return session;
+  const live = await refuseLiveChange(session, { setsLive: false, agentId: id });
+  if (live) return live;
   try {
     await deleteAgent(session.activeWorkspace.id, id);
     return NextResponse.json({ ok: true });

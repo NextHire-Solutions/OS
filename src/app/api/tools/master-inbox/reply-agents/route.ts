@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth/workspace";
-import { requireReplyAgentSession } from "@/lib/tools/master-inbox/auth/require-reply-agent";
+import { refuseLiveChange, requireReplyAgentSession } from "@/lib/tools/master-inbox/auth/require-reply-agent";
 import { LiveModeNotEnabledError, loadAgents, saveAgent } from "@/lib/tools/master-inbox/ai/agent";
 import { normaliseUpgradeFields, upgradeFieldsSchema } from "@/lib/tools/master-inbox/ai/agent-schema";
 import { liveSendingEnabled } from "@/lib/tools/master-inbox/ai/live-gate";
@@ -54,6 +54,8 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  const live = await refuseLiveChange(session, { setsLive: parsed.data.run_mode === "live" });
+  if (live) return live;
   try {
     const id = await saveAgent({
       workspaceId: session.activeWorkspace.id,

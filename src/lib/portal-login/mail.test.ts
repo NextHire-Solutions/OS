@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 import { mayEmail, sendSignInEmail, signInMessage, signInOpen, SIGNIN_FROM } from "./mail.ts";
+import { clientIp, CODE_REFUSED, fromSignInPage } from "./http.ts";
 
 const read = (p: string) => fs.readFileSync(p, "utf8");
 const MAIL = { to: "angela@brokerage.test", link: "https://os.test/portal-signin/confirm?t=abc", code: "123456", minutes: 15 };
@@ -80,4 +81,31 @@ test("migration 0037 only adds — three new tables, nothing existing changed", 
   assert.doesNotMatch(sql.replace(/ON DELETE CASCADE/g, ""), /\b(DROP|DELETE|UPDATE|TRUNCATE|RENAME)\b/i);
   for (const a of sql.matchAll(/ALTER TABLE\s+public\.(\w+)/gi)) assert.match(a[1], /^os_portal_/, "only its own tables");
   assert.match(sql, /BEGIN;[\s\S]*COMMIT;/);
+});
+
+test("22 Oct audit: one answer for every failed code; older Safari can sign in; the IP is the edge's own hop", () => {
+  const code = read("src/app/api/portal-signin/code/route.ts");
+  assert.match(code, /if \(!r\.ok\) return NextResponse\.json\(\{ error: CODE_REFUSED \}/);
+  assert.doesNotMatch(code, /REASON\[/);
+  assert.match(CODE_REFUSED, /didn't work/);
+  const h = (o: Record<string, string>) => ({ get: (n: string) => o[n] ?? null });
+  const O = "https://os.brokerstaffer.com";
+  assert.equal(fromSignInPage(h({ "sec-fetch-site": "same-origin", "content-type": "application/json" }), O), true);
+  assert.equal(fromSignInPage(h({ "sec-fetch-site": "cross-site", "content-type": "application/json", origin: O }), O), false, "a browser that says cross-site is believed");
+  assert.equal(fromSignInPage(h({ "content-type": "application/json", origin: O }), O), true, "no Sec-Fetch-Site: judged by Origin");
+  assert.equal(fromSignInPage(h({ "content-type": "application/json", origin: "https://evil.test" }), O), false);
+  assert.equal(fromSignInPage(h({ "content-type": "application/json" }), O), false, "neither: refused");
+  assert.equal(fromSignInPage(h({ "sec-fetch-site": "same-origin", "content-type": "text/plain" }), O), false);
+  assert.equal(clientIp(h({ "x-forwarded-for": "1.2.3.4, 198.51.100.7" })), "198.51.100.7", "what the caller wrote first is ignored");
+  assert.equal(clientIp(h({ "x-forwarded-for": "198.51.100.7" })), "198.51.100.7");
+  assert.equal(clientIp(h({})), null);
+});
+
+test("22 Oct audit: the staff list changes only from the OS's own page; only a missing table asks for the migration", () => {
+  const src = read("src/app/api/tools/master-inbox/portals/logins/route.ts");
+  for (const m of ["POST", "DELETE"]) {
+    const at = src.indexOf(`export async function ${m}`);
+    assert.match(src.slice(at, at + 300), /if \(!fromOwnPage\(request\)\) return NextResponse\.json\(\{ error: "Forbidden" \}, \{ status: 403 \}\);/, m);
+  }
+  assert.doesNotMatch(src, /\/os_portal_logins\|/, "the table's name in an error is not a missing table");
 });

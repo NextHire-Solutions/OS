@@ -72,9 +72,10 @@ test("both data routes admit before they read, count what they serve, and never 
 
 test("a market agent's or a prospect's email never reaches the browser — only agents on the client's own lists, only in the Setup tables", () => {
   const src = readFileSync("src/lib/crm-preview/market.ts", "utf8");
-  assert.match(src, /q\.per === SETUP_PAGE_SIZE && OWN_LISTS\.has\(list\) \? \{ email:/);
+  assert.match(src, /q\.per === SETUP_PAGE_SIZE && OWN_LISTS\.has\(list\) \? \{ email: ownListEmail\(emails, sets\) \}/, "only an address the client already holds (22 Oct audit)");
   assert.match(src, /new Set\(\["My Agents", "DNC List", "In your pipeline"\]\)/);
-  assert.equal((src.match(/email: str\(/g) ?? []).length, 1, "no other place sends an email");
+  assert.equal((src.match(/email: str\(/g) ?? []).length, 0, "never the agent database's own address");
+  assert.equal((src.match(/\bemail: /g) ?? []).length, 1, "no other place sends an email");
 });
 
 /* ---------------------------------------------- the chat and Billing (19 Oct) --- */

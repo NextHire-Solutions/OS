@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
   bandOf, bandRows, clientForPortal, DEAL_BANDS, interestedReport, LIST_PILL, listFor, listSets, marketFilters,
-  parseMarketQuery, resolveMls, SALES_BANDS, type OsClientRow,
+  ownListEmail, parseMarketQuery, resolveMls, SALES_BANDS, type OsClientRow,
 } from "./market-model.ts";
 
 const client = (over: Partial<OsClientRow>): OsClientRow => ({ id: "c", name: "X", aliases: [], mi_client_id: null, mls_codes: [], orch_client_id: null, ...over });
@@ -146,4 +146,24 @@ test("the List column: DNC over My Agents over the pipeline over Prospects; emai
   assert.equal(listFor(a("a7", "Lo"), sets), "Not on a list", "a name too short to trust never matches");
   assert.equal(listFor(a("a2x", "Nobody"), sets), "Not on a list");
   assert.equal(listFor({ id: "a2", full_name: "Other Name", emails: [] }, { ...sets, dncNames: new Set() }), "Prospects");
+});
+
+test("an agent's email reaches the page only when the client already has that exact address (22 Oct audit)", () => {
+  const sets = listSets(
+    [{ name: "Michael Johnson", email: null }, { name: "Pat Lee", email: "Pat.Lee@Old.test" }],
+    [{ kind: "company", name: "Keller Williams", email: null, domain: "kw.com" }, { kind: "agent", name: "Dana Roe", email: "dana@x.test", domain: null }],
+    [{ lead_name: "Jo Park", lead_email: "jo@park.test" }],
+    new Set(),
+  );
+  // A company domain labels the row DNC — but sends no address.
+  assert.equal(listFor({ id: "1", full_name: "Anyone At KW", emails: ["anyone@kw.com"] }, sets), "DNC List");
+  assert.equal(ownListEmail(["anyone@kw.com"], sets), null);
+  // A name-only My Agents entry matches every agent of that name — none of their addresses is sent.
+  assert.equal(listFor({ id: "2", full_name: "Michael Johnson", emails: ["mj@elsewhere.test"] }, sets), "My Agents");
+  assert.equal(ownListEmail(["mj@elsewhere.test"], sets), null);
+  // An exact match sends the address the client holds — not the agent database's other one.
+  assert.equal(ownListEmail(["preferred@new.test", "pat.lee@old.test"], sets), "pat.lee@old.test");
+  assert.equal(ownListEmail([" Dana@X.test "], sets), "dana@x.test");
+  assert.equal(ownListEmail(["jo@park.test"], sets), "jo@park.test");
+  assert.equal(ownListEmail([], sets), null);
 });

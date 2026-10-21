@@ -41,6 +41,22 @@ export function EmailForm() {
       </label>
       {error ? <p className="psi-err" role="alert">{error}</p> : null}
       <button className="psi-btn" type="submit" disabled={busy}>{busy ? "Sending…" : "Send link to log in"}</button>
+      {/*
+        The email's code works here too (22 Oct audit): someone who closed the
+        "Check your email" tab could only ask again — which cancels the code
+        they hold. This goes to the code box without sending anything.
+      */}
+      <button
+        className="psi-linkbtn"
+        type="button"
+        onClick={() => {
+          const a = email.trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a)) return setError("Enter your work email address, then the code.");
+          window.location.assign(`/portal-signin/check?e=${encodeURIComponent(a)}`);
+        }}
+      >
+        I already have a code from the email
+      </button>
     </form>
   );
 }
