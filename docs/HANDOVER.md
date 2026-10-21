@@ -11,6 +11,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | | |
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
+| **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
 | **0.1** | [BrokerStaffer OS for Claude, 15 October](#01-brokerstaffer-os-for-claude-15-october) — a read-only connector: admins add the OS to Claude and ask it anything the Assistant can answer |
 | **0.2** | [Interested leads → Slack, 14 October](#02-interested-leads--slack-14-october) — one Slack post per conversation newly labelled Interested, to #client-interested-updates; needs Master Inbox migration 0033 |
 | **0.3** | [OS feedback batch, 13–14 October](#03-os-feedback-batch-1314-october) — ~45 items across the OS, LIVE 14 Oct (`28d910b`, standalone inbox `840094f`); what each became, what was not done, what was never exercised |
@@ -164,6 +165,39 @@ Scored against §22, the client's own Definition of Done: **19 of 25
 requirements met**, 5 partly met, 1 not met — and the one unmet requirement is
 deliberate, not outstanding: the standalone tools keep their own Add Client
 buttons because they stay live and clients use them. See §6 for what remains.
+
+---
+
+## 0.0 SECURITY — staff pages open without signing in (found 22 October)
+
+**What:** the 22 Oct audit found that ANY staff address ending in an image
+extension opened without a session: `GET /portals/x.png` returned the full
+Client Portals admin page — every client's portal link in it (a link alone
+opens that client's live portal, writes included) — and `/inbox/all-email/x.png`
+the inbox list, `/clients/weekly/x.png` Client Health. Also `/portal-signin/x`
+and `/login/x` rendered the staff Home page. Confirmed on the LIVE site with
+plain GETs (200, 408 KB, 57 portal-token mentions); old — the proxy matcher
+has skipped image extensions since long before 21 Oct.
+
+**Why:** (1) the proxy matcher skipped `.*\.(svg|png|jpg|…)$`; (2) the public
+paths were prefixes; (3) the catch-all page trusted `x-bs-user`/`x-bs-grants`
+request headers instead of verifying the cookie.
+
+**Fixed** (0307cc1 on main; the same fix alone on branch
+`hotfix/access-check-22oct` = e301749, built on 354f94e, the version live
+since 20 Oct): exact public paths; the matcher runs on everything but Next's
+build files and the three real static files; the page verifies `bs_sso`
+itself and repeats the switch check; nothing reads `x-bs-*` any more.
+`proxy-public.test.ts` pins all three. Verified on production builds of both
+main and the hotfix: every probed address → /login (or 401) even with forged
+headers; the sign-in pages, favicon, icon and logo still served; signed-in
+staff open every page as before.
+
+**Not deployed yet** — Railway refused every deploy on 21–22 Oct. When it
+accepts: deploy the hotfix branch FIRST (it changes only the access check),
+re-probe the live site, then deploy main. Open decision for the user: whether
+to change the client portal links, since anyone who found the hole could have
+copied them (no access logs are available while Railway's API is down).
 
 ---
 
