@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { ALL_TOOLS } from "../bs-auth.ts";
 import { canSeePage, PAGE_GRANTS } from "./nav.ts";
+import { holdsPage, NAMED_PAGES, namedPagesFor } from "../identity/named-pages.ts";
 
 const EVERY = [...ALL_TOOLS];
 const ROLES = [{}, { accountManager: true }, { salesperson: true }, { accountManager: true, salesperson: true }];
@@ -37,4 +38,34 @@ test("Home is for everyone, switched on or not", () => {
   for (const roles of ROLES) {
     assert.equal(canSeePage("home", false, [], ALL_TOOLS, roles), true);
   }
+});
+
+test("admin-only pages opened by name: the Reply agent to Amy (21 Oct) — that page only, and nobody else", () => {
+  assert.deepEqual(NAMED_PAGES, { "reply-agent": ["amy@brokerstaffer.com"] }, "a person is added here deliberately, on the user's word");
+  assert.deepEqual(namedPagesFor(" Amy@BrokerStaffer.com "), ["reply-agent"]);
+  const amy = { pages: namedPagesFor("amy@brokerstaffer.com") };
+  assert.equal(canSeePage("reply-agent", false, [], ALL_TOOLS, amy), true);
+  for (const id of ["team-access", "consistency", "assistant"]) assert.equal(canSeePage(id, false, EVERY, ALL_TOOLS, amy), false, `${id}: not opened by the Reply agent`);
+  for (const email of ["amy@brokerstaffer.co", "amy.anderes@brokerstaffer.com", "eddy@brokerstaffer.com", "gabriel@brokerstaffer.com", "", null]) {
+    assert.deepEqual(namedPagesFor(email), [], String(email));
+    assert.equal(holdsPage(email, "reply-agent"), false, String(email));
+    assert.equal(canSeePage("reply-agent", false, EVERY, ALL_TOOLS, { pages: namedPagesFor(email) }), false, String(email));
+  }
+});
+
+test("the Reply agent page's routes accept the same people — and its other admin routes do not change", async () => {
+  const fs = await import("node:fs");
+  const read = (p: string) => fs.readFileSync(p, "utf8");
+  for (const f of ["reply-agents/route.ts", "reply-agents/[id]/route.ts", "reply-agents/[id]/duplicate/route.ts"]) {
+    const src = read(`src/app/api/tools/master-inbox/${f}`);
+    assert.doesNotMatch(src, /requireAdminSession/, f);
+    assert.match(src, /requireReplyAgentSession\(\)/, f);
+  }
+  for (const f of ["corpus", "feedback", "knowledge", "proposals"]) {
+    const src = read(`src/app/api/tools/master-inbox/ai/${f}/route.ts`);
+    assert.match(src, /canUseReplyAgent\(session\.email\)/, f);
+    assert.doesNotMatch(src, /isAdminUser/, f);
+  }
+  // Running the agent by hand and releasing held replies stay admins-only.
+  for (const f of ["reply-agents/run/route.ts", "reply-agents/release/route.ts"]) assert.match(read(`src/app/api/tools/master-inbox/${f}`), /requireAdminSession\(\)/, f);
 });

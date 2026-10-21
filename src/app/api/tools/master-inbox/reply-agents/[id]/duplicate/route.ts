@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireReplyAgentSession } from "@/lib/tools/master-inbox/auth/require-reply-agent";
 import { duplicateAgent } from "@/lib/tools/master-inbox/ai/agent";
 
 /*
@@ -26,7 +26,7 @@ const bodySchema = z.object({
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const session = await requireAdminSession();
+  const session = await requireReplyAgentSession();
   if (session instanceof NextResponse) return session;
   const raw = await request.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(raw ?? {});

@@ -72,7 +72,7 @@ export async function POST(request: Request) {
   const response = NextResponse.json({
     ok: true,
     grants: user.grants,
-    roles: viewer ? { accountManager: viewer.accountManager, salesperson: viewer.salesperson } : undefined,
+    roles: viewer ? { accountManager: viewer.accountManager, salesperson: viewer.salesperson, pages: viewer.pages } : undefined,
   });
 
   response.cookies.set(

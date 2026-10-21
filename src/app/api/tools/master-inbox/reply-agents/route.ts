@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth/workspace";
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireReplyAgentSession } from "@/lib/tools/master-inbox/auth/require-reply-agent";
 import { LiveModeNotEnabledError, loadAgents, saveAgent } from "@/lib/tools/master-inbox/ai/agent";
 import { normaliseUpgradeFields, upgradeFieldsSchema } from "@/lib/tools/master-inbox/ai/agent-schema";
 import { liveSendingEnabled } from "@/lib/tools/master-inbox/ai/live-gate";
@@ -44,7 +44,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await requireAdminSession();
+  const session = await requireReplyAgentSession();
   if (session instanceof NextResponse) return session;
   const body = await request.json().catch(() => null);
   const parsed = createSchema.safeParse(body);

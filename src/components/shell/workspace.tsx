@@ -71,11 +71,13 @@ export function Workspace({
    */
   const [liveRoles, setLiveRoles] = useState<RoleFlags>(roles);
   const onRoles = useCallback((next: RoleFlags) => {
-    setLiveRoles((cur) =>
-      !!cur.accountManager === !!next.accountManager && !!cur.salesperson === !!next.salesperson
+    setLiveRoles((cur) => {
+      // Pages opened by name (identity/named-pages.ts) come with the roles; an answer without them keeps what the page loaded with.
+      const pages = Array.isArray(next.pages) ? next.pages : cur.pages ?? [];
+      return !!cur.accountManager === !!next.accountManager && !!cur.salesperson === !!next.salesperson && (cur.pages ?? []).join() === pages.join()
         ? cur
-        : { accountManager: !!next.accountManager, salesperson: !!next.salesperson },
-    );
+        : { accountManager: !!next.accountManager, salesperson: !!next.salesperson, pages };
+    });
   }, []);
   /*
    * Remembered (rail-state.ts): this component is rebuilt on navigation, so a

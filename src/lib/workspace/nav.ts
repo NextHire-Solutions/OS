@@ -478,6 +478,8 @@ export const ADMIN_ONLY_PAGES = new Set(["team-access", "reply-agent", "consiste
 export interface RoleFlags {
   accountManager?: boolean;
   salesperson?: boolean;
+  /** Admin-only pages opened to this person by name (identity/named-pages.ts) — e.g. Amy's Reply agent, 21 Oct. */
+  pages?: readonly string[];
 }
 
 /*
@@ -499,9 +501,9 @@ export const PAGE_GRANTS: Readonly<Record<string, ToolId>> = {
  * for them on Team access — never the admin-only pages. Roles no longer open
  * pages; Commissions still shows a non-admin only their own payouts.
  */
-export function canSeePage(id: string, admin: boolean, grants: readonly string[], _allTools: readonly string[], _roles: RoleFlags = {}): boolean {
+export function canSeePage(id: string, admin: boolean, grants: readonly string[], _allTools: readonly string[], roles: RoleFlags = {}): boolean {
   if (admin) return true;
-  if (ADMIN_ONLY_PAGES.has(id)) return false;
+  if (ADMIN_ONLY_PAGES.has(id)) return !!roles.pages?.includes(id);
   const grant = PAGE_GRANTS[id];
   if (grant) return grants.includes(grant);
   return true;

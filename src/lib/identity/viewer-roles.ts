@@ -9,6 +9,7 @@ import { canSeePage, type RoleFlags } from "@/lib/workspace/nav";
 import { sessionPageGrants } from "@/lib/workspace/switch-transition";
 
 import { isAdminUser } from "./admin-db";
+import { namedPagesFor } from "./named-pages";
 
 /*
  * Who the signed-in person is, for deciding which pages they see (Eddy, 2 Oct):
@@ -24,7 +25,7 @@ export interface Viewer extends RoleFlags {
 
 export async function viewerRoles(email: string | null | undefined): Promise<Viewer> {
   const key = (email ?? "").trim().toLowerCase();
-  if (!key) return { admin: false, accountManager: false, salesperson: false, name: null };
+  if (!key) return { admin: false, accountManager: false, salesperson: false, name: null, pages: [] };
   const [admin, user, seller] = await Promise.all([
     isAdminUser(key),
     osTable("os_users").select("name, is_account_manager").eq("email", key).maybeSingle().then((r) => r.data as { name?: string | null; is_account_manager?: boolean } | null, () => null),
@@ -35,6 +36,7 @@ export async function viewerRoles(email: string | null | undefined): Promise<Vie
     accountManager: user?.is_account_manager === true,
     salesperson: seller?.active === true,
     name: user?.name?.trim() || null,
+    pages: namedPagesFor(key),
   };
 }
 

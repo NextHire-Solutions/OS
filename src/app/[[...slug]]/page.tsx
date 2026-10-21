@@ -257,7 +257,7 @@ export default async function WorkspacePage({
   // the person may not see lands on Home.
   const viewer = await viewerRoles(email);
   const admin = viewer.admin;
-  const roles = { accountManager: viewer.accountManager, salesperson: viewer.salesperson };
+  const roles = { accountManager: viewer.accountManager, salesperson: viewer.salesperson, pages: viewer.pages };
   // A session signed before the 15 Oct switch split also has the pages its roles opened (switch-transition.ts).
   const pageGrants = preSplitPageGrants(grants, requestHeaders.get("x-bs-pre-split") === "1", roles);
   if (!initialId.includes(":") && !canSeePage(initialId, admin, pageGrants, ALL_TOOLS, roles)) redirect("/");
