@@ -92,54 +92,100 @@ export const SETUP_PAGE_SIZE = 8;
 export const MAX_ROWS = 1_000;
 export const maxPage = (per: number) => Math.floor(MAX_ROWS / per);
 
+/*
+ * Sorting (21 Oct, Eddy: "alphabetical sorting for names and brokerages") — the
+ * Database app's own sort keys (fn_agent_sort_col). Names and places read A→Z
+ * on the first click; figures largest first.
+ */
+export const SORTS = {
+  name: "full_name",
+  brokerage: "brand",
+  officeCity: "office_city",
+  transactedCity: "most_transacted_city",
+  title: "title",
+  volume: "sales_volume",
+  units: "units",
+} as const;
+export type SortKey = keyof typeof SORTS;
+export const FIRST_DIR: Record<SortKey, "asc" | "desc"> = { name: "asc", brokerage: "asc", officeCity: "asc", transactedCity: "asc", title: "asc", volume: "desc", units: "desc" };
+
+export interface Range {
+  min: number | null;
+  max: number | null;
+}
+
+/** Brokerages, cities and counties picked at once (Eddy: "searching multiple cities and brokerages at once"). */
+export const MAX_PICKS = 20;
+
 export interface MarketQuery {
   list: MarketList;
   page: number;
   /** Rows a page: 50, or the Setup wizard's 8. */
   per: number;
   q: string;
-  minVolume: number | null;
-  minUnits: number | null;
-  minYears: number | null;
-  brokerage: string | null;
-  county: string | null;
+  /** Ranges, min and max (21 Oct, Eddy: "range filters for sales volume and number of units"). */
+  volume: Range;
+  units: Range;
+  years: Range;
+  brokerages: string[];
+  cities: string[];
+  counties: string[];
   title: string | null;
+  sort: SortKey;
+  dir: "asc" | "desc";
 }
 
-const pick = <T extends number>(raw: string | null, allowed: readonly T[]): T | null => {
-  const n = Number(raw);
-  return (allowed as readonly number[]).includes(n) ? (n as T) : null;
-};
-
-/** A request's query string, held to what the page can send. */
+/** A request's query string, held to what the page can send: bounded numbers, short texts, known sorts. */
 export function parseMarketQuery(p: URLSearchParams): MarketQuery {
-  const text = (k: string, max: number) => (p.get(k) ?? "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, max) || null;
+  const clean = (v: string | null, max: number) => (v ?? "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, max) || null;
+  const amount = (k: string, cap: number) => {
+    const raw = p.get(k);
+    if (raw === null || raw.trim() === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 && n <= cap ? n : null;
+  };
+  const range = (min: string, max: string, cap: number): Range => ({ min: amount(min, cap), max: amount(max, cap) });
+  const many = (k: string) => [...new Set(p.getAll(k).map((v) => clean(v, 120)).filter((v): v is string => !!v))].slice(0, MAX_PICKS);
   const page = Math.floor(Number(p.get("page")));
-  const title = text("title", 40);
+  const title = clean(p.get("title"), 40);
   const per = p.get("per") === String(SETUP_PAGE_SIZE) ? SETUP_PAGE_SIZE : PAGE_SIZE;
+  const sortRaw = p.get("sort") ?? "";
+  const sort: SortKey = sortRaw in SORTS ? (sortRaw as SortKey) : "volume";
+  const dirRaw = p.get("dir");
   return {
     list: p.get("list") === "prospects" ? "prospects" : "market",
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, maxPage(per)) : 1,
     per,
-    q: text("q", 80) ?? "",
-    minVolume: pick(p.get("minVolume"), VOLUME_PRESETS),
-    minUnits: pick(p.get("minUnits"), UNIT_PRESETS),
-    minYears: pick(p.get("minYears"), YEAR_PRESETS),
-    brokerage: text("brokerage", 120),
-    county: text("county", 120),
+    q: clean(p.get("q"), 80) ?? "",
+    volume: range("minVolume", "maxVolume", 100_000_000_000),
+    units: range("minUnits", "maxUnits", 100_000),
+    years: range("minYears", "maxYears", 80),
+    brokerages: many("brokerage"),
+    cities: many("city"),
+    counties: many("county"),
     title: title && (TITLES as readonly string[]).includes(title) ? title : null,
+    sort,
+    dir: dirRaw === "asc" || dirRaw === "desc" ? dirRaw : FIRST_DIR[sort],
   };
 }
 
-/** The Database app's p_filters for a market page: its base (MLS or client) plus the chips. */
+const set = (r: Range) => r.min !== null || r.max !== null;
+const ends = (r: Range) => ({ min: r.min === null ? "" : String(r.min), max: r.max === null ? "" : String(r.max) });
+
+/** The Database app's p_filters for a market page: its base (MLS or client) plus the filters. */
 export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Record<string, unknown> {
   const f: Record<string, unknown> = { ...base };
-  if (q.minVolume) f.salesVolume = { side: "all", buckets: [], min: String(q.minVolume), max: "" };
-  if (q.minUnits) f.closedUnits = { side: "all", buckets: [], min: String(q.minUnits), max: "" };
+  if (set(q.volume)) f.salesVolume = { side: "all", buckets: [], ...ends(q.volume) };
+  if (set(q.units)) f.closedUnits = { side: "all", buckets: [], ...ends(q.units) };
   // In YEARS: fn_agent_where turns them into months itself (Database 0109). Sending months filtered 2+ years as 24+ (21 Oct).
-  if (q.minYears) f.estTimeInIndustry = { buckets: [], min: String(q.minYears), max: "" };
-  if (q.brokerage) f.officeSearch = { brand: { include: [q.brokerage], exclude: [] }, office: { include: [], exclude: [] } };
-  if (q.county) f.location = { field: "county", appliesTo: ["office", "home", "transacted"], values: [q.county], excludeValues: [], excludeField: "county" };
+  if (set(q.years)) f.estTimeInIndustry = { buckets: [], ...ends(q.years) };
+  if (q.brokerages.length) f.officeSearch = { brand: { include: [...q.brokerages], exclude: [] }, office: { include: [], exclude: [] } };
+  // Cities and counties in one location filter, each value keeping its own level — any of them matches (the Database app's way).
+  const places = [...q.cities.map((v) => ({ f: "city", v })), ...q.counties.map((v) => ({ f: "county", v }))];
+  if (places.length) {
+    const field = q.cities.length ? "city" : "county";
+    f.location = { field, appliesTo: ["office", "home", "transacted"], values: places, excludeValues: [], excludeField: field };
+  }
   if (q.title) f.title = { include: [q.title], exclude: [] };
   // The Database app's search: matching agents come first; it narrows nothing (fn_agent_order).
   if (q.q) f.nameQuery = q.q;

@@ -9,7 +9,7 @@ import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/too
 import { DEMO_MARKET_MLS, isDemoPortal } from "@/lib/crm-preview/demo";
 
 import {
-  bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type ReportGroup,
 } from "./market-model";
 
@@ -39,9 +39,9 @@ async function rpc(fn: "fn_filter_search" | "fn_facet_options", args: Record<str
   return data;
 }
 
-async function search(filters: Record<string, unknown>, limit: number, offset = 0) {
+async function search(filters: Record<string, unknown>, limit: number, offset = 0, sort: { by: string; dir: "asc" | "desc" } = { by: "sales_volume", dir: "desc" }) {
   const d = (await rpc("fn_filter_search", {
-    p_mode: "agent", p_source: "all", p_filters: filters, p_sort_by: "sales_volume", p_sort_dir: "desc", p_limit: Math.max(limit, 1), p_offset: offset,
+    p_mode: "agent", p_source: "all", p_filters: filters, p_sort_by: sort.by, p_sort_dir: sort.dir, p_limit: Math.max(limit, 1), p_offset: offset,
   })) as { data?: Array<Record<string, unknown>>; totalCount?: number; salesVolumeTotal?: number } | null;
   return { rows: d?.data ?? [], total: Number(d?.totalCount) || 0, salesVolume: Number(d?.salesVolumeTotal) || 0 };
 }
@@ -176,7 +176,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
   const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
-  const page = await search(marketFilters(base, q), q.per, (q.page - 1) * q.per);
+  const page = await search(marketFilters(base, q), q.per, (q.page - 1) * q.per, { by: SORTS[q.sort], dir: q.dir });
   const ids = page.rows.map((r) => String(r.id));
   const [prospects, myAgents, dnc, pipeline] = await Promise.all([
     q.list === "prospects" ? Promise.resolve(new Set(ids)) : inClientLists(ctx.orchClientId ?? "", ctx.orchClientId ? ids : []),
@@ -203,7 +203,35 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
       pill: LIST_PILL[list],
     };
   });
-  return { total: page.total, page: q.page, pageSize: q.per, rows };
+  return { total: page.total, salesVolume: page.salesVolume, page: q.page, pageSize: q.per, rows };
+}
+
+export type FacetKind = "brand" | "city" | "county";
+
+/*
+ * The choices for a brokerage or location filter (21 Oct, Eddy: "the same UX on
+ * filtering as the DB"): the Database app's own option lists — searched by
+ * name, with how many agents each has, counted under the other filters (a
+ * filter never narrows its own list, as there). Names and counts only: no
+ * agent leaves the server.
+ */
+export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: FacetKind, text: string): Promise<{ unavailable: string } | { options: Array<{ v: string; n: number }> }> {
+  const why = unavailable(ctx, q.list);
+  if (why) return { unavailable: why };
+  const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
+  const d = await rpc("fn_facet_options", {
+    p_type: kind === "brand" ? "brand" : "location",
+    p_q: text.replace(/[\u0000-\u001f%_]/g, " ").trim().slice(0, 60),
+    p_field: kind === "brand" ? null : kind,
+    p_source: "all",
+    p_filters: marketFilters(base, q),
+  });
+  const raw = kind === "brand" ? (Array.isArray(d) ? d : []) : ((d as { options?: unknown[] } | null)?.options ?? []);
+  const options = (raw as Array<{ v?: unknown; n?: unknown }>)
+    .map((o) => ({ v: str(o.v) ?? "", n: num(o.n) ?? 0 }))
+    .filter((o) => o.v)
+    .slice(0, 50);
+  return { options };
 }
 
 /** The chips' choices for a market: its brokerages and counties, largest first. */

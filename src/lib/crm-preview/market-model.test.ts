@@ -35,35 +35,48 @@ test("MLS codes: exact code or alias only; anything else is named, never guessed
   assert.deepEqual(resolveMls(null, MLS), { ids: [], matched: [], unmatched: [] });
 });
 
-test("the query string is held to the chips' presets", () => {
-  const q = parseMarketQuery(new URLSearchParams("list=prospects&page=3&q=  smith &minVolume=2000000&minUnits=4&minYears=2&brokerage=Keller Williams&county=Cobb, GA&title=Team Leader"));
-  assert.deepEqual(q, { list: "prospects", page: 3, per: 50, q: "smith", minVolume: 2_000_000, minUnits: 4, minYears: 2, brokerage: "Keller Williams", county: "Cobb, GA", title: "Team Leader" });
-  const bad = parseMarketQuery(new URLSearchParams("list=drop&page=-1&minVolume=7&minUnits=1e9&title=CEO&q=" + "x".repeat(200)));
+test("the query string: ranges, several brokerages and places, a known sort — held to sane values (21 Oct, Eddy's filters)", () => {
+  const q = parseMarketQuery(new URLSearchParams("list=prospects&page=3&q=  smith &minVolume=2000000&maxVolume=8000000&minUnits=4&maxUnits=30&minYears=2&brokerage=Keller Williams&brokerage=Compass&brokerage=Compass&city=Atlanta&county=Cobb, GA&title=Team Leader&sort=name"));
+  assert.deepEqual(q, {
+    list: "prospects", page: 3, per: 50, q: "smith",
+    volume: { min: 2_000_000, max: 8_000_000 }, units: { min: 4, max: 30 }, years: { min: 2, max: null },
+    brokerages: ["Keller Williams", "Compass"], cities: ["Atlanta"], counties: ["Cobb, GA"],
+    title: "Team Leader", sort: "name", dir: "asc",
+  });
+  // The old single values (the Setup wizard still sends them) read the same way.
+  const old = parseMarketQuery(new URLSearchParams("minVolume=1000000&brokerage=Compass&county=Fulton"));
+  assert.deepEqual([old.volume, old.brokerages, old.counties], [{ min: 1_000_000, max: null }, ["Compass"], ["Fulton"]]);
+  const bad = parseMarketQuery(new URLSearchParams("list=drop&page=-1&minVolume=-7&maxUnits=1e9&minYears=abc&title=CEO&sort=password&dir=sideways&q=" + "x".repeat(200) + "&" + Array.from({ length: 30 }, (_, i) => `city=c${i}`).join("&")));
   assert.equal(bad.list, "market");
   assert.equal(bad.page, 1);
-  assert.equal(bad.minVolume, null);
-  assert.equal(bad.minUnits, null);
+  assert.deepEqual([bad.volume.min, bad.units.max, bad.years.min], [null, null, null], "negative, absurd and non-numbers are dropped");
   assert.equal(bad.title, null);
   assert.equal(bad.q.length, 80);
+  assert.deepEqual([bad.sort, bad.dir], ["volume", "desc"], "an unknown sort is the default, largest first");
+  assert.equal(bad.cities.length, 20, "at most 20 picks");
+  assert.equal(parseMarketQuery(new URLSearchParams("sort=volume")).dir, "desc");
+  assert.equal(parseMarketQuery(new URLSearchParams("sort=brokerage")).dir, "asc", "names A→Z on the first click");
+  assert.equal(parseMarketQuery(new URLSearchParams("sort=name&dir=desc")).dir, "desc");
   assert.equal(parseMarketQuery(new URLSearchParams("page=99999")).page, 20, "a search goes 1,000 agents deep at most");
   assert.equal(parseMarketQuery(new URLSearchParams("per=8")).per, 8, "the Setup wizard's eight a page");
   assert.equal(parseMarketQuery(new URLSearchParams("per=8&page=99999")).page, 125, "the same depth, eight at a time");
   assert.equal(parseMarketQuery(new URLSearchParams("per=5000")).per, 50, "no other page size");
 });
 
-test("the chips as the Database app's filters, on top of the market or the client's lists", () => {
+test("the filters as the Database app's, on top of the market or the client's lists", () => {
   const base = { mls: { include: ["m1"], exclude: [] } };
   const none = marketFilters(base, parseMarketQuery(new URLSearchParams("")));
   assert.deepEqual(none, base);
-  const f = marketFilters(base, parseMarketQuery(new URLSearchParams("minVolume=2000000&minUnits=4&minYears=2&brokerage=Compass&county=Cobb, GA&title=Salesperson&q=smith")));
+  const f = marketFilters(base, parseMarketQuery(new URLSearchParams("minVolume=2000000&maxVolume=8000000&maxUnits=30&minYears=2&brokerage=Compass&brokerage=eXp Realty&city=Atlanta&county=Cobb, GA&title=Salesperson&q=smith")));
   assert.deepEqual(f, {
     mls: { include: ["m1"], exclude: [] },
-    salesVolume: { side: "all", buckets: [], min: "2000000", max: "" },
-    closedUnits: { side: "all", buckets: [], min: "4", max: "" },
+    salesVolume: { side: "all", buckets: [], min: "2000000", max: "8000000" },
+    closedUnits: { side: "all", buckets: [], min: "", max: "30" },
     // Years, as the Database app sends them — the SQL makes months (21 Oct: "2+" had filtered 24+ years; the Atlanta market 1,455 instead of 91,804).
     estTimeInIndustry: { buckets: [], min: "2", max: "" },
-    officeSearch: { brand: { include: ["Compass"], exclude: [] }, office: { include: [], exclude: [] } },
-    location: { field: "county", appliesTo: ["office", "home", "transacted"], values: ["Cobb, GA"], excludeValues: [], excludeField: "county" },
+    officeSearch: { brand: { include: ["Compass", "eXp Realty"], exclude: [] }, office: { include: [], exclude: [] } },
+    // Cities and counties together, each keeping its level — any of them matches.
+    location: { field: "city", appliesTo: ["office", "home", "transacted"], values: [{ f: "city", v: "Atlanta" }, { f: "county", v: "Cobb, GA" }], excludeValues: [], excludeField: "city" },
     title: { include: ["Salesperson"], exclude: [] },
     nameQuery: "smith",
   });

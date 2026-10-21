@@ -3,12 +3,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
 import { canSeeCrmPreview } from "@/lib/crm-preview/access";
-import { marketContext, marketOptions, marketPage } from "@/lib/crm-preview/market";
+import { marketContext, marketFacet, marketOptions, marketPage, type FacetKind } from "@/lib/crm-preview/market";
 import { parseMarketQuery } from "@/lib/crm-preview/market-model";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
 
 /*
  * GET /api/crm-preview/market?client=<portal id>&list=market|prospects&page=…
+ *   (&facet=brand|city|county&fq=<text>: a filter's choices with their counts)
  *
  * One page of the redesign preview's Market or Prospects (src/app/crm-preview).
  * Owners only, as the page: anyone else gets a bare 404. Read-only: GET is
@@ -39,13 +40,21 @@ export async function GET(request: NextRequest) {
     const ctx = await marketContext(client);
     if (!ctx) return NextResponse.json({ error: "No such client portal." }, { status: 404, headers: NO_STORE_HEADERS });
     const q = parseMarketQuery(params);
+    // A filter's choices (brokerages, cities, counties) with their counts — names and numbers only.
+    const facet = params.get("facet");
+    if (facet === "brand" || facet === "city" || facet === "county") {
+      const out = await marketFacet(ctx, q, facet as FacetKind, params.get("fq") ?? "");
+      served(who, "market", 0);
+      console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "facet", who, client, list: q.list, facet, fq: params.get("fq") ? "set" : "" }));
+      return NextResponse.json(out, { headers: NO_STORE_HEADERS });
+    }
     const [page, options] = await Promise.all([
       marketPage(ctx, q),
       params.get("options") === "1" ? marketOptions(ctx) : Promise.resolve(undefined),
     ]);
     const rows = "rows" in page && page.rows ? page.rows.length : 0;
     served(who, "market", rows);
-    console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "market", who, client, list: q.list, page: q.page, per: q.per, rows, q: q.q ? "set" : "", filters: [q.minVolume, q.minUnits, q.minYears, q.brokerage, q.county, q.title].filter(Boolean).length }));
+    console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "market", who, client, list: q.list, page: q.page, per: q.per, rows, q: q.q ? "set" : "", sort: `${q.sort}:${q.dir}`, filters: [q.volume.min, q.volume.max, q.units.min, q.units.max, q.years.min, q.years.max, q.title].filter((v) => v !== null).length + q.brokerages.length + q.cities.length + q.counties.length }));
     return NextResponse.json({ ...page, options, mls: ctx.mls, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.error("[crm-preview] market", err);
