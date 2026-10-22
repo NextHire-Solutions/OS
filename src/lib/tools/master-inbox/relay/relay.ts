@@ -6,8 +6,8 @@ import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
 import { escapeLike, sameName } from "../portals/stop-person-plan.ts";
 import { getMasterInboxSupabase, workspaceId } from "../supabase";
 
-import { fromAddress, liveSendAllowed, postmarkToken, sweepSwitchedOff, type Env } from "./gate.ts";
-import { agentDisplayName, buildRelayEmail, cleanDisplayName, messageIdFromPayload, providerSaysAutomatic, replyText, type RelayEmail } from "./message.ts";
+import { fromAddress, liveSendAllowed, messageStream, postmarkToken, sweepSwitchedOff, type Env } from "./gate.ts";
+import { addressHeader, agentDisplayName, buildRelayEmail, cleanDisplayName, messageIdFromPayload, providerSaysAutomatic, replyText, type RelayEmail } from "./message.ts";
 import { bounceKind, createPostmarkTransport, fetchBounces, sendTest, type PostmarkBounce, type Transport } from "./postmark.ts";
 import { asTest, sampleEmail, takeTestSend, TEST_DAILY_CAP, TEST_RECIPIENTS } from "./test-send.ts";
 import { campaignKey, portalsOfClient, resolveBrokerage, type OsClientRef, type ResolvedBy, type World } from "./resolve.ts";
@@ -1377,6 +1377,71 @@ export async function sendRelayTest(relayId: string | null, who: string, deps: R
   if (!res.ok) throw new RelayActionError(res.error, res.definite ? 409 : 502);
   console.log(`[brokerage-relay] TEST ${relayId ? `copy of ${relayId}` : "sample"} sent to ${to} by ${who} (Postmark ${res.messageId})`);
   return { to, messageId: res.messageId, kind: relayId ? "copy" : "sample" };
+}
+
+/**
+ * One hand-off's email, exactly as it was prepared — what would go (or went)
+ * to the brokerage (23 Oct, the user: "we need full transparency so that we can
+ * check each and everything in practice mode"). Read from the record the
+ * sweep stored, never rebuilt, so it is the very email the send would use:
+ * the From, To and Reply-To headers Postmark would be given (postmark.ts
+ * postmarkPayload builds them the same way), the subject, both bodies and the
+ * extra headers. Reads only.
+ */
+export interface RelayEmailView {
+  record: RelayRecordView & { threadId: string | null; agentName: string | null; agentEmail: string | null };
+  /** False when nothing was prepared (held or skipped before an email was built). */
+  prepared: boolean;
+  email: {
+    from: string;
+    to: Array<{ name: string | null; email: string; header: string }>;
+    replyTo: string | null;
+    subject: string;
+    textBody: string;
+    htmlBody: string;
+    headers: Array<{ Name: string; Value: string }>;
+  } | null;
+  /** How Postmark would be asked to send it. */
+  postmark: { stream: string; trackOpens: false; trackLinks: "None"; tag: string };
+  /** Whether THIS server could send for real at all (the env switch) — never the token. */
+  server: { liveSendAllowed: boolean };
+  providerMessageId: string | null;
+}
+
+export async function relayEmailView(relayId: string, deps: RelayDeps = {}): Promise<RelayEmailView> {
+  const env = deps.env ?? process.env;
+  const os: Os = deps.os ?? osTable;
+  const ws = deps.ws ?? (await workspaceId());
+  const { data, error } = await os("os_brokerage_relays").select("*").eq("workspace_id", ws).eq("id", relayId).maybeSingle();
+  if (error) throw new RelayActionError(error.message, 502);
+  if (!data) throw new RelayActionError("No such hand-off.", 404);
+  const r = data as Row;
+  const view = recordView(r);
+  const subject = str(r.subject), text = str(r.text_body), html = str(r.html_body);
+  const prepared = !!(subject && text && html && view.recipients.length);
+  const fromName = cleanDisplayName(str(r.from_name)) || "An agent via BrokerStaffer";
+  const fromAddr = str(r.from_address) ?? fromAddress(env);
+  const headers = Array.isArray(r.headers)
+    ? (r.headers as unknown[]).filter((h): h is { Name: string; Value: string } => !!h && typeof (h as Row).Name === "string" && typeof (h as Row).Value === "string")
+    : [];
+  return {
+    record: { ...view, threadId: str(r.thread_id), agentName: str(r.agent_name), agentEmail: str(r.agent_email) },
+    prepared,
+    email: prepared
+      ? {
+          from: addressHeader(fromName, fromAddr),
+          to: view.recipients.map((x) => ({ ...x, header: addressHeader(x.name, x.email) })),
+          replyTo: str(r.reply_to),
+          subject: subject!,
+          textBody: text!,
+          htmlBody: html!,
+          headers,
+        }
+      : null,
+    postmark: { stream: messageStream(env), trackOpens: false, trackLinks: "None", tag: "brokerage-relay" },
+    server: { liveSendAllowed: liveSendAllowed(env) },
+    providerMessageId: str(r.provider_message_id),
+  };
 }
 
 /** The global switches (admins). Switching on records when, so nothing labelled earlier is relayed. */

@@ -849,6 +849,20 @@ Inbox → Settings → Brokerage hand-off switch **Hand-off on**, leave
 **Practice mode** on, mode **one click** (or automatic, to have every
 Interested reply practised without a press — still nothing is sent). No env
 var is needed for practice. Review the log against what the team did by hand.
+
+**Practice ON since 22 Oct 18:10 UTC.** Reviewing it (23 Oct, the user: "we
+need full transparency so that we can check each and everything in practice
+mode"): each line under *Recent hand-offs* shows **To** and **Subject**, and
+**View email** opens the stored email exactly as Postmark would be given it —
+From, To, Cc/Bcc (none), Reply-To (the agent), Subject, the message as the
+brokerage's mail program shows it (sandboxed frame: no scripts, nothing
+loaded from outside), the plain-text version, and the In-Reply-To/References
+headers with Postmark's settings (stream, open and link tracking off, tag).
+Read from the record, never rebuilt (`relayEmailView` in `relay.ts`,
+`GET /api/tools/master-inbox/relay/email`, admins only, reads only). Audit
+the same day: `OS_BROKERAGE_RELAY_LIVE_SEND` not set on Railway, no brokerage
+switched on, all 4 records practice with no Postmark id, and Postmark's own
+outbound log = 7 messages ever, every one to admin@outreachify.io (tests).
 **Before a real send (pilot):** DNS verified + Postmark approved; on Railway
 `os` set `POSTMARK_SERVER_TOKEN` and `OS_BROKERAGE_RELAY_LIVE_SEND=1`, then
 redeploy; Settings: practice off (two clicks); switch on the pilot

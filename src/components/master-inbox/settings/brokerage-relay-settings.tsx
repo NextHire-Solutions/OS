@@ -9,6 +9,7 @@ import type { PipelineEntry, RecipientMode, RelayMode } from "@/lib/tools/master
 import { REASON_TEXT, relayLine, stamp } from "@/lib/tools/master-inbox/relay/wording";
 import { TEST_RECIPIENTS } from "@/lib/tools/master-inbox/relay/test-send";
 
+import { RelayEmailButton } from "./relay-email-view";
 import { Btn, ConfirmButton, Field, Section, ToastHost, ToggleRow, useShowToast } from "./ui";
 
 /*
@@ -468,7 +469,7 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
 
 function Recent({ data }: { data: RelayOverview }) {
   return (
-    <Section title="Recent hand-offs" sub="Every Interested reply the hand-off looked at — practised, held, skipped or sent — newest first. The practice week is reviewed here.">
+    <Section title="Recent hand-offs" sub="Every Interested reply the hand-off looked at — practised, held, skipped or sent — newest first. The practice week is reviewed here: View email shows each one exactly as the brokerage would receive it.">
       {data.recent.length === 0 ? (
         <p className="mut">None yet.</p>
       ) : (
@@ -496,9 +497,22 @@ function Recent({ data }: { data: RelayOverview }) {
                   <td>{r.brokerageName ?? r.campaignName ?? "—"}</td>
                   <td>
                     {relayLine(r, data.now).text}
+                    {r.subject && r.recipients.length ? (
+                      <div className="mis-em-line" data-testid="relay-line-email">
+                        <div><span>To</span> {r.recipients.map((x) => (x.name ? `${x.name} <${x.email}>` : x.email)).join(", ")}</div>
+                        <div><span>Subject</span> {r.subject}</div>
+                      </div>
+                    ) : null}
                     {r.pipelineAction === "enter_at_interested" ? <div className="mut">Pipeline: would enter at Interested (not written)</div> : null}
                   </td>
-                  <td>{r.subject && r.recipients.length ? <TestCopy relayId={r.id} /> : null}</td>
+                  <td>
+                    {r.subject && r.recipients.length ? (
+                      <div className="mis-em-acts">
+                        <RelayEmailButton relayId={r.id} />
+                        <TestCopy relayId={r.id} />
+                      </div>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

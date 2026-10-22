@@ -1283,3 +1283,33 @@ td.mis-empty-cell {
   -webkit-appearance: none;
   margin: 0;
 }
+
+/* Recent hand-offs: who it goes to and the subject on the line, and the full email (23 Oct, relay-email-view.tsx). */
+.mis-em-line { display: grid; gap: 2px; margin-top: 6px; font-size: 12.5px; color: var(--ink-2); }
+.mis-em-line > div { overflow-wrap: anywhere; }
+.mis-em-line span { display: inline-block; min-width: 54px; margin-right: 2px; color: var(--muted); font-size: 11.5px; }
+.mis-em-acts { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.mis-em { display: flex; flex-direction: column; min-height: 0; color: var(--ink); }
+.mis-em-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 20px 12px; border-bottom: 1px solid var(--line); }
+.mis-em-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.mis-em-head p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
+.mis-em-pad { padding: 16px 20px; margin: 0; }
+.mis-em-err { color: #B42318; }
+.mis-em-body { display: grid; gap: 14px; padding: 14px 20px 20px; overflow-y: auto; min-height: 0; }
+.mis-em-state { display: grid; gap: 3px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45; }
+.mis-em-state b { font-weight: 600; }
+.mis-em-state span { font-size: 12.5px; }
+.mis-em-state.is-safe { background: #ECFDF3; color: #05603A; border: 1px solid #ABEFC6; }
+.mis-em-state.is-sent { background: var(--inset); color: var(--ink-2); border: 1px solid var(--line); }
+.mis-em-hdr { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 13px; }
+.mis-em-hdr dt { color: var(--muted); }
+.mis-em-hdr dd { margin: 0; overflow-wrap: anywhere; }
+.mis-em-subj { font-weight: 600; }
+.mis-em-hdr .mono { font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 12px; }
+.mis-em-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.mis-em-tabs button { appearance: none; border: 0; background: none; padding: 7px 10px; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.mis-em-tabs button.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.mis-em-tabs button:focus-visible { outline: 2px solid #0165FE; outline-offset: 2px; }
+.mis-em-frame { width: 100%; height: min(460px, 52vh); border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.mis-em-text { margin: 0; max-height: min(460px, 52vh); overflow: auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--inset);
+  font: 12.5px/1.55 var(--mono, ui-monospace, Menlo, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }

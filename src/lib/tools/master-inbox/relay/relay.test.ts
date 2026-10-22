@@ -167,6 +167,46 @@ test("PRACTICE (the default): decided, recorded with the full message, and the t
   assertContained();
 });
 
+test("View email (23 Oct): a practised hand-off's email exactly as Postmark would be given it — reading it sends nothing and writes nothing", async () => {
+  seed({ mode: "one_click" });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  const rec = recordFor(thread.id);
+  const callsBefore = db.calls.length;
+  const v = await relay.relayEmailView(String(rec.id), { ws: WS, env: {} });
+  assert.deepEqual([v.prepared, v.record.status, v.record.practice, v.server.liveSendAllowed], [true, "ready", true, false]);
+  const { addressHeader } = await import("./message.ts");
+  const { postmarkPayload } = await import("./postmark.ts");
+  // The headers a real send would carry, built by the send's own function from the same record.
+  const sent = postmarkPayload({
+    fromName: String(rec.from_name), fromAddress: String(rec.from_address), from: "", to: rec.recipients as Array<{ name: string | null; email: string }>,
+    toHeader: (rec.recipients as Array<{ name: string | null; email: string }>).map((x) => addressHeader(x.name, x.email)).join(", "),
+    replyTo: String(rec.reply_to), subject: String(rec.subject), textBody: String(rec.text_body), htmlBody: String(rec.html_body),
+    headers: rec.headers as Array<{ Name: string; Value: string }>, metadata: {},
+  }, v.postmark.stream);
+  const e = v.email!;
+  assert.equal(e.from, sent.From);
+  assert.equal(e.to.map((t) => t.header).join(", "), sent.To);
+  assert.deepEqual(e.to.map((t) => t.email), ["lance@jeffcook.test", "stan@jeffcook.test"]);
+  assert.equal(e.replyTo, sent.ReplyTo);
+  assert.equal(e.subject, sent.Subject);
+  assert.equal(e.textBody, sent.TextBody);
+  assert.equal(e.htmlBody, sent.HtmlBody);
+  assert.deepEqual(e.headers, sent.Headers);
+  assert.deepEqual([v.postmark.trackOpens, v.postmark.trackLinks, v.postmark.tag], [sent.TrackOpens, sent.TrackLinks, sent.Tag]);
+  assert.equal(v.record.agentName, "Jordan Ellis");
+  assert.equal(handed.length, 0, "never handed to Postmark");
+  assert.deepEqual(db.calls.slice(callsBefore).filter((c) => !["GET", "HEAD"].includes(c.method)), [], "reading it writes nothing");
+  assertContained();
+
+  // One that stopped before an email was built: said so, no email.
+  const [held] = add("os_brokerage_relays", [{ workspace_id: WS, thread_id: thread.id, kind: "handoff", status: "held", reason: "no_recipients", recipients: [], practice: true, created_at: at(-1) }]);
+  const h = await relay.relayEmailView(held.id, { ws: WS, env: {} });
+  assert.deepEqual([h.prepared, h.email], [false, null]);
+  await assert.rejects(relay.relayEmailView("11111111-1111-4111-8111-111111111111", { ws: WS, env: {} }), /No such hand-off/);
+});
+
 test("practice even with every database switch open, while OS_BROKERAGE_RELAY_LIVE_SEND is unset — and the REAL transport is never reached", async () => {
   seed({ practice_mode: false }, { enabled: true });
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });

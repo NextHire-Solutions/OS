@@ -45,7 +45,7 @@ test("pressing it needs a signed-in address, which the hand-off records", () => 
 });
 
 test("every Settings route of the hand-off is admins only, in every method", () => {
-  for (const file of ["relay/route.ts", "relay/assign/route.ts", "relay/brokerage/route.ts"]) {
+  for (const file of ["relay/route.ts", "relay/assign/route.ts", "relay/brokerage/route.ts", "relay/email/route.ts"]) {
     const src = read(`${API}/${file}`);
     const handlers = [...src.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\b[^{]*\{([\s\S]*?)\n\}/g)];
     assert.ok(handlers.length > 0, file);
@@ -55,4 +55,20 @@ test("every Settings route of the hand-off is admins only, in every method", () 
   }
   const settings = read("src/components/screens/master-inbox/settings.tsx");
   assert.match(settings, /const ADMIN_TABS = new Set<SettingsTab>\(\[[^\]]*"brokerage-relay"[^\]]*\]\)/, "the tab is hidden from non-admins too");
+});
+
+test("View email (23 Oct) only reads: a GET, admins only, and relayEmailView never sends or writes", () => {
+  const route = read(`${API}/relay/email/route.ts`);
+  assert.doesNotMatch(route, /export async function (POST|PUT|PATCH|DELETE)/);
+  assert.ok(route.indexOf("requireAdminSession()") < route.indexOf("relayEmailView("), "admins first");
+  const src = read("src/lib/tools/master-inbox/relay/relay.ts");
+  const start = src.indexOf("export async function relayEmailView(");
+  const body = src.slice(start, src.indexOf("\n}\n", start));
+  for (const w of [".send(", "sendTest(", ".update(", ".insert(", ".upsert(", ".delete(", "transport", "takeTestSend"]) assert.ok(!body.includes(w), `relayEmailView must not use ${w}`);
+  // The screen renders the email in a frame that can run nothing and load nothing.
+  const ui = read("src/components/master-inbox/settings/relay-email-view.tsx");
+  assert.match(ui, /<iframe[^>]*sandbox=""/);
+  assert.match(ui, /Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"/);
+  assert.equal((ui.match(/fetch\(/g) ?? []).length, 1);
+  assert.match(ui, /fetch\(`\/api\/tools\/master-inbox\/relay\/email\?id=/, "its one request is the read");
 });
