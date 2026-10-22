@@ -1194,3 +1194,92 @@ td.mis-empty-cell {
   width: 12px;
   height: 12px;
 }
+
+/* Settings › Brokerage hand-off › Brokerages (22 Oct): fifty-odd rows scroll
+   inside their own box, headings stay in view, and the fixed columns fit the
+   card so Save is never off to the right. Scoped here: the design's `.inp` /
+   `.sel` keep their 200px minimum everywhere else. */
+.mis-brk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.mis-brk {
+  max-height: min(560px, 62vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--line, #e6e8ec);
+  border-radius: 10px;
+}
+.mis-brk:focus-visible {
+  outline: 2px solid var(--blue, #0165fe);
+  outline-offset: 2px;
+}
+.mis-brk .atbl {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.mis-brk .atbl thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+  box-shadow: inset 0 -1px 0 var(--line, #e6e8ec);
+}
+.mis-brk .atbl td {
+  vertical-align: middle;
+  padding: 10px 10px;
+}
+.mis-brk .atbl th {
+  padding: 9px 10px;
+}
+.mis-brk .inp,
+.mis-brk .sel {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 9px;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+.mis-brk .inp + .inp,
+.mis-brk .sel + .inp {
+  margin-top: 6px;
+}
+.mis-brk-name {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mis-brk-meta {
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+.mis-brk td:last-child {
+  text-align: right;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* The per-hour box: no spin arrows (they ate the room "Default" needs); typing a number is unchanged. */
+.mis-brk input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.mis-brk input[type="number"]::-webkit-outer-spin-button,
+.mis-brk input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

@@ -303,14 +303,44 @@ function Held({ data }: { data: RelayOverview }) {
   );
 }
 
+/*
+ * Fifty-odd brokerages (22 Oct, the user: "a very long section … I have to
+ * scroll right left … to view the save button"): the list scrolls inside a
+ * box of its own with the headings kept in view, the columns are fixed so
+ * every row — Save included — fits the card's width, and a search finds one.
+ */
 function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally: boolean }) {
+  const [q, setQ] = useState("");
+  const shown = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return s ? rows.filter((b) => b.name.toLowerCase().includes(s)) : rows;
+  }, [rows, q]);
+  const on = rows.filter((b) => b.relay.enabled).length;
   return (
     <Section
       title="Brokerages"
       sub="Each brokerage's own switch (the pilot), who receives, one click or automatic, and where its agents enter the portal pipeline. A brokerage that is off is still practised — recorded, never sent. For the pilot: switch on one or two, leave the mode on one click; move to automatic after the pilot."
     >
-      <div className="tbl-scroll">
+      <div className="mis-brk-bar">
+        <label className="mis-find">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input className="inp" type="search" placeholder="Find a brokerage" aria-label="Find a brokerage" value={q} onChange={(e) => setQ(e.target.value)} />
+        </label>
+        <span className="mut tnum">
+          {q.trim() ? `${shown.length} of ${rows.length}` : `${rows.length} brokerages`} · {on} switched on
+        </span>
+      </div>
+      <div className="mis-brk" role="region" aria-label="Brokerages" tabIndex={0}>
         <table className="atbl">
+          <colgroup>
+            <col style={{ width: "26%" }} />
+            <col style={{ width: "60px" }} />
+            <col style={{ width: "21%" }} />
+            <col style={{ width: "96px" }} />
+            <col style={{ width: "15%" }} />
+            <col style={{ width: "17%" }} />
+            <col style={{ width: "80px" }} />
+          </colgroup>
           <thead>
             <tr>
               <th>Brokerage</th>
@@ -319,13 +349,18 @@ function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally
               <th>Per hour</th>
               <th>Mode</th>
               <th>Pipeline entry</th>
-              <th />
+              <th><span className="sr-only">Save</span></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((b) => (
+            {shown.map((b) => (
               <BrokerageLine key={`${b.id}:${JSON.stringify(b.relay)}:${b.pipelineEntry}`} row={b} liveGlobally={liveGlobally} />
             ))}
+            {shown.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="mut">No brokerage matches “{q.trim()}”.</td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
@@ -372,8 +407,8 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
   return (
     <tr>
       <td>
-        <b>{row.name}</b>
-        <div className="mut">
+        <b className="mis-brk-name" title={row.name}>{row.name}</b>
+        <div className="mut mis-brk-meta">
           {row.status ?? "no status"} · {row.contactsWithEmail}/{row.contacts} contacts with an email
         </div>
       </td>
@@ -381,8 +416,8 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
         <Switch checked={enabled} aria-label={`${row.name} on`} onCheckedChange={setEnabled} />
       </td>
       <td>
-        <select className="sel" value={recipients} onChange={(e) => setRecipients(e.target.value as RecipientMode)} aria-label="Receives">
-          <option value="intro_contacts">Introduction contacts, by territory</option>
+        <select className="sel" value={recipients} onChange={(e) => setRecipients(e.target.value as RecipientMode)} aria-label="Receives" title="Introduction contacts: the client's introduction contacts, chosen by territory. One address: a single inbox you type.">
+          <option value="intro_contacts">Introduction contacts</option>
           <option value="address">One address</option>
         </select>
         {recipients === "address" ? (
@@ -390,7 +425,7 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
         ) : null}
       </td>
       <td>
-        <input className="inp" type="number" min={1} max={100} placeholder="default" value={cap} onChange={(e) => setCap(e.target.value)} aria-label="Per hour" style={{ width: 90 }} />
+        <input className="inp" type="number" min={1} max={100} placeholder="Default" value={cap} onChange={(e) => setCap(e.target.value)} aria-label="Per hour" title="Empty: the hourly limit set above." />
       </td>
       <td>
         <select className="sel" value={mode} onChange={(e) => setMode(e.target.value as RelayMode | "")} aria-label="Mode">
@@ -407,8 +442,8 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
           aria-label="Pipeline entry"
           title="Recorded on each hand-off only. Entering the portal at Interested is not built yet: nothing in the portal changes either way."
         >
-          <option value="introduction">Introduction (today)</option>
-          <option value="interested">Interested — recorded only, not built yet</option>
+          <option value="introduction">Introduction</option>
+          <option value="interested">Interested (not built yet)</option>
         </select>
       </td>
       <td>
