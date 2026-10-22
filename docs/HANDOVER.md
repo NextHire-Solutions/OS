@@ -193,11 +193,20 @@ main and the hotfix: every probed address → /login (or 401) even with forged
 headers; the sign-in pages, favicon, icon and logo still served; signed-in
 staff open every page as before.
 
-**Not deployed yet** — Railway refused every deploy on 21–22 Oct. When it
-accepts: deploy the hotfix branch FIRST (it changes only the access check),
-re-probe the live site, then deploy main. Open decision for the user: whether
-to change the client portal links, since anyone who found the hole could have
-copied them (no access logs are available while Railway's API is down).
+**DEPLOYED 22 Oct.** Railway's own security incident (status.railway.com
+QH8L8B3E) had invalidated every Railway API token; the user created a new OS
+project token. The hotfix went first (deployment 8b97f56a, on 354f94e — the
+version live since 19 Oct 21:43 UTC), verified live (every probe → /login or
+401 even with forged headers; webhooks, connector and static files fine;
+staff 13/13), then main (c94ebf1b, 34cd24a). Live after main: access probes,
+staff 13/13, all eight browser suites against the live site 178/178, a relay
+sample in the agreed format delivered to admin@outreachify.io, client sign-in
+by real email (link and code) 18/18, Amy refused Live (403). Still off on
+Railway: OS_BROKERAGE_RELAY_LIVE_SEND, OS_CLIENT_SIGNIN,
+OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
+hostname). Open decisions for the user: whether to change the client portal
+links (anyone who found the hole could have copied them), and Railway's
+recommendation to revoke the secrets stored in Railway.
 
 ---
 
