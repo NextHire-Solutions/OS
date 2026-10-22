@@ -194,7 +194,7 @@ test("the CSV: numbers stay numbers, text a spreadsheet would run is made text, 
 
 /* ------------------------------------------------------------ the routes --- */
 
-test("the Billing tab's routes are read-only, Owners and Eddy only, and open only the client's own documents on stripe.com", () => {
+test("the Billing tab's read routes are read-only, the named people only, and open only the client's own documents on stripe.com", () => {
   const history = readFileSync("src/app/api/workspace/clients/billing/history/route.ts", "utf8");
   const doc = readFileSync("src/app/api/workspace/clients/billing/document/route.ts", "utf8");
   for (const [name, src] of [["history", history], ["document", doc]] as const) {
@@ -212,7 +212,7 @@ test("the Billing tab's routes are read-only, Owners and Eddy only, and open onl
   assert.equal((control.match(/await billingUser\(request\)/g) ?? []).length, 2, "GET and POST both gated");
   const gate = readFileSync("src/lib/clients/billing-user.ts", "utf8");
   assert.match(gate, /!v\.admin && !sessionPageGrants\(s, v\)\.includes\("roster"\)/);
-  // The tab itself never writes.
+  // The tab itself never writes; its one write is the Refund dialog (22 Oct, billing-refund.test.ts).
   const tab = readFileSync("src/components/screens/client-billing.tsx", "utf8");
   assert.doesNotMatch(tab, /method:\s*"(POST|PUT|PATCH|DELETE)"/);
 });

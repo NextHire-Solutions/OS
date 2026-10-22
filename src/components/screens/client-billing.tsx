@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 
 import { fmtDay } from "@/components/clients/cells";
+import { RefundDialog } from "@/components/screens/client-billing-refund";
+import { givenBack } from "@/lib/clients/billing-refund";
 import { csvText, type CsvCell } from "@/lib/clients/billing-csv";
 import type { BillingHistoryRow, BillingInvoiceRow, BillingNowView, ClientBillingDetail } from "@/lib/clients/billing-model";
 
@@ -12,9 +14,10 @@ import type { BillingHistoryRow, BillingInvoiceRow, BillingNowView, ClientBillin
  * failed payments and refunds, and invoice history with the ability to view
  * and download them — all in one place, synced with Stripe."
  *
- * Read-only: it reads /api/workspace/clients/billing/history and opens
- * invoices and receipts through /billing/document. Pausing, resuming and
- * linking stay in the Stripe control under it, unchanged.
+ * It reads /api/workspace/clients/billing/history and opens invoices and
+ * receipts through /billing/document. The one write is Refund on a paid
+ * invoice (22 Oct, client-billing-refund.tsx). Pausing, resuming and linking
+ * stay in the Stripe control under it, unchanged.
  */
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -201,7 +204,7 @@ export function ClientBillingTab({ clientId, clientName, plan }: { clientId: str
       </section>
 
       <History rows={d.history} clientName={clientName} docUrl={docUrl} />
-      <Invoices rows={d.invoices} clientName={clientName} docUrl={docUrl} />
+      <Invoices rows={d.invoices} clientId={clientId} clientName={clientName} docUrl={docUrl} onRefunded={() => void load(true)} />
     </div>
   );
 }
@@ -249,7 +252,9 @@ function History({ rows, clientName, docUrl }: { rows: BillingHistoryRow[]; clie
                     <td className="day">{fmtDay(r.date)}</td>
                     <td>
                       {r.kind === "refund" ? <>Refund — {r.description}</> : r.description}
-                      {r.card || r.note ? <small>{[r.card, r.note].filter(Boolean).join(" · ")}</small> : null}
+                      {r.card || r.note || r.by || r.creditNote ? (
+                        <small>{[r.card, r.note, r.creditNote ? `credit note ${r.creditNote}` : null, r.by ? `by ${r.by}` : null].filter(Boolean).join(" · ")}</small>
+                      ) : null}
                     </td>
                     <td className="num">{r.kind === "refund" ? `−${money(r.amount)}` : money(r.amount)}</td>
                     <td><span className={`rb-pill ${KIND[r.kind].tone}`}>{KIND[r.kind].label}</span></td>
@@ -273,8 +278,11 @@ function History({ rows, clientName, docUrl }: { rows: BillingHistoryRow[]; clie
 
 /* ------------------------------------------------------------- invoices --- */
 
-function Invoices({ rows, clientName, docUrl }: { rows: BillingInvoiceRow[]; clientName: string; docUrl: (id: string, as?: "page" | "pdf") => string }) {
+function Invoices({ rows, clientId, clientName, docUrl, onRefunded }: {
+  rows: BillingInvoiceRow[]; clientId: string; clientName: string; docUrl: (id: string, as?: "page" | "pdf") => string; onRefunded: () => void;
+}) {
   const [all, setAll] = useState(false);
+  const [refunding, setRefunding] = useState<BillingInvoiceRow | null>(null);
   const visible = all ? rows : rows.slice(0, SHOW);
   const csv = () => downloadCsv(`${clientName} invoices ${today()}`,
     ["Invoice", "Date", "Period start", "Period end", "Total (USD)", "Paid (USD)", "Unpaid (USD)", "Status", "Paid on", "Payment attempts", "Description", "Stripe id"],
@@ -303,7 +311,11 @@ function Invoices({ rows, clientName, docUrl }: { rows: BillingInvoiceRow[]; cli
                     </td>
                     <td className="day">{fmtDay(i.date)}</td>
                     <td className="num">{money(i.total)}</td>
-                    <td className="num">{money(i.paid)}{i.remaining > 0 && i.status === "open" ? <small>{money(i.remaining)} unpaid</small> : null}</td>
+                    <td className="num">
+                      {money(i.paid)}
+                      {i.remaining > 0 && i.status === "open" ? <small>{money(i.remaining)} unpaid</small>
+                        : i.status === "paid" && i.card && givenBack(i) ? <small>{givenBack(i)}</small> : null}
+                    </td>
                     <td>
                       <span className={`rb-pill ${i.tone}`}>{i.label}</span>
                       {i.status === "open" && i.attempts > 0 ? <small>{plural(i.attempts, "try", "tries")}</small> : null}
@@ -311,6 +323,7 @@ function Invoices({ rows, clientName, docUrl }: { rows: BillingInvoiceRow[]; cli
                     <td className="rb-links">
                       {i.page ? <a href={docUrl(i.id, "page")} target="_blank" rel="noreferrer">View ↗</a> : null}
                       {i.pdf ? <a href={docUrl(i.id, "pdf")} target="_blank" rel="noreferrer">PDF ↓</a> : null}
+                      {i.refundable > 0 && i.card ? <button type="button" className="rb-refund" onClick={() => setRefunding(i)}>Refund</button> : null}
                     </td>
                   </tr>
                 ))}
@@ -322,6 +335,7 @@ function Invoices({ rows, clientName, docUrl }: { rows: BillingInvoiceRow[]; cli
           ) : null}
         </>
       ) : <p className="rx-hint" style={{ marginTop: 6 }}>No invoices in Stripe for this client yet.</p>}
+      {refunding ? <RefundDialog clientId={clientId} invoice={refunding} onClose={() => setRefunding(null)} onRefunded={onRefunded} /> : null}
     </section>
   );
 }

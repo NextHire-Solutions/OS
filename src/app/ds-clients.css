@@ -454,6 +454,38 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rb-links a + a { margin-left: 10px; }
 .rb-links a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .rb-more { margin-top: 10px; }
+
+/* Refund (22 Oct): the invoice row's button and its dialog. */
+.rb-refund { appearance: none; border: 0; background: none; padding: 0; margin-left: 10px; font: inherit; font-size: 12px; color: var(--st-churned); cursor: pointer; }
+.rb-refund:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rb-refund:focus-visible { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+.rb-dlg { display: flex; flex-direction: column; min-height: 0; color: var(--x-ink); }
+.rb-dlg header { padding: 18px 20px 12px; border-bottom: 1px solid var(--x-line); }
+.rb-dlg h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.rb-dlg header p { margin: 4px 0 0; font-size: 12.5px; color: var(--x-mute); font-variant-numeric: tabular-nums; }
+.rb-dlg-body { display: grid; gap: 14px; padding: 16px 20px 18px; overflow-y: auto; min-height: 0; }
+.rb-dlg fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
+.rb-dlg legend, .rb-field > span { padding: 0; margin-bottom: 2px; font-size: 12px; font-weight: 600; color: var(--x-ink-2); }
+.rb-field { display: grid; gap: 4px; }
+.rb-field em { font-style: normal; font-weight: 400; color: var(--x-faint); }
+.rb-field textarea.ds-input { height: auto; padding: 8px 11px; resize: vertical; line-height: 1.45; }
+.rb-opt, .rb-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.rb-opt b { font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.rb-opt input, .rb-check input { margin: 0; accent-color: var(--x-ink); }
+.rb-amt { display: flex; align-items: center; gap: 6px; padding-left: 22px; }
+.rb-amt .ds-input { width: 130px; font-variant-numeric: tabular-nums; }
+.rb-amt small { font-size: 12px; color: var(--x-faint); }
+.rb-sum { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--x-line); border-radius: 10px; background: var(--x-bg); font-size: 13px; }
+.rb-sum b { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rb-sum dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.rb-sum dt { color: var(--x-mute); }
+.rb-sum dd { margin: 0; overflow-wrap: anywhere; }
+.rb-sum p { margin: 0; color: var(--x-mute); font-size: 12.5px; line-height: 1.5; }
+.rb-sum.ok b { color: var(--st-active); }
+.rb-dlg footer { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.rb-dlg .rx-btn:disabled { opacity: .55; cursor: default; }
+.rx-btn.solid.rb-danger { background: var(--st-churned); border-color: var(--st-churned); }
+.rx-btn.solid.rb-danger:hover:not(:disabled) { filter: brightness(.92); }
 /* Profile completeness (6 Oct). */
 .cx-pct { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12.5px; }
 .cx-pct-bar { width: 46px; height: 6px; border-radius: 999px; background: var(--x-line); overflow: hidden; }

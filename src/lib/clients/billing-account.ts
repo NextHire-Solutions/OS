@@ -71,6 +71,7 @@ type RawInvoice = {
   amount_due: number; amount_remaining: number; created: number; number: string | null; hosted_invoice_url: string | null;
   subscription?: string | null; parent?: { subscription_details?: { subscription?: string | null } | null } | null;
   total?: number; amount_paid?: number; invoice_pdf?: string | null; period_start?: number; period_end?: number;
+  post_payment_credit_notes_amount?: number;
   status_transitions?: { paid_at?: number | null } | null; lines?: { data?: Array<{ description?: string | null; period?: { start?: number; end?: number } | null }> } | null;
 };
 /*
@@ -95,6 +96,8 @@ type RawCharge = {
   description?: string | null; receipt_url?: string | null; payment_method_details?: { type?: string; card?: { brand?: string | null; last4?: string | null } | null } | null;
 };
 type RawInvoicePayment = { id: string; invoice: string; payment?: { payment_intent?: string | null } };
+/* A credit note: who issued a refund from the OS is in its metadata (billing-refund.ts). */
+type RawCreditNote = { id: string; number: string | null; invoice: string | null; created: number; amount: number; pdf?: string | null; reason?: string | null; refunds?: Array<{ refund?: string | { id: string } | null }> | null; refund?: string | null; metadata?: Record<string, string> | null };
 type RawRefund = { id: string; charge: string | null; amount: number; created: number; status: string; reason: string | null };
 
 /** "Visa •••• 4242", or the payment method's type when it is not a card. */
@@ -109,7 +112,7 @@ function cardOf(c: RawCharge): string | null {
 }
 
 async function loadSnapshot(): Promise<AccountSnapshot> {
-  const [customers, subs, charges, invoices, payments, refunds, products] = await Promise.all([
+  const [customers, subs, charges, invoices, payments, refunds, products, creditNotes] = await Promise.all([
     all<{ id: string; name: string | null; email: string | null; created: number }>("customers"),
     all<RawSub>("subscriptions?status=all"),
     all<RawCharge>("charges"),
@@ -118,6 +121,8 @@ async function loadSnapshot(): Promise<AccountSnapshot> {
     // For the Billing tab (19 Oct). A failure here never takes billing down: the tab shows payments without refund rows or plan names.
     all<RawRefund>("refunds").catch(() => null),
     all<{ id: string; name: string }>("products").catch(() => null),
+    // For refunds from the Billing tab (22 Oct): who issued each one. Optional, like refunds.
+    all<RawCreditNote>("credit_notes").catch(() => null),
   ]);
   const invoiceSub = new Map(invoices.map((i) => [i.id, i.parent?.subscription_details?.subscription ?? i.subscription ?? null]));
   const piInvoice = new Map(payments.filter((p) => p.payment?.payment_intent).map((p) => [p.payment!.payment_intent!, p.invoice]));
@@ -159,9 +164,19 @@ async function loadSnapshot(): Promise<AccountSnapshot> {
       periodStart: i.period_start ?? null, periodEnd: i.period_end ?? null,
       description: i.lines?.data?.[0]?.description ?? null,
       ...servicePeriod(i),
+      ...(typeof i.post_payment_credit_notes_amount === "number" ? { creditedAfterPayment: i.post_payment_credit_notes_amount / 100 } : {}),
     })),
     ...(refunds ? { refunds: refunds.map((r) => ({ id: r.id, charge: r.charge, amount: r.amount / 100, created: r.created, status: r.status, reason: r.reason })) } : {}),
     ...(products ? { products: products.map((p) => ({ id: p.id, name: p.name })) } : {}),
+    ...(creditNotes
+      ? {
+          creditNotes: creditNotes.map((c) => ({
+            id: c.id, number: c.number, invoice: c.invoice, created: c.created, amount: c.amount / 100, pdf: c.pdf ?? null,
+            refunds: [...(c.refunds ?? []).map((r) => (typeof r.refund === "string" ? r.refund : r.refund?.id ?? null)), c.refund ?? null].filter((x): x is string => !!x),
+            by: c.metadata?.os_refund_by ?? null, reason: c.reason ?? null,
+          })),
+        }
+      : {}),
     readAt: Date.now(),
   };
 }

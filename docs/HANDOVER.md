@@ -1064,8 +1064,8 @@ before: the Stripe control and billing fields on the Record tab, under
 `billingUser`'s old rule (admins + the Clients page), and "Fix →" on a billing
 check opens Record for them.
 
-Read-only. Data: the shared Stripe snapshot (`billing-account.ts`, now also
-refunds, products, invoice PDFs, card and receipt), shaped by
+Read-only, except Refund (below, 22 Oct). Data: the shared Stripe snapshot (`billing-account.ts`, now also
+refunds, products, invoice PDFs, card and receipt, and credit notes), shaped by
 `clientBillingDetail` in `billing-model.ts` with the same ownership rules as
 every other money figure. *Refresh* re-reads Stripe (not within 30 s of the
 last read). Invoice and receipt links go through `/billing/document`, which
@@ -1081,6 +1081,63 @@ CSV, Refresh, 700 px width; PDF/page/receipt redirects; another client's
 invoice refused; admin@outreachify.io and Eddy see it, the two other team members with the
 Clients page do not (no tab, routes 404, their Record tab unchanged). Tests:
 `billing-detail.test.ts`.
+
+#### Refund an invoice (built 22–23 Oct)
+
+Eddy's plan, approved 22 Oct ("yes amy and I (eddy) can issue refunds.
+everything else approved"). Each paid invoice on the Billing tab with money
+left to give back has a **Refund** link, which opens a dialog:
+
+- **Full** (everything left) **or part of it**, a **reason** (Service issue,
+  Plan change, Duplicate payment, Fraudulent payment — Stripe's credit-note
+  codes), an optional **note** (printed on the credit note), and **Email the
+  credit note to the client** — unticked unless someone ticks it
+  (`email_type: none` otherwise; Stripe's default would email them).
+- **Review refund** asks Stripe for its own preview of the credit note
+  (creates nothing). The confirm screen shows the amount, the card it goes
+  back to, the invoice, reason, note and whether the client is emailed, and
+  says the money usually shows in 5–10 business days and Stripe keeps its fee.
+- **Refund $X** creates one **credit note** on the invoice with
+  `refund_amount` (Stripe's recommended way for invoices). The credit note
+  carries `metadata.os_refund_by` (who) and `os_client_id`. The history then
+  shows the refund with the reason picked, the credit note's number and
+  "by <email>"; the invoice row shows "$X refunded".
+
+Who: the Billing tab's three people only (`billingTabUser`, bare 404 for
+anyone else), from the OS's own page only (JSON + same-origin). The route
+(`/api/workspace/clients/billing/refund`, `lib/clients/billing-refund.ts`)
+checks the invoice is the client's by the tab's rules and has a payment, then
+reads the invoice, its payments and its credit notes **from Stripe at that
+moment** (`invoiceNow`: paid, less the larger of the payments' refunds — a
+refund made in the Stripe Dashboard counts — and the credit notes) before
+asking Stripe; Stripe refuses anything over what is left. **A live-key refund
+is refused unless the server runs on Railway AND the request comes from
+https://os.brokerstaffer.com** (Origin), so a local copy — even under
+`railway run` — can never move real money. Every refund is logged
+(`[billing] … refunded …`).
+
+**Never twice by accident** (independent review, 23 Oct): the key made at
+*Review* goes to Stripe as `Idempotency-Key` and onto the credit note
+(`metadata.os_refund_key`). A retry whose refund already went through (its
+answer lost to a timeout or a dropped connection) is answered with that refund
+and nothing new is sent. When the answer is lost after sending, the dialog says
+it may have gone through, re-reads the tab, and offers only *Close and check
+the history* or the same refund again — no Back to a new amount. And another
+refund of the same amount on the same invoice within ten minutes is refused at
+*Review*, naming the credit note. Also from the review: the confirm screen
+shows Stripe's preview amount (no Refund button if it differs); "1,50" is
+refused rather than read as $150; an invoice row says "credited" rather than
+"refunded" when a credit note gave a balance credit, not money.
+
+Tested in **Stripe TEST mode only** (we never issue a real refund — Amy
+finalises real ones): the Stripe calls 16/16 against Stripe's API (partial;
+the key found on the credit note; a direct Dashboard refund counted; a repeat
+with the same key = one credit note; over-refund refused; the rest);
+unit tests in `billing-refund.test.ts`; and the whole flow in real Chrome
+36/36 against a local server holding ONLY the test key (a test customer named
+to match one client, nothing written to any database; deleted after),
+including the answer cut off after Stripe refunded → *try again* (double
+clicked) → the same one credit note.
 
 ### Inboxes: where each column comes from
 

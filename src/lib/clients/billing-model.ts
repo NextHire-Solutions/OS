@@ -101,6 +101,24 @@ export interface StripeInvoice {
   serviceEnd?: number;
   /** The first line's description: "1 × RECRUITING SERVICES (at $750.00 / every 14 days)". */
   description?: string | null;
+  /** Dollars credited back after it was paid (credit notes: refunds, balance credits, outside Stripe). */
+  creditedAfterPayment?: number;
+}
+/** A credit note, for who issued a refund (22 Oct). */
+export interface StripeCreditNote {
+  id: string;
+  number: string | null;
+  invoice: string | null;
+  created: number;
+  /** Dollars. */
+  amount: number;
+  pdf: string | null;
+  /** The refunds it made (re_…). */
+  refunds: string[];
+  /** Who issued it from the OS (metadata os_refund_by); null when issued in Stripe. */
+  by: string | null;
+  /** Stripe's credit-note reason code (CREDIT_NOTE_REASONS). */
+  reason?: string | null;
 }
 export interface AccountSnapshot {
   customers: StripeCustomer[];
@@ -110,6 +128,7 @@ export interface AccountSnapshot {
   /* For the Billing tab (19 Oct). */
   refunds?: StripeRefund[];
   products?: { id: string; name: string }[];
+  creditNotes?: StripeCreditNote[];
   /** When Stripe was read (ms). */
   readAt?: number;
 }
@@ -371,6 +390,9 @@ export interface BillingHistoryRow {
   note: string | null;
   /** A Stripe receipt can be opened (a successful payment). */
   receipt: boolean;
+  /** A refund issued from the OS: who did it (credit note metadata); its credit note's number. */
+  by?: string | null;
+  creditNote?: string | null;
   /** A refund: the payment it gave back. */
   chargeId?: string;
 }
@@ -394,6 +416,12 @@ export interface BillingInvoiceRow {
   /** Can be viewed (Stripe's invoice page) / downloaded (the PDF). A draft can do neither. */
   page: boolean;
   pdf: boolean;
+  /** Dollars still refundable: paid, less what refunds and credit notes already gave back (22 Oct). 0 when nothing can be refunded. */
+  refundable: number;
+  /** The card or account the payment came from — where a refund goes back to. */
+  card: string | null;
+  /** Dollars its payments were refunded (in Stripe or by a credit note) — against `refundable`, says whether money went back or only a credit. */
+  refunded: number;
 }
 
 export interface ClientBillingDetail {
@@ -425,6 +453,14 @@ export interface ClientBillingDetail {
 }
 
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** A credit note's reason, as a person picks it in the Refund dialog (billing-refund.ts); Stripe's codes behind them. */
+export const CREDIT_NOTE_REASONS = {
+  product_unsatisfactory: "Service issue",
+  order_change: "Plan change",
+  duplicate: "Duplicate payment",
+  fraudulent: "Fraudulent payment",
+} as const;
 
 const REFUND_REASON: Record<string, string> = {
   duplicate: "Duplicate payment",
@@ -489,16 +525,22 @@ export function clientBillingDetail(
       receipt: kind === "payment" && ch.hasReceipt === true,
     });
   }
+  const noteByRefund = new Map<string, StripeCreditNote>();
+  for (const cn of snap.creditNotes ?? []) for (const id of cn.refunds) noteByRefund.set(id, cn);
   for (const r of snap.refunds ?? []) {
     const ch = r.charge ? chargeById.get(r.charge) : undefined;
     if (!ch) continue;
     const inv = ch.invoice ? invoiceById.get(ch.invoice) : undefined;
-    const why = r.reason ? REFUND_REASON[r.reason] ?? r.reason : null;
+    // A refund made through a credit note (Refund in the OS) says the reason picked there, not Stripe's code for the refund.
+    const cn = noteByRefund.get(r.id);
+    const why = cn?.reason && cn.reason in CREDIT_NOTE_REASONS ? CREDIT_NOTE_REASONS[cn.reason as keyof typeof CREDIT_NOTE_REASONS]
+      : r.reason ? REFUND_REASON[r.reason] ?? r.reason : null;
     const state = r.status === "succeeded" ? null : r.status === "pending" ? "Processing" : r.status === "failed" ? "Refund failed" : r.status === "canceled" ? "Refund cancelled" : r.status;
     history.push({
       id: r.id, kind: "refund", date: etDay(r.created), at: r.created, amount: cents(r.amount), description: describe(ch),
       invoiceId: inv?.id ?? null, invoiceNumber: inv?.number ?? null, card: ch.card ?? null,
       note: [why, state].filter(Boolean).join(" · ") || null, receipt: false, chargeId: ch.id,
+      by: cn?.by ?? null, creditNote: cn?.number ?? null,
     });
   }
   history.sort((a, c) => c.at - a.at || a.id.localeCompare(c.id));
@@ -565,6 +607,10 @@ export function clientBillingDetail(
     invoices: myInvoices.map((inv) => {
       const look = invoiceLook(inv);
       const total = inv.total ?? inv.amountDue;
+      const paidCharges = myCharges.filter((ch) => ch.invoice === inv.id && ch.status === "succeeded");
+      const paidAmount = inv.amountPaid ?? (inv.status === "paid" ? total : 0);
+      // Already given back: what its charges were refunded, or what credit notes credited after payment — whichever is more.
+      const returned = Math.max(paidCharges.reduce((t, ch) => t + ch.refunded, 0), inv.creditedAfterPayment ?? 0);
       return {
         id: inv.id, number: inv.number, date: etDay(inv.created), at: inv.created, status: inv.status, label: look.label, tone: look.tone,
         total: cents(total),
@@ -577,6 +623,10 @@ export function clientBillingDetail(
         attempts: inv.attemptCount,
         page: inv.status !== "draft" && !!inv.url,
         pdf: inv.status !== "draft" && !!inv.pdf,
+        // Only with a payment to give back to: an invoice paid outside Stripe, or a $0 one, has none.
+        refundable: inv.status === "paid" && paidCharges.length > 0 ? Math.max(0, cents(paidAmount - returned)) : 0,
+        card: paidCharges[0]?.card ?? null,
+        refunded: cents(paidCharges.reduce((t, ch) => t + ch.refunded, 0)),
       };
     }),
     readAt: snap.readAt ?? null,
