@@ -457,6 +457,25 @@ the conversation panel reads `/api/crm-preview/conversation` by id.
   Portals → the portal → "Their offer"). Only the design's eight choices, a
   reason (≤ 1,000 characters) and an optional "never say".
 
+**22 October — the bot check on client sign-in (Cloudflare Turnstile).** The
+client created the Cloudflare account and sent the keys (22 Oct). The keys live
+ONLY in `~/.brokerstaffer/turnstile.env` (and, at deploy, Railway `os`:
+`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`) — never in git, never in
+`.env.local` (the client's widget is tied to their hostnames, so it would
+fail on localhost). The check is ON only when both are set. Then "Send link
+to log in" and the code form each carry a widget (`portal-signin/forms.tsx`
+HumanCheck — usually passes by itself) and the routes verify its token with
+Cloudflare before doing anything (`lib/portal-login/turnstile.ts`): no token,
+a failed check, a token from the other form, or Cloudflare unreachable → the
+same refusal for every address ("Please complete the security check, then
+try again") — fail closed. The secret was checked valid against Cloudflare
+(a dummy token is refused as `invalid-input-response`, not
+`invalid-input-secret`). Tested locally with Cloudflare's published TEST keys
+(1x… pass, 2x… fail): 8/8 + 7/7, and the full sign-in suite 18/18 with the
+check off and on. **The client's widget must list `os.brokerstaffer.com`
+(where the sign-in page is today) — and later the portal's own address —
+under Hostname Management in Cloudflare**, or the live widget errors.
+
 **Market, Prospects and Reports** (added later on 16 Oct) read the agent
 database — the Database project's Supabase — through two Owner-only GET routes,
 `/api/crm-preview/market` and `/api/crm-preview/report` (`lib/crm-preview/market.ts`):
@@ -575,7 +594,7 @@ person signs in (no data behind a shareable link, unlike today's portals —
 built 21 Oct, `lib/portal-login`); usage counted with alerts to staff (built
 21 Oct, above; **no automatic lock** — the user's decision); no export of the
 market or prospects (exports only of the client's own lists); a bot challenge
-on sign-in (Cloudflare Turnstile — waiting on the client's keys). Canary
+on sign-in (Cloudflare Turnstile — BUILT 22 Oct, see below). Canary
 agents: **no** (the user, 21 Oct). An anti-scraping clause in the client
 terms: **not added** — it is not in Eddy's design (the user, 22 Oct: "if no
 then do not add please").

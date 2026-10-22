@@ -55,7 +55,7 @@ test("each public route checks for itself, and the request answers the same for 
   }
   const req = routes[0][1];
   assert.match(req, /after\(async \(\) => \{/, "the work happens after the answer");
-  assert.equal((req.match(/NextResponse\.json\(/g) ?? []).length, 2, "one refusal (not the page) and one answer for every address");
+  assert.equal((req.match(/NextResponse\.json\(/g) ?? []).length, 3, "two refusals (not the page; the bot check — neither depends on the address) and one answer for every address");
   assert.match(req, /if \(!mayEmail\(email\)\) return;/);
   for (const [name, src] of routes.slice(1, 3)) assert.match(src, /res\.cookies\.set\(sessionCookie\(r\.session\)\)/, name);
   const http = read("src/lib/portal-login/http.ts");

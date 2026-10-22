@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { turnstileSiteKey } from "@/lib/portal-login/turnstile";
+
 import { SignInShell } from "../shell";
 import { CodeForm } from "../forms";
 
@@ -17,7 +19,7 @@ export default async function CheckPage({ searchParams }: { searchParams: Search
       <p>
         If <b>{email || "your address"}</b> can sign in, we&apos;ve sent it a sign-in link. It works once, for the next 15&nbsp;minutes.
       </p>
-      {email ? <CodeForm email={email} /> : null}
+      {email ? <CodeForm email={email} siteKey={turnstileSiteKey()} /> : null}
       <p className="psi-small">Nothing arrived? Check spam, or <a href="/portal-signin">ask for a new link</a>. Only addresses BrokerStaffer has set up for your portal can sign in.</p>
     </SignInShell>
   );
