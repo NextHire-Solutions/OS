@@ -1313,3 +1313,10 @@ td.mis-empty-cell {
 .mis-em-frame { width: 100%; height: min(460px, 52vh); border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .mis-em-text { margin: 0; max-height: min(460px, 52vh); overflow: auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--inset);
   font: 12.5px/1.55 var(--mono, ui-monospace, Menlo, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The test address (23 Oct): the field and its Save on one line. */
+.mis-test-to { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin: 14px 0 12px; }
+.mis-test-to > .mis-f { flex: 1 1 360px; min-width: 0; margin: 0; }
+.mis-test-to .inp { width: 100%; min-width: 0; }
+.mis-test-err { margin: -4px 0 10px; font-size: 12.5px; color: #B42318; }
+.mis-test-hint { margin: -6px 0 12px; font-size: 12.5px; }

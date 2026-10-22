@@ -74,3 +74,8 @@ test("0035's defaults are the cautious answers: off, practice, one click, nothin
   assert.match(sql, /dedupe_key\s+text\s+NOT NULL UNIQUE/);
   assert.match(sql, /PRIMARY KEY \(workspace_id, os_client_id, agent_email, mode\)/);
 });
+
+test("0040 only adds the empty test_recipients column — nothing updated, no default, the switches untouched", () => {
+  const s = statements("0040_relay_test_recipients.sql");
+  assert.deepEqual(s, ["ALTER TABLE public.os_relay_settings ADD COLUMN IF NOT EXISTS test_recipients text[]"]);
+});

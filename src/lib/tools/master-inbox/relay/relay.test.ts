@@ -1116,3 +1116,56 @@ test("a raw_payload read error in the database holds the hand-off (fake database
   assert.deepEqual([r.status, r.reason], ["held", "read_error"]);
   assert.match(String(r.detail), /stored payload/);
 });
+
+/* ============================================ the test address, set on the page (23 Oct) */
+
+test("test address: saved within the limits, the switches and their version untouched; one test email per address; checked again at send", async () => {
+  seed({ mode: "one_click" });
+  db.seed("os_users", [
+    { email: "eddy@brokerstaffer.com", is_active: true },
+    { email: "teammate@gmail.com", is_active: true },
+  ]);
+  const before = db.rows("os_relay_settings")[0];
+  // A brokerage contact is refused, whatever else is on the list.
+  await assert.rejects(relay.saveTestRecipients("admin@outreachify.io, angela@jeffcook.test", "admin@outreachify.io", { ws: WS }), /angela@jeffcook\.test is on a brokerage's contact list/);
+  await assert.rejects(relay.saveTestRecipients("someone@gmail.com", "admin@outreachify.io", { ws: WS }), /not one of ours/);
+  assert.deepEqual(await relay.saveTestRecipients("Eddy@BrokerStaffer.com, teammate@gmail.com", "admin@outreachify.io", { ws: WS }), ["eddy@brokerstaffer.com", "teammate@gmail.com"]);
+  const after = db.rows("os_relay_settings")[0];
+  assert.deepEqual(after.test_recipients, ["eddy@brokerstaffer.com", "teammate@gmail.com"]);
+  for (const k of ["enabled", "practice_mode", "mode", "hourly_cap", "enabled_since", "updated_at", "updated_by"]) assert.deepEqual(after[k], before[k], `${k} untouched`);
+  assert.deepEqual((await relay.relayOverview({ ws: WS, env: {} }, NOW)).tests, { recipients: ["eddy@brokerstaffer.com", "teammate@gmail.com"], ready: true });
+
+  // A copy of a prepared hand-off: one email to each saved address, each to that address alone.
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps());
+  const sentTo: Array<Record<string, unknown>> = [];
+  const testFetch = (async (_u: string, init: RequestInit) => {
+    sentTo.push(JSON.parse(String(init.body)));
+    return new Response(JSON.stringify({ ErrorCode: 0, MessageID: `pm-${sentTo.length}` }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const TOKEN = { POSTMARK_SERVER_TOKEN: "pm-test" };
+  const r = await relay.sendRelayTest(String(recordFor(thread.id).id), "admin@outreachify.io", { ws: WS, env: TOKEN, testFetch });
+  assert.equal(r.to, "eddy@brokerstaffer.com, teammate@gmail.com");
+  assert.deepEqual(sentTo.map((m) => [m.To, m.ReplyTo]), [["eddy@brokerstaffer.com", "eddy@brokerstaffer.com"], ["teammate@gmail.com", "teammate@gmail.com"]]);
+  assert.ok(sentTo.every((m) => String(m.Subject).startsWith("[TEST] ") && /In live use this goes to: Lance Overstreet <lance@jeffcook\.test>/.test(String(m.TextBody))), "the brokerage is named, never addressed");
+  assert.equal(handed.length, 0, "the relay's own transport never used");
+
+  // Someone leaves Team access: at the next send they are skipped; with nobody left, nothing goes.
+  db.seed("os_users", [{ email: "eddy@brokerstaffer.com", is_active: true }, { email: "teammate@gmail.com", is_active: false }]);
+  sentTo.length = 0;
+  assert.equal((await relay.sendRelayTest(null, "admin@outreachify.io", { ws: WS, env: TOKEN, testFetch })).to, "eddy@brokerstaffer.com", "our own domain still counts");
+  assert.deepEqual(sentTo.map((m) => m.To), ["eddy@brokerstaffer.com"]);
+  db.rows("os_relay_settings")[0].test_recipients = ["teammate@gmail.com"];
+  sentTo.length = 0;
+  await assert.rejects(relay.sendRelayTest(null, "admin@outreachify.io", { ws: WS, env: TOKEN, testFetch }), /None of the test addresses can be used now/);
+  assert.equal(sentTo.length, 0);
+  assertContained();
+});
+
+test("test address with nothing saved: admin@outreachify.io, as before", async () => {
+  seed();
+  assert.deepEqual((await relay.relayOverview({ ws: WS, env: {} }, NOW)).tests, { recipients: ["admin@outreachify.io"], ready: true });
+  db.rows("os_relay_settings")[0].test_recipients = [];
+  assert.deepEqual((await relay.relayOverview({ ws: WS, env: {} }, NOW)).tests.recipients, ["admin@outreachify.io"]);
+});

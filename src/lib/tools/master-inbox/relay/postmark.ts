@@ -1,6 +1,6 @@
 import { isRelayAddress, LIVE_SEND_ENV, liveSendAllowed, messageStream, postmarkToken, TOKEN_ENV, type Env } from "./gate.ts";
 import { addressHeader, type RelayEmail } from "./message.ts";
-import { isTestRecipient } from "./test-send.ts";
+import { TEST_RECIPIENTS } from "./test-send.ts";
 
 /*
  * Postmark — the only code that can put a hand-off in a brokerage's inbox.
@@ -131,8 +131,11 @@ export function createPostmarkTransport(deps: TransportDeps = {}): Transport {
  * it cannot reach a brokerage or an agent, whatever a caller passes it. From
  * is built from the checked address (postmarkPayload), as for a live send.
  */
-export async function sendTest(email: RelayEmail, deps: TransportDeps = {}): Promise<SendResult> {
+export async function sendTest(email: RelayEmail, deps: TransportDeps & { allowed?: readonly string[] } = {}): Promise<SendResult> {
   const env = deps.env ?? process.env;
+  // The hand-off's test list as relay.ts checked it (test-send.ts), else the fixed address.
+  const allowed = (deps.allowed?.length ? deps.allowed : TEST_RECIPIENTS).map((x) => x.trim().toLowerCase());
+  const isTestRecipient = (x: string | null | undefined) => allowed.includes(String(x ?? "").trim().toLowerCase());
   const token = postmarkToken(env);
   if (!token) return { ok: false, gated: "no_token", error: `${TOKEN_ENV} is not set — nothing was sent`, definite: true };
   if (!isRelayAddress(email.fromAddress)) {

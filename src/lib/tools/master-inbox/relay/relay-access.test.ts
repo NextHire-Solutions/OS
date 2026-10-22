@@ -45,7 +45,7 @@ test("pressing it needs a signed-in address, which the hand-off records", () => 
 });
 
 test("every Settings route of the hand-off is admins only, in every method", () => {
-  for (const file of ["relay/route.ts", "relay/assign/route.ts", "relay/brokerage/route.ts", "relay/email/route.ts"]) {
+  for (const file of ["relay/route.ts", "relay/assign/route.ts", "relay/brokerage/route.ts", "relay/email/route.ts", "relay/test/route.ts"]) {
     const src = read(`${API}/${file}`);
     const handlers = [...src.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\b[^{]*\{([\s\S]*?)\n\}/g)];
     assert.ok(handlers.length > 0, file);

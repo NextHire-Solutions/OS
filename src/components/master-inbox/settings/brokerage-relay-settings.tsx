@@ -7,7 +7,7 @@ import { Switch } from "@/components/mi-ui/switch";
 import type { BrokerageRow, RelayOverview } from "@/lib/tools/master-inbox/relay/relay";
 import type { PipelineEntry, RecipientMode, RelayMode } from "@/lib/tools/master-inbox/relay/settings";
 import { REASON_TEXT, relayLine, stamp } from "@/lib/tools/master-inbox/relay/wording";
-import { TEST_RECIPIENTS } from "@/lib/tools/master-inbox/relay/test-send";
+import { MAX_TEST_RECIPIENTS } from "@/lib/tools/master-inbox/relay/test-send";
 
 import { RelayEmailButton } from "./relay-email-view";
 import { Btn, ConfirmButton, Field, Section, ToastHost, ToggleRow, useShowToast } from "./ui";
@@ -57,7 +57,7 @@ function Panel({ data }: { data: RelayOverview }) {
             nothing at all.
           </p>
         </Section>
-        <TestSends tokenSet={data.server.tokenSet} />
+        <TestSends tokenSet={data.server.tokenSet} tests={data.tests} />
       </>
     );
   }
@@ -148,7 +148,7 @@ function Panel({ data }: { data: RelayOverview }) {
         </div>
       </Section>
 
-      <TestSends tokenSet={data.server.tokenSet} />
+      <TestSends tokenSet={data.server.tokenSet} tests={data.tests} />
       <Held data={data} />
       <Brokerages rows={data.brokerages} liveGlobally={s.enabled && !s.practiceMode && data.server.liveSendAllowed && data.server.tokenSet} />
       <Recent data={data} />
@@ -157,35 +157,65 @@ function Panel({ data }: { data: RelayOverview }) {
 }
 
 /*
- * Test sends (20 Oct): to our own address only, never a brokerage or an agent,
- * and without switching anything live (relay/test-send.ts).
+ * Test sends (20 Oct): to our own address(es) only, never a brokerage or an
+ * agent, and without switching anything live (relay/test-send.ts). The
+ * address can be set here (23 Oct) within the limits the server checks.
  */
-function TestSends({ tokenSet }: { tokenSet: boolean }) {
+function TestSends({ tokenSet, tests }: { tokenSet: boolean; tests: RelayOverview["tests"] }) {
   const show = useShowToast();
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(tests.recipients);
+  const [draft, setDraft] = useState(tests.recipients.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const changed = draft.trim().toLowerCase() !== saved.join(", ");
   const run = async () => {
     setBusy(true);
     const r = await send("/api/tools/master-inbox/relay/test", "POST", {});
     setBusy(false);
-    show(r.ok ? { text: `Test sent to ${String(r.to)} — check that inbox` } : { text: r.error ?? "Could not send the test", bad: true });
+    show(r.ok ? { text: `Test sent to ${String(r.to)} — check that inbox${r.notSent ? `. Not sent to ${String(r.notSent)}` : ""}` } : { text: r.error ?? "Could not send the test", bad: true });
+  };
+  const save = async () => {
+    setSaving(true);
+    setErr(null);
+    const r = await send("/api/tools/master-inbox/relay/test", "PUT", { recipients: draft });
+    setSaving(false);
+    if (r.ok && Array.isArray(r.recipients)) {
+      const list = (r.recipients as string[]).map(String);
+      setSaved(list);
+      setDraft(list.join(", "));
+      show({ text: `Tests now go to ${list.join(", ")}` });
+    } else setErr(r.error ?? "Could not save the test address");
   };
   return (
-    <Section title="Test with our own address" sub={`Sends only to ${TEST_RECIPIENTS.join(", ")} — never to a brokerage or an agent, and without switching anything live.`}>
+    <Section title="Test with our own address" sub={`Sends only to ${saved.join(", ")} — never to a brokerage or an agent, and without switching anything live.`}>
       <p className="mut">
         A sample hand-off with made-up words, exactly as a brokerage would receive one, marked TEST. To see a real one, use <b>Test copy</b> on a
         prepared hand-off under Recent hand-offs.
       </p>
+      <div className="mis-test-to">
+        <Field label="Send tests to" htmlFor="mis-test-to">
+          <input id="mis-test-to" className="inp" value={draft} disabled={!tests.ready || saving} onChange={(e) => setDraft(e.target.value)} spellCheck={false} autoComplete="off" />
+        </Field>
+        <Btn onClick={save} disabled={!tests.ready || saving || !changed || !draft.trim()}>{saving ? "Saving…" : "Save"}</Btn>
+      </div>
+      <p className="mut mis-test-hint">
+        {tests.ready
+          ? `Up to ${MAX_TEST_RECIPIENTS} addresses, separated by commas. Our own only: an @outreachify.io or @brokerstaffer.com address, or someone on Team access — never a brokerage or an agent. Checked again at every send.`
+          : "To change it, run migration 0040_relay_test_recipients.sql in the Master Inbox database first. Until then tests go to admin@outreachify.io."}
+      </p>
+      {err ? <p className="mis-test-err" role="alert">{err}</p> : null}
       <div className="mis-act" style={{ alignItems: "center", gap: 10 }}>
-        <Btn primary onClick={run} disabled={busy || !tokenSet}>
-          {busy ? "Sending…" : `Send a sample to ${TEST_RECIPIENTS[0]}`}
+        <Btn primary onClick={run} disabled={busy || !tokenSet || changed}>
+          {busy ? "Sending…" : `Send a sample to ${saved.join(", ")}`}
         </Btn>
-        {!tokenSet ? <span className="mut">The Postmark token is not set on this server.</span> : null}
+        {!tokenSet ? <span className="mut">The Postmark token is not set on this server.</span> : changed ? <span className="mut">Save the address first.</span> : null}
       </div>
     </Section>
   );
 }
 
-function TestCopy({ relayId }: { relayId: string }) {
+function TestCopy({ relayId, to }: { relayId: string; to: string[] }) {
   const show = useShowToast();
   const [busy, setBusy] = useState(false);
   return (
@@ -193,12 +223,12 @@ function TestCopy({ relayId }: { relayId: string }) {
       type="button"
       className="mi-relay-btn"
       disabled={busy}
-      title={`Send a copy of this hand-off, marked TEST, to ${TEST_RECIPIENTS[0]} only`}
+      title={`Send a copy of this hand-off, marked TEST, to ${to.join(", ")} only`}
       onClick={async () => {
         setBusy(true);
         const r = await send("/api/tools/master-inbox/relay/test", "POST", { relayId });
         setBusy(false);
-        show(r.ok ? { text: `Test copy sent to ${String(r.to)}` } : { text: r.error ?? "Could not send the test", bad: true });
+        show(r.ok ? { text: `Test copy sent to ${String(r.to)}${r.notSent ? `. Not sent to ${String(r.notSent)}` : ""}` } : { text: r.error ?? "Could not send the test", bad: true });
       }}
     >
       {busy ? "Sending…" : "Test copy"}
@@ -509,7 +539,7 @@ function Recent({ data }: { data: RelayOverview }) {
                     {r.subject && r.recipients.length ? (
                       <div className="mis-em-acts">
                         <RelayEmailButton relayId={r.id} />
-                        <TestCopy relayId={r.id} />
+                        <TestCopy relayId={r.id} to={data.tests.recipients} />
                       </div>
                     ) : null}
                   </td>

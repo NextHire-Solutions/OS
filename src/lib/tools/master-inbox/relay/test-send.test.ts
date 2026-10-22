@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { sendTest } from "./postmark.ts";
-import { asTest, isTestRecipient, resetTestSends, sampleEmail, takeTestSend, TEST_DAILY_CAP, TEST_RECIPIENTS } from "./test-send.ts";
+import {
+  asTest, isTestRecipient, MAX_TEST_RECIPIENTS, parseTestRecipients, resetTestSends, sampleEmail, takeTestSend, TEST_DAILY_CAP, TEST_RECIPIENTS, testAddressRefusal,
+} from "./test-send.ts";
 
 /*
  * Test sends (user, 20 Oct): "test this properly with our own email address
@@ -121,9 +123,75 @@ test("sendRelayTest changes no hand-off, takes no slot, counts no cap, and never
   for (const w of [".update(", ".insert(", ".upsert(", ".delete(", "liveSendAllowed(", "os_brokerage_relay_agents", "transport.send("]) {
     assert.ok(!body.includes(w), `sendRelayTest must not use ${w}`);
   }
-  assert.match(body, /sendTest\(email, \{ env, fetch: deps\.testFetch \}\)/);
-  assert.match(body, /const to = TEST_RECIPIENTS\[0\];/);
+  assert.match(body, /sendTest\(email, \{ env, fetch: deps\.testFetch, allowed: toList \}\)/, "the transport gets the list as checked now");
+  assert.match(body, /const toList = ctx \? saved\.list\.filter\(\(a\) => testAddressRefusal\(a, ctx\) === null\) : saved\.list;/, "every saved address is checked again at send time");
   const route = readFileSync("src/app/api/tools/master-inbox/relay/test/route.ts", "utf8");
   assert.ok(route.indexOf("requireAdminSession()") < route.indexOf("sendRelayTest("), "admins first");
-  assert.deepEqual([...route.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["POST"]);
+  assert.deepEqual([...route.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["POST", "PUT"]);
+  const put = route.slice(route.indexOf("export async function PUT"));
+  assert.ok(put.indexOf("requireAdminSession()") > 0 && put.indexOf("requireAdminSession()") < put.indexOf("saveTestRecipients("), "PUT: admins first");
+});
+
+/* ---------------------------------------------- a test address set on the page (23 Oct) --- */
+
+const CTX = {
+  team: new Set(["eddy@brokerstaffer.com", "teammate@gmail.com"]),
+  brokerage: new Set(["angela@jeffcook.test", "owner@brokerstaffer.com"]),
+};
+
+test("a test address: our own domains or Team access — never a brokerage contact, never anyone else", () => {
+  for (const ok of ["admin@outreachify.io", "Automation@Outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com", "teammate@gmail.com"]) {
+    assert.equal(testAddressRefusal(ok, CTX), null, ok);
+  }
+  const no: Array<[string, RegExp]> = [
+    ["angela@jeffcook.test", /brokerage's contact list/],
+    ["owner@brokerstaffer.com", /brokerage's contact list/], // even on our domain
+    ["someone@gmail.com", /not one of ours/],
+    ["agent@kw.com", /not one of ours/],
+    ["x@leads.brokerstaffer.com", /not one of ours/], // a subdomain is not the domain
+    ["x@brokerstaffer.com.evil.com", /not one of ours/],
+    ["x@outreachify.io.evil.com", /not one of ours/],
+    ["not an address", /not an email address/],
+    ["a@b", /not an email address/],
+  ];
+  for (const [a, why] of no) assert.match(testAddressRefusal(a, CTX) ?? "", why, a);
+});
+
+test("the list typed on the page: commas, semicolons or spaces; lower-cased; no repeats; one to three; every one checked", () => {
+  assert.deepEqual(parseTestRecipients(" Eddy@BrokerStaffer.com, admin@outreachify.io;eddy@brokerstaffer.com ", CTX), { list: ["eddy@brokerstaffer.com", "admin@outreachify.io"] });
+  assert.deepEqual(parseTestRecipients(["admin@outreachify.io"], CTX), { list: ["admin@outreachify.io"] });
+  assert.match((parseTestRecipients("", CTX) as { error: string }).error, /at least one/);
+  assert.match((parseTestRecipients("a@outreachify.io b@outreachify.io c@outreachify.io d@outreachify.io", CTX) as { error: string }).error, new RegExp(`At most ${MAX_TEST_RECIPIENTS}`));
+  assert.match((parseTestRecipients("admin@outreachify.io, angela@jeffcook.test", CTX) as { error: string }).error, /angela@jeffcook\.test is on a brokerage's contact list/, "one bad address refuses the whole save");
+});
+
+test("the transport takes the checked list — and still refuses anyone not on it, and two at once", async () => {
+  const allowed = ["eddy@brokerstaffer.com", "admin@outreachify.io"];
+  const toEddy = sampleEmail(FROM, "eddy@brokerstaffer.com");
+  const ok = fakeFetch();
+  assert.equal((await sendTest(toEddy, { env: TOKEN_ONLY, fetch: ok.f, allowed })).ok, true);
+  assert.equal(ok.calls[0].body.To, "eddy@brokerstaffer.com");
+  assert.equal(ok.calls[0].body.ReplyTo, "eddy@brokerstaffer.com", "a reply to the test comes back to the tester");
+  // Without the list, only the fixed address.
+  const none = fakeFetch();
+  assert.equal((await sendTest(toEddy, { env: TOKEN_ONLY, fetch: none.f })).ok, false);
+  assert.equal(none.calls.length, 0);
+  for (const bad of [
+    { ...toEddy, to: [{ name: null, email: "angela@brokerage.com" }], toHeader: "angela@brokerage.com", replyTo: "angela@brokerage.com" },
+    { ...toEddy, to: [{ name: null, email: "eddy@brokerstaffer.com" }, { name: null, email: "admin@outreachify.io" }] },
+  ]) {
+    const x = fakeFetch();
+    assert.equal((await sendTest(bad, { env: TOKEN_ONLY, fetch: x.f, allowed })).ok, false);
+    assert.equal(x.calls.length, 0);
+  }
+});
+
+test("portal sign-in emails keep the FIXED test address — a hand-off test address never widens them", () => {
+  assert.deepEqual([...TEST_RECIPIENTS], ["admin@outreachify.io"]);
+  const mail = readFileSync("src/lib/portal-login/mail.ts", "utf8");
+  assert.match(mail, /import \{ isTestRecipient \} from "@\/lib\/tools\/master-inbox\/relay\/test-send";/);
+  assert.doesNotMatch(mail, /test_recipients|loadTestRecipients|parseTestRecipients/);
+  const src = readFileSync("src/lib/tools/master-inbox/relay/test-send.ts", "utf8");
+  const fn = src.slice(src.indexOf("export function isTestRecipient("), src.indexOf("\n}\n", src.indexOf("export function isTestRecipient(")));
+  assert.match(fn, /TEST_RECIPIENTS\.includes\(a\)/);
 });

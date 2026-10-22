@@ -1,5 +1,6 @@
 import { buildRelayEmail, type RelayEmail } from "./message.ts";
 import type { Recipient } from "./rules.ts";
+import { isEmail } from "./settings.ts";
 
 /*
  * TEST SENDS (user, 20 Oct): "we need to deploy this postmark work but do not
@@ -24,9 +25,55 @@ export const TEST_RECIPIENTS: readonly string[] = ["admin@outreachify.io"];
 /** Test sends a day, all admins together — a stuck button cannot flood the inbox. */
 export const TEST_DAILY_CAP = 20;
 
+/**
+ * The fixed test address. Portal sign-in emails (portal-login/mail.ts) use
+ * THIS, never the hand-off's settable list below — setting a hand-off test
+ * address must not widen who can get a sign-in email.
+ */
 export function isTestRecipient(address: string | null | undefined): boolean {
   const a = String(address ?? "").trim().toLowerCase();
   return a.length > 0 && TEST_RECIPIENTS.includes(a);
+}
+
+/*
+ * The hand-off's test address(es) can be set on its Settings page (23 Oct, the
+ * user: "can we change this email address for testing? … give me an option to
+ * set email address here"), within these limits, checked when saved AND again
+ * at every send (relay.ts): our own domains or someone on Team access, never
+ * an address on a brokerage's contact list, at most three. Until one is saved
+ * (and before migration 0040), TEST_RECIPIENTS.
+ */
+export const TEST_DOMAINS: readonly string[] = ["outreachify.io", "brokerstaffer.com"];
+export const MAX_TEST_RECIPIENTS = 3;
+
+export interface TestAddressContext {
+  /** Active Team access people. */
+  team: ReadonlySet<string>;
+  /** Every address on a brokerage's contact list (and any relay address override). */
+  brokerage: ReadonlySet<string>;
+}
+
+/** Why an address cannot receive hand-off tests — or null when it can. */
+export function testAddressRefusal(address: string, ctx: TestAddressContext): string | null {
+  const a = address.trim().toLowerCase();
+  if (!isEmail(a)) return `"${address.trim()}" is not an email address.`;
+  if (ctx.brokerage.has(a)) return `${a} is on a brokerage's contact list — a test never goes to a brokerage.`;
+  // The exact domain: leads.brokerstaffer.com or brokerstaffer.com.evil.com are not ours.
+  if (TEST_DOMAINS.includes(a.slice(a.lastIndexOf("@") + 1)) || ctx.team.has(a)) return null;
+  return `${a} is not one of ours — use an @outreachify.io or @brokerstaffer.com address, or someone on Team access.`;
+}
+
+/** The list a person typed (comma, semicolon or space separated), checked. */
+export function parseTestRecipients(raw: unknown, ctx: TestAddressContext): { list: string[] } | { error: string } {
+  const parts = (Array.isArray(raw) ? raw.map(String) : String(raw ?? "").split(/[,;\s]+/)).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const list = [...new Set(parts)];
+  if (!list.length) return { error: "Enter at least one address." };
+  if (list.length > MAX_TEST_RECIPIENTS) return { error: `At most ${MAX_TEST_RECIPIENTS} addresses.` };
+  for (const a of list) {
+    const why = testAddressRefusal(a, ctx);
+    if (why) return { error: why };
+  }
+  return { list };
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

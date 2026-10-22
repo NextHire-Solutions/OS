@@ -9,7 +9,7 @@ import { getMasterInboxSupabase, workspaceId } from "../supabase";
 import { fromAddress, liveSendAllowed, messageStream, postmarkToken, sweepSwitchedOff, type Env } from "./gate.ts";
 import { addressHeader, agentDisplayName, buildRelayEmail, cleanDisplayName, messageIdFromPayload, providerSaysAutomatic, replyText, type RelayEmail } from "./message.ts";
 import { bounceKind, createPostmarkTransport, fetchBounces, sendTest, type PostmarkBounce, type Transport } from "./postmark.ts";
-import { asTest, sampleEmail, takeTestSend, TEST_DAILY_CAP, TEST_RECIPIENTS } from "./test-send.ts";
+import { asTest, parseTestRecipients, sampleEmail, takeTestSend, TEST_DAILY_CAP, TEST_RECIPIENTS, testAddressRefusal, type TestAddressContext } from "./test-send.ts";
 import { campaignKey, portalsOfClient, resolveBrokerage, type OsClientRef, type ResolvedBy, type World } from "./resolve.ts";
 import {
   agentEmailOf,
@@ -1348,16 +1348,60 @@ export async function assignCampaign(
  * Reads only: the hand-off is not changed, no agent's slot is taken, no cap
  * is counted. Needs the Postmark token, never OS_BROKERAGE_RELAY_LIVE_SEND.
  */
-export async function sendRelayTest(relayId: string | null, who: string, deps: RelayDeps = {}): Promise<{ to: string; messageId: string; kind: "sample" | "copy" }> {
+/*
+ * The hand-off's test address(es) (test-send.ts; migration 0040). Read apart
+ * from the switches, so a settings row or column that is not there yet only
+ * means "the fixed address", never a failed page.
+ */
+export async function loadTestRecipients(os: Os, ws: string): Promise<{ list: string[]; ready: boolean }> {
+  const { data, error } = await os("os_relay_settings").select("test_recipients").eq("workspace_id", ws).maybeSingle();
+  if (error) return { list: [...TEST_RECIPIENTS], ready: false };
+  const saved = Array.isArray((data as Row | null)?.test_recipients) ? ((data as Row).test_recipients as unknown[]).filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+  return { list: saved.length ? saved.map((x) => x.trim().toLowerCase()) : [...TEST_RECIPIENTS], ready: !!data };
+}
+
+/** Who a test may go to, as of now: active Team access people; and every brokerage contact address, which it may never go to. */
+async function testContext(os: Os): Promise<TestAddressContext> {
+  const { data, error } = await os("os_users").select("email, is_active");
+  if (error) throw new RelayActionError(`Team access could not be read: ${error.message}`, 502);
+  const team = new Set(((data ?? []) as Row[]).filter((u) => u.is_active !== false).map((u) => String(u.email ?? "").trim().toLowerCase()).filter(Boolean));
+  const brokerage = new Set<string>();
+  for (const r of await loadClientRows(os)) {
+    const intro = introClientFromRow(r, String(r.name ?? ""));
+    for (const e of [intro.contactEmail, ...(intro.extraContacts ?? []).map((c) => c.email), brokerageFromJson(r.relay_settings).address]) {
+      const k = String(e ?? "").trim().toLowerCase();
+      if (k) brokerage.add(k);
+    }
+  }
+  return { team, brokerage };
+}
+
+/** Saves the hand-off's test address(es) (admins). Writes only os_relay_settings.test_recipients — never the switches or their version. */
+export async function saveTestRecipients(raw: unknown, who: string, deps: RelayDeps = {}): Promise<string[]> {
+  const os: Os = deps.os ?? osTable;
+  const ws = deps.ws ?? (await workspaceId());
+  const parsed = parseTestRecipients(raw, await testContext(os));
+  if ("error" in parsed) throw new RelayActionError(parsed.error, 400);
+  const { data, error } = await os("os_relay_settings").update({ test_recipients: parsed.list }).eq("workspace_id", ws).select("workspace_id");
+  if (error) throw new RelayActionError(/test_recipients/.test(error.message) ? "Run migration 0040 first — the place to keep the test address is not there yet." : error.message, /test_recipients/.test(error.message) ? 409 : 502);
+  if (!((data ?? []) as Row[]).length) throw new RelayActionError("Switch the hand-off on once first — its settings are not there yet.", 409);
+  console.log(`[brokerage-relay] ${who} set the test address(es) to ${parsed.list.join(", ")}`);
+  return parsed.list;
+}
+
+export async function sendRelayTest(relayId: string | null, who: string, deps: RelayDeps = {}): Promise<{ to: string; messageId: string; kind: "sample" | "copy"; notSent?: string }> {
   const env = deps.env ?? process.env;
-  const to = TEST_RECIPIENTS[0];
   if (!postmarkToken(env)) throw new RelayActionError("The Postmark token is not set on this server, so a test cannot be sent.", 409);
-  let email: RelayEmail;
-  if (!relayId) {
-    email = sampleEmail(fromAddress(env), to);
-  } else {
-    const os: Os = deps.os ?? osTable;
-    const ws = deps.ws ?? (await workspaceId());
+  const os: Os = deps.os ?? osTable;
+  const ws = deps.ws ?? (await workspaceId());
+  // The saved test address(es), checked again now — someone may have left Team access, or become a brokerage contact, since.
+  const saved = await loadTestRecipients(os, ws);
+  const ctx = saved.list.some((a) => !TEST_RECIPIENTS.includes(a)) ? await testContext(os) : null;
+  const toList = ctx ? saved.list.filter((a) => testAddressRefusal(a, ctx) === null) : saved.list;
+  if (!toList.length) throw new RelayActionError(`None of the test addresses can be used now (${saved.list.join(", ")}) — set another on this page.`, 409);
+  let base: Pick<RelayEmail, "fromName" | "fromAddress" | "from" | "subject" | "textBody" | "htmlBody"> | null = null;
+  let note: Parameters<typeof asTest>[2] | null = null;
+  if (relayId) {
     const { data, error } = await os("os_brokerage_relays").select("*").eq("workspace_id", ws).eq("id", relayId).maybeSingle();
     if (error) throw new RelayActionError(error.message, 502);
     if (!data) throw new RelayActionError("No such hand-off.", 404);
@@ -1366,17 +1410,24 @@ export async function sendRelayTest(relayId: string | null, who: string, deps: R
     if (!subject || !text || !html) throw new RelayActionError("This hand-off has no prepared email — only one that was prepared or practised can be sent as a test.", 409);
     const fromName = cleanDisplayName(str(r.from_name)) || "An agent via BrokerStaffer";
     const fromAddr = str(r.from_address) ?? fromAddress(env);
-    email = asTest(
-      { fromName, fromAddress: fromAddr, from: `"${fromName}" <${fromAddr}>`, subject, textBody: text, htmlBody: html },
-      to,
-      { intended: recordView(r).recipients, agentReplyTo: str(r.reply_to), source: "A copy of a prepared hand-off." },
-    );
+    base = { fromName, fromAddress: fromAddr, from: `"${fromName}" <${fromAddr}>`, subject, textBody: text, htmlBody: html };
+    note = { intended: recordView(r).recipients, agentReplyTo: str(r.reply_to), source: "A copy of a prepared hand-off." };
   }
-  if (!takeTestSend()) throw new RelayActionError(`Today's ${TEST_DAILY_CAP} test sends have been used. It resets tomorrow.`, 429);
-  const res = await sendTest(email, { env, fetch: deps.testFetch });
-  if (!res.ok) throw new RelayActionError(res.error, res.definite ? 409 : 502);
-  console.log(`[brokerage-relay] TEST ${relayId ? `copy of ${relayId}` : "sample"} sent to ${to} by ${who} (Postmark ${res.messageId})`);
-  return { to, messageId: res.messageId, kind: relayId ? "copy" : "sample" };
+  // One email per test address, each to that address alone (the transport refuses anything else).
+  const sent: string[] = [];
+  let messageId = "";
+  let failure: string | null = null;
+  for (const to of toList) {
+    if (!takeTestSend()) { failure = `Today's ${TEST_DAILY_CAP} test sends have been used. It resets tomorrow.`; break; }
+    const email = base && note ? asTest(base, to, note) : sampleEmail(fromAddress(env), to);
+    const res = await sendTest(email, { env, fetch: deps.testFetch, allowed: toList });
+    if (!res.ok) { failure = res.error; if (!sent.length) throw new RelayActionError(res.error, res.definite ? 409 : 502); break; }
+    sent.push(to);
+    messageId ||= res.messageId;
+    console.log(`[brokerage-relay] TEST ${relayId ? `copy of ${relayId}` : "sample"} sent to ${to} by ${who} (Postmark ${res.messageId})`);
+  }
+  if (!sent.length) throw new RelayActionError(failure ?? "Nothing was sent.", 429);
+  return { to: sent.join(", "), messageId, kind: relayId ? "copy" : "sample", ...(failure ? { notSent: `${toList.filter((a) => !sent.includes(a)).join(", ")}: ${failure}` } : {}) };
 }
 
 /**
@@ -1564,6 +1615,8 @@ export interface RelayOverview {
   brokerages: BrokerageRow[];
   held: HeldCampaign[];
   recent: Array<RelayRecordView & { threadId: string; agentName: string | null }>;
+  /** Where tests go (test-send.ts); ready = the place to keep them exists (migration 0040) and the settings row is there. */
+  tests: { recipients: string[]; ready: boolean };
   /** The server's time when this was read — the screen dates its lines against it, never against the browser's clock. */
   now: string;
 }
@@ -1576,7 +1629,8 @@ export async function relayOverview(deps: RelayDeps = {}, at = new Date()): Prom
   const now = at.toISOString();
   const server = { liveSendAllowed: liveSendAllowed(env), tokenSet: postmarkToken(env) !== null, fromAddress: fromAddress(env) };
   const { settings, missing } = await loadGlobalSettings(os, ws);
-  if (missing) return { available: false, settings, server, brokerages: [], held: [], recent: [], now };
+  const tests = await loadTestRecipients(os, ws).then((t) => ({ recipients: t.list, ready: t.ready }));
+  if (missing) return { available: false, settings, server, brokerages: [], held: [], recent: [], tests, now };
 
   const rows = await loadClientRows(os);
   const brokerages: BrokerageRow[] = rows
@@ -1640,6 +1694,7 @@ export async function relayOverview(deps: RelayDeps = {}, at = new Date()): Prom
     brokerages,
     held: [...byCampaign.values()],
     recent: ((recentRows ?? []) as Row[]).map((r) => ({ ...recordView(r), threadId: String(r.thread_id), agentName: str(r.agent_name) })),
+    tests,
     now,
   };
 }

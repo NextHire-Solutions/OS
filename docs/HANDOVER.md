@@ -863,6 +863,24 @@ Read from the record, never rebuilt (`relayEmailView` in `relay.ts`,
 the same day: `OS_BROKERAGE_RELAY_LIVE_SEND` not set on Railway, no brokerage
 switched on, all 4 records practice with no Postmark id, and Postmark's own
 outbound log = 7 messages ever, every one to admin@outreachify.io (tests).
+
+**The test address can be set on the page** (23 Oct, the user: "can we change
+this email address for testing? … give me an option to set email address
+here"): *Test with our own address → Send tests to*, up to three addresses.
+Allowed: an @outreachify.io or @brokerstaffer.com address (exact domain) or
+someone active on Team access — never an address on any brokerage's contact
+list. Checked when saved and again at every send (someone who left Team access
+is skipped); one TEST email per address, each to that address alone, Reply-To
+that address. Stored in `os_relay_settings.test_recipients` — **migration
+0040_relay_test_recipients.sql** (one empty column); until it is run, and while
+nothing is saved, tests go to admin@outreachify.io as before. Saving it never
+touches the switches or their version. **Portal sign-in emails are not
+affected** — they keep the fixed `TEST_RECIPIENTS` (`isTestRecipient`).
+
+Why so few lines (23 Oct): only replies labelled Interested AFTER the hand-off
+was switched on are looked at (no backfill). Since 22 Oct 18:10 UTC there were
+exactly 5; the team introduced 4 of them by hand afterwards (their label is
+now Introduction). The week before had 6 Interested labels in all.
 **Before a real send (pilot):** DNS verified + Postmark approved; on Railway
 `os` set `POSTMARK_SERVER_TOKEN` and `OS_BROKERAGE_RELAY_LIVE_SEND=1`, then
 redeploy; Settings: practice off (two clicks); switch on the pilot
