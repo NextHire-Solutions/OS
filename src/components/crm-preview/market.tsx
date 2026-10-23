@@ -97,13 +97,24 @@ const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agent
  * Apply or a click outside keeps it, Escape drops it, Clear empties it.
  * ------------------------------------------------------------------------- */
 
-type Place = { f: "city" | "county"; v: string };
-type Picks = { volume: Range; units: Range; years: Range; brokerages: string[]; places: Place[]; title: string | null };
+/*
+ * Include and exclude (23 Oct — the client likes the Database app's): a pick
+ * is shown (ex false) or left out (ex true). The panel's Include / Exclude
+ * switch only steers NEW picks; a pick keeps its side until it is removed or
+ * ticked on the other side (the Database app's rule — flipping the switch
+ * never silently turns a filter around).
+ */
+type Facet = "brand" | "office" | "city" | "county";
+type Pick = { f: Facet; v: string; ex: boolean };
+type Titles = { include: string[]; exclude: string[] };
+type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; titles: Titles };
 const NO_RANGE: Range = { min: null, max: null };
-const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], title: null };
+const NO_TITLES: Titles = { include: [], exclude: [] };
+const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], titles: NO_TITLES };
 const isSet = (r: Range) => r.min !== null || r.max !== null;
+const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county" };
 
-/** The picks as the route's query string (several brokerages and places repeat their key). */
+/** The picks as the route's query string (several of a kind repeat their key; a left-out one is x-prefixed). */
 function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place") {
   const range = (name: string, r: Range) => {
     if (r.min !== null) sp.set(`min${name}`, String(r.min));
@@ -112,10 +123,15 @@ function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place")
   range("Volume", p.volume);
   range("Units", p.units);
   range("Years", p.years);
-  if (skip !== "brokerage") for (const b of p.brokerages) sp.append("brokerage", b);
-  if (skip !== "place") for (const x of p.places) sp.append(x.f, x.v);
-  if (p.title) sp.set("title", p.title);
+  if (skip !== "brokerage") for (const x of p.brokerages) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
+  if (skip !== "place") for (const x of p.places) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
+  for (const t of p.titles.include) sp.append("title", t);
+  for (const t of p.titles.exclude) sp.append("xtitle", t);
 }
+
+/** What a set filter's button says: one pick by name ("not Atlanta" when left out); several, a count. */
+const pickText = (xs: readonly Pick[]) => (xs.length === 1 ? `${xs[0].ex ? "not " : ""}${xs[0].v}` : null);
+const titleParts = (t: Titles) => [...t.include, ...t.exclude.map((x) => `not ${x}`)];
 
 type Unit = "usd" | "count" | "years";
 const fmt = (u: Unit, n: number) => (u === "usd" ? abbrevUsd(n) : u === "years" ? `${n} yrs` : n.toLocaleString("en-US"));
@@ -193,7 +209,7 @@ function RangePanel({ unit, presets, value, onApply, register }: { unit: Unit; p
 type Option = { v: string; n: number };
 
 /* A filter's choices from the agent database: searched by name, with counts, under the other filters. */
-function useOptions(clientId: string, list: "market" | "prospects", facet: "brand" | "city" | "county", text: string, picks: Picks, skip: "brokerage" | "place") {
+function useOptions(clientId: string, list: "market" | "prospects", facet: Facet, text: string, picks: Picks, skip: "brokerage" | "place") {
   const [state, setState] = useState<{ loading: boolean; options: Option[]; error: string | null }>({ loading: true, options: [], error: null });
   const key = JSON.stringify(picks);
   useEffect(() => {
@@ -214,63 +230,123 @@ function useOptions(clientId: string, list: "market" | "prospects", facet: "bran
   return state;
 }
 
-/** Several of a kind at once (brokerages; places with their level): a search, a list with counts, the picks as chips. */
-function ManyPanel<T>({
-  clientId, list, picks, levels, initial, keyOf, labelOf, make, facetOf, skip, onApply, register, noun,
+/** Include / Exclude, as the Database app's panels have it: which side a new pick lands on. */
+function ModeSwitch({ out, onChange }: { out: boolean; onChange: (out: boolean) => void }) {
+  return (
+    <span className="cpv-mode" role="radiogroup" aria-label="Include or exclude">
+      <button type="button" role="radio" aria-checked={!out} onClick={() => onChange(false)}>Include</button>
+      <button type="button" role="radio" aria-checked={out} data-x="" onClick={() => onChange(true)}>Exclude</button>
+    </span>
+  );
+}
+
+/** Several of a kind at once (brokerages and offices; cities and counties), included or excluded: a search, a list with counts, the picks as chips. */
+function ManyPanel({
+  clientId, list, picks, levels, initial, skip, onApply, register, noun,
 }: {
   clientId: string; list: "market" | "prospects"; picks: Picks;
-  levels: ReadonlyArray<{ id: "brand" | "city" | "county"; label: string }>;
-  initial: T[]; keyOf: (x: T) => string; labelOf: (x: T) => string; make: (o: Option, level: "brand" | "city" | "county") => T; facetOf: (x: T) => string;
-  skip: "brokerage" | "place"; onApply: (xs: T[]) => void; register: (commit: () => void) => void; noun: string;
+  levels: ReadonlyArray<{ id: Facet; label: string }>;
+  initial: Pick[]; skip: "brokerage" | "place"; onApply: (xs: Pick[]) => void; register: (commit: () => void) => void; noun: string;
 }) {
   const [level, setLevel] = useState(levels[0].id);
+  const [out, setOut] = useState(false);
   const [text, setText] = useState("");
-  const [draft, setDraft] = useState<T[]>(initial);
+  const [draft, setDraft] = useState<Pick[]>(initial);
   register(() => onApply(draft));
   const opts = useOptions(clientId, list, level, text, picks, skip);
-  const chosen = new Set(draft.map(keyOf));
-  const keyFor = (o: Option) => keyOf(make(o, level));
-  const toggle = (o: Option) => setDraft((d) => (chosen.has(keyFor(o)) ? d.filter((x) => keyOf(x) !== keyFor(o)) : d.length >= MAX_PICKS ? d : [...d, make(o, level)]));
+  const same = (x: Pick, v: string) => x.f === level && x.v === v;
+  const sideOf = (v: string) => draft.find((x) => same(x, v))?.ex;
+  // Ticking: off this side if it is on it, over from the other side if it is there, else added.
+  const toggle = (v: string) => setDraft((d) => {
+    const at = d.find((x) => same(x, v));
+    if (at) return at.ex === out ? d.filter((x) => x !== at) : d.map((x) => (x === at ? { ...x, ex: out } : x));
+    return d.length >= MAX_PICKS ? d : [...d, { f: level, v, ex: out }];
+  });
+  // Select all only adds the ones on neither side — it never moves a pick across.
+  const addShown = () => setDraft((d) => [...d, ...opts.options.filter((o) => sideOf(o.v) === undefined).map((o): Pick => ({ f: level, v: o.v, ex: out }))].slice(0, MAX_PICKS));
+  const levelName = (f: Facet) => levels.find((l) => l.id === f)?.label.toLowerCase() ?? f;
+  const chips = (ex: boolean) => {
+    const xs = draft.filter((x) => x.ex === ex);
+    return xs.length ? (
+      <div className="cpv-chips" aria-label={ex ? "Excluded" : "Included"}>
+        {xs.map((x) => (
+          <span key={`${x.f}:${x.v}`} className={ex ? "cpv-chipx cpv-x" : "cpv-chipx"}>
+            {ex ? <s aria-hidden="true">not</s> : null}
+            {x.v}
+            {levels.length > 1 ? <small style={{ opacity: 0.7 }}>{levelName(x.f)}</small> : null}
+            <button type="button" aria-label={`Remove ${ex ? "excluded " : ""}${x.v}`} onClick={() => setDraft((d) => d.filter((y) => y !== x))}><Icon name="x" size={12} /></button>
+          </span>
+        ))}
+      </div>
+    ) : null;
+  };
   return (
     <>
       <div className="cpv-pop-body">
-        {levels.length > 1 ? (
-          <div className="cpv-seg2" role="group" aria-label="Level">
-            {levels.map((l) => <button key={l.id} type="button" aria-pressed={level === l.id} onClick={() => setLevel(l.id)}>{l.label}</button>)}
-          </div>
-        ) : null}
-        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${levels.length > 1 ? levels.find((l) => l.id === level)?.label.toLowerCase() + "s" : noun}`} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+        <div className="cpv-pop-row">
+          {levels.length > 1 ? (
+            <div className="cpv-seg2" role="group" aria-label="Level">
+              {levels.map((l) => <button key={l.id} type="button" aria-pressed={level === l.id} onClick={() => setLevel(l.id)}>{l.label}</button>)}
+            </div>
+          ) : null}
+          <ModeSwitch out={out} onChange={setOut} />
+        </div>
+        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${levels.length > 1 ? levelName(level) + (level === "county" ? " names" : "s") : noun}`} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
         <div className="cpv-status">
           <span>{opts.loading ? "Searching…" : opts.error ? opts.error : `${opts.options.length} shown · ${draft.length} selected`}</span>
           <span style={{ display: "flex", gap: 10 }}>
-            <button type="button" className="cpv-link" onClick={() => setDraft((d) => [...d, ...opts.options.filter((o) => !chosen.has(keyFor(o))).map((o) => make(o, level))].slice(0, MAX_PICKS))}>Select all</button>
+            <button type="button" className="cpv-link" onClick={addShown}>Select all</button>
             <button type="button" className="cpv-link" onClick={() => setDraft([])}>Clear</button>
           </span>
         </div>
         <div className="cpv-opts" role="listbox" aria-multiselectable="true" aria-label={noun}>
-          {opts.options.map((o) => (
-            <label key={o.v} className="cpv-opt">
-              <input type="checkbox" className={k("ck")} checked={chosen.has(keyFor(o))} onChange={() => toggle(o)} />
-              <span>{o.v}</span>
-              <small>{o.n.toLocaleString("en-US")} agents</small>
-            </label>
-          ))}
+          {opts.options.map((o) => {
+            const side = sideOf(o.v);
+            return (
+              <label key={o.v} className="cpv-opt">
+                <input type="checkbox" className={k("ck")} data-x={out ? "" : undefined} checked={side === out} onChange={() => toggle(o.v)} />
+                <span>{o.v}</span>
+                {side !== undefined && side !== out ? <em className={side ? "cpv-tag cpv-x" : "cpv-tag"}>{side ? "Excluded" : "Included"}</em> : null}
+                <small>{o.n.toLocaleString("en-US")} agents</small>
+              </label>
+            );
+          })}
           {!opts.loading && !opts.error && opts.options.length === 0 ? <span style={{ padding: "6px 4px", color: "#6b7280", fontSize: 12 }}>Nothing matches “{text}”.</span> : null}
         </div>
-        {draft.length ? (
-          <div className="cpv-chips">
-            {draft.map((x) => (
-              <span key={keyOf(x)} className="cpv-chipx">
-                {labelOf(x)}
-                {levels.length > 1 ? <small style={{ opacity: 0.7 }}>{facetOf(x)}</small> : null}
-                <button type="button" aria-label={`Remove ${labelOf(x)}`} onClick={() => setDraft((d) => d.filter((y) => keyOf(y) !== keyOf(x)))}><Icon name="x" size={12} /></button>
-              </span>
-            ))}
-          </div>
-        ) : null}
+        {chips(false)}
+        {chips(true)}
         {draft.length >= MAX_PICKS ? <span style={{ fontSize: 12, color: "#6b7280" }}>Up to {MAX_PICKS} at once.</span> : null}
       </div>
       <PopFoot onClear={() => onApply([])} onApply={() => onApply(draft)} />
+    </>
+  );
+}
+
+/** Title: each of the three, included or excluded (the Database app's Title filter). */
+function TitlePanel({ value, onApply, register }: { value: Titles; onApply: (t: Titles) => void; register: (commit: () => void) => void }) {
+  const [inc, setInc] = useState<string[]>(value.include);
+  const [exc, setExc] = useState<string[]>(value.exclude);
+  register(() => onApply({ include: inc, exclude: exc }));
+  const tick = (t: string, ex: boolean) => {
+    const [mine, setMine, setOther] = ex ? ([exc, setExc, setInc] as const) : ([inc, setInc, setExc] as const);
+    setMine(mine.includes(t) ? mine.filter((x) => x !== t) : [...mine, t]);
+    setOther((o) => o.filter((x) => x !== t));
+  };
+  return (
+    <>
+      <div className="cpv-pop-body">
+        <div className="cpv-tgrid" role="group" aria-label="Titles">
+          <span /><b>Include</b><b>Exclude</b>
+          {TITLES.map((t) => (
+            <div key={t} style={{ display: "contents" }}>
+              <span>{t}</span>
+              <input type="checkbox" className={k("ck")} aria-label={`Include ${t}`} checked={inc.includes(t)} onChange={() => tick(t, false)} />
+              <input type="checkbox" className={k("ck")} data-x="" aria-label={`Exclude ${t}`} checked={exc.includes(t)} onChange={() => tick(t, true)} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <PopFoot onClear={() => onApply(NO_TITLES)} onApply={() => onApply({ include: inc, exclude: exc })} />
     </>
   );
 }
@@ -291,7 +367,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
   // Market starts on salespeople (23 Oct, the user: "only Salesperson pre selected as we do not have team lead and managing broker"); Clear all shows everyone.
-  const [f, setF] = useState<Picks>(list === "market" ? { ...NO_PICKS, title: "Salesperson" } : NO_PICKS);
+  const [f, setF] = useState<Picks>(list === "market" ? { ...NO_PICKS, titles: { include: ["Salesperson"], exclude: [] } } : NO_PICKS);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "volume", dir: "desc" });
   const [page, setPage] = useState(1);
   const [menu, setMenu] = useState<string | null>(null);
@@ -391,7 +467,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
 
   const apply = <K extends keyof Picks>(key: K, v: Picks[K]) => { commit.current = null; setF((x) => ({ ...x, [key]: v })); setPage(1); setMenu(null); };
   const onSort = (by: SortKey) => { setSort((cur) => (cur.key === by ? { key: by, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: by, dir: FIRST_DIR[by] })); setPage(1); };
-  const any = isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0 || f.title !== null;
+  const any = isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0 || titleParts(f.titles).length > 0;
   const data = state.data;
   const total = data?.total ?? 0;
   // From the rows on screen, not the page asked for: while the next page loads, the footer still describes these.
@@ -410,19 +486,15 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const selected = allPicked ? total : picked.size;
   const clearAll = () => { setSearch(""); setQ(""); setF(NO_PICKS); setPage(1); };
 
-  // What each filter shows when set.
-  // One pick reads by name; several, as the Database app shows them, by the filter's name and a count.
-  const placeText = f.places.length === 1 ? f.places[0].v : null;
-  const brokerText = f.brokerages.length === 1 ? f.brokerages[0] : null;
+  // What each filter shows when set: one pick by name, several by the filter's name and a count (the Database app's way).
+  const titles = titleParts(f.titles);
   const filters = (
     <>
-      <FilterButton id="place" label="Location" value={placeText} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
-        <ManyPanel<Place>
+      <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
+        <ManyPanel
           clientId={clientId} list={list} picks={f} skip="place" noun="places"
           levels={[{ id: "city", label: "City" }, { id: "county", label: "County" }]}
-          initial={f.places} keyOf={(x) => `${x.f}:${x.v}`} labelOf={(x) => x.v} facetOf={(x) => x.f}
-          make={(o, level) => ({ f: level === "county" ? "county" : "city", v: o.v })}
-          onApply={(xs) => apply("places", xs)} register={register}
+          initial={f.places} onApply={(xs) => apply("places", xs)} register={register}
         />
       </FilterButton>
       <FilterButton id="volume" label="Sales volume" value={isSet(f.volume) ? rangeText("usd", f.volume) : null} open={menu === "volume"} onOpen={openMenu}>
@@ -434,15 +506,16 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       <FilterButton id="years" label="Years licensed" value={isSet(f.years) ? rangeText("years", f.years) : null} open={menu === "years"} onOpen={openMenu}>
         <RangePanel unit="years" presets={YEAR_PRESETS} value={f.years} onApply={(r) => apply("years", r)} register={register} />
       </FilterButton>
-      <FilterButton id="brokerage" label="Brokerage" value={brokerText} count={f.brokerages.length} open={menu === "brokerage"} onOpen={openMenu}>
-        <ManyPanel<string>
+      <FilterButton id="brokerage" label="Brokerage" value={pickText(f.brokerages)} count={f.brokerages.length} open={menu === "brokerage"} onOpen={openMenu}>
+        <ManyPanel
           clientId={clientId} list={list} picks={f} skip="brokerage" noun="brokerages"
-          levels={[{ id: "brand", label: "Brokerage" }]}
-          initial={f.brokerages} keyOf={(x) => x} labelOf={(x) => x} facetOf={() => "brand"} make={(o) => o.v}
-          onApply={(xs) => apply("brokerages", xs)} register={register}
+          levels={[{ id: "brand", label: "Brokerage" }, { id: "office", label: "Office" }]}
+          initial={f.brokerages} onApply={(xs) => apply("brokerages", xs)} register={register}
         />
       </FilterButton>
-      <Chip id="title" label="Title" value={f.title} show={(v) => v} choices={TITLES} open={menu === "title"} onOpen={openMenu} onPick={(v) => apply("title", v)} />
+      <FilterButton id="title" label="Title" value={titles.length && titles.length <= 2 ? titles.join(", ") : null} count={titles.length > 2 ? titles.length : undefined} open={menu === "title"} onOpen={openMenu}>
+        <TitlePanel value={f.titles} onApply={(t) => apply("titles", t)} register={register} />
+      </FilterButton>
     </>
   );
 

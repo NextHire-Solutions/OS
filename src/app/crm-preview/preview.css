@@ -239,6 +239,23 @@
 .cpv-shell .cpv-seg2 button { border: 0; background: #fff; padding: 5px 12px; font: inherit; font-size: 12px; color: #555a64; cursor: pointer; }
 .cpv-shell .cpv-seg2 button[aria-pressed="true"] { background: #edf2fc; color: #2f55a8; font-weight: 600; }
 
+/* Include / Exclude in the filter panels (23 Oct — the Database app's way): excluded picks are red. */
+.cpv-shell .cpv-pop-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cpv-shell .cpv-mode { display: inline-flex; align-items: center; gap: 14px; }
+.cpv-shell .cpv-mode button { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: #31353b; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.cpv-shell .cpv-mode button::before { content: ""; width: 14px; height: 14px; box-sizing: border-box; border-radius: 50%; border: 1px solid #c3c8d1; background: #fff; }
+.cpv-shell .cpv-mode button[aria-checked="true"]::before { border: 4px solid #3e6bd1; }
+.cpv-shell .cpv-mode button[data-x][aria-checked="true"]::before { border-color: #c4321f; }
+.cpv-shell .cpv-mode button:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 3px; border-radius: 4px; }
+.cpv-shell input[data-x] { accent-color: #c4321f; }
+.cpv-shell .cpv-chipx.cpv-x { background: #fdeeec; color: #a8291a; }
+.cpv-shell .cpv-chipx s { text-decoration: none; font-weight: 600; opacity: .8; }
+.cpv-shell .cpv-tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #edf2fc; color: #2f55a8; flex: none; }
+.cpv-shell .cpv-tag.cpv-x { background: #fdeeec; color: #a8291a; }
+.cpv-shell .cpv-tgrid { display: grid; grid-template-columns: 1fr 64px 64px; align-items: center; row-gap: 10px; font-size: 13px; color: #31353b; }
+.cpv-shell .cpv-tgrid b { font-size: 12px; font-weight: 500; color: #6b7280; text-align: center; }
+.cpv-shell .cpv-tgrid input { justify-self: center; }
+
 /* The card's name following the pointer while it is dragged to another column (board-drag.tsx, 23 Oct). */
 .cpv-drag-ghost {
   position: fixed; z-index: 1000; pointer-events: none; max-width: 240px; padding: 8px 12px;

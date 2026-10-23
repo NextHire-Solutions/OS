@@ -128,6 +128,17 @@ test("the Demo's Prospects page filters as Market does — ranges, brokerages, o
   assert.deepEqual(ids("city=Decatur"), ["a2"], "a home city counts");
   assert.deepEqual(ids("county=Fulton"), ["a1", "a2", "a3"]);
   assert.deepEqual(ids("title=Team%20Leader"), ["a2"]);
+  // Include and exclude (23 Oct): left out by brokerage, office, place or title — an agent with nothing on record stays.
+  assert.deepEqual(ids("xbrokerage=Compass"), ["a1", "a3"]);
+  assert.deepEqual(ids("xoffice=KW%20Midtown"), ["a2"]);
+  assert.deepEqual(ids("xcity=Decatur"), ["a1", "a3"], "a home city counts when leaving out, too");
+  assert.deepEqual(ids("xcounty=Fulton"), [], "every one has Fulton somewhere");
+  assert.deepEqual(ids("title=Salesperson&xtitle=Team%20Leader"), ["a1", "a3"]);
+  assert.deepEqual(ids("brokerage=Keller%20Williams&xcity=Atlanta"), [], "include and exclude together");
+  const titled = [agent("t1", { title: "Salesperson, Team Leader" }), agent("t2", { title: null }), agent("t3", { title: "sales person" })] as never[];
+  const tids = (s: string) => filterProspects(titled, q(s)).map((a: { id: string }) => a.id);
+  assert.deepEqual(tids("title=Salesperson"), ["t1", "t3"], "a title's parts, spacing and case aside — the agent database's rule");
+  assert.deepEqual(tids("xtitle=Team%20Leader"), ["t2", "t3"], "no title on record stays");
   const sorted = (s: string) => sortProspects(filterProspects(rows, q(s)), q(s)).map((a: { id: string }) => a.id);
   assert.deepEqual(sorted("sort=volume&dir=desc"), ["a2", "a1", "a3"], "blanks last");
   assert.deepEqual(sorted("sort=volume&dir=desc&q=smith"), ["a3", "a2", "a1"], "a name match first");

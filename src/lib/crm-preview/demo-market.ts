@@ -103,23 +103,32 @@ export const emailsOf = (a: AgentRow) => [a.preferred_email, a.enriched_email].m
 const inRange = (v: number | null, r: { min: number | null; max: number | null }) => (r.min === null || (v !== null && v >= r.min)) && (r.max === null || (v !== null && v <= r.max));
 const years = (a: AgentRow) => (a.est_time_in_industry_months === null ? null : Math.floor(a.est_time_in_industry_months / 12));
 
+/* A title's parts, as the agent database compares them (fn_title_tokens): "Salesperson, Team Leader" is both. */
+const titleTokens = (t: string | null) => (t ?? "").split(",").map((x) => x.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean);
+
 /**
  * The Demo's prospects that match the page's filters, as Market's search
  * applies them: sales volume, units and years as ranges; any of the
- * brokerages; any of the cities or counties (office, home or most transacted);
- * the title. A name search narrows nothing — matching agents come first, as
- * in the Database app.
+ * brokerages, offices, cities or counties (office, home or most transacted)
+ * and titles — and none of the left-out ones, where an agent with nothing on
+ * record stays (fn_agent_where's rule). A name search narrows nothing —
+ * matching agents come first, as in the Database app.
  */
 export function filterProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
-  const brands = new Set(q.brokerages.map((b) => b.toLowerCase()));
-  const offices = new Set(q.offices.map((o) => o.toLowerCase()));
-  const cities = new Set(q.cities.map((c) => c.toLowerCase()));
-  const counties = new Set(q.counties.map((c) => c.toLowerCase()));
+  const set = (xs: string[]) => new Set(xs.map((x) => x.toLowerCase()));
+  const tokens = (xs: string[]) => new Set(xs.flatMap((t) => titleTokens(t)));
+  const [brands, offices, cities, counties, titles] = [set(q.brokerages), set(q.offices), set(q.cities), set(q.counties), tokens(q.titles)];
+  const [noBrands, noOffices, noCities, noCounties, noTitles] = [set(q.not.brokerages), set(q.not.offices), set(q.not.cities), set(q.not.counties), tokens(q.not.titles)];
+  const inPlace = (a: AgentRow, cs: Set<string>, ks: Set<string>) =>
+    [a.office_city, a.home_city, a.most_transacted_city].some((c) => cs.has(lower(c))) || [a.office_county, a.home_county, a.most_transacted_county].some((c) => ks.has(lower(c)));
   return rows.filter((a) =>
     inRange(a.sales_volume, q.volume) && inRange(a.units, q.units) && inRange(years(a), q.years)
     && (!brands.size || brands.has(lower(a.brand))) && (!offices.size || offices.has(lower(a.office_name)))
-    && (!(cities.size || counties.size) || [a.office_city, a.home_city, a.most_transacted_city].some((c) => cities.has(lower(c))) || [a.office_county, a.home_county, a.most_transacted_county].some((c) => counties.has(lower(c))))
-    && (!q.title || lower(a.title).includes(q.title.toLowerCase())));
+    && (!(cities.size || counties.size) || inPlace(a, cities, counties))
+    && (!titles.size || titleTokens(a.title).some((t) => titles.has(t)))
+    && !noBrands.has(lower(a.brand)) && !noOffices.has(lower(a.office_name))
+    && !inPlace(a, noCities, noCounties)
+    && !titleTokens(a.title).some((t) => noTitles.has(t)));
 }
 
 const SORT_FIELD: Record<MarketQuery["sort"], (a: AgentRow) => string | number | null> = {

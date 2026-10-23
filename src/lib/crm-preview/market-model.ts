@@ -132,7 +132,16 @@ export interface MarketQuery {
   offices: string[];
   cities: string[];
   counties: string[];
-  title: string | null;
+  /** Titles, any of them (the page starts on Salesperson). */
+  titles: string[];
+  /*
+   * Left out (23 Oct, the client likes the Database app's include / exclude):
+   * an agent at any of these brokerages or offices, in any of these places,
+   * or with any of these titles is not shown. An agent with no brokerage,
+   * place or title on record stays — "not in Atlanta" does not drop someone
+   * whose city is unknown (the Database app's rule, fn_agent_where).
+   */
+  not: { brokerages: string[]; offices: string[]; cities: string[]; counties: string[]; titles: string[] };
   sort: SortKey;
   dir: "asc" | "desc";
 }
@@ -149,7 +158,7 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
   const range = (min: string, max: string, cap: number): Range => ({ min: amount(min, cap), max: amount(max, cap) });
   const many = (k: string) => [...new Set(p.getAll(k).map((v) => clean(v, 120)).filter((v): v is string => !!v))].slice(0, MAX_PICKS);
   const page = Math.floor(Number(p.get("page")));
-  const title = clean(p.get("title"), 40);
+  const titles = (k: string) => many(k).filter((t) => (TITLES as readonly string[]).includes(t));
   const per = p.get("per") === String(SETUP_PAGE_SIZE) ? SETUP_PAGE_SIZE : PAGE_SIZE;
   const sortRaw = p.get("sort") ?? "";
   const sort: SortKey = sortRaw in SORTS ? (sortRaw as SortKey) : "volume";
@@ -166,7 +175,8 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
     offices: many("office"),
     cities: many("city"),
     counties: many("county"),
-    title: title && (TITLES as readonly string[]).includes(title) ? title : null,
+    titles: titles("title"),
+    not: { brokerages: many("xbrokerage"), offices: many("xoffice"), cities: many("xcity"), counties: many("xcounty"), titles: titles("xtitle") },
     sort,
     dir: dirRaw === "asc" || dirRaw === "desc" ? dirRaw : FIRST_DIR[sort],
   };
@@ -182,16 +192,18 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
   if (set(q.units)) f.closedUnits = { side: "all", buckets: [], ...ends(q.units) };
   // In YEARS: fn_agent_where turns them into months itself (Database 0109). Sending months filtered 2+ years as 24+ (21 Oct).
   if (set(q.years)) f.estTimeInIndustry = { buckets: [], ...ends(q.years) };
-  if (q.brokerages.length || q.offices.length) {
-    f.officeSearch = { brand: { include: [...q.brokerages], exclude: [] }, office: { include: [...q.offices], exclude: [] } };
+  const x = q.not;
+  if (q.brokerages.length || q.offices.length || x.brokerages.length || x.offices.length) {
+    f.officeSearch = { brand: { include: [...q.brokerages], exclude: [...x.brokerages] }, office: { include: [...q.offices], exclude: [...x.offices] } };
   }
-  // Cities and counties in one location filter, each value keeping its own level — any of them matches (the Database app's way).
+  // Cities and counties in one location filter, each value keeping its own level — any of them matches, none of the left-out ones (the Database app's way).
   const places = [...q.cities.map((v) => ({ f: "city", v })), ...q.counties.map((v) => ({ f: "county", v }))];
-  if (places.length) {
-    const field = q.cities.length ? "city" : "county";
-    f.location = { field, appliesTo: ["office", "home", "transacted"], values: places, excludeValues: [], excludeField: field };
+  const notPlaces = [...x.cities.map((v) => ({ f: "city", v })), ...x.counties.map((v) => ({ f: "county", v }))];
+  if (places.length || notPlaces.length) {
+    const field = (places[0] ?? notPlaces[0]).f;
+    f.location = { field, appliesTo: ["office", "home", "transacted"], values: places, excludeValues: notPlaces, excludeField: (notPlaces[0] ?? places[0]).f };
   }
-  if (q.title) f.title = { include: [q.title], exclude: [] };
+  if (q.titles.length || x.titles.length) f.title = { include: [...q.titles], exclude: [...x.titles] };
   // The Database app's search: matching agents come first; it narrows nothing (fn_agent_order).
   if (q.q) f.nameQuery = q.q;
   return f;

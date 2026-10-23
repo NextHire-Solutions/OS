@@ -250,7 +250,9 @@ export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: Face
     // The Demo's own prospects: the choices among them, under the other filters (a filter never narrows its own list).
     const ids = await demoProspectIds(mi(), DEMO_PORTAL_ID);
     if (ids === null) return { unavailable: PROSPECTS_MIGRATION };
-    const others: MarketQuery = kind === "brand" || kind === "office" ? { ...q, brokerages: [], offices: [] } : { ...q, cities: [], counties: [] };
+    const others: MarketQuery = kind === "brand" || kind === "office"
+      ? { ...q, brokerages: [], offices: [], not: { ...q.not, brokerages: [], offices: [] } }
+      : { ...q, cities: [], counties: [], not: { ...q.not, cities: [], counties: [] } };
     const rows = filterProspects(await agentsByIds(ids), others);
     const counts = new Map<string, number>();
     const needle = text.trim().toLowerCase();
