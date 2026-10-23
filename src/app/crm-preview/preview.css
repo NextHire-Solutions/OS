@@ -92,6 +92,17 @@
 .cpv-shell .crx-rail .crx-col { flex: 0 0 auto; min-height: 0; }
 
 /*
+ * The collapsed sidebar shows the logo's house mark alone (24 Oct, the user:
+ * "one vertical line right to the logo and its not properly center
+ * aligned"). The design cropped the full logo to 34px, which took in the
+ * start of the divider before "BROKER STAFFER" and left the 26px mark 4px
+ * left of the icons under it. At the logo's size (32px tall) the mark is
+ * 25.6px wide and the divider starts at 29px: a 26px crop is the mark only,
+ * centred in the column as the icons are.
+ */
+.cpv-shell .crx-rail.crx-cl .crx-lg .crx-lw { width: 26px; }
+
+/*
  * The same on the design's Reports screen: its chart-legend rule `.lg` also
  * catches the sidebar's logo row (a faint line under it, the logo taking the
  * row). The preview follows it on Reports only.
