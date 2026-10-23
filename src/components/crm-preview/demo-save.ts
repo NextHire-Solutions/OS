@@ -36,6 +36,9 @@ export const lock = (live: boolean) => (live ? {} : RO);
 
 const CANONICAL = new Set<string>(STAGE_ORDER);
 
+/** A key that is one of the pipeline's own stages (not a portal's custom stage). */
+export const isCanonicalStage = (key: string) => CANONICAL.has(key);
+
 /** Moving agents to a stage or tag: a pipeline stage, or one of the portal's own (custom) stages. */
 export function moveTo(ids: readonly string[], key: string): DemoAction {
   return CANONICAL.has(key) ? { type: "entry.stage", ids: [...ids], stage: key } : { type: "entry.customStage", ids: [...ids], key };
@@ -191,6 +194,6 @@ export function csvSafe(v: string): string {
 export function fieldValues(root: HTMLElement | null): Record<string, string> {
   const out: Record<string, string> = {};
   if (!root) return out;
-  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input[name], textarea[name]")) out[el.name] = el.value.trim();
+  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input[name], textarea[name], select[name]")) out[el.name] = el.value.trim();
   return out;
 }

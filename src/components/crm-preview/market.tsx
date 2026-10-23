@@ -16,7 +16,8 @@ import { abbrevUsd, initials } from "@/lib/crm-preview/model";
 import { FIRST_DIR, interestedReport, LIST_PILL, MAX_PICKS, maxPage, PAGE_SIZE, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
-import { k, RO, withIds } from "./k";
+import { k, off, withIds } from "./k";
+import { lock, useDemo } from "./demo-save";
 
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
@@ -42,8 +43,8 @@ export type Row = {
   mostTransactedCity: string | null; salesVolume: number | null; units: number | null; list: string; pill: string;
   office?: string | null; years?: number | null; email?: string | null;
 };
-export type Filters = { minVolume: number | null; minUnits: number | null; minYears: number | null; brokerage: string | null; county: string | null; title: string | null };
-export const NO_FILTERS: Filters = { minVolume: null, minUnits: null, minYears: null, brokerage: null, county: null, title: null };
+export type Filters = { minVolume: number | null; minUnits: number | null; minYears: number | null; brokerage: string | null; county: string | null; title: string | null; office: string | null; city: string | null };
+export const NO_FILTERS: Filters = { minVolume: null, minUnits: null, minYears: null, brokerage: null, county: null, title: null, office: null, city: null };
 
 type Loaded = { total: number; salesVolume: number; page: number; rows: Row[]; client: string | null; mls: Mls | null };
 
@@ -299,6 +300,10 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [allPicked, setAllPicked] = useState(false);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
+  // The Demo Portal moves agents between its lists (23 Oct, demo-market.ts); every other client is read-only.
+  const { live, save, say } = useDemo();
+  const [moving, setMoving] = useState(false);
+  const [reload, setReload] = useState(0);
   // The open panel's "keep what I set" — run on a click outside it (Escape drops it).
   const commit = useRef<(() => void) | null>(null);
   const register = (fn: () => void) => { commit.current = fn; };
@@ -327,7 +332,28 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       .catch((err) => { if (err?.name !== "AbortError") setState((s) => ({ ...s, loading: false, error: "Couldn't reach the server." })); });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, list, page, q, fKey, sort.key, sort.dir]);
+  }, [clientId, list, page, q, fKey, sort.key, sort.dir, reload]);
+
+  /* Ticked agents, every agent that matches, or one row's agent, to a list (Demo Portal). */
+  const moveAgents = async (to: "Prospects" | "My Agents" | "DNC List" | "Not on a list", one?: string) => {
+    if (!live || moving) return;
+    if (!one && !allPicked && picked.size > 1000) { say("Move at most 1,000 agents at once — tick fewer, or narrow the filters.", true); return; }
+    const sp = new URLSearchParams({ sort: sort.key, dir: sort.dir });
+    if (q) sp.set("q", q);
+    pickParams(sp, f);
+    setMoving(true);
+    const ok = await save(one ? { type: "market.move", ids: [one], to } : allPicked ? { type: "market.moveAll", list, query: sp.toString(), to } : { type: "market.move", ids: [...picked], to });
+    setMoving(false);
+    if (ok) {
+      // Shown at once; the reload (from the agent database, a few seconds) then confirms it.
+      const moved = one ? [one] : allPicked ? null : [...picked];
+      if (moved) setState((st) => (st.data ? { ...st, data: { ...st.data, rows: st.data.rows.map((r) => (moved.includes(String(r.id)) ? { ...r, list: to, pill: LIST_PILL[to] } : r)) } } : st));
+      setPicked(new Set());
+      setAllPicked(false);
+      setRowMenu(null);
+      setReload((n) => n + 1);
+    }
+  };
 
   useEffect(() => {
     if (!rowMenu) return;
@@ -471,8 +497,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       <header className={k("top")}>
         <div className={k("ttl")}><h1>{title}</h1></div>
         <div className={k("hr")}>
-          <button type="button" className={k("btn")} {...RO}><Icon name="upload" size={15} />Import CSV</button>
-          <button type="button" className={k("btn")} {...RO}><Icon name="download" size={15} />Export</button>
+          <button type="button" className={k("btn")} {...off(`Importing a list into ${title} isn't set up yet.`)}><Icon name="upload" size={15} />Import CSV</button>
+          <button type="button" className={k("btn")} {...off("Export is off on purpose: agent details from the agent database can't be downloaded from the portal.")}><Icon name="download" size={15} />Export</button>
         </div>
       </header>
       <div className={k("content")}>
@@ -512,10 +538,11 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                 {!allPicked && pageAll && total > rowIds.length ? <button type="button" className="cpv-link" onClick={() => setAllPicked(true)}>Select all {total.toLocaleString("en-US")} that match</button> : null}
                 <span style={{ width: 1, height: 18, background: "#d9e1f2", margin: "0 4px" }} />
                 <span style={{ fontSize: 12, color: "#555a64" }}>Move to</span>
-                <button className={k("btn sm pri")} type="button" {...RO}><Icon name="plus" size={13} />Prospects</button>
-                <button className={k("btn sm")} type="button" {...RO}><Icon name="users" size={13} />My Agents</button>
-                <button className={k("btn sm")} type="button" style={{ color: "#b42318" }} {...RO}><Icon name="ban" size={13} />DNC List</button>
-                <button className={k("btn sm")} type="button" {...RO}><Icon name="x" size={13} />Remove from all lists</button>
+                <button className={k("btn sm pri")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Prospects") : undefined}><Icon name="plus" size={13} />Prospects</button>
+                <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("My Agents") : undefined}><Icon name="users" size={13} />My Agents</button>
+                <button className={k("btn sm")} type="button" style={{ color: "#b42318" }} disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("DNC List") : undefined}><Icon name="ban" size={13} />DNC List</button>
+                <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Not on a list") : undefined}><Icon name="x" size={13} />Remove from all lists</button>
+                {moving ? <span style={{ fontSize: 12, color: "#555a64" }} role="status">Moving…</span> : null}
                 <span style={{ flexGrow: 1 }} />
                 <button type="button" className={k("dd")} style={{ height: 30, fontSize: 12, color: "#555a64" }} onClick={() => { setPicked(new Set()); setAllPicked(false); }}><Icon name="x" size={13} />Clear selection</button>
               </div>
@@ -569,7 +596,16 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                             <div className={k("mmenu")} role="menu" style={{ top: 36, right: "0", width: 200 }}>
                               <div style={{ padding: "6px 10px 4px", fontSize: 11, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.04em" }}>Move to list</div>
                               {MOVE_LISTS.map((l) => (
-                                <button key={l} type="button" role="menuitemradio" aria-checked={r.list === l} className={r.list === l ? k("hv") : undefined} {...RO}>
+                                <button
+                                  key={l}
+                                  type="button"
+                                  role="menuitemradio"
+                                  aria-checked={r.list === l}
+                                  className={r.list === l ? k("hv") : undefined}
+                                  disabled={moving}
+                                  {...lock(live)}
+                                  onClick={live ? () => { if (r.list !== l) void moveAgents(l as "Prospects" | "My Agents" | "DNC List" | "Not on a list", String(r.id)); else setRowMenu(null); } : undefined}
+                                >
                                   <span style={{ width: 14, display: "inline-flex", color: "#3e6bd1" }}>{r.list === l ? <Icon name="check" size={14} /> : null}</span>
                                   <span className={k(`pill ${LIST_PILL[l]}`)}>{l}</span>
                                 </button>

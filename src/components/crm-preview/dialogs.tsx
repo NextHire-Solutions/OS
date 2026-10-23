@@ -18,7 +18,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
-import { formatPhone, panelFields, type Placement } from "@/lib/crm-preview/model";
+import { formatPhone, panelFields, type Placement, type PreviewStage } from "@/lib/crm-preview/model";
 
 import { Icon } from "./icons";
 import { k, RO } from "./k";
@@ -202,12 +202,17 @@ export function PipelineUploadDialog({ onClose, onFile }: { onClose: () => void;
   );
 }
 
-/** Edit lead, filled from the agent's record; "Add field" adds a blank custom field row, as the design does. */
-export function EditLeadDialog({ entry: e, placement, onClose, onSave }: { entry: PipelineEntry; placement: Placement; onClose: () => void; onSave?: OnSave }) {
+/**
+ * Edit lead, filled from the agent's record; "Add field" adds a blank custom
+ * field row, as the design does. On the Demo Portal (`onSave`) everything saves
+ * (23 Oct): the agent's own fields, the tag (a choice of the portal's tags, or
+ * none), the custom fields (changed or cleared) and any added. Elsewhere the
+ * dialog is drawn only.
+ */
+export function EditLeadDialog({ entry: e, placement, tags = [], onClose, onSave }: { entry: PipelineEntry; placement: Placement; tags?: PreviewStage[]; onClose: () => void; onSave?: OnSave }) {
   const [extra, setExtra] = useState<number[]>([]);
   const { ref, busy, run } = useSaving(onSave, onClose);
-  // On the Demo Portal the agent's own fields save; tags (Add tag on the agent) and custom fields are not built yet, so they are drawn only.
-  const drawnOnly = !!onSave;
+  const live = !!onSave;
   const fields = panelFields(e);
   const date = e.introduced_at ? mdy(new Date(e.introduced_at)) : "";
   return (
@@ -227,35 +232,41 @@ export function EditLeadDialog({ entry: e, placement, onClose, onSave }: { entry
           <Field label="Company" name="company" value={e.current_brokerage ?? ""} placeholder="Compass" />
           <Field label="Agent profile" name="profile" value={e.agent_profile_url ?? ""} placeholder="https://..." />
         </div>
-      </div>
-      <div className={k("g2")}>
-        <DateField label="Introduction date" value={date} />
-        <Field label="Tags" value={placement.tag?.label ?? ""} placeholder="Add a tag" readOnly={drawnOnly} />
-      </div>
-      <div className={k("hr2")} />
-      <p className={k("cf")}>Custom fields</p>
-      {fields.length ? (
         <div className={k("g2")}>
-          {fields.map((f) => <Field key={f.label} label={sentence(f.label)} value={f.value} readOnly={drawnOnly} />)}
+          <DateField label="Introduction date" value={date} />
+          {live ? (
+            <label className={k("fl")}>
+              Tags
+              <select className={k("in")} name="tag" defaultValue={placement.tag?.key ?? ""}>
+                <option value="">No tag</option>
+                {tags.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+            </label>
+          ) : (
+            <Field label="Tags" value={placement.tag?.label ?? ""} placeholder="Add a tag" readOnly />
+          )}
         </div>
-      ) : null}
-      {extra.map((id, i) => (
-        <div key={id} className={k("nf")}>
-          <Field label="Field name" placeholder="e.g. Coaching Status" autoFocus={i === extra.length - 1} />
-          <Field label="Value" placeholder="e.g. Active" />
-          <button type="button" className={k("ib")} aria-label="Remove field" onClick={() => setExtra((x) => x.filter((y) => y !== id))}>
-            <Icon name="x" size={15} />
-          </button>
-        </div>
-      ))}
+        <div className={k("hr2")} />
+        <p className={k("cf")}>Custom fields</p>
+        {fields.length ? (
+          <div className={k("g2")}>
+            {fields.map((f) => <Field key={f.label} label={sentence(f.label)} name={live && f.key ? `cf:${f.key}` : undefined} value={f.value} />)}
+          </div>
+        ) : null}
+        {extra.map((id, i) => (
+          <div key={id} className={k("nf")}>
+            <Field label="Field name" name={live ? `nf:name:${id}` : undefined} placeholder="e.g. Coaching Status" autoFocus={i === extra.length - 1} />
+            <Field label="Value" name={live ? `nf:value:${id}` : undefined} placeholder="e.g. Active" />
+            <button type="button" className={k("ib")} aria-label="Remove field" onClick={() => setExtra((x) => x.filter((y) => y !== id))}>
+              <Icon name="x" size={15} />
+            </button>
+          </div>
+        ))}
+      </div>
       <div>
-        {drawnOnly ? (
-          <button type="button" className={k("btn sm")} {...RO}><Icon name="plus" size={14} />Add field</button>
-        ) : (
-          <button type="button" className={k("btn sm")} onClick={() => setExtra((x) => [...x, Date.now()])}>
-            <Icon name="plus" size={14} />Add field
-          </button>
-        )}
+        <button type="button" className={k("btn sm")} onClick={() => setExtra((x) => [...x, Date.now()])}>
+          <Icon name="plus" size={14} />Add field
+        </button>
       </div>
     </PipelineDialog>
   );

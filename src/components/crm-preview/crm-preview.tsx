@@ -128,10 +128,13 @@ export function CrmPreview({
    * handler, a checkbox toggle or a link — with a note instead.
    */
   const onClickCapture = (e: React.MouseEvent) => {
-    if (!(e.target as Element).closest?.("[data-ro]")) return;
+    const ro = (e.target as Element).closest?.("[data-ro]");
+    if (!ro) return;
     e.preventDefault();
     e.stopPropagation();
-    flash(client.demo ? "Not built yet on the Demo Portal — this one is drawn only." : `Read-only preview — nothing here changes ${client.name}'s portal.`);
+    // A control that is off everywhere says why (k.ts off); otherwise: read-only, unless this is the Demo Portal.
+    const reason = ro.getAttribute("data-ro-reason");
+    flash(reason && client.demo ? reason : client.demo ? "Not built yet on the Demo Portal — this one is drawn only." : `Read-only preview — nothing here changes ${client.name}'s portal.`);
   };
   // The server's clock, so the first draw in the browser matches the server's.
   const today = useMemo(() => new Date(now), [now]);

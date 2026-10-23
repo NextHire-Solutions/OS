@@ -405,6 +405,58 @@ GAMLS — the user, 21 Oct); Prospects stay unavailable (a real client's own
 lists). Tested in a real Chrome against a local server (42/42; every test row
 removed).
 
+**23 October — everything on the Demo works, tested with a real mouse.** The
+client, using the Demo: "unable to move records", "unable to reorder the
+stages", Market's Move to "not built yet on demo portal", and an empty
+Prospects. Found and fixed:
+- **Moving cards on the board**: the design has no drag on the board (moves
+  were only List → tick → Move to). Cards now drag between columns
+  (`board-drag.tsx`, pointer events: the name follows the pointer, the column
+  lights up, the card shows in its new column at once and a failed save puts
+  it back; a click still opens the agent; the board scrolls near its edges).
+- **Reordering stages**: the browser's own drag and drop never started on the
+  handle in a real Chrome (an earlier test had fired drag events from script,
+  so it passed). Now pointer events, followed on the window — pointer capture
+  is lost when the row moves in the page, which stopped a drag after one row.
+  Arrow keys still work.
+- **Market Move to** (the bar, each row's List menu, "Select all that match"
+  up to 1,000) → Prospects / My Agents / DNC List / Remove from all lists. An
+  agent is on one list (DNC > My Agents > pipeline > Prospects), so a move
+  takes it off the others. **No email from the agent database is copied onto
+  a list** (My Agents and DNC show and export emails — the no-scraping rule):
+  moved agents are saved by name, brokerage and phone ("From Market") and still
+  placed by name.
+- **Prospects on the Demo**: a real client's are its campaign leads in the
+  agent database; the Demo has none, so it keeps its own list — **migration
+  `0041_demo_prospects.sql`** (agent ids only). Its Prospects page filters and
+  sorts those agents as Market does (`demo-market.ts`). Until 0041 is run, a
+  move to Prospects says so and changes nothing.
+- **Setup wizard**: step 2 — Office / Brokerage / City / Years filters work
+  (Office uses the agent database's office names; `office` in the market
+  query) and "Add N to My Agents" adds the ticked agents; step 3 — Brokerage
+  filters the list (a DNC entry records no office or city: those two say so);
+  step 4 — "Add N to prospects" and the row ticks work, leaving out My Agents,
+  the DNC List (people and company domains) and the pipeline, as the step says.
+  Moved rows change at once; the reload from the agent database then confirms.
+- **Edit form**: Tags (the portal's tags, or none) and custom fields (changed,
+  cleared, added → `custom_fields_overrides`, as the live portal keeps them)
+  save. **DNC page**: companies can be ticked.
+- **Off on purpose, each saying why** (`k.ts off`, never "Not built yet"):
+  Market/Prospects Export (agent data can't be downloaded) and Import CSV (not
+  set up), Follow Up Boss connect (the Demo never connects), Help articles and
+  the tour (not written).
+
+demo.ts stays the preview's only writer (access.test.ts) and never upserts;
+demo-market.ts only reads (the agent database through `readOnly`). Real Chrome
+with real mouse and keyboard input, 54/54 (`demo-full-tail.mjs`): board drags
+(ghost, lit column, saved, kept after reload, a click still opens, its own
+column saves nothing), stage reorder (two rows, saved, kept, columns follow,
+arrow keys back), List Move to, Market bar / row menu / select-all / the
+1,000 cap / a real client refused, the wizard's filters and adds, Edit tag and
+field, DNC companies, and a sweep clicking every off control on every Demo
+page (22 — each says why). The Demo's rows were snapshotted first and restored
+exactly after each run.
+
 **22 October — CSV imports and Manage stages work on the Demo.** Imports
 (Pipeline, My Agents, DNC, Team): the browser reads the file with the live
 portal's own parser and header matching (`portals/csv.ts`) and sends the rows

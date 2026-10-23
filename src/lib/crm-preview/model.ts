@@ -458,6 +458,8 @@ function fieldLabel(k: string): string {
 }
 
 export interface PanelField {
+  /** The field's own key, as the lead and the overrides keep it. */
+  key?: string;
   label: string;
   value: string;
   /** Set when the value is a web address, to show it as a link. */
@@ -476,7 +478,7 @@ export function panelFields(e: Pick<PipelineEntry, "lead_detail">): PanelField[]
     const value = formatPortalFieldValue(k, v);
     if (!value || value === "null" || value === "undefined") continue;
     seen.add(norm);
-    out.push(/^https?:\/\//i.test(value) ? { label: fieldLabel(k), value, href: value } : { label: fieldLabel(k), value });
+    out.push(/^https?:\/\//i.test(value) ? { key: k, label: fieldLabel(k), value, href: value } : { key: k, label: fieldLabel(k), value });
   }
   return out;
 }

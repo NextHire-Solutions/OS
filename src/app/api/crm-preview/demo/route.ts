@@ -4,7 +4,10 @@ import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { adminEmails } from "@/lib/identity/admin";
 import { canSeeCrmPreview } from "@/lib/crm-preview/access";
 import { admit, NO_STORE_HEADERS } from "@/lib/crm-preview/data-guard";
-import { demoAction, isDemoPortal, runDemoAction } from "@/lib/crm-preview/demo";
+import { DEMO_PORTAL_ID, demoAction, isDemoPortal, moveAgents, runDemoAction, type DemoResult } from "@/lib/crm-preview/demo";
+import { MAX_MOVE, marketAction, type MarketAction } from "@/lib/crm-preview/demo-market";
+import { marketContext, matchingIds } from "@/lib/crm-preview/market";
+import { parseMarketQuery } from "@/lib/crm-preview/market-model";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 
 /*
@@ -38,14 +41,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: gate.message }, { status: gate.status, headers: NO_STORE_HEADERS });
   }
 
-  const parsed = demoAction.safeParse(body?.action);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "That could not be saved." }, { status: 400, headers: NO_STORE_HEADERS });
+  // Market's "Move to" (23 Oct, demo-market.ts), else every other save (demo.ts).
+  const market = marketAction.safeParse(body?.action);
+  const parsed = market.success ? null : demoAction.safeParse(body?.action);
+  if (!market.success && !parsed?.success) {
+    return NextResponse.json({ error: parsed?.error?.issues[0]?.message ?? "That could not be saved." }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
   try {
-    const out = await runDemoAction(createAdminSupabase(), parsed.data, who);
-    const a = parsed.data;
+    const out = market.success ? await runMarketMove(market.data, who) : await runDemoAction(createAdminSupabase(), parsed!.data!, who);
+    const a = market.success ? market.data : parsed!.data!;
     console.info(JSON.stringify({ tag: "[crm-preview] demo save", who, type: a.type, ids: "ids" in a ? a.ids.length : "rows" in a ? a.rows.length : 1, ok: out.ok }));
     if (!out.ok) return NextResponse.json({ error: out.error }, { status: out.status, headers: NO_STORE_HEADERS });
     return NextResponse.json({ ok: true, ...(out.id ? { id: out.id } : {}), ...(out.message ? { message: out.message } : {}) }, { headers: NO_STORE_HEADERS });
@@ -53,4 +58,22 @@ export async function POST(request: NextRequest) {
     console.error("[crm-preview] demo save", err);
     return NextResponse.json({ error: "That could not be saved just now. Please try again." }, { status: 500, headers: NO_STORE_HEADERS });
   }
+}
+
+/* Ticked agents, or every agent matching the page's filters (at most MAX_MOVE), to a list of the Demo Portal's. */
+async function runMarketMove(a: MarketAction, who: string): Promise<DemoResult> {
+  let ids: string[];
+  if (a.type === "market.move") ids = a.ids;
+  else {
+    const ctx = await marketContext(DEMO_PORTAL_ID);
+    if (!ctx) return { ok: false, status: 404, error: "The Demo Portal could not be found." };
+    const found = await matchingIds(ctx, { ...parseMarketQuery(new URLSearchParams(a.query)), list: a.list }, MAX_MOVE);
+    if ("unavailable" in found) return { ok: false, status: 409, error: found.unavailable };
+    if (found.total > MAX_MOVE) {
+      return { ok: false, status: 409, error: `That's ${found.total.toLocaleString("en-US")} agents — narrow the filters to ${MAX_MOVE.toLocaleString("en-US")} or fewer to move them all at once.` };
+    }
+    if (!found.ids.length) return { ok: false, status: 404, error: "No agents match these filters." };
+    ids = found.ids;
+  }
+  return moveAgents(createAdminSupabase(), ids, a.to, who, { onlyUnlisted: a.onlyUnlisted });
 }

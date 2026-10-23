@@ -30,7 +30,7 @@ import { maxPage, SETUP_PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } 
 import { csvRowToAgent, csvRowToDnc } from "@/lib/tools/master-inbox/portals/csv";
 
 import { Icon } from "./icons";
-import { k, RO, withIds } from "./k";
+import { k, off, RO, withIds } from "./k";
 import { Chip, NO_FILTERS, type Filters, type Row } from "./market";
 import { DncAddDialog, ImportDialog, TeamAddForm } from "./dialogs";
 import { importCsv, useDemo } from "./demo-save";
@@ -113,7 +113,7 @@ function NoRows({ cols, why }: { cols: number; why: string }) {
 const searchWidth = (placeholder: string) => Math.max(280, 280 + (placeholder.length - 39) * 7);
 
 /** A page of the client's market or prospects, eight at a time, from the preview's market route. */
-function useMarket(clientId: string, list: "market" | "prospects", page: number, q: string, f: Filters, enabled = true) {
+function useMarket(clientId: string, list: "market" | "prospects", page: number, q: string, f: Filters, enabled = true, version = 0) {
   const [state, setState] = useState<{ total: number | null; rows: Row[]; loading: boolean; unavailable: string | null }>({ total: null, rows: [], loading: true, unavailable: null });
   useEffect(() => {
     if (!enabled) return;
@@ -125,6 +125,8 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
     if (f.minYears) sp.set("minYears", String(f.minYears));
     if (f.brokerage) sp.set("brokerage", f.brokerage);
     if (f.county) sp.set("county", f.county);
+    if (f.office) sp.set("office", f.office);
+    if (f.city) sp.set("city", f.city);
     setState((s) => ({ ...s, loading: true }));
     fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
       .then(async (r) => {
@@ -135,8 +137,37 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
       })
       .catch((err) => { if (err?.name !== "AbortError") setState({ total: null, rows: [], loading: false, unavailable: "Couldn't reach the server. Please try again." }); });
     return () => ctrl.abort();
-  }, [clientId, list, page, q, f, enabled]);
+  }, [clientId, list, page, q, f, enabled, version]);
   return state;
+}
+
+/* A filter's choices from the agent database (offices, cities): the largest 50 in the market. */
+function useChoices(clientId: string, facet: "office" | "city") {
+  const [choices, setChoices] = useState<string[] | null>(null);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const sp = new URLSearchParams({ client: clientId, list: "market", facet });
+    fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
+      .then((r) => r.json())
+      .then((j) => setChoices(Array.isArray(j.options) ? (j.options as Array<{ v: string }>).map((o) => o.v) : []))
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [clientId, facet]);
+  return choices;
+}
+
+/* The query string Market's "move everyone matching" reads (demo-market.ts) — the same keys as useMarket's. */
+function filterQuery(q: string, f: Filters): string {
+  const sp = new URLSearchParams();
+  if (q) sp.set("q", q);
+  if (f.minVolume) sp.set("minVolume", String(f.minVolume));
+  if (f.minUnits) sp.set("minUnits", String(f.minUnits));
+  if (f.minYears) sp.set("minYears", String(f.minYears));
+  if (f.brokerage) sp.append("brokerage", f.brokerage);
+  if (f.county) sp.append("county", f.county);
+  if (f.office) sp.append("office", f.office);
+  if (f.city) sp.append("city", f.city);
+  return sp.toString();
 }
 
 /* The market's filter choices (Location, Brokerage) — the same lists as Market's chips. */
@@ -253,12 +284,32 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
   const [search, setSearch] = useState("");
   const q = useDebounced(search);
   const [page, setPage] = useState(1);
-  const market = useMarket(clientId, "market", tab === "market" ? page : 1, tab === "market" ? q : "", NO_FILTERS);
-  useEffect(() => setPage(1), [tab, q]);
+  // Office, Brokerage, City and Years licensed (23 Oct — they were drawn only).
+  const [f, setF] = useState<Filters>(NO_FILTERS);
+  const [menu, setMenu] = useState<string | null>(null);
+  const options = useOptions(clientId);
+  const offices = useChoices(clientId, "office");
+  const cities = useChoices(clientId, "city");
+  const [version, setVersion] = useState(0);
+  const market = useMarket(clientId, "market", tab === "market" ? page : 1, tab === "market" ? q : "", f, true, version);
+  useEffect(() => setPage(1), [tab, q, f]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element)?.closest?.("[data-chip]")) setMenu(null);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [menu]);
+  const setFilter = <K extends keyof Filters>(key: K, v: Filters[K]) => { setF((x) => ({ ...x, [key]: v })); setMenu(null); };
   const mine = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
+  // Agents just added show on My Agents at once; the market's reload (a few seconds) then confirms it.
+  const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => setAdded(new Set()), [market.rows]);
   const rows: Array<{ id: string; name: string; office: string | null; city: string | null; email: string | null; years: number | null; list: string }> =
     tab === "market"
-      ? market.rows.map((r) => ({ id: r.id, name: r.name, office: r.office ?? r.brokerage, city: r.officeCity, email: r.email ?? null, years: r.years ?? null, list: r.list }))
+      ? market.rows.map((r) => ({ id: r.id, name: r.name, office: r.office ?? r.brokerage, city: r.officeCity, email: r.email ?? null, years: r.years ?? null, list: added.has(r.id) ? "My Agents" : r.list }))
       : mine.slice((page - 1) * PER, page * PER).map((a) => ({ id: a.id, name: a.name, office: null, city: null, email: a.email, years: null, list: "My Agents" }));
   const total = tab === "market" ? market.total ?? 0 : mine.length;
   const n = agents.length;
@@ -288,7 +339,16 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
     const ids = pickedShown;
     if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "agent" : "agents"} from My Agents?`)) await save({ type: "agent.delete", ids });
   };
-  const marketOnly = () => demo.say("On the Demo, agents ticked from the market are shown only — they are real agents, so they're never saved to its lists. Import a CSV to add agents.");
+  // Ticked market agents onto My Agents (23 Oct, demo-market.ts): by name, brokerage and phone — never the agent database's email.
+  const [adding, setAdding] = useState(false);
+  const addMarked = async () => {
+    const ids = rows.filter((r) => marked.has(r.id) && !onList(r)).map((r) => r.id);
+    if (!ids.length) { demo.say("Tick the agents on your team first."); return; }
+    setAdding(true);
+    const ok = await save({ type: "market.move", ids, to: "My Agents" });
+    setAdding(false);
+    if (ok) { setAdded(new Set(ids)); setMarked(new Set()); setVersion((v) => v + 1); }
+  };
   const placeholder = `Search all ${fmt(market.total ?? 0)} agents in your market`;
   return (
     <>
@@ -307,16 +367,20 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
             <input id="crx-setup-agents-search" type="search" placeholder={placeholder} aria-label="Search agents in your market" value={search} onChange={(e) => setSearch(e.target.value)} />
           </label>
           <Divider />
-          <button className={k("dd")} type="button" {...RO}>Office<Icon name="chevDown" size={14} /></button>
-          <button className={k("dd")} type="button" {...RO}>Brokerage<Icon name="chevDown" size={14} /></button>
-          <button className={k("dd")} type="button" {...RO}>City<Icon name="chevDown" size={14} /></button>
-          <button className={k("dd")} type="button" {...RO}>Years licensed<Icon name="chevDown" size={14} /></button>
-          <button className={k("clr")} type="button" onClick={() => setSearch("")}>Clear all</button>
+          <Chip id="office" label="Office" value={f.office} show={(v) => v} choices={offices ?? []} open={menu === "office"} onOpen={setMenu} onPick={(v) => setFilter("office", v)} />
+          <Chip id="brokerage" label="Brokerage" value={f.brokerage} show={(v) => v} choices={options?.brokerages ?? []} open={menu === "brokerage"} onOpen={setMenu} onPick={(v) => setFilter("brokerage", v)} />
+          <Chip id="city" label="City" value={f.city} show={(v) => v} choices={cities ?? []} open={menu === "city"} onOpen={setMenu} onPick={(v) => setFilter("city", v)} />
+          <Chip id="years" label="Years licensed" value={f.minYears} show={(v) => `${v}+`} choices={YEAR_PRESETS} open={menu === "years"} onOpen={setMenu} onPick={(v) => setFilter("minYears", v)} />
+          <button className={k("clr")} type="button" onClick={() => { setSearch(""); setF(NO_FILTERS); }}>Clear all</button>
         </div>
         {n === 0 ? (
           <div className={k("sbulk idle")}>
             <span className={k("bt")}>No agents added yet. Filter by your office to find them, or import a&nbsp;CSV.</span>
-            <button className={k("btn sm")} type="button" disabled>Add to My Agents</button>
+            {live && tab === "market" ? (
+              <button className={k("btn sm")} type="button" disabled={adding || marked.size === 0} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(rows.filter((r) => marked.has(r.id) && !onList(r)).length)} to My Agents` : "Add to My Agents"}</button>
+            ) : (
+              <button className={k("btn sm")} type="button" disabled>Add to My Agents</button>
+            )}
           </div>
         ) : tab === "mine" ? (
           <div className={k("sbulk")}>
@@ -327,7 +391,7 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
           <div className={k("sbulk idle")}>
             <span className={k("bt")}><b className={k("num")}>{fmt(total)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{fmt(n)} added to My Agents</span></span>
             {live ? (
-              <button className={k("btn sm")} type="button" onClick={marketOnly}>Add to My Agents</button>
+              <button className={k("btn sm")} type="button" disabled={adding} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(rows.filter((r) => marked.has(r.id) && !onList(r)).length)} to My Agents` : "Add to My Agents"}</button>
             ) : (
               <button className={k("btn sm")} type="button" {...RO}>{ticked ? "Remove selected" : "Add to My Agents"}</button>
             )}
@@ -349,7 +413,7 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
             {rows.length === 0 && !(tab === "market" && market.loading) ? <NoRows cols={7} why={tab === "market" ? market.unavailable ?? "No agents match." : "No agents on My Agents yet."} /> : null}
             {rows.map((r) => (
               <tr key={r.id} className={isTicked(r) ? k("sel") : undefined}>
-                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={isTicked(r)} {...(live && !(tab === "market" && onList(r)) ? { onChange: () => tick(r) } : { readOnly: true, ...RO })} /></td>
+                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={isTicked(r)} {...(live && !(tab === "market" && onList(r)) ? { onChange: () => tick(r) } : live ? { readOnly: true, ...off(`${r.name} is on My Agents already — remove them on the My Agents tab.`) } : { readOnly: true, ...RO })} /></td>
                 <td className={k("nm")}>{r.name}</td>
                 <td>{r.office ?? "–"}</td>
                 <td>{r.city ?? "–"}</td>
@@ -372,7 +436,20 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
   const [page, setPage] = useState(1);
   const people = useMemo(() => dnc.filter((d) => d.kind === "agent"), [dnc]);
   const companies = useMemo(() => dnc.filter((d) => d.kind === "company"), [dnc]);
-  useEffect(() => setPage(1), [tab, q]);
+  // The Brokerage filter: the brokerages on the list itself.
+  const [brk, setBrk] = useState<string | null>(null);
+  const [dncMenu, setDncMenu] = useState<string | null>(null);
+  const brokerages = useMemo(() => [...new Set(dnc.map((d) => d.brokerage).filter((b): b is string => !!b && !!b.trim()))].sort((x, y) => x.localeCompare(y)), [dnc]);
+  useEffect(() => {
+    if (!dncMenu) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element)?.closest?.("[data-chip]")) setDncMenu(null);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [dncMenu]);
+  useEffect(() => setPage(1), [tab, q, brk]);
   const demo = useDemo();
   const { live, save } = demo;
   const [dialog, setDialog] = useState<"agent" | "company" | "import" | null>(null);
@@ -411,7 +488,7 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
       </>
     );
   }
-  const list = (tab === "agents" ? people : companies).filter((d) => has(q, d.name, d.email, d.brokerage, d.domain));
+  const list = (tab === "agents" ? people : companies).filter((d) => has(q, d.name, d.email, d.brokerage, d.domain) && (!brk || d.brokerage === brk));
   const names = companies.map((c) => c.name);
   const blocked = names.length === 0 ? "" : names.length === 1 ? ` (${names[0]})` : names.length === 2 ? ` (${names[0]} and ${names[1]})` : ` (${names[0]}, ${names[1]} and ${fmt(names.length - 2)} more)`;
   return (
@@ -435,10 +512,11 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
             <input id="crx-setup-dnc-search" type="search" placeholder="Search your DNC List" aria-label="Search your DNC List" value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
           <Divider />
-          <button className={k("dd")} type="button" {...RO}>Brokerage<Icon name="chevDown" size={14} /></button>
-          <button className={k("dd")} type="button" {...RO}>Office<Icon name="chevDown" size={14} /></button>
-          <button className={k("dd")} type="button" {...RO}>City<Icon name="chevDown" size={14} /></button>
-          <button className={k("clr")} type="button" onClick={() => setQ("")}>Clear all</button>
+          {/* Brokerage filters the list itself (23 Oct); a DNC entry records no office or city, so those two say so. */}
+          <Chip id="dnc-brokerage" label="Brokerage" value={brk} show={(v) => v} choices={brokerages} open={dncMenu === "dnc-brokerage"} onOpen={setDncMenu} onPick={(v) => { setBrk(v); setDncMenu(null); }} />
+          <button className={k("dd")} type="button" {...off("A DNC entry doesn't record an office, so there is nothing to filter by.")}>Office<Icon name="chevDown" size={14} /></button>
+          <button className={k("dd")} type="button" {...off("A DNC entry doesn't record a city, so there is nothing to filter by.")}>City<Icon name="chevDown" size={14} /></button>
+          <button className={k("clr")} type="button" onClick={() => { setQ(""); setBrk(null); }}>Clear all</button>
         </div>
         <div className={k("sbulk idle")}>
           <span className={k("bt")}><b className={k("num")}>{fmt(people.length)}</b>{" "}agents ·{" "}<b className={k("num")}>{fmt(companies.length)}</b>{" "}companies blocked{blocked}{live && pickedIn(list).length ? <> · <span className={k("sub")}>{fmt(pickedIn(list).length)} selected</span></> : null}</span>
@@ -488,9 +566,35 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
   const [page, setPage] = useState(1);
   const [menu, setMenu] = useState<string | null>(null);
   const options = useOptions(clientId);
-  const all = useMarket(clientId, "market", 1, "", NO_FILTERS);
-  const prospects = useMarket(clientId, "prospects", tab === "prospects" ? page : 1, tab === "prospects" ? q : "", NO_FILTERS);
-  const filtered = useMarket(clientId, "market", page, q, f, tab === "market");
+  // After a save on the Demo, every count and row is read again.
+  const [version, setVersion] = useState(0);
+  const all = useMarket(clientId, "market", 1, "", NO_FILTERS, true, version);
+  const prospects = useMarket(clientId, "prospects", tab === "prospects" ? page : 1, tab === "prospects" ? q : "", NO_FILTERS, true, version);
+  const filtered = useMarket(clientId, "market", page, q, f, tab === "market", version);
+  const demo = useDemo();
+  const { live, save } = demo;
+  const [busy, setBusy] = useState(false);
+  /* Prospects in or out (23 Oct — drawn only before). Adding leaves out My Agents, the DNC List and the pipeline, as this step says. */
+  const [moved, setMoved] = useState<ReadonlyMap<string, string>>(new Map());
+  const change = async (action: Record<string, unknown> & { type: string }) => {
+    if (!live || busy) return;
+    setBusy(true);
+    const ok = await save(action);
+    setBusy(false);
+    if (ok) {
+      // Shown at once; the reload then confirms it.
+      if (Array.isArray(action.ids)) setMoved(new Map((action.ids as string[]).map((id) => [id, String(action.to)])));
+      setVersion((v) => v + 1);
+    }
+  };
+  const listed = (r: Row) => r.list === "My Agents" || r.list === "DNC List" || r.list === "In your pipeline";
+  const tickRow = (r: Row) => void change(inProspects(r) ? { type: "market.move", ids: [r.id], to: "Not on a list" } : { type: "market.move", ids: [r.id], to: "Prospects", onlyUnlisted: true });
+  const tickPage = () => {
+    const rows = shown.rows.filter((r) => !listed(r));
+    if (!rows.length) return;
+    const allIn = rows.every(inProspects);
+    void change(allIn ? { type: "market.move", ids: rows.map((r) => r.id), to: "Not on a list" } : { type: "market.move", ids: rows.filter((r) => !inProspects(r)).map((r) => r.id), to: "Prospects", onlyUnlisted: true });
+  };
   useEffect(() => setPage(1), [tab, q, f]);
   useEffect(() => { if (prospects.total !== null) onProspects(prospects.total); }, [prospects.total, onProspects]);
   useEffect(() => {
@@ -504,7 +608,9 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
   }, [menu]);
   const set = <K extends keyof Filters>(key: K, v: Filters[K]) => { setF((x) => ({ ...x, [key]: v })); setMenu(null); };
   const any = Object.values(f).some((v) => v !== null) || !!q;
-  const shown = tab === "market" ? filtered : prospects;
+  const loaded = tab === "market" ? filtered : prospects;
+  useEffect(() => setMoved(new Map()), [loaded.rows]);
+  const shown = { ...loaded, rows: loaded.rows.map((r) => (moved.has(r.id) ? { ...r, list: moved.get(r.id)! } : r)) };
   const marketTotal = all.total ?? 0;
   // As the design draws it: a row is ticked when the agent is in the client's prospects; changing that is inert.
   const inProspects = (r: Row) => tab === "prospects" || r.list === "Prospects";
@@ -529,7 +635,11 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
         {tab === "market" && any ? (
           <div className={k("sbulk")}>
             <span className={k("bt")}><b className={k("num")}>{fmt(filtered.total ?? 0)}</b>{" "}agents match these filters ·{" "}<span className={k("sub")}>of {fmt(marketTotal)} active in your market</span></span>
-            <button className={k("btn sm")} type="button" {...RO}>Add {fmt(filtered.total ?? 0)} to prospects</button>
+            {live ? (
+              <button className={k("btn sm")} type="button" disabled={busy} onClick={() => void change({ type: "market.moveAll", list: "market", query: filterQuery(q, f), to: "Prospects", onlyUnlisted: true })}>{busy ? "Adding…" : `Add ${fmt(filtered.total ?? 0)} to prospects`}</button>
+            ) : (
+              <button className={k("btn sm")} type="button" {...RO}>Add {fmt(filtered.total ?? 0)} to prospects</button>
+            )}
           </div>
         ) : (
           <div className={k("sbulk idle")}>
@@ -540,7 +650,11 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
         <table className={k("tb")}>
           <thead>
             <tr>
-              <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all" checked={shown.rows.length > 0 && shown.rows.every(inProspects)} readOnly {...RO} /></th>
+              <th style={{ width: 20 }}>
+                {live
+                  ? <input type="checkbox" aria-label="Select all on this page" checked={shown.rows.some((r) => !listed(r)) && shown.rows.filter((r) => !listed(r)).every(inProspects)} disabled={busy} onChange={tickPage} />
+                  : <input type="checkbox" aria-label="Select all" checked={shown.rows.length > 0 && shown.rows.every(inProspects)} readOnly {...RO} />}
+              </th>
               <th>Agent</th>
               <th>Brokerage</th>
               <th>City</th>
@@ -554,7 +668,11 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
             {shown.rows.length === 0 && !shown.loading ? <NoRows cols={8} why={shown.unavailable ?? "No agents match."} /> : null}
             {shown.rows.map((r) => (
               <tr key={r.id} className={inProspects(r) ? k("sel") : undefined}>
-                <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={inProspects(r)} readOnly {...RO} /></td>
+                <td>
+                  {live
+                    ? <input type="checkbox" aria-label={`Select ${r.name}`} checked={inProspects(r)} disabled={busy || listed(r)} title={listed(r) ? `On ${r.list === "In your pipeline" ? "your pipeline" : `your ${r.list}`} — always left out` : undefined} onChange={() => tickRow(r)} />
+                    : <input type="checkbox" aria-label={`Select ${r.name}`} checked={inProspects(r)} readOnly {...RO} />}
+                </td>
                 <td className={k("nm")}>{r.name}</td>
                 <td>{r.brokerage ?? "–"}</td>
                 <td>{r.officeCity ?? "–"}</td>

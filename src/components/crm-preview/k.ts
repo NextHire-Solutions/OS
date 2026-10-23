@@ -19,6 +19,9 @@ export const READ_ONLY = "Read-only preview — this would change the client's p
  */
 export const RO = { "aria-disabled": true, "data-ro": "", title: READ_ONLY } as const;
 
+/** A control that stays off even on the Demo Portal, and says why when clicked (crm-preview.tsx reads data-ro-reason). */
+export const off = (reason: string) => ({ "aria-disabled": true, "data-ro": "", "data-ro-reason": reason, title: reason }) as const;
+
 /**
  * Ticked rows: `ids` ticked (on) or unticked, as a new set. (Built without the
  * Set's own remove method, so the preview's "nothing here writes" test can keep

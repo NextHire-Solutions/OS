@@ -6,7 +6,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { readOnly } from "@/lib/tools/assistant/read-only";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
-import { DEMO_MARKET_MLS, isDemoPortal } from "@/lib/crm-preview/demo";
+import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
+import { agentsByIds, demoProspectIds, filterProspects, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
   SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, ownListEmail, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
@@ -121,7 +122,8 @@ export function unavailable(ctx: MarketContext, list: "market" | "prospects"): s
       ? `The MLS on ${ctx.client.name}'s record (${ctx.mls.unmatched.join(", ")}) is not in the agent database.`
       : `${ctx.client.name}'s record has no MLS yet (Clients → the client → Markets), so its market is unknown.`;
   }
-  if (list === "prospects" && !ctx.orchClientId) return `${ctx.client.name} is not linked in the agent database, so its lists cannot be read.`;
+  // The Demo Portal keeps its own prospects (demo-market.ts); a real client's are its campaign leads in the agent database.
+  if (list === "prospects" && !ctx.orchClientId && !isDemoPortal(ctx.portal.id)) return `${ctx.client.name} is not linked in the agent database, so its lists cannot be read.`;
   return null;
 }
 
@@ -172,14 +174,38 @@ const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null
 /* The client's own lists: the only agents whose email may reach the browser. */
 const OWN_LISTS: ReadonlySet<string> = new Set(["My Agents", "DNC List", "In your pipeline"]);
 
+/*
+ * The Demo Portal's own prospects (migration 0041): every one, filtered and
+ * sorted here as Market's search would (demo-market.ts). A Demo list is small.
+ */
+async function demoProspects(q: MarketQuery): Promise<{ unavailable: string } | { page: { rows: Array<Record<string, unknown>>; total: number; salesVolume: number } }> {
+  const ids = await demoProspectIds(mi(), DEMO_PORTAL_ID);
+  if (ids === null) return { unavailable: PROSPECTS_MIGRATION };
+  const shown = sortProspects(filterProspects(await agentsByIds(ids), q), q);
+  const from = (q.page - 1) * q.per;
+  return {
+    page: { rows: shown.slice(from, from + q.per) as unknown as Array<Record<string, unknown>>, total: shown.length, salesVolume: shown.reduce((t, a) => t + (a.sales_volume ?? 0), 0) },
+  };
+}
+
 export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
-  const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
-  const page = await search(marketFilters(base, q), q.per, (q.page - 1) * q.per, { by: SORTS[q.sort], dir: q.dir });
+  const demo = isDemoPortal(ctx.portal.id);
+  let page: { rows: Array<Record<string, unknown>>; total: number; salesVolume: number };
+  if (demo && q.list === "prospects") {
+    const d = await demoProspects(q);
+    if ("unavailable" in d) return d;
+    page = d.page;
+  } else {
+    const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
+    page = await search(marketFilters(base, q), q.per, (q.page - 1) * q.per, { by: SORTS[q.sort], dir: q.dir });
+  }
   const ids = page.rows.map((r) => String(r.id));
   const [prospects, myAgents, dnc, pipeline] = await Promise.all([
-    q.list === "prospects" ? Promise.resolve(new Set(ids)) : inClientLists(ctx.orchClientId ?? "", ctx.orchClientId ? ids : []),
+    q.list === "prospects" ? Promise.resolve(new Set(ids))
+    : demo ? demoProspectIds(mi(), DEMO_PORTAL_ID).then((all) => { const s = new Set(all ?? []); return new Set(ids.filter((id) => s.has(id))); })
+    : inClientLists(ctx.orchClientId ?? "", ctx.orchClientId ? ids : []),
     loadAgentEntries(ctx.portal.id),
     loadDncEntries(ctx.portal.id),
     loadPipelineEntries(ctx.portal.id),
@@ -208,7 +234,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   return { total: page.total, salesVolume: page.salesVolume, page: q.page, pageSize: q.per, rows };
 }
 
-export type FacetKind = "brand" | "city" | "county";
+export type FacetKind = "brand" | "office" | "city" | "county";
 
 /*
  * The choices for a brokerage or location filter (21 Oct, Eddy: "the same UX on
@@ -220,15 +246,29 @@ export type FacetKind = "brand" | "city" | "county";
 export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: FacetKind, text: string): Promise<{ unavailable: string } | { options: Array<{ v: string; n: number }> }> {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
+  if (isDemoPortal(ctx.portal.id) && q.list === "prospects") {
+    // The Demo's own prospects: the choices among them, under the other filters (a filter never narrows its own list).
+    const ids = await demoProspectIds(mi(), DEMO_PORTAL_ID);
+    if (ids === null) return { unavailable: PROSPECTS_MIGRATION };
+    const others: MarketQuery = kind === "brand" || kind === "office" ? { ...q, brokerages: [], offices: [] } : { ...q, cities: [], counties: [] };
+    const rows = filterProspects(await agentsByIds(ids), others);
+    const counts = new Map<string, number>();
+    const needle = text.trim().toLowerCase();
+    for (const a of rows) {
+      const vals = kind === "brand" ? [a.brand] : kind === "office" ? [a.office_name] : kind === "city" ? [a.office_city, a.home_city, a.most_transacted_city] : [a.office_county, a.home_county, a.most_transacted_county];
+      for (const v of new Set(vals.filter((x): x is string => !!x && x.toLowerCase().includes(needle)))) counts.set(v, (counts.get(v) ?? 0) + 1);
+    }
+    return { options: [...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, 50).map(([v, n]) => ({ v, n })) };
+  }
   const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
   const d = await rpc("fn_facet_options", {
-    p_type: kind === "brand" ? "brand" : "location",
+    p_type: kind === "brand" ? "brand" : kind === "office" ? "office" : "location",
     p_q: text.replace(/[\u0000-\u001f%_]/g, " ").trim().slice(0, 60),
-    p_field: kind === "brand" ? null : kind,
+    p_field: kind === "brand" || kind === "office" ? null : kind,
     p_source: "all",
     p_filters: marketFilters(base, q),
   });
-  const raw = kind === "brand" ? (Array.isArray(d) ? d : []) : ((d as { options?: unknown[] } | null)?.options ?? []);
+  const raw = kind === "brand" || kind === "office" ? (Array.isArray(d) ? d : []) : ((d as { options?: unknown[] } | null)?.options ?? []);
   const options = (raw as Array<{ v?: unknown; n?: unknown }>)
     .map((o) => ({ v: str(o.v) ?? "", n: num(o.n) ?? 0 }))
     .filter((o) => o.v)
@@ -342,3 +382,29 @@ const cachedReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport> 
     allBrokerages: brandRows,
   };
 }, { ttlMs: 30 * 60_000, key: (ctx) => `report:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-report", inflightTimeoutMs: 180_000 });
+
+/**
+ * Every agent matching a page's filters, for "Select all that match" → Move to
+ * (Demo Portal, 23 Oct): their ids, at most `cap`; `total` says how many there
+ * are, so a list longer than the cap is refused rather than cut short.
+ */
+export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: number): Promise<{ unavailable: string } | { ids: string[]; total: number }> {
+  const why = unavailable(ctx, q.list);
+  if (why) return { unavailable: why };
+  if (isDemoPortal(ctx.portal.id) && q.list === "prospects") {
+    const ids = await demoProspectIds(mi(), DEMO_PORTAL_ID);
+    if (ids === null) return { unavailable: PROSPECTS_MIGRATION };
+    const rows: AgentRow[] = filterProspects(await agentsByIds(ids), q);
+    return { ids: rows.slice(0, cap).map((a) => a.id), total: rows.length };
+  }
+  const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
+  const first = await search(marketFilters(base, q), Math.min(cap, 500), 0, { by: SORTS[q.sort], dir: q.dir });
+  if (first.total > cap) return { ids: [], total: first.total };
+  const ids = first.rows.map((r) => String(r.id));
+  for (let offset = ids.length; offset < first.total; offset += 500) {
+    const more = await search(marketFilters(base, q), 500, offset, { by: SORTS[q.sort], dir: q.dir });
+    ids.push(...more.rows.map((r) => String(r.id)));
+    if (!more.rows.length) break;
+  }
+  return { ids: [...new Set(ids)], total: first.total };
+}

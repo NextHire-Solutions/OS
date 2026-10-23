@@ -40,7 +40,7 @@ test("the query string: ranges, several brokerages and places, a known sort — 
   assert.deepEqual(q, {
     list: "prospects", page: 3, per: 50, q: "smith",
     volume: { min: 2_000_000, max: 8_000_000 }, units: { min: 4, max: 30 }, years: { min: 2, max: null },
-    brokerages: ["Keller Williams", "Compass"], cities: ["Atlanta"], counties: ["Cobb, GA"],
+    brokerages: ["Keller Williams", "Compass"], offices: [], cities: ["Atlanta"], counties: ["Cobb, GA"],
     title: "Team Leader", sort: "name", dir: "asc",
   });
   // The old single values (the Setup wizard still sends them) read the same way.

@@ -18,7 +18,7 @@ import { formatPhone, initials, LIST_PAGE_SIZE } from "@/lib/crm-preview/model";
 
 import { DncAddDialog, ImportDialog, MyAgentAddDialog, TeamAddForm } from "./dialogs";
 import { Icon, type IconName } from "./icons";
-import { k, RO, withIds } from "./k";
+import { k, off, RO, withIds } from "./k";
 import { csvRowToAgent, csvRowToDnc, csvRowToTeam } from "@/lib/tools/master-inbox/portals/csv";
 
 import { importCsv, lock, saveCsv, useDemo } from "./demo-save";
@@ -270,7 +270,11 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const shown = pageOf(foundPeople, pageNo);
   const pageIds = shown.rows.map((d) => d.id);
   const pageAll = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
-  const count = foundPeople.filter((d) => picked.has(d.id)).length;
+  // Ticked agents and companies together (23 Oct — companies could not be ticked): the bulk bar acts on both.
+  const pickedRows = [...foundPeople, ...foundCompanies].filter((d) => picked.has(d.id));
+  const count = pickedRows.length;
+  const companyIds = foundCompanies.map((d) => d.id);
+  const companiesAll = companyIds.length > 0 && companyIds.every((id) => picked.has(id));
   return (
     <>
       <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} onExport={live ? () => csv(dnc) : undefined} />
@@ -300,8 +304,8 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
             <Bulk
               count={count}
               onCancel={clear}
-              onExport={live ? () => csv(foundPeople.filter((d) => picked.has(d.id))) : undefined}
-              onDelete={live ? () => void remove(foundPeople.filter((d) => picked.has(d.id)).map((d) => d.id), `${count} ${count === 1 ? "entry" : "entries"}`) : undefined}
+              onExport={live ? () => csv(pickedRows) : undefined}
+              onDelete={live ? () => void remove(pickedRows.map((d) => d.id), `${count} ${count === 1 ? "entry" : "entries"}`) : undefined}
             />
             <div className={k("sec")}>Agents<span>{foundPeople.length.toLocaleString("en-US")}</span></div>
             {pageAll && foundPeople.length > pageIds.length ? <SelAll onPage={pageIds.length} total={foundPeople.length} onAll={() => pick(foundPeople.map((d) => d.id), true)} /> : null}
@@ -351,7 +355,11 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                   <table className={k("tb")}>
                     <thead>
                       <tr>
-                        <th scope="col" style={{ width: 20 }}><input type="checkbox" className={k("ck")} aria-label="Select all DNC companies" {...RO} /></th>
+                        <th scope="col" style={{ width: 20 }}>
+                          {live
+                            ? <input type="checkbox" className={k("ck")} aria-label="Select all DNC companies" checked={companiesAll} onChange={() => pick(companyIds, !companiesAll)} />
+                            : <input type="checkbox" className={k("ck")} aria-label="Select all DNC companies" {...RO} />}
+                        </th>
                         <th scope="col" style={{ width: "30%" }}>Company</th>
                         <th scope="col" style={{ width: "26%" }}>Email domain</th>
                         <th scope="col">Notes</th>
@@ -360,8 +368,12 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
                     </thead>
                     <tbody>
                       {foundCompanies.map((d) => (
-                        <tr key={d.id}>
-                          <td><input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} {...RO} /></td>
+                        <tr key={d.id} className={picked.has(d.id) ? k("sel") : undefined}>
+                          <td>
+                            {live
+                              ? <input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} checked={picked.has(d.id)} onChange={() => pick([d.id], !picked.has(d.id))} />
+                              : <input type="checkbox" className={k("ck")} aria-label={`Select ${d.name}`} {...RO} />}
+                          </td>
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                               <span className={k("av")} style={{ ...AV, background: "#f1f3f6", color: "#555a64" }}><Icon name="building" size={14} /></span>
@@ -499,7 +511,11 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
 
 // ----------------------------------------------------------- Integrations ---
 
+/* The Demo Portal never reaches Follow Up Boss (demo.ts): its connect controls say so rather than "not built". */
+const FUB_DEMO = "The Demo Portal never connects to Follow Up Boss. On a real portal, this is where the client saves its API key.";
+
 export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) {
+  const { live } = useDemo();
   return (
     <>
       <Header title="Integrations" />
@@ -522,8 +538,8 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
             <div style={{ padding: "18px 20px 20px", borderTop: "1px solid #ebedf0", display: "flex", flexDirection: "column", gap: 8 }}>
               <label className={k("fl")} htmlFor="crx-fubkey">API key</label>
               <div className={k("inw")}>
-                <input id="crx-fubkey" className={k("in")} type="password" placeholder={fubConnected ? "A key is saved for this client" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} readOnly {...RO} />
-                <button type="button" className={k("ib")} aria-label="Show API key" {...RO}><Icon name="eye" size={16} /></button>
+                <input id="crx-fubkey" className={k("in")} type="password" placeholder={fubConnected ? "A key is saved for this client" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} readOnly {...(live ? off(FUB_DEMO) : RO)} />
+                <button type="button" className={k("ib")} aria-label="Show API key" {...(live ? off(FUB_DEMO) : RO)}><Icon name="eye" size={16} /></button>
               </div>
               <p className={k("hint")}>
                 Find it in Follow Up Boss under <b style={{ color: "#1f2124", fontWeight: 500 }}>My Settings &rarr; API</b>.{" "}
@@ -532,7 +548,7 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
                 </a>
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-                <button type="button" className={k("btn pri dim")} {...RO}>{fubConnected ? "Update key" : "Connect"}</button>
+                <button type="button" className={k("btn pri dim")} {...(live ? off(FUB_DEMO) : RO)}>{fubConnected ? "Update key" : "Connect"}</button>
               </div>
             </div>
           </section>

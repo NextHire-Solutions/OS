@@ -11,7 +11,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 
 /*
  * GET /api/crm-preview/market?client=<portal id>&list=market|prospects&page=…
- *   (&facet=brand|city|county&fq=<text>: a filter's choices with their counts)
+ *   (&facet=brand|office|city|county&fq=<text>: a filter's choices with their counts)
  *
  * One page of the redesign preview's Market or Prospects (src/app/crm-preview).
  * Owners only, as the page: anyone else gets a bare 404. Read-only: GET is
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     const q = parseMarketQuery(params);
     // A filter's choices (brokerages, cities, counties) with their counts — names and numbers only.
     const facet = params.get("facet");
-    if (facet === "brand" || facet === "city" || facet === "county") {
+    if (facet === "brand" || facet === "office" || facet === "city" || facet === "county") {
       const out = await marketFacet(ctx, q, facet as FacetKind, params.get("fq") ?? "");
       served(who, "market", 0);
       after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "market", rows: 0, now: new Date() }));

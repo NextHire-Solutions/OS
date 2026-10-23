@@ -27,6 +27,7 @@ import {
   sourceLabel,
   type ManagedStage,
   type Placement,
+  panelFields,
   type PreviewStage,
   type TimeRange,
 } from "@/lib/crm-preview/model";
@@ -37,7 +38,8 @@ import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
 import { EditLeadDialog, PipelineAddDialog, PipelineUploadDialog } from "./dialogs";
 import { AgentPanel, ChooseMenu, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
-import { importCsv, lock, moveTo, saveCsv, useDemo, type DemoAction } from "./demo-save";
+import { importCsv, isCanonicalStage, lock, moveTo, saveCsv, useDemo, type DemoAction } from "./demo-save";
+import { useBoardDrag } from "./board-drag";
 
 type Open = { kind: "agent" | "conversation" | "notes" | "edit"; entry: PipelineEntry } | { kind: "add" | "upload" } | null;
 
@@ -59,7 +61,30 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
   const { live, save } = demo;
   const bulkRef = useRef<HTMLDivElement>(null);
 
-  const view = useMemo(() => pipelineView(entries, stages, { range, search, chip, now }, furthest), [entries, stages, range, search, chip, now, furthest]);
+  /*
+   * A card dropped in another column (Demo Portal, 23 Oct) shows there at once;
+   * the page's reload after the save replaces this guess with the real row, and
+   * a failed save puts the card back.
+   */
+  const [pending, setPending] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => setPending(new Map()), [entries]);
+  const shownEntries = useMemo(
+    () => (pending.size
+      ? entries.map((e) => {
+          const to = pending.get(e.id);
+          return !to ? e : isCanonicalStage(to) ? { ...e, stage: to as PipelineEntry["stage"], custom_stage_key: null } : { ...e, custom_stage_key: to };
+        })
+      : entries),
+    [entries, pending],
+  );
+  const board = useBoardDrag(live && mode === "board", (id, to) => {
+    setPending((m) => new Map(m).set(id, to));
+    void save(moveTo([id], to)).then((ok) => {
+      if (!ok) setPending((m) => new Map([...m].filter(([k]) => k !== id)));
+    });
+  });
+
+  const view = useMemo(() => pipelineView(shownEntries, stages, { range, search, chip, now }, furthest), [shownEntries, stages, range, search, chip, now, furthest]);
   const [listPageNo, setListPageNo] = useState(1);
   const page = useMemo(() => listPage(view.shown, listPageNo), [view.shown, listPageNo]);
   // A new filter starts the list again at its first page.
@@ -107,6 +132,24 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
       setPicked(new Set());
       setBulkMenu(null);
     }
+  };
+  /*
+   * The Edit form on the Demo Portal (23 Oct): the agent's fields, then any
+   * custom field changed, cleared or added, then the tag — each its own save.
+   */
+  const saveEdit = async (e: PipelineEntry, v: Record<string, string>) => {
+    if (!(await save({ type: "entry.edit", id: e.id, lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }))) return false;
+    const before = new Map(panelFields(e).filter((f) => f.key).map((f) => [f.key as string, f.value]));
+    const fields: Record<string, string | null> = {};
+    for (const [name, value] of Object.entries(v)) {
+      if (name.startsWith("cf:") && before.get(name.slice(3)) !== value) fields[name.slice(3)] = value || null;
+      if (name.startsWith("nf:name:") && value) fields[value] = v[`nf:value:${name.slice(8)}`] || null;
+    }
+    if (Object.keys(fields).length && !(await save({ type: "entry.fields", id: e.id, fields }))) return false;
+    const place = placeOf(e);
+    const tagNow = place.tag?.key ?? "";
+    if ((v.tag ?? "") !== tagNow && !(await save(moveTo([e.id], v.tag || place.stage.key)))) return false;
+    return true;
   };
   const toggleChip = (key: string) => setChip((c) => (c === key ? null : key));
   const openAgent = (entry: PipelineEntry) => setOpen({ kind: "agent", entry });
@@ -278,11 +321,12 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
             </div>
 
             {mode === "board" ? (
-              <div className={k("board")}>
+              <div className={k("board")} data-board="">
                 {/* Every card, as the design's board (no client has more than a few hundred); each column scrolls. */}
                 {view.columns.map((c) => {
+                  const target = board.drag && board.drag.over === c.stage.key && board.drag.from !== c.stage.key;
                   return (
-                    <section key={c.stage.key} className={k("col")} aria-label={c.stage.label}>
+                    <section key={c.stage.key} className={k("col")} aria-label={c.stage.label} data-col={c.stage.key} style={target ? { boxShadow: "0 0 0 2px #3e6bd1 inset", background: "#eef3fd" } : undefined}>
                       <div className={k("colh")}>
                         <span className={k("dot")} style={{ background: c.stage.dot }} />
                         {c.stage.label}
@@ -294,7 +338,15 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
                         const place = placeOf(e);
                         const src = sourceLabel(e);
                         return (
-                          <button key={e.id} type="button" className={k("kc")} onClick={() => openAgent(e)}>
+                          <button
+                            key={e.id}
+                            type="button"
+                            className={k("kc")}
+                            {...board.cardProps(e.id, e.lead_name || "Unnamed agent", c.stage.key)}
+                            style={board.drag?.id === e.id ? { opacity: 0.4 } : live ? { cursor: "grab" } : undefined}
+                            title={live ? "Drag to another column to move — or click to open" : undefined}
+                            onClick={() => { if (!board.wasDrag()) openAgent(e); }}
+                          >
                             <span className={k("t1")}>{e.lead_name || "Unnamed agent"}{sv ? <span>{abbrevUsd(sv)}</span> : null}</span>
                             <span className={k("co")}>{e.current_brokerage || "—"}</span>
                             <span className={k("t3")}>
@@ -403,8 +455,9 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
         <EditLeadDialog
           entry={open.entry}
           placement={placeOf(fresh(open.entry))}
+          tags={tags}
           onClose={() => setOpen(null)}
-          onSave={live ? (v) => save({ type: "entry.edit", id: open.entry.id, lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }) : undefined}
+          onSave={live ? (v) => saveEdit(fresh(open.entry), v) : undefined}
         />
       ) : null}
       {open?.kind === "add" ? (
@@ -414,6 +467,7 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
           onSave={live ? (v) => save({ type: "entry.add", lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }) : undefined}
         />
       ) : null}
+      {board.drag ? <div className="cpv-drag-ghost" style={{ left: board.drag.x + 14, top: board.drag.y + 10 }} aria-hidden="true">{board.drag.name}</div> : null}
       {open?.kind === "upload" ? <PipelineUploadDialog onClose={() => setOpen(null)} onFile={live ? (f) => importCsv(f, csvRowToPipeline, "entry.import", demo) : undefined} /> : null}
       {open?.kind === "conversation" ? (
         <ConversationPanel entry={open.entry} placement={placeOf(open.entry)} clientId={clientId} now={now} onClose={() => setOpen(null)} />
@@ -569,6 +623,10 @@ function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string
   }, [sig]);
   const [busy, setBusy] = useState<Part | null>(null);
   const [drag, setDrag] = useState<{ part: Part; key: string } | null>(null);
+  /* The press on a handle, and the latest draft for the pointer handlers (they run between renders). */
+  const pressRef = useRef<{ part: Part; key: string; y: number; moved: boolean } | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const focus = useRef<{ key: string; what: "name" | "handle" } | null>(null);
   useEffect(() => {
     if (!focus.current) return;
@@ -580,9 +638,10 @@ function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string
   const setPart = (part: Part, list: Draft[]) => setDraft((d) => ({ ...d, [part]: list }));
   const edit = (part: Part, key: string, patch: Partial<Draft>) => setPart(part, draft[part].map((s) => (s.key === key ? { ...s, ...patch } : s)));
   const move = (part: Part, from: number, to: number) => {
-    const list = [...draft[part]];
+    const list = [...draftRef.current[part]];
     const [it] = list.splice(from, 1);
     list.splice(to, 0, it);
+    draftRef.current = { ...draftRef.current, [part]: list };
     setPart(part, list);
   };
   const add = (part: Part) => {
@@ -620,27 +679,61 @@ function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string
       <div
         key={s.key}
         data-stage={s.key}
+        data-part={part}
         className={k("stg")}
-        style={{ ...(s.hidden ? { opacity: 0.55 } : {}), ...(drag?.key === s.key ? { background: "#f5f8fe" } : {}) }}
-        onDragOver={(e) => { if (drag?.part === part) e.preventDefault(); }}
-        onDrop={(e) => {
-          e.preventDefault();
-          // The dragged stage's key travels with the drag; only a row of the same section moves.
-          const from = list.findIndex((x) => x.key === (e.dataTransfer.getData("text/plain") || drag?.key));
-          if (from >= 0 && from !== i) move(part, from, i);
-          setDrag(null);
-        }}
+        style={{ ...(s.hidden ? { opacity: 0.55 } : {}), ...(drag?.key === s.key ? { background: "#eef3fd", boxShadow: "0 0 0 1px #c7d5f3 inset" } : {}) }}
       >
         <button
           type="button"
           className={k("ib")}
           data-handle=""
-          draggable
           aria-label={`Reorder ${name}`}
           title="Drag to reorder, or use the arrow keys"
-          style={{ cursor: "grab" }}
-          onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", s.key); setDrag({ part, key: s.key }); }}
-          onDragEnd={() => setDrag(null)}
+          style={{ cursor: drag?.key === s.key ? "grabbing" : "grab", touchAction: "none" }}
+          /*
+           * Pointer events, not the browser's drag and drop (23 Oct): a real
+           * mouse drag on this handle never started one in Chrome, and Safari
+           * and Firefox are worse with draggable buttons. Pressing and moving
+           * reorders the row live under the pointer — mouse, pen or finger.
+           */
+          onPointerDown={(e) => {
+            if (e.button !== 0 || !e.isPrimary) return;
+            e.preventDefault();
+            const p = { part, key: s.key, y: e.clientY, moved: false };
+            pressRef.current = p;
+            /*
+             * Followed on the window, not by pointer capture: the row moves in
+             * the page as it is dragged, and moving the handle's element
+             * releases a capture — the drag stopped after one row (23 Oct test).
+             */
+            const follow = (ev: PointerEvent) => {
+              if (pressRef.current !== p || ev.pointerId !== e.pointerId) return;
+              if (!p.moved) {
+                if (Math.abs(ev.clientY - p.y) < 4) return;
+                p.moved = true;
+                setDrag({ part: p.part, key: p.key });
+              }
+              ev.preventDefault();
+              // The row under the pointer, in the same section: the dragged one takes its place.
+              const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-stage]");
+              if (!over || over.dataset.part !== p.part || over.dataset.stage === p.key) return;
+              const cur = draftRef.current[p.part];
+              const from = cur.findIndex((x) => x.key === p.key);
+              const to = cur.findIndex((x) => x.key === over.dataset.stage);
+              if (from >= 0 && to >= 0 && from !== to) move(p.part, from, to);
+            };
+            const end = (ev: PointerEvent) => {
+              if (ev.pointerId !== e.pointerId) return;
+              window.removeEventListener("pointermove", follow);
+              window.removeEventListener("pointerup", end);
+              window.removeEventListener("pointercancel", end);
+              if (pressRef.current === p) pressRef.current = null;
+              setDrag(null);
+            };
+            window.addEventListener("pointermove", follow);
+            window.addEventListener("pointerup", end);
+            window.addEventListener("pointercancel", end);
+          }}
           onKeyDown={(e) => {
             const to = e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : -1;
             if (to < 0 || to >= list.length) return;

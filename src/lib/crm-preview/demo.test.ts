@@ -262,11 +262,16 @@ test("the save path imports nothing that reaches outside the database, and the r
     const src = read(f);
     const imports = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
     const allowed = f.endsWith("demo.ts")
-      ? ["zod", "@/lib/crm-preview/model", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config"]
-      : ["next/server", "@/lib/bs-auth", "@/lib/identity/admin", "@/lib/crm-preview/access", "@/lib/crm-preview/data-guard", "@/lib/crm-preview/demo", "@/lib/supabase/admin"];
+      // 23 Oct: Market's Move to reads the agent database (demo-market.ts, read-only) — still nothing that blocks, stops, posts or texts.
+      ? ["zod", "@/lib/crm-preview/model", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market-model"]
+      : ["next/server", "@/lib/bs-auth", "@/lib/identity/admin", "@/lib/crm-preview/access", "@/lib/crm-preview/data-guard", "@/lib/crm-preview/demo", "@/lib/supabase/admin", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market", "@/lib/crm-preview/market-model"];
+    // And what those read from: the agent database (read-only) and the Market helpers — never a blocklist, Slack, texts or Follow Up Boss.
     assert.deepEqual(imports.filter((i) => !allowed.includes(i)), [], `${f}: only the database and the preview's own checks — no blocklist, stop, Slack, texts, Follow Up Boss`);
     assert.doesNotMatch(src, /\bfetch\(|import\(/, `${f}: no outside requests, no dynamic imports`);
   }
+  const dm = read("src/lib/crm-preview/demo-market.ts");
+  assert.deepEqual([...dm.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]).filter((i) => !["server-only", "zod", "@/lib/tools/assistant/read-only", "@/lib/tools/corofy/supabase", "./demo", "./market-model"].includes(i)), [], "demo-market.ts: the agent database read-only, nothing else");
+  assert.match(dm, /const agentDb = \(\) => readOnly\(getCorofySupabase\(\)\);/, "the agent database only through the read-only wrapper");
   const route = read("src/app/api/crm-preview/demo/route.ts");
   const refuse = route.indexOf("isDemoPortal(");
   assert.ok(refuse > route.indexOf("canSeeCrmPreview(") && refuse < route.indexOf("runDemoAction(") && refuse < route.indexOf("createAdminSupabase()"), "who first, then Demo-only, then the save");

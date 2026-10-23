@@ -45,6 +45,8 @@
  */
 
 import { z } from "zod";
+import { agentsByIds, demoProspectIds, emailsOf, lower, missingTable, PROSPECTS_MIGRATION, type AgentRow, type MoveTarget } from "@/lib/crm-preview/demo-market";
+import { personKey } from "@/lib/crm-preview/market-model";
 
 import { ALWAYS_SHOWN, SETUP_OFFERS } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
@@ -128,6 +130,12 @@ export const demoAction = z.preprocess(noNul, z.discriminatedUnion("type", [
     current_brokerage: optional(200),
     agent_profile_url: optional(500),
   }),
+  // The Edit form's custom fields (23 Oct): set (a value) or cleared (null), merged into the entry's own overrides, as the live portal keeps them.
+  z.object({
+    type: z.literal("entry.fields"),
+    id,
+    fields: z.record(z.string().trim().min(1).max(60), z.string().trim().max(500).nullable()).refine((o) => Object.keys(o).length <= 30, "At most 30 fields at once."),
+  }),
   z.object({ type: z.literal("entry.delete"), ids }),
   z.object({ type: z.literal("note.add"), entry: id, body: text(20_000).min(1) }),
   z.object({ type: z.literal("agent.add"), name: text(160).min(1), email: optionalEmail, phone: optional(40), license: optional(80) }),
@@ -175,10 +183,10 @@ export function companyDomain(raw: string | null): string | null {
 }
 
 /** The slice of a Supabase client used here, so the tests can hand in a fake one. */
-type Db = { from(table: string): any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+export type Db = { from(table: string): any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-type Res = { data: unknown; error: { message: string; code?: string } | null };
-const failed = (r: Res): DemoResult | null =>
+export type Res = { data: unknown; error: { message: string; code?: string } | null };
+export const failed = (r: Res): DemoResult | null =>
   !r.error ? null
   // The database's own duplicate refusal (an address or domain already on the list) says so, rather than "try again" (22 Oct audit).
   : r.error.code === "23505" ? { ok: false, status: 409, error: "That's already on the list." }
@@ -189,7 +197,7 @@ const failed = (r: Res): DemoResult | null =>
  * `id=in.(…)` passes the gateway's URL limit (~16 KB, about 400 ids —
  * intro-leads.ts) and failed every time, so a big list could not be cleared.
  */
-async function eachChunk(all: readonly string[], write: (part: string[]) => PromiseLike<Res>): Promise<DemoResult | null> {
+export async function eachChunk(all: readonly string[], write: (part: string[]) => PromiseLike<Res>): Promise<DemoResult | null> {
   for (let i = 0; i < all.length; i += 200) {
     const r = await write(all.slice(i, i + 200));
     if (r.error) return failed(r);
@@ -545,6 +553,18 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
       if (failed(r)) return failed(r)!;
       return (r.data as unknown[]).length ? { ok: true } : { ok: false, status: 404, error: "That agent is not on this portal." };
     }
+    case "entry.fields": {
+      const cur: Res = await db.from("client_pipeline_entries").select("custom_fields_overrides").eq("client_id", C).eq("id", a.id).maybeSingle();
+      if (failed(cur)) return failed(cur)!;
+      if (!cur.data) return { ok: false, status: 404, error: "That agent is not on this portal." };
+      const merged: Record<string, unknown> = { ...(((cur.data as { custom_fields_overrides?: Record<string, unknown> | null }).custom_fields_overrides) ?? {}) };
+      for (const [key, value] of Object.entries(a.fields)) {
+        if (value === null || value === "") delete merged[key];
+        else merged[key] = value;
+      }
+      const r: Res = await db.from("client_pipeline_entries").update({ custom_fields_overrides: merged, updated_at: now() }).eq("client_id", C).eq("id", a.id).select("id");
+      return failed(r) ?? { ok: true };
+    }
     case "entry.delete": {
       return (await eachChunk(a.ids, (part) => db.from("client_pipeline_entries").delete().eq("client_id", C).in("id", part))) ?? { ok: true };
     }
@@ -647,4 +667,99 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
       return (await eachChunk(a.ids, (part) => db.from("client_team_members").delete().eq("client_id", C).in("id", part))) ?? { ok: true };
     }
   }
+}
+
+/* ----------------------------------------------------- Market's Move to (23 Oct) --- */
+
+/**
+ * Moves agents of the agent database between the Demo Portal's lists.
+ * `onlyUnlisted` (the Setup wizard's prospects step: "My Agents and your DNC
+ * List are always left out") leaves alone anyone already on My Agents, the DNC
+ * List (as a person or by company domain) or in the pipeline.
+ */
+export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget, who: string | null, opts: { onlyUnlisted?: boolean } = {}): Promise<DemoResult> {
+  const C = DEMO_PORTAL_ID;
+  const unique = [...new Set(ids)];
+  // Before anything is taken off a list: Prospects must exist when it is where they go.
+  if (to === "Prospects" && (await demoProspectIds(db, C)) === null) return { ok: false, status: 409, error: PROSPECTS_MIGRATION };
+  let agents = await agentsByIds(unique);
+  if (!agents.length) return { ok: false, status: 404, error: "Those agents are not in the agent database." };
+  if (opts.onlyUnlisted) {
+    const [my, dn, pl] = await Promise.all([
+      db.from("client_agents").select("name, email").eq("client_id", C) as PromiseLike<Res>,
+      db.from("client_dnc_entries").select("kind, name, email, domain").eq("client_id", C) as PromiseLike<Res>,
+      db.from("client_pipeline_entries").select("lead_name, lead_email").eq("client_id", C) as PromiseLike<Res>,
+    ]);
+    const bad = [my, dn, pl].find((r) => r.error);
+    if (bad) return failed(bad)!;
+    const people = [
+      ...((my.data ?? []) as Array<{ name: string | null; email: string | null }>),
+      ...((dn.data ?? []) as Array<{ kind: string; name: string | null; email: string | null }>).filter((d) => d.kind === "agent"),
+      ...((pl.data ?? []) as Array<{ lead_name: string | null; lead_email: string | null }>).map((x) => ({ name: x.lead_name, email: x.lead_email })),
+    ];
+    const listedEmails = new Set(people.map((x) => lower(x.email)).filter(Boolean));
+    const listedNames = new Set(people.filter((x) => !lower(x.email)).map((x) => personKey(x.name)).filter((k) => k.length >= 5));
+    const domains = new Set(((dn.data ?? []) as Array<{ kind: string; domain: string | null }>).filter((d) => d.kind === "company").map((d) => lower(d.domain).replace(/^@/, "")).filter(Boolean));
+    agents = agents.filter((a) => {
+      const es = emailsOf(a);
+      return !es.some((e) => listedEmails.has(e) || domains.has(e.split("@")[1] ?? "")) && !listedNames.has(personKey(a.full_name));
+    });
+    if (!agents.length) return { ok: true, message: "They're all on My Agents, your DNC List or your pipeline already — left out, as always." };
+  }
+  const emails = new Set(agents.flatMap(emailsOf));
+  const names = new Set(agents.map((a) => personKey(a.full_name)).filter((k) => k.length >= 5));
+  // A list entry is this agent's by an address, or — an entry with no address — by name (market-model listFor).
+  const theirs = (row: { email: string | null; name: string | null }) => (lower(row.email) ? emails.has(lower(row.email)) : names.has(personKey(row.name)));
+
+  const [mine, dnc] = await Promise.all([
+    db.from("client_agents").select("id, name, email").eq("client_id", C) as PromiseLike<Res>,
+    db.from("client_dnc_entries").select("id, name, email, kind").eq("client_id", C).eq("kind", "agent") as PromiseLike<Res>,
+  ]);
+  if (mine.error || dnc.error) return failed(mine.error ? mine : dnc)!;
+  const myRows = ((mine.data ?? []) as Array<{ id: string; name: string | null; email: string | null }>).filter(theirs);
+  const dncRows = ((dnc.data ?? []) as Array<{ id: string; name: string | null; email: string | null }>).filter(theirs);
+
+  // Off the lists it is leaving.
+  if (to !== "My Agents" && myRows.length) {
+    const r = await eachChunk(myRows.map((x) => x.id), (part) => db.from("client_agents").delete().eq("client_id", C).in("id", part));
+    if (r) return r;
+  }
+  if (to !== "DNC List" && dncRows.length) {
+    const r = await eachChunk(dncRows.map((x) => x.id), (part) => db.from("client_dnc_entries").delete().eq("client_id", C).in("id", part));
+    if (r) return r;
+  }
+  if (to !== "Prospects") {
+    const r: Res = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", agents.map((a) => a.id));
+    if (r.error && !missingTable(r)) return failed(r)!;
+  }
+
+  // Onto the one it goes to — those not on it already. By name, brokerage and phone: never the agent database's email.
+  const already = (rows: Array<{ name: string | null; email: string | null }>, a: AgentRow) =>
+    rows.some((row) => (lower(row.email) ? emailsOf(a).includes(lower(row.email)) : personKey(row.name) === personKey(a.full_name) && personKey(a.full_name).length >= 5));
+  const adding = agents.filter((a) => (to === "My Agents" ? !already(myRows, a) : to === "DNC List" ? !already(dncRows, a) : true));
+  if (to === "My Agents" && adding.length) {
+    const r: Res = await db.from("client_agents").insert(adding.map((a) => ({
+      client_id: C, name: a.full_name ?? "Unnamed agent", email: null, phone: a.preferred_phone, license: null, notes: "From Market",
+      pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null,
+    })));
+    if (r.error) return failed(r)!;
+  } else if (to === "DNC List" && adding.length) {
+    const r: Res = await db.from("client_dnc_entries").insert(adding.map((a) => ({
+      client_id: C, kind: "agent", name: a.full_name ?? "Unnamed agent", email: null, phone: a.preferred_phone, brokerage: a.brand ?? a.office_name,
+      domain: null, notes: "From Market", added_by: "client", pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null,
+    })));
+    if (r.error) return failed(r)!;
+  } else if (to === "Prospects") {
+    // Only those not on it yet: a plain insert, never an upsert (the preview's writes never overwrite).
+    const have = new Set((await demoProspectIds(db, C)) ?? []);
+    const fresh = agents.filter((a) => !have.has(a.id));
+    if (fresh.length) {
+      const r: Res = await db.from("os_demo_prospects").insert(fresh.map((a) => ({ portal_id: C, agent_id: a.id, added_by: who })));
+      if (missingTable(r)) return { ok: false, status: 409, error: PROSPECTS_MIGRATION };
+      if (r.error) return failed(r)!;
+    }
+  }
+  const n = agents.length;
+  const who1 = n === 1 ? (agents[0].full_name ?? "1 agent") : `${n.toLocaleString("en-US")} agents`;
+  return { ok: true, message: to === "Not on a list" ? `${who1} taken off every list.` : `${who1} moved to ${to}.` };
 }

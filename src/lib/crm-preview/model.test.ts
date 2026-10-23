@@ -198,11 +198,12 @@ test("the agent panel: the lead's details, dollars formatted, no repeats of emai
     "MLS Affiliation": "GAMLS, FMLS", closedTransactions: 8, "Agent Profile": "https://example.com/a", nested: { a: 1 }, Empty: "",
   } } });
   assert.deepEqual(fields, [
-    { label: "Sales Volume", value: "$2,314,500" },
-    { label: "Buy-side", value: "$0" },
-    { label: "MLS Affiliation", value: "GAMLS, FMLS" },
-    { label: "Closed Transactions", value: "8" },
-    { label: "Agent Profile", value: "https://example.com/a", href: "https://example.com/a" },
+    // Each with its own key (23 Oct): the Demo's Edit form saves a changed value under it.
+    { key: "Sales Volume", label: "Sales Volume", value: "$2,314,500" },
+    { key: "Buy-side", label: "Buy-side", value: "$0" },
+    { key: "MLS Affiliation", label: "MLS Affiliation", value: "GAMLS, FMLS" },
+    { key: "closedTransactions", label: "Closed Transactions", value: "8" },
+    { key: "Agent Profile", label: "Agent Profile", value: "https://example.com/a", href: "https://example.com/a" },
   ]);
 });
 

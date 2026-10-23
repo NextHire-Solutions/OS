@@ -128,6 +128,8 @@ export interface MarketQuery {
   units: Range;
   years: Range;
   brokerages: string[];
+  /** Office names (the Setup wizard's Office filter, 23 Oct). */
+  offices: string[];
   cities: string[];
   counties: string[];
   title: string | null;
@@ -161,6 +163,7 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
     units: range("minUnits", "maxUnits", 100_000),
     years: range("minYears", "maxYears", 80),
     brokerages: many("brokerage"),
+    offices: many("office"),
     cities: many("city"),
     counties: many("county"),
     title: title && (TITLES as readonly string[]).includes(title) ? title : null,
@@ -179,7 +182,9 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
   if (set(q.units)) f.closedUnits = { side: "all", buckets: [], ...ends(q.units) };
   // In YEARS: fn_agent_where turns them into months itself (Database 0109). Sending months filtered 2+ years as 24+ (21 Oct).
   if (set(q.years)) f.estTimeInIndustry = { buckets: [], ...ends(q.years) };
-  if (q.brokerages.length) f.officeSearch = { brand: { include: [...q.brokerages], exclude: [] }, office: { include: [], exclude: [] } };
+  if (q.brokerages.length || q.offices.length) {
+    f.officeSearch = { brand: { include: [...q.brokerages], exclude: [] }, office: { include: [...q.offices], exclude: [] } };
+  }
   // Cities and counties in one location filter, each value keeping its own level — any of them matches (the Database app's way).
   const places = [...q.cities.map((v) => ({ f: "city", v })), ...q.counties.map((v) => ({ f: "county", v }))];
   if (places.length) {

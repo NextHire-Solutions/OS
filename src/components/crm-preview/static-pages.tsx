@@ -9,9 +9,8 @@
 import { useMemo, useState } from "react";
 
 import { Icon, type IconName } from "./icons";
-import { k, RO } from "./k";
+import { k, off } from "./k";
 
-const NOT_YET = "Not built yet — part of the redesign, not of this preview";
 const HIDDEN = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } as const;
 
 export function CampaignsScreen({ onChat }: { onChat: () => void }) {
@@ -83,7 +82,7 @@ export function HelpScreen({ onChat }: { onChat: () => void }) {
               <section key={t.title} className={k("card topic")} aria-label={t.title}>
                 <span className={k("ti")}><Icon name={t.icon} size={16} /></span>
                 <h2>{t.title}</h2>
-                <ul>{t.links.map((l) => <li key={l}><a href="#" {...RO} title={NOT_YET}>{l}</a></li>)}</ul>
+                <ul>{t.links.map((l) => <li key={l}><a href="#" {...off("This help article isn't written yet.")}>{l}</a></li>)}</ul>
               </section>
             ))}
           </div>
@@ -111,7 +110,7 @@ export function HelpScreen({ onChat }: { onChat: () => void }) {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <button type="button" className={k("btn pri")} style={{ justifyContent: "center" }} onClick={onChat}><Icon name="chat" size={15} />Chat with support</button>
-              <button type="button" className={k("btn")} style={{ justifyContent: "center" }} {...RO} title={NOT_YET}><Icon name="spark" size={15} />Take the tour</button>
+              <button type="button" className={k("btn")} style={{ justifyContent: "center" }} {...off("The guided tour isn't built yet.")}><Icon name="spark" size={15} />Take the tour</button>
             </div>
           </section>
         </div>
