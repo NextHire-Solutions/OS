@@ -290,7 +290,8 @@ function SortHead({ label, by, sort, onSort, right }: { label: string; by: SortK
 export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clientId: string; list: "market" | "prospects"; onContext?: (text: string | null) => void; onOpenMarket?: () => void }) {
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
-  const [f, setF] = useState<Picks>(NO_PICKS);
+  // Market starts on salespeople (23 Oct, the user: "only Salesperson pre selected as we do not have team lead and managing broker"); Clear all shows everyone.
+  const [f, setF] = useState<Picks>(list === "market" ? { ...NO_PICKS, title: "Salesperson" } : NO_PICKS);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "volume", dir: "desc" });
   const [page, setPage] = useState(1);
   const [menu, setMenu] = useState<string | null>(null);

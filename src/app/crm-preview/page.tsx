@@ -52,6 +52,7 @@ import { SessionKeeper } from "@/components/shell/session-keeper";
 
 import "./crm-preview.css";
 import "./preview.css";
+import "./mobile.css";
 
 export const dynamic = "force-dynamic";
 

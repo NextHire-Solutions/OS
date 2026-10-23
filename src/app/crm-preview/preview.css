@@ -84,14 +84,12 @@
 /*
  * The sidebar's collapse button is `.col`, as is a board column, and the
  * design's board screens' stylesheet sizes every `.col` as a board column (a
- * quarter of the row, at least 420px tall) — so on those screens the button
- * is that tall, which is why the collapsed sidebar in the design has a large
- * gap under the logo and its icons low down. Its other screens have no board
- * rule and a 26px button. The preview follows each: the board's sizing only
- * while the board is showing.
+ * quarter of the row, at least 420px tall). The preview used to follow the
+ * design there (16 Oct); 23 Oct the user found it broken ("this sidebar
+ * toggle is broken": a tall grey block on hover, the collapsed sidebar pushed
+ * apart), so the button is a 26px button on every screen.
  */
 .cpv-shell .crx-rail .crx-col { flex: 0 0 auto; min-height: 0; }
-.cpv-shell .crx-app:has(.crx-board) .crx-rail .crx-col { flex: 0 0 calc((100% - 36px) / 4); min-height: 420px; }
 
 /*
  * The same on the design's Reports screen: its chart-legend rule `.lg` also
@@ -247,3 +245,13 @@
   background: #fff; border: 1px solid #c7d5f3; border-radius: 8px; box-shadow: 0 8px 24px rgba(16, 24, 40, .18);
   font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
+/*
+ * The OS's own stylesheet holds the page still (workspace.css: body
+ * overflow hidden, html/body height 100% — its screens scroll inside their
+ * own panels). The portal is a page that scrolls, so on a page that has it
+ * the window scrolls again (23 Oct, the user: "I cannot scroll down in pages
+ * like market, prospects, agents, team, dnc list"). The OS's screens never
+ * contain .cpv-shell, so they are unchanged.
+ */
+html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }

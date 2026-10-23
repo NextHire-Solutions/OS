@@ -94,6 +94,14 @@ export function CrmPreview({
   const [step, setStep] = useState(initialStep);
   const [chat, setChat] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // On a phone the sidebar is a menu that slides in (mobile.css, 23 Oct); a choice, the backdrop or Escape closes it.
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => {
+    if (!drawer) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawer(false); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [drawer]);
   // What the page shows is explained up here, in the preview's own bar — never inside the design.
   const [context, setContext] = useState<string | null>(null);
   // The note a read-only control gives when it is clicked — and, on the Demo Portal, what a save did.
@@ -141,6 +149,7 @@ export function CrmPreview({
 
   const hrefFor = (v: PreviewView) => `/crm-preview?client=${encodeURIComponent(client.id)}&view=${v}`;
   const go = (v: PreviewView) => {
+    setDrawer(false);
     setView(v);
     setContext(null);
     window.history.replaceState(null, "", v === "setup" ? `${hrefFor(v)}&step=${step}` : hrefFor(v));
@@ -190,8 +199,10 @@ export function CrmPreview({
       ) : (
       /* The handoff's list pages sit in .wrap, which their pop-ups cover; the other screens are the same with or without it. */
       <div className={k("wrap")}>
-      <div className={k("app")} data-view={view} onClickCapture={onClickCapture}>
-        <nav className={k(collapsed ? "rail cl" : "rail")} aria-label="Main">
+      <div className={`${k("app")}${drawer ? " cpv-drawer" : ""}`} data-view={view} onClickCapture={onClickCapture}>
+        {drawer ? <div className="cpv-mback" aria-hidden="true" onClick={() => setDrawer(false)} /> : null}
+        {/* The phone's menu is always the full sidebar, whatever the desktop's collapse button left. */}
+        <nav className={k(collapsed && !drawer ? "rail cl" : "rail")} aria-label="Main">
           <div className={k("lg")}>
             <span className={k("lw")}>
               {/* eslint-disable-next-line @next/next/no-img-element -- a fixed-size logo, as the design draws it */}
@@ -247,6 +258,12 @@ export function CrmPreview({
         </nav>
 
         <div className={k("main")}>
+          {/* A phone's top bar (mobile.css shows it only there): the menu and the logo. */}
+          <div className="cpv-mbar">
+            <button type="button" className="cpv-mmenu" aria-label="Open menu" aria-expanded={drawer} onClick={() => setDrawer(true)}><Icon name="sidebar" size={18} /></button>
+            {/* eslint-disable-next-line @next/next/no-img-element -- the design's logo */}
+            <img src={logo.src} alt="BrokerStaffer" style={{ height: 26, width: "auto" }} />
+          </div>
           {view === "pipeline" ? (
             <PipelineScreen entries={entries} stages={stages} allStages={allStages} furthest={furthest} team={team} clientId={client.id} now={today} />
           ) : view === "market" || view === "prospects" ? (

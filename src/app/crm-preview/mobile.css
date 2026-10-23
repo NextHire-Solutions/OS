@@ -1,0 +1,111 @@
+/*
+ * The new client portal on a phone or a tablet (23 Oct, the user: "can we
+ * make these portals mobile friendly?"). Eddy's design is drawn for a desktop
+ * and nothing here changes it there: every rule is inside a width query.
+ *
+ *   up to 1024px   the board's columns keep a readable width and scroll
+ *   up to 760px    a phone: the sidebar becomes a menu that slides in (the
+ *                  page's top bar opens it), content takes the full width,
+ *                  tables scroll inside themselves, menus and filters open as
+ *                  sheets from the bottom, dialogs / panels / the chat fill the
+ *                  screen, grids go to one column, the Setup wizard's steps
+ *                  become a strip.
+ */
+
+.cpv-mbar, .cpv-mback { display: none; }
+
+/* ------------------------------------------------ tablets, narrow windows --- */
+@media (max-width: 1024px) {
+  .crx-board { overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+  .crx-board > .crx-col { flex: 0 0 260px; scroll-snap-align: start; }
+  .crx-hgrid { grid-template-columns: repeat(2, 1fr); }
+  .crx-hcols { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------------------------------ phones --- */
+@media (max-width: 760px) {
+  /* The preview's own bar: the note on one line, the client menu full width. */
+  .cpv-bar { position: relative; gap: 4px 10px; padding: 8px 12px; font-size: 12px; }
+  .cpv-bar .cpv-note { flex-basis: 100%; order: 3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
+  .cpv-bar .cpv-right { margin-left: 0; flex-basis: 100%; order: 4; gap: 10px; }
+  .cpv-bar select { flex: 1; min-width: 0; max-width: none; }
+
+  /* The page's top bar: the menu and the logo. */
+  .cpv-mbar {
+    display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 12px; box-sizing: border-box;
+    position: sticky; top: 0; z-index: 20; background: #fff; border-bottom: 1px solid #ebedf0;
+  }
+  .cpv-mmenu {
+    width: 38px; height: 38px; border: 1px solid #e3e6eb; border-radius: 8px; background: #fff; color: #3d4459;
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  }
+  .cpv-mmenu:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; }
+
+  /* The sidebar: a menu that slides in over the page. */
+  .crx-app { display: block; min-height: 0; }
+  .crx-rail {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 41; width: min(280px, 86vw); flex-basis: auto;
+    overflow-y: auto; transform: translateX(-105%); transition: transform .2s ease;
+  }
+  .crx-app.cpv-drawer .crx-rail { transform: none; box-shadow: 0 0 40px rgba(16, 20, 28, .25); }
+  .crx-rail .crx-col { display: none; }
+  .crx-rail .crx-ri { min-height: 40px; }
+  .cpv-mback { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(16, 20, 28, .42); }
+
+  /* Each page's header and content. */
+  .crx-main { min-height: 0; }
+  .crx-top { height: auto; min-height: 52px; flex-wrap: wrap; padding: 6px 0; }
+  .crx-ttl { height: auto; flex-wrap: wrap; padding: 4px 12px; row-gap: 2px; }
+  .crx-ttl h1 { white-space: normal; }
+  .crx-hr { flex-wrap: wrap; padding: 4px 12px; margin-left: 0; width: 100%; box-sizing: border-box; }
+  .crx-htabs { overflow-x: auto; max-width: 100%; }
+  .crx-content { padding: 12px 12px 88px; gap: 12px; }
+  .crx-tbar > * { max-width: 100%; }
+  .crx-tbar input[type="search"], .crx-tbar .crx-srch { min-width: 0; max-width: 100%; }
+  .crx-bulk { flex-wrap: wrap; padding: 8px 10px; }
+  .crx-kpis { flex-wrap: wrap; }
+  .crx-kpis > * { flex: 1 1 140px; min-width: 0; }
+  .crx-hgrid, .crx-ag2, .crx-fl2 { grid-template-columns: 1fr; }
+  .crx-kv { grid-template-columns: 120px 1fr; }
+  .crx-rv { grid-template-columns: 28px 1fr auto; }
+  .crx-rv > :nth-child(3) { grid-column: 2 / -1; }
+  .crx-tl { grid-template-columns: 22px 1fr; }
+  .crx-tl > :nth-child(3) { grid-column: 2; }
+
+  /* The board: one column at a time, swiped. */
+  .crx-board > .crx-col { flex: 0 0 82vw; min-height: 300px; }
+
+  /* Tables scroll sideways inside their own box; the page never does. */
+  .crx-tb { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .crx-tb th, .crx-tb td { white-space: nowrap; }
+
+  /* Menus, filter panels and pickers: a sheet from the bottom, so none is cut off. */
+  .crx-root [role="menu"], .crx-root .cpv-pop {
+    position: fixed !important; left: 10px !important; right: 10px !important; top: auto !important; bottom: 10px !important;
+    width: auto !important; min-width: 0 !important; max-height: 62vh; overflow-y: auto; z-index: 60 !important;
+    box-shadow: 0 -8px 40px rgba(16, 20, 28, .22) !important;
+  }
+  .crx-root [role="menu"] [role^="menuitem"] { min-height: 40px; }
+
+  /* Dialogs, the agent's panels, the chat: the whole screen. */
+  .crx-ov { padding: 10px; align-items: flex-start; overflow-y: auto; }
+  .crx-dlg { width: 100% !important; max-width: 100%; }
+  .crx-g2, .crx-pf, .crx-nf { grid-template-columns: 1fr; }
+  .crx-nf > button { justify-self: end; }
+  .crx-panel, .crx-pnl { position: fixed; inset: 0; width: 100% !important; max-width: none; z-index: 30; border-left: 0; overflow-y: auto; }
+  section[aria-label="Support chat"] {
+    left: 0 !important; right: 0 !important; top: 0 !important; bottom: 0 !important;
+    width: auto !important; height: auto !important; max-height: none !important; border-radius: 0 !important; z-index: 50 !important;
+  }
+
+  /* The Setup wizard: the steps as a strip above the step. */
+  .crx-ob .crx-top { height: auto; flex-wrap: wrap; padding: 10px 12px; gap: 10px; }
+  .crx-ob .crx-top .crx-vr { display: none; }
+  .crx-ob .crx-top .crx-hr { width: auto; margin-left: auto; padding: 0; }
+  .crx-obb { flex-direction: column; }
+  .crx-steps { flex: none; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid #ebedf0; padding: 8px 12px; gap: 6px; }
+  .crx-steps .crx-sh { display: none; }
+  .crx-steps > a { flex: none; white-space: nowrap; }
+  .crx-obc { padding: 16px 12px 20px; }
+  .crx-obf { padding: 10px 12px; flex-wrap: wrap; }
+}
