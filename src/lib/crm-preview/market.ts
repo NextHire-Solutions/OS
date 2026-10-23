@@ -7,10 +7,10 @@ import { readOnly } from "@/lib/tools/assistant/read-only";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
 import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
-import { agentsByIds, demoProspectIds, filterProspects, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
+import { agentsByIds, demoProspectIds, filterProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
-  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, ownListEmail, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, ownListEmail, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type ReportGroup,
 } from "./market-model";
 
@@ -235,7 +235,11 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   return { total: page.total, salesVolume: page.salesVolume, page: q.page, pageSize: q.per, rows };
 }
 
-export type FacetKind = "brand" | "office" | "city" | "county";
+export type FacetKind = "brand" | "office" | "city" | "county" | "zip" | "state";
+const isPlace = (k: FacetKind): k is "city" | "county" | "zip" | "state" => k !== "brand" && k !== "office";
+
+/** A filter's choices: names and agent counts; for places also how many match the search and the agents they cover, and a city's spellings. */
+export type FacetResult = { unavailable: string } | { options: Array<{ v: string; n: number; var?: number }>; total?: number; agents?: number };
 
 /*
  * The choices for a brokerage or location filter (21 Oct, Eddy: "the same UX on
@@ -244,39 +248,60 @@ export type FacetKind = "brand" | "office" | "city" | "county";
  * filter never narrows its own list, as there). Names and counts only: no
  * agent leaves the server.
  */
-export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: FacetKind, text: string): Promise<{ unavailable: string } | { options: Array<{ v: string; n: number }> }> {
+export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: FacetKind, text: string): Promise<FacetResult> {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
   if (isDemoPortal(ctx.portal.id) && q.list === "prospects") {
     // The Demo's own prospects: the choices among them, under the other filters (a filter never narrows its own list).
     const ids = await demoProspectIds(mi(), DEMO_PORTAL_ID);
     if (ids === null) return { unavailable: PROSPECTS_MIGRATION };
-    const others: MarketQuery = kind === "brand" || kind === "office"
-      ? { ...q, brokerages: [], offices: [], not: { ...q.not, brokerages: [], offices: [] } }
-      : { ...q, cities: [], counties: [], not: { ...q.not, cities: [], counties: [] } };
+    const noPlaces = { cities: [], counties: [], zips: [], states: [] };
+    const others: MarketQuery = isPlace(kind)
+      ? { ...q, ...noPlaces, not: { ...q.not, ...noPlaces } }
+      : { ...q, brokerages: [], offices: [], not: { ...q.not, brokerages: [], offices: [] } };
     const rows = filterProspects(await agentsByIds(ids), others);
     const counts = new Map<string, number>();
     const needle = text.trim().toLowerCase();
+    // A place at any of the agent's three locations, written as the agent database writes it ("Atlanta, GA"); an agent counts once a place.
+    const placeName = (p: ReturnType<typeof placeOf>) => {
+      const st = (p.state ?? "").trim().toUpperCase();
+      const at = kind === "city" ? p.city : kind === "county" ? p.county : kind === "zip" ? p.zip : st || null;
+      if (!at || !at.trim()) return null;
+      return kind === "city" || kind === "county" ? `${at.trim()}${st ? `, ${st}` : ""}` : at.trim();
+    };
     for (const a of rows) {
-      const vals = kind === "brand" ? [a.brand] : kind === "office" ? [a.office_name] : kind === "city" ? [a.office_city, a.home_city, a.most_transacted_city] : [a.office_county, a.home_county, a.most_transacted_county];
+      const vals = kind === "brand" ? [a.brand] : kind === "office" ? [a.office_name] : PLACE_KINDS.map((k) => placeName(placeOf(a, k)));
       for (const v of new Set(vals.filter((x): x is string => !!x && x.toLowerCase().includes(needle)))) counts.set(v, (counts.get(v) ?? 0) + 1);
     }
-    return { options: [...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, 50).map(([v, n]) => ({ v, n })) };
+    const sorted = [...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
+    const cap = isPlace(kind) ? 100 : 50;
+    return {
+      options: sorted.slice(0, cap).map(([v, n]) => ({ v, n })),
+      ...(isPlace(kind) ? { total: sorted.length, agents: sorted.reduce((t, [, n]) => t + n, 0) } : {}),
+    };
   }
   const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
   const d = await rpc("fn_facet_options", {
-    p_type: kind === "brand" ? "brand" : kind === "office" ? "office" : "location",
+    p_type: isPlace(kind) ? "location" : kind,
     p_q: text.replace(/[\u0000-\u001f%_]/g, " ").trim().slice(0, 60),
-    p_field: kind === "brand" || kind === "office" ? null : kind,
+    p_field: isPlace(kind) ? kind : null,
     p_source: "all",
     p_filters: marketFilters(base, q),
   });
-  const raw = kind === "brand" || kind === "office" ? (Array.isArray(d) ? d : []) : ((d as { options?: unknown[] } | null)?.options ?? []);
-  const options = (raw as Array<{ v?: unknown; n?: unknown }>)
-    .map((o) => ({ v: str(o.v) ?? "", n: num(o.n) ?? 0 }))
+  if (!isPlace(kind)) {
+    const options = ((Array.isArray(d) ? d : []) as Array<{ v?: unknown; n?: unknown }>)
+      .map((o) => ({ v: str(o.v) ?? "", n: num(o.n) ?? 0 }))
+      .filter((o) => o.v)
+      .slice(0, 50);
+    return { options };
+  }
+  // Places, as the Database app's Location panel shows them: up to 100, how many match the search and the agents they cover, a city's spellings.
+  const loc = (d ?? {}) as { options?: Array<{ v?: unknown; n?: unknown; var?: unknown }>; total?: unknown; agents?: unknown };
+  const options = (loc.options ?? [])
+    .map((o) => ({ v: str(o.v) ?? "", n: num(o.n) ?? 0, var: num(o.var) ?? 1 }))
     .filter((o) => o.v)
-    .slice(0, 50);
-  return { options };
+    .slice(0, 100);
+  return { options, total: num(loc.total) ?? options.length, agents: num(loc.agents) ?? undefined };
 }
 
 /** The chips' choices for a market: its brokerages and counties, largest first. */

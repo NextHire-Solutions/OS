@@ -127,8 +127,18 @@ export interface Range {
   max: number | null;
 }
 
-/** Brokerages, cities and counties picked at once (Eddy: "searching multiple cities and brokerages at once"). */
+/** Brokerages and offices picked at once (Eddy: "searching multiple cities and brokerages at once"). */
 export const MAX_PICKS = 20;
+/** Places picked at once, included and excluded together — the Database app's Location cap. */
+export const MAX_PLACES = 50;
+
+/*
+ * Which of an agent's places a Location filter looks at (24 Oct — the user
+ * wants the Database app's Location filter): where the office is, where the
+ * agent sold most, where the agent lives. All three unless narrowed, as there.
+ */
+export const PLACE_KINDS = ["office", "transacted", "home"] as const;
+export type PlaceKind = (typeof PLACE_KINDS)[number];
 
 export interface MarketQuery {
   list: MarketList;
@@ -145,6 +155,11 @@ export interface MarketQuery {
   offices: string[];
   cities: string[];
   counties: string[];
+  /** Zip codes and states (the Database app's other two Location levels, 24 Oct). */
+  zips: string[];
+  states: string[];
+  /** The agent's places a Location filter looks at: office, most transacted, home. */
+  kinds: PlaceKind[];
   /** Titles, any of them (the page starts on Salesperson). */
   titles: string[];
   /*
@@ -154,7 +169,7 @@ export interface MarketQuery {
    * place or title on record stays — "not in Atlanta" does not drop someone
    * whose city is unknown (the Database app's rule, fn_agent_where).
    */
-  not: { brokerages: string[]; offices: string[]; cities: string[]; counties: string[]; titles: string[] };
+  not: { brokerages: string[]; offices: string[]; cities: string[]; counties: string[]; zips: string[]; states: string[]; titles: string[] };
   sort: SortKey;
   dir: "asc" | "desc";
 }
@@ -169,7 +184,11 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
     return Number.isFinite(n) && n >= 0 && n <= cap ? n : null;
   };
   const range = (min: string, max: string, cap: number): Range => ({ min: amount(min, cap), max: amount(max, cap) });
-  const many = (k: string) => [...new Set(p.getAll(k).map((v) => clean(v, 120)).filter((v): v is string => !!v))].slice(0, MAX_PICKS);
+  const many = (k: string, cap = MAX_PICKS) => [...new Set(p.getAll(k).map((v) => clean(v, 120)).filter((v): v is string => !!v))].slice(0, cap);
+  const places = (k: string) => many(k, MAX_PLACES);
+  const zips = (k: string) => places(k).filter((z) => /^[0-9A-Za-z -]{3,10}$/.test(z));
+  const states = (k: string) => places(k).filter((st) => /^[A-Za-z]{2}$/.test(st)).map((st) => st.toUpperCase());
+  const kinds = PLACE_KINDS.filter((x) => p.getAll("kind").includes(x));
   const page = Math.floor(Number(p.get("page")));
   const list: MarketList = p.get("list") === "prospects" ? "prospects" : "market";
   // A market is salespeople, set by marketScope: a title asked for there is ignored, so the market can never be widened.
@@ -188,10 +207,14 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
     years: range("minYears", "maxYears", 80),
     brokerages: many("brokerage"),
     offices: many("office"),
-    cities: many("city"),
-    counties: many("county"),
+    cities: places("city"),
+    counties: places("county"),
+    zips: zips("zip"),
+    states: states("state"),
+    // None named: all three (a filter that looked at no place would show everyone).
+    kinds: kinds.length ? kinds : [...PLACE_KINDS],
     titles: titles("title"),
-    not: { brokerages: many("xbrokerage"), offices: many("xoffice"), cities: many("xcity"), counties: many("xcounty"), titles: titles("xtitle") },
+    not: { brokerages: many("xbrokerage"), offices: many("xoffice"), cities: places("xcity"), counties: places("xcounty"), zips: zips("xzip"), states: states("xstate"), titles: titles("xtitle") },
     sort,
     dir: dirRaw === "asc" || dirRaw === "desc" ? dirRaw : FIRST_DIR[sort],
   };
@@ -211,12 +234,16 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
   if (q.brokerages.length || q.offices.length || x.brokerages.length || x.offices.length) {
     f.officeSearch = { brand: { include: [...q.brokerages], exclude: [...x.brokerages] }, office: { include: [...q.offices], exclude: [...x.offices] } };
   }
-  // Cities and counties in one location filter, each value keeping its own level — any of them matches, none of the left-out ones (the Database app's way).
-  const places = [...q.cities.map((v) => ({ f: "city", v })), ...q.counties.map((v) => ({ f: "county", v }))];
-  const notPlaces = [...x.cities.map((v) => ({ f: "city", v })), ...x.counties.map((v) => ({ f: "county", v }))];
+  // Cities, zips, counties and states in one location filter, each value keeping its own level — any of them matches, none of the left-out ones —
+  // at the agent's office, most transacted and/or home location (the Database app's way).
+  const levels = (c: { cities: string[]; counties: string[]; zips: string[]; states: string[] }) => [
+    ...c.cities.map((v) => ({ f: "city", v })), ...c.zips.map((v) => ({ f: "zip", v })), ...c.counties.map((v) => ({ f: "county", v })), ...c.states.map((v) => ({ f: "state", v })),
+  ];
+  const places = levels(q);
+  const notPlaces = levels(x);
   if (places.length || notPlaces.length) {
     const field = (places[0] ?? notPlaces[0]).f;
-    f.location = { field, appliesTo: ["office", "home", "transacted"], values: places, excludeValues: notPlaces, excludeField: (notPlaces[0] ?? places[0]).f };
+    f.location = { field, appliesTo: [...q.kinds], values: places, excludeValues: notPlaces, excludeField: (notPlaces[0] ?? places[0]).f };
   }
   if (q.titles.length || x.titles.length) f.title = { include: [...q.titles], exclude: [...x.titles] };
   // The Database app's search: matching agents come first; it narrows nothing (fn_agent_order).

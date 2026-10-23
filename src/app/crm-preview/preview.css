@@ -264,6 +264,12 @@
 .cpv-shell .cpv-tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #edf2fc; color: #2f55a8; flex: none; }
 .cpv-shell .cpv-tag.cpv-x { background: #fdeeec; color: #a8291a; }
 
+/* Location, the Database app's way (24 Oct): four levels beside Include / Exclude, and which of the agent's places it looks at. */
+.cpv-shell .cpv-pop[aria-label="Location"] { width: 460px; max-width: calc(100vw - 32px); }
+.cpv-shell .cpv-kinds { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid #ebedf0; }
+.cpv-shell .cpv-kind { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #31353b; cursor: pointer; }
+.cpv-shell .cpv-kind:has(input:disabled) { cursor: default; }
+
 /* A board card held by a finger (board-drag.tsx, 24 Oct): no text selection or callout menu from the long press. */
 .cpv-shell [data-card] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 

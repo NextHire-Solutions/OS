@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     const q = parseMarketQuery(params);
     // A filter's choices (brokerages, cities, counties) with their counts — names and numbers only.
     const facet = params.get("facet");
-    if (facet === "brand" || facet === "office" || facet === "city" || facet === "county") {
+    if (facet === "brand" || facet === "office" || facet === "city" || facet === "county" || facet === "zip" || facet === "state") {
       const out = await marketFacet(ctx, q, facet as FacetKind, params.get("fq") ?? "");
       served(who, "market", 0);
       after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "market", rows: 0, now: new Date() }));
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     served(who, "market", rows);
     // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
     after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "market", rows, page: q.page, now: new Date() }));
-    console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "market", who, client, list: q.list, page: q.page, per: q.per, rows, q: q.q ? "set" : "", sort: `${q.sort}:${q.dir}`, filters: [q.volume.min, q.volume.max, q.units.min, q.units.max, q.years.min, q.years.max].filter((v) => v !== null).length + q.titles.length + q.brokerages.length + q.offices.length + q.cities.length + q.counties.length + Object.values(q.not).reduce((n, xs) => n + xs.length, 0) }));
+    console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "market", who, client, list: q.list, page: q.page, per: q.per, rows, q: q.q ? "set" : "", sort: `${q.sort}:${q.dir}`, filters: [q.volume.min, q.volume.max, q.units.min, q.units.max, q.years.min, q.years.max].filter((v) => v !== null).length + q.titles.length + q.brokerages.length + q.offices.length + q.cities.length + q.counties.length + q.zips.length + q.states.length + Object.values(q.not).reduce((n, xs) => n + xs.length, 0) }));
     return NextResponse.json({ ...page, options, mls: ctx.mls, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.error("[crm-preview] market", err);

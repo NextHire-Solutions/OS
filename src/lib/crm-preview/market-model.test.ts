@@ -40,8 +40,8 @@ test("the query string: ranges, several brokerages and places, a known sort — 
   assert.deepEqual(q, {
     list: "prospects", page: 3, per: 50, q: "smith",
     volume: { min: 2_000_000, max: 8_000_000 }, units: { min: 4, max: 30 }, years: { min: 2, max: null },
-    brokerages: ["Keller Williams", "Compass"], offices: [], cities: ["Atlanta"], counties: ["Cobb, GA"],
-    titles: ["Team Leader"], not: { brokerages: [], offices: [], cities: [], counties: [], titles: [] }, sort: "name", dir: "asc",
+    brokerages: ["Keller Williams", "Compass"], offices: [], cities: ["Atlanta"], counties: ["Cobb, GA"], zips: [], states: [], kinds: ["office", "transacted", "home"],
+    titles: ["Team Leader"], not: { brokerages: [], offices: [], cities: [], counties: [], zips: [], states: [], titles: [] }, sort: "name", dir: "asc",
   });
   // The old single values (the Setup wizard still sends them) read the same way.
   const old = parseMarketQuery(new URLSearchParams("minVolume=1000000&brokerage=Compass&county=Fulton"));
@@ -53,7 +53,9 @@ test("the query string: ranges, several brokerages and places, a known sort — 
   assert.deepEqual(bad.titles, [], "only the three titles");
   assert.equal(bad.q.length, 80);
   assert.deepEqual([bad.sort, bad.dir], ["volume", "desc"], "an unknown sort is the default, largest first");
-  assert.equal(bad.cities.length, 20, "at most 20 picks");
+  assert.equal(bad.cities.length, 30, "places: up to 50 (the Database app's Location cap)");
+  assert.equal(parseMarketQuery(new URLSearchParams(Array.from({ length: 60 }, (_, i) => `city=c${i}`).join("&"))).cities.length, 50);
+  assert.equal(parseMarketQuery(new URLSearchParams(Array.from({ length: 30 }, (_, i) => `brokerage=b${i}`).join("&"))).brokerages.length, 20, "brokerages: at most 20");
   assert.equal(parseMarketQuery(new URLSearchParams("sort=volume")).dir, "desc");
   assert.equal(parseMarketQuery(new URLSearchParams("sort=brokerage")).dir, "asc", "names A→Z on the first click");
   assert.equal(parseMarketQuery(new URLSearchParams("sort=name&dir=desc")).dir, "desc");
@@ -67,14 +69,14 @@ test("include and exclude (23 Oct, the Database app's): x-prefixed picks are lef
   const q = parseMarketQuery(new URLSearchParams("list=prospects&title=Salesperson&xtitle=Team Leader&xtitle=CEO&xbrokerage=Compass&xoffice=KW Midtown&xcity=Decatur&xcounty=Cobb&office=Compass Buckhead"));
   assert.deepEqual(q.titles, ["Salesperson"]);
   assert.deepEqual(q.offices, ["Compass Buckhead"]);
-  assert.deepEqual(q.not, { brokerages: ["Compass"], offices: ["KW Midtown"], cities: ["Decatur"], counties: ["Cobb"], titles: ["Team Leader"] });
-  assert.equal(parseMarketQuery(new URLSearchParams(Array.from({ length: 30 }, (_, i) => `xcity=c${i}`).join("&"))).not.cities.length, 20, "at most 20 left out, too");
+  assert.deepEqual(q.not, { brokerages: ["Compass"], offices: ["KW Midtown"], cities: ["Decatur"], counties: ["Cobb"], zips: [], states: [], titles: ["Team Leader"] });
+  assert.equal(parseMarketQuery(new URLSearchParams(Array.from({ length: 60 }, (_, i) => `xcity=c${i}`).join("&"))).not.cities.length, 50, "at most 50 places left out, too");
   const base = { mls: { include: ["m1"], exclude: [] } };
   assert.deepEqual(marketFilters(base, q), {
     mls: { include: ["m1"], exclude: [] },
     officeSearch: { brand: { include: [], exclude: ["Compass"] }, office: { include: ["Compass Buckhead"], exclude: ["KW Midtown"] } },
     // Only excluded places: no values, so nobody is required to be anywhere — just not in these.
-    location: { field: "city", appliesTo: ["office", "home", "transacted"], values: [], excludeValues: [{ f: "city", v: "Decatur" }, { f: "county", v: "Cobb" }], excludeField: "city" },
+    location: { field: "city", appliesTo: ["office", "transacted", "home"], values: [], excludeValues: [{ f: "city", v: "Decatur" }, { f: "county", v: "Cobb" }], excludeField: "city" },
     title: { include: ["Salesperson"], exclude: ["Team Leader"] },
   });
   // Excluded counties alone: the location's level is the county's.
@@ -82,6 +84,22 @@ test("include and exclude (23 Oct, the Database app's): x-prefixed picks are lef
   assert.deepEqual([counties.location.field, counties.location.excludeField], ["county", "county"]);
   // An excluded title alone.
   assert.deepEqual((marketFilters(base, parseMarketQuery(new URLSearchParams("list=prospects&xtitle=Managing Broker"))) as { title: unknown }).title, { include: [], exclude: ["Managing Broker"] });
+});
+
+test("Location, the Database app's (24 Oct): city, zip, county and state; which of the agent's places it looks at", () => {
+  const q = parseMarketQuery(new URLSearchParams("zip=30303&zip=30303&zip=303;drop&state=ga&state=Georgia&xzip=30318&xstate=SC&kind=office&kind=home&kind=hq"));
+  assert.deepEqual([q.zips, q.states, q.not.zips, q.not.states], [["30303"], ["GA"], ["30318"], ["SC"]], "a zip is digits and letters only, a state two letters (upper case); repeats once");
+  assert.deepEqual(q.kinds, ["office", "home"], "only the three kinds, in their own order");
+  assert.deepEqual(parseMarketQuery(new URLSearchParams("kind=hq")).kinds, ["office", "transacted", "home"], "none known: all three");
+  const base = { mls: { include: ["m1"], exclude: [] } };
+  const f = marketFilters(base, parseMarketQuery(new URLSearchParams("list=prospects&zip=30303&city=Atlanta, GA&state=GA&xcounty=Cobb, GA&xzip=30318&kind=office"))) as { location: unknown };
+  assert.deepEqual(f.location, {
+    field: "city", appliesTo: ["office"],
+    values: [{ f: "city", v: "Atlanta, GA" }, { f: "zip", v: "30303" }, { f: "state", v: "GA" }],
+    excludeValues: [{ f: "zip", v: "30318" }, { f: "county", v: "Cobb, GA" }], excludeField: "zip",
+  });
+  // A kind alone narrows nothing (no place to look for), as in the Database app.
+  assert.equal((marketFilters(base, parseMarketQuery(new URLSearchParams("kind=home"))) as { location?: unknown }).location, undefined);
 });
 
 test("a market is salespeople, decided on the server (24 Oct, the user): a title asked for there is ignored and cannot widen it", () => {
@@ -113,7 +131,7 @@ test("the filters as the Database app's, on top of the market or the client's li
     estTimeInIndustry: { buckets: [], min: "2", max: "" },
     officeSearch: { brand: { include: ["Compass", "eXp Realty"], exclude: [] }, office: { include: [], exclude: [] } },
     // Cities and counties together, each keeping its level — any of them matches.
-    location: { field: "city", appliesTo: ["office", "home", "transacted"], values: [{ f: "city", v: "Atlanta" }, { f: "county", v: "Cobb, GA" }], excludeValues: [], excludeField: "city" },
+    location: { field: "city", appliesTo: ["office", "transacted", "home"], values: [{ f: "city", v: "Atlanta" }, { f: "county", v: "Cobb, GA" }], excludeValues: [], excludeField: "city" },
     title: { include: ["Salesperson"], exclude: [] },
     nameQuery: "smith",
   });

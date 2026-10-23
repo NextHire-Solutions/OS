@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
-import { FIRST_DIR, interestedReport, LIST_PILL, MAX_PICKS, maxPage, PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
+import { FIRST_DIR, interestedReport, LIST_PILL, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
 import { k, off, withIds } from "./k";
@@ -104,14 +104,19 @@ const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agent
  * ticked on the other side (the Database app's rule — flipping the switch
  * never silently turns a filter around).
  */
-type Facet = "brand" | "office" | "city" | "county";
+type Facet = "brand" | "office" | "city" | "zip" | "county" | "state";
 type Pick = { f: Facet; v: string; ex: boolean };
-/* No Title filter: the market is salespeople, set on the server (market-model.ts marketScope — 24 Oct, the user). */
-type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[] };
+/*
+ * No Title filter: the market is salespeople, set on the server (market-model.ts marketScope — 24 Oct, the user).
+ * kinds: which of an agent's places Location looks at — office, most transacted, home (the Database app's Location, 24 Oct).
+ */
+type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[] };
 const NO_RANGE: Range = { min: null, max: null };
-const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [] };
+const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS] };
 const isSet = (r: Range) => r.min !== null || r.max !== null;
-const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county" };
+const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", zip: "zip", county: "county", state: "state" };
+const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", zip: "zip codes", county: "counties", state: "states" };
+const KIND_LABEL: Record<PlaceKind, string> = { office: "Office location", transacted: "Most transacted location", home: "Home location" };
 
 /** The picks as the route's query string (several of a kind repeat their key; a left-out one is x-prefixed). */
 function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place") {
@@ -123,7 +128,11 @@ function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place")
   range("Units", p.units);
   range("Years", p.years);
   if (skip !== "brokerage") for (const x of p.brokerages) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
-  if (skip !== "place") for (const x of p.places) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
+  if (skip !== "place") {
+    for (const x of p.places) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
+    // All three is the default; fewer only matter with a place picked.
+    if (p.places.length && p.kinds.length < PLACE_KINDS.length) for (const kd of p.kinds) sp.append("kind", kd);
+  }
 }
 
 /** What a set filter's button says: one pick by name ("not Atlanta" when left out); several, a count. */
@@ -202,11 +211,12 @@ function RangePanel({ unit, presets, value, onApply, register }: { unit: Unit; p
   );
 }
 
-type Option = { v: string; n: number };
+type Option = { v: string; n: number; var?: number };
+type Options = { loading: boolean; options: Option[]; error: string | null; total?: number; agents?: number };
 
-/* A filter's choices from the agent database: searched by name, with counts, under the other filters. */
+/* A filter's choices from the agent database: searched by name, with counts, under the other filters (for places, also how many match and the agents they cover). */
 function useOptions(clientId: string, list: "market" | "prospects", facet: Facet, text: string, picks: Picks, skip: "brokerage" | "place") {
-  const [state, setState] = useState<{ loading: boolean; options: Option[]; error: string | null }>({ loading: true, options: [], error: null });
+  const [state, setState] = useState<Options>({ loading: true, options: [], error: null });
   const key = JSON.stringify(picks);
   useEffect(() => {
     const ctrl = new AbortController();
@@ -217,7 +227,7 @@ function useOptions(clientId: string, list: "market" | "prospects", facet: Facet
       setState((s) => ({ ...s, loading: true, error: null }));
       fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => setState(ok ? { loading: false, options: Array.isArray(j.options) ? j.options : [], error: j.unavailable ?? null } : { loading: false, options: [], error: j?.error ?? "Couldn't load the choices." }))
+        .then(({ ok, j }) => setState(ok ? { loading: false, options: Array.isArray(j.options) ? j.options : [], error: j.unavailable ?? null, total: typeof j.total === "number" ? j.total : undefined, agents: typeof j.agents === "number" ? j.agents : undefined } : { loading: false, options: [], error: j?.error ?? "Couldn't load the choices." }))
         .catch((err) => { if (err?.name !== "AbortError") setState({ loading: false, options: [], error: "Couldn't reach the server." }); });
     }, 250);
     return () => { clearTimeout(t); ctrl.abort(); };
@@ -236,19 +246,25 @@ function ModeSwitch({ out, onChange }: { out: boolean; onChange: (out: boolean) 
   );
 }
 
-/** Several of a kind at once (brokerages and offices; cities and counties), included or excluded: a search, a list with counts, the picks as chips. */
+/**
+ * Several of a kind at once (brokerages and offices; cities, zips, counties and states), included or excluded:
+ * a search, a list with counts, the picks as chips. With `kinds`, the Database app's Location panel: which
+ * of an agent's places it looks at, up to MAX_PLACES picks, and how many places match with the agents they cover.
+ */
 function ManyPanel({
-  clientId, list, picks, levels, initial, skip, onApply, register, noun,
+  clientId, list, picks, levels, initial, kinds, skip, onApply, register, noun,
 }: {
   clientId: string; list: "market" | "prospects"; picks: Picks;
   levels: ReadonlyArray<{ id: Facet; label: string }>;
-  initial: Pick[]; skip: "brokerage" | "place"; onApply: (xs: Pick[]) => void; register: (commit: () => void) => void; noun: string;
+  initial: Pick[]; kinds?: PlaceKind[]; skip: "brokerage" | "place"; onApply: (xs: Pick[], kinds?: PlaceKind[]) => void; register: (commit: () => void) => void; noun: string;
 }) {
   const [level, setLevel] = useState(levels[0].id);
   const [out, setOut] = useState(false);
   const [text, setText] = useState("");
   const [draft, setDraft] = useState<Pick[]>(initial);
-  register(() => onApply(draft));
+  const [where, setWhere] = useState<PlaceKind[] | undefined>(kinds);
+  const cap = kinds ? MAX_PLACES : MAX_PICKS;
+  register(() => onApply(draft, where));
   const opts = useOptions(clientId, list, level, text, picks, skip);
   const same = (x: Pick, v: string) => x.f === level && x.v === v;
   const sideOf = (v: string) => draft.find((x) => same(x, v))?.ex;
@@ -256,10 +272,15 @@ function ManyPanel({
   const toggle = (v: string) => setDraft((d) => {
     const at = d.find((x) => same(x, v));
     if (at) return at.ex === out ? d.filter((x) => x !== at) : d.map((x) => (x === at ? { ...x, ex: out } : x));
-    return d.length >= MAX_PICKS ? d : [...d, { f: level, v, ex: out }];
+    return d.length >= cap ? d : [...d, { f: level, v, ex: out }];
   });
   // Select all only adds the ones on neither side — it never moves a pick across.
-  const addShown = () => setDraft((d) => [...d, ...opts.options.filter((o) => sideOf(o.v) === undefined).map((o): Pick => ({ f: level, v: o.v, ex: out }))].slice(0, MAX_PICKS));
+  const addShown = () => setDraft((d) => [...d, ...opts.options.filter((o) => sideOf(o.v) === undefined).map((o): Pick => ({ f: level, v: o.v, ex: out }))].slice(0, cap));
+  // At least one of the three: a Location that looked at none of an agent's places would match no one.
+  const flip = (kd: PlaceKind) => setWhere((w) => (!w ? w : w.includes(kd) ? (w.length > 1 ? w.filter((x) => x !== kd) : w) : PLACE_KINDS.filter((x) => x === kd || w.includes(x))));
+  const status = opts.loading ? "Searching…" : opts.error ? opts.error
+    : kinds && opts.total !== undefined ? `${opts.total.toLocaleString("en-US")} ${opts.total === 1 ? "match" : "matches"}${opts.agents !== undefined ? ` · ≈${opts.agents.toLocaleString("en-US")} agents` : ""} · ${draft.length} selected`
+    : `${opts.options.length} shown · ${draft.length} selected`;
   const levelName = (f: Facet) => levels.find((l) => l.id === f)?.label.toLowerCase() ?? f;
   const chips = (ex: boolean) => {
     const xs = draft.filter((x) => x.ex === ex);
@@ -287,9 +308,9 @@ function ManyPanel({
           ) : null}
           <ModeSwitch out={out} onChange={setOut} />
         </div>
-        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${levels.length > 1 ? levelName(level) + (level === "county" ? " names" : "s") : noun}`} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${PLURAL[level]}`} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
         <div className="cpv-status">
-          <span>{opts.loading ? "Searching…" : opts.error ? opts.error : `${opts.options.length} shown · ${draft.length} selected`}</span>
+          <span>{status}</span>
           <span style={{ display: "flex", gap: 10 }}>
             <button type="button" className="cpv-link" onClick={addShown}>Select all</button>
             <button type="button" className="cpv-link" onClick={() => setDraft([])}>Clear</button>
@@ -303,7 +324,7 @@ function ManyPanel({
                 <input type="checkbox" className={k("ck")} data-x={out ? "" : undefined} checked={side === out} onChange={() => toggle(o.v)} />
                 <span>{o.v}</span>
                 {side !== undefined && side !== out ? <em className={side ? "cpv-tag cpv-x" : "cpv-tag"}>{side ? "Excluded" : "Included"}</em> : null}
-                <small>{o.n.toLocaleString("en-US")} agents</small>
+                <small>{o.n.toLocaleString("en-US")} agents{level === "city" && (o.var ?? 1) > 1 ? ` · ${o.var} variants` : ""}</small>
               </label>
             );
           })}
@@ -311,9 +332,19 @@ function ManyPanel({
         </div>
         {chips(false)}
         {chips(true)}
-        {draft.length >= MAX_PICKS ? <span style={{ fontSize: 12, color: "#6b7280" }}>Up to {MAX_PICKS} at once.</span> : null}
+        {draft.length >= cap ? <span style={{ fontSize: 12, color: "#6b7280" }}>{kinds ? `${cap} places max — remove some to add more.` : `Up to ${cap} at once.`}</span> : null}
+        {where ? (
+          <div className="cpv-kinds" role="group" aria-label="Look at the agent's">
+            {PLACE_KINDS.map((kd) => (
+              <label key={kd} className="cpv-kind">
+                <input type="checkbox" className={k("ck")} checked={where.includes(kd)} disabled={where.length === 1 && where.includes(kd)} onChange={() => flip(kd)} />
+                {KIND_LABEL[kd]}
+              </label>
+            ))}
+          </div>
+        ) : null}
       </div>
-      <PopFoot onClear={() => onApply([])} onApply={() => onApply(draft)} />
+      <PopFoot onClear={() => onApply([], kinds ? [...PLACE_KINDS] : undefined)} onApply={() => onApply(draft, where)} />
     </>
   );
 }
@@ -432,6 +463,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const openMenu = (id: string | null) => { commit.current = null; setMenu(id); };
 
   const apply = <K extends keyof Picks>(key: K, v: Picks[K]) => { commit.current = null; setF((x) => ({ ...x, [key]: v })); setPage(1); setMenu(null); };
+  const applyPlaces = (places: Pick[], kinds: PlaceKind[]) => { commit.current = null; setF((x) => ({ ...x, places, kinds })); setPage(1); setMenu(null); };
   const onSort = (by: SortKey) => { setSort((cur) => (cur.key === by ? { key: by, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: by, dir: FIRST_DIR[by] })); setPage(1); };
   const any = isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0;
   const data = state.data;
@@ -458,8 +490,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
         <ManyPanel
           clientId={clientId} list={list} picks={f} skip="place" noun="places"
-          levels={[{ id: "city", label: "City" }, { id: "county", label: "County" }]}
-          initial={f.places} onApply={(xs) => apply("places", xs)} register={register}
+          levels={[{ id: "city", label: "City" }, { id: "zip", label: "Zip code" }, { id: "county", label: "County" }, { id: "state", label: "State" }]}
+          initial={f.places} kinds={f.kinds} onApply={(xs, kinds) => applyPlaces(xs, kinds ?? [...PLACE_KINDS])} register={register}
         />
       </FilterButton>
       <FilterButton id="volume" label="Sales volume" value={isSet(f.volume) ? rangeText("usd", f.volume) : null} open={menu === "volume"} onOpen={openMenu}>

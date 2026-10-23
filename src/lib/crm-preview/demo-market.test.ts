@@ -140,6 +140,21 @@ test("the Demo's Prospects page filters as Market does — ranges, brokerages, o
   const tids = (s: string) => filterProspects(titled, q(s)).map((a: { id: string }) => a.id);
   assert.deepEqual(tids("title=Salesperson"), ["t1", "t3"], "a title's parts, spacing and case aside — the agent database's rule");
   assert.deepEqual(tids("xtitle=Team%20Leader"), ["t2", "t3"], "no title on record stays");
+  // Location, the Database app's (24 Oct): zip, state, "City, ST", and which of the agent's places count.
+  const placed = [
+    agent("p1", { office_city: "Atlanta", office_state: "GA", office_zip: "30303", home_city: "Decatur", home_state: "GA", home_zip: "30030", most_transacted_city: "Atlanta", transacted_state: "GA", most_transacted_zip: "30303" }),
+    agent("p2", { office_city: "Charlotte", office_state: "NC", office_zip: "28202", office_county: "Mecklenburg", home_city: "Atlanta", home_state: "GA", home_zip: "30318", home_county: "Fulton", most_transacted_city: "Charlotte", transacted_state: "NC", most_transacted_zip: "28202", most_transacted_county: "Mecklenburg" }),
+    agent("p3", { office_city: null, office_county: null, office_state: null, office_zip: null, home_city: null, home_county: null, most_transacted_city: null, most_transacted_county: null }),
+  ] as never[];
+  const pids = (s: string) => filterProspects(placed, q(s)).map((a: { id: string }) => a.id);
+  assert.deepEqual(pids("zip=30303"), ["p1"]);
+  assert.deepEqual(pids("state=NC"), ["p2"]);
+  assert.deepEqual(pids("city=Atlanta,%20GA"), ["p1", "p2"], "Atlanta in Georgia — p2 lives there");
+  assert.deepEqual(pids("city=Atlanta,%20GA&kind=office"), ["p1"], "at the office only");
+  assert.deepEqual(pids("city=Atlanta,%20NC"), [], "the state must match");
+  assert.deepEqual(pids("xstate=GA"), ["p3"], "left out where any place is in Georgia; no place on record stays");
+  assert.deepEqual(pids("xstate=GA&kind=office"), ["p2", "p3"], "left out only by the office's state");
+  assert.deepEqual(pids("county=Fulton&kind=home"), ["p2"]);
   const sorted = (s: string) => sortProspects(filterProspects(rows, q(s)), q(s)).map((a: { id: string }) => a.id);
   assert.deepEqual(sorted("sort=volume&dir=desc"), ["a2", "a1", "a3"], "blanks last");
   assert.deepEqual(sorted("sort=volume&dir=desc&q=smith"), ["a3", "a2", "a1"], "a name match first");
