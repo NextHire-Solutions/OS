@@ -126,13 +126,13 @@ test("the Demo's Prospects page filters as Market does — ranges, brokerages, o
   assert.deepEqual(ids("minYears=10"), ["a2"]);
   assert.deepEqual(ids("brokerage=Compass"), ["a2"]);
   assert.deepEqual(ids("office=KW%20Midtown"), ["a1", "a3"]);
-  assert.deepEqual(ids("city=Decatur"), ["a2"], "a home city counts");
+  assert.deepEqual(ids("city=Decatur"), [], "a home city does not count — home is not a location on the client's Market (24 Oct)");
   assert.deepEqual(ids("county=Fulton"), ["a1", "a2", "a3"]);
   assert.deepEqual(ids("title=Team%20Leader"), ["a2"]);
   // Include and exclude (23 Oct): left out by brokerage, office, place or title — an agent with nothing on record stays.
   assert.deepEqual(ids("xbrokerage=Compass"), ["a1", "a3"]);
   assert.deepEqual(ids("xoffice=KW%20Midtown"), ["a2"]);
-  assert.deepEqual(ids("xcity=Decatur"), ["a1", "a3"], "a home city counts when leaving out, too");
+  assert.deepEqual(ids("xcity=Decatur"), ["a1", "a2", "a3"], "nor when leaving out");
   assert.deepEqual(ids("xcounty=Fulton"), [], "every one has Fulton somewhere");
   assert.deepEqual(ids("title=Salesperson&xtitle=Team%20Leader"), ["a1", "a3"]);
   assert.deepEqual(ids("brokerage=Keller%20Williams&xcity=Atlanta"), [], "include and exclude together");
@@ -140,21 +140,21 @@ test("the Demo's Prospects page filters as Market does — ranges, brokerages, o
   const tids = (s: string) => filterProspects(titled, q(s)).map((a: { id: string }) => a.id);
   assert.deepEqual(tids("title=Salesperson"), ["t1", "t3"], "a title's parts, spacing and case aside — the agent database's rule");
   assert.deepEqual(tids("xtitle=Team%20Leader"), ["t2", "t3"], "no title on record stays");
-  // Location, the Database app's (24 Oct): zip, state, "City, ST", and which of the agent's places count.
+  // Location on the client's columns (24 Oct): state, "City, ST", at the office and/or where the agent sold most — never home.
   const placed = [
-    agent("p1", { office_city: "Atlanta", office_state: "GA", office_zip: "30303", home_city: "Decatur", home_state: "GA", home_zip: "30030", most_transacted_city: "Atlanta", transacted_state: "GA", most_transacted_zip: "30303" }),
-    agent("p2", { office_city: "Charlotte", office_state: "NC", office_zip: "28202", office_county: "Mecklenburg", home_city: "Atlanta", home_state: "GA", home_zip: "30318", home_county: "Fulton", most_transacted_city: "Charlotte", transacted_state: "NC", most_transacted_zip: "28202", most_transacted_county: "Mecklenburg" }),
-    agent("p3", { office_city: null, office_county: null, office_state: null, office_zip: null, home_city: null, home_county: null, most_transacted_city: null, most_transacted_county: null }),
+    agent("p1", { office_city: "Atlanta", office_state: "GA", office_county: "Fulton", most_transacted_city: "Decatur", transacted_state: "GA", most_transacted_county: "DeKalb", home_city: "Charlotte", home_state: "NC" }),
+    agent("p2", { office_city: "Charlotte", office_state: "NC", office_county: "Mecklenburg", most_transacted_city: "Atlanta", transacted_state: "GA", most_transacted_county: "Fulton", home_city: "Atlanta", home_state: "GA" }),
+    agent("p3", { office_city: null, office_county: null, office_state: null, most_transacted_city: null, most_transacted_county: null, transacted_state: null, home_city: "Atlanta", home_state: "GA" }),
   ] as never[];
   const pids = (s: string) => filterProspects(placed, q(s)).map((a: { id: string }) => a.id);
-  assert.deepEqual(pids("zip=30303"), ["p1"]);
-  assert.deepEqual(pids("state=NC"), ["p2"]);
-  assert.deepEqual(pids("city=Atlanta,%20GA"), ["p1", "p2"], "Atlanta in Georgia — p2 lives there");
-  assert.deepEqual(pids("city=Atlanta,%20GA&kind=office"), ["p1"], "at the office only");
+  assert.deepEqual(pids("city=Atlanta,%20GA"), ["p1", "p2"], "at the office (p1) or where most sold (p2) — p3 only lives there");
+  assert.deepEqual(pids("city=Atlanta,%20GA&kind=office"), ["p1"]);
+  assert.deepEqual(pids("city=Atlanta,%20GA&kind=transacted"), ["p2"]);
   assert.deepEqual(pids("city=Atlanta,%20NC"), [], "the state must match");
-  assert.deepEqual(pids("xstate=GA"), ["p3"], "left out where any place is in Georgia; no place on record stays");
-  assert.deepEqual(pids("xstate=GA&kind=office"), ["p2", "p3"], "left out only by the office's state");
-  assert.deepEqual(pids("county=Fulton&kind=home"), ["p2"]);
+  assert.deepEqual(pids("state=NC"), ["p2"], "p1 only lives in NC — home is not a location here");
+  assert.deepEqual(pids("xstate=GA"), ["p3"], "left out where office or most-sold place is in Georgia; nothing on record stays");
+  assert.deepEqual(pids("xstate=GA&kind=office"), ["p2", "p3"]);
+  assert.deepEqual(pids("county=Fulton&kind=transacted"), ["p2"]);
   const sorted = (s: string) => sortProspects(filterProspects(rows, q(s)), q(s)).map((a: { id: string }) => a.id);
   assert.deepEqual(sorted("sort=volume&dir=desc"), ["a2", "a1", "a3"], "blanks last");
   assert.deepEqual(sorted("sort=volume&dir=desc&q=smith"), ["a3", "a2", "a1"], "a name match first");

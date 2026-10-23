@@ -104,19 +104,19 @@ const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agent
  * ticked on the other side (the Database app's rule — flipping the switch
  * never silently turns a filter around).
  */
-type Facet = "brand" | "office" | "city" | "zip" | "county" | "state";
+type Facet = "brand" | "office" | "city" | "county" | "state";
 type Pick = { f: Facet; v: string; ex: boolean };
 /*
  * No Title filter: the market is salespeople, set on the server (market-model.ts marketScope — 24 Oct, the user).
- * kinds: which of an agent's places Location looks at — office, most transacted, home (the Database app's Location, 24 Oct).
+ * kinds: which of an agent's places Location looks at — the office, where it sold most: Market's Office city and Most transacted city columns (24 Oct).
  */
 type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[] };
 const NO_RANGE: Range = { min: null, max: null };
 const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS] };
 const isSet = (r: Range) => r.min !== null || r.max !== null;
-const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", zip: "zip", county: "county", state: "state" };
-const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", zip: "zip codes", county: "counties", state: "states" };
-const KIND_LABEL: Record<PlaceKind, string> = { office: "Office location", transacted: "Most transacted location", home: "Home location" };
+const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county", state: "state" };
+const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", county: "counties", state: "states" };
+const KIND_LABEL: Record<PlaceKind, string> = { office: "Office location", transacted: "Most transacted location" };
 
 /** The picks as the route's query string (several of a kind repeat their key; a left-out one is x-prefixed). */
 function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place") {
@@ -130,7 +130,7 @@ function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place")
   if (skip !== "brokerage") for (const x of p.brokerages) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
   if (skip !== "place") {
     for (const x of p.places) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
-    // All three is the default; fewer only matter with a place picked.
+    // Both is the default; one only matters with a place picked.
     if (p.places.length && p.kinds.length < PLACE_KINDS.length) for (const kd of p.kinds) sp.append("kind", kd);
   }
 }
@@ -211,28 +211,39 @@ function RangePanel({ unit, presets, value, onApply, register }: { unit: Unit; p
   );
 }
 
-type Option = { v: string; n: number; var?: number };
+type Option = { v: string; n: number };
 type Options = { loading: boolean; options: Option[]; error: string | null; total?: number; agents?: number };
 
-/* A filter's choices from the agent database: searched by name, with counts, under the other filters (for places, also how many match and the agents they cover). */
-function useOptions(clientId: string, list: "market" | "prospects", facet: Facet, text: string, picks: Picks, skip: "brokerage" | "place") {
+/*
+ * A filter's choices from the agent database: the market's (or the client's prospects') places or brokerages, searched by name, with
+ * counts — kept on the server, so they come back quickly (market.ts marketFacet). Places are counted at the chosen locations. While a
+ * search is on its way, the choices already here that match it are shown.
+ */
+function useOptions(clientId: string, list: "market" | "prospects", facet: Facet, text: string, kinds?: readonly PlaceKind[]) {
   const [state, setState] = useState<Options>({ loading: true, options: [], error: null });
-  const key = JSON.stringify(picks);
+  const seen = useRef<Option[]>([]);
+  const kindKey = (kinds ?? []).join(",");
+  useEffect(() => { seen.current = []; }, [clientId, list, facet, kindKey]);
   useEffect(() => {
     const ctrl = new AbortController();
+    const needle = text.trim().toLowerCase();
+    setState((s) => ({ ...s, loading: true, error: null, options: needle ? seen.current.filter((o) => o.v.toLowerCase().includes(needle)) : seen.current.length ? seen.current : s.options }));
     const t = setTimeout(() => {
       const sp = new URLSearchParams({ client: clientId, list, facet });
       if (text.trim()) sp.set("fq", text.trim());
-      pickParams(sp, picks, skip);
-      setState((s) => ({ ...s, loading: true, error: null }));
+      if (kinds && kinds.length < PLACE_KINDS.length) for (const kd of kinds) sp.append("kind", kd);
       fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => setState(ok ? { loading: false, options: Array.isArray(j.options) ? j.options : [], error: j.unavailable ?? null, total: typeof j.total === "number" ? j.total : undefined, agents: typeof j.agents === "number" ? j.agents : undefined } : { loading: false, options: [], error: j?.error ?? "Couldn't load the choices." }))
+        .then(({ ok, j }) => {
+          const options: Option[] = ok && Array.isArray(j.options) ? j.options : [];
+          if (ok && !text.trim()) seen.current = options;
+          setState(ok ? { loading: false, options, error: j.unavailable ?? null, total: typeof j.total === "number" ? j.total : undefined, agents: typeof j.agents === "number" ? j.agents : undefined } : { loading: false, options: [], error: j?.error ?? "Couldn't load the choices." });
+        })
         .catch((err) => { if (err?.name !== "AbortError") setState({ loading: false, options: [], error: "Couldn't reach the server." }); });
-    }, 250);
+    }, 200);
     return () => { clearTimeout(t); ctrl.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, list, facet, text, key]);
+  }, [clientId, list, facet, text, kindKey]);
   return state;
 }
 
@@ -247,16 +258,16 @@ function ModeSwitch({ out, onChange }: { out: boolean; onChange: (out: boolean) 
 }
 
 /**
- * Several of a kind at once (brokerages and offices; cities, zips, counties and states), included or excluded:
+ * Several of a kind at once (brokerages and offices; cities, counties and states), included or excluded:
  * a search, a list with counts, the picks as chips. With `kinds`, the Database app's Location panel: which
  * of an agent's places it looks at, up to MAX_PLACES picks, and how many places match with the agents they cover.
  */
 function ManyPanel({
-  clientId, list, picks, levels, initial, kinds, skip, onApply, register, noun,
+  clientId, list, levels, initial, kinds, onApply, register, noun,
 }: {
-  clientId: string; list: "market" | "prospects"; picks: Picks;
+  clientId: string; list: "market" | "prospects";
   levels: ReadonlyArray<{ id: Facet; label: string }>;
-  initial: Pick[]; kinds?: PlaceKind[]; skip: "brokerage" | "place"; onApply: (xs: Pick[], kinds?: PlaceKind[]) => void; register: (commit: () => void) => void; noun: string;
+  initial: Pick[]; kinds?: PlaceKind[]; onApply: (xs: Pick[], kinds?: PlaceKind[]) => void; register: (commit: () => void) => void; noun: string;
 }) {
   const [level, setLevel] = useState(levels[0].id);
   const [out, setOut] = useState(false);
@@ -265,7 +276,7 @@ function ManyPanel({
   const [where, setWhere] = useState<PlaceKind[] | undefined>(kinds);
   const cap = kinds ? MAX_PLACES : MAX_PICKS;
   register(() => onApply(draft, where));
-  const opts = useOptions(clientId, list, level, text, picks, skip);
+  const opts = useOptions(clientId, list, level, text, where);
   const same = (x: Pick, v: string) => x.f === level && x.v === v;
   const sideOf = (v: string) => draft.find((x) => same(x, v))?.ex;
   // Ticking: off this side if it is on it, over from the other side if it is there, else added.
@@ -324,7 +335,7 @@ function ManyPanel({
                 <input type="checkbox" className={k("ck")} data-x={out ? "" : undefined} checked={side === out} onChange={() => toggle(o.v)} />
                 <span>{o.v}</span>
                 {side !== undefined && side !== out ? <em className={side ? "cpv-tag cpv-x" : "cpv-tag"}>{side ? "Excluded" : "Included"}</em> : null}
-                <small>{o.n.toLocaleString("en-US")} agents{level === "city" && (o.var ?? 1) > 1 ? ` · ${o.var} variants` : ""}</small>
+                <small>{o.n.toLocaleString("en-US")} agents</small>
               </label>
             );
           })}
@@ -381,6 +392,16 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   // The open panel's "keep what I set" — run on a click outside it (Escape drops it).
   const commit = useRef<(() => void) | null>(null);
   const register = (fn: () => void) => { commit.current = fn; };
+
+  // The Location and Brokerage choices, asked for as the page opens so they are ready when a panel is (the server keeps them 30 minutes).
+  useEffect(() => {
+    const ctrl = new AbortController();
+    for (const facet of ["city", "county", "state", "brand"]) {
+      const sp = new URLSearchParams({ client: clientId, list, facet });
+      void fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal }).catch(() => {});
+    }
+    return () => ctrl.abort();
+  }, [clientId, list]);
 
   // Search waits for a pause in typing.
   useEffect(() => {
@@ -489,8 +510,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
     <>
       <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
         <ManyPanel
-          clientId={clientId} list={list} picks={f} skip="place" noun="places"
-          levels={[{ id: "city", label: "City" }, { id: "zip", label: "Zip code" }, { id: "county", label: "County" }, { id: "state", label: "State" }]}
+          clientId={clientId} list={list} noun="places"
+          levels={[{ id: "city", label: "City" }, { id: "county", label: "County" }, { id: "state", label: "State" }]}
           initial={f.places} kinds={f.kinds} onApply={(xs, kinds) => applyPlaces(xs, kinds ?? [...PLACE_KINDS])} register={register}
         />
       </FilterButton>
@@ -505,7 +526,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       </FilterButton>
       <FilterButton id="brokerage" label="Brokerage" value={pickText(f.brokerages)} count={f.brokerages.length} open={menu === "brokerage"} onOpen={openMenu}>
         <ManyPanel
-          clientId={clientId} list={list} picks={f} skip="brokerage" noun="brokerages"
+          clientId={clientId} list={list} noun="brokerages"
           levels={[{ id: "brand", label: "Brokerage" }, { id: "office", label: "Office" }]}
           initial={f.brokerages} onApply={(xs) => apply("brokerages", xs)} register={register}
         />

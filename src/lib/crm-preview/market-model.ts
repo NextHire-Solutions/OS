@@ -134,10 +134,12 @@ export const MAX_PLACES = 50;
 
 /*
  * Which of an agent's places a Location filter looks at (24 Oct — the user
- * wants the Database app's Location filter): where the office is, where the
- * agent sold most, where the agent lives. All three unless narrowed, as there.
+ * wants the Database app's Location filter, on the columns the client's
+ * design shows: "we do not have home location column so we do not want this
+ * here"): the office's place and where the agent sold most — Market's Office
+ * city and Most transacted city. Both unless narrowed.
  */
-export const PLACE_KINDS = ["office", "transacted", "home"] as const;
+export const PLACE_KINDS = ["office", "transacted"] as const;
 export type PlaceKind = (typeof PLACE_KINDS)[number];
 
 export interface MarketQuery {
@@ -155,10 +157,9 @@ export interface MarketQuery {
   offices: string[];
   cities: string[];
   counties: string[];
-  /** Zip codes and states (the Database app's other two Location levels, 24 Oct). */
-  zips: string[];
+  /** States (the Database app's Location levels are city, county and state here — 24 Oct). */
   states: string[];
-  /** The agent's places a Location filter looks at: office, most transacted, home. */
+  /** The agent's places a Location filter looks at: office, most transacted. */
   kinds: PlaceKind[];
   /** Titles, any of them (the page starts on Salesperson). */
   titles: string[];
@@ -169,7 +170,7 @@ export interface MarketQuery {
    * place or title on record stays — "not in Atlanta" does not drop someone
    * whose city is unknown (the Database app's rule, fn_agent_where).
    */
-  not: { brokerages: string[]; offices: string[]; cities: string[]; counties: string[]; zips: string[]; states: string[]; titles: string[] };
+  not: { brokerages: string[]; offices: string[]; cities: string[]; counties: string[]; states: string[]; titles: string[] };
   sort: SortKey;
   dir: "asc" | "desc";
 }
@@ -186,7 +187,6 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
   const range = (min: string, max: string, cap: number): Range => ({ min: amount(min, cap), max: amount(max, cap) });
   const many = (k: string, cap = MAX_PICKS) => [...new Set(p.getAll(k).map((v) => clean(v, 120)).filter((v): v is string => !!v))].slice(0, cap);
   const places = (k: string) => many(k, MAX_PLACES);
-  const zips = (k: string) => places(k).filter((z) => /^[0-9A-Za-z -]{3,10}$/.test(z));
   const states = (k: string) => places(k).filter((st) => /^[A-Za-z]{2}$/.test(st)).map((st) => st.toUpperCase());
   const kinds = PLACE_KINDS.filter((x) => p.getAll("kind").includes(x));
   const page = Math.floor(Number(p.get("page")));
@@ -209,12 +209,11 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
     offices: many("office"),
     cities: places("city"),
     counties: places("county"),
-    zips: zips("zip"),
     states: states("state"),
-    // None named: all three (a filter that looked at no place would show everyone).
+    // None named: both (a filter that looked at no place would show everyone).
     kinds: kinds.length ? kinds : [...PLACE_KINDS],
     titles: titles("title"),
-    not: { brokerages: many("xbrokerage"), offices: many("xoffice"), cities: places("xcity"), counties: places("xcounty"), zips: zips("xzip"), states: states("xstate"), titles: titles("xtitle") },
+    not: { brokerages: many("xbrokerage"), offices: many("xoffice"), cities: places("xcity"), counties: places("xcounty"), states: states("xstate"), titles: titles("xtitle") },
     sort,
     dir: dirRaw === "asc" || dirRaw === "desc" ? dirRaw : FIRST_DIR[sort],
   };
@@ -234,10 +233,10 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
   if (q.brokerages.length || q.offices.length || x.brokerages.length || x.offices.length) {
     f.officeSearch = { brand: { include: [...q.brokerages], exclude: [...x.brokerages] }, office: { include: [...q.offices], exclude: [...x.offices] } };
   }
-  // Cities, zips, counties and states in one location filter, each value keeping its own level — any of them matches, none of the left-out ones —
-  // at the agent's office, most transacted and/or home location (the Database app's way).
-  const levels = (c: { cities: string[]; counties: string[]; zips: string[]; states: string[] }) => [
-    ...c.cities.map((v) => ({ f: "city", v })), ...c.zips.map((v) => ({ f: "zip", v })), ...c.counties.map((v) => ({ f: "county", v })), ...c.states.map((v) => ({ f: "state", v })),
+  // Cities, counties and states in one location filter, each value keeping its own level — any of them matches, none of the left-out ones —
+  // at the agent's office and/or most transacted location (the Database app's way).
+  const levels = (c: { cities: string[]; counties: string[]; states: string[] }) => [
+    ...c.cities.map((v) => ({ f: "city", v })), ...c.counties.map((v) => ({ f: "county", v })), ...c.states.map((v) => ({ f: "state", v })),
   ];
   const places = levels(q);
   const notPlaces = levels(x);

@@ -62,9 +62,6 @@ export interface AgentRow {
   home_county: string | null;
   most_transacted_city: string | null;
   most_transacted_county: string | null;
-  office_zip: string | null;
-  home_zip: string | null;
-  most_transacted_zip: string | null;
   office_state: string | null;
   home_state: string | null;
   transacted_state: string | null;
@@ -72,7 +69,7 @@ export interface AgentRow {
   units: number | null;
   est_time_in_industry_months: number | null;
 }
-const AGENT_COLS = "id, full_name, preferred_email, enriched_email, preferred_phone, brand, office_name, title, office_city, office_county, home_city, home_county, most_transacted_city, most_transacted_county, office_zip, home_zip, most_transacted_zip, office_state, home_state, transacted_state, sales_volume, units, est_time_in_industry_months";
+const AGENT_COLS = "id, full_name, preferred_email, enriched_email, preferred_phone, brand, office_name, title, office_city, office_county, home_city, home_county, most_transacted_city, most_transacted_county, office_state, home_state, transacted_state, sales_volume, units, est_time_in_industry_months";
 
 /** Agents by id, in chunks the gateway's URL limit allows. */
 export async function agentsByIds(ids: readonly string[]): Promise<AgentRow[]> {
@@ -109,21 +106,19 @@ export const emailsOf = (a: AgentRow) => [a.preferred_email, a.enriched_email].m
 const inRange = (v: number | null, r: { min: number | null; max: number | null }) => (r.min === null || (v !== null && v >= r.min)) && (r.max === null || (v !== null && v <= r.max));
 const years = (a: AgentRow) => (a.est_time_in_industry_months === null ? null : Math.floor(a.est_time_in_industry_months / 12));
 
-/** An agent's place at one of its three locations, at each level. */
-export function placeOf(a: AgentRow, kind: PlaceKind): { city: string | null; county: string | null; zip: string | null; state: string | null } {
-  if (kind === "office") return { city: a.office_city, county: a.office_county, zip: a.office_zip, state: a.office_state };
-  if (kind === "home") return { city: a.home_city, county: a.home_county, zip: a.home_zip, state: a.home_state };
-  return { city: a.most_transacted_city, county: a.most_transacted_county, zip: a.most_transacted_zip, state: a.transacted_state };
+/** An agent's place at its office or where it sold most, at each level. */
+export function placeOf(a: AgentRow, kind: PlaceKind): { city: string | null; county: string | null; state: string | null } {
+  if (kind === "office") return { city: a.office_city, county: a.office_county, state: a.office_state };
+  return { city: a.most_transacted_city, county: a.most_transacted_county, state: a.transacted_state };
 }
 
 /*
  * Whether a place's value names it, as the agent database matches
  * (fn_agent_where): "Atlanta, GA" is Atlanta in Georgia, "Atlanta" Atlanta
- * anywhere; a zip exactly; a state by its two letters.
+ * anywhere; a state by its two letters.
  */
-function names(level: "city" | "county" | "zip" | "state", value: string, p: ReturnType<typeof placeOf>): boolean {
+function names(level: "city" | "county" | "state", value: string, p: ReturnType<typeof placeOf>): boolean {
   const v = value.trim();
-  if (level === "zip") return !!p.zip && p.zip.trim().toLowerCase() === v.toLowerCase();
   if (level === "state") return !!p.state && p.state.trim().toUpperCase() === v.toUpperCase();
   const at = level === "city" ? p.city : p.county;
   if (!at) return false;
@@ -132,13 +127,13 @@ function names(level: "city" | "county" | "zip" | "state", value: string, p: Ret
   return lower(at) === m[1].trim().toLowerCase() && (p.state ?? "").trim().toUpperCase() === m[2].toUpperCase();
 }
 
-type Places = { cities: string[]; counties: string[]; zips: string[]; states: string[] };
-const anyPlace = (c: Places) => c.cities.length + c.counties.length + c.zips.length + c.states.length > 0;
+type Places = { cities: string[]; counties: string[]; states: string[] };
+const anyPlace = (c: Places) => c.cities.length + c.counties.length + c.states.length > 0;
 /** At any of the chosen locations, the agent is in any of these places. */
 const inPlaces = (a: AgentRow, c: Places, kinds: readonly PlaceKind[]) =>
   kinds.some((k) => {
     const p = placeOf(a, k);
-    return c.cities.some((v) => names("city", v, p)) || c.counties.some((v) => names("county", v, p)) || c.zips.some((v) => names("zip", v, p)) || c.states.some((v) => names("state", v, p));
+    return c.cities.some((v) => names("city", v, p)) || c.counties.some((v) => names("county", v, p)) || c.states.some((v) => names("state", v, p));
   });
 
 /* A title's parts, as the agent database compares them (fn_title_tokens): "Salesperson, Team Leader" is both. */
@@ -147,8 +142,8 @@ const titleTokens = (t: string | null) => (t ?? "").split(",").map((x) => x.toLo
 /**
  * The Demo's prospects that match the page's filters, as Market's search
  * applies them: sales volume, units and years as ranges; any of the
- * brokerages, offices and titles; any of the cities, zips, counties or states
- * at the chosen locations (office, most transacted, home) — and none of the left-out ones, where an agent with nothing on
+ * brokerages, offices and titles; any of the cities, counties or states at the
+ * chosen locations (office, most transacted) — and none of the left-out ones, where an agent with nothing on
  * record stays (fn_agent_where's rule). A name search narrows nothing —
  * matching agents come first, as in the Database app.
  */
