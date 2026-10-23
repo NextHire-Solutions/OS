@@ -253,6 +253,9 @@
 .cpv-shell .cpv-tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #edf2fc; color: #2f55a8; flex: none; }
 .cpv-shell .cpv-tag.cpv-x { background: #fdeeec; color: #a8291a; }
 
+/* A board card held by a finger (board-drag.tsx, 24 Oct): no text selection or callout menu from the long press. */
+.cpv-shell [data-card] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+
 /* The card's name following the pointer while it is dragged to another column (board-drag.tsx, 23 Oct). */
 .cpv-drag-ghost {
   position: fixed; z-index: 1000; pointer-events: none; max-width: 240px; padding: 8px 12px;

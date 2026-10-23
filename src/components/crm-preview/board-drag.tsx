@@ -11,9 +11,19 @@ import { useEffect, useRef, useState } from "react";
  * the column under it is marked, and letting go there moves the agent — the
  * same save as the list's "Move to…". Near the board's left or right edge,
  * or the window's top or bottom, it scrolls.
+ *
+ * On a touch screen (24 Oct — a finger's drag was taken by the browser as a
+ * scroll and the drag was cancelled): press and HOLD a card to pick it up; a
+ * swipe that moves first still scrolls the board or the page, and a tap still
+ * opens the card. Once a card is held, the page does not scroll under the
+ * finger (a non-passive touchmove listener, there from the start of the
+ * touch, so the browser lets it cancel the scroll).
  */
 
 const THRESHOLD = 6;
+/** How long a finger holds a card before it is picked up, and how far it may wander meanwhile. */
+const HOLD_MS = 280;
+const TOUCH_SLOP = 10;
 const EDGE = 64;
 const SPEED = 14;
 
@@ -32,18 +42,35 @@ const columnAt = (x: number, y: number) => document.elementFromPoint(x, y)?.clos
 
 export function useBoardDrag(live: boolean, onDrop: (id: string, to: string) => void) {
   const [drag, setDrag] = useState<BoardDrag | null>(null);
-  const press = useRef<{ id: string; name: string; from: string; x: number; y: number; pointerId: number; started: boolean } | null>(null);
+  const press = useRef<{ id: string; name: string; from: string; x: number; y: number; pointerId: number; started: boolean; touch: boolean; timer: number } | null>(null);
   const last = useRef<{ x: number; y: number } | null>(null);
   const suppress = useRef(false);
   const dropRef = useRef(onDrop);
   useEffect(() => { dropRef.current = onDrop; });
   const dragging = drag !== null;
 
+  // A held card keeps the page still under the finger; a long press shows no menu.
+  useEffect(() => {
+    if (!live) return;
+    const still = (e: TouchEvent) => { if (press.current?.started && e.cancelable) e.preventDefault(); };
+    const noMenu = (e: Event) => { if (press.current?.touch) e.preventDefault(); };
+    window.addEventListener("touchmove", still, { passive: false });
+    window.addEventListener("contextmenu", noMenu);
+    return () => {
+      window.removeEventListener("touchmove", still);
+      window.removeEventListener("contextmenu", noMenu);
+    };
+  }, [live]);
+
   // While a card is held: scroll near the edges, and keep the column under the pointer current as the board moves.
   useEffect(() => {
     if (!dragging) return;
     const prevSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
+    // The board snaps to its columns on a phone or tablet (mobile.css); a snap would undo each small scroll near the edge.
+    const held = document.querySelector<HTMLElement>("[data-board]");
+    const prevSnap = held?.style.scrollSnapType ?? "";
+    if (held) held.style.scrollSnapType = "none";
     let raf = 0;
     const tick = () => {
       const p = last.current;
@@ -68,6 +95,7 @@ export function useBoardDrag(live: boolean, onDrop: (id: string, to: string) => 
     return () => {
       cancelAnimationFrame(raf);
       document.body.style.userSelect = prevSelect;
+      if (held) held.style.scrollSnapType = prevSnap;
     };
   }, [dragging]);
 
@@ -76,8 +104,26 @@ export function useBoardDrag(live: boolean, onDrop: (id: string, to: string) => 
     "data-card": id,
     onPointerDown: (e: React.PointerEvent) => {
       if (!live || e.button !== 0 || !e.isPrimary) return;
-      press.current = { id, name, from, x: e.clientX, y: e.clientY, pointerId: e.pointerId, started: false };
+      const touch = e.pointerType === "touch";
+      const begin = (x: number, y: number) => {
+        const p = press.current;
+        if (!p) return;
+        p.started = true;
+        last.current = { x, y };
+        setDrag({ id: p.id, name: p.name, from: p.from, x, y, over: columnAt(x, y) });
+      };
+      press.current = { id, name, from, x: e.clientX, y: e.clientY, pointerId: e.pointerId, started: false, touch, timer: 0 };
+      if (touch) {
+        // Held still long enough: picked up where the finger is.
+        const p = press.current;
+        p.timer = window.setTimeout(() => {
+          if (press.current !== p) return;
+          begin(last.current?.x ?? p.x, last.current?.y ?? p.y);
+          navigator.vibrate?.(10);
+        }, HOLD_MS);
+      }
       const end = () => {
+        if (press.current) window.clearTimeout(press.current.timer);
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
         window.removeEventListener("pointercancel", cancel);
@@ -89,7 +135,14 @@ export function useBoardDrag(live: boolean, onDrop: (id: string, to: string) => 
         const p = press.current;
         if (!p || ev.pointerId !== p.pointerId) return;
         if (!p.started) {
-          if (Math.hypot(ev.clientX - p.x, ev.clientY - p.y) < THRESHOLD) return;
+          const far = Math.hypot(ev.clientX - p.x, ev.clientY - p.y);
+          if (p.touch) {
+            // A finger that moves before the hold is scrolling: let it.
+            if (far > TOUCH_SLOP) end();
+            else last.current = { x: ev.clientX, y: ev.clientY };
+            return;
+          }
+          if (far < THRESHOLD) return;
           p.started = true;
         }
         ev.preventDefault();
