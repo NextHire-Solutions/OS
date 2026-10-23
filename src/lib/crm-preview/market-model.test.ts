@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
-  bandOf, bandRows, clientForPortal, DEAL_BANDS, interestedReport, LIST_PILL, listFor, listSets, marketFilters,
+  bandOf, bandRows, clientForPortal, DEAL_BANDS, interestedReport, LIST_PILL, listFor, listSets, MARKET_TITLE, marketFilters, marketScope,
   ownListEmail, parseMarketQuery, resolveMls, SALES_BANDS, type OsClientRow,
 } from "./market-model.ts";
 
@@ -64,7 +64,7 @@ test("the query string: ranges, several brokerages and places, a known sort — 
 });
 
 test("include and exclude (23 Oct, the Database app's): x-prefixed picks are left out — each kind its own list, titles only the three", () => {
-  const q = parseMarketQuery(new URLSearchParams("title=Salesperson&xtitle=Team Leader&xtitle=CEO&xbrokerage=Compass&xoffice=KW Midtown&xcity=Decatur&xcounty=Cobb&office=Compass Buckhead"));
+  const q = parseMarketQuery(new URLSearchParams("list=prospects&title=Salesperson&xtitle=Team Leader&xtitle=CEO&xbrokerage=Compass&xoffice=KW Midtown&xcity=Decatur&xcounty=Cobb&office=Compass Buckhead"));
   assert.deepEqual(q.titles, ["Salesperson"]);
   assert.deepEqual(q.offices, ["Compass Buckhead"]);
   assert.deepEqual(q.not, { brokerages: ["Compass"], offices: ["KW Midtown"], cities: ["Decatur"], counties: ["Cobb"], titles: ["Team Leader"] });
@@ -81,14 +81,30 @@ test("include and exclude (23 Oct, the Database app's): x-prefixed picks are lef
   const counties = marketFilters(base, parseMarketQuery(new URLSearchParams("xcounty=Cobb"))) as { location: { field: string; excludeField: string } };
   assert.deepEqual([counties.location.field, counties.location.excludeField], ["county", "county"]);
   // An excluded title alone.
-  assert.deepEqual((marketFilters(base, parseMarketQuery(new URLSearchParams("xtitle=Managing Broker"))) as { title: unknown }).title, { include: [], exclude: ["Managing Broker"] });
+  assert.deepEqual((marketFilters(base, parseMarketQuery(new URLSearchParams("list=prospects&xtitle=Managing Broker"))) as { title: unknown }).title, { include: [], exclude: ["Managing Broker"] });
+});
+
+test("a market is salespeople, decided on the server (24 Oct, the user): a title asked for there is ignored and cannot widen it", () => {
+  assert.equal(MARKET_TITLE, "Salesperson");
+  const scope = marketScope(["m1", "m2"]);
+  assert.deepEqual(scope, { mls: { include: ["m1", "m2"], exclude: [] }, title: { include: ["Salesperson"], exclude: [] } });
+  for (const qs of ["", "title=Team Leader", "title=Managing Broker&title=Team Leader", "xtitle=Salesperson", "list=market&title=Team Leader&xtitle=Salesperson"]) {
+    const q = parseMarketQuery(new URLSearchParams(qs));
+    assert.deepEqual([q.titles, q.not.titles], [[], []], qs);
+    assert.deepEqual((marketFilters(scope, q) as { title: unknown }).title, { include: ["Salesperson"], exclude: [] }, `still salespeople only: ${qs}`);
+  }
+  // The other filters sit on top of it.
+  const f = marketFilters(scope, parseMarketQuery(new URLSearchParams("xbrokerage=Compass&minUnits=4"))) as Record<string, unknown>;
+  assert.deepEqual([f.title, (f.officeSearch as { brand: unknown }).brand, f.closedUnits], [{ include: ["Salesperson"], exclude: [] }, { include: [], exclude: ["Compass"] }, { side: "all", buckets: [], min: "4", max: "" }]);
+  // Prospects (a client's own campaign leads) are every title.
+  assert.deepEqual(parseMarketQuery(new URLSearchParams("list=prospects&title=Team Leader")).titles, ["Team Leader"]);
 });
 
 test("the filters as the Database app's, on top of the market or the client's lists", () => {
   const base = { mls: { include: ["m1"], exclude: [] } };
   const none = marketFilters(base, parseMarketQuery(new URLSearchParams("")));
   assert.deepEqual(none, base);
-  const f = marketFilters(base, parseMarketQuery(new URLSearchParams("minVolume=2000000&maxVolume=8000000&maxUnits=30&minYears=2&brokerage=Compass&brokerage=eXp Realty&city=Atlanta&county=Cobb, GA&title=Salesperson&q=smith")));
+  const f = marketFilters(base, parseMarketQuery(new URLSearchParams("list=prospects&minVolume=2000000&maxVolume=8000000&maxUnits=30&minYears=2&brokerage=Compass&brokerage=eXp Realty&city=Atlanta&county=Cobb, GA&title=Salesperson&q=smith")));
   assert.deepEqual(f, {
     mls: { include: ["m1"], exclude: [] },
     salesVolume: { side: "all", buckets: [], min: "2000000", max: "8000000" },

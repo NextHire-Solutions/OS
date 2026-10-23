@@ -10,7 +10,7 @@ import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview
 import { agentsByIds, demoProspectIds, filterProspects, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
-  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, ownListEmail, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, ownListEmail, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type ReportGroup,
 } from "./market-model";
 
@@ -111,7 +111,8 @@ export async function marketContext(portalId: string): Promise<MarketContext | n
   };
 }
 
-const marketBase = (ctx: MarketContext) => ({ mls: { include: ctx.mls.ids, exclude: [] } });
+// Salespeople only — the page, its choices and counts, Reports and every move read the market through this (market-model.ts).
+const marketBase = (ctx: MarketContext) => marketScope(ctx.mls.ids);
 const prospectsBase = (ctx: MarketContext) => ({ orchClientIds: [ctx.orchClientId], orchClientMode: "include" });
 
 /** Why a list cannot be shown for this client, or null when it can. */
@@ -289,7 +290,7 @@ export const marketOptions = ttlCache(async (ctx: MarketContext): Promise<{ brok
     brokerages: ((Array.isArray(brands) ? brands : []) as Array<{ v: string }>).map((b) => b.v).slice(0, 40),
     counties: (((counties as { options?: Array<{ v: string }> } | null)?.options ?? []).map((c) => c.v)).slice(0, 40),
   };
-}, { ttlMs: 30 * 60_000, key: (ctx) => `options:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-options", inflightTimeoutMs: 120_000 });
+}, { ttlMs: 30 * 60_000, key: (ctx) => `options:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-options", inflightTimeoutMs: 120_000 });
 
 /*
  * Reports › All market. Every figure is an exact count of agents in the
@@ -383,7 +384,7 @@ const cachedReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport> 
     ],
     allBrokerages: brandRows,
   };
-}, { ttlMs: 30 * 60_000, key: (ctx) => `report:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-report", inflightTimeoutMs: 180_000 });
+}, { ttlMs: 30 * 60_000, key: (ctx) => `report:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-report", inflightTimeoutMs: 180_000 });
 
 /**
  * Every agent matching a page's filters, for "Select all that match" → Move to

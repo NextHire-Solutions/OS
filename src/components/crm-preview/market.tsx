@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
-import { FIRST_DIR, interestedReport, LIST_PILL, MAX_PICKS, maxPage, PAGE_SIZE, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
+import { FIRST_DIR, interestedReport, LIST_PILL, MAX_PICKS, maxPage, PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
 import { k, off, withIds } from "./k";
@@ -33,7 +33,7 @@ function definition(list: "market" | "prospects", client: string | null, mls: Ml
   if (!mls) return null;
   const codes = mls.matched.map((m) => m.code).join(", ");
   const missing = mls.unmatched.length ? ` Not in the agent database, so not counted: ${mls.unmatched.join(", ")}.` : "";
-  return `Market here = every agent in the MLS on ${client}'s record${codes ? ` (${codes})` : ""}.${missing}`;
+  return `Market here = every salesperson in the MLS on ${client}'s record${codes ? ` (${codes})` : ""}.${missing}`;
 }
 
 // ---------------------------------------------------------------- Market ---
@@ -43,8 +43,8 @@ export type Row = {
   mostTransactedCity: string | null; salesVolume: number | null; units: number | null; list: string; pill: string;
   office?: string | null; years?: number | null; email?: string | null;
 };
-export type Filters = { minVolume: number | null; minUnits: number | null; minYears: number | null; brokerage: string | null; county: string | null; title: string | null; office: string | null; city: string | null };
-export const NO_FILTERS: Filters = { minVolume: null, minUnits: null, minYears: null, brokerage: null, county: null, title: null, office: null, city: null };
+export type Filters = { minVolume: number | null; minUnits: number | null; minYears: number | null; brokerage: string | null; county: string | null; office: string | null; city: string | null };
+export const NO_FILTERS: Filters = { minVolume: null, minUnits: null, minYears: null, brokerage: null, county: null, office: null, city: null };
 
 type Loaded = { total: number; salesVolume: number; page: number; rows: Row[]; client: string | null; mls: Mls | null };
 
@@ -106,11 +106,10 @@ const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agent
  */
 type Facet = "brand" | "office" | "city" | "county";
 type Pick = { f: Facet; v: string; ex: boolean };
-type Titles = { include: string[]; exclude: string[] };
-type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; titles: Titles };
+/* No Title filter: the market is salespeople, set on the server (market-model.ts marketScope — 24 Oct, the user). */
+type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[] };
 const NO_RANGE: Range = { min: null, max: null };
-const NO_TITLES: Titles = { include: [], exclude: [] };
-const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], titles: NO_TITLES };
+const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [] };
 const isSet = (r: Range) => r.min !== null || r.max !== null;
 const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county" };
 
@@ -125,13 +124,10 @@ function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place")
   range("Years", p.years);
   if (skip !== "brokerage") for (const x of p.brokerages) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
   if (skip !== "place") for (const x of p.places) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
-  for (const t of p.titles.include) sp.append("title", t);
-  for (const t of p.titles.exclude) sp.append("xtitle", t);
 }
 
 /** What a set filter's button says: one pick by name ("not Atlanta" when left out); several, a count. */
 const pickText = (xs: readonly Pick[]) => (xs.length === 1 ? `${xs[0].ex ? "not " : ""}${xs[0].v}` : null);
-const titleParts = (t: Titles) => [...t.include, ...t.exclude.map((x) => `not ${x}`)];
 
 type Unit = "usd" | "count" | "years";
 const fmt = (u: Unit, n: number) => (u === "usd" ? abbrevUsd(n) : u === "years" ? `${n} yrs` : n.toLocaleString("en-US"));
@@ -322,35 +318,6 @@ function ManyPanel({
   );
 }
 
-/** Title: each of the three, included or excluded (the Database app's Title filter). */
-function TitlePanel({ value, onApply, register }: { value: Titles; onApply: (t: Titles) => void; register: (commit: () => void) => void }) {
-  const [inc, setInc] = useState<string[]>(value.include);
-  const [exc, setExc] = useState<string[]>(value.exclude);
-  register(() => onApply({ include: inc, exclude: exc }));
-  const tick = (t: string, ex: boolean) => {
-    const [mine, setMine, setOther] = ex ? ([exc, setExc, setInc] as const) : ([inc, setInc, setExc] as const);
-    setMine(mine.includes(t) ? mine.filter((x) => x !== t) : [...mine, t]);
-    setOther((o) => o.filter((x) => x !== t));
-  };
-  return (
-    <>
-      <div className="cpv-pop-body">
-        <div className="cpv-tgrid" role="group" aria-label="Titles">
-          <span /><b>Include</b><b>Exclude</b>
-          {TITLES.map((t) => (
-            <div key={t} style={{ display: "contents" }}>
-              <span>{t}</span>
-              <input type="checkbox" className={k("ck")} aria-label={`Include ${t}`} checked={inc.includes(t)} onChange={() => tick(t, false)} />
-              <input type="checkbox" className={k("ck")} data-x="" aria-label={`Exclude ${t}`} checked={exc.includes(t)} onChange={() => tick(t, true)} />
-            </div>
-          ))}
-        </div>
-      </div>
-      <PopFoot onClear={() => onApply(NO_TITLES)} onApply={() => onApply({ include: inc, exclude: exc })} />
-    </>
-  );
-}
-
 /* A sortable column heading: ↕ when another column sorts, ↑ / ↓ when this one does. */
 function SortHead({ label, by, sort, onSort, right }: { label: string; by: SortKey; sort: { key: SortKey; dir: "asc" | "desc" }; onSort: (by: SortKey) => void; right?: boolean }) {
   const on = sort.key === by;
@@ -366,8 +333,7 @@ function SortHead({ label, by, sort, onSort, right }: { label: string; by: SortK
 export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clientId: string; list: "market" | "prospects"; onContext?: (text: string | null) => void; onOpenMarket?: () => void }) {
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
-  // Market starts on salespeople (23 Oct, the user: "only Salesperson pre selected as we do not have team lead and managing broker"); Clear all shows everyone.
-  const [f, setF] = useState<Picks>(list === "market" ? { ...NO_PICKS, titles: { include: ["Salesperson"], exclude: [] } } : NO_PICKS);
+  const [f, setF] = useState<Picks>(NO_PICKS);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "volume", dir: "desc" });
   const [page, setPage] = useState(1);
   const [menu, setMenu] = useState<string | null>(null);
@@ -467,7 +433,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
 
   const apply = <K extends keyof Picks>(key: K, v: Picks[K]) => { commit.current = null; setF((x) => ({ ...x, [key]: v })); setPage(1); setMenu(null); };
   const onSort = (by: SortKey) => { setSort((cur) => (cur.key === by ? { key: by, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: by, dir: FIRST_DIR[by] })); setPage(1); };
-  const any = isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0 || titleParts(f.titles).length > 0;
+  const any = isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0;
   const data = state.data;
   const total = data?.total ?? 0;
   // From the rows on screen, not the page asked for: while the next page loads, the footer still describes these.
@@ -487,7 +453,6 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const clearAll = () => { setSearch(""); setQ(""); setF(NO_PICKS); setPage(1); };
 
   // What each filter shows when set: one pick by name, several by the filter's name and a count (the Database app's way).
-  const titles = titleParts(f.titles);
   const filters = (
     <>
       <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
@@ -512,9 +477,6 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
           levels={[{ id: "brand", label: "Brokerage" }, { id: "office", label: "Office" }]}
           initial={f.brokerages} onApply={(xs) => apply("brokerages", xs)} register={register}
         />
-      </FilterButton>
-      <FilterButton id="title" label="Title" value={titles.length && titles.length <= 2 ? titles.join(", ") : null} count={titles.length > 2 ? titles.length : undefined} open={menu === "title"} onOpen={openMenu}>
-        <TitlePanel value={f.titles} onApply={(t) => apply("titles", t)} register={register} />
       </FilterButton>
     </>
   );

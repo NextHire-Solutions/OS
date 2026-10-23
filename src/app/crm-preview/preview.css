@@ -252,9 +252,6 @@
 .cpv-shell .cpv-chipx s { text-decoration: none; font-weight: 600; opacity: .8; }
 .cpv-shell .cpv-tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #edf2fc; color: #2f55a8; flex: none; }
 .cpv-shell .cpv-tag.cpv-x { background: #fdeeec; color: #a8291a; }
-.cpv-shell .cpv-tgrid { display: grid; grid-template-columns: 1fr 64px 64px; align-items: center; row-gap: 10px; font-size: 13px; color: #31353b; }
-.cpv-shell .cpv-tgrid b { font-size: 12px; font-weight: 500; color: #6b7280; text-align: center; }
-.cpv-shell .cpv-tgrid input { justify-self: center; }
 
 /* The card's name following the pointer while it is dragged to another column (board-drag.tsx, 23 Oct). */
 .cpv-drag-ghost {

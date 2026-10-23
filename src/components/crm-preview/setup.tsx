@@ -25,7 +25,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
 import { abbrevUsd, formatPhone, initials, SETUP_OFFERS, type PortalOffer } from "@/lib/crm-preview/model";
-import { maxPage, SETUP_PAGE_SIZE, TITLES, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } from "@/lib/crm-preview/market-model";
+import { maxPage, SETUP_PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } from "@/lib/crm-preview/market-model";
 
 import { csvRowToAgent, csvRowToDnc } from "@/lib/tools/master-inbox/portals/csv";
 
@@ -127,7 +127,6 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
     if (f.county) sp.set("county", f.county);
     if (f.office) sp.set("office", f.office);
     if (f.city) sp.set("city", f.city);
-    if (f.title) sp.set("title", f.title);
     setState((s) => ({ ...s, loading: true }));
     fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
       .then(async (r) => {
@@ -168,7 +167,6 @@ function filterQuery(q: string, f: Filters): string {
   if (f.county) sp.append("county", f.county);
   if (f.office) sp.append("office", f.office);
   if (f.city) sp.append("city", f.city);
-  if (f.title) sp.set("title", f.title);
   return sp.toString();
 }
 
@@ -560,14 +558,11 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
   );
 }
 
-// Who we email starts on salespeople, as Market does (23 Oct, the user); the Title chip shows it and can clear it.
-const TARGET_START: Filters = { ...NO_FILTERS, title: "Salesperson" };
-
 function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: (n: number) => void }) {
   const [tab, setTab] = useState<"market" | "prospects">("market");
   const [search, setSearch] = useState("");
   const q = useDebounced(search);
-  const [f, setF] = useState<Filters>(TARGET_START);
+  const [f, setF] = useState<Filters>(NO_FILTERS);
   const [page, setPage] = useState(1);
   const [menu, setMenu] = useState<string | null>(null);
   const options = useOptions(clientId);
@@ -635,7 +630,6 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
           <Chip bold id="units" label="Units" value={f.minUnits} show={(v) => `${v}+`} choices={UNIT_PRESETS} open={menu === "units"} onOpen={setMenu} onPick={(v) => set("minUnits", v)} />
           <Chip bold id="years" label="Years licensed" value={f.minYears} show={(v) => `${v}+`} choices={YEAR_PRESETS} open={menu === "years"} onOpen={setMenu} onPick={(v) => set("minYears", v)} />
           <Chip bold id="brokerage" label="Brokerage" value={f.brokerage} show={(v) => v} choices={options?.brokerages ?? []} open={menu === "brokerage"} onOpen={setMenu} onPick={(v) => set("brokerage", v)} />
-          <Chip bold id="title" label="Title" value={f.title} show={(v) => v} choices={TITLES} open={menu === "title"} onOpen={setMenu} onPick={(v) => set("title", v)} />
           <button className={k("clr")} type="button" onClick={() => { setF(NO_FILTERS); setSearch(""); }}>Clear all</button>
         </div>
         {tab === "market" && any ? (

@@ -117,7 +117,8 @@ test("the request: agent ids only, at most MAX_MOVE, one of the four lists; a qu
 
 test("the Demo's Prospects page filters as Market does — ranges, brokerages, offices, places, title — and a name search only puts matches first", () => {
   const rows = [agent("a1"), agent("a2", { brand: "Compass", office_name: "Compass Buckhead", sales_volume: 9_000_000, units: 20, est_time_in_industry_months: 240, title: "Team Leader", home_city: "Decatur" }), agent("a3", { full_name: "Zed Smith", sales_volume: null })] as never[];
-  const q = (s: string) => parseMarketQuery(new URLSearchParams(s));
+  // The Demo's own Prospects page — every title (a market is salespeople, set on the server).
+  const q = (s: string) => parseMarketQuery(new URLSearchParams(`list=prospects&${s}`));
   const ids = (s: string) => filterProspects(rows, q(s)).map((a: { id: string }) => a.id);
   assert.deepEqual(ids(""), ["a1", "a2", "a3"]);
   assert.deepEqual(ids("minVolume=5000000"), ["a2"], "a blank sales volume does not pass a minimum");

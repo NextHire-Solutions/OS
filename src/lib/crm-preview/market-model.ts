@@ -6,9 +6,14 @@
  * client's market comes from, so the preview uses the two things we already
  * hold and states them on the page:
  *
- *   Market     every agent in the agent database who belongs to an MLS on the
- *              client's record (os_clients.mls_codes — C21: FMLS, GAMLS). The
- *              record's Areas are free text ("Tampa Bay") and are not used.
+ *   Market     every SALESPERSON in the agent database who belongs to an MLS
+ *              on the client's record (os_clients.mls_codes — C21: FMLS,
+ *              GAMLS). The record's Areas are free text ("Tampa Bay") and are
+ *              not used. Salespeople only, decided here on the server (24 Oct,
+ *              the user: we do not recruit team leaders or managing brokers —
+ *              "we can remove this filter but in backend salesperson should be
+ *              pre filled"): the page has no Title filter, and a title in a
+ *              request for the market is ignored (marketScope, parseMarketQuery).
  *              A code the agent database does not have is named, never guessed
  *              (ECOAR is not silently read as ECAOR).
  *   Prospects  the agents in the client's lists in the agent database — the
@@ -75,6 +80,14 @@ export function resolveMls(codes: readonly string[] | null | undefined, rows: re
 // -------------------------------------------------------------- filters ---
 
 export type MarketList = "market" | "prospects";
+
+/** The only title a market holds (see the top of this file). */
+export const MARKET_TITLE = "Salesperson";
+
+/** The Database app's p_filters for a client's market: the salespeople in its MLSs. */
+export function marketScope(mlsIds: readonly string[]): Record<string, unknown> {
+  return { mls: { include: [...mlsIds], exclude: [] }, title: { include: [MARKET_TITLE], exclude: [] } };
+}
 
 /** The design's filter chips, as presets (the values a chip offers), so nothing free-form reaches the database. */
 export const VOLUME_PRESETS = [1_000_000, 2_000_000, 5_000_000, 10_000_000] as const;
@@ -158,13 +171,15 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
   const range = (min: string, max: string, cap: number): Range => ({ min: amount(min, cap), max: amount(max, cap) });
   const many = (k: string) => [...new Set(p.getAll(k).map((v) => clean(v, 120)).filter((v): v is string => !!v))].slice(0, MAX_PICKS);
   const page = Math.floor(Number(p.get("page")));
-  const titles = (k: string) => many(k).filter((t) => (TITLES as readonly string[]).includes(t));
+  const list: MarketList = p.get("list") === "prospects" ? "prospects" : "market";
+  // A market is salespeople, set by marketScope: a title asked for there is ignored, so the market can never be widened.
+  const titles = (k: string) => (list === "market" ? [] : many(k).filter((t) => (TITLES as readonly string[]).includes(t)));
   const per = p.get("per") === String(SETUP_PAGE_SIZE) ? SETUP_PAGE_SIZE : PAGE_SIZE;
   const sortRaw = p.get("sort") ?? "";
   const sort: SortKey = sortRaw in SORTS ? (sortRaw as SortKey) : "volume";
   const dirRaw = p.get("dir");
   return {
-    list: p.get("list") === "prospects" ? "prospects" : "market",
+    list,
     page: Number.isFinite(page) && page >= 1 ? Math.min(page, maxPage(per)) : 1,
     per,
     q: clean(p.get("q"), 80) ?? "",
