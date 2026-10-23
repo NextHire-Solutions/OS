@@ -574,7 +574,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                 {!allPicked && pageAll && total > rowIds.length ? <button type="button" className="cpv-link" onClick={() => setAllPicked(true)}>Select all {total.toLocaleString("en-US")} that match</button> : null}
                 <span style={{ width: 1, height: 18, background: "#d9e1f2", margin: "0 4px" }} />
                 <span style={{ fontSize: 12, color: "#555a64" }}>Move to</span>
-                <button className={k("btn sm pri")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Prospects") : undefined}><Icon name="plus" size={13} />Prospects</button>
+                {/* Not on Prospects itself: they are there already (24 Oct, the user). */}
+                {list === "market" ? <button className={k("btn sm pri")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Prospects") : undefined}><Icon name="plus" size={13} />Prospects</button> : null}
                 <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("My Agents") : undefined}><Icon name="users" size={13} />My Agents</button>
                 <button className={k("btn sm")} type="button" style={{ color: "#b42318" }} disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("DNC List") : undefined}><Icon name="ban" size={13} />DNC List</button>
                 <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Not on a list") : undefined}><Icon name="x" size={13} />Remove from all lists</button>
