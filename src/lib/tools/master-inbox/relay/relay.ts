@@ -6,7 +6,7 @@ import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
 import { escapeLike, sameName } from "../portals/stop-person-plan.ts";
 import { getMasterInboxSupabase, workspaceId } from "../supabase";
 
-import { fromAddress, liveSendAllowed, messageStream, postmarkToken, sweepSwitchedOff, type Env } from "./gate.ts";
+import { fromAddress, LIVE_ONLY_ENV, liveOnlyDomains, liveSendAllowed, messageStream, postmarkToken, sweepSwitchedOff, withinLiveFence, type Env } from "./gate.ts";
 import { addressHeader, agentDisplayName, buildRelayEmail, cleanDisplayName, messageIdFromPayload, providerSaysAutomatic, replyText, type RelayEmail } from "./message.ts";
 import { bounceKind, createPostmarkTransport, fetchBounces, sendTest, type PostmarkBounce, type Transport } from "./postmark.ts";
 import { asTest, parseTestRecipients, sampleEmail, takeTestSend, TEST_DAILY_CAP, TEST_RECIPIENTS, testAddressRefusal, type TestAddressContext } from "./test-send.ts";
@@ -658,7 +658,10 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
 
   // Live only when every lock is open; a later reply never goes live after a practised hand-off.
   const parentPractised = rec.kind === "follow_up" && parent?.practice !== false;
-  const mode = parentPractised ? "practice" : deliveryMode(ctx.global, client.relay, liveSendAllowed(ctx.env));
+  const unfenced = parentPractised ? "practice" : deliveryMode(ctx.global, client.relay, liveSendAllowed(ctx.env));
+  // The pilot fence (gate.ts): live only when every recipient is on an allowed domain — anything else is practised, and says why.
+  const fenced = unfenced === "live" && !withinLiveFence(recipients.map((r) => r.email), ctx.env);
+  const mode = fenced ? "practice" : unfenced;
   const practice = mode === "practice";
 
   const agentMessageId = messageIdFromPayload(payload);
@@ -682,6 +685,7 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
     reason: null,
     detail: null,
     error: null,
+    ...(fenced ? { detail: `practised: a recipient is outside ${LIVE_ONLY_ENV}` } : {}),
     recipients,
     from_name: email.fromName,
     from_address: email.fromAddress,
@@ -792,7 +796,7 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
     const { data: clientRow, error: swErr } = await ctx.os("os_clients").select("relay_settings").eq("id", osClientId).maybeSingle();
     if (swErr) return stop("held", "read_error", { ...computed, detail: `switches: ${swErr.message}` });
     const nowBrokerage = brokerageFromJson((clientRow as Row | null)?.relay_settings);
-    const stillLive = !missing && nowGlobal.enabled && deliveryMode(nowGlobal, nowBrokerage, liveSendAllowed(ctx.env)) === "live";
+    const stillLive = !missing && nowGlobal.enabled && deliveryMode(nowGlobal, nowBrokerage, liveSendAllowed(ctx.env)) === "live" && withinLiveFence(recipients.map((r) => r.email), ctx.env);
     const stillMayGo = via.by === "click" || effectiveMode(nowGlobal, nowBrokerage) === "automatic";
     if (!stillLive || !stillMayGo) return settle("ready", { ...computed, practice: !stillLive, decided_by: decidedBy });
   }
@@ -1611,7 +1615,8 @@ export interface HeldCampaign {
 export interface RelayOverview {
   available: boolean;
   settings: GlobalRelaySettings;
-  server: { liveSendAllowed: boolean; tokenSet: boolean; fromAddress: string };
+  /** liveOnly: the pilot fence's domains while OS_BROKERAGE_RELAY_LIVE_ONLY is set (gate.ts), else null. */
+  server: { liveSendAllowed: boolean; tokenSet: boolean; fromAddress: string; liveOnly: string[] | null };
   brokerages: BrokerageRow[];
   held: HeldCampaign[];
   recent: Array<RelayRecordView & { threadId: string; agentName: string | null }>;
@@ -1627,7 +1632,7 @@ export async function relayOverview(deps: RelayDeps = {}, at = new Date()): Prom
   const os: Os = deps.os ?? osTable;
   const ws = deps.ws ?? (await workspaceId());
   const now = at.toISOString();
-  const server = { liveSendAllowed: liveSendAllowed(env), tokenSet: postmarkToken(env) !== null, fromAddress: fromAddress(env) };
+  const server = { liveSendAllowed: liveSendAllowed(env), tokenSet: postmarkToken(env) !== null, fromAddress: fromAddress(env), liveOnly: liveOnlyDomains(env) };
   const { settings, missing } = await loadGlobalSettings(os, ws);
   const tests = await loadTestRecipients(os, ws).then((t) => ({ recipients: t.list, ready: t.ready }));
   if (missing) return { available: false, settings, server, brokerages: [], held: [], recent: [], tests, now };

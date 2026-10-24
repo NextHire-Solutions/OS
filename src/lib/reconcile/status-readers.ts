@@ -22,7 +22,7 @@ import {
   type ExceptionIndex,
 } from "./coverage";
 import { reconcileCounts, type CountReconciliation, type ToolRow } from "./counts";
-import { nonClientReason } from "@/lib/clients/roster";
+import { isKnownNonClient, nonClientReason } from "@/lib/clients/roster";
 
 /*
  * Gathers each client's status from every source that holds one, so
@@ -101,7 +101,8 @@ async function readOsClients(): Promise<{ rows: OsClientKeys[]; unreadable: bool
       an_client_id: string | null; orch_client_id: string | null;
     }[]) {
       const name = (raw.name ?? "").trim();
-      if (!name || PLACEHOLDER.test(name)) continue;
+      // Not a client (BrokerStaffer's own record, 24 Oct): not on the master list, so no tool is "missing" it; a tool's row of it is explained, as Demo Portal's is.
+      if (!name || PLACEHOLDER.test(name) || isKnownNonClient(name)) continue;
       const keys = [name, ...(raw.aliases ?? [])].map(norm).filter(Boolean);
       rows.push({
         id: raw.id,

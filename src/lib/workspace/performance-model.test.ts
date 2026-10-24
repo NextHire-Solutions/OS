@@ -112,3 +112,9 @@ test("with the status history unreadable, no pause names are claimed", () => {
   assert.deepEqual(p.months[0].pausedNames, []);
   assert.equal(p.months[0].paused, null);
 });
+
+test("BrokerStaffer's own record is never counted (Eddy, 24 Oct: 'Leave BrokerStaffer out like the demo portal')", () => {
+  const ours = { ...c("active", "2026-10-24"), name: "BrokerStaffer" };
+  const p = performanceFrom([c("active", "2026-09-01"), ours], null, null, 1, TODAY);
+  assert.equal(p.totals.active, 1);
+});

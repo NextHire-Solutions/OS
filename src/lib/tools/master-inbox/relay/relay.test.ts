@@ -285,6 +285,67 @@ test("LIVE only with every lock open: handed to Postmark once, exactly as the pl
   assertContained();
 });
 
+/*
+ * THE PILOT FENCE (24 Oct): BrokerStaffer's own hand-off goes live first. With
+ * OS_BROKERAGE_RELAY_LIVE_ONLY=brokerstaffer.com, a client's brokerage that is
+ * switched on — by mistake — is only practised, and Postmark is never called
+ * for it; BrokerStaffer's own goes to its people. A contact list that mixes in
+ * one outside address is practised whole, never sent in part.
+ */
+function seedBrokerStaffer(contact3: string | null = null) {
+  const [portal] = add("clients", [{ name: "BrokerStaffer", slug: "brokerstaffer", aliases: [] }]);
+  const [rec] = add("os_clients", [{
+    name: "BrokerStaffer", aliases: [], status: "active", mi_client_id: portal.id, brokerage: "BrokerStaffer",
+    contact_name: "Ryan", contact_role: "Sales", contact_email: "ryan.j@brokerstaffer.com",
+    contact2_name: "Eddy", contact2_role: "Owner", contact2_email: "eddy@brokerstaffer.com",
+    ...(contact3 ? { contact3_name: "Outside", contact3_role: "Other", contact3_email: contact3 } : {}),
+    more_contacts: [], intro_variants: [], relay_settings: { enabled: true, mode: "automatic" }, pipeline_entry: "introduction",
+  }]);
+  return { portal: portal.id, client: rec.id };
+}
+const FENCED = { ...LIVE, OS_BROKERAGE_RELAY_LIVE_ONLY: "brokerstaffer.com" };
+
+test("THE PILOT FENCE: a client's brokerage switched on by mistake is only practised — Postmark never called; BrokerStaffer's own goes live to its people", async () => {
+  seed({ practice_mode: false, mode: "one_click" }, { enabled: true, mode: "automatic" });
+  const bs = seedBrokerStaffer();
+  const client = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  const ours = conversation({ portal: bs.portal, campaign: "BrokerStaffer - Dallas recruiting", email: "taylor@agent.test", name: "Taylor Agent" });
+  label(L.interested, client.thread.id);
+  label(L.interested, ours.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps(FENCED));
+  const jeff = recordFor(client.thread.id);
+  assert.equal(jeff.status, "practice", "the client's hand-off is practised");
+  assert.equal(jeff.practice, true);
+  assert.match(String(jeff.detail), /OS_BROKERAGE_RELAY_LIVE_ONLY/, "and says why");
+  assert.equal(handed.length, 1, "Postmark is called once — for BrokerStaffer only");
+  assert.equal(handed[0].toHeader, '"Ryan" <ryan.j@brokerstaffer.com>, "Eddy" <eddy@brokerstaffer.com>');
+  assert.ok(handed.every((e) => e.to.every((r) => r.email.endsWith("@brokerstaffer.com"))), "every address handed over is BrokerStaffer's");
+  const mine = recordFor(ours.thread.id);
+  assert.equal(mine.status, "sent");
+  assert.equal(mine.practice, false);
+  assertContained();
+});
+
+test("THE PILOT FENCE: one outside address among BrokerStaffer's contacts → the whole hand-off is practised, nothing sent in part", async () => {
+  seed({ practice_mode: false }, {});
+  const bs = seedBrokerStaffer("someone@client-brokerage.test");
+  const ours = conversation({ portal: bs.portal, campaign: "BrokerStaffer - Dallas recruiting", email: "taylor@agent.test", name: "Taylor Agent" });
+  label(L.interested, ours.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps(FENCED));
+  assert.equal(recordFor(ours.thread.id).status, "practice");
+  assert.equal(handed.length, 0);
+});
+
+test("THE PILOT FENCE: set but naming no valid domain fences everything; unset leaves the locks as they were", async () => {
+  seed({ practice_mode: false }, { enabled: true, mode: "automatic" });
+  const bs = seedBrokerStaffer();
+  const a = conversation({ portal: bs.portal, campaign: "BrokerStaffer - Dallas recruiting", email: "taylor@agent.test", name: "Taylor Agent" });
+  label(L.interested, a.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps({ ...LIVE, OS_BROKERAGE_RELAY_LIVE_ONLY: " , not a domain" }));
+  assert.equal(recordFor(a.thread.id).status, "practice");
+  assert.equal(handed.length, 0);
+});
+
 test("a definite Postmark refusal frees the agent's slot so Try again works; an unknown outcome refuses a retry", async () => {
   seed({ practice_mode: false }, { enabled: true });
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });

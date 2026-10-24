@@ -1,6 +1,7 @@
 import "server-only";
 
 import { osTable } from "@/lib/clients/os-db";
+import { isKnownNonClient } from "@/lib/clients/roster";
 import { getMasterClientList, type MasterClient } from "@/lib/clients/master-list";
 import { dayNumber, dayToDate, scheduleFor } from "@/lib/tools/client-health/billing";
 import type { BillingInterval } from "@/lib/tools/client-health/types";
@@ -451,7 +452,8 @@ export async function loadCommissions(opts: { viewerEmail: string; admin: boolea
     readSettings().catch(() => ({ gross: new Map(), available: false } as Settings)),
     readHistory().catch(() => { unavailable.push("Status history"); return new Map<string, StatusChange[]>(); }),
   ]);
-  const base = { clients: list.clients, team, salespeople: sp.people, settings };
+  // A record that is not a client (BrokerStaffer's own, 24 Oct) earns no one anything and is never "unassigned".
+  const base = { clients: list.clients.filter((c) => !isKnownNonClient(c.name)), team, salespeople: sp.people, settings };
 
   // Stripe is read only for the clients this viewer may see.
   const { inScope } = scopeFor({ ...base, viewerEmail: opts.viewerEmail, admin: opts.admin, as: opts.as });

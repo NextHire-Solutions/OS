@@ -98,6 +98,12 @@ function Panel({ data }: { data: RelayOverview }) {
             <div className="mut">
               Live sending: <b>{data.server.liveSendAllowed ? "allowed" : "locked"}</b> (OS_BROKERAGE_RELAY_LIVE_SEND) · Postmark token:{" "}
               <b>{data.server.tokenSet ? "set" : "not set"}</b>
+              {data.server.liveOnly ? (
+                <>
+                  {" "}· Live only to:{" "}
+                  <b>{data.server.liveOnly.length ? data.server.liveOnly.map((d) => `@${d}`).join(", ") : "no one"}</b> (OS_BROKERAGE_RELAY_LIVE_ONLY — any other address is practised, never sent)
+                </>
+              ) : null}
             </div>
           </div>
           <div>

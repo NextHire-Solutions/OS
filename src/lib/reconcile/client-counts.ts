@@ -3,6 +3,7 @@ import "server-only";
 import { osTable } from "@/lib/clients/os-db";
 import { ttlCache } from "@/lib/cache/ttl";
 
+import { isKnownNonClient } from "@/lib/clients/roster";
 import { gatherCountReport } from "./status-readers";
 import type { ExtraRow, SecondRow } from "./counts";
 
@@ -40,13 +41,15 @@ export interface ClientCounts {
 
 async function load(): Promise<ClientCounts> {
   const [{ data, error }, report] = await Promise.all([
-    osTable("os_clients").select("status").limit(1000),
+    osTable("os_clients").select("name, status").limit(1000),
     gatherCountReport(),
   ]);
   if (error) throw new Error(error.message);
+  // A record that is not a client (BrokerStaffer's own, 24 Oct — roster.ts NOT_CLIENTS) is never counted.
+  const rows = ((data ?? []) as unknown as { name: string | null; status: string }[]).filter((r) => !isKnownNonClient(r.name ?? ""));
   const byStatus = { onboarding: 0, active: 0, paused: 0, churned: 0 };
-  for (const r of (data ?? []) as unknown as { status: keyof typeof byStatus }[]) {
-    if (r.status in byStatus) byStatus[r.status]++;
+  for (const r of rows) {
+    if (r.status in byStatus) byStatus[r.status as keyof typeof byStatus]++;
   }
   const tools: ClientCounts["tools"] = {};
   for (const t of report.tools) {
@@ -56,7 +59,7 @@ async function load(): Promise<ClientCounts> {
       absent: t.absent.map((a) => ({ name: a.name, status: a.status })),
     };
   }
-  return { total: (data ?? []).length, byStatus, tools, unreadable: report.unreadable };
+  return { total: rows.length, byStatus, tools, unreadable: report.unreadable };
 }
 
 export const getClientCounts = ttlCache(load, { ttlMs: 60_000, staleMs: 5 * 60_000, shared: "client-counts" });

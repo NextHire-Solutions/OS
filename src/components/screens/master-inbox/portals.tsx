@@ -15,6 +15,7 @@
  * checks that the OS mounts the same components — this one mounted 0 of 2.
  */
 
+import { isKnownNonClient } from "@/lib/clients/roster";
 import { requireSession } from "@/lib/auth/workspace";
 import { masterAll, masterByToolId, portalPeopleByMiId, resolveByIdOrName, type MasterFacts, type PortalPeopleCounts } from "@/lib/clients/master-lookup";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -111,7 +112,7 @@ export async function PortalsAdminScreen({ admin: isAdmin = false }: { admin?: b
    * client as missing a portal.
    */
   const activeClients = masterList.length
-    ? masterList.filter((m) => m.status === "active").map((m) => ({ id: m.id, name: m.name }))
+    ? masterList.filter((m) => m.status === "active" && !isKnownNonClient(m.name)).map((m) => ({ id: m.id, name: m.name }))
     : null;
 
   return <PortalsAdmin rows={rows} admin={isAdmin} activeClients={activeClients} />;

@@ -119,3 +119,12 @@ test("two tool spellings of one client count once", () => {
   assert.equal(m.matched.size, 1);
   assert.deepEqual(m.matched.get("BHGRE Base Camp"), ["BHGRE Base Camp", "BHGRE Basecamp"]);
 });
+
+test("BrokerStaffer's own record is a known non-client — case aside; a client whose name merely contains it is not", async () => {
+  const { isKnownNonClient, nonClientReason } = await import("./roster.ts");
+  assert.equal(isKnownNonClient("BrokerStaffer"), true);
+  assert.equal(isKnownNonClient("BROKERSTAFFER"), true, "case aside");
+  assert.match(nonClientReason("BrokerStaffer") ?? "", /never counted/);
+  assert.equal(isKnownNonClient("JM Properties (BrokerStaffer manual list)"), false);
+  assert.equal(isKnownNonClient("BrokerStaffer Realty"), false);
+});

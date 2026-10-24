@@ -3,6 +3,8 @@
  * See performance.ts for where each input comes from.
  */
 
+import { isKnownNonClient } from "@/lib/clients/roster";
+
 export interface PlanBreakdown {
   plan: string;
   label: string;
@@ -101,6 +103,8 @@ export function performanceFrom(
   /** False when the status history could not be read: pauses are then unknown, not zero. */
   pauseHistory = true,
 ): Performance {
+  // A record that is not a client (BrokerStaffer's own, 24 Oct) is never counted.
+  clients = clients.filter((c) => !isKnownNonClient(c.name ?? ""));
   const count = (s: string) => clients.filter((c) => c.status === s).length;
   const addedOn = (c: PerfClient) => (c.onboardingDate ?? c.signupDate)?.slice(0, 10) ?? null;
   const churnedOn = (c: PerfClient) => (c.status === "churned" && c.churnDate ? c.churnDate.slice(0, 10) : null);

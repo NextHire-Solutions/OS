@@ -1,4 +1,4 @@
-import { isRelayAddress, LIVE_SEND_ENV, liveSendAllowed, messageStream, postmarkToken, TOKEN_ENV, type Env } from "./gate.ts";
+import { isRelayAddress, LIVE_ONLY_ENV, LIVE_SEND_ENV, liveSendAllowed, messageStream, postmarkToken, TOKEN_ENV, withinLiveFence, type Env } from "./gate.ts";
 import { addressHeader, type RelayEmail } from "./message.ts";
 import { TEST_RECIPIENTS } from "./test-send.ts";
 
@@ -15,6 +15,8 @@ import { TEST_RECIPIENTS } from "./test-send.ts";
  *   2. POSTMARK_SERVER_TOKEN is set                    (default: unset)
  *   3. From is on leads.brokerstaffer.com
  *   4. there is somebody to send to
+ *   5. while OS_BROKERAGE_RELAY_LIVE_ONLY is set, every recipient is on one
+ *      of its domains (the pilot fence, gate.ts)
  *
  * The relay has already decided "live" before it calls this (relay.ts, which
  * also needs the Settings switches); this is the second, independent lock, so
@@ -32,7 +34,7 @@ export type SendResult =
   | {
       ok: false;
       /** Set when a lock refused it — nothing was attempted. */
-      gated: "live_send_off" | "no_token" | "bad_from" | "no_recipients" | null;
+      gated: "live_send_off" | "no_token" | "bad_from" | "no_recipients" | "outside_fence" | null;
       error: string;
       /**
        * True when Postmark definitely did not accept it (a refusal, or gated).
@@ -85,6 +87,9 @@ export function createPostmarkTransport(deps: TransportDeps = {}): Transport {
         return { ok: false, gated: "bad_from", error: "From is not on leads.brokerstaffer.com — nothing was sent", definite: true };
       }
       if (!email.to.length) return { ok: false, gated: "no_recipients", error: "No recipient — nothing was sent", definite: true };
+      if (!withinLiveFence(email.to.map((r) => r.email), env)) {
+        return { ok: false, gated: "outside_fence", error: `A recipient is outside ${LIVE_ONLY_ENV} — nothing was sent`, definite: true };
+      }
 
       const doFetch = deps.fetch ?? fetch;
       try {
