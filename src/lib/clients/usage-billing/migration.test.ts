@@ -32,7 +32,8 @@ test("0043 only creates its two os_* tables and their indexes, IF NOT EXISTS, RL
     /^BEGIN$/i,
     /^COMMIT$/i,
     /^CREATE TABLE IF NOT EXISTS public\.(os_\w+) \(/i,
-    /^CREATE INDEX IF NOT EXISTS \w+ ON public\.(os_\w+) /i,
+    /^SET LOCAL lock_timeout = '5s'$/i,
+    /^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS \w+ ON public\.(os_\w+) /i,
     /^ALTER TABLE public\.(os_\w+) ENABLE ROW LEVEL SECURITY$/i,
   ];
   for (const stmt of statements) {
@@ -57,7 +58,7 @@ test("0043's defaults: off, test only, every 7 or 14 days, handoffs; one row per
   assert.match(sql, /every_days\s+integer\s+NOT NULL DEFAULT 7 CHECK \(every_days IN \(7, 14\)\)/);
   assert.match(sql, /lead_source\s+text\s+NOT NULL DEFAULT 'handoffs' CHECK \(lead_source IN \('handoffs', 'introductions'\)\)/);
   assert.match(sql, /status\s+text\s+NOT NULL DEFAULT 'preview' CHECK \(status IN \('preview', 'draft', 'charged', 'paid', 'failed', 'void'\)\)/);
-  assert.match(sql, /UNIQUE \(os_client_id, period_start\)/, "the database's never-twice");
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS \w+ ON public\.os_usage_billing_periods \(os_client_id, period_start, test_mode\)/, "the database's never-twice, test and live kept apart");
 });
 
 test("the scheduled run is registered only behind OS_USAGE_BILLING_ENABLED=1 on Railway (schedulerAllowed), re-checked on every tick", () => {

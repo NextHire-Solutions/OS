@@ -53,7 +53,7 @@ export interface SweepDeps {
   os?: Os;
   env?: Env;
   now?: () => Date;
-  readEntries?: (source: ListSource, cursor: Cursor, limit: number) => Promise<ListEntry[]>;
+  readEntries?: (source: ListSource, cursor: Cursor, limit: number, before: string) => Promise<ListEntry[]>;
   clients?: () => Promise<OwnerClient[]>;
   portals?: () => Promise<{ id: string; name: string; slug: string | null }[]>;
   campaigns?: (client: OwnerClient) => Promise<ClientCampaign[]>;
@@ -116,7 +116,10 @@ export async function loadSettings(os: Os = osTable): Promise<ListSettings> {
 /**
  * The global switches: { enabled?, practiceMode?, ifUpdatedAt? }. Switching
  * on, or leaving practice, starts from NOW — nothing added earlier is acted
- * on. A page opened before someone else's change cannot undo it.
+ * on. Switching on ALWAYS starts in practice: leaving practice is its own,
+ * later save. Any change to the switches abandons entries a pass had claimed
+ * but not finished — they are never finished later under different switches.
+ * A page opened before someone else's change cannot undo it.
  */
 export async function saveSettings(body: unknown, who: string, os: Os = osTable, now = new Date()): Promise<ListSettings> {
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
@@ -129,8 +132,9 @@ export async function saveSettings(body: unknown, who: string, os: Os = osTable,
     throw new CampaignListError("These settings were changed by someone else since this page was opened — nothing was saved. The page now shows the newest; make your change again.", 409);
   }
   const enabled = typeof b.enabled === "boolean" ? b.enabled : s.enabled;
-  const practiceMode = typeof b.practiceMode === "boolean" ? b.practiceMode : s.practiceMode;
-  const restart = (enabled && !s.enabled) || (enabled && s.practiceMode && !practiceMode);
+  const switchingOn = enabled && !s.enabled;
+  const practiceMode = switchingOn ? true : typeof b.practiceMode === "boolean" ? b.practiceMode : s.practiceMode;
+  const restart = switchingOn || (enabled && s.practiceMode && !practiceMode);
   const row: Row = {
     id: "default",
     enabled,
@@ -141,6 +145,11 @@ export async function saveSettings(body: unknown, who: string, os: Os = osTable,
   };
   const { error } = await os("os_campaign_list_settings").upsert(row, { onConflict: "id" });
   if (error) throw new CampaignListError(error.message, 502);
+  if (enabled !== s.enabled || practiceMode !== s.practiceMode) {
+    await os("os_campaign_removals")
+      .update({ status: "skipped", reason: "The clean-up's switches changed before this entry was finished — it was not acted on.", updated_at: now.toISOString() })
+      .eq("status", "pending");
+  }
   return loadSettings(os);
 }
 
@@ -165,6 +174,12 @@ function clientFromRow(r: Row | null): ClientListSettings {
   };
 }
 
+/** One client's switch, read now — never a copy from the start of a pass. Unreadable = off. */
+async function clientSwitchOn(os: Os, osClientId: string): Promise<boolean> {
+  const { data, error } = await os("os_campaign_list_clients").select("remove_enabled").eq("os_client_id", osClientId).maybeSingle();
+  return !error && (data as Row | null)?.remove_enabled === true;
+}
+
 async function clientSwitches(os: Os): Promise<Map<string, ClientListSettings>> {
   const { data, error } = await os("os_campaign_list_clients").select("*");
   if (error) return new Map();
@@ -179,9 +194,14 @@ const ENTRY_COLUMNS: Record<ListSource, string> = {
 };
 const TABLE: Record<ListSource, string> = { my_agents: "client_agents", dnc: "client_dnc_entries" };
 
-/** Entries added after the cursor, oldest first. Read-only. */
-async function readEntriesFromMi(source: ListSource, cursor: Cursor, limit: number): Promise<ListEntry[]> {
-  let q = getMasterInboxSupabase().from(TABLE[source]).select(ENTRY_COLUMNS[source]);
+/**
+ * Entries added after the cursor and before `before`, oldest first. Read-only.
+ * `before` holds back the last two minutes: created_at is when an insert
+ * BEGAN, so a long CSV import can commit after a later single add — reading
+ * right up to now could move the cursor past rows not yet visible.
+ */
+async function readEntriesFromMi(source: ListSource, cursor: Cursor, limit: number, before: string): Promise<ListEntry[]> {
+  let q = getMasterInboxSupabase().from(TABLE[source]).select(ENTRY_COLUMNS[source]).lt("created_at", before);
   q = cursor.id
     ? q.or(`created_at.gt."${cursor.at}",and(created_at.eq."${cursor.at}",id.gt.${cursor.id})`)
     : q.gte("created_at", cursor.at);
@@ -268,16 +288,34 @@ interface Decision {
   campaigns: CampaignOutcome[];
 }
 
+type Mode = { live: true } | { live: false; reason: string };
+/** Asked right before each campaign's removal: how this client's campaigns are to be treated NOW. */
+type Gate = (osClientId: string) => Promise<(campaignId: string) => Mode>;
+
+/** The gate with every switch read fresh: on, out of practice, the client's own switch, the server lock, the fence. */
+async function freshGate(x: Real, osClientId: string): Promise<{ settings: ListSettings; modeFor: (campaignId: string) => Mode }> {
+  const settings = await loadSettings(x.os);
+  if (!settings.available || !settings.enabled) return { settings, modeFor: () => ({ live: false, reason: PRACTICE_TEXT.switched_off }) };
+  const on = settings.practiceMode ? false : await clientSwitchOn(x.os, osClientId);
+  return {
+    settings,
+    modeFor: (campaignId) => {
+      const m = campaignMode(settings, on, campaignId, x.env);
+      return m.live ? m : { live: false, reason: PRACTICE_TEXT[m.reason] };
+    },
+  };
+}
+
 /**
  * What one entry does: the reason it does nothing, or its campaigns with
- * each one's outcome. `mode` decides each campaign — practice or real.
+ * each one's outcome. `gate` decides each campaign — practice or real.
  */
 async function decide(
   x: Real,
   ctx: Context,
   entry: ListEntry,
   source: ListSource,
-  mode: (osClientId: string, campaignId: string) => { live: true } | { live: false; reason: string },
+  gate: Gate,
 ): Promise<Decision> {
   const target = entryTarget(entry, source);
   const base = { osClientId: null as string | null, email: target.ok ? target.email : null, campaigns: [] as CampaignOutcome[] };
@@ -293,7 +331,8 @@ async function decide(
   const outcomes: CampaignOutcome[] = [];
   const actor = `campaign-cleanup (${source === "dnc" ? "DNC" : "My Agents"})`;
   for (const p of plan) {
-    const m = mode(client.id, p.campaignId);
+    // Asked again before EVERY campaign: a switch turned off between two removals stops the second.
+    const m = (await gate(client.id))(p.campaignId);
     if (!m.live) {
       outcomes.push({ ...p, outcome: "would_remove", reason: m.reason });
       continue;
@@ -309,6 +348,8 @@ async function decide(
 
 export interface SweepResult {
   off?: string;
+  /** Why a pass ended early: its switches changed under it. The next pass starts from the new settings. */
+  stopped?: string;
   seen: number;
   claimed: number;
   outcomes: Partial<Record<RemovalStatus, number>>;
@@ -318,7 +359,19 @@ export interface SweepResult {
 /** A pending claim this old was left by a process that died mid-entry. */
 const STALE_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 3;
+/** Entries younger than this are left for a later pass (readEntriesFromMi). */
+const SETTLE_MS = 2 * 60_000;
 
+/**
+ * One pass. Its settings are read once at the start; every guard that
+ * matters is then re-checked as it goes:
+ *   - right before anything is removed, the switches and the client's own
+ *     switch are read again (freshGate) — switched off, back in practice or
+ *     changed: nothing more is removed and the pass ends;
+ *   - the cursor only moves from where this pass found it (compare-and-set):
+ *     if a person switched on or left practice meanwhile (which moves it to
+ *     "now"), the pass ends instead of putting it back.
+ */
 export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<SweepResult> {
   const x = realDeps(deps);
   const result: SweepResult = { seen: 0, claimed: 0, outcomes: {}, errors: [] };
@@ -326,15 +379,17 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
   const settings = await loadSettings(x.os);
   if (!settings.available) return { ...result, off: "migration 0042 not run" };
   if (!settings.enabled) return { ...result, off: "switched off" };
-  const cursor: Cursor = settings.cursor ?? { at: x.now().toISOString(), id: null };
   if (!settings.cursor) {
-    await x.os("os_campaign_list_settings").update({ cursor_at: cursor.at, cursor_id: null }).eq("id", "default");
+    // On without a starting point (should not happen — saveSettings sets one): start now, act next pass.
+    await x.os("os_campaign_list_settings").update({ cursor_at: x.now().toISOString(), cursor_id: null }).eq("id", "default").is("cursor_at", null);
     return result;
   }
+  let cursor: Cursor = settings.cursor;
 
+  const before = new Date(x.now().getTime() - SETTLE_MS).toISOString();
   const [agents, dnc] = await Promise.all([
-    x.readEntries("my_agents", cursor, settings.perRun),
-    x.readEntries("dnc", cursor, settings.perRun),
+    x.readEntries("my_agents", cursor, settings.perRun, before),
+    x.readEntries("dnc", cursor, settings.perRun, before),
   ]);
   const queue = [
     ...agents.map((e) => ({ e, source: "my_agents" as const })),
@@ -347,16 +402,20 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
     .select("id, source, entry_id, attempts")
     .eq("status", "pending")
     .lt("updated_at", new Date(x.now().getTime() - STALE_MS).toISOString())
-    .lt("attempts", MAX_ATTEMPTS)
     .limit(5);
 
   if (!queue.length && !(stale.data ?? []).length) return result;
   const ctx = await context(x);
-  const mode = (osClientId: string, campaignId: string) => {
-    const m = campaignMode(settings, ctx.switches.get(osClientId)?.removeEnabled === true, campaignId, x.env);
-    return m.live ? m : { live: false as const, reason: PRACTICE_TEXT[m.reason] };
-  };
   const tally = (s: RemovalStatus) => (result.outcomes[s] = (result.outcomes[s] ?? 0) + 1);
+  const gate: Gate = async (osClientId) => {
+    // Practice at the start of the pass: nothing can be removed in it, whatever happens meanwhile.
+    if (settings.practiceMode) return () => ({ live: false, reason: PRACTICE_TEXT.practice_mode });
+    const fresh = await freshGate(x, osClientId);
+    if (!fresh.settings.enabled) result.stopped = "the clean-up was switched off during this pass";
+    else if (fresh.settings.updatedAt !== settings.updatedAt) result.stopped = "the switches changed during this pass";
+    if (result.stopped) return () => ({ live: false, reason: fresh.settings.enabled ? PRACTICE_TEXT.practice_mode : PRACTICE_TEXT.switched_off });
+    return fresh.modeFor;
+  };
 
   for (const { e, source } of queue) {
     result.seen++;
@@ -376,28 +435,51 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
     const id = !claim.error ? String(((claim.data ?? []) as Row[])[0]?.id ?? "") : "";
     if (id) {
       result.claimed++;
-      await finish(x, id, e, source, ctx, mode, tally, result);
+      await finish(x, id, e, source, ctx, gate, tally, result);
     } else if (claim.error && claim.error.code !== "23505") {
       result.errors.push(`${source} ${e.id}: ${claim.error.message}`);
       break; // the cursor stays here, so this entry is tried again next pass
     }
-    const moved = await x.os("os_campaign_list_settings").update({ cursor_at: e.created_at, cursor_id: e.id }).eq("id", "default");
+    // Compare-and-set: only from where this pass found the cursor.
+    const move = x.os("os_campaign_list_settings").update({ cursor_at: e.created_at, cursor_id: e.id }).eq("id", "default").eq("cursor_at", cursor.at);
+    const moved = await (cursor.id ? move.eq("cursor_id", cursor.id) : move.is("cursor_id", null)).select("id");
     if (moved.error) {
       result.errors.push(`cursor: ${moved.error.message}`);
       break;
     }
+    if (!((moved.data ?? []) as Row[]).length) {
+      result.stopped ??= "the cursor was moved by a switch change during this pass";
+      break;
+    }
+    cursor = { at: e.created_at, id: e.id };
+    if (result.stopped) break;
   }
 
-  // Entries a dead process claimed and never finished.
-  for (const r of (stale.data ?? []) as Row[]) {
-    const source = r.source === "dnc" ? "dnc" : "my_agents";
-    const { data } = await getMasterInboxSupabase().from(TABLE[source]).select(ENTRY_COLUMNS[source]).eq("id", String(r.entry_id)).maybeSingle();
-    await x.os("os_campaign_removals").update({ attempts: Number(r.attempts ?? 1) + 1, updated_at: x.now().toISOString() }).eq("id", String(r.id));
+  // Entries a dead process claimed and never finished — one process each, a few tries, then failed.
+  for (const r of result.stopped ? [] : ((stale.data ?? []) as Row[])) {
+    const attempts = Number(r.attempts ?? 1);
+    const take = await x.os("os_campaign_removals")
+      .update({ attempts: attempts + 1, updated_at: x.now().toISOString() })
+      .eq("id", String(r.id)).eq("status", "pending").eq("attempts", attempts)
+      .select("id");
+    if (take.error || !((take.data ?? []) as Row[]).length) continue; // another process has it
+    if (attempts >= MAX_ATTEMPTS) {
+      await x.os("os_campaign_removals").update({ status: "failed", reason: `Could not be finished after ${MAX_ATTEMPTS} tries.` }).eq("id", String(r.id));
+      tally("failed");
+      continue;
+    }
+    const source: ListSource = r.source === "dnc" ? "dnc" : "my_agents";
+    const { data, error } = await getMasterInboxSupabase().from(TABLE[source]).select(ENTRY_COLUMNS[source]).eq("id", String(r.entry_id)).maybeSingle();
+    if (error) {
+      // Not "deleted" — just unreadable right now. Left pending for another try.
+      result.errors.push(`${source} ${String(r.entry_id)}: ${error.message}`);
+      continue;
+    }
     if (!data) {
       await x.os("os_campaign_removals").update({ status: "skipped", reason: "The entry was deleted before it was looked at." }).eq("id", String(r.id));
       continue;
     }
-    await finish(x, String(r.id), data as unknown as ListEntry, source, ctx, mode, tally, result);
+    await finish(x, String(r.id), data as unknown as ListEntry, source, ctx, gate, tally, result);
   }
   return result;
 }
@@ -408,27 +490,40 @@ async function finish(
   e: ListEntry,
   source: ListSource,
   ctx: Context,
-  mode: Parameters<typeof decide>[4],
+  gate: Gate,
   tally: (s: RemovalStatus) => void,
   result: SweepResult,
 ) {
+  let d: Decision;
   try {
-    const d = await decide(x, ctx, e, source, mode);
-    await x.os("os_campaign_removals").update({
-      status: d.status,
-      os_client_id: d.osClientId,
-      email: d.email ?? e.email,
-      reason: d.reason,
-      campaigns: d.campaigns,
-      error: d.campaigns.find((c) => c.error)?.error ?? null,
-      updated_at: x.now().toISOString(),
-    }).eq("id", id);
-    tally(d.status);
+    d = await decide(x, ctx, e, source, gate);
   } catch (err) {
     // Left pending: retried (up to MAX_ATTEMPTS) once it is STALE_MS old.
     const message = err instanceof Error ? err.message : String(err);
     await x.os("os_campaign_removals").update({ error: message, updated_at: x.now().toISOString() }).eq("id", id);
     result.errors.push(`${source} ${e.id}: ${message}`);
+    return;
+  }
+  const record = {
+    status: d.status,
+    os_client_id: d.osClientId,
+    email: d.email ?? e.email,
+    reason: d.reason,
+    campaigns: d.campaigns,
+    error: d.campaigns.find((c) => c.error)?.error ?? null,
+    updated_at: x.now().toISOString(),
+  };
+  // Twice if need be: after a real removal this row is the only record of it.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { error } = await x.os("os_campaign_removals").update(record).eq("id", id);
+    if (!error) {
+      tally(d.status);
+      return;
+    }
+    if (attempt === 1) {
+      console.error(`[campaign-cleanup] could not record ${source} ${e.id}: ${error.message} — what happened: ${JSON.stringify(record)}`);
+      result.errors.push(`${source} ${e.id}: not recorded (${error.message})`);
+    }
   }
 }
 
@@ -461,10 +556,12 @@ export async function checkEmail(osClientId: string, rawEmail: string, deps: Swe
 }
 
 /**
- * "Remove now" on one recorded entry (admins). A person pressing the button
- * stands in for practice mode and the client's switch — but never for the
- * server: OS_CAMPAIGN_CLEANUP_LIVE=1 and the test fence still decide. The
- * person is looked up again first; the record may be days old.
+ * "Remove now" on one recorded entry (admins) — a retry of a failed or
+ * partly removed entry, or one practised earlier. Exactly the same gates as
+ * the sweep, all read fresh: the clean-up on, out of practice, this client's
+ * own switch on, OS_CAMPAIGN_CLEANUP_LIVE=1, and the test fence. One press
+ * acts once (a conditional claim on the record). The person is looked up
+ * again first; the record may be days old.
  */
 export async function removeNow(rowId: string, who: string, deps: SweepDeps = {}) {
   const x = realDeps(deps);
@@ -474,15 +571,35 @@ export async function removeNow(rowId: string, who: string, deps: SweepDeps = {}
   const row = (data ?? null) as Row | null;
   if (!row) throw new CampaignListError("No such record.", 404);
   if (!["practice", "partly_removed", "failed"].includes(String(row.status))) throw new CampaignListError("Only a practised, partly removed or failed entry can be removed now.", 409);
+  const osClientId = typeof row.os_client_id === "string" ? row.os_client_id : null;
+  if (!osClientId) throw new CampaignListError("This entry belongs to no client.", 409);
+  const settings = await loadSettings(x.os);
+  if (!settings.enabled) throw new CampaignListError("The clean-up is switched off. Nothing was changed.", 409);
+  if (settings.practiceMode) throw new CampaignListError("The clean-up is in practice mode. Nothing was changed.", 409);
+  if (!(await clientSwitchOn(x.os, osClientId))) throw new CampaignListError("This client's own switch is off (client record → Campaigns). Nothing was changed.", 409);
+
   const source: ListSource = row.source === "dnc" ? "dnc" : "my_agents";
   const entry = await getMasterInboxSupabase().from(TABLE[source]).select(ENTRY_COLUMNS[source]).eq("id", String(row.entry_id)).maybeSingle();
   if (entry.error) throw new CampaignListError(entry.error.message, 502);
   if (!entry.data) throw new CampaignListError("That entry is no longer on the portal's list — nothing was removed.", 409);
 
+  // One press acts once: claim the record from exactly the state it was read in.
+  const attempts = Number(row.attempts ?? 1);
+  const take = await x.os("os_campaign_removals")
+    .update({ status: "pending", attempts: attempts + 1, decided_by: who, updated_at: x.now().toISOString() })
+    .eq("id", rowId).eq("status", String(row.status)).eq("attempts", attempts)
+    .select("id");
+  if (take.error) throw new CampaignListError(take.error.message, 502);
+  if (!((take.data ?? []) as Row[]).length) throw new CampaignListError("Someone else is already acting on this entry.", 409);
+
   const ctx = await context(x);
-  const fence = liveOnlyCampaigns(x.env);
-  const d = await decide(x, ctx, entry.data as unknown as ListEntry, source, (_client, campaignId) =>
-    fence !== null && !fence.includes(campaignId) ? { live: false, reason: PRACTICE_TEXT.outside_fence } : { live: true });
+  let d: Decision;
+  try {
+    d = await decide(x, ctx, entry.data as unknown as ListEntry, source, async (clientId) => (await freshGate(x, clientId)).modeFor);
+  } catch (e) {
+    await x.os("os_campaign_removals").update({ status: String(row.status), error: e instanceof Error ? e.message : String(e), updated_at: x.now().toISOString() }).eq("id", rowId);
+    throw e;
+  }
   // Earlier removals on this record stay counted; the fresh look-up no longer lists those campaigns.
   const earlier = ((row.campaigns ?? []) as CampaignOutcome[]).filter((c) => (c.outcome === "removed" || c.outcome === "already_off") && !d.campaigns.some((n) => n.campaignId === c.campaignId));
   const campaigns = [...earlier, ...d.campaigns];
@@ -492,8 +609,6 @@ export async function removeNow(rowId: string, who: string, deps: SweepDeps = {}
     reason: d.reason,
     campaigns,
     error: d.campaigns.find((c) => c.error)?.error ?? null,
-    attempts: Number(row.attempts ?? 1) + 1,
-    decided_by: who,
     updated_at: x.now().toISOString(),
   }).eq("id", rowId);
   return { status, campaigns };

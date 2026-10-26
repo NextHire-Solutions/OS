@@ -688,18 +688,33 @@ export class EmailBisonClient {
    */
   async findLeadsByEmail(email: string): Promise<Array<{ id: number; email: string; campaigns: Array<{ campaignId: number; status: string | null }> }>> {
     const want = email.trim().toLowerCase();
-    const response = await this.request<{
-      data?: Array<{ id: number; email?: string; lead_campaign_data?: Array<{ campaign_id?: number | string; status?: string | null }> }>;
-    }>(`/api/leads?search=${encodeURIComponent(want)}&per_page=15`);
-    return (response?.data ?? [])
-      .filter((r) => (r.email ?? "").trim().toLowerCase() === want)
-      .map((r) => ({
-        id: Number(r.id),
-        email: want,
-        campaigns: (r.lead_campaign_data ?? [])
-          .filter((c) => c.campaign_id != null && Number.isFinite(Number(c.campaign_id)))
-          .map((c) => ({ campaignId: Number(c.campaign_id), status: c.status ?? null })),
-      }));
+    const PER_PAGE = 15;
+    const out: Array<{ id: number; email: string; campaigns: Array<{ campaignId: number; status: string | null }> }> = [];
+    /*
+     * Every page the search returns, up to five: other leads can contain the
+     * address (bigjohn@… for john@…), so the exact one is not always on page
+     * one. Five pages is 75 near-matches — far beyond any real address.
+     */
+    for (let page = 1; page <= 5; page++) {
+      const response = await this.request<{
+        data?: Array<{ id: number; email?: string; lead_campaign_data?: Array<{ campaign_id?: number | string; status?: string | null }> }>;
+        meta?: { last_page?: number };
+      }>(`/api/leads?search=${encodeURIComponent(want)}&per_page=${PER_PAGE}&page=${page}`);
+      const rows = response?.data ?? [];
+      for (const r of rows) {
+        if ((r.email ?? "").trim().toLowerCase() !== want) continue;
+        out.push({
+          id: Number(r.id),
+          email: want,
+          campaigns: (r.lead_campaign_data ?? [])
+            .filter((c) => c.campaign_id != null && Number.isFinite(Number(c.campaign_id)))
+            .map((c) => ({ campaignId: Number(c.campaign_id), status: c.status ?? null })),
+        });
+      }
+      const last = Number(response?.meta?.last_page ?? 0);
+      if (rows.length < PER_PAGE || (last && page >= last)) break;
+    }
+    return out;
   }
 
   /** Sends made to one lead — the source for first_send_at (Median Reply Time). */

@@ -50,15 +50,17 @@ let entries: Record<ListSource, ListEntry[]>;
 let removed: { campaignId: number; leadIds: number[]; actor: string }[];
 let lookups: string[];
 let reads: number;
+/** Runs inside each removal — a person changing a switch while a pass is mid-way. */
+let duringRemove: (() => Promise<void>) | null = null;
 
 function deps(env: Record<string, string> = {}) {
   return {
     env,
     now: () => NOW,
-    readEntries: async (source: ListSource, cursor: Cursor, limit: number) => {
+    readEntries: async (source: ListSource, cursor: Cursor, limit: number, before: string) => {
       reads++;
       const after = (e: ListEntry) => e.created_at > cursor.at || (e.created_at === cursor.at && (cursor.id === null || e.id > cursor.id));
-      return entries[source].filter(after).sort((a, b) => (a.created_at + a.id < b.created_at + b.id ? -1 : 1)).slice(0, limit);
+      return entries[source].filter((e) => after(e) && e.created_at < before).sort((a, b) => (a.created_at + a.id < b.created_at + b.id ? -1 : 1)).slice(0, limit);
     },
     clients: async () => [KEYES, JEFF],
     portals: async () => [{ id: "p-keyes", name: "Keyes", slug: "keyes" }, { id: "p-jeff", name: "Jeff Cook", slug: "jeff" }, { id: DEMO_PORTAL_ID, name: "Demo Portal", slug: "demo" }, { id: "p-orphan", name: "Nobody", slug: "nobody" }],
@@ -66,6 +68,7 @@ function deps(env: Record<string, string> = {}) {
     findLeads: async (email: string) => { lookups.push(email); return LEADS(email); },
     remove: async (campaignId: number, leadIds: number[], actor: string) => {
       removed.push({ campaignId, leadIds, actor });
+      await duringRemove?.();
       return { ok: true, attempted: leadIds.length, applied: leadIds.length, skipped: 0, chunks: [{ size: leadIds.length, ok: true }], batchId: "b" };
     },
   };
@@ -76,6 +79,7 @@ function reset(settings: Row | null, clients: Row[] = []) {
   removed = [];
   lookups = [];
   reads = 0;
+  duringRemove = null;
   db.seed("os_campaign_list_settings", settings ? [{ id: "default", per_run: 40, updated_at: at(-60), ...settings }] : []);
   db.seed("os_campaign_list_clients", clients);
   db.seed("os_campaign_removals", []);
@@ -88,6 +92,8 @@ function reset(settings: Row | null, clients: Row[] = []) {
       { id: "a2", client_id: DEMO_PORTAL_ID, email: "demo@agent.test", name: "Demo", created_at: at(-9) },
       { id: "a3", client_id: "p-orphan", email: "lost@agent.test", name: "Lost", created_at: at(-8) },
       { id: "a0", client_id: "p-keyes", email: "before@agent.test", name: "Before", created_at: at(-120) },
+      // Added a minute ago: held back until it is two minutes old (a slow import may still be committing around it).
+      { id: "a9", client_id: "p-keyes", email: "fresh@agent.test", name: "Fresh", created_at: at(-1) },
     ],
     dnc: [
       { id: "d1", client_id: "p-jeff", email: "sam@agent.test", name: "Sam", kind: "agent", created_at: at(-7) },
@@ -121,6 +127,7 @@ test("practice: every entry recorded, nothing removed, nothing before the switch
   assert.equal(statusOf("d2"), "skipped", "a name alone");
   assert.equal(statusOf("d3"), "skipped", "a company");
   assert.equal(statusOf("a0"), undefined, "added before the switch went on");
+  assert.equal(statusOf("a9"), undefined, "too new — left for a later pass");
   assert.deepEqual(lookups, ["pat@agent.test", "sam@agent.test"], "only real addresses of real clients are looked up");
   const pat = db.rows("os_campaign_removals").find((x) => x.entry_id === "a1")!;
   assert.deepEqual((pat.campaigns as Row[]).map((c) => [c.campaignId, c.outcome]), [["642", "would_remove"], ["700", "would_remove"]], "Keyes' own campaigns only — never Jeff's 653 or someone's 999");
@@ -165,6 +172,20 @@ test("an entry already claimed is never acted on again", async () => {
   assert.equal(db.rows("os_campaign_removals").filter((r) => r.entry_id === "a1").length, 1);
 });
 
+test("switching on always starts in practice, even when asked to go straight to live", async () => {
+  reset({ enabled: false, practice_mode: false, cursor_at: at(-600) });
+  const s = await saveSettings({ enabled: true, practiceMode: false }, "admin@outreachify.io", undefined, NOW);
+  assert.equal(s.enabled, true);
+  assert.equal(s.practiceMode, true);
+});
+
+test("a switch change abandons entries claimed but not finished — they are never finished later under other switches", async () => {
+  reset({ enabled: true, practice_mode: true, cursor_at: at(-60) });
+  db.seed("os_campaign_removals", [{ dedupe_key: "my_agents:a1", source: "my_agents", entry_id: "a1", status: "pending", attempts: 1, created_at: at(-30), updated_at: at(-30) }]);
+  await saveSettings({ practiceMode: false }, "admin@outreachify.io", undefined, NOW);
+  assert.equal(statusOf("a1"), "skipped");
+});
+
 test("switching on, or leaving practice, starts from now", async () => {
   reset({ enabled: false, practice_mode: true, cursor_at: at(-600) });
   await saveSettings({ enabled: true }, "admin@outreachify.io", undefined, NOW);
@@ -177,20 +198,84 @@ test("switching on, or leaving practice, starts from now", async () => {
   await assert.rejects(saveSettings({ enabled: false, ifUpdatedAt: "2020-01-01T00:00:00.000Z" }, "x", undefined, NOW), /changed by someone else/);
 });
 
-test("Remove now: locked without the server switch; with it, looks the person up again", async () => {
+test("Remove now needs every gate the sweep needs — and one press acts once", async () => {
   reset({ enabled: true, practice_mode: true, cursor_at: at(-60) });
   await sweepCampaignRemovals(deps({}));
   const row = db.rows("os_campaign_removals").find((r) => r.entry_id === "a1")!;
+  const LIVE = { OS_CAMPAIGN_CLEANUP_LIVE: "1" };
   await assert.rejects(removeNow(String(row.id), "admin@outreachify.io", deps({})), /locked/);
-  assert.equal(removed.length, 0);
+  await assert.rejects(removeNow(String(row.id), "admin@outreachify.io", deps(LIVE)), /practice mode/, "practice on");
+  db.rows("os_campaign_list_settings")[0].practice_mode = false;
+  await assert.rejects(removeNow(String(row.id), "admin@outreachify.io", deps(LIVE)), /own switch is off/, "client switch off");
+  db.seed("os_campaign_list_clients", [{ os_client_id: "c-keyes", remove_enabled: true }]);
+  db.rows("os_campaign_list_settings")[0].enabled = false;
+  await assert.rejects(removeNow(String(row.id), "admin@outreachify.io", deps(LIVE)), /switched off/, "clean-up off");
+  db.rows("os_campaign_list_settings")[0].enabled = true;
+  assert.equal(removed.length, 0, "no gate closed → nothing removed so far");
   // The entry must still be on the portal's list.
-  await assert.rejects(removeNow(String(row.id), "admin@outreachify.io", deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1" })), /no longer on the portal/);
+  await assert.rejects(removeNow(String(row.id), "admin@outreachify.io", deps(LIVE)), /no longer on the portal/);
   db.seed("client_agents", [{ ...entries.my_agents[0] }]);
-  const r = await removeNow(String(row.id), "admin@outreachify.io", deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1", OS_CAMPAIGN_CLEANUP_LIVE_ONLY: "642" }));
+  const r = await removeNow(String(row.id), "admin@outreachify.io", deps({ ...LIVE, OS_CAMPAIGN_CLEANUP_LIVE_ONLY: "642" }));
   assert.deepEqual(removed.map((x) => x.campaignId), [642], "the fence still applies to a person's press");
   assert.equal(r.status, "partly_removed");
+  // A second press from a page that read the record before the first one finished.
+  db.rows("os_campaign_removals").find((x) => x.entry_id === "a1")!.status = "partly_removed";
+  const stalePress = removeNow(String(row.id), "other@outreachify.io", deps(LIVE));
+  const first = removeNow(String(row.id), "admin@outreachify.io", deps(LIVE));
+  const settled = await Promise.allSettled([first, stalePress]);
+  assert.equal(settled.filter((x) => x.status === "fulfilled").length, 1, "only one of two presses acts");
   const skipped = db.rows("os_campaign_removals").find((x) => x.entry_id === "d2")!;
-  await assert.rejects(removeNow(String(skipped.id), "x", deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1" })), /Only a practised/);
+  await assert.rejects(removeNow(String(skipped.id), "x", deps(LIVE)), /Only a practised/);
+});
+
+test("leaving practice while a pass is mid-way: the pass stops and never puts the cursor back", async () => {
+  reset({ enabled: true, practice_mode: true, cursor_at: at(-60) }, [{ os_client_id: "c-keyes", remove_enabled: true }, { os_client_id: "c-jeff", remove_enabled: true }]);
+  const LIVE = { OS_CAMPAIGN_CLEANUP_LIVE: "1" };
+  // The first lookup is where the person flips practice off.
+  let flipped = false;
+  const d = deps(LIVE);
+  const findLeads = d.findLeads;
+  d.findLeads = async (email: string) => {
+    if (!flipped) { flipped = true; await saveSettings({ practiceMode: false }, "admin@outreachify.io", undefined, NOW); }
+    return findLeads(email);
+  };
+  const r = await sweepCampaignRemovals(d);
+  assert.ok(r.stopped, "the pass ended");
+  assert.equal(db.rows("os_campaign_list_settings")[0].cursor_at, NOW.toISOString(), "the cursor stays where leaving practice put it");
+  // The next pass is live — and finds nothing added before practice was left.
+  await sweepCampaignRemovals(deps(LIVE));
+  assert.equal(removed.length, 0, "nothing added before leaving practice is removed");
+  assert.equal(statusOf("d1"), undefined);
+});
+
+test("switching off while a live pass is mid-way: nothing more is removed", async () => {
+  reset({ enabled: true, practice_mode: false, cursor_at: at(-60) }, [{ os_client_id: "c-keyes", remove_enabled: true }, { os_client_id: "c-jeff", remove_enabled: true }]);
+  duringRemove = async () => { if (db.rows("os_campaign_list_settings")[0].enabled) await saveSettings({ enabled: false }, "admin@outreachify.io", undefined, NOW); };
+  const r = await sweepCampaignRemovals(deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1" }));
+  assert.deepEqual(removed.map((x) => x.campaignId), [642], "the removal in flight finishes; nothing after it");
+  assert.ok(r.stopped);
+  assert.equal(statusOf("d1"), undefined, "Jeff's entry was never reached");
+});
+
+test("a client switched off mid-pass is not removed from", async () => {
+  reset({ enabled: true, practice_mode: false, cursor_at: at(-60) }, [{ os_client_id: "c-keyes", remove_enabled: true }, { os_client_id: "c-jeff", remove_enabled: true }]);
+  duringRemove = async () => { db.rows("os_campaign_list_clients").find((r) => r.os_client_id === "c-jeff")!.remove_enabled = false; };
+  await sweepCampaignRemovals(deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1" }));
+  assert.deepEqual([...new Set(removed.map((x) => x.campaignId))], [642, 700], "Keyes only");
+  assert.equal(statusOf("d1"), "practice", "Jeff's switch was read fresh — off");
+});
+
+test("a stuck entry is retried by one process only, and fails after three tries", async () => {
+  reset({ enabled: true, practice_mode: true, cursor_at: at(1) });
+  db.seed("client_agents", [{ ...entries.my_agents[0] }]);
+  db.seed("os_campaign_removals", [{ dedupe_key: "my_agents:a1", source: "my_agents", entry_id: "a1", status: "pending", attempts: 1, created_at: at(-30), updated_at: at(-30) }]);
+  await Promise.all([sweepCampaignRemovals(deps()), sweepCampaignRemovals(deps())]);
+  assert.equal(lookups.length, 1, "two passes, one retry");
+  assert.equal(statusOf("a1"), "practice");
+  const row = db.rows("os_campaign_removals")[0];
+  Object.assign(row, { status: "pending", attempts: 3, updated_at: at(-30) });
+  await sweepCampaignRemovals(deps());
+  assert.equal(statusOf("a1"), "failed");
 });
 
 test("Check one email: reads only, and says what would happen now", async () => {

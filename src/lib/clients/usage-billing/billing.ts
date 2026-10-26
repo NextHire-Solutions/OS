@@ -45,7 +45,7 @@ import { usageStripe, type InvoiceSummary, type UsageStripe } from "./stripe.ts"
  * NEVER TWICE
  *
  *   1. The database: os_usage_billing_periods is UNIQUE (os_client_id,
- *      period_start). A period is CLAIMED by moving its row from 'preview' to
+ *      period_start, test_mode). A period is CLAIMED by moving its row from 'preview' to
  *      'draft' with a conditional update (… WHERE status = 'preview'); Postgres
  *      lets exactly one of two concurrent updates match, so with two servers,
  *      a double click or a scheduled run racing a person, one bills and the
@@ -204,16 +204,24 @@ export async function confirmSetup(osClientId: string, stripe: UsageStripe): Pro
   return { saved: true, cardLabel: session.cardLabel, status: session.status };
 }
 
+/*
+ * Every period this version writes or reads is a TEST period. Test and live
+ * periods are kept apart (UNIQUE includes test_mode, and every lookup filters
+ * on it), so a test charge on a real client's period can never make that
+ * period — or its agents — count as already billed once billing goes live.
+ */
+const TEST_MODE = true;
+
 /* ------------------------------------------------------------- periods --- */
 
 export async function listPeriods(osClientId: string, limit = 52): Promise<PeriodRow[]> {
-  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).order("period_start", { ascending: false }).limit(limit);
+  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("test_mode", TEST_MODE).order("period_start", { ascending: false }).limit(limit);
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return (data ?? []) as PeriodRow[];
 }
 
 async function periodRow(osClientId: string, start: string): Promise<PeriodRow | null> {
-  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("period_start", start).maybeSingle();
+  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("period_start", start).eq("test_mode", TEST_MODE).maybeSingle();
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return (data as PeriodRow | null) ?? null;
 }
@@ -237,7 +245,7 @@ export function choosePeriod(s: Pick<SettingsRow, "anchor_date" | "every_days">,
 
 /** Every lead key billed for this client on any OTHER period — never billed again (model.ts keysAlreadyBilled). */
 async function keysBilledElsewhere(osClientId: string, exceptStart: string): Promise<Set<string>> {
-  const { data, error } = await osTable("os_usage_billing_periods").select("period_start, status, leads").eq("os_client_id", osClientId).in("status", [...BILLED_STATUSES]);
+  const { data, error } = await osTable("os_usage_billing_periods").select("period_start, status, leads").eq("os_client_id", osClientId).eq("test_mode", TEST_MODE).in("status", [...BILLED_STATUSES]);
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return keysAlreadyBilled((data ?? []) as Array<{ period_start: string; status: string; leads: unknown }>, exceptStart);
 }
@@ -323,10 +331,10 @@ async function updateRow(id: string, from: PeriodStatus, patch: Row): Promise<Pe
 async function ensurePeriodRow(osClientId: string, s: SettingsRow, period: Period): Promise<void> {
   const { error } = await osTable("os_usage_billing_periods").upsert(
     {
-      os_client_id: osClientId, period_start: period.start, period_end: period.end, test_mode: true, status: "preview",
+      os_client_id: osClientId, period_start: period.start, period_end: period.end, test_mode: TEST_MODE, status: "preview",
       lead_source: s.lead_source, price_cents: s.price_cents, lead_count: 0, amount_cents: 0, leads: [],
     },
-    { onConflict: "os_client_id,period_start", ignoreDuplicates: true },
+    { onConflict: "os_client_id,period_start,test_mode", ignoreDuplicates: true },
   );
   if (error) throw dbError("os_usage_billing_periods", error.message);
 }
@@ -340,7 +348,7 @@ export async function recordPreview(osClientId: string, s: SettingsRow, period: 
       leads: p.leads, lead_count: p.count, amount_cents: p.amountCents, price_cents: p.priceCents, lead_source: p.leadSource,
       note: `Preview ${new Date().toISOString().slice(0, 16)}Z — not charged`, updated_at: new Date().toISOString(),
     })
-    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("status", "preview")
+    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("test_mode", TEST_MODE).eq("status", "preview")
     .select("*");
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return ((data ?? []) as PeriodRow[])[0] ?? null;
@@ -385,7 +393,7 @@ export async function chargePeriod(osClientId: string, o: ChargeOptions): Promis
       note: p.count ? null : "No billable leads in this period — nothing charged.",
       updated_at: now.toISOString(),
     })
-    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("status", "preview")
+    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("test_mode", TEST_MODE).eq("status", "preview")
     .select("*");
   if (claimed.error) throw dbError("os_usage_billing_periods", claimed.error.message);
   const row = ((claimed.data ?? []) as PeriodRow[])[0];

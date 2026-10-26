@@ -107,7 +107,7 @@ function Panel({ data }: { data: CleanupOverview }) {
       </Section>
 
       <Section title="Switches" sub={s.updatedBy ? `Last changed by ${s.updatedBy}${s.updatedAt ? ` · ${stamp(s.updatedAt, "1970-01-01")}` : ""}` : undefined}>
-        <ToggleRow title="Clean-up on" hint="Off stops everything at once. Turning it on starts from now: nothing added to My Agents or DNC earlier is ever looked at.">
+        <ToggleRow title="Clean-up on" hint="Off stops everything at once, even mid-way. Turning it on starts from now — nothing added to My Agents or DNC earlier is ever looked at — and always in practice.">
           <Switch checked={enabled} aria-label="Clean-up on" onCheckedChange={setEnabled} />
         </ToggleRow>
         <ToggleRow title="Practice mode" hint="Look each person up and record which campaigns they would come off — remove nothing. Leaving practice also starts from now.">
@@ -134,7 +134,7 @@ function Panel({ data }: { data: CleanupOverview }) {
       </Section>
 
       <Check clients={data.clients} />
-      <Recent rows={data.recent} canRemove={data.server.liveAllowed} />
+      <Recent rows={data.recent} canRemove={data.server.liveAllowed && s.enabled && !s.practiceMode} />
     </>
   );
 }
@@ -262,7 +262,7 @@ export function Recent({ rows, canRemove, title = "Recent entries" }: { rows: Re
                       <ConfirmButton
                         label="Remove now"
                         armedLabel="Click again: off these live campaigns"
-                        title="Looks the person up again and takes them off this client's campaigns for real."
+                        title="Looks the person up again and takes them off this client's campaigns for real — only while the clean-up is live and this client's own switch is on."
                         onConfirm={() => remove(r.id)}
                         disabled={busy === r.id}
                         compact

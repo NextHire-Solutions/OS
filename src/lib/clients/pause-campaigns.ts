@@ -165,13 +165,13 @@ async function analyticsRowIdsFor(client: {
   return ids;
 }
 
-async function campaignsFor(clientIds: string[]): Promise<CampaignRow[]> {
+async function campaignsFor(clientIds: string[], { strict = false }: { strict?: boolean } = {}): Promise<CampaignRow[]> {
   if (clientIds.length === 0) return [];
   const db = getAnalyticsSupabase();
   const out: CampaignRow[] = [];
 
   const [bisonMap, instantlyMap] = await Promise.all([
-    db.from("campaign_clients").select("campaign_id, client_id").in("client_id", clientIds),
+    db.from("campaign_clients").select("campaign_id, client_id, excluded, ambiguous, resolved_at").in("client_id", clientIds),
     db
       .from("instantly_campaign_clients")
       .select("campaign_id, client_id, excluded")
@@ -180,7 +180,18 @@ async function campaignsFor(clientIds: string[]): Promise<CampaignRow[]> {
   if (bisonMap.error) throw new Error(bisonMap.error.message);
   if (instantlyMap.error) throw new Error(instantlyMap.error.message);
 
-  const bisonIds = (bisonMap.data ?? []).map((r) => String(r.campaign_id));
+  /*
+   * strict (the My Agents / DNC clean-up, which REMOVES people): only a
+   * mapping nobody detached (excluded) and nobody left unsure (ambiguous and
+   * never resolved). The pause keeps its own, wider reading.
+   */
+  const bisonIds = (bisonMap.data ?? [])
+    .filter((r) => {
+      if (!strict) return true;
+      const m = r as { excluded?: boolean | null; ambiguous?: boolean | null; resolved_at?: string | null };
+      return m.excluded !== true && !(m.ambiguous === true && !m.resolved_at);
+    })
+    .map((r) => String(r.campaign_id));
   // An excluded mapping is a campaign somebody deliberately detached from this
   // client. Pausing it would act on a client's behalf over a link they removed.
   const instantlyIds = (instantlyMap.data ?? [])
@@ -232,11 +243,12 @@ async function campaignsFor(clientIds: string[]): Promise<CampaignRow[]> {
 }
 
 /**
- * Every campaign this client has that still exists — the same list the pause
- * reads. Used by the My Agents / DNC clean-up (campaign-lists/).
+ * Every campaign this client has that still exists — the pause's list, less
+ * any EmailBison mapping that was excluded or left ambiguous. Used by the My
+ * Agents / DNC clean-up (campaign-lists/), which removes people from them.
  */
 export async function campaignsOfClient(client: { name: string; aliases?: string[] | null }): Promise<CampaignRow[]> {
-  return campaignsFor(await analyticsRowIdsFor(client));
+  return campaignsFor(await analyticsRowIdsFor(client), { strict: true });
 }
 
 /**

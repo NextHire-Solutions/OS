@@ -179,9 +179,10 @@ export interface GlobalSwitches {
 
 export type CampaignMode = { live: true } | { live: false; reason: PracticeReason };
 
-export type PracticeReason = "practice_mode" | "server_locked" | "client_off" | "outside_fence";
+export type PracticeReason = "switched_off" | "practice_mode" | "server_locked" | "client_off" | "outside_fence";
 
 export const PRACTICE_TEXT: Record<PracticeReason, string> = {
+  switched_off: "The clean-up was switched off.",
   practice_mode: "Practice mode is on.",
   server_locked: `The server's lock is closed (${LIVE_ENV}).`,
   client_off: "This client's own switch is off.",

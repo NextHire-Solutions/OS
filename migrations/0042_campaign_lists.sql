@@ -26,6 +26,11 @@
 
 BEGIN;
 
+-- Never wait on a busy os_clients: the new foreign keys briefly lock it
+-- against writes. If that lock is not free within 5 seconds, this stops and
+-- changes nothing — just run it again.
+SET LOCAL lock_timeout = '5s';
+
 -- 1. The switches. One row; no row = off.
 CREATE TABLE IF NOT EXISTS public.os_campaign_list_settings (
   id             text        PRIMARY KEY DEFAULT 'default' CHECK (id = 'default'),

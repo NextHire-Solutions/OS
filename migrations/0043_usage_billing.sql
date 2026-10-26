@@ -33,6 +33,11 @@
 
 BEGIN;
 
+-- Never wait on a busy os_clients: the new foreign keys briefly lock it
+-- against writes. If that lock is not free within 5 seconds, this stops and
+-- changes nothing — just run it again.
+SET LOCAL lock_timeout = '5s';
+
 -- 1. A client's pay-per-lead settings. No row = not billed per lead.
 CREATE TABLE IF NOT EXISTS public.os_usage_billing_settings (
   os_client_id               uuid        PRIMARY KEY REFERENCES public.os_clients(id) ON DELETE CASCADE,
@@ -65,8 +70,8 @@ CREATE TABLE IF NOT EXISTS public.os_usage_billing_settings (
 CREATE INDEX IF NOT EXISTS os_usage_billing_settings_enabled ON public.os_usage_billing_settings (enabled) WHERE enabled;
 ALTER TABLE public.os_usage_billing_settings ENABLE ROW LEVEL SECURITY;
 
--- 2. One row per client per period: the preview, then the invoice. The UNIQUE
---    (os_client_id, period_start) is the "never twice" guarantee — whichever
+-- 2. One row per client per period: the preview, then the invoice. The unique
+--    (os_client_id, period_start, test_mode) is the "never twice" guarantee — whichever
 --    process claims the row (status preview → draft) bills it; every other one
 --    finds it taken, however many servers are running.
 CREATE TABLE IF NOT EXISTS public.os_usage_billing_periods (
@@ -98,9 +103,14 @@ CREATE TABLE IF NOT EXISTS public.os_usage_billing_periods (
   charged_at             timestamptz,
   paid_at                timestamptz,
   created_at             timestamptz NOT NULL DEFAULT now(),
-  updated_at             timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (os_client_id, period_start)
+  updated_at             timestamptz NOT NULL DEFAULT now()
 );
+-- One period per client, kept apart for test and live: a test charge on a
+-- real client's period never makes it (or its agents) "already billed" once
+-- billing goes live. (A database that ran the first version of this file
+-- also has UNIQUE (os_client_id, period_start) — stricter, so still safe;
+-- dropping it is a go-live step.)
+CREATE UNIQUE INDEX IF NOT EXISTS os_usage_billing_periods_client_period_mode ON public.os_usage_billing_periods (os_client_id, period_start, test_mode);
 CREATE INDEX IF NOT EXISTS os_usage_billing_periods_status ON public.os_usage_billing_periods (status, period_start DESC);
 CREATE INDEX IF NOT EXISTS os_usage_billing_periods_invoice ON public.os_usage_billing_periods (stripe_invoice_id) WHERE stripe_invoice_id IS NOT NULL;
 ALTER TABLE public.os_usage_billing_periods ENABLE ROW LEVEL SECURITY;

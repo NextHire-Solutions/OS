@@ -61,7 +61,7 @@ function seed(o: { acmeSettings?: Row | null; betaSettings?: Row | null; periods
     ...(o.acmeSettings === null ? [] : [{ os_client_id: ACME, ...base, ...o.acmeSettings }]),
     ...(o.betaSettings ? [{ os_client_id: BETA, ...base, test_only: false, ...o.betaSettings }] : []),
   ]);
-  db.seed("os_usage_billing_periods", o.periods ?? []);
+  db.seed("os_usage_billing_periods", (o.periods ?? []).map((r) => ({ test_mode: true, ...r })));
   const relay = (r: Row) => ({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: ACME, thread_id: crypto.randomUUID(), ...r });
   db.seed("os_brokerage_relays", [
     relay({ agent_email: "Jordan@Coastal.test", agent_name: "Jordan Ellis", sent_at: "2026-10-06T14:00:00.000Z" }),
@@ -125,6 +125,13 @@ test("an agent billed in another period is never billed again", async () => {
   const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });
   assert.deepEqual(p.leads.map((l) => l.key), ["jordan@coastal.test", "pat@bay.test"]);
   assert.ok(p.skipped.some((s) => s.reason === "billed_before" && s.lead.key === "sam@harbor.test"));
+});
+
+test("test and live periods are kept apart: a period billed in the other mode never counts as billed here", async () => {
+  seed({ periods: [{ os_client_id: ACME, period_start: "2026-09-28", period_end: "2026-10-05", status: "paid", test_mode: false, leads: [{ key: "sam@harbor.test", name: "Sam Lee", at: "2026-09-30T12:00:00.000Z", source: "handoff" }] }] });
+  const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });
+  assert.ok(p.leads.some((l) => l.key === "sam@harbor.test"), "Sam was billed only in the other mode");
+  assert.deepEqual(writes(), []);
 });
 
 test("introductions (the other definition): our entries in any of the client's portals, never the client's own", async () => {
@@ -230,7 +237,7 @@ test("a claim that died half way is resumed once stale: the period's invoice is 
   await stripe.addLeadLine({ customerId, invoiceId, periodKey: PK, lead: leads[0], priceCents: 10_000 });
   fake.forgetIdempotencyKeys(); // a day later
   const claimedAt = new Date(NOW.getTime() - 60 * 60_000).toISOString();
-  db.seed("os_usage_billing_periods", [{ os_client_id: ACME, period_start: WEEK.start, period_end: WEEK.end, status: "draft", leads, lead_count: 2, price_cents: 10_000, amount_cents: 20_000, lead_source: "handoffs", claimed_by: "server-1", claimed_at: claimedAt, stripe_invoice_id: null }]);
+  db.seed("os_usage_billing_periods", [{ os_client_id: ACME, period_start: WEEK.start, period_end: WEEK.end, test_mode: true, status: "draft", leads, lead_count: 2, price_cents: 10_000, amount_cents: 20_000, lead_source: "handoffs", claimed_by: "server-1", claimed_at: claimedAt, stripe_invoice_id: null }]);
   fake.calls.length = 0;
 
   // Not yet stale: left alone, Stripe not asked.
@@ -256,7 +263,7 @@ test("an invoice that does not match what was previewed is not charged", async (
   const { invoiceId } = await stripe.createDraftInvoice({ customerId, paymentMethodId: pm, osClientId: ACME, period: WEEK, periodKey: PK, description: "x", leadCount: 1 });
   await stripe.addLeadLine({ customerId, invoiceId, periodKey: PK, lead: leads[0], priceCents: 10_000 });
   await stripe.addLeadLine({ customerId, invoiceId, periodKey: PK, lead: { ...leads[0], key: "stray@x.test", name: "Stray" }, priceCents: 10_000 });
-  db.seed("os_usage_billing_periods", [{ os_client_id: ACME, period_start: WEEK.start, period_end: WEEK.end, status: "draft", leads, lead_count: 1, price_cents: 10_000, amount_cents: 10_000, lead_source: "handoffs", claimed_at: "2026-10-13T00:00:00.000Z", stripe_invoice_id: invoiceId }]);
+  db.seed("os_usage_billing_periods", [{ os_client_id: ACME, period_start: WEEK.start, period_end: WEEK.end, test_mode: true, status: "draft", leads, lead_count: 1, price_cents: 10_000, amount_cents: 10_000, lead_source: "handoffs", claimed_at: "2026-10-13T00:00:00.000Z", stripe_invoice_id: invoiceId }]);
   fake.calls.length = 0;
   const r = await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW });
   assert.equal(r.outcome, "failed");
