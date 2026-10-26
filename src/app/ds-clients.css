@@ -544,3 +544,6 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .ub-settings .ds-input { width: 100%; min-width: 0; }
 .rb-tools.ub-save { margin-top: 0; }
 .ub-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--x-ink-2); height: 30px; cursor: pointer; }
+/* Disabled buttons read as disabled in the new sections (the base .rx-btn has no disabled look outside dialogs). */
+.cl-card .rx-btn:disabled, [data-testid="usage-billing"] .rx-btn:disabled { opacity: .45; cursor: not-allowed; }
+.cl-card .rx-btn.solid:disabled:hover, [data-testid="usage-billing"] .rx-btn.solid:disabled:hover { background: var(--x-ink); }
