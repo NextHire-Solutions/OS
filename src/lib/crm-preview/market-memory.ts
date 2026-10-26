@@ -276,7 +276,7 @@ const HUNG_MS = 10 * 60_000;
 
 type Slot =
   | { status: "loading"; since: number; token: number }
-  | { status: "ready"; market: MemMarket; stamp: MlsStamp; at: number; lastUsed: number; verifiedAt: number; refreshing: number | null; refreshAfter: number }
+  | { status: "ready"; market: MemMarket; stamp: MlsStamp; at: number; lastUsed: number; verifiedAt: number; verifying?: boolean; refreshing: number | null; refreshAfter: number }
   | { status: "unused"; reason: string; retryAfter: number };
 
 const GLOBAL_KEY = "__osMarketMemory";
@@ -405,7 +405,15 @@ export async function marketFromMemory(mlsIds: readonly string[], base: Record<s
   }
   if (now - slot.at > MAX_AGE_MS) return null;
   slot.lastUsed = now;
-  if (now - slot.verifiedAt > PROBE_MS && !(await verify(key, slot, now))) return null;
+  const age = now - slot.verifiedAt;
+  if (age > PROBE_MS) {
+    // Not checked within the minute: checked now, before anything is served (one small read).
+    if (!(await verify(key, slot, now))) return null;
+  } else if (age > PROBE_MS * 0.75 && !slot.verifying) {
+    // In use and nearly due: checked in the background, so no request has to wait for it.
+    slot.verifying = true;
+    void verify(key, slot, now).finally(() => { slot.verifying = false; });
+  }
   return slot.market;
 }
 
