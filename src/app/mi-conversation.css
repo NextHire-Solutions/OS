@@ -582,8 +582,46 @@
 .mi-prospect .pp-multi .one > span.val {
   flex: 1;
   min-width: 0;
-  word-break: break-word;
+  overflow-wrap: break-word;
   line-height: 1.4;
+}
+
+/*
+ * Two or more addresses or numbers (26 Oct — "when I add a different
+ * preferred email or phone, the text gets wonky"). Beside its 86px label, at
+ * the panel's 300px, a value shared ~125px with its checkbox, the "Preferred"
+ * tag and the copy button and was left 0px: one character a line. So a field
+ * with a choice puts its list under its label, at the card's full width, and
+ * each choice keeps its line — checkbox, value, copy — with "Preferred" under
+ * the value instead of beside it. A single value is unchanged. (Not `.stack`:
+ * workspace.css's `.stack` is a 12px chart bar — it clipped the row to 12px.)
+ */
+.mi-prospect .prow.pp-list { flex-direction: column; gap: 8px; }
+.mi-prospect .prow.pp-list .k { width: auto; padding-top: 0; }
+.mi-prospect .prow.pp-list .v { width: 100%; }
+.mi-prospect .pp-multi .one.pp-pick {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 3px;
+  align-items: center;
+}
+.mi-prospect .pp-multi .one.pp-pick > .cbx { grid-column: 1; grid-row: 1; }
+.mi-prospect .pp-multi .one.pp-pick > .val { grid-column: 2; grid-row: 1; }
+.mi-prospect .pp-multi .one.pp-pick > .cp { grid-column: 3; grid-row: 1; }
+.mi-prospect .pp-multi .one.pp-pick > .pref { grid-column: 2; grid-row: 2; justify-self: start; }
+
+/*
+ * A single email or phone in a narrow panel (≤ 420px — it opens at 300): the
+ * value goes under its label too, so an address reads on one line instead of
+ * three pieces beside the 86px label. Wider, the design's two columns are
+ * kept. A browser without container queries keeps today's layout.
+ */
+.mi-prospect { container-type: inline-size; }
+@container (max-width: 420px) {
+  .mi-prospect .prow.pp-addr { flex-direction: column; gap: 6px; }
+  .mi-prospect .prow.pp-addr .k { width: auto; padding-top: 0; }
+  .mi-prospect .prow.pp-addr .v { width: 100%; }
 }
 .mi-prospect .cbx {
   width: 16px;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { isPlaceholder, realValue } from "@/lib/tools/master-inbox/agents/placeholder";
 import { requireSession } from "@/lib/auth/workspace";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { updateAgentContact } from "@/lib/tools/master-inbox/agents/contact";
@@ -31,8 +32,9 @@ function normEmail(s: string): string {
 }
 
 function stringArray(v: unknown): string[] {
+  // An imported "None" (and the like) is not an address or a number — dropped, so the next save cleans it out (agents/placeholder.ts).
   return Array.isArray(v)
-    ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
+    ? v.filter((x): x is string => !isPlaceholder(x)).map((x) => x.trim())
     : [];
 }
 
@@ -122,7 +124,7 @@ export async function POST(
     typeof cf.preferred_email === "string" && cf.preferred_email.trim() !== ""
       ? cf.preferred_email.trim()
       : null;
-  const preferred = priorPreferred ?? lead.email ?? emails[0] ?? null;
+  const preferred = priorPreferred ?? realValue(lead.email) ?? emails[0] ?? null;
 
   const merged: Record<string, unknown> = { ...cf, emails };
   if (preferred) merged.preferred_email = preferred;

@@ -9,6 +9,7 @@ import { labelClass } from "@/components/screens/master-inbox/mockup/tabs";
 import { toast } from "sonner";
 import { cn } from "@/lib/tools/master-inbox/utils";
 import type { ThreadDetail } from "@/lib/tools/master-inbox/inbox/thread-detail";
+import { isPlaceholder, realValue } from "@/lib/tools/master-inbox/agents/placeholder";
 
 /*
  * ---------------------------------------------------------------------------
@@ -231,13 +232,14 @@ function DetailsTab({
   };
 
   // ---- Card 1: general agent info ----
-  const phone = find("phone", "phonenumber", "mobile", "cell", "mobilephone", "cellphone");
+  // An imported "None" is not a number (agents/placeholder.ts).
+  const phone = realValue(find("phone", "phonenumber", "mobile", "cell", "mobilephone", "cellphone"));
   // Multi-phone + preferred: a staff-maintained list lives on custom_fields.phones,
   // with the chosen one in custom_fields.preferred_phone. Fall back to the single
   // derived phone above when no list has been created yet.
   const storedPhones = Array.isArray(lead.custom_fields?.phones)
     ? (lead.custom_fields.phones as unknown[])
-        .filter((x): x is string => typeof x === "string" && x.trim() !== "")
+        .filter((x): x is string => !isPlaceholder(x))
         .map((x) => x.trim())
     : [];
   const preferredPhone =
@@ -251,13 +253,13 @@ function DetailsTab({
   // (custom_fields.emails). De-duplicated case-insensitively.
   const storedEmails = Array.isArray(lead.custom_fields?.emails)
     ? (lead.custom_fields.emails as unknown[])
-        .filter((x): x is string => typeof x === "string" && x.trim() !== "")
+        .filter((x): x is string => !isPlaceholder(x))
         .map((x) => x.trim())
     : [];
   const emailSeen = new Set<string>();
   const emailList: string[] = [];
   for (const e of [lead.email, ...storedEmails]) {
-    const t = (e ?? "").trim();
+    const t = realValue(e);
     if (!t) continue;
     const k = t.toLowerCase();
     if (emailSeen.has(k)) continue;
@@ -458,7 +460,7 @@ function AgentEmails({
   }
 
   return (
-    <div className="prow">
+    <div className={multi ? "prow pp-list" : "prow pp-addr"}>
       <span className="k">Email</span>
       <div className="v">
         {multi ? (
@@ -466,7 +468,7 @@ function AgentEmails({
             {emails.map((e) => {
               const isPref = sameEmail(e, preferred);
               return (
-                <div key={e} className="one">
+                <div key={e} className="one pp-pick">
                   <button
                     type="button"
                     role="checkbox"
@@ -479,7 +481,7 @@ function AgentEmails({
                   >
                     {isPref ? <Check /> : null}
                   </button>
-                  <span className="val">{e}</span>
+                  <span className="val">{breakable(e)}</span>
                   {isPref ? <span className="pref">Preferred</span> : null}
                   {onCopy ? (
                     <button
@@ -501,7 +503,7 @@ function AgentEmails({
         ) : emails.length === 1 ? (
           <div className="pp-multi">
             <div className="one">
-              <span className="val">{emails[0]}</span>
+              <span className="val">{breakable(emails[0])}</span>
               {onCopy ? (
                 <button
                   type="button"
@@ -558,6 +560,21 @@ function AgentEmails({
       </div>
     </div>
   );
+}
+
+/*
+ * An address that wraps does so after the @ or before a dot — "gcaraballow@" /
+ * "kw.com" — not at whatever letter the line ran out on (26 Oct).
+ */
+function breakable(email: string): React.ReactNode {
+  // A plain loop, not a look-behind pattern: Safari before 16.4 rejects those, and with them the whole page.
+  const parts: string[] = [""];
+  for (const ch of email) {
+    if (ch === "." && parts[parts.length - 1]) parts.push("");
+    parts[parts.length - 1] += ch;
+    if (ch === "@") parts.push("");
+  }
+  return parts.filter(Boolean).map((part, i) => (i ? <span key={i}><wbr />{part}</span> : part));
 }
 
 // Compare two phone strings by digits, ignoring formatting.
@@ -671,7 +688,7 @@ function AgentPhones({
   }
 
   return (
-    <div className="prow">
+    <div className={multi ? "prow pp-list" : "prow pp-addr"}>
       <span className="k">Phone</span>
       <div className="v">
         {multi ? (
@@ -679,7 +696,7 @@ function AgentPhones({
             {phones.map((p) => {
               const isPref = samePhone(p, preferred);
               return (
-                <div key={p} className="one">
+                <div key={p} className="one pp-pick">
                   <button
                     type="button"
                     role="checkbox"

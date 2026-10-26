@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { z } from "zod";
+import { isPlaceholder, looksLikePhone, realValue } from "@/lib/tools/master-inbox/agents/placeholder";
 import { updateAgentContact } from "@/lib/tools/master-inbox/agents/contact";
 import {
   LICENSE_KEYS,
@@ -35,7 +36,7 @@ export const dynamic = "force-dynamic";
 const MAX_PHONES = 10;
 
 const bodySchema = z.object({
-  phone: z.string().trim().min(1, "Phone is required").max(80),
+  phone: z.string().trim().min(1, "Phone is required").max(80).refine(looksLikePhone, "Enter a phone number (at least 7 digits)"),
 });
 
 // Digits-only key for de-duplication / membership (formatting is preserved in
@@ -45,8 +46,9 @@ function normPhone(s: string): string {
 }
 
 function stringArray(v: unknown): string[] {
+  // An imported "None" (and the like) is not an address or a number — dropped, so the next save cleans it out (agents/placeholder.ts).
   return Array.isArray(v)
-    ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
+    ? v.filter((x): x is string => !isPlaceholder(x)).map((x) => x.trim())
     : [];
 }
 
@@ -68,10 +70,10 @@ function dedupe(list: string[]): string[] {
 // a number stored under e.g. "Mobile Phone" is still seeded into the list.
 const PHONE_NKEYS = ["phone", "phonenumber", "mobile", "cell", "mobilephone", "cellphone"];
 function deriveDisplayPhone(cf: Record<string, unknown>): string | null {
-  const exact = pickFirstString(cf, PHONE_KEYS);
+  const exact = realValue(pickFirstString(cf, PHONE_KEYS));
   if (exact) return exact;
   for (const [k, v] of Object.entries(cf)) {
-    if (v == null || String(v).trim() === "") continue;
+    if (v == null || isPlaceholder(String(v))) continue;
     const nk = k.toLowerCase().replace(/[^a-z0-9]+/g, "");
     if (PHONE_NKEYS.includes(nk)) return String(v).trim();
   }
