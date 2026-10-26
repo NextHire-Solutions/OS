@@ -134,7 +134,8 @@ test("the filters as the Database app's, on top of the market or the client's li
     // Cities and counties together, each keeping its level — any of them matches.
     location: { field: "city", appliesTo: ["office", "transacted"], values: [{ f: "city", v: "Atlanta" }, { f: "county", v: "Cobb, GA" }], excludeValues: [], excludeField: "city" },
     title: { include: ["Salesperson"], exclude: [] },
-    nameQuery: "smith",
+    // The search box narrows to names containing the text (fn_agent_where `name`).
+    name: { include: ["smith"], exclude: [] },
   });
 });
 

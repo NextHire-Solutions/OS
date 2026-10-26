@@ -8,7 +8,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
 import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
 import { searchMarket } from "@/lib/crm-preview/market-engine";
-import { marketFromMemory } from "@/lib/crm-preview/market-memory";
+import { marketFromMemory, requestNameOrder } from "@/lib/crm-preview/market-memory";
 import { agentsByIds, demoProspectIds, filterProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
@@ -289,6 +289,8 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
      * does not reproduce exactly, the database as before.
      */
     const mem = q.list === "market" ? await marketFromMemory(ctx.mls.ids, base, search) : null;
+    // A name sort before this market's name order is read: the database answers, and the order starts loading.
+    if (mem && sort.by === "full_name" && !mem.namesReady) requestNameOrder(ctx.mls.ids, base, search);
     const fast = mem ? searchMarket(mem, filters, sort, q.per, offset) : null;
     page = fast
       ? { rows: fast.rows as unknown as Array<Record<string, unknown>>, total: fast.total, salesVolume: fast.salesVolume }
@@ -552,8 +554,9 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
  * clients need to be able to see the data instantly as new filters are being
  * applied"). The markets likely to be shown — the Demo, every client in
  * Onboarding, and the portals whose Market was opened in the last two days —
- * are loaded into memory and their Location and Brokerage lists read before
- * anyone opens them, so the first look is as fast as the hundredth. At most
+ * are loaded into memory, with their name order, and their Location and
+ * Brokerage lists read before anyone opens them, so the first look is as
+ * fast as the hundredth. At most
  * three (market-memory holds four; one stays free for any other). Called
  * every two minutes by instrumentation (Railway only); once warm it costs a
  * cache hit and, once a minute, the one-row freshness check. Reads only.
@@ -569,6 +572,7 @@ export async function warmMarkets(now = new Date()): Promise<string[]> {
   portals.push(...[...byUse].sort((a, b) => b[1] - a[1]).map(([id]) => id));
 
   const warmed: string[] = [];
+  const held: Array<{ ids: readonly string[]; base: Record<string, unknown> }> = [];
   const seen = new Set<string>();
   for (const portalId of portals) {
     if (warmed.length >= 3) break;
@@ -586,7 +590,10 @@ export async function warmMarkets(now = new Date()): Promise<string[]> {
     // The page's badges: the portal's own lists and, for a real client, its campaign set.
     await portalLists(ctx.portal.id).catch(() => null);
     if (ctx.orchClientId) heldClientSet(ctx.orchClientId);
+    held.push({ ids: ctx.mls.ids, base });
     warmed.push(ctx.portal.name);
   }
+  // Then their name orders — only once no market is loading (markets first), one at a time.
+  for (const m of held) requestNameOrder(m.ids, m.base, search);
   return warmed;
 }

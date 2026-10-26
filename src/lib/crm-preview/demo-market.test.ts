@@ -115,7 +115,7 @@ test("the request: agent ids only, at most MAX_MOVE, one of the four lists; a qu
   ]) assert.equal(marketAction.safeParse(bad).success, false, JSON.stringify(bad).slice(0, 80));
 });
 
-test("the Demo's Prospects page filters as Market does — ranges, brokerages, offices, places, title — and a name search only puts matches first", () => {
+test("the Demo's Prospects page filters as Market does — ranges, brokerages, offices, places, title — and the search box narrows by name", () => {
   const rows = [agent("a1"), agent("a2", { brand: "Compass", office_name: "Compass Buckhead", sales_volume: 9_000_000, units: 20, est_time_in_industry_months: 240, title: "Team Leader", home_city: "Decatur" }), agent("a3", { full_name: "Zed Smith", sales_volume: null })] as never[];
   // The Demo's own Prospects page — every title (a market is salespeople, set on the server).
   const q = (s: string) => parseMarketQuery(new URLSearchParams(`list=prospects&${s}`));
@@ -157,7 +157,9 @@ test("the Demo's Prospects page filters as Market does — ranges, brokerages, o
   assert.deepEqual(pids("county=Fulton&kind=transacted"), ["p2"]);
   const sorted = (s: string) => sortProspects(filterProspects(rows, q(s)), q(s)).map((a: { id: string }) => a.id);
   assert.deepEqual(sorted("sort=volume&dir=desc"), ["a2", "a1", "a3"], "blanks last");
-  assert.deepEqual(sorted("sort=volume&dir=desc&q=smith"), ["a3", "a2", "a1"], "a name match first");
+  assert.deepEqual(sorted("sort=volume&dir=desc&q=smith"), ["a3"], "only names containing it");
+  assert.deepEqual(sorted("sort=volume&dir=desc&q=SMITH"), ["a3"], "any case");
+  assert.deepEqual(sorted("q=nobody"), []);
 });
 
 test("the Edit form's custom fields: set, changed, cleared — on the Demo's own entry only", async () => {

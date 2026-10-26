@@ -144,16 +144,18 @@ const titleTokens = (t: string | null) => (t ?? "").split(",").map((x) => x.toLo
  * applies them: sales volume, units and years as ranges; any of the
  * brokerages, offices and titles; any of the cities, counties or states at the
  * chosen locations (office, most transacted) — and none of the left-out ones, where an agent with nothing on
- * record stays (fn_agent_where's rule). A name search narrows nothing —
- * matching agents come first, as in the Database app.
+ * record stays (fn_agent_where's rule) — and the search box: only names
+ * containing the text, any case (27 Oct, as Market now does).
  */
 export function filterProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
   const set = (xs: string[]) => new Set(xs.map((x) => x.toLowerCase()));
   const tokens = (xs: string[]) => new Set(xs.flatMap((t) => titleTokens(t)));
   const [brands, offices, titles] = [set(q.brokerages), set(q.offices), tokens(q.titles)];
   const [noBrands, noOffices, noTitles] = [set(q.not.brokerages), set(q.not.offices), tokens(q.not.titles)];
+  const needle = q.q.toLowerCase();
   return rows.filter((a) =>
-    inRange(a.sales_volume, q.volume) && inRange(a.units, q.units) && inRange(years(a), q.years)
+    (!needle || (a.full_name ?? "").toLowerCase().includes(needle))
+    && inRange(a.sales_volume, q.volume) && inRange(a.units, q.units) && inRange(years(a), q.years)
     && (!brands.size || brands.has(lower(a.brand))) && (!offices.size || offices.has(lower(a.office_name)))
     && (!anyPlace(q) || inPlaces(a, q, q.kinds))
     && (!titles.size || titleTokens(a.title).some((t) => titles.has(t)))
@@ -170,11 +172,7 @@ const SORT_FIELD: Record<MarketQuery["sort"], (a: AgentRow) => string | number |
 export function sortProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
   const get = SORT_FIELD[q.sort];
   const dir = q.dir === "asc" ? 1 : -1;
-  const needle = q.q.trim().toLowerCase();
-  const hit = (a: AgentRow) => (needle && lower(a.full_name).includes(needle) ? 0 : 1);
   return [...rows].sort((a, b) => {
-    const h = hit(a) - hit(b);
-    if (h) return h;
     const x = get(a), y = get(b);
     // Blanks last, either way.
     if (x === null || x === "") return y === null || y === "" ? 0 : 1;

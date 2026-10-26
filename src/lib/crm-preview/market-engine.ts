@@ -41,6 +41,15 @@ export interface MemAgent {
   sales_volume: number | null;
   units: number | null;
   est_time_in_industry_months: number | null;
+  /**
+   * This agent's place in the DATABASE's own name order (its collation, not
+   * JavaScript's): agents with the same name share a rank. Set only once the
+   * market's name order has been read from the database and proven
+   * (market-memory.ts); no name → Infinity (nulls last, either way).
+   */
+  nameRank?: number;
+  /** The name lower-cased A–Z only, kept on first name search. */
+  nameLower?: string;
   preferred_email: string | null;
   enriched_email: string | null;
 }
@@ -54,6 +63,10 @@ export interface MemMarket {
   sorted?: Map<string, MemAgent[]>;
   /** Scoped per MLS (sales_volume / units are the sums over these MLSs) or not (the agents' own). The rules are the same. */
   scoped?: boolean;
+  /** Every agent's nameRank is set from the database's name order and proven: sorting by name is answered here. */
+  namesReady?: boolean;
+  /** Some name holds a letter Postgres and JavaScript lower-case differently: name searches go to the database. Checked once. */
+  nameRisk?: boolean;
 }
 
 export interface MemResult {
@@ -243,12 +256,41 @@ function location(f: unknown): Pred[] | typeof UNSUPPORTED {
 }
 
 /**
+ * The search box: fn_agent_where's `name` include — full_name ILIKE '%text%'
+ * for any of the texts, so a missing name never matches. Only plain ASCII
+ * without ILIKE's own wildcards (% _) or escape (\\) is answered here — then
+ * ILIKE is exactly a case-insensitive "contains"; anything else, and any
+ * exclude, goes to the database. Names are lower-cased A–Z only: every other
+ * letter lower-cases to a letter outside ASCII in both, so it can never meet
+ * the ASCII text — except Turkish İ and the Kelvin sign, which lower-case to
+ * ASCII by rules that differ between engines; a market with one sends name
+ * searches to the database.
+ */
+const RISKY_LETTERS = /[\u0130\u212A]/;
+function nameFilter(f: unknown, market: MemMarket): Pred | null | typeof UNSUPPORTED {
+  if (f === undefined || f === null) return null;
+  if (!isObj(f)) return UNSUPPORTED;
+  if (strs(f.exclude).length) return UNSUPPORTED;
+  const inc = strs(f.include);
+  if (!inc.length) return null;
+  if (inc.some((v) => !PLAIN.test(v) || /[%_\\]/.test(v))) return UNSUPPORTED;
+  market.nameRisk ??= market.agents.some((a) => a.full_name !== null && RISKY_LETTERS.test(a.full_name));
+  if (market.nameRisk) return UNSUPPORTED;
+  const needles = inc.map((v) => v.toLowerCase());
+  return (a) => {
+    if (a.full_name === null) return false;
+    const name = (a.nameLower ??= a.full_name.replace(/[A-Z]+/g, (m) => m.toLowerCase()));
+    return needles.some((n) => name.includes(n));
+  };
+}
+
+/**
  * The market's filters as one predicate — or UNSUPPORTED for anything this
  * does not reproduce exactly. The base must be exactly the market: these MLSs
  * (all scoped), salespeople.
  */
 function compile(filters: Filters, market: MemMarket): Pred | typeof UNSUPPORTED {
-  const KNOWN = new Set(["mls", "title", "salesVolume", "closedUnits", "estTimeInIndustry", "officeSearch", "location", "nameQuery"]);
+  const KNOWN = new Set(["mls", "title", "salesVolume", "closedUnits", "estTimeInIndustry", "officeSearch", "location", "name"]);
   for (const k of Object.keys(filters)) if (!KNOWN.has(k)) return UNSUPPORTED;
 
   const mls = filters.mls;
@@ -283,26 +325,31 @@ function compile(filters: Filters, market: MemMarket): Pred | typeof UNSUPPORTED
   const loc = location(filters.location);
   if (loc === UNSUPPORTED) return UNSUPPORTED;
   preds.push(...loc);
+  const nm = nameFilter(filters.name, market);
+  if (nm === UNSUPPORTED) return UNSUPPORTED;
+  if (nm) preds.push(nm);
   return (a) => preds.every((p) => p(a));
 }
 
 /* ---------------------------------------------------------------- the order --- */
 
 /*
- * THE ORDER. Only the market's own numbers — volume and units, which a
- * scoped market sorts by its MLS sums with nulls last and the agent id to
- * break ties (fn_filter_search 0119), exactly reproducible. A text order
- * (name, brokerage, city, title) depends on the database's collation, which
- * JavaScript's is not — those go to the database. So does the search box:
- * under these two orders the database ignores it anyway, and any other
- * order is a text one.
+ * THE ORDER. The market's own numbers — volume and units, which a scoped
+ * market sorts by its MLS sums with nulls last and the agent id to break ties
+ * (fn_filter_search 0119), exactly reproducible — and the name, once the
+ * market's name order has been read from the database itself (27 Oct): a
+ * text order depends on the database's collation, which JavaScript's is not,
+ * so names are never compared here, only their ranks in the database's
+ * order. Brokerage, city and title orders go to the database.
  */
-const MEMORY_SORTS = new Set(["sales_volume", "units"]);
+const MEMORY_SORTS = new Set(["sales_volume", "units", "full_name"]);
 
-function comparator(sortBy: string, dir: "asc" | "desc"): ((x: MemAgent, y: MemAgent) => number) | typeof UNSUPPORTED {
+function comparator(sortBy: string, dir: "asc" | "desc", market?: MemMarket): ((x: MemAgent, y: MemAgent) => number) | typeof UNSUPPORTED {
   if (!MEMORY_SORTS.has(sortBy)) return UNSUPPORTED;
+  if (sortBy === "full_name" && !market?.namesReady) return UNSUPPORTED;
   const sign = dir === "asc" ? 1 : -1;
-  const get = (a: MemAgent) => (sortBy === "units" ? a.units : a.sales_volume);
+  const get = (a: MemAgent): number | null =>
+    sortBy === "units" ? a.units : sortBy === "full_name" ? (a.nameRank === undefined || a.nameRank === Infinity ? null : a.nameRank) : a.sales_volume;
   return (x, y) => {
     const a = get(x);
     const b = get(y);
@@ -329,9 +376,7 @@ export function searchMarket(
 ): MemResult | null {
   const pred = compile(filters, market);
   if (pred === UNSUPPORTED) return null;
-  // The search box: the database's (its scoped order ignores it — but it is not ours to assume).
-  if (typeof filters.nameQuery === "string" && filters.nameQuery !== "") return null;
-  const cmp = comparator(sort.by, sort.dir);
+  const cmp = comparator(sort.by, sort.dir, market);
   if (cmp === UNSUPPORTED) return null;
   // The market in this order, sorted once and kept: a search then only filters.
   const key = `${sort.by}:${sort.dir}`;

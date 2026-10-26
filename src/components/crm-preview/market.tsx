@@ -640,7 +640,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
               <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: "1px solid #ebedf0", fontSize: 12, color: "#555a64" }}>
                 <Icon name="info" size={14} />
                 {q
-                  ? "Agents matching your search are listed first; the count is the whole list, as in the Database app."
+                  ? <>Only agents whose name contains &ldquo;{q}&rdquo;. Clear the search to see everyone.</>
                   : <>Tick agents to move them to your prospects, My Agents or DNC List. To move one agent, click its list in the List&nbsp;column.</>}
               </div>
             )}

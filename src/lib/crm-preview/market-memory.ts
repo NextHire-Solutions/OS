@@ -20,9 +20,13 @@ import { MARKET_TITLE_TOKEN, searchMarket, titleTokens, type MemAgent, type MemM
  * the database on a set of real queries — the whole market, its biggest
  * city, brokerage, county and state, each range, an exclude, the units
  * order, page 2, the name search. One difference and that market stays on
- * the database (logged). The name / brokerage / city orders depend on the
- * database's collation; they are proven separately and only used if they
- * match.
+ * the database (logged).
+ *
+ * THE NAME ORDER (27 Oct) is the database's collation, not JavaScript's, so it
+ * is read from the database once the market is ready — in the background,
+ * the first time someone sorts by name (or kept warm) — and proven on its own
+ * before a name sort is answered here. Brokerage / city / title orders stay
+ * on the database.
  *
  * Kept 30 minutes, then reloaded (and proven again) in the background, and
  * dropped at once if the agent database refreshes the market's MLSs; at most
@@ -190,6 +194,90 @@ export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(ge
   return { market: { mlsIds: ids, agents: [...agents.values()], scoped }, stamp };
 }
 
+/* ------------------------------------------------------- the name order --- */
+
+/*
+ * The market's named agents IN THE DATABASE'S OWN ORDER — order by
+ * full_name, id, exactly what fn_filter_search sorts by (0119: "full_name
+ * <dir> nulls last, a.id") — so no two names are ever compared here. Its
+ * collation is not JavaScript's: punctuation, then digits, then letters
+ * (“Christi”, "Frank", (Deborah), 247 Property, A Allen…).
+ *
+ * Six ranges of names read side by side, three at a time, each keyset-paged
+ * on (full_name, id). Each range is the database's own comparison, so the
+ * ranges in turn are its whole order. ~117 pages for the Demo's 116,123
+ * names. All agents in the MLSs, not only salespeople: a superset keeps the
+ * same order.
+ */
+const NAME_RANGES = ["", "C", "G", "K", "N", "S"];
+
+/** A value inside PostgREST's or=(…): double-quoted, with \ and " escaped. */
+const quoted = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+export async function loadNameOrder(mlsIds: readonly string[], db: Db = readOnly(getCorofySupabase()) as unknown as Db): Promise<Array<{ id: string; name: string }>> {
+  const ids = [...new Set(mlsIds)].sort();
+  const ranges = await pooled(NAME_RANGES.map((lo, i) => async () => {
+    const hi = NAME_RANGES[i + 1] ?? null;
+    const rows: Array<{ id: string; name: string }> = [];
+    let after: { name: string; id: string } | null = null;
+    for (let guard = 0; guard < 10_000; guard++) {
+      let q = db.from("agents").select("id,full_name,agent_mls!inner(mls_id)").in("agent_mls.mls_id", ids).not("full_name", "is", null);
+      if (lo) q = q.gte("full_name", lo);
+      if (hi) q = q.lt("full_name", hi);
+      if (after) q = q.or(`full_name.gt.${quoted(after.name)},and(full_name.eq.${quoted(after.name)},id.gt.${after.id})`);
+      const { data, error } = await q.order("full_name", { ascending: true }).order("id", { ascending: true }).limit(PAGE);
+      if (error) throw new Error(`agents by name: ${error.message}`);
+      const got = (data ?? []) as unknown as Row[];
+      for (const r of got) rows.push({ id: String(r.id), name: String(r.full_name) });
+      if (got.length < PAGE) break;
+      after = rows[rows.length - 1];
+    }
+    return rows;
+  }), 3);
+  return ranges.flat();
+}
+
+/**
+ * Each agent's place in that order (equal names share one; the id breaks the
+ * tie, as there) — or why not: an agent of the market missing from it, or
+ * named differently than when the market was read. Nothing is set unless
+ * every named agent has its place.
+ */
+export function rankNames(m: MemMarket, ordered: ReadonlyArray<{ id: string; name: string }>): string | null {
+  const place = new Map<string, { name: string; rank: number }>();
+  let rank = -1;
+  let prev: string | null = null;
+  for (const o of ordered) {
+    if (o.name !== prev) { rank++; prev = o.name; }
+    place.set(o.id, { name: o.name, rank });
+  }
+  for (const a of m.agents) {
+    if (a.full_name === null) continue;
+    const p = place.get(a.id);
+    if (!p) return `${a.id} is not in the database's name order`;
+    if (p.name !== a.full_name) return `${a.id} was renamed since the market was read`;
+  }
+  for (const a of m.agents) a.nameRank = a.full_name === null ? Infinity : place.get(a.id)!.rank;
+  return null;
+}
+
+/**
+ * A refreshed copy keeps the proven order of the copy it replaces when no
+ * name changed and no named agent is new — relative places hold, and the
+ * names are not read again every half hour. Otherwise false, and nothing set.
+ */
+export function carryNames(from: MemMarket, to: MemMarket): boolean {
+  if (!from.namesReady) return false;
+  const old = new Map(from.agents.map((a) => [a.id, a]));
+  for (const a of to.agents) {
+    if (a.full_name === null) continue;
+    const o = old.get(a.id);
+    if (!o || o.full_name !== a.full_name || o.nameRank === undefined || o.nameRank === Infinity) return false;
+  }
+  for (const a of to.agents) a.nameRank = a.full_name === null ? Infinity : old.get(a.id)!.nameRank;
+  return true;
+}
+
 /* ------------------------------------------------------------ the proof --- */
 
 export type DbSearch = (filters: Record<string, unknown>, limit: number, offset: number, sort: { by: string; dir: "asc" | "desc" }) =>
@@ -236,6 +324,42 @@ export function parityQueries(m: MemMarket, base: Record<string, unknown>): Arra
     out.push({ label: `brokerage ${brand}`, filters: { ...base, ...org([brand], []) }, sort: vol });
     out.push({ label: `not brokerage ${brand}`, filters: { ...base, ...org([], [brand]) }, sort: vol });
   }
+  // The search box: a common surname, in capitals too (any case), part of one, and with a city.
+  const word = commonSurname(m);
+  if (word) {
+    const name = (...include: string[]) => ({ name: { include, exclude: [] } });
+    out.push({ label: `name contains "${word}"`, filters: { ...base, ...name(word) }, sort: vol });
+    out.push({ label: `name contains "${word.toUpperCase()}", by units`, filters: { ...base, ...name(word.toUpperCase()) }, sort: { by: "units", dir: "desc" } });
+    out.push({ label: `name contains "${word.slice(0, 3)}" or "${word.slice(-3)}", page 2`, filters: { ...base, ...name(word.slice(0, 3), word.slice(-3)) }, sort: vol, offset: 50 });
+    if (city) out.push({ label: `name contains "${word}" + city ${city}`, filters: { ...base, ...name(word), ...loc([{ f: "city", v: city }]) }, sort: vol });
+  }
+  return out;
+}
+
+/** The market's most common last name (letters only, 4+), lower-cased — a search box text that matches many. */
+function commonSurname(m: MemMarket): string | null {
+  return most(m.agents.map((a) => {
+    const last = a.full_name?.trim().split(/\s+/).pop() ?? "";
+    return /^[A-Za-z]{4,}$/.test(last) ? last.toLowerCase() : null;
+  }));
+}
+
+/** The name order's own proof: both ways, deep pages, under filters, with the search box. */
+export function nameQueries(m: MemMarket, base: Record<string, unknown>): ReturnType<typeof parityQueries> {
+  const city = most(m.agents.map((a) => (a.office_city_key && a.office_state ? `${a.office_city_key}, ${a.office_state}` : null)));
+  const word = commonSurname(m);
+  const asc = { by: "full_name", dir: "asc" as const };
+  const desc = { by: "full_name", dir: "desc" as const };
+  const out: ReturnType<typeof parityQueries> = [
+    { label: "names A→Z", filters: { ...base }, sort: asc },
+    { label: "names Z→A", filters: { ...base }, sort: desc },
+    { label: "names A→Z, page 2", filters: { ...base }, sort: asc, offset: 50 },
+    { label: "names A→Z, the last page a search may reach", filters: { ...base }, sort: asc, offset: 950 },
+    { label: "names Z→A, page 11", filters: { ...base }, sort: desc, offset: 500 },
+    { label: "names A→Z, volume ≥ $2M", filters: { ...base, salesVolume: { side: "all", buckets: [], min: "2000000", max: "" } }, sort: asc },
+  ];
+  if (city) out.push({ label: `names Z→A, city ${city}`, filters: { ...base, location: { field: "city", appliesTo: ["office", "transacted"], values: [{ f: "city", v: city }], excludeValues: [], excludeField: "city" } }, sort: desc });
+  if (word) out.push({ label: `names A→Z, name contains "${word}"`, filters: { ...base, name: { include: [word], exclude: [] } }, sort: asc });
   return out;
 }
 
@@ -247,12 +371,20 @@ export interface Proof {
 
 /** Each query both ways: the same total, the same volume to the cent, the same page in the same order. */
 export async function proveMarket(m: MemMarket, base: Record<string, unknown>, dbSearch: DbSearch): Promise<Proof> {
+  // Its own sort cache: the copy that is served never inherits anything from the proof.
+  return prove({ mlsIds: m.mlsIds, agents: m.agents, sorted: new Map() }, parityQueries(m, base), dbSearch);
+}
+
+/** The name order, once its ranks are set: answered as if ready, against the database. */
+export async function proveNames(m: MemMarket, base: Record<string, unknown>, dbSearch: DbSearch): Promise<Proof> {
+  return prove({ mlsIds: m.mlsIds, agents: m.agents, sorted: new Map(), namesReady: true }, nameQueries(m, base), dbSearch);
+}
+
+async function prove(probe: MemMarket, queries: ReturnType<typeof parityQueries>, dbSearch: DbSearch): Promise<Proof> {
   const failures: string[] = [];
   let checked = 0;
-  // Its own sort cache: the copy that is served never inherits anything from the proof.
-  const probe: MemMarket = { mlsIds: m.mlsIds, agents: m.agents, sorted: new Map() };
   // Three at a time: the agent database is shared with the live apps.
-  await pooled(parityQueries(m, base).map((q) => async () => {
+  await pooled(queries.map((q) => async () => {
     const mem = searchMarket(probe, q.filters, q.sort, 50, q.offset ?? 0);
     if (!mem) { failures.push(`${q.label}: memory refused it`); return; }
     const db = await dbSearch(q.filters, 50, q.offset ?? 0, q.sort);
@@ -296,7 +428,7 @@ const HUNG_MS = 10 * 60_000;
 
 type Slot =
   | { status: "loading"; since: number; token: number }
-  | { status: "ready"; market: MemMarket; stamp: MlsStamp; at: number; lastUsed: number; verifiedAt: number; verifying?: boolean; refreshing: number | null; refreshAfter: number }
+  | { status: "ready"; market: MemMarket; stamp: MlsStamp; at: number; lastUsed: number; verifiedAt: number; verifying?: boolean; refreshing: number | null; refreshAfter: number; namesLoading?: number | null; namesRetryAfter?: number }
   | { status: "unused"; reason: string; retryAfter: number };
 
 const GLOBAL_KEY = "__osMarketMemory";
@@ -343,6 +475,14 @@ function startLoad(key: string, mlsIds: readonly string[], base: Record<string, 
         all[key] = { status: "unused", reason: proof.failures.join(" | "), retryAfter: Date.now() + TTL_MS };
         console.error(`[market-memory] ${key}: NOT used — differs from the database: ${proof.failures.join(" | ")}`);
         return;
+      }
+      // A refresh keeps the name order it replaces when no name changed — proven again on this copy.
+      const prev = all[key];
+      if (prev?.status === "ready" && carryNames(prev.market, loaded.market)) {
+        const names = await proveNames(loaded.market, base, dbSearch);
+        if (!owner(all[key])) return;
+        if (names.ok) loaded.market.namesReady = true;
+        else console.error(`[market-memory] ${key}: the carried name order differs — read again when asked: ${names.failures.join(" | ")}`);
       }
       const now = Date.now();
       all[key] = { status: "ready", market: loaded.market, stamp: loaded.stamp, at: now, lastUsed: now, verifiedAt: now, refreshing: null, refreshAfter: 0 };
@@ -437,6 +577,56 @@ export async function marketFromMemory(mlsIds: readonly string[], base: Record<s
   return slot.market;
 }
 
+/**
+ * Starts reading a held market's name order (loadNameOrder) in the
+ * background, when it may — it counts as the one load running, so it waits
+ * for any other and nothing else starts meanwhile. Nobody waits on it: until
+ * it is read and proven, a name sort is the database's. Written only into the
+ * copy that asked, and only if that copy is still the one held.
+ */
+export function requestNameOrder(mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch, now = Date.now()): void {
+  if (memoryOff() || !mlsIds.length) return;
+  const key = keyOf(mlsIds);
+  const st = store();
+  const slot = st.slots[key];
+  if (slot?.status !== "ready" || slot.market.namesReady) return;
+  if (typeof slot.namesLoading === "number" && now - slot.namesLoading < HUNG_MS) return;
+  if (now < (slot.namesRetryAfter ?? 0) || inFlight(now) > 0) return;
+  const token = st.next++;
+  st.running[token] = now;
+  slot.namesLoading = now;
+  const mine = () => st.slots[key] === slot && slot.namesLoading === now;
+  void (async () => {
+    const t0 = Date.now();
+    try {
+      const ordered = await loadNameOrder(slot.market.mlsIds);
+      if (!mine()) return;
+      const why = rankNames(slot.market, ordered);
+      if (why) {
+        slot.namesRetryAfter = Date.now() + COOL_DOWN_MS;
+        console.error(`[market-memory] ${key}: name order NOT used — ${why}`);
+        return;
+      }
+      const proof = await proveNames(slot.market, base, dbSearch);
+      if (!mine()) return;
+      if (!proof.ok) {
+        slot.namesRetryAfter = Date.now() + TTL_MS;
+        console.error(`[market-memory] ${key}: name order NOT used — differs from the database: ${proof.failures.join(" | ")}`);
+        return;
+      }
+      // No name order was ever cached while not ready (the comparator refuses it), so nothing stale is left to clear.
+      slot.market.namesReady = true;
+      console.log(`[market-memory] ${key}: name order of ${ordered.length} names ready in ${Math.round((Date.now() - t0) / 1000)} s — ${proof.checked} checks matched`);
+    } catch (e) {
+      if (mine()) slot.namesRetryAfter = Date.now() + COOL_DOWN_MS;
+      console.error(`[market-memory] ${key}: name order failed — ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      delete st.running[token];
+      if (slot.namesLoading === now) slot.namesLoading = null;
+    }
+  })();
+}
+
 /** At most MAX_MARKETS held — the one used longest ago goes first. */
 function evict(all: Record<string, Slot>) {
   const ready = Object.entries(all).filter(([, v]) => v.status === "ready") as Array<[string, Extract<Slot, { status: "ready" }>]>;
@@ -445,6 +635,6 @@ function evict(all: Record<string, Slot>) {
 }
 
 /** For the timing script and tests: what the holder has. */
-export function memoryState(): Array<{ key: string; status: string; agents?: number; reason?: string }> {
-  return Object.entries(slots()).map(([key, v]) => ({ key, status: v.status, ...(v.status === "ready" ? { agents: v.market.agents.length } : {}), ...(v.status === "unused" ? { reason: v.reason } : {}) }));
+export function memoryState(): Array<{ key: string; status: string; agents?: number; names?: boolean; reason?: string }> {
+  return Object.entries(slots()).map(([key, v]) => ({ key, status: v.status, ...(v.status === "ready" ? { agents: v.market.agents.length, names: !!v.market.namesReady } : {}), ...(v.status === "unused" ? { reason: v.reason } : {}) }));
 }

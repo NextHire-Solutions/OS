@@ -103,9 +103,13 @@ test("anything it does not reproduce exactly goes to the database", () => {
   assert.equal(run(loc([{ f: "city", v: "Atlanta" }], { appliesTo: ["home"] })), null, "home places are not held");
   assert.equal(run({ salesVolume: { side: "all", buckets: ["1M+"], min: "", max: "" } }), null, "buckets");
   assert.equal(run({ salesVolume: { side: "list", buckets: [], min: "1", max: "" } }), null, "list side");
-  assert.equal(run({ nameQuery: "smith" }), null, "the search box — always the database's");
-  assert.equal(run({ nameQuery: "%%%%%%%%%%%%%%%%%%%%x" }), null, "a wildcard search never reaches a regular expression");
-  for (const by of ["full_name", "brand", "office_city", "most_transacted_city", "title", "license_number"]) assert.equal(run({}, { by, dir: "asc" }), null, `${by}: a text order is the database's collation`);
+  assert.equal(run({ nameQuery: "smith" }), null, "the old nameQuery is not a filter here");
+  assert.equal(run({ name: { include: ["%%%%%%%%%%%%%%%%%%%%x"], exclude: [] } }), null, "ILIKE's own wildcards go to the database — never a regular expression");
+  assert.equal(run({ name: { include: ["sm_th"], exclude: [] } }), null);
+  assert.equal(run({ name: { include: ["José"], exclude: [] } }), null, "beyond plain ASCII");
+  assert.equal(run({ name: { include: ["smith"], exclude: ["ann"] } }), null, "a name exclude");
+  for (const by of ["brand", "office_city", "most_transacted_city", "title", "license_number"]) assert.equal(run({}, { by, dir: "asc" }), null, `${by}: a text order is the database's collation`);
+  assert.equal(run({}, { by: "full_name", dir: "asc" }), null, "names: only once the database's own order is loaded");
   assert.equal(run(loc([{ f: "city", v: "Atlanta\u00a0, GA" }])), null, "a no-break space: trims differ");
   assert.equal(run(loc([{ f: "city", v: "Atl\\anta" }])), null, "a backslash");
   assert.equal(run(loc([{ f: "city", v: "Ángel, GA" }])), null, "beyond plain ASCII");
@@ -114,4 +118,27 @@ test("anything it does not reproduce exactly goes to the database", () => {
 test("a place filter that yields no condition is no filter — as the SQL adds none", () => {
   assert.equal(run(loc([{ f: "city", v: "(x)" }]))!.total, 6);
   assert.equal(run({ location: { field: "city", appliesTo: ["office", "transacted"], values: [], excludeValues: [{ f: "city", v: "(x)" }], excludeField: "city" } })!.total, 6);
+});
+
+test("the search box: names containing the text, any case; no name never matches", () => {
+  const r = run({ name: { include: ["SMITH"], exclude: [] } });
+  assert.deepEqual(names(r), ["Ann Smith", "Cy Smith"]);
+  assert.equal(r!.total, 2);
+  assert.deepEqual(names(run({ name: { include: ["smith", "lee"], exclude: [] } })), ["Ann Smith", "Cy Smith", "Di Lee"], "any of the texts");
+  assert.deepEqual(names(run({ name: { include: [], exclude: [] } })), names(run({})), "no text: no filter");
+});
+
+test("the name order comes from the database's ranks — never from comparing names here", () => {
+  // The database's own order (its collation), as ranks: here deliberately NOT alphabetical, to prove the ranks rule.
+  const rank: Record<string, number> = { "Ed Ng": 0, "Ann Smith": 1, "Cy Smith": 1, "Bo Jones": 2, "Di Lee": 3 };
+  const ranked: MemMarket = { ...market, sorted: new Map(), namesReady: true, agents: market.agents.map((a) => ({ ...a, nameRank: a.full_name === null ? Infinity : rank[a.full_name] })) };
+  const by = (dir: "asc" | "desc") => searchMarket(ranked, base(), { by: "full_name", dir }, 50, 0)!.rows.map((a) => a.full_name);
+  assert.deepEqual(by("asc"), ["Ed Ng", "Ann Smith", "Cy Smith", "Bo Jones", "Di Lee", null], "rank order; equal ranks by id; no name last");
+  assert.deepEqual(by("desc"), ["Di Lee", "Bo Jones", "Ann Smith", "Cy Smith", "Ed Ng", null], "reversed — but equal ranks still by id, and no name still last (nulls last)");
+});
+
+test("a market holding a name with Turkish İ or the Kelvin sign sends name searches to the database", () => {
+  const risky: MemMarket = { ...market, sorted: new Map(), nameRisk: undefined, agents: [...market.agents, agent({ full_name: "İsmail Smith", sales_volume: 1, units: 1 })] };
+  assert.equal(searchMarket(risky, { ...base(), name: { include: ["smith"], exclude: [] } }, { by: "sales_volume", dir: "desc" }, 50, 0), null);
+  assert.notEqual(searchMarket(risky, base(), { by: "sales_volume", dir: "desc" }, 50, 0), null, "everything else still from memory");
 });

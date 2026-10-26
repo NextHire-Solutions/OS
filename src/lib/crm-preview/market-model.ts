@@ -245,8 +245,14 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
     f.location = { field, appliesTo: [...q.kinds], values: places, excludeValues: notPlaces, excludeField: (notPlaces[0] ?? places[0]).f };
   }
   if (q.titles.length || x.titles.length) f.title = { include: [...q.titles], exclude: [...x.titles] };
-  // The Database app's search: matching agents come first; it narrows nothing (fn_agent_order).
-  if (q.q) f.nameQuery = q.q;
+  /*
+   * "Search agents": the agents whose name contains the text, any case — the
+   * Database app's own name filter (fn_agent_where `name`: full_name ILIKE
+   * %text%). It used to send nameQuery, which only moves matches first and,
+   * in a market scoped per MLS, is ignored under the volume and units orders
+   * (fn_filter_search 0119): typing a name changed nothing (27 Oct).
+   */
+  if (q.q) f.name = { include: [q.q], exclude: [] };
   return f;
 }
 
