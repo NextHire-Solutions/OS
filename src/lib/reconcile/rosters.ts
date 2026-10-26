@@ -1,6 +1,7 @@
 import "server-only";
 
 import { analyticsRead } from "@/lib/tools/analytics/in-process";
+import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 import { httpProbe } from "@/lib/http/probe";
 import { baseUrlEnv, optionalEnv } from "@/lib/env";
 import { lifecycleOf, listClientRows } from "@/lib/tools/client-health/publish";
@@ -125,35 +126,54 @@ async function masterInbox(): Promise<Roster> {
   };
 }
 
-/** Analytics — clients configured for campaign attribution. */
+/**
+ * Analytics — every client set up for campaign attribution.
+ *
+ * Its own clients table (27 Oct). This used to read the Clients REPORT
+ * (/api/analytics/clients), which lists only the clients with campaign
+ * activity in the default date range — 32 of 54 that day — so the card read
+ * "32" while every client had a row (the count table proved 54 of 54). The
+ * report's figures are kept as each entry's detail when it answers.
+ */
 async function analytics(): Promise<Roster> {
   const base: Omit<Roster, "entries" | "unavailable"> = {
     tool: "analytics",
     label: "Campaign Analytics",
     definition:
-      "Clients created to match campaign names. A client exists here only once someone set it up for attribution, so one with no campaigns is usually absent.",
+      "Every client set up for campaign attribution — since 28 Sep, every client, whether or not it has campaigns.",
   };
 
-  // In-process — the standalone Analytics app is being switched off.
-  const res = await analyticsRead("/api/analytics/clients");
-  if (!res.ok) return { ...base, entries: [], unavailable: `returned ${res.status ?? "no response"}` };
+  let rows: { id: string; name: string | null }[];
+  try {
+    const { data, error } = await getAnalyticsSupabase().from("clients").select("id, name").limit(1000);
+    if (error) throw new Error(error.message);
+    rows = (data ?? []) as { id: string; name: string | null }[];
+  } catch (error) {
+    return { ...base, entries: [], unavailable: error instanceof Error ? error.message : "Analytics is unreachable" };
+  }
 
-  const rows = asRecord(res.json)?.rows;
-  if (!Array.isArray(rows)) return { ...base, entries: [], unavailable: "unexpected response shape" };
+  // Campaign figures for the default range — detail only; a client without activity simply has none.
+  const figures = new Map<string, { campaigns: number | null; sent: number | null }>();
+  const res = await analyticsRead("/api/analytics/clients").catch(() => null);
+  const reportRows = res?.ok ? asRecord(res.json)?.rows : null;
+  if (Array.isArray(reportRows)) {
+    for (const raw of reportRows) {
+      const row = asRecord(raw);
+      const name = str(row?.name);
+      if (!name) continue;
+      figures.set(name.toLowerCase(), {
+        campaigns: typeof row?.campaignCount === "number" ? row.campaignCount : null,
+        sent: typeof row?.sent === "number" ? row.sent : null,
+      });
+    }
+  }
 
   return {
     ...base,
-    ...withoutPlaceholders(rows.flatMap((raw) => {
-      const row = asRecord(raw);
-      const name = str(row?.name);
+    ...withoutPlaceholders(rows.flatMap((row) => {
+      const name = str(row.name);
       if (!name) return [];
-      return [{
-        name,
-        meta: {
-          campaigns: typeof row?.campaignCount === "number" ? row.campaignCount : null,
-          sent: typeof row?.sent === "number" ? row.sent : null,
-        },
-      }];
+      return [{ name, meta: figures.get(name.toLowerCase()) ?? { campaigns: 0, sent: 0 } }];
     })),
   };
 }

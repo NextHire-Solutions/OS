@@ -193,24 +193,42 @@ export function DiscrepanciesScreen() {
 
   return (
     <Frame>
-      {/* What each list actually contains — the single most useful thing here.
-          Most "discrepancies" dissolve once you read these three sentences. */}
-      <div className="cards" style={{ gridTemplateColumns: `repeat(${Math.max(1, data.rosters.length)}, 1fr)` }}>
-        {data.rosters.map((r) => (
-          <div className="card" key={r.tool}>
-            <div className="card-l">{r.label}</div>
-            <div
-              className="card-n tnum"
-              style={r.unavailable ? { color: "#B9C0CB" } : undefined}
-            >
-              {r.unavailable ? "—" : r.count}
+      {/* The headline is CLIENTS per tool, counted by the agreed rules (29 Sep:
+          a client with several portals counts once; Demo Portal, tests and
+          buckets never count) — so every tool reads the same number when none
+          is missing. It used to show each tool's own list size by its own
+          definition (56 / 32 / 54 on 27 Oct, beside a table proving 54 of 54
+          everywhere). The rows behind each number are named underneath. */}
+      {data.counts && !data.counts.error && data.counts.tools.length ? (
+        <div className="cards" style={{ gridTemplateColumns: `repeat(${data.counts.tools.length}, 1fr)` }} data-testid="client-count-cards">
+          {data.counts.tools.map((t) => (
+            <div className="card" key={t.tool}>
+              <div className="card-l">{t.label}</div>
+              <div className="card-n tnum" style={t.present < t.masterTotal ? { color: "#B45309" } : undefined}>
+                {t.present}
+              </div>
+              <div className="card-s" style={{ lineHeight: 1.5 }}>{countLine(t)}</div>
             </div>
-            <div className="card-s" style={{ lineHeight: 1.5 }}>
-              {r.unavailable ?? r.definition}
+          ))}
+        </div>
+      ) : (
+        <div className="cards" style={{ gridTemplateColumns: `repeat(${Math.max(1, data.rosters.length)}, 1fr)` }}>
+          {data.rosters.map((r) => (
+            <div className="card" key={r.tool}>
+              <div className="card-l">{r.label}</div>
+              <div
+                className="card-n tnum"
+                style={r.unavailable ? { color: "#B9C0CB" } : undefined}
+              >
+                {r.unavailable ? "—" : r.count}
+              </div>
+              <div className="card-s" style={{ lineHeight: 1.5 }}>
+                {r.unavailable ?? r.definition}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {readable.length < 2 ? (
         <div className="anno">
@@ -986,6 +1004,16 @@ interface CountReport {
   unreadable: string[];
   masterTotal: number;
   error?: string;
+}
+
+/** Under a tool's client count: whether it holds every client, and what its other rows are. */
+function countLine(t: CountRow): string {
+  const missing = t.masterTotal - t.present;
+  const head = missing > 0 ? `${missing} of ${t.masterTotal} clients missing` : `All ${t.masterTotal} clients`;
+  const other: string[] = [];
+  if (t.secondRows.length) other.push(`${t.secondRows.length} second portal${t.secondRows.length === 1 ? "" : "s"} (${t.secondRows.map((r) => r.name).join(", ")})`);
+  if (t.extras.length) other.push(`${t.extras.length} not a client (${t.extras.map((e) => e.name).join(", ")})`);
+  return other.length ? `${head} · ${t.toolRows} rows: ${other.join("; ")}` : `${head} · every row is a client`;
 }
 
 function Counts({ report }: { report?: CountReport }) {
