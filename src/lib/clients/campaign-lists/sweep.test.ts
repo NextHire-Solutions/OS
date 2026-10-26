@@ -268,7 +268,7 @@ test("a client switched off mid-pass is not removed from", async () => {
 test("a stuck entry is retried by one process only, and fails after three tries", async () => {
   reset({ enabled: true, practice_mode: true, cursor_at: at(1) });
   db.seed("client_agents", [{ ...entries.my_agents[0] }]);
-  db.seed("os_campaign_removals", [{ dedupe_key: "my_agents:a1", source: "my_agents", entry_id: "a1", status: "pending", attempts: 1, created_at: at(-30), updated_at: at(-30) }]);
+  db.seed("os_campaign_removals", [{ dedupe_key: "my_agents:a1", source: "my_agents", entry_id: "a1", status: "pending", attempts: 1, decided_by: "sweep", settings_version: at(-60), created_at: at(-30), updated_at: at(-30) }]);
   await Promise.all([sweepCampaignRemovals(deps()), sweepCampaignRemovals(deps())]);
   assert.equal(lookups.length, 1, "two passes, one retry");
   assert.equal(statusOf("a1"), "practice");
@@ -294,4 +294,20 @@ test("a Prospects campaign must be one of the client's own", async () => {
   const s = await saveClientListSettings("c-keyes", { prospectsCampaignId: "700" }, "x", deps());
   assert.equal(s.prospectsCampaignName, "Keyes + Miami");
   assert.equal(s.removeEnabled, false, "choosing a campaign switches nothing on");
+});
+
+test("a stuck claim is never finished under other switches, nor a person's unfinished Remove now", async () => {
+  reset({ enabled: true, practice_mode: false, cursor_at: at(1) }, [{ os_client_id: "c-keyes", remove_enabled: true }]);
+  db.seed("client_agents", [{ ...entries.my_agents[0] }]);
+  db.seed("os_campaign_removals", [
+    // Claimed by a practice pass (other switches) whose process died.
+    { dedupe_key: "my_agents:a1", source: "my_agents", entry_id: "a1", status: "pending", attempts: 1, decided_by: "sweep", settings_version: at(-600), created_at: at(-30), updated_at: at(-30) },
+  ]);
+  await sweepCampaignRemovals(deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1" }));
+  assert.equal(removed.length, 0);
+  assert.equal(statusOf("a1"), "skipped");
+  Object.assign(db.rows("os_campaign_removals")[0], { status: "pending", attempts: 2, decided_by: "admin@outreachify.io", settings_version: at(-60), updated_at: at(-30) });
+  await sweepCampaignRemovals(deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1" }));
+  assert.equal(removed.length, 0, "a person's Remove now is never finished by the sweep");
+  assert.equal(statusOf("a1"), "failed");
 });

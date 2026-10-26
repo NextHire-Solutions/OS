@@ -73,7 +73,8 @@ function Panel({ data }: { data: CleanupOverview }) {
     setBusy(true);
     const r = await send(API, "PUT", { ...changed, ifUpdatedAt: s.updatedAt });
     setBusy(false);
-    show(r.ok ? { text: "Saved" } : { text: r.error ?? "Could not save", bad: true });
+    const forced = r.ok && changed.enabled === true && changed.practiceMode === false;
+    show(r.ok ? { text: forced ? "Saved — switching on always starts in practice; leave practice with a second save" : "Saved" } : { text: r.error ?? "Could not save", bad: true });
     router.refresh();
   };
 

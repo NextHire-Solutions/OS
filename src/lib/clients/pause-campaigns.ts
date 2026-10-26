@@ -171,7 +171,7 @@ async function campaignsFor(clientIds: string[], { strict = false }: { strict?: 
   const out: CampaignRow[] = [];
 
   const [bisonMap, instantlyMap] = await Promise.all([
-    db.from("campaign_clients").select("campaign_id, client_id, excluded, ambiguous, resolved_at").in("client_id", clientIds),
+    db.from("campaign_clients").select("campaign_id, client_id, excluded, ambiguous").in("client_id", clientIds),
     db
       .from("instantly_campaign_clients")
       .select("campaign_id, client_id, excluded")
@@ -182,14 +182,14 @@ async function campaignsFor(clientIds: string[], { strict = false }: { strict?: 
 
   /*
    * strict (the My Agents / DNC clean-up, which REMOVES people): only a
-   * mapping nobody detached (excluded) and nobody left unsure (ambiguous and
-   * never resolved). The pause keeps its own, wider reading.
+   * mapping nobody detached (excluded) and nobody flagged ambiguous. The
+   * pause keeps its own, wider reading.
    */
   const bisonIds = (bisonMap.data ?? [])
     .filter((r) => {
       if (!strict) return true;
-      const m = r as { excluded?: boolean | null; ambiguous?: boolean | null; resolved_at?: string | null };
-      return m.excluded !== true && !(m.ambiguous === true && !m.resolved_at);
+      const m = r as { excluded?: boolean | null; ambiguous?: boolean | null };
+      return m.excluded !== true && m.ambiguous !== true;
     })
     .map((r) => String(r.campaign_id));
   // An excluded mapping is a campaign somebody deliberately detached from this

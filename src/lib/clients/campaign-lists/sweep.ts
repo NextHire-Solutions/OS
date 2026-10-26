@@ -146,9 +146,11 @@ export async function saveSettings(body: unknown, who: string, os: Os = osTable,
   const { error } = await os("os_campaign_list_settings").upsert(row, { onConflict: "id" });
   if (error) throw new CampaignListError(error.message, 502);
   if (enabled !== s.enabled || practiceMode !== s.practiceMode) {
-    await os("os_campaign_removals")
+    // Belt and braces: the retry also refuses a claim made under other switches (settings_version).
+    const abandoned = await os("os_campaign_removals")
       .update({ status: "skipped", reason: "The clean-up's switches changed before this entry was finished — it was not acted on.", updated_at: now.toISOString() })
       .eq("status", "pending");
+    if (abandoned.error) console.error(`[campaign-cleanup] could not mark unfinished entries skipped: ${abandoned.error.message}`);
   }
   return loadSettings(os);
 }
@@ -399,7 +401,7 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
     .slice(0, settings.perRun);
 
   const stale = await x.os("os_campaign_removals")
-    .select("id, source, entry_id, attempts")
+    .select("id, source, entry_id, attempts, decided_by, settings_version")
     .eq("status", "pending")
     .lt("updated_at", new Date(x.now().getTime() - STALE_MS).toISOString())
     .limit(5);
@@ -413,7 +415,7 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
     const fresh = await freshGate(x, osClientId);
     if (!fresh.settings.enabled) result.stopped = "the clean-up was switched off during this pass";
     else if (fresh.settings.updatedAt !== settings.updatedAt) result.stopped = "the switches changed during this pass";
-    if (result.stopped) return () => ({ live: false, reason: fresh.settings.enabled ? PRACTICE_TEXT.practice_mode : PRACTICE_TEXT.switched_off });
+    if (result.stopped) return () => ({ live: false, reason: fresh.settings.enabled ? "The switches changed during this pass — nothing more was removed." : PRACTICE_TEXT.switched_off });
     return fresh.modeFor;
   };
 
@@ -430,6 +432,8 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
       status: "pending",
       attempts: 1,
       decided_by: "sweep",
+      // The switches this was claimed under: a retry under any other is refused.
+      settings_version: settings.updatedAt,
     }).select("id");
     // Already claimed — by an earlier pass or another process. Never twice.
     const id = !claim.error ? String(((claim.data ?? []) as Row[])[0]?.id ?? "") : "";
@@ -448,7 +452,7 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
       break;
     }
     if (!((moved.data ?? []) as Row[]).length) {
-      result.stopped ??= "the cursor was moved by a switch change during this pass";
+      result.stopped ??= "the cursor moved under this pass (a switch change, or another server's pass)";
       break;
     }
     cursor = { at: e.created_at, id: e.id };
@@ -457,12 +461,24 @@ export async function sweepCampaignRemovals(deps: SweepDeps = {}): Promise<Sweep
 
   // Entries a dead process claimed and never finished — one process each, a few tries, then failed.
   for (const r of result.stopped ? [] : ((stale.data ?? []) as Row[])) {
+    if (result.stopped) break;
     const attempts = Number(r.attempts ?? 1);
     const take = await x.os("os_campaign_removals")
       .update({ attempts: attempts + 1, updated_at: x.now().toISOString() })
       .eq("id", String(r.id)).eq("status", "pending").eq("attempts", attempts)
       .select("id");
     if (take.error || !((take.data ?? []) as Row[]).length) continue; // another process has it
+    // Only the sweep's own claims, made under the switches as they are now — never a person's
+    // unfinished "Remove now", never an entry claimed before a switch change.
+    if (r.decided_by !== "sweep" || (r.settings_version ?? null) !== settings.updatedAt) {
+      await x.os("os_campaign_removals").update({
+        status: r.decided_by !== "sweep" ? "failed" : "skipped",
+        reason: r.decided_by !== "sweep"
+          ? "A Remove now did not finish — look the entry up and press it again."
+          : "The clean-up's switches changed before this entry was finished — it was not acted on.",
+      }).eq("id", String(r.id));
+      continue;
+    }
     if (attempts >= MAX_ATTEMPTS) {
       await x.os("os_campaign_removals").update({ status: "failed", reason: `Could not be finished after ${MAX_ATTEMPTS} tries.` }).eq("id", String(r.id));
       tally("failed");
@@ -592,9 +608,9 @@ export async function removeNow(rowId: string, who: string, deps: SweepDeps = {}
   if (take.error) throw new CampaignListError(take.error.message, 502);
   if (!((take.data ?? []) as Row[]).length) throw new CampaignListError("Someone else is already acting on this entry.", 409);
 
-  const ctx = await context(x);
   let d: Decision;
   try {
+    const ctx = await context(x);
     d = await decide(x, ctx, entry.data as unknown as ListEntry, source, async (clientId) => (await freshGate(x, clientId)).modeFor);
   } catch (e) {
     await x.os("os_campaign_removals").update({ status: String(row.status), error: e instanceof Error ? e.message : String(e), updated_at: x.now().toISOString() }).eq("id", rowId);
@@ -604,13 +620,15 @@ export async function removeNow(rowId: string, who: string, deps: SweepDeps = {}
   const earlier = ((row.campaigns ?? []) as CampaignOutcome[]).filter((c) => (c.outcome === "removed" || c.outcome === "already_off") && !d.campaigns.some((n) => n.campaignId === c.campaignId));
   const campaigns = [...earlier, ...d.campaigns];
   const status = d.status === "skipped" ? "skipped" : overallStatus(campaigns);
-  await x.os("os_campaign_removals").update({
-    status,
-    reason: d.reason,
-    campaigns,
-    error: d.campaigns.find((c) => c.error)?.error ?? null,
-    updated_at: x.now().toISOString(),
-  }).eq("id", rowId);
+  const record = { status, reason: d.reason, campaigns, error: d.campaigns.find((c) => c.error)?.error ?? null, updated_at: x.now().toISOString() };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { error: wErr } = await x.os("os_campaign_removals").update(record).eq("id", rowId);
+    if (!wErr) return { status, campaigns };
+    if (attempt === 1) {
+      console.error(`[campaign-cleanup] could not record Remove now on ${rowId}: ${wErr.message} — what happened: ${JSON.stringify(record)}`);
+      throw new CampaignListError(`Done, but the record could not be saved (${wErr.message}). What happened is in the server log.`, 502);
+    }
+  }
   return { status, campaigns };
 }
 

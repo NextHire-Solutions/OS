@@ -84,7 +84,11 @@ CREATE TABLE IF NOT EXISTS public.os_campaign_removals (
   campaigns         jsonb       NOT NULL DEFAULT '[]'::jsonb,
   attempts          integer     NOT NULL DEFAULT 0,
   error             text,
+  -- 'sweep' or the person who pressed Remove now.
   decided_by        text,
+  -- The switches' updated_at when the sweep claimed it: an unfinished claim
+  -- is only ever retried under the same switches.
+  settings_version  text,
   created_at        timestamptz NOT NULL DEFAULT now(),
   updated_at        timestamptz NOT NULL DEFAULT now()
 );
