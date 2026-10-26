@@ -157,3 +157,21 @@ test("only a client marked test_only may be billed in this version", () => {
   assert.ok(testBillingRefusal({ ...ok, every_days: 30 }));
   assert.ok(testBillingRefusal({ ...ok, price_cents: 0 }));
 });
+
+test("the onboarding products: a price and what is counted, and their own words", async () => {
+  const { PAY_PER_LEAD_PRODUCTS, productLabel, parseSettingsInput } = await import("./model.ts");
+  assert.deepEqual(PAY_PER_LEAD_PRODUCTS.map((p) => [p.label, p.leadSource, p.priceCents]), [
+    ["$150 per lead", "handoffs", 15_000],
+    ["$250 per lead", "handoffs", 25_000],
+    ["$500 per call", "calls", 50_000],
+    ["$1,000 per call", "calls", 100_000],
+    ["$5,000 per introduction", "introductions", 500_000],
+  ]);
+  for (const p of PAY_PER_LEAD_PRODUCTS) assert.equal(productLabel(p.leadSource, p.priceCents), p.label);
+  assert.equal(productLabel("calls", 75_050), "$750.50 per call", "a custom price reads the same way");
+  for (const p of PAY_PER_LEAD_PRODUCTS) {
+    const r = parseSettingsInput({ priceCents: p.priceCents, leadSource: p.leadSource, everyDays: 14, anchorDate: "2026-10-26" });
+    assert.ok(!("error" in r), `${p.label} saves`);
+  }
+  assert.ok("error" in parseSettingsInput({ priceCents: 15_000, leadSource: "meetings", everyDays: 7, anchorDate: "2026-10-26" }));
+});

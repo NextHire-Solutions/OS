@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { addDays, periodLabel } from "@/lib/clients/usage-billing/model";
+import { addDays, periodLabel, productLabel, type LeadSource } from "@/lib/clients/usage-billing/model";
 
 /*
  * PAY PER LEAD — the TEST panel on a client's Billing tab (26 Oct 2026).
@@ -155,6 +155,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       {note ? <p className="rx-hint" role="status" style={{ color: "var(--st-active)" }}>{note}</p> : null}
       {!view ? (error ? null : <p className="rx-hint" role="status">Loading…</p>) : (
         <>
+          {s ? <p className="rx-hint" style={{ margin: "0 0 8px" }}>Product: <b>{productLabel(s.lead_source as LeadSource, s.price_cents)}</b> · every {s.every_days} days{s.enabled ? "" : " · not in the scheduled run"}</p> : null}
           {/* --------------------------------------------------- settings */}
           <div className="rb-tools" style={{ alignItems: "flex-end" }}>
             <label className="rb-field"><span>Price per lead ($)</span>

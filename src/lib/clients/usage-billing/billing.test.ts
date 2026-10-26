@@ -85,6 +85,29 @@ function seed(o: { acmeSettings?: Row | null; betaSettings?: Row | null; periods
     { client_id: LIVE, thread_id: "t4", lead_name: "Beta Lead", lead_email: "b@x.test", source: "Introduction", introduced_at: "2026-10-08T12:00:00.000Z" },
     { client_id: BOSTON, thread_id: "t5", lead_name: "Too Late", lead_email: "late@x.test", source: "Introduction", introduced_at: "2026-10-13T12:00:00.000Z" },
   ]);
+  // Booked calls: conversations marked "Meetings Booked".
+  db.seed("labels", [{ id: "lab-mb", name: "Meetings Booked" }, { id: "lab-int", name: "Interested" }]);
+  db.seed("leads", [
+    { id: "l1", email: "Cal@Call.test", full_name: "Cal Caller" },
+    { id: "l2", email: "dee@call.test", full_name: "Dee Dialer" },
+    { id: "l3", email: "beta-call@x.test", full_name: "Beta's Call" },
+    { id: "l4", email: "int@x.test", full_name: "Only Interested" },
+  ]);
+  db.seed("threads", [
+    { id: "th1", client_id: BOSTON, lead_id: "l1" },
+    { id: "th2", client_id: FLORIDA, lead_id: "l2" },
+    { id: "th3", client_id: LIVE, lead_id: "l3" },
+    { id: "th4", client_id: BOSTON, lead_id: "l4" },
+    { id: "th5", client_id: BOSTON, lead_id: "l1" },
+  ]);
+  db.seed("label_assignments", [
+    { label_id: "lab-mb", target_type: "thread", target_id: "th1", assigned_at: "2026-10-06T15:00:00.000Z" },
+    { label_id: "lab-mb", target_type: "thread", target_id: "th2", assigned_at: "2026-10-09T15:00:00.000Z" },
+    { label_id: "lab-mb", target_type: "thread", target_id: "th3", assigned_at: "2026-10-09T15:00:00.000Z" }, // Beta's portal
+    { label_id: "lab-int", target_type: "thread", target_id: "th4", assigned_at: "2026-10-09T15:00:00.000Z" }, // Interested only
+    { label_id: "lab-mb", target_type: "thread", target_id: "th5", assigned_at: "2026-10-10T15:00:00.000Z" }, // Cal again
+    { label_id: "lab-mb", target_type: "thread", target_id: "th1", assigned_at: "2026-10-13T15:00:00.000Z" }, // next week
+  ]);
 }
 
 async function withCard() {
@@ -125,6 +148,16 @@ test("an agent billed in another period is never billed again", async () => {
   const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });
   assert.deepEqual(p.leads.map((l) => l.key), ["jordan@coastal.test", "pat@bay.test"]);
   assert.ok(p.skipped.some((s) => s.reason === "billed_before" && s.lead.key === "sam@harbor.test"));
+});
+
+test("calls (the per-call products): conversations of the client's portals marked Meetings Booked, once per agent", async () => {
+  seed({ acmeSettings: { lead_source: "calls", price_cents: 50_000 } });
+  const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });
+  assert.deepEqual(p.leads.map((l) => [l.name, l.source]), [["Cal Caller", "call"], ["Dee Dialer", "call"]], "the alias portal counts; Beta's portal, Interested-only and next week do not; Cal once");
+  assert.equal(p.amountCents, 100_000);
+  assert.match(p.description, /2 calls × \$500\.00/);
+  assert.match(p.lines[0].description, /^Call: Cal Caller — /);
+  assert.deepEqual(writes(), []);
 });
 
 test("test and live periods are kept apart: a period billed in the other mode never counts as billed here", async () => {

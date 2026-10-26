@@ -10,6 +10,7 @@ import {
   type BillingInterval, type Plan,
 } from "@/lib/clients/onboard-plan";
 import { ModalDialog } from "@/components/ui/modal-dialog";
+import { easternDay, PAY_PER_LEAD_PRODUCTS } from "@/lib/clients/usage-billing/model";
 import { PLAN_DEFAULT_TARGET } from "@/lib/tools/client-health/types";
 
 /*
@@ -32,7 +33,8 @@ import { PLAN_DEFAULT_TARGET } from "@/lib/tools/client-health/types";
 const FIELD: React.CSSProperties = { display: "grid", gap: 5 };
 const LABEL: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--muted)" };
 
-export function OnboardClient() {
+/** `billing`: the viewer is one of the Billing tab's named people — only they see the pay-per-lead products. */
+export function OnboardClient({ billing = false }: { billing?: boolean }) {
   const trigger = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -54,13 +56,13 @@ export function OnboardClient() {
         width={620}
         label="Onboard a client"
       >
-        <OnboardForm onClose={close} />
+        <OnboardForm onClose={close} billing={billing} />
       </ModalDialog>
     </>
   );
 }
 
-function OnboardForm({ onClose }: { onClose: () => void }) {
+function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boolean }) {
   const [name, setName] = useState("");
   const [plan, setPlan] = useState<Plan>(DEFAULTS.plan);
   const [aliases, setAliases] = useState("");
@@ -70,6 +72,8 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
   const [billingIntervalDays, setBillingIntervalDays] = useState("");
   // Optional: link billing at creation (§2 "connect their Stripe subscription").
   const [stripeSub, setStripeSub] = useState("");
+  // Pay per lead (26 Oct) — TEST MODE ONLY: saved on the client's Billing tab, switched off; nothing is charged.
+  const [product, setProduct] = useState("");
   const [macroOn, setMacroOn] = useState(false);
   const [brokerage, setBrokerage] = useState("");
   const [fullName, setFullName] = useState("");
@@ -115,6 +119,7 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
     statusAlignment?: string | null;
     /** The outcome of linking the Stripe subscription, when one was entered. */
     stripe?: { ok: boolean; text: string } | null;
+    usage?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   } | null>(null);
 
@@ -209,7 +214,36 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
           stripe = { ok: false, text: `Stripe NOT linked: ${e instanceof Error ? e.message : String(e)} Link it from Edit.` };
         }
       }
-      setRunResult({ ...body, stripe });
+      /*
+       * The pay-per-lead product, last of all and never fatal — as Stripe.
+       * Saved through the Billing tab's own route (the same named people, test
+       * mode only): a TEST client, switched off. Nothing is charged, and the
+       * client's subscription and plan are untouched.
+       */
+      let usage: { ok: boolean; text: string } | null = null;
+      const chosen = PAY_PER_LEAD_PRODUCTS.find((p) => p.id === product);
+      if (chosen) {
+        try {
+          const saved = await fetch("/api/workspace/clients/billing/usage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              clientId: madeBody.id, action: "save",
+              priceCents: chosen.priceCents, leadSource: chosen.leadSource,
+              everyDays: billingInterval === "biweekly" ? 14 : 7,
+              anchorDate: easternDay(new Date()),
+              enabled: false,
+            }),
+          });
+          const sb = await saved.json().catch(() => null);
+          usage = saved.ok
+            ? { ok: true, text: `Pay per lead: ${chosen.label} saved in test mode (Billing tab). Nothing is charged.` }
+            : { ok: false, text: `Pay per lead NOT saved: ${sb?.error ?? `HTTP ${saved.status}`} Set it on the client's Billing tab.` };
+        } catch (e) {
+          usage = { ok: false, text: `Pay per lead NOT saved: ${e instanceof Error ? e.message : String(e)} Set it on the client's Billing tab.` };
+        }
+      }
+      setRunResult({ ...body, stripe, usage });
     } catch (e) {
       setFailed(e instanceof Error ? e.message : String(e));
     } finally {
@@ -266,6 +300,21 @@ function OnboardForm({ onClose }: { onClose: () => void }) {
             </label>
           ) : null}
         </div>
+
+        {billing ? (
+          <label style={FIELD}>
+            <span style={LABEL}>Pay per lead — test only</span>
+            <select className="inp" value={product} onChange={(e) => setProduct(e.target.value)} aria-label="Pay per lead product">
+              <option value="">None — subscription as above</option>
+              {PAY_PER_LEAD_PRODUCTS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+            <span className="mut" style={{ fontSize: 12 }}>
+              {product
+                ? `Saved on the client's Billing tab in Stripe test mode, billed every ${billingInterval === "biweekly" ? 14 : 7} days from today — switched off. Nothing is charged and the plan above is unchanged.`
+                : "Not live for any client yet: a product chosen here is saved in test mode only."}
+            </span>
+          </label>
+        ) : null}
 
         <label style={FIELD}>
           <span style={LABEL}>Stripe subscription — optional</span>
@@ -425,6 +474,7 @@ function RunView({
     portalFeatures?: string | null;
     statusAlignment?: string | null;
     stripe?: { ok: boolean; text: string } | null;
+    usage?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   };
 }) {
@@ -469,6 +519,11 @@ function RunView({
         {result.stripe ? (
           <p style={{ fontSize: 12, color: result.stripe.ok ? "var(--muted)" : "var(--red)", margin: 0 }}>
             {result.stripe.text}
+          </p>
+        ) : null}
+        {result.usage ? (
+          <p style={{ fontSize: 12, color: result.usage.ok ? "var(--muted)" : "var(--red)", margin: 0 }}>
+            {result.usage.text}
           </p>
         ) : null}
         {result.portalUrl ? (

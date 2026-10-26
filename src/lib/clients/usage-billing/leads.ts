@@ -16,7 +16,7 @@ import { DEFAULT_LEAD_SOURCE, leadKey, periodWindow, type BillableLead, type Lea
  *   billableLeads(osClientId, periodStart, periodEnd) → [{ key, name, at, source }]
  *
  * (days are Eastern, YYYY-MM-DD, end exclusive; `key` is the dedupe key), and
- * there are two of them. Which one a client uses is its row's lead_source;
+ * there are three of them. Which one a client uses is its row's lead_source;
  * the default for new rows is DEFAULT_LEAD_SOURCE in model.ts — one line.
  *
  *   handoffs       (the default candidate) each Interested reply handed to
@@ -30,6 +30,11 @@ import { DEFAULT_LEAD_SOURCE, leadKey, periodWindow, type BillableLead, type Lea
  *                  portals whose source is not "Client Entry" (the client's
  *                  own candidates — portals/intro-counts.ts), introduced
  *                  within the period.
+ *   calls          (the "$500 / $1,000 per call" products, 26 Oct) each
+ *                  conversation on the client's portals labelled "Meetings
+ *                  Booked" within the period, once per agent — the label the
+ *                  AI and the team use for a booked call. Not confirmed with
+ *                  the client yet.
  *
  * Both only READ. The OS's own tables through osTable(); Master Inbox's
  * through its read-only client (supabase.ts). The dedupe — once per key in a
@@ -137,9 +142,68 @@ export const introductionLeads: LeadSourceFn = async (osClientId, periodStart, p
     });
 };
 
+/** The label that marks a booked call (labels.name, as open-responses.ts and the relay read it). */
+const CALL_LABEL = "Meetings Booked";
+
+/** The "per call" products: conversations of the client's portals labelled Meetings Booked in the period. */
+export const callLeads: LeadSourceFn = async (osClientId, periodStart, periodEnd) => {
+  const portals = new Set(await portalsOf(osClientId));
+  if (!portals.size) return [];
+  const w = periodWindow({ start: periodStart, end: periodEnd });
+  const mi = getMasterInboxSupabase();
+  const { data: labels, error } = await mi.from("labels").select("id").eq("name", CALL_LABEL);
+  if (error) throw new Error(`labels: ${error.message}`);
+  const labelIds = ((labels ?? []) as Row[]).map((l) => s(l.id)).filter(Boolean);
+  if (!labelIds.length) return [];
+  const assigned = await allPages(
+    (from, to) =>
+      mi
+        .from("label_assignments")
+        .select("target_id, assigned_at")
+        .eq("target_type", "thread")
+        .in("label_id", labelIds)
+        .gte("assigned_at", w.from)
+        .lt("assigned_at", w.to)
+        .order("assigned_at", { ascending: true })
+        .order("target_id", { ascending: true })
+        .range(from, to),
+    "label_assignments",
+  );
+  // The first time each conversation was marked in the period.
+  const firstAt = new Map<string, string>();
+  for (const a of assigned) if (s(a.target_id) && !firstAt.has(s(a.target_id))) firstAt.set(s(a.target_id), s(a.assigned_at));
+  const threads: Row[] = [];
+  const ids = [...firstAt.keys()];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error: tErr } = await mi.from("threads").select("id, client_id, lead_id").in("id", ids.slice(i, i + 200));
+    if (tErr) throw new Error(`threads: ${tErr.message}`);
+    threads.push(...((data ?? []) as Row[]).filter((t) => portals.has(s(t.client_id))));
+  }
+  const leadIds = [...new Set(threads.map((t) => s(t.lead_id)).filter(Boolean))];
+  const leads = new Map<string, Row>();
+  for (let i = 0; i < leadIds.length; i += 200) {
+    const { data, error: lErr } = await mi.from("leads").select("id, email, full_name").in("id", leadIds.slice(i, i + 200));
+    if (lErr) throw new Error(`leads: ${lErr.message}`);
+    for (const l of (data ?? []) as Row[]) leads.set(s(l.id), l);
+  }
+  return threads
+    .map((t) => {
+      const lead = leads.get(s(t.lead_id));
+      const email = leadKey(s(lead?.email));
+      return {
+        key: email || `thread:${s(t.id)}`,
+        name: s(lead?.full_name).trim() || email || "Agent",
+        at: new Date(firstAt.get(s(t.id)) ?? w.from).toISOString(),
+        source: "call",
+      };
+    })
+    .sort((a, b) => a.at.localeCompare(b.at));
+};
+
 export const LEAD_SOURCES: Record<LeadSource, LeadSourceFn> = {
   handoffs: handoffLeads,
   introductions: introductionLeads,
+  calls: callLeads,
 };
 
 /** The leads of a client in a period, by its chosen definition (or the default). Before dedupe. */

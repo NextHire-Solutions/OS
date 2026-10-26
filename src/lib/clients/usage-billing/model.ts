@@ -30,11 +30,15 @@
 export type EveryDays = 7 | 14;
 export const EVERY_DAYS: readonly EveryDays[] = [7, 14];
 
-export type LeadSource = "handoffs" | "introductions";
+export type LeadSource = "handoffs" | "introductions" | "calls";
+export const LEAD_SOURCES_ALL: readonly LeadSource[] = ["handoffs", "introductions", "calls"];
 export const LEAD_SOURCE_NAMES: Record<LeadSource, string> = {
   handoffs: "Interested replies handed to the brokerage (once per agent)",
   introductions: "Introductions in the client's portal",
+  calls: "Booked calls — conversations marked Meetings Booked (once per agent)",
 };
+/** What one charge is for, in words: "$500 per call". */
+export const LEAD_SOURCE_UNIT: Record<LeadSource, string> = { handoffs: "lead", introductions: "introduction", calls: "call" };
 /*
  * WHAT COUNTS AS A BILLABLE LEAD IS NOT DECIDED YET (the client is being
  * asked). The default candidate is the brokerage hand-off; switching every new
@@ -42,6 +46,28 @@ export const LEAD_SOURCE_NAMES: Record<LeadSource, string> = {
  * carries its own choice (lead_source).
  */
 export const DEFAULT_LEAD_SOURCE: LeadSource = "handoffs";
+
+/*
+ * The products offered when a client is onboarded (the user, 26 Oct). Each is
+ * a price and what is counted — nothing else is stored, so a client's product
+ * is always its (lead_source, price_cents). "Per lead" follows
+ * DEFAULT_LEAD_SOURCE until the client says what a lead is.
+ */
+export const PAY_PER_LEAD_PRODUCTS: ReadonlyArray<{ id: string; label: string; leadSource: LeadSource; priceCents: number }> = [
+  { id: "lead-150", label: "$150 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 15_000 },
+  { id: "lead-250", label: "$250 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 25_000 },
+  { id: "call-500", label: "$500 per call", leadSource: "calls", priceCents: 50_000 },
+  { id: "call-1000", label: "$1,000 per call", leadSource: "calls", priceCents: 100_000 },
+  { id: "intro-5000", label: "$5,000 per introduction", leadSource: "introductions", priceCents: 500_000 },
+];
+
+/** "$500 per call" — the product's own words, or the same shape for a custom price. */
+export function productLabel(leadSource: LeadSource, priceCents: number): string {
+  const p = PAY_PER_LEAD_PRODUCTS.find((x) => x.leadSource === leadSource && x.priceCents === priceCents);
+  if (p) return p.label;
+  const dollars = (priceCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: priceCents % 100 ? 2 : 0 });
+  return `${dollars} per ${LEAD_SOURCE_UNIT[leadSource] ?? "lead"}`;
+}
 
 export type PeriodStatus = "preview" | "draft" | "charged" | "paid" | "failed" | "void";
 /** A period in one of these has been billed (or settled): never billed again, and its leads are never billed again. */
@@ -178,15 +204,18 @@ export function usd(cents: number): string {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-/** One invoice line: "Lead: Jordan Ellis — Oct 7, 2026" (the Eastern day it came). */
+const LINE_WORD: Record<string, string> = { handoff: "Lead", introduction: "Introduction", call: "Call" };
+
+/** One invoice line: "Lead: Jordan Ellis — Oct 7, 2026" (the Eastern day it came); "Call: …" / "Introduction: …" by what was counted. */
 export function lineDescription(lead: BillableLead): string {
   const name = lead.name.replace(/\s+/g, " ").trim() || lead.key;
-  return `Lead: ${name.slice(0, 200)} — ${fmt(easternDay(lead.at), true)}`;
+  return `${LINE_WORD[lead.source] ?? "Lead"}: ${name.slice(0, 200)} — ${fmt(easternDay(lead.at), true)}`;
 }
 
-/** The invoice's own description. */
-export function invoiceDescription(p: Period, count: number, priceCents: number): string {
-  return `Pay per lead · ${periodLabel(p)} · ${count} lead${count === 1 ? "" : "s"} × ${usd(priceCents)}`;
+/** The invoice's own description: "Pay per lead · Oct 6 – Oct 12 · 2 calls × $500.00". */
+export function invoiceDescription(p: Period, count: number, priceCents: number, leadSource?: LeadSource | string): string {
+  const unit = LEAD_SOURCE_UNIT[leadSource as LeadSource] ?? "lead";
+  return `Pay per lead · ${periodLabel(p)} · ${count} ${unit}${count === 1 ? "" : "s"} × ${usd(priceCents)}`;
 }
 
 /* ------------------------------------------------------------- dedupe --- */
@@ -287,8 +316,8 @@ export function parseSettingsInput(body: Record<string, unknown> | null | undefi
   if (every !== 7 && every !== 14) return { error: "Bill every 7 or every 14 days." };
   if (!isDay(b.anchorDate)) return { error: "Choose the first day of the first period." };
   const source = b.leadSource === undefined ? DEFAULT_LEAD_SOURCE : b.leadSource;
-  if (source !== "handoffs" && source !== "introductions") return { error: "Lead source must be handoffs or introductions." };
-  return { priceCents: cents, everyDays: every, anchorDate: b.anchorDate, leadSource: source, enabled: b.enabled === true };
+  if (!(LEAD_SOURCES_ALL as readonly unknown[]).includes(source)) return { error: "Lead source must be handoffs, introductions or calls." };
+  return { priceCents: cents, everyDays: every, anchorDate: b.anchorDate, leadSource: source as LeadSource, enabled: b.enabled === true };
 }
 
 /**

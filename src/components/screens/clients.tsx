@@ -178,7 +178,7 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
         <div className="cx-head-a">
           <button type="button" className="cx-btn" onClick={exportCsv}>Export</button>
           {/* §2/§13: ONE place creates a client — the Clients page — never a tool view. */}
-          {only ? <a className="cx-btn" href={`/roster?view=${only}`}>All fields →</a> : <span className="cx-primary"><OnboardClient /></span>}
+          {only ? <a className="cx-btn" href={`/roster?view=${only}`}>All fields →</a> : <span className="cx-primary"><OnboardClient billing={billingTab} /></span>}
         </div>
       </header>
 

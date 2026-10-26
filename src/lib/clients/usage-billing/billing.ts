@@ -12,6 +12,7 @@ import {
   duePeriods,
   easternDay,
   invoiceDescription,
+  LEAD_SOURCES_ALL,
   isPeriodStart,
   keysAlreadyBilled,
   lastCompletedPeriod,
@@ -277,7 +278,7 @@ export interface PreviewOptions {
 export async function previewPeriod(osClientId: string, s: SettingsRow, o: PreviewOptions = {}): Promise<Preview> {
   const today = easternDay(o.now ?? new Date());
   const period = choosePeriod(s, today, o.periodStart ?? null);
-  const source = (s.lead_source === "introductions" ? "introductions" : s.lead_source === "handoffs" ? "handoffs" : DEFAULT_LEAD_SOURCE) as LeadSource;
+  const source = ((LEAD_SOURCES_ALL as readonly string[]).includes(s.lead_source) ? s.lead_source : DEFAULT_LEAD_SOURCE) as LeadSource;
   let raw: BillableLead[];
   if (o.fakeLeads !== undefined && o.fakeLeads !== null && o.fakeLeads !== "") {
     const parsed = parseFakeLeads(o.fakeLeads, period);
@@ -298,7 +299,7 @@ export async function previewPeriod(osClientId: string, s: SettingsRow, o: Previ
     skipped: d.skipped,
     count: d.billable.length,
     amountCents: amountCents(d.billable.length, price),
-    description: invoiceDescription(period, d.billable.length, price),
+    description: invoiceDescription(period, d.billable.length, price, source),
     lines: d.billable.map((l) => ({ description: lineDescription(l), amountCents: price })),
     existing: await periodRow(osClientId, period.start),
   };
@@ -434,7 +435,7 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
     if (!invoiceId) {
       invoiceId = (await stripe.createDraftInvoice({
         customerId, paymentMethodId: s.default_payment_method_id, osClientId: row.os_client_id, period, periodKey: key,
-        description: invoiceDescription(period, leads.length, row.price_cents), leadCount: leads.length,
+        description: invoiceDescription(period, leads.length, row.price_cents, row.lead_source), leadCount: leads.length,
       })).invoiceId;
     }
     if (invoiceId !== row.stripe_invoice_id) await updateRow(row.id, "draft", { stripe_invoice_id: invoiceId });

@@ -53,10 +53,13 @@ CREATE TABLE IF NOT EXISTS public.os_usage_billing_settings (
   -- The first day of the first period (a US Eastern calendar day). Periods are
   -- [anchor + k·every_days, anchor + (k+1)·every_days). Nothing before it is billed.
   anchor_date                date        NOT NULL,
-  -- What counts as a billable lead (not decided yet — see leads.ts):
-  -- 'handoffs' = each Interested reply handed to the brokerage, once per agent;
-  -- 'introductions' = each portal entry we made (not the client's own).
-  lead_source                text        NOT NULL DEFAULT 'handoffs' CHECK (lead_source IN ('handoffs', 'introductions')),
+  -- What one charge is for (see leads.ts). With the price it IS the product
+  -- chosen when the client was onboarded ("$500 per call"):
+  -- 'handoffs' = each Interested reply handed to the brokerage, once per agent
+  --              (the "per lead" products, until the client says what a lead is);
+  -- 'introductions' = each portal entry we made (not the client's own);
+  -- 'calls' = each conversation marked Meetings Booked, once per agent.
+  lead_source                text        NOT NULL DEFAULT 'handoffs' CHECK (lead_source IN ('handoffs', 'introductions', 'calls')),
   -- Stripe (test mode): the customer and the card saved through Checkout.
   stripe_customer_id         text,
   default_payment_method_id  text,

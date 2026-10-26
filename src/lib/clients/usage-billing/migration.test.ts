@@ -56,7 +56,7 @@ test("0043's defaults: off, test only, every 7 or 14 days, handoffs; one row per
   assert.match(sql, /test_only\s+boolean\s+NOT NULL DEFAULT true/);
   assert.match(sql, /test_mode\s+boolean\s+NOT NULL DEFAULT true/);
   assert.match(sql, /every_days\s+integer\s+NOT NULL DEFAULT 7 CHECK \(every_days IN \(7, 14\)\)/);
-  assert.match(sql, /lead_source\s+text\s+NOT NULL DEFAULT 'handoffs' CHECK \(lead_source IN \('handoffs', 'introductions'\)\)/);
+  assert.match(sql, /lead_source\s+text\s+NOT NULL DEFAULT 'handoffs' CHECK \(lead_source IN \('handoffs', 'introductions', 'calls'\)\)/);
   assert.match(sql, /status\s+text\s+NOT NULL DEFAULT 'preview' CHECK \(status IN \('preview', 'draft', 'charged', 'paid', 'failed', 'void'\)\)/);
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS \w+ ON public\.os_usage_billing_periods \(os_client_id, period_start, test_mode\)/, "the database's never-twice, test and live kept apart");
 });
