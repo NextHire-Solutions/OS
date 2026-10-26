@@ -75,6 +75,13 @@ export interface DuplicateReport {
   findings: DuplicateFinding[];
   /** Master rows examined, so "0 findings" is distinguishable from "0 rows". */
   checked: number;
+  /**
+   * Of those, the CLIENTS by the counting rules — without BrokerStaffer's own
+   * record, Demo Portal, tests and buckets (27 Oct: Home read "55 clients"
+   * beside 54 everywhere else). Set by the reader; the check itself still
+   * examines every row.
+   */
+  clients?: number;
 }
 
 /** Every spelling a client is known by — its name first, then its aliases. */

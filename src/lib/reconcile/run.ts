@@ -120,7 +120,8 @@ export async function runReconcileCheck(
     aliasDrift: new Set((aliases?.findings ?? []).map((f) => f.client)).size,
     unreadable: [...new Set(unreadable)],
     failedChecks,
-    clientsChecked: duplicates?.checked ?? coverage?.rows.length ?? 0,
+    // Clients by the counting rules — the number every other screen shows.
+    clientsChecked: duplicates?.clients ?? duplicates?.checked ?? coverage?.rows.length ?? 0,
   };
 
   const alert = buildReconcileAlert(input);

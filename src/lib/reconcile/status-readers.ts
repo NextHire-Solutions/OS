@@ -419,7 +419,7 @@ export async function gatherDuplicateReport(): Promise<DuplicateReport> {
     mi_client_id: string | null; ch_client_id: string | null;
     an_client_id: string | null; orch_client_id: string | null;
   }[];
-  return findDuplicates(
+  const report = findDuplicates(
     rows.map((r) => ({
       id: r.id,
       name: r.name ?? "",
@@ -432,6 +432,12 @@ export async function gatherDuplicateReport(): Promise<DuplicateReport> {
       },
     })),
   );
+  // Counted as the count table counts the master list (readOsClients).
+  const clients = rows.filter((r) => {
+    const name = (r.name ?? "").trim();
+    return name && !PLACEHOLDER.test(name) && !isKnownNonClient(name);
+  }).length;
+  return { ...report, clients };
 }
 
 
