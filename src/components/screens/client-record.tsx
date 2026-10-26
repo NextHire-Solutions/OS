@@ -179,7 +179,9 @@ export function ClientRecord({
   /** "12 / 50" — where this client sits in the list it was opened from. */
   position?: string;
 }) {
-  const [tab, setTab] = useState<Tab>("record");
+  // Back from Stripe's card page (pay per lead, ?usage_setup=…): straight to the Billing tab, where the card is read.
+  const [tab, setTab] = useState<Tab>(() =>
+    billingTab && typeof window !== "undefined" && new URLSearchParams(window.location.search).has("usage_setup") ? "billing" : "record");
   const [team, setTeam] = useState<{ salespeople: string[]; accountManagers: string[] }>({ salespeople: [], accountManagers: [] });
   // Account Manager = a Team access member (30 Sep): the dropdown offers exactly that list.
   const [members, setMembers] = useState<string[]>([]);
