@@ -246,34 +246,11 @@ export async function register() {
   setInterval(sweepRelaySafely, 60_000).unref?.();
 
   /*
-   * My Agents and DNC → off the client's own campaigns (26 Oct; Eddy's
-   * 16 Oct decision; lib/clients/campaign-lists/). Every two minutes. Does
-   * NOTHING until migration 0042 has run and the switch in Inbox → Settings →
-   * Campaign clean-up is on — and then only PRACTISES (looks each person up,
-   * records what would come off) until practice mode is off, the client's own
-   * switch is on and OS_CAMPAIGN_CLEANUP_LIVE=1. Never touches a blocklist.
-   * Railway only. OS_CAMPAIGN_CLEANUP=0 stops it.
+   * The My Agents / DNC campaign clean-up (lib/clients/campaign-lists/) is
+   * retired and no longer scheduled (27 Oct, the user: "we do not have to
+   * remove the lead from campaigns. blacklisting and unsubscribing is
+   * enough"). It never left practice: nothing was ever removed.
    */
-  let cleanupRunning = false;
-  const sweepCleanup = async () => {
-    if (cleanupRunning) return;
-    if (process.env.OS_CAMPAIGN_CLEANUP === "0") return;
-    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
-    cleanupRunning = true;
-    try {
-      const { sweepCampaignRemovals } = await import("./lib/clients/campaign-lists/sweep");
-      const r = await sweepCampaignRemovals();
-      if (r.claimed || r.errors.length) {
-        const outcomes = Object.entries(r.outcomes).map(([k, v]) => `${v} ${k}`).join(" · ") || "nothing decided";
-        console.log(`[campaign-cleanup] ${outcomes}${r.errors.length ? ` · ${r.errors.join(" | ")}` : ""}`);
-      }
-    } finally {
-      cleanupRunning = false;
-    }
-  };
-  const sweepCleanupSafely = () => { sweepCleanup().catch((e) => console.error("[campaign-cleanup] failed:", e instanceof Error ? e.message : e)); };
-  setTimeout(sweepCleanupSafely, 70_000).unref?.();
-  setInterval(sweepCleanupSafely, 120_000).unref?.();
 
   /*
    * The new portal's markets, kept warm (27 Oct; lib/crm-preview/market.ts

@@ -125,22 +125,6 @@ test("the log line says what happened, in words", async () => {
   assert.match(removalLine({ status: "failed", reason: null, campaigns: [c("failed", { error: "422" })] }), /Failed on Keyes \+ West Florida: 422/);
 });
 
-test("the log's detail lists each campaign once, grouped — never one long sentence", async () => {
-  const { removalGroups } = await import("./rules.ts");
-  const c = (outcome: string, name: string, extra: Record<string, unknown> = {}) => ({ campaignId: name, campaignName: name, leadId: 1, leadStatus: null, outcome, ...extra }) as never;
-  const long = "Jeff Cook Real Estate LPT Realty 1 + Nicole + West Ashley, North Charleston, Mount Pleasant";
-  assert.deepEqual(removalGroups({ status: "practice", reason: null, campaigns: [c("would_remove", long, { reason: "Practice mode is on." }), c("would_remove", "B", { reason: "Practice mode is on." })] }), [
-    { label: "Would come off 2 campaigns", names: [long, "B"], note: "Practice mode is on." },
-  ]);
-  assert.deepEqual(removalGroups({ status: "partly_removed", reason: null, campaigns: [c("removed", "A"), c("already_off", "B"), c("failed", "C", { error: "422" })] }), [
-    { label: "Off 2 campaigns", names: ["A", "B"], note: null },
-    { label: "Failed on 1 campaign", names: ["C"], note: "422" },
-  ]);
-  assert.deepEqual(removalGroups({ status: "not_in_campaigns", reason: null, campaigns: [] }), [], "the chip says it all");
-  assert.deepEqual(removalGroups({ status: "skipped", reason: "A company entry.", campaigns: [] }), [{ label: "A company entry.", names: [], note: null }]);
-  assert.deepEqual(removalGroups({ status: "pending", reason: null, campaigns: [] }), []);
-});
-
 test("the Prospects campaign is pre-selected: the newest sending one, never a finished one", async () => {
   const { suggestProspectsCampaign, campaignChoiceOrder, campaignStatusWord } = await import("./rules.ts");
   const c = (id: string, status: string) => ({ id, status, name: `#${id}` });
