@@ -288,3 +288,36 @@ export function removalLine(r: { status: RemovalStatus; reason: string | null; c
       return `Failed on ${names(failed)}: ${failed[0]?.error ?? r.error ?? "error"}`;
   }
 }
+
+/*
+ * THE PROSPECTS CAMPAIGN, PRE-SELECTED (27 Oct, the user: "campaign should be
+ * pre selected and we should have an option to change this via dropdown").
+ * Until a person picks one, the client's Prospects go to its newest campaign
+ * that is sending; else the newest about to send, paused, then draft. Never a
+ * finished one. Newest = the highest EmailBison id (they only grow).
+ */
+const SUGGEST_RANK: Record<string, number> = { active: 0, launching: 1, queued: 1, paused: 2, draft: 3 };
+
+export function suggestProspectsCampaign<C extends { id: string; status: string }>(campaigns: readonly C[]): C | null {
+  let best: C | null = null;
+  for (const c of campaigns) {
+    const rank = SUGGEST_RANK[(c.status ?? "").toLowerCase()];
+    if (rank === undefined || !/^\d+$/.test(c.id)) continue;
+    if (!best) { best = c; continue; }
+    const bestRank = SUGGEST_RANK[best.status.toLowerCase()];
+    if (rank < bestRank || (rank === bestRank && Number(c.id) > Number(best.id))) best = c;
+  }
+  return best;
+}
+
+/** The order the dropdown lists them in: sending first, finished last; newest first within each. */
+export function campaignChoiceOrder<C extends { id: string; status: string }>(campaigns: readonly C[]): C[] {
+  const rank = (c: C) => SUGGEST_RANK[(c.status ?? "").toLowerCase()] ?? 9;
+  return [...campaigns].sort((a, b) => rank(a) - rank(b) || Number(b.id) - Number(a.id));
+}
+
+/** A campaign status, as a person reads it. */
+export function campaignStatusWord(status: string): string {
+  const s = (status ?? "").toLowerCase();
+  return ({ active: "Sending", launching: "Starting", queued: "Queued", paused: "Paused", draft: "Draft", completed: "Finished", archived: "Archived" } as Record<string, string>)[s] ?? (s ? s[0].toUpperCase() + s.slice(1) : "Unknown");
+}

@@ -124,3 +124,15 @@ test("the log line says what happened, in words", async () => {
   assert.match(removalLine({ status: "skipped", reason: "A company entry.", campaigns: [] }), /^Skipped — A company entry/);
   assert.match(removalLine({ status: "failed", reason: null, campaigns: [c("failed", { error: "422" })] }), /Failed on Keyes \+ West Florida: 422/);
 });
+
+test("the Prospects campaign is pre-selected: the newest sending one, never a finished one", async () => {
+  const { suggestProspectsCampaign, campaignChoiceOrder, campaignStatusWord } = await import("./rules.ts");
+  const c = (id: string, status: string) => ({ id, status, name: `#${id}` });
+  assert.equal(suggestProspectsCampaign([c("10", "active"), c("42", "active"), c("99", "paused"), c("120", "completed")])?.id, "42", "newest sending, over a newer paused or finished one");
+  assert.equal(suggestProspectsCampaign([c("10", "draft"), c("11", "paused")])?.id, "11", "nothing sending: paused before draft");
+  assert.equal(suggestProspectsCampaign([c("10", "completed"), c("11", "archived")]), null, "only finished ones: nothing is suggested");
+  assert.equal(suggestProspectsCampaign([]), null);
+  assert.deepEqual(campaignChoiceOrder([c("10", "completed"), c("11", "draft"), c("12", "active"), c("13", "active")]).map((x) => x.id), ["13", "12", "11", "10"]);
+  assert.equal(campaignStatusWord("active"), "Sending");
+  assert.equal(campaignStatusWord("completed"), "Finished");
+});

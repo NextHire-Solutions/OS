@@ -28,7 +28,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 }) as typeof fetch;
 for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, m, () => {});
 
-const { sweepCampaignRemovals, saveSettings, saveClientListSettings, removeNow, checkEmail } = await import("./sweep.ts");
+const { sweepCampaignRemovals, saveSettings, saveClientListSettings, removeNow, checkEmail, clientListView } = await import("./sweep.ts");
 const { DEMO_PORTAL_ID } = await import("../../crm-preview/demo.ts");
 type ListEntry = import("./rules.ts").ListEntry;
 type ListSource = import("./rules.ts").ListSource;
@@ -310,4 +310,24 @@ test("a stuck claim is never finished under other switches, nor a person's unfin
   await sweepCampaignRemovals(deps({ OS_CAMPAIGN_CLEANUP_LIVE: "1" }));
   assert.equal(removed.length, 0, "a person's Remove now is never finished by the sweep");
   assert.equal(statusOf("a1"), "failed");
+});
+
+test("the Prospects campaign: pre-selected until a person picks one; a chosen one that disappears falls back to the suggestion", async () => {
+  reset({ enabled: false, practice_mode: true, cursor_at: at(-60) });
+  let v = await clientListView("c-keyes", deps());
+  assert.ok(v.available);
+  if (!v.available) return;
+  assert.equal(v.prospects.source, "suggested");
+  assert.equal(v.prospects.effective?.id, "642", "Keyes' sending campaign, not the paused one");
+  assert.deepEqual(v.campaigns.map((c) => c.id), ["642", "700"], "sending first");
+  await saveClientListSettings("c-keyes", { prospectsCampaignId: "700" }, "x", deps());
+  v = await clientListView("c-keyes", deps());
+  if (!v.available) return;
+  assert.equal(v.prospects.source, "chosen");
+  assert.equal(v.prospects.effective?.id, "700", "the person's choice wins over the suggestion");
+  db.rows("os_campaign_list_clients")[0].prospects_campaign_id = "555";
+  v = await clientListView("c-keyes", deps());
+  if (!v.available) return;
+  assert.equal(v.prospects.source, "suggested");
+  assert.equal(v.prospects.savedMissing?.id, "555", "and it says the chosen one is gone");
 });

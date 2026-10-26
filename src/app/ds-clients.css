@@ -506,3 +506,41 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx-flash { animation: rx-flash 1.6s ease-out; border-radius: 8px; }
 @keyframes rx-flash { 0% { box-shadow: 0 0 0 3px #93C5FD; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .rx-flash { animation: none; outline: 2px solid #93C5FD; } }
+
+/* Client record → Campaigns → Prospects and list clean-up (client-campaign-lists.tsx, 27 Oct). Prefixed cl- (CSS class collisions). */
+.cl-card { border: 1px solid var(--x-line); border-radius: 12px; background: var(--x-surface); padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.cl-card + .cl-card { margin-top: 10px; }
+.cl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.cl-head b { font-size: 13.5px; font-weight: 650; color: var(--x-ink); }
+.rx-hint.cl-hint { margin: 0; }
+.cl-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.cl-pick select.ds-input { flex: 1 1 280px; min-width: 0; max-width: 100%; }
+.rx-hint.cl-meta { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rx-hint.cl-bad { margin: 0; color: var(--st-churned, #b42318); }
+.cl-dot { width: 7px; height: 7px; border-radius: 50%; background: #D4D4D8; flex: none; }
+/* A data attribute, not .s-active: ds.css's global .s-active (soft background, !important) would win. */
+.cl-dot[data-s="active"] { background: var(--st-active); }
+.cl-dot[data-s="paused"], .cl-dot[data-s="queued"], .cl-dot[data-s="launching"] { background: var(--st-paused); }
+.cl-switch { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 10px; background: var(--x-bg); }
+.cl-switch-label { font-size: 12.5px; color: var(--x-ink-2); }
+.rx-btn.cl-armed { color: var(--st-churned); border-color: var(--st-churned); background: var(--st-churned-soft); font-weight: 650; }
+.cl-recent { list-style: none; margin: 2px 0 0; padding: 0; display: grid; }
+.cl-recent li { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--x-line-2); }
+.cl-recent li .rb-pill { justify-self: start; margin-top: 1px; }
+.cl-recent li div { display: grid; gap: 2px; min-width: 0; }
+.cl-recent li b { font-size: 13px; font-weight: 600; color: var(--x-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-recent li small { font-size: 12px; color: var(--x-mute); }
+.cl-line { font-size: 12.5px; color: var(--x-ink-2); line-height: 1.45; overflow-wrap: anywhere; }
+@media (max-width: 520px) { .cl-recent li { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
+
+/* Billing tab → Pay per lead's settings row (client-usage-billing.tsx, 27 Oct). Prefixed ub-. */
+.rb-tools.ub-settings { align-items: flex-end; gap: 10px; }
+.ub-settings .rb-field { min-width: 0; }
+.ub-settings .ub-product { flex: 1 1 220px; max-width: 280px; }
+.ub-settings .ub-price { flex: 0 1 150px; }
+.ub-settings .ub-source { flex: 1 1 300px; }
+.ub-settings .ub-every { flex: 0 1 120px; }
+.ub-settings .ub-date { flex: 0 1 170px; }
+.ub-settings .ds-input { width: 100%; min-width: 0; }
+.rb-tools.ub-save { margin-top: 0; }
+.ub-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--x-ink-2); height: 30px; cursor: pointer; }

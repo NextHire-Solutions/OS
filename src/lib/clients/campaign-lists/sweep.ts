@@ -10,6 +10,7 @@ import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 
 import {
+  campaignChoiceOrder,
   campaignMode,
   compareEntries,
   entryTarget,
@@ -20,6 +21,7 @@ import {
   portalOwners,
   PRACTICE_TEXT,
   SKIP_TEXT,
+  suggestProspectsCampaign,
   sweepSwitchedOff,
   type BisonLead,
   type CampaignOutcome,
@@ -717,7 +719,26 @@ export async function cleanupOverview(deps: SweepDeps = {}): Promise<CleanupOver
 
 /* ------------------------------------------------------------------------- */
 
-/** One client's switch, Prospects campaign, its EmailBison campaigns to pick from, and its recent entries. */
+/**
+ * The client's Prospects campaign as it stands: the one a person chose, else
+ * the pre-selected one (rules.ts suggestProspectsCampaign). `source` says
+ * which. A chosen campaign that no longer exists falls back to the
+ * suggestion, and says so.
+ */
+export function prospectsCampaign(saved: ClientListSettings, campaigns: readonly ClientCampaign[]) {
+  const suggested = suggestProspectsCampaign(campaigns);
+  const chosen = saved.prospectsCampaignId ? campaigns.find((c) => c.id === saved.prospectsCampaignId) ?? null : null;
+  const savedMissing = !!saved.prospectsCampaignId && !chosen;
+  const effective = chosen ?? suggested;
+  return {
+    suggested,
+    effective,
+    source: (chosen ? "chosen" : suggested ? "suggested" : "none") as "chosen" | "suggested" | "none",
+    savedMissing: savedMissing ? { id: saved.prospectsCampaignId!, name: saved.prospectsCampaignName } : null,
+  };
+}
+
+/** One client's switch, Prospects campaign (chosen or pre-selected), its EmailBison campaigns to pick from, and its recent entries. */
 export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
   const x = realDeps(deps);
   const settings = await loadSettings(x.os);
@@ -725,17 +746,21 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
   const clients = await x.clients();
   const client = clients.find((c) => c.id === osClientId);
   if (!client) throw new CampaignListError("No such client.", 404);
+  let campaignsError: string | null = null;
   const [row, campaigns, recent] = await Promise.all([
     x.os("os_campaign_list_clients").select("*").eq("os_client_id", osClientId).maybeSingle(),
-    x.campaigns(client).catch(() => [] as ClientCampaign[]),
+    x.campaigns(client).catch((e) => { campaignsError = e instanceof Error ? e.message : String(e); return [] as ClientCampaign[]; }),
     recentRemovals(osClientId, 20, x.os),
   ]);
+  const saved = clientFromRow((row.data ?? null) as Row | null);
   return {
     available: true as const,
     global: { enabled: settings.enabled, practiceMode: settings.practiceMode },
     server: { liveAllowed: liveAllowed(x.env) },
-    client: clientFromRow((row.data ?? null) as Row | null),
-    campaigns,
+    client: saved,
+    campaigns: campaignChoiceOrder(campaigns),
+    campaignsError: campaignsError as string | null,
+    prospects: prospectsCampaign(saved, campaigns),
     recent,
   };
 }

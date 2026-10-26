@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { addDays, periodLabel, productLabel, type LeadSource } from "@/lib/clients/usage-billing/model";
+import { addDays, LEAD_SOURCE_UNIT, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type LeadSource } from "@/lib/clients/usage-billing/model";
 
 /*
  * PAY PER LEAD — the TEST panel on a client's Billing tab (26 Oct 2026).
@@ -38,6 +38,14 @@ type View = {
 type PreviewView = { label: string; count: number; amountCents: number; priceCents: number; lines: Array<{ description: string; amountCents: number }>; skipped: unknown[]; existing: PeriodRow | null };
 
 const money = (cents: number) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+/** "lead" / "call" / "introduction" — what one charge is for. */
+const unitOf = (source: string | null | undefined) => LEAD_SOURCE_UNIT[source as LeadSource] ?? "lead";
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+/** The product a price and a lead source make — or "custom". */
+const productOf = (price: string, source: string) => {
+  const cents = Math.round(Number(String(price).replace(/[$,\s]/g, "")) * 100);
+  return PAY_PER_LEAD_PRODUCTS.find((p) => p.leadSource === source && p.priceCents === cents)?.id ?? "custom";
+};
 const TONE: Record<string, string> = { paid: "good", failed: "bad", charged: "warn", draft: "warn", preview: "mute", void: "mute", open: "warn", uncollectible: "bad" };
 
 export type UsageBillingView = View;
@@ -51,7 +59,10 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [form, setForm] = useState({ price: "100", everyDays: "7", anchorDate: "", leadSource: "handoffs", enabled: false });
+  const [form, setForm] = useState({ price: String(PAY_PER_LEAD_PRODUCTS[0].priceCents / 100), everyDays: "7", anchorDate: "", leadSource: PAY_PER_LEAD_PRODUCTS[0].leadSource as string, enabled: false });
+  // "Custom price…" picked: the price and what is counted are typed, even if they happen to match a product.
+  const [custom, setCustom] = useState(false);
+  const product = custom ? "custom" : productOf(form.price, form.leadSource);
   const [setupUrl, setSetupUrl] = useState<string | null>(null);
   const [periodStart, setPeriodStart] = useState("");
   const [fakeLeads, setFakeLeads] = useState("");
@@ -157,28 +168,46 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
         <>
           {s ? <p className="rx-hint" style={{ margin: "0 0 8px" }}>Product: <b>{productLabel(s.lead_source as LeadSource, s.price_cents)}</b> · every {s.every_days} days{s.enabled ? "" : " · not in the scheduled run"}</p> : null}
           {/* --------------------------------------------------- settings */}
-          <div className="rb-tools" style={{ alignItems: "flex-end" }}>
-            <label className="rb-field"><span>Price per lead ($)</span>
-              <input className="ds-input" style={{ width: 110 }} inputMode="decimal" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+          {/* The product first — the same five offered when a client is onboarded — or a custom price and what is counted. */}
+          <div className="rb-tools ub-settings">
+            <label className="rb-field ub-product"><span>Product</span>
+              <select className="ds-input" value={product} onChange={(e) => {
+                const p = PAY_PER_LEAD_PRODUCTS.find((x) => x.id === e.target.value);
+                setCustom(!p);
+                if (p) setForm({ ...form, price: String(p.priceCents / 100), leadSource: p.leadSource });
+              }}>
+                {PAY_PER_LEAD_PRODUCTS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                <option value="custom">Custom price…</option>
+              </select>
             </label>
-            <label className="rb-field"><span>Bill every</span>
-              <select className="ds-input" style={{ width: 120 }} value={form.everyDays} onChange={(e) => setForm({ ...form, everyDays: e.target.value })}>
+            {product === "custom" ? (
+              <>
+                <label className="rb-field ub-price"><span>Price per {unitOf(form.leadSource)} ($)</span>
+                  <input className="ds-input" inputMode="decimal" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+                </label>
+                <label className="rb-field ub-source"><span>What is counted</span>
+                  <select className="ds-input" value={form.leadSource} onChange={(e) => setForm({ ...form, leadSource: e.target.value })}>
+                    {Object.entries(view.leadSources).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                  </select>
+                </label>
+              </>
+            ) : null}
+            <label className="rb-field ub-every"><span>Bill every</span>
+              <select className="ds-input" value={form.everyDays} onChange={(e) => setForm({ ...form, everyDays: e.target.value })}>
                 <option value="7">7 days</option>
                 <option value="14">14 days</option>
               </select>
             </label>
-            <label className="rb-field"><span>First period starts</span>
-              <input className="ds-input" style={{ width: 160 }} type="date" value={form.anchorDate} onChange={(e) => setForm({ ...form, anchorDate: e.target.value })} />
+            <label className="rb-field ub-date"><span>First period starts</span>
+              <input className="ds-input" type="date" value={form.anchorDate} onChange={(e) => setForm({ ...form, anchorDate: e.target.value })} />
             </label>
-            <label className="rb-field"><span>A lead is</span>
-              <select className="ds-input" style={{ width: 300 }} value={form.leadSource} onChange={(e) => setForm({ ...form, leadSource: e.target.value })}>
-                {Object.entries(view.leadSources).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-              </select>
-            </label>
-            <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, height: 34 }} title="The scheduled run only exists when OS_USAGE_BILLING_ENABLED=1 is set on Railway">
+          </div>
+          <div className="rb-tools ub-save">
+            <label className="ub-check" title="The scheduled run only exists when OS_USAGE_BILLING_ENABLED=1 is set on Railway">
               <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> In the scheduled run
             </label>
-            <button type="button" className="rx-btn" disabled={!!busy} onClick={async () => {
+            <span className="sp" />
+            <button type="button" className="rx-btn solid" disabled={!!busy} onClick={async () => {
               const r = await act("save", { price: form.price, everyDays: Number(form.everyDays), anchorDate: form.anchorDate, leadSource: form.leadSource, enabled: form.enabled });
               if (r) { setNote(s ? "Saved." : "Saved — this client is now a TEST client for pay per lead."); setPreview(null); await load(); }
             }}>{busy === "save" ? "Saving…" : s ? "Save" : "Save as test client"}</button>
@@ -188,7 +217,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
           {s && !view.refusal ? (
             <>
               <div className="rb-grid">
-                <div><small>Price</small><b>{money(s.price_cents)}</b><span>per lead</span></div>
+                <div><small>Price</small><b>{money(s.price_cents)}</b><span>per {unitOf(s.lead_source)}</span></div>
                 <div><small>Every</small><b>{s.every_days} days</b><span>from {s.anchor_date}</span></div>
                 <div><small>Current period</small><b>{view.schedule?.current?.label ?? "—"}</b><span>{view.schedule?.firstStarts ? `starts ${view.schedule.firstStarts}` : view.schedule?.current ? `billed from ${view.schedule.current.end}` : ""}</span></div>
                 <div><small>Card</small><b>{s.card_label ?? "None yet"}</b><span>{s.stripe_customer_id ? `test customer ${s.stripe_customer_id}` : "no Stripe customer yet"}</span></div>
@@ -231,7 +260,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
                   if (r?.preview) setPreview(r.preview as PreviewView);
                 }}>{busy === "preview" ? "Reading leads…" : "Preview invoice"}</button>
                 <button type="button" className="rx-btn solid" disabled={!!busy || !stripeOk || !s.default_payment_method_id || !preview || preview.count === 0} title={!s.default_payment_method_id ? "Save a test card first" : !preview ? "Preview first" : undefined} onClick={async () => {
-                  if (!preview || !window.confirm(`Charge ${money(preview.amountCents)} for ${preview.count} lead${preview.count === 1 ? "" : "s"} (${preview.label}) to the TEST card ${s.card_label ?? ""}?\n\nStripe test mode — no real money moves.`)) return;
+                  if (!preview || !window.confirm(`Charge ${money(preview.amountCents)} for ${plural(preview.count, unitOf(s.lead_source))} (${preview.label}) to the TEST card ${s.card_label ?? ""}?\n\nStripe test mode — no real money moves.`)) return;
                   const r = await act("charge", { ...periodArg, ...leadsArg });
                   if (r) setNote(`${r.message}${r.invoice ? ` Invoice ${r.invoice.number ?? r.invoice.id}: ${money(r.invoice.total)}, ${r.invoice.status}.` : ""}`);
                   setPreview(null);
@@ -241,7 +270,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
               {preview ? (
                 <div className="rb-scroll" data-testid="usage-preview">
                   <p className="rx-hint" style={{ margin: "0 0 6px" }}>
-                    {preview.label}: <b>{preview.count} lead{preview.count === 1 ? "" : "s"} × {money(preview.priceCents)} = {money(preview.amountCents)}</b>
+                    {preview.label}: <b>{plural(preview.count, unitOf(s.lead_source))} × {money(preview.priceCents)} = {money(preview.amountCents)}</b>
                     {preview.skipped.length ? ` · ${preview.skipped.length} not billed (already billed, or the same agent twice)` : ""}
                     {preview.existing && preview.existing.status !== "preview" ? ` · this period is already ${preview.existing.status}` : ""}
                   </p>
@@ -250,7 +279,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
                       <thead><tr><th>Invoice line</th><th className="num">Amount</th></tr></thead>
                       <tbody>{preview.lines.map((l, i) => <tr key={i}><td>{l.description}</td><td className="num">{money(l.amountCents)}</td></tr>)}</tbody>
                     </table>
-                  ) : <p className="rx-hint">No billable leads in this period — nothing would be charged.</p>}
+                  ) : <p className="rx-hint">Nothing billable in this period — nothing would be charged.</p>}
                 </div>
               ) : null}
 
@@ -258,7 +287,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
               {view.periods.length ? (
                 <div className="rb-scroll" style={{ marginTop: 12 }}>
                   <table className="rb-table" data-testid="usage-periods">
-                    <thead><tr><th>Period</th><th className="num">Leads</th><th className="num">Amount</th><th>Status</th><th /></tr></thead>
+                    <thead><tr><th>Period</th><th className="num">Billed</th><th className="num">Amount</th><th>Status</th><th /></tr></thead>
                     <tbody>
                       {view.periods.map((p) => (
                         <tr key={p.id}>
