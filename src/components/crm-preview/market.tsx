@@ -586,7 +586,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       <header className={k("top")}>
         <div className={k("ttl")}><h1>{title}</h1></div>
         <div className={k("hr")}>
-          <button type="button" className={k("btn")} {...off(`Importing a list into ${title} isn't set up yet.`)}><Icon name="upload" size={15} />Import CSV</button>
+          {/* No Import CSV here (26 Oct, the user: "you can remove this") — the design drew one; it never had a job. My Agents and the DNC List import. */}
           <button type="button" className={k("btn")} {...off("Export is off on purpose: agent details from the agent database can't be downloaded from the portal.")}><Icon name="download" size={15} />Export</button>
         </div>
       </header>
