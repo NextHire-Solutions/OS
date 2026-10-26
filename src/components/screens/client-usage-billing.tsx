@@ -153,7 +153,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       ) : null}
       {error ? <div className="ds-field-err" role="alert">{error}</div> : null}
       {note ? <p className="rx-hint" role="status" style={{ color: "var(--st-active)" }}>{note}</p> : null}
-      {!view ? <p className="rx-hint" role="status">Loading…</p> : (
+      {!view ? (error ? null : <p className="rx-hint" role="status">Loading…</p>) : (
         <>
           {/* --------------------------------------------------- settings */}
           <div className="rb-tools" style={{ alignItems: "flex-end" }}>
