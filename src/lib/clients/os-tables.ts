@@ -54,6 +54,11 @@ export const OS_TABLES = [
   "os_brokerage_relays",
   "os_brokerage_relay_agents",
   "os_relay_campaigns",
+  // My Agents and DNC off the client's own campaigns, and each client's
+  // Prospects campaign — see migrations/0042_campaign_lists.sql.
+  "os_campaign_list_settings",
+  "os_campaign_list_clients",
+  "os_campaign_removals",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

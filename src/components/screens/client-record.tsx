@@ -23,6 +23,7 @@ import { ClientPeople } from "./clients-people";
 import { DeleteClient } from "./clients-delete";
 import { MarketsPanel } from "./markets-panel";
 import { ClientBillingTab } from "./client-billing";
+import { ClientCampaignLists } from "./client-campaign-lists";
 import type { ChangeKind, ClientPatch } from "./clients";
 import type { ClientBilling } from "@/lib/clients/billing-model";
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
@@ -586,6 +587,7 @@ function Campaigns({ c, onChanged }: { c: MasterClient; onChanged?: () => void }
       {multi ? <p className="rx-hint">Each campaign&apos;s portal is chosen automatically once, from the market in its name, and can be changed here. Only new replies follow a change — leads already in a portal stay there.</p> : null}
     </section>
     <InboxRows clientId={c.id} onChanged={onChanged} />
+    <ClientCampaignLists clientId={c.id} />
     </>
   );
 }

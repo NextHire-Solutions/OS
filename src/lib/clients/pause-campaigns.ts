@@ -232,6 +232,14 @@ async function campaignsFor(clientIds: string[]): Promise<CampaignRow[]> {
 }
 
 /**
+ * Every campaign this client has that still exists — the same list the pause
+ * reads. Used by the My Agents / DNC clean-up (campaign-lists/).
+ */
+export async function campaignsOfClient(client: { name: string; aliases?: string[] | null }): Promise<CampaignRow[]> {
+  return campaignsFor(await analyticsRowIdsFor(client));
+}
+
+/**
  * Pauses everything this client has that can still send.
  *
  * `apply: false` plans without sending anything, which is how this was verified

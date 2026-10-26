@@ -45,6 +45,10 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_brokerage_relays",
     "os_brokerage_relay_agents",
     "os_relay_campaigns",
+    // Added 2026-10-26: My Agents / DNC off campaigns, Prospects campaign (0042).
+    "os_campaign_list_settings",
+    "os_campaign_list_clients",
+    "os_campaign_removals",
   ]);
 });
 

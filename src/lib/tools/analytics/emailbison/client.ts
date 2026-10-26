@@ -680,6 +680,28 @@ export class EmailBisonClient {
     return response?.data ?? [];
   }
 
+  /**
+   * The leads with exactly this address, each with every campaign it is on
+   * (`lead_campaign_data`) — one call instead of a search per campaign
+   * (checked 26 Oct). The search is a search, so anything but an exact
+   * address match is dropped here.
+   */
+  async findLeadsByEmail(email: string): Promise<Array<{ id: number; email: string; campaigns: Array<{ campaignId: number; status: string | null }> }>> {
+    const want = email.trim().toLowerCase();
+    const response = await this.request<{
+      data?: Array<{ id: number; email?: string; lead_campaign_data?: Array<{ campaign_id?: number | string; status?: string | null }> }>;
+    }>(`/api/leads?search=${encodeURIComponent(want)}&per_page=15`);
+    return (response?.data ?? [])
+      .filter((r) => (r.email ?? "").trim().toLowerCase() === want)
+      .map((r) => ({
+        id: Number(r.id),
+        email: want,
+        campaigns: (r.lead_campaign_data ?? [])
+          .filter((c) => c.campaign_id != null && Number.isFinite(Number(c.campaign_id)))
+          .map((c) => ({ campaignId: Number(c.campaign_id), status: c.status ?? null })),
+      }));
+  }
+
   /** Sends made to one lead — the source for first_send_at (Median Reply Time). */
   async getLeadSentEmails(leadId: number) {
     return this.request<{ data?: Array<Record<string, unknown>> }>(
