@@ -1265,6 +1265,62 @@ td.mis-empty-cell {
 .mis-brk td:last-child {
   text-align: right;
 }
+/* Settings › Campaign clean-up › Recent entries (27 Oct): the log scrolls
+   inside a box of its own with its headings in view, every column a set
+   width so a client's name stays on one line, and the outcome a chip. */
+.mis-cc-log {
+  max-height: min(480px, 60vh);
+  overflow: auto;
+  border: 1px solid var(--line, #e6e8ec);
+  border-radius: 10px;
+  overscroll-behavior: contain;
+}
+.mis-cc-log:focus-visible {
+  outline: 2px solid var(--blue, #0165fe);
+  outline-offset: 2px;
+}
+.mis-cc-log .atbl {
+  width: 100%;
+  min-width: 720px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.mis-cc-log .atbl thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 14px;
+  white-space: nowrap;
+  box-shadow: inset 0 -1px 0 var(--line, #e6e8ec);
+}
+.mis-cc-log .atbl td {
+  padding: 11px 14px;
+  vertical-align: top;
+}
+.mis-cc-when { width: 132px; }
+.mis-cc-person { width: 30%; }
+.mis-cc-client { width: 24%; }
+.mis-cc-act { width: 52px; }
+.mis-cc-time {
+  white-space: nowrap;
+  color: var(--ink-2, #3f4450);
+}
+.mis-cc-one {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mis-cc-name { color: var(--ink, #14161a); font-weight: 500; }
+.mis-cc-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.mis-cc-log .cl-detail { color: var(--muted, #6b7280); }
+.mis-cc-log .lc { display: inline-block; white-space: nowrap; }
 .sr-only {
   position: absolute;
   width: 1px;

@@ -525,12 +525,23 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .cl-switch-label { font-size: 12.5px; color: var(--x-ink-2); }
 .rx-btn.cl-armed { color: var(--st-churned); border-color: var(--st-churned); background: var(--st-churned-soft); font-weight: 650; }
 .cl-recent { list-style: none; margin: 2px 0 0; padding: 0; display: grid; }
-.cl-recent li { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--x-line-2); }
+.cl-recent li { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--x-line-2); }
 .cl-recent li .rb-pill { justify-self: start; margin-top: 1px; }
 .cl-recent li div { display: grid; gap: 2px; min-width: 0; }
 .cl-recent li b { font-size: 13px; font-weight: 600; color: var(--x-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cl-recent li small { font-size: 12px; color: var(--x-mute); }
-.cl-line { font-size: 12.5px; color: var(--x-ink-2); line-height: 1.45; overflow-wrap: anywhere; }
+/* An entry's detail under its chip (removal-detail.tsx) — Settings' log and the client record:
+   each group, then its campaigns one per line, cut with an ellipsis. Campaign names run long. */
+.cl-detail { display: grid; gap: 6px; margin-top: 6px; min-width: 0; font-size: 12px; line-height: 1.45; }
+.cl-detail-g { display: grid; gap: 2px; min-width: 0; }
+.cl-detail-l { font-weight: 500; }
+.cl-detail-note { font-weight: 400; }
+.cl-detail-n { list-style: none; margin: 0; padding: 0 0 0 9px; display: grid; gap: 1px; min-width: 0; border-left: 2px solid var(--line, #e6e8ec); }
+.cl-detail-n li { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cl-detail-more { opacity: 0.75; }
+/* .cl-recent li div (above) would otherwise restyle the detail's own blocks. */
+.cl-recent li .cl-detail { gap: 6px; margin-top: 4px; color: var(--x-ink-2); }
+.cl-recent li .cl-detail-g { gap: 2px; }
 @media (max-width: 520px) { .cl-recent li { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
 
 /* Billing tab → Pay per lead's settings row (client-usage-billing.tsx, 27 Oct). Prefixed ub-. */

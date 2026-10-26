@@ -289,6 +289,48 @@ export function removalLine(r: { status: RemovalStatus; reason: string | null; c
   }
 }
 
+export interface RemovalGroup {
+  label: string;
+  /** The campaigns, each once, in the order they were looked at. */
+  names: string[];
+  note: string | null;
+}
+
+/**
+ * The same, as groups for a list (27 Oct): a client's campaign names are long
+ * and hold commas of their own ("Jeff Cook Real Estate LPT Realty 1 + Nicole +
+ * West Ashley, North Charleston, …"), so in one sentence they ran together.
+ * Empty when the chip alone says it all.
+ */
+export function removalGroups(r: { status: RemovalStatus; reason: string | null; campaigns: readonly CampaignOutcome[]; error?: string | null }): RemovalGroup[] {
+  const names = (o: readonly CampaignOutcome[]) => [...new Set(o.map((c) => c.campaignName || `#${c.campaignId}`))];
+  const by = (k: CampaignOutcome["outcome"]) => r.campaigns.filter((c) => c.outcome === k);
+  const off = [...by("removed"), ...by("already_off")];
+  const would = by("would_remove");
+  const failed = by("failed");
+  const group = (label: string, o: readonly CampaignOutcome[], note: string | null = null): RemovalGroup => ({ label: `${label} ${plural(o.length, "campaign")}`, names: names(o), note });
+  switch (r.status) {
+    case "pending":
+      return [];
+    case "skipped":
+      return [{ label: r.reason ?? "Nothing to look up.", names: [], note: null }];
+    case "not_in_campaigns":
+      return r.reason ? [{ label: r.reason, names: [], note: null }] : [];
+    case "practice":
+      return [group("Would come off", would, would[0]?.reason ?? null)];
+    case "removed":
+      return [group("Off", off)];
+    case "partly_removed":
+      return [
+        ...(off.length ? [group("Off", off)] : []),
+        ...(would.length ? [group("Still on", would, would[0].reason ?? "Practice.")] : []),
+        ...(failed.length ? [group("Failed on", failed, failed[0].error ?? "error")] : []),
+      ];
+    case "failed":
+      return [group("Failed on", failed, failed[0]?.error ?? r.error ?? "error")];
+  }
+}
+
 /*
  * THE PROSPECTS CAMPAIGN, PRE-SELECTED (27 Oct, the user: "campaign should be
  * pre selected and we should have an option to change this via dropdown").

@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { Switch } from "@/components/mi-ui/switch";
 import type { CleanupOverview, RemovalRow } from "@/lib/clients/campaign-lists/sweep";
-import { LIVE_ENV, LIVE_ONLY_ENV, removalLine, SOURCE_LABEL } from "@/lib/clients/campaign-lists/rules";
+import { LIVE_ENV, LIVE_ONLY_ENV, SOURCE_LABEL } from "@/lib/clients/campaign-lists/rules";
+import { RemovalDetail } from "@/components/campaign-lists/removal-detail";
 import { stamp } from "@/lib/tools/master-inbox/relay/wording";
 
 import { Btn, ConfirmButton, Field, Section, ToastHost, ToggleRow, useShowToast } from "./ui";
@@ -213,6 +214,17 @@ function Check({ clients }: { clients: CleanupOverview["clients"] }) {
   );
 }
 
+const OUTCOME: Record<RemovalRow["status"], { word: string; chip: string }> = {
+  removed: { word: "Removed", chip: "lc-green" },
+  partly_removed: { word: "Partly removed", chip: "lc-amber" },
+  failed: { word: "Failed", chip: "lc-red" },
+  practice: { word: "Practice", chip: "lc-amber" },
+  pending: { word: "Looking up", chip: "lc-zinc" },
+  skipped: { word: "Skipped", chip: "lc-zinc" },
+  not_in_campaigns: { word: "Not on campaigns", chip: "lc-zinc" },
+};
+
+/* The log: the newest 50, in a box of its own that scrolls with its headings in view (27 Oct, the user: "fixed height … looks clean"). */
 export function Recent({ rows, canRemove, title = "Recent entries" }: { rows: RemovalRow[]; canRemove: boolean; title?: string }) {
   const router = useRouter();
   const show = useShowToast();
@@ -224,56 +236,71 @@ export function Recent({ rows, canRemove, title = "Recent entries" }: { rows: Re
     show(r.ok ? { text: "Done — see the entry for what came off" } : { text: r.error ?? "Could not remove", bad: true });
     router.refresh();
   };
+  const removable = (r: RemovalRow) => canRemove && (r.status === "practice" || r.status === "partly_removed" || r.status === "failed");
+  const actions = rows.some(removable);
   return (
-    <Section title={title} sub="Every My Agents and DNC entry the clean-up looked at, newest first.">
+    <Section title={title} sub={`Every My Agents and DNC entry the clean-up looked at, newest first${rows.length ? ` — the latest ${rows.length}` : ""}.`}>
       {rows.length === 0 ? (
         <p className="mut">None yet.</p>
       ) : (
-        <div className="tbl-scroll">
+        <div className="mis-cc-log" role="region" aria-label={title} tabIndex={0} data-testid="cc-recent">
           <table className="atbl">
+            <colgroup>
+              <col className="mis-cc-when" />
+              <col className="mis-cc-person" />
+              <col className="mis-cc-client" />
+              <col />
+              {actions ? <col className="mis-cc-act" /> : null}
+            </colgroup>
             <thead>
               <tr>
                 <th>When</th>
                 <th>Person</th>
                 <th>Client</th>
                 <th>What happened</th>
-                <th />
+                {actions ? <th><span className="sr-only">Remove now</span></th> : null}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td className="tnum" style={{ whiteSpace: "nowrap" }}>
-                    {stamp(r.createdAt, "1970-01-01")}
-                  </td>
-                  <td>
-                    {r.personName ?? r.email ?? "—"}
-                    <div className="mut">
-                      {SOURCE_LABEL[r.source]}
-                      {r.email && r.personName ? ` · ${r.email}` : ""}
-                    </div>
-                  </td>
-                  <td>{r.clientName ?? "—"}</td>
-                  <td>
-                    {removalLine(r)}
-                    {r.decidedBy && r.decidedBy !== "sweep" ? <div className="mut">by {r.decidedBy}</div> : null}
-                  </td>
-                  <td>
-                    {canRemove && (r.status === "practice" || r.status === "partly_removed" || r.status === "failed") ? (
-                      <ConfirmButton
-                        label="Remove now"
-                        armedLabel="Click again: off these live campaigns"
-                        title="Looks the person up again and takes them off this client's campaigns for real — only while the clean-up is live and this client's own switch is on."
-                        onConfirm={() => remove(r.id)}
-                        disabled={busy === r.id}
-                        compact
-                      >
-                        ✕
-                      </ConfirmButton>
+              {rows.map((r) => {
+                const o = OUTCOME[r.status];
+                return (
+                  <tr key={r.id}>
+                    <td className="tnum mis-cc-time">{stamp(r.createdAt, "1970-01-01")}</td>
+                    <td>
+                      <span className="mis-cc-one mis-cc-name" title={r.personName ?? r.email ?? undefined}>{r.personName ?? r.email ?? "—"}</span>
+                      <span className="mis-cc-one mut mis-cc-sub" title={r.email ?? undefined}>
+                        {SOURCE_LABEL[r.source]}
+                        {r.email && r.personName ? ` · ${r.email}` : ""}
+                      </span>
+                    </td>
+                    <td className="mis-cc-for">
+                      <span className="mis-cc-one" title={r.clientName ?? undefined}>{r.clientName ?? "—"}</span>
+                    </td>
+                    <td>
+                      <span className={`lc ${o.chip}`}>{o.word}</span>
+                      <RemovalDetail entry={r} />
+                      {r.decidedBy && r.decidedBy !== "sweep" ? <span className="mut mis-cc-sub">by {r.decidedBy}</span> : null}
+                    </td>
+                    {actions ? (
+                      <td>
+                        {removable(r) ? (
+                          <ConfirmButton
+                            label="Remove now"
+                            armedLabel="Click again: off these live campaigns"
+                            title="Looks the person up again and takes them off this client's campaigns for real — only while the clean-up is live and this client's own switch is on."
+                            onConfirm={() => remove(r.id)}
+                            disabled={busy === r.id}
+                            compact
+                          >
+                            ✕
+                          </ConfirmButton>
+                        ) : null}
+                      </td>
                     ) : null}
-                  </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

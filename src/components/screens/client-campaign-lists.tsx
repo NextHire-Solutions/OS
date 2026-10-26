@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { campaignStatusWord, removalLine, SOURCE_LABEL, type RemovalStatus } from "@/lib/clients/campaign-lists/rules";
+import { RemovalDetail } from "@/components/campaign-lists/removal-detail";
+import { campaignStatusWord, SOURCE_LABEL, type RemovalStatus } from "@/lib/clients/campaign-lists/rules";
+import { stamp } from "@/lib/tools/master-inbox/relay/wording";
 import type { RemovalRow } from "@/lib/clients/campaign-lists/sweep";
 
 /*
@@ -41,7 +43,7 @@ const ENTRY_TONE: Record<RemovalStatus, "good" | "warn" | "bad" | "mute"> = {
   removed: "good", partly_removed: "warn", failed: "bad", practice: "warn", pending: "mute", skipped: "mute", not_in_campaigns: "mute",
 };
 const ENTRY_WORD: Record<RemovalStatus, string> = {
-  removed: "Removed", partly_removed: "Partly removed", failed: "Failed", practice: "Practice", pending: "Looking up", skipped: "Skipped", not_in_campaigns: "On none",
+  removed: "Removed", partly_removed: "Partly removed", failed: "Failed", practice: "Practice", pending: "Looking up", skipped: "Skipped", not_in_campaigns: "Not on campaigns",
 };
 
 function cleanupState(v: Ready): { label: string; tone: "good" | "warn" | "mute"; text: string } {
@@ -199,8 +201,8 @@ export function ClientCampaignLists({ clientId }: { clientId: string }) {
                 <span className={`rb-pill ${ENTRY_TONE[r.status]}`}>{ENTRY_WORD[r.status]}</span>
                 <div>
                   <b title={r.email ?? undefined}>{r.personName ?? r.email ?? "—"}</b>
-                  <small>{SOURCE_LABEL[r.source]} · {new Date(r.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small>
-                  <span className="cl-line">{removalLine(r)}</span>
+                  <small>{SOURCE_LABEL[r.source]} · {stamp(r.createdAt, "1970-01-01")}</small>
+                  <RemovalDetail entry={r} />
                 </div>
               </li>
             ))}
