@@ -246,8 +246,11 @@ export function ClientRecord({
           <div className="ds-field-l"><span>{label}</span>{source ? <em className="ds-field-src">{source}</em> : null}</div>
           <div className="ds-field-v">
             <div className="rx-static">
-              <Cell k={key} c={c} />
-              {managed ? (
+              {/* A churned or paused client is not billed: no next billing date (26 Oct, as in the header). */}
+              {key === "nextBillingDate" && (c.status === "churned" || c.status === "paused") ? <span>—</span> : <Cell k={key} c={c} />}
+              {key === "nextBillingDate" && (c.status === "churned" || c.status === "paused") ? (
+                <small className="rx-why">{c.status} · not billed</small>
+              ) : managed ? (
                 <button type="button" className="rx-go" onClick={() => setTab(managed)}>{managed === "campaigns" ? "View" : "Manage"} →</button>
               ) : def && !tool ? <small className="rx-why">{def.editIn}</small> : null}
             </div>
@@ -275,7 +278,9 @@ export function ClientRecord({
 
   const period = c.health.period;
   const billingNote = alignmentNote(c.billingAlignment);
-  const daysToBilling = c.nextBillingDate
+  // A churned or paused client is not billed (status-propagate.ts pauses its Stripe subscription; 26 Oct, Eddy: "Next billing Oct 29" on a churned client).
+  const notBilled = c.status === "churned" || c.status === "paused";
+  const daysToBilling = c.nextBillingDate && !notBilled
     ? Math.round((Date.parse(`${c.nextBillingDate}T00:00:00Z`) - Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)) / 86_400_000)
     : null;
 
@@ -374,8 +379,8 @@ export function ClientRecord({
               </div>
               <div>
                 <small>Next billing</small>
-                <b>{c.nextBillingDate ? fmtDay(c.nextBillingDate)?.replace(/, \d{4}$/, "") : "—"}</b>
-                <span>{daysToBilling === null ? "no schedule" : daysToBilling === 0 ? "today" : `in ${daysToBilling} day${daysToBilling === 1 ? "" : "s"}`}</span>
+                <b>{c.nextBillingDate && !notBilled ? fmtDay(c.nextBillingDate)?.replace(/, \d{4}$/, "") : "—"}</b>
+                <span>{notBilled ? `${c.status} · not billed` : daysToBilling === null ? "no schedule" : daysToBilling === 0 ? "today" : `in ${daysToBilling} day${daysToBilling === 1 ? "" : "s"}`}</span>
                 {/*
                   One billing date (13 Oct): this follows Stripe's real charge
                   where the record's own dates were off it, and says so; a
@@ -1084,7 +1089,7 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
             <div className="rx-static">
               <span>
                 <b style={{ color: cancelled ? "var(--x-mute)" : b.paused ? "var(--st-paused)" : "var(--st-active)" }}>
-                  {cancelled ? `Subscription ${b.status}` : b.paused ? "Paused" : "Collecting"}
+                  {cancelled ? (b.status === "incomplete_expired" ? "Subscription expired" : "Subscription cancelled") : b.paused ? "Paused" : "Collecting"}
                 </b>
                 {" · "}{money(b.amount)}{b.every ? ` every ${b.every}` : ""}
                 {!cancelled && !b.paused && b.nextBilling ? ` · next charge ${fmtDay(b.nextBilling)}` : ""}
@@ -1237,10 +1242,11 @@ function BillingAccount({ account: a, linksReady, saving, canManage, act }: {
           {a.subscriptions.map((s) => {
             const ended = ["canceled", "incomplete_expired"].includes(s.status);
             return (
-              <tr key={s.id} className={s.current ? "current" : undefined}>
+              // "current" only on a subscription still running (26 Oct, Eddy: a cancelled one tagged "current" read as still billing).
+              <tr key={s.id} className={s.current && !ended ? "current" : undefined}>
                 <td>
                   {money(s.amount)} {s.every}
-                  {s.current ? <span className="rx-bill-tag">current</span> : null}
+                  {s.current && !ended ? <span className="rx-bill-tag">current</span> : null}
                   <small title={s.id}>since {fmtDay(s.created)} · {s.source}</small>
                 </td>
                 <td>{ended ? `Cancelled ${s.canceled ? fmtDay(s.canceled) : ""}` : s.collectionPaused ? "Paused" : s.status === "past_due" ? "Past due" : "Collecting"}</td>

@@ -1,5 +1,6 @@
 "use client";
 
+import { isKnownNonClient, nonClientReason } from "@/lib/clients/roster";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Cell, avatarStyle, initials, introMissing, textOf } from "@/components/clients/cells";
@@ -108,12 +109,13 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
     window.history.replaceState(null, "", u);
   };
 
+  // A record that is not a client (BrokerStaffer's own, 24 Oct — roster.ts NOT_CLIENTS) is listed but never counted.
   const counts = useMemo(() => {
     const out: Record<ClientStatus, number> = { onboarding: 0, active: 0, paused: 0, churned: 0 };
-    for (const c of data.clients) out[c.status] += 1;
+    for (const c of data.clients) if (!isKnownNonClient(c.name)) out[c.status] += 1;
     return out;
   }, [data.clients]);
-  const total = data.clients.length;
+  const total = data.clients.filter((c) => !isKnownNonClient(c.name)).length;
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -234,7 +236,7 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
               {view ? <>{view.label} — the §8 fields, read from the master record</> : <>Every §6 field and the §12 dates, in the document&rsquo;s words</>}
             </span>
             <span className="cx-toolbar-r">
-              <span className="cx-count">{rows.length === total ? total : `${rows.length}/${total}`} <em>clients</em></span>
+              <span className="cx-count">{(() => { const n = rows.filter((c) => !isKnownNonClient(c.name)).length; return n === total ? total : `${n}/${total}`; })()} <em>clients</em></span>
               {lens === "master" ? (
                 <span className="cx-cols-menu">
                   <button type="button" className="cx-btn sm" aria-expanded={colsOpen} onClick={() => setColsOpen((o) => !o)}>
@@ -294,7 +296,11 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
                         <span className={`cx-sdot st-${c.status}`} title={statusLabel(c.status)} aria-hidden="true" />
                         <span className="cx-av" style={avatarStyle(c.name)} aria-hidden="true">{initials(c.name)}</span>
                         <span className="cx-client-t">
-                          <b>{c.name}{introMissing(c).length ? (
+                          <b>{c.name}{isKnownNonClient(c.name) ? (
+                            <span className="cx-chip" style={{ marginLeft: 8, height: 18, fontSize: 10.5, verticalAlign: 1 }} title={nonClientReason(c.name) ?? undefined}>
+                              Not counted
+                            </span>
+                          ) : null}{introMissing(c).length ? (
                             <span className="cx-chip t-orange" style={{ marginLeft: 8, height: 18, fontSize: 10.5, verticalAlign: 1 }}
                               title={`The Introduce button cannot be used for ${c.name}: add the ${introMissing(c).join(" and ")} under Introduce to.`}>
                               No intro template
