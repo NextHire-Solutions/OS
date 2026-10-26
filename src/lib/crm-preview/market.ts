@@ -96,9 +96,9 @@ export async function portalClient(portalId: string): Promise<{ id: string; name
  * filter change and choice list read the portal and every client record
  * first — ~0.7 s, the slowest part of a request once the market answers from
  * memory. A client's MLSs or a portal changed in the OS shows here within a
- * minute.
+ * minute — the minute-old answer is served while the new one is read.
  */
-export const marketContext = ttlCache(readMarketContext, { ttlMs: 60_000, key: (portalId) => portalId, shared: "crm-preview-market-context" });
+export const marketContext = ttlCache(readMarketContext, { ttlMs: 60_000, staleMs: 30 * 60_000, key: (portalId) => portalId, shared: "crm-preview-market-context" });
 
 async function readMarketContext(portalId: string): Promise<MarketContext | null> {
   const { data: portal } = await mi().from("clients").select("id, name, slug, portal_token").eq("id", portalId).maybeSingle();
@@ -143,9 +143,54 @@ export function unavailable(ctx: MarketContext, list: "market" | "prospects"): s
  * Which of these agents are in the client's lists — the Database app's own
  * rule (fn_agent_where, orchClientIds): the client's campaign leads, or its
  * lead list while it has no campaign leads at all.
+ *
+ * The whole set per client is held (27 Oct, speed: two queries a page were
+ * ~0.3 s of every Market request) — read in the background, page by page,
+ * and refreshed after 10 minutes while the held one is still used. Until a
+ * client's set is first read, the page's agents are looked up directly, as
+ * before. Never more than one read per client at a time.
  */
+type ClientSet = { ids: Set<string> | null; at: number; loading: boolean };
+const CLIENT_SET_MS = 10 * 60_000;
+function clientSets(): Record<string, ClientSet> {
+  const g = globalThis as unknown as Record<string, Record<string, ClientSet>>;
+  return (g.__osCrmClientCampaignSets ??= {});
+}
+
+async function readClientSet(orchClientId: string): Promise<Set<string>> {
+  const db = agentDb();
+  const { data: probe, error: pErr } = await db.from("v_agent_campaigns").select("agent_id").eq("client_id", orchClientId).limit(1);
+  if (pErr) throw new Error(pErr.message);
+  const table = (probe ?? []).length ? "v_agent_campaigns" : "orch_client_leads";
+  const ids = new Set<string>();
+  for (let from = 0; from < 2_000_000; from += 1000) {
+    const { data, error } = await db.from(table).select("agent_id").eq("client_id", orchClientId).not("agent_id", "is", null).order("agent_id", { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Array<{ agent_id: string | null }>;
+    for (const r of rows) if (r.agent_id) ids.add(r.agent_id);
+    if (rows.length < 1000) break;
+  }
+  return ids;
+}
+
+function heldClientSet(orchClientId: string, now = Date.now()): Set<string> | null {
+  const all = clientSets();
+  const cur = all[orchClientId];
+  if (!cur || (now - cur.at > CLIENT_SET_MS && !cur.loading)) {
+    all[orchClientId] = { ids: cur?.ids ?? null, at: cur?.at ?? 0, loading: true };
+    void readClientSet(orchClientId)
+      .then((ids) => { all[orchClientId] = { ids, at: Date.now(), loading: false }; })
+      .catch(() => { all[orchClientId] = { ids: cur?.ids ?? null, at: cur?.at ?? 0, loading: false }; });
+  }
+  // A held set is used for up to six hours while a newer one is read; older than that, the page asks directly.
+  const held = all[orchClientId];
+  return held?.ids && now - held.at < 6 * 60 * 60_000 ? held.ids : null;
+}
+
 async function inClientLists(orchClientId: string, agentIds: string[]): Promise<Set<string>> {
   if (!agentIds.length) return new Set();
+  const held = heldClientSet(orchClientId);
+  if (held) return new Set(agentIds.filter((id) => held.has(id)));
   const db = agentDb();
   const { data: probe } = await db.from("v_agent_campaigns").select("agent_id").eq("client_id", orchClientId).limit(1);
   const table = (probe ?? []).length ? "v_agent_campaigns" : "orch_client_leads";
@@ -205,7 +250,9 @@ async function demoProspects(q: MarketQuery): Promise<{ unavailable: string } | 
  * every filter change read all three — ~0.7 s, the slowest part of a request
  * once the market answers from memory. A Demo save drops them at once
  * (invalidatePortalLists, from the Demo's save route); a real portal's lists
- * change only on the live portal, and show here within 20 seconds.
+ * change only on the live portal, and show here within 20 seconds. Past 20 s
+ * the last answer is served while the new one is read (staleMs): a large
+ * client's My Agents list (Keyes: 3,170, 1.7 s) never holds up a page.
  */
 const portalLists = ttlCache(async (portalId: string) => {
   const [myAgents, dnc, pipeline, demoProspectsAll] = await Promise.all([
@@ -215,7 +262,7 @@ const portalLists = ttlCache(async (portalId: string) => {
     isDemoPortal(portalId) ? demoProspectIds(mi(), DEMO_PORTAL_ID) : Promise.resolve(null),
   ]);
   return { myAgents, dnc, pipeline, demoProspectsAll };
-}, { ttlMs: 20_000, key: (portalId) => portalId, shared: "crm-preview-portal-lists" });
+}, { ttlMs: 20_000, staleMs: 10 * 60_000, key: (portalId) => portalId, shared: "crm-preview-portal-lists" });
 
 /** After a save changed a portal's lists: the next page reads them fresh. */
 export function invalidatePortalLists(portalId: string): void {
@@ -536,6 +583,9 @@ export async function warmMarkets(now = new Date()): Promise<string[]> {
     // Its lists, one after another — the agent database is shared.
     for (const level of ["city", "county", "state"] as const) await placeList(base, level, PLACE_KINDS).catch(() => []);
     await orgList(base, "brand", "").catch(() => []);
+    // The page's badges: the portal's own lists and, for a real client, its campaign set.
+    await portalLists(ctx.portal.id).catch(() => null);
+    if (ctx.orchClientId) heldClientSet(ctx.orchClientId);
     warmed.push(ctx.portal.name);
   }
   return warmed;
