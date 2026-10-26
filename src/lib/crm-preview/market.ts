@@ -241,7 +241,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
      * milliseconds instead of seconds; otherwise, and for anything the memory
      * does not reproduce exactly, the database as before.
      */
-    const mem = q.list === "market" ? marketFromMemory(ctx.mls.ids, base, search) : null;
+    const mem = q.list === "market" ? await marketFromMemory(ctx.mls.ids, base, search) : null;
     const fast = mem ? searchMarket(mem, filters, sort, q.per, offset) : null;
     page = fast
       ? { rows: fast.rows as unknown as Array<Record<string, unknown>>, total: fast.total, salesVolume: fast.salesVolume }

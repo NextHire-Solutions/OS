@@ -81,7 +81,8 @@ const US_STATES = new Set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA
 
 /** fn_city_embedded_state (Database 0037): a trailing ", ST" on a raw city. */
 export function cityEmbeddedState(p: string | null | undefined): string | null {
-  const m = /,\s*([A-Za-z]{2})\s*$/.exec(p ?? "");
+  // ASCII whitespace only: Postgres's \s (glibc) is not JavaScript's, which also matches a no-break space.
+  const m = /,[ \t\n\v\f\r]*([A-Za-z]{2})[ \t\n\v\f\r]*$/.exec(p ?? "");
   const u = m ? m[1].toUpperCase() : null;
   return u && US_STATES.has(u) ? u : null;
 }

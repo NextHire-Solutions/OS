@@ -118,7 +118,8 @@ function addScaled(total: number | null, v: unknown, scale: number): number | nu
   const n = nOrNull(v);
   if (n === null) return total;
   const scaled = n * scale;
-  if (Math.abs(scaled - Math.round(scaled)) > 1e-6) throw new Inexact(`a value of ${n} is finer than 1/${scale}`);
+  // Relative to the size: a large exact cent amount carries floating-point noise of its own.
+  if (Math.abs(scaled - Math.round(scaled)) > Math.max(1e-6, Math.abs(scaled) * 1e-12)) throw new Inexact(`a value of ${n} is finer than 1/${scale}`);
   return (total ?? 0) + Math.round(scaled);
 }
 
@@ -254,17 +255,19 @@ function differs(mem: MemResult, db: { rows: Array<Record<string, unknown>>; tot
 /* ----------------------------------------------------------- the holder --- */
 
 /*
- * Bounded (audit, 26 Oct):
- *   - ONE load at a time across all markets (a refresh counts): the raw rows
- *     of a load are the biggest thing in memory, and the agent database is
- *     shared. Others wait their turn — on the database, as before.
+ * Bounded (two audits, 26 Oct):
+ *   - ONE load at a time across all markets (a refresh counts; a load hung
+ *     past HUNG_MS stops counting): the raw rows of a load are the biggest
+ *     thing in memory, and the agent database is shared. Others wait their
+ *     turn — on the database, as before.
+ *   - a load writes only into the slot that started it (a token).
  *   - at most MAX_MARKETS held; the one used longest ago goes first.
- *   - a load or proof that fails waits COOL_DOWN before trying again — never
- *     back-to-back against a struggling database.
+ *   - a load or proof that fails, or a market the agent database refreshed,
+ *     waits COOL_DOWN before loading again.
  *   - a market is never served older than MAX_AGE, refresh or not.
- *   - FRESH: every minute in use, the market's MLS rows are read again (one
- *     small query); if the agent database refreshed an MLS, or one stopped
- *     being scoped, the copy stops being served at once and is reloaded.
+ *   - FRESH: a copy is served only if its MLS rows were checked against the
+ *     agent database within the last minute (one small read, awaited when
+ *     due); if an MLS refreshed or stopped being scoped, it is dropped.
  */
 const COOL_DOWN_MS = 10 * 60_000;
 const MAX_AGE_MS = 2 * TTL_MS;
@@ -272,80 +275,114 @@ const PROBE_MS = 60_000;
 const HUNG_MS = 10 * 60_000;
 
 type Slot =
-  | { status: "loading"; since: number }
-  | { status: "ready"; market: MemMarket; stamp: MlsStamp; at: number; lastUsed: number; lastProbe: number; refreshing: boolean; refreshAfter: number }
+  | { status: "loading"; since: number; token: number }
+  | { status: "ready"; market: MemMarket; stamp: MlsStamp; at: number; lastUsed: number; verifiedAt: number; refreshing: number | null; refreshAfter: number }
   | { status: "unused"; reason: string; retryAfter: number };
 
 const GLOBAL_KEY = "__osMarketMemory";
-/* A plain object, shared by every bundle of the process (globalThis). Only memory — nothing here writes a database. */
-function slots(): Record<string, Slot> {
-  const g = globalThis as unknown as Record<string, Record<string, Slot>>;
-  return (g[GLOBAL_KEY] ??= {});
+/* Plain objects, shared by every bundle of the process (globalThis). Only memory — nothing here writes a database. */
+function store(): { slots: Record<string, Slot>; running: Record<number, number>; next: number } {
+  const g = globalThis as unknown as Record<string, { slots: Record<string, Slot>; running: Record<number, number>; next: number }>;
+  return (g[GLOBAL_KEY] ??= { slots: {}, running: {}, next: 1 });
 }
+const slots = () => store().slots;
 
 const keyOf = (mlsIds: readonly string[]) => [...new Set(mlsIds)].sort().join(",");
 
-function inFlight(all: Record<string, Slot>, now: number): number {
-  return Object.values(all).filter((v) => (v.status === "loading" && now - v.since < HUNG_MS) || (v.status === "ready" && v.refreshing)).length;
+/*
+ * Loads running, counted on their own — not read off the slots, which an
+ * eviction or a probe can replace while the load still runs. A load that
+ * has run past HUNG_MS stops counting (it can no longer block the others),
+ * though it still may not write over a newer slot (its token).
+ */
+function inFlight(now: number): number {
+  return Object.values(store().running).filter((since) => now - since < HUNG_MS).length;
 }
 
-function startLoad(key: string, mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch) {
-  const all = slots();
+/**
+ * One load. Its result is written only if the slot is still the one that
+ * started it (its token) — an older, slower load never overwrites a newer
+ * copy, and a market evicted or dropped meanwhile is not brought back.
+ */
+function startLoad(key: string, mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch, owner: (slot: Slot | undefined) => boolean, token: number) {
+  const st = store();
+  const all = st.slots;
+  st.running[token] = Date.now();
   void (async () => {
     const t0 = Date.now();
     try {
       const loaded = await loadMarket(mlsIds);
+      if (!owner(all[key])) return;
       if ("unused" in loaded) {
         all[key] = { status: "unused", reason: loaded.unused, retryAfter: Date.now() + TTL_MS };
         return;
       }
       const proof = await proveMarket(loaded.market, base, dbSearch);
+      if (!owner(all[key])) return;
       if (!proof.ok) {
         all[key] = { status: "unused", reason: proof.failures.join(" | "), retryAfter: Date.now() + TTL_MS };
         console.error(`[market-memory] ${key}: NOT used — differs from the database: ${proof.failures.join(" | ")}`);
         return;
       }
       const now = Date.now();
-      all[key] = { status: "ready", market: loaded.market, stamp: loaded.stamp, at: now, lastUsed: now, lastProbe: now, refreshing: false, refreshAfter: 0 };
+      all[key] = { status: "ready", market: loaded.market, stamp: loaded.stamp, at: now, lastUsed: now, verifiedAt: now, refreshing: null, refreshAfter: 0 };
       evict(all);
       console.log(`[market-memory] ${key}: ${loaded.market.agents.length} agents ready in ${Math.round((now - t0) / 1000)} s — ${proof.checked} checks matched`);
     } catch (e) {
       const cur = all[key];
-      if (cur?.status === "ready") { cur.refreshing = false; cur.refreshAfter = Date.now() + COOL_DOWN_MS; }
-      else all[key] = { status: "unused", reason: "load failed", retryAfter: Date.now() + COOL_DOWN_MS };
-      console.error(`[market-memory] ${key}: load failed — ${e instanceof Error ? e.message : String(e)}`);
-    }
-  })();
-}
-
-/** Whether the agent database moved under a held market (an MLS refreshed, or no longer scoped): it then stops being served. */
-function probe(key: string, slot: Extract<Slot, { status: "ready" }>) {
-  void (async () => {
-    try {
-      const db = readOnly(getCorofySupabase()) as unknown as Db;
-      const now = await readStamp(db, slot.market.mlsIds);
-      if (!sameStamp(now, slot.stamp) || !allScoped(now, slot.market.mlsIds)) {
-        const all = slots();
-        if (all[key] === slot) all[key] = { status: "unused", reason: "the agent database refreshed this market", retryAfter: 0 };
-        console.log(`[market-memory] ${key}: the agent database moved — back to the database until reloaded`);
+      if (owner(cur)) {
+        if (cur?.status === "ready") { cur.refreshing = null; cur.refreshAfter = Date.now() + COOL_DOWN_MS; }
+        else all[key] = { status: "unused", reason: "load failed", retryAfter: Date.now() + COOL_DOWN_MS };
       }
-    } catch {
-      /* a failed probe changes nothing; the next minute tries again */
+      console.error(`[market-memory] ${key}: load failed — ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      delete st.running[token];
     }
   })();
 }
 
 /**
- * The proven market for these MLSs, if it is ready — and, if not, starts
- * loading it in the background when it may. Never waits.
+ * Whether the agent database moved under a held market (an MLS refreshed,
+ * or no longer scoped). One small read. Moved: the copy is dropped, and
+ * reloaded only after COOL_DOWN — the database is mid-ingest then, and a
+ * reload per ingest chunk would be the heaviest work at its busiest time.
  */
-export function marketFromMemory(mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch, now = Date.now()): MemMarket | null {
+async function verify(key: string, slot: Extract<Slot, { status: "ready" }>, now: number): Promise<boolean> {
+  try {
+    const db = readOnly(getCorofySupabase()) as unknown as Db;
+    const stamp = await readStamp(db, slot.market.mlsIds);
+    if (sameStamp(stamp, slot.stamp) && allScoped(stamp, slot.market.mlsIds)) {
+      slot.verifiedAt = now;
+      return true;
+    }
+    const all = slots();
+    if (all[key] === slot) all[key] = { status: "unused", reason: "the agent database refreshed this market", retryAfter: now + COOL_DOWN_MS };
+    console.log(`[market-memory] ${key}: the agent database moved — back to the database, reloaded in ${COOL_DOWN_MS / 60_000} min`);
+    return false;
+  } catch {
+    // Unchecked is not served: this request goes to the database; the next one checks again.
+    return false;
+  }
+}
+
+/**
+ * The proven market for these MLSs, if it is ready — checked against the
+ * agent database within the last minute (a one-row read, awaited when due:
+ * milliseconds) — and, if not ready, starts loading it in the background
+ * when it may. Never waits on a load.
+ */
+export async function marketFromMemory(mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch, now = Date.now()): Promise<MemMarket | null> {
   if (memoryOff() || !mlsIds.length) return null;
   const key = keyOf(mlsIds);
-  const all = slots();
+  const st = store();
+  const all = st.slots;
   const slot = all[key];
-  const canStart = inFlight(all, now) === 0;
-  const begin = () => { all[key] = { status: "loading", since: now }; startLoad(key, mlsIds, base, dbSearch); };
+  const canStart = inFlight(now) === 0;
+  const begin = () => {
+    const token = st.next++;
+    all[key] = { status: "loading", since: now, token };
+    startLoad(key, mlsIds, base, dbSearch, (cur) => cur?.status === "loading" && cur.token === token, token);
+  };
 
   if (!slot) {
     if (canStart) begin();
@@ -359,18 +396,16 @@ export function marketFromMemory(mlsIds: readonly string[], base: Record<string,
     if (now >= slot.retryAfter && canStart) begin();
     return null;
   }
-  // Ready.
-  if (now - slot.at > MAX_AGE_MS) {
-    // Too old to serve, whatever happened to its refresh.
-    if (!slot.refreshing && canStart && now >= slot.refreshAfter) { slot.refreshing = true; startLoad(key, mlsIds, base, dbSearch); }
-    return null;
+  // Ready: refreshed in the background once old (the old copy serving meanwhile), never served past MAX_AGE.
+  const refreshHung = slot.refreshing !== null && now - slot.refreshing > HUNG_MS;
+  if (now - slot.at > TTL_MS && (slot.refreshing === null || refreshHung) && canStart && now >= slot.refreshAfter) {
+    const token = st.next++;
+    slot.refreshing = now;
+    startLoad(key, mlsIds, base, dbSearch, (cur) => cur === slot && slot.refreshing === now, token);
   }
+  if (now - slot.at > MAX_AGE_MS) return null;
   slot.lastUsed = now;
-  if (now - slot.lastProbe > PROBE_MS) { slot.lastProbe = now; probe(key, slot); }
-  if (now - slot.at > TTL_MS && !slot.refreshing && canStart && now >= slot.refreshAfter) {
-    slot.refreshing = true;
-    startLoad(key, mlsIds, base, dbSearch);
-  }
+  if (now - slot.verifiedAt > PROBE_MS && !(await verify(key, slot, now))) return null;
   return slot.market;
 }
 
