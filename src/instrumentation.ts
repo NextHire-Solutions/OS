@@ -274,4 +274,34 @@ export async function register() {
   const sweepCleanupSafely = () => { sweepCleanup().catch((e) => console.error("[campaign-cleanup] failed:", e instanceof Error ? e.message : e)); };
   setTimeout(sweepCleanupSafely, 70_000).unref?.();
   setInterval(sweepCleanupSafely, 120_000).unref?.();
+
+  /*
+   * Pay per lead (26 Oct; lib/clients/usage-billing/) — TEST MODE ONLY. Does
+   * not exist unless OS_USAGE_BILLING_ENABLED=1 is set AND it runs on Railway
+   * (neither is set today). Even then it only records previews of each enabled
+   * client's ended periods, unless OS_USAGE_BILLING_CHARGE=1 is set as well;
+   * and it charges only clients marked test_only, with a Stripe TEST key
+   * (OS_USAGE_BILLING_STRIPE_KEY — a live key is refused). Hourly; a period is
+   * billed once however many replicas run it (the period row's claim).
+   */
+  const { schedulerAllowed } = await import("./lib/clients/usage-billing/model");
+  if (schedulerAllowed(process.env)) {
+    let usageRunning = false;
+    const runUsage = async () => {
+      if (usageRunning || !schedulerAllowed(process.env)) return;
+      usageRunning = true;
+      try {
+        const { runUsageBilling } = await import("./lib/clients/usage-billing/billing");
+        const r = await runUsageBilling();
+        if (r.previews || r.charged || r.errors.length) {
+          console.log(`[usage-billing] TEST MODE · ${r.clients} client(s) · ${r.previews} preview(s) · ${r.charged} charged${r.errors.length ? ` · ${r.errors.join(" | ")}` : ""}`);
+        }
+      } finally {
+        usageRunning = false;
+      }
+    };
+    const runUsageSafely = () => { runUsage().catch((e) => console.error("[usage-billing] failed:", e instanceof Error ? e.message : e)); };
+    setTimeout(runUsageSafely, 120_000).unref?.();
+    setInterval(runUsageSafely, 60 * 60_000).unref?.();
+  }
 }

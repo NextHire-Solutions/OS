@@ -49,6 +49,9 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_campaign_list_settings",
     "os_campaign_list_clients",
     "os_campaign_removals",
+    // Added 2026-10-26: pay per lead, test mode only (0043).
+    "os_usage_billing_settings",
+    "os_usage_billing_periods",
   ]);
 });
 

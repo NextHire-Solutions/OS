@@ -24,6 +24,7 @@ import { DeleteClient } from "./clients-delete";
 import { MarketsPanel } from "./markets-panel";
 import { ClientBillingTab } from "./client-billing";
 import { ClientCampaignLists } from "./client-campaign-lists";
+import { UsageBillingPanel } from "./client-usage-billing";
 import type { ChangeKind, ClientPatch } from "./clients";
 import type { ClientBilling } from "@/lib/clients/billing-model";
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
@@ -481,6 +482,8 @@ export function ClientRecord({
                     <BillingControl clientId={c.id} onChanged={() => onChanged("stripe")} />
                     {fieldsIn("billing").map((f) => row(f.key, f.label, f))}
                   </section>
+                  {/* Pay per lead (26 Oct): Stripe TEST mode only — renders nothing for anyone the route refuses. */}
+                  <UsageBillingPanel clientId={c.id} />
                 </>
               ) : null}
               {tab === "campaigns" ? (
