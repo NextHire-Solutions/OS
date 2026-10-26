@@ -41,6 +41,8 @@ const money = (cents: number) => (cents / 100).toLocaleString("en-US", { style: 
 /** "lead" / "call" / "introduction" — what one charge is for. */
 const unitOf = (source: string | null | undefined) => LEAD_SOURCE_UNIT[source as LeadSource] ?? "lead";
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+/** "2026-10-19" → "Oct 19, 2026". */
+const day = (d: string | null | undefined) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—");
 /** The product a price and a lead source make — or "custom". */
 const productOf = (price: string, source: string) => {
   const cents = Math.round(Number(String(price).replace(/[$,\s]/g, "")) * 100);
@@ -166,7 +168,6 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       {note ? <p className="rx-hint" role="status" style={{ color: "var(--st-active)" }}>{note}</p> : null}
       {!view ? (error ? null : <p className="rx-hint" role="status">Loading…</p>) : (
         <>
-          {s ? <p className="rx-hint" style={{ margin: "0 0 8px" }}>Product: <b>{productLabel(s.lead_source as LeadSource, s.price_cents)}</b> · every {s.every_days} days{s.enabled ? "" : " · not in the scheduled run"}</p> : null}
           {/* --------------------------------------------------- settings */}
           {/* The product first — the same five offered when a client is onboarded — or a custom price and what is counted. */}
           <div className="rb-tools ub-settings">
@@ -216,11 +217,10 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
 
           {s && !view.refusal ? (
             <>
-              <div className="rb-grid">
-                <div><small>Price</small><b>{money(s.price_cents)}</b><span>per {unitOf(s.lead_source)}</span></div>
-                <div><small>Every</small><b>{s.every_days} days</b><span>from {s.anchor_date}</span></div>
-                <div><small>Current period</small><b>{view.schedule?.current?.label ?? "—"}</b><span>{view.schedule?.firstStarts ? `starts ${view.schedule.firstStarts}` : view.schedule?.current ? `billed from ${view.schedule.current.end}` : ""}</span></div>
-                <div><small>Card</small><b>{s.card_label ?? "None yet"}</b><span>{s.stripe_customer_id ? `test customer ${s.stripe_customer_id}` : "no Stripe customer yet"}</span></div>
+              <div className="rb-grid ub-grid" data-testid="usage-summary">
+                <div><small>Product</small><b>{productLabel(s.lead_source as LeadSource, s.price_cents)}</b><span>every {s.every_days} days, from {day(s.anchor_date)}</span></div>
+                <div><small>Current period</small><b>{view.schedule?.current?.label ?? "—"}</b><span>{view.schedule?.firstStarts ? `starts ${day(view.schedule.firstStarts)}` : view.schedule?.current ? `billed once it ends, ${day(view.schedule.current.end)}` : ""}</span></div>
+                <div><small>Card</small><b>{s.card_label ?? "None yet"}</b><span title={s.stripe_customer_id ?? undefined}>{s.stripe_customer_id ? "on a Stripe test customer" : "no Stripe customer yet"}</span></div>
                 <div><small>Scheduled run</small><b>{view.flags.scheduler ? (view.flags.charge ? "Charging" : "Previews only") : "Off"}</b><span>{s.enabled ? "this client is in it" : "this client is not in it"}</span></div>
               </div>
 

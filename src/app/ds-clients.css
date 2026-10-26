@@ -547,3 +547,5 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 /* Disabled buttons read as disabled in the new sections (the base .rx-btn has no disabled look outside dialogs). */
 .cl-card .rx-btn:disabled, [data-testid="usage-billing"] .rx-btn:disabled { opacity: .45; cursor: not-allowed; }
 .cl-card .rx-btn.solid:disabled:hover, [data-testid="usage-billing"] .rx-btn.solid:disabled:hover { background: var(--x-ink); }
+/* Pay per lead's summary: four boxes, two by two in the Billing tab's width (the Billing tab's own .rb-grid is unchanged). */
+.rb-grid.ub-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
