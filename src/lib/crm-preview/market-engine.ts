@@ -12,7 +12,7 @@
  * the Database app's fn_agent_where / fn_filter_search the Market sends
  * (Database migrations 0035, 0037, 0064, 0109, 0119): same keys, same NULL
  * rules, same order and tie-break. Anything else — a filter it does not
- * know, a market not scoped per MLS, the search box, a text order (name,
+ * know, the search box, a text order (name,
  * brokerage, city — the database's collation is not JavaScript's), a value
  * with characters beyond plain ASCII — answers null and the request goes to
  * the database as before (audit, 26 Oct). And a market is only
@@ -52,6 +52,8 @@ export interface MemMarket {
   agents: MemAgent[];
   /** The agents in each order already asked for ("sales_volume:desc"), sorted once — a search then only filters. */
   sorted?: Map<string, MemAgent[]>;
+  /** Scoped per MLS (sales_volume / units are the sums over these MLSs) or not (the agents' own). The rules are the same. */
+  scoped?: boolean;
 }
 
 export interface MemResult {

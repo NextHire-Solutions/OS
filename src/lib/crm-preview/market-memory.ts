@@ -33,10 +33,13 @@ import { MARKET_TITLE_TOKEN, searchMarket, titleTokens, type MemAgent, type MemM
 type Row = Record<string, unknown>;
 type Db = ReturnType<typeof getCorofySupabase>;
 
-const COLS = "id,full_name,title,brand,office_name,office_city,office_state,office_county,office_city_key,most_transacted_city,transacted_state,most_transacted_county,most_transacted_city_key,est_time_in_industry_months,preferred_email,enriched_email";
+// The agent's own sales_volume / units are the market's numbers when it is NOT scoped per MLS (fn_agent_where's rule).
+const COLS = "id,full_name,title,brand,office_name,office_city,office_state,office_county,office_city_key,most_transacted_city,transacted_state,most_transacted_county,most_transacted_city_key,est_time_in_industry_months,sales_volume,units,preferred_email,enriched_email";
+/** Above this many salespeople a market stays on the database (memory budget: ~0.5 KB an agent). */
+const MAX_AGENTS = 250_000;
 const PAGE = 1000;
 const TTL_MS = 30 * 60_000;
-const MAX_MARKETS = 3;
+const MAX_MARKETS = 4;
 
 const s = (v: unknown) => (typeof v === "string" ? v : null);
 const nOrNull = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
@@ -125,23 +128,39 @@ function addScaled(total: number | null, v: unknown, scale: number): number | nu
 
 export type Loaded = { market: MemMarket; stamp: MlsStamp } | { unused: string };
 
-/** The market's salespeople with their per-MLS numbers — or why it stays on the database. */
+/**
+ * The market's salespeople with the numbers the database uses for it — or
+ * why it stays on the database. SCOPED (every MLS has stats for 90% of its
+ * members): each agent's sums over these MLSs (agent_mls_stats). NOT scoped:
+ * the agent's own sales_volume and units (agents), exactly as fn_agent_where
+ * and fn_filter_search then read them. Either way the proof decides.
+ */
 export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(getCorofySupabase()) as unknown as Db): Promise<Loaded> {
   const ids = [...new Set(mlsIds)].sort();
   if (!ids.length) return { unused: "no MLS" };
   const stamp = await readStamp(db, ids);
-  if (!allScoped(stamp, ids)) return { unused: "not scoped per MLS" };
+  if (stamp.length !== ids.length) return { unused: "an MLS is missing" };
+  const scoped = allScoped(stamp, ids);
   const [members, stats] = await Promise.all([
     readSlices(db, "agent_mls", `agent_id,mls_id,agents(${COLS})`, ids),
-    readSlices(db, "agent_mls_stats", "agent_id,mls_id,sales_volume,units", ids),
+    scoped ? readSlices(db, "agent_mls_stats", "agent_id,mls_id,sales_volume,units", ids) : Promise.resolve([] as Row[]),
   ]);
   const volume = new Map<string, number | null>();
   const units = new Map<string, number | null>();
   try {
-    for (const r of stats) {
-      const id = String(r.agent_id);
-      volume.set(id, addScaled(volume.has(id) ? volume.get(id)! : null, r.sales_volume, SCALE.volume));
-      units.set(id, addScaled(units.has(id) ? units.get(id)! : null, r.units, SCALE.units));
+    if (scoped) {
+      for (const r of stats) {
+        const id = String(r.agent_id);
+        volume.set(id, addScaled(volume.has(id) ? volume.get(id)! : null, r.sales_volume, SCALE.volume));
+        units.set(id, addScaled(units.has(id) ? units.get(id)! : null, r.units, SCALE.units));
+      }
+    } else {
+      for (const r of members) {
+        const a = r.agents as Row | null;
+        if (!a || volume.has(String(a.id))) continue;
+        volume.set(String(a.id), addScaled(null, a.sales_volume, SCALE.volume));
+        units.set(String(a.id), addScaled(null, a.units, SCALE.units));
+      }
     }
   } catch (e) {
     if (e instanceof Inexact) return { unused: e.message };
@@ -167,7 +186,8 @@ export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(ge
       preferred_email: s(a.preferred_email), enriched_email: s(a.enriched_email),
     });
   }
-  return { market: { mlsIds: ids, agents: [...agents.values()] }, stamp };
+  if (agents.size > MAX_AGENTS) return { unused: `${agents.size} salespeople is above the memory budget` };
+  return { market: { mlsIds: ids, agents: [...agents.values()], scoped }, stamp };
 }
 
 /* ------------------------------------------------------------ the proof --- */
@@ -343,7 +363,7 @@ function startLoad(key: string, mlsIds: readonly string[], base: Record<string, 
 
 /**
  * Whether the agent database moved under a held market (an MLS refreshed,
- * or no longer scoped). One small read. Moved: the copy is dropped, and
+ * or its scoping flipped). One small read. Moved: the copy is dropped, and
  * reloaded only after COOL_DOWN — the database is mid-ingest then, and a
  * reload per ingest chunk would be the heaviest work at its busiest time.
  */
@@ -351,7 +371,7 @@ async function verify(key: string, slot: Extract<Slot, { status: "ready" }>, now
   try {
     const db = readOnly(getCorofySupabase()) as unknown as Db;
     const stamp = await readStamp(db, slot.market.mlsIds);
-    if (sameStamp(stamp, slot.stamp) && allScoped(stamp, slot.market.mlsIds)) {
+    if (sameStamp(stamp, slot.stamp) && allScoped(stamp, slot.market.mlsIds) === slot.market.scoped) {
       slot.verifiedAt = now;
       return true;
     }

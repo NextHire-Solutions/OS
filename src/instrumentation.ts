@@ -276,6 +276,29 @@ export async function register() {
   setInterval(sweepCleanupSafely, 120_000).unref?.();
 
   /*
+   * The new portal's markets, kept warm (27 Oct; lib/crm-preview/market.ts
+   * warmMarkets): the Demo, clients in Onboarding and the portals used in the
+   * last two days are held in memory with their filter lists loaded, so a
+   * client watching an onboarding call never waits for the first load. Every
+   * two minutes, Railway only; reads only. OS_MARKET_MEMORY=0 switches it off.
+   */
+  let warmRunning = false;
+  const warmMarketsNow = async () => {
+    if (warmRunning || process.env.OS_MARKET_MEMORY === "0") return;
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    warmRunning = true;
+    try {
+      const { warmMarkets } = await import("./lib/crm-preview/market");
+      await warmMarkets();
+    } finally {
+      warmRunning = false;
+    }
+  };
+  const warmMarketsSafely = () => { warmMarketsNow().catch((e) => console.error("[market-memory] warm failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(warmMarketsSafely, 60_000).unref?.();
+  setInterval(warmMarketsSafely, 120_000).unref?.();
+
+  /*
    * Pay per lead (26 Oct; lib/clients/usage-billing/) — TEST MODE ONLY. Does
    * not exist unless OS_USAGE_BILLING_ENABLED=1 is set AND it runs on Railway
    * (neither is set today). Even then it only records previews of each enabled

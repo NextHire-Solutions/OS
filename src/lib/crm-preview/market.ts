@@ -12,7 +12,7 @@ import { marketFromMemory } from "@/lib/crm-preview/market-memory";
 import { agentsByIds, demoProspectIds, filterProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
-  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, ownListEmail, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, ownListEmail, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type ReportGroup,
 } from "./market-model";
 
@@ -302,7 +302,9 @@ export type FacetResult = { unavailable: string } | { options: Array<{ v: string
  *   brokerages  the Database app's brand / office lists, kept per search.
  *
  * The page asks for the city list as it opens, so the first look is quick
- * too. The other filters don't narrow these lists (the counts are the
+ * too; and after 30 minutes a list is served as it was while it refreshes
+ * behind (staleMs) — nobody waits on a list twice. warmMarkets keeps the
+ * lists of the markets in use loaded before anyone opens them. The other filters don't narrow these lists (the counts are the
  * market's); a filter never narrowed its own list anyway. Names and counts
  * only: no agent leaves the server.
  */
@@ -318,7 +320,7 @@ const placeList = ttlCache(async (base: Record<string, unknown>, level: PlaceLev
     if (got.length < 5000) break;
   }
   return out;
-}, { ttlMs: 30 * 60_000, key: (base, level, kinds) => `places:${JSON.stringify(base)}:${level}:${kinds.join("+")}`, shared: "crm-preview-place-lists", inflightTimeoutMs: 180_000 });
+}, { ttlMs: 30 * 60_000, staleMs: 6 * 60 * 60_000, key: (base, level, kinds) => `places:${JSON.stringify(base)}:${level}:${kinds.join("+")}`, shared: "crm-preview-place-lists", inflightTimeoutMs: 180_000 });
 
 const orgList = ttlCache(async (base: Record<string, unknown>, kind: "brand" | "office", text: string): Promise<Array<{ v: string; n: number }>> => {
   const d = await rpc("fn_facet_options", { p_type: kind, p_q: text, p_field: null, p_source: "all", p_filters: base });
@@ -326,7 +328,7 @@ const orgList = ttlCache(async (base: Record<string, unknown>, kind: "brand" | "
     .map((o) => ({ v: str(o.v) ?? "", n: num(o.n) ?? 0 }))
     .filter((o) => o.v)
     .slice(0, 50);
-}, { ttlMs: 30 * 60_000, key: (base, kind, text) => `orgs:${JSON.stringify(base)}:${kind}:${text.toLowerCase()}`, shared: "crm-preview-org-lists", inflightTimeoutMs: 120_000 });
+}, { ttlMs: 30 * 60_000, staleMs: 6 * 60 * 60_000, key: (base, kind, text) => `orgs:${JSON.stringify(base)}:${kind}:${text.toLowerCase()}`, shared: "crm-preview-org-lists", inflightTimeoutMs: 120_000 });
 
 /** A place list searched by name: up to 100, with how many places match and the agents they cover. */
 function searchPlaces(all: ReadonlyArray<{ v: string; n: number }>, text: string) {
@@ -376,7 +378,7 @@ export const marketOptions = ttlCache(async (ctx: MarketContext): Promise<{ brok
     brokerages: ((Array.isArray(brands) ? brands : []) as Array<{ v: string }>).map((b) => b.v).slice(0, 40),
     counties: (((counties as { options?: Array<{ v: string }> } | null)?.options ?? []).map((c) => c.v)).slice(0, 40),
   };
-}, { ttlMs: 30 * 60_000, key: (ctx) => `options:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-options", inflightTimeoutMs: 120_000 });
+}, { ttlMs: 30 * 60_000, staleMs: 6 * 60 * 60_000, key: (ctx) => `options:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-options", inflightTimeoutMs: 120_000 });
 
 /*
  * Reports › All market. Every figure is an exact count of agents in the
@@ -496,4 +498,45 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
     if (!more.rows.length) break;
   }
   return { ids: [...new Set(ids)], total: first.total };
+}
+
+/*
+ * KEPT WARM (27 Oct — the client: "if we're using this during onboarding,
+ * clients need to be able to see the data instantly as new filters are being
+ * applied"). The markets likely to be shown — the Demo, every client in
+ * Onboarding, and the portals whose Market was opened in the last two days —
+ * are loaded into memory and their Location and Brokerage lists read before
+ * anyone opens them, so the first look is as fast as the hundredth. At most
+ * three (market-memory holds four; one stays free for any other). Called
+ * every two minutes by instrumentation (Railway only); once warm it costs a
+ * cache hit and, once a minute, the one-row freshness check. Reads only.
+ */
+export async function warmMarkets(now = new Date()): Promise<string[]> {
+  const portals: string[] = [DEMO_PORTAL_ID];
+  const { data: onboarding } = await osTable("os_clients").select("mi_client_id").eq("status", "onboarding");
+  for (const r of (onboarding ?? []) as unknown as Array<{ mi_client_id: string | null }>) if (r.mi_client_id) portals.push(r.mi_client_id);
+  const since = new Date(now.getTime() - 2 * 86_400_000).toISOString().slice(0, 10);
+  const { data: used } = await mi().from("os_portal_usage").select("portal_id, requests").eq("kind", "market").gte("day", since);
+  const byUse = new Map<string, number>();
+  for (const r of (used ?? []) as Array<{ portal_id: string; requests: number }>) byUse.set(r.portal_id, (byUse.get(r.portal_id) ?? 0) + (Number(r.requests) || 0));
+  portals.push(...[...byUse].sort((a, b) => b[1] - a[1]).map(([id]) => id));
+
+  const warmed: string[] = [];
+  const seen = new Set<string>();
+  for (const portalId of portals) {
+    if (warmed.length >= 3) break;
+    const ctx = await marketContext(portalId).catch(() => null);
+    if (!ctx || unavailable(ctx, "market")) continue;
+    const key = [...ctx.mls.ids].sort().join(",");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const base = marketBase(ctx);
+    // The market (starts its load if none is running; one at a time across the server).
+    await marketFromMemory(ctx.mls.ids, base, search);
+    // Its lists, one after another — the agent database is shared.
+    for (const level of ["city", "county", "state"] as const) await placeList(base, level, PLACE_KINDS).catch(() => []);
+    await orgList(base, "brand", "").catch(() => []);
+    warmed.push(ctx.portal.name);
+  }
+  return warmed;
 }
