@@ -7,6 +7,8 @@ import { readOnly } from "@/lib/tools/assistant/read-only";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
 import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
+import { orgOptions, searchMarket } from "@/lib/crm-preview/market-engine";
+import { marketFromMemory } from "@/lib/crm-preview/market-memory";
 import { agentsByIds, demoProspectIds, filterProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
@@ -88,8 +90,17 @@ export async function portalClient(portalId: string): Promise<{ id: string; name
   return client ? { id: client.id, name: client.name } : null;
 }
 
-/** A portal's client, its market's MLSs and its id in the agent database. Null for no such portal. */
-export async function marketContext(portalId: string): Promise<MarketContext | null> {
+/**
+ * A portal's client, its market's MLSs and its id in the agent database. Null
+ * for no such portal. Kept a minute per portal (26 Oct, speed): every page,
+ * filter change and choice list read the portal and every client record
+ * first — ~0.7 s, the slowest part of a request once the market answers from
+ * memory. A client's MLSs or a portal changed in the OS shows here within a
+ * minute.
+ */
+export const marketContext = ttlCache(readMarketContext, { ttlMs: 60_000, key: (portalId) => portalId, shared: "crm-preview-market-context" });
+
+async function readMarketContext(portalId: string): Promise<MarketContext | null> {
   const { data: portal } = await mi().from("clients").select("id, name, slug, portal_token").eq("id", portalId).maybeSingle();
   const p = portal as { id: string; name: string | null; slug: string | null; portal_token: string | null } | null;
   if (!p || p.slug === "unknown" || !p.portal_token) return null;
@@ -189,6 +200,28 @@ async function demoProspects(q: MarketQuery): Promise<{ unavailable: string } | 
   };
 }
 
+/*
+ * The portal's own lists, kept 20 seconds (26 Oct, speed): every page and
+ * every filter change read all three — ~0.7 s, the slowest part of a request
+ * once the market answers from memory. A Demo save drops them at once
+ * (invalidatePortalLists, from the Demo's save route); a real portal's lists
+ * change only on the live portal, and show here within 20 seconds.
+ */
+const portalLists = ttlCache(async (portalId: string) => {
+  const [myAgents, dnc, pipeline, demoProspectsAll] = await Promise.all([
+    loadAgentEntries(portalId),
+    loadDncEntries(portalId),
+    loadPipelineEntries(portalId),
+    isDemoPortal(portalId) ? demoProspectIds(mi(), DEMO_PORTAL_ID) : Promise.resolve(null),
+  ]);
+  return { myAgents, dnc, pipeline, demoProspectsAll };
+}, { ttlMs: 20_000, key: (portalId) => portalId, shared: "crm-preview-portal-lists" });
+
+/** After a save changed a portal's lists: the next page reads them fresh. */
+export function invalidatePortalLists(portalId: string): void {
+  portalLists.invalidate(portalId);
+}
+
 export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
@@ -200,16 +233,27 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
     page = d.page;
   } else {
     const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
-    page = await search(marketFilters(base, q), q.per, (q.page - 1) * q.per, { by: SORTS[q.sort], dir: q.dir });
+    const filters = marketFilters(base, q);
+    const sort = { by: SORTS[q.sort], dir: q.dir };
+    const offset = (q.page - 1) * q.per;
+    /*
+     * From memory when this market is loaded and proven (market-memory.ts) —
+     * milliseconds instead of seconds; otherwise, and for anything the memory
+     * does not reproduce exactly, the database as before.
+     */
+    const mem = q.list === "market" ? marketFromMemory(ctx.mls.ids, base, search) : null;
+    const fast = mem ? searchMarket(mem, filters, sort, q.per, offset) : null;
+    page = fast
+      ? { rows: fast.rows as unknown as Array<Record<string, unknown>>, total: fast.total, salesVolume: fast.salesVolume }
+      : await search(filters, q.per, offset, sort);
   }
   const ids = page.rows.map((r) => String(r.id));
-  const [prospects, myAgents, dnc, pipeline] = await Promise.all([
+  const lists = portalLists(ctx.portal.id);
+  const [prospects, { myAgents, dnc, pipeline }] = await Promise.all([
     q.list === "prospects" ? Promise.resolve(new Set(ids))
-    : demo ? demoProspectIds(mi(), DEMO_PORTAL_ID).then((all) => { const s = new Set(all ?? []); return new Set(ids.filter((id) => s.has(id))); })
+    : demo ? lists.then(({ demoProspectsAll }) => { const s = new Set(demoProspectsAll ?? []); return new Set(ids.filter((id) => s.has(id))); })
     : inClientLists(ctx.orchClientId ?? "", ctx.orchClientId ? ids : []),
-    loadAgentEntries(ctx.portal.id),
-    loadDncEntries(ctx.portal.id),
-    loadPipelineEntries(ctx.portal.id),
+    lists,
   ]);
   const sets = listSets(myAgents, dnc, pipeline, prospects);
   const rows: MarketRow[] = page.rows.map((r) => {
@@ -318,7 +362,11 @@ export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: Face
   }
   const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
   if (isPlace(kind)) return searchPlaces(await placeList(base, kind, q.kinds), text);
-  return { options: await orgList(base, kind, text.replace(/[\u0000-\u001f%_]/g, " ").trim().slice(0, 60)) };
+  const clean = text.replace(/[\u0000-\u001f%_]/g, " ").trim().slice(0, 60);
+  // Brokerages and offices from memory when the market is held (milliseconds per letter typed, not ~4 s).
+  const mem = q.list === "market" ? marketFromMemory(ctx.mls.ids, base, search) : null;
+  if (mem) return { options: orgOptions(mem, kind, clean) };
+  return { options: await orgList(base, kind, clean) };
 }
 
 /** The chips' choices for a market: its brokerages and counties, largest first. */

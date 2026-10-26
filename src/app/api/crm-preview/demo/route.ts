@@ -6,7 +6,7 @@ import { canSeeCrmPreview } from "@/lib/crm-preview/access";
 import { admit, NO_STORE_HEADERS } from "@/lib/crm-preview/data-guard";
 import { DEMO_PORTAL_ID, demoAction, isDemoPortal, moveAgents, runDemoAction, type DemoResult } from "@/lib/crm-preview/demo";
 import { MAX_MOVE, marketAction, type MarketAction } from "@/lib/crm-preview/demo-market";
-import { marketContext, matchingIds } from "@/lib/crm-preview/market";
+import { invalidatePortalLists, marketContext, matchingIds } from "@/lib/crm-preview/market";
 import { parseMarketQuery } from "@/lib/crm-preview/market-model";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 
@@ -52,6 +52,8 @@ export async function POST(request: NextRequest) {
     const out = market.success ? await runMarketMove(market.data, who) : await runDemoAction(createAdminSupabase(), parsed!.data!, who);
     const a = market.success ? market.data : parsed!.data!;
     console.info(JSON.stringify({ tag: "[crm-preview] demo save", who, type: a.type, ids: "ids" in a ? a.ids.length : "rows" in a ? a.rows.length : 1, ok: out.ok }));
+    // Any save can change a list the Market's pills read (kept 20 s): the next page reads them fresh.
+    invalidatePortalLists(DEMO_PORTAL_ID);
     if (!out.ok) return NextResponse.json({ error: out.error }, { status: out.status, headers: NO_STORE_HEADERS });
     return NextResponse.json({ ok: true, ...(out.id ? { id: out.id } : {}), ...(out.message ? { message: out.message } : {}) }, { headers: NO_STORE_HEADERS });
   } catch (err) {
