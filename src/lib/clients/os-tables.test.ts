@@ -45,6 +45,9 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_brokerage_relays",
     "os_brokerage_relay_agents",
     "os_relay_campaigns",
+    // Added 2026-10-26: pay per lead, test mode only (0043).
+    "os_usage_billing_settings",
+    "os_usage_billing_periods",
   ]);
 });
 

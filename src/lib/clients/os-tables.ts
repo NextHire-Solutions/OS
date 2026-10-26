@@ -54,6 +54,10 @@ export const OS_TABLES = [
   "os_brokerage_relays",
   "os_brokerage_relay_agents",
   "os_relay_campaigns",
+  // Pay per lead (TEST MODE ONLY in this version): each client's settings and
+  // one record per billing period — see migrations/0043_usage_billing.sql.
+  "os_usage_billing_settings",
+  "os_usage_billing_periods",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 
