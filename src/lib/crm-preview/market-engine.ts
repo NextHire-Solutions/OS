@@ -12,8 +12,10 @@
  * the Database app's fn_agent_where / fn_filter_search the Market sends
  * (Database migrations 0035, 0037, 0064, 0109, 0119): same keys, same NULL
  * rules, same order and tie-break. Anything else — a filter it does not
- * know, a market not scoped per MLS, an email or phone search — answers
- * null and the request goes to the database as before. And a market is only
+ * know, a market not scoped per MLS, the search box, a text order (name,
+ * brokerage, city — the database's collation is not JavaScript's), a value
+ * with characters beyond plain ASCII — answers null and the request goes to
+ * the database as before (audit, 26 Oct). And a market is only
  * ever answered from memory after it has matched the database on a set of
  * real queries (market-memory.ts parity).
  *
@@ -48,12 +50,8 @@ export interface MemMarket {
   mlsIds: string[];
   /** Salespeople only — the market's base (marketScope) — in no particular order. */
   agents: MemAgent[];
-  /** Text sorts (name, brokerage, cities, title) matched the database's collation in the parity check. */
-  textSorts: boolean;
   /** The agents in each order already asked for ("sales_volume:desc"), sorted once — a search then only filters. */
   sorted?: Map<string, MemAgent[]>;
-  /** Every brokerage / office with its agents, largest first — worked out once. */
-  orgs?: Map<"brand" | "office", Array<{ v: string; n: number }>>;
 }
 
 export interface MemResult {
@@ -146,7 +144,11 @@ const KIND_COLS = {
 } as const;
 
 /** One side of a location filter (values or excludeValues): does the agent match ANY of its conditions. */
-function placeMatcher(values: unknown[], defaultField: string, kinds: Array<keyof typeof KIND_COLS>): ((a: MemAgent) => boolean) | typeof UNSUPPORTED {
+/** Plain printable ASCII only: JavaScript's and Postgres's trim / \\s / lower agree there, and nowhere else is promised. */
+const PLAIN = /^[\x20-\x7E]*$/;
+
+/** One side's match — or null when its values give no condition at all (the SQL then adds none: no filter). */
+function placeMatcher(values: unknown[], defaultField: string, kinds: Array<keyof typeof KIND_COLS>): ((a: MemAgent) => boolean) | null | typeof UNSUPPORTED {
   // Grouped by level, as the database does: { f, v } objects carry their own; plain strings use the side's field.
   const groups = new Map<string, string[]>();
   for (const e of values) {
@@ -158,6 +160,7 @@ function placeMatcher(values: unknown[], defaultField: string, kinds: Array<keyo
       v = e.v;
     } else if (typeof e === "string") v = e;
     else return UNSUPPORTED;
+    if (!PLAIN.test(v) || v.includes("\\")) return UNSUPPORTED;
     if (!groups.has(f)) groups.set(f, []);
     groups.get(f)!.push(v);
   }
@@ -207,6 +210,7 @@ function placeMatcher(values: unknown[], defaultField: string, kinds: Array<keyo
       }
     }
   }
+  if (!conds.length) return null;
   return (a) => conds.some((p) => p(a));
 }
 
@@ -222,7 +226,7 @@ function location(f: unknown): Pred[] | typeof UNSUPPORTED {
   if (inc.length) {
     const m = placeMatcher(inc, field, kinds);
     if (m === UNSUPPORTED) return UNSUPPORTED;
-    out.push(m);
+    if (m) out.push(m);
   }
   const exc = Array.isArray(f.excludeValues) ? f.excludeValues : [];
   if (exc.length) {
@@ -230,7 +234,7 @@ function location(f: unknown): Pred[] | typeof UNSUPPORTED {
     const m = placeMatcher(exc, exField, kinds);
     if (m === UNSUPPORTED) return UNSUPPORTED;
     // NOT EXISTS: an agent with no place at all is kept.
-    out.push((a) => !m(a));
+    if (m) out.push((a) => !m(a));
   }
   return out;
 }
@@ -281,50 +285,31 @@ function compile(filters: Filters, market: MemMarket): Pred | typeof UNSUPPORTED
 
 /* ---------------------------------------------------------------- the order --- */
 
-/** The production columns a scoped market sorts by its MLS sums (fn_filter_search's scoped branch). */
-const SCOPED_SORTS = new Set(["sales_volume", "units"]);
-const NUMBER_SORTS = new Set(["sales_volume", "units", "est_time_in_industry_months"]);
-const TEXT_SORTS = new Set(["full_name", "brand", "office_city", "most_transacted_city", "title", "office_name"]);
-
-const collator = new Intl.Collator("en-US", { sensitivity: "variant", ignorePunctuation: false, numeric: false });
-
-/**
- * PostgreSQL's ILIKE '%q%': % and _ are wildcards, everything else literal,
- * case-insensitive.
+/*
+ * THE ORDER. Only the market's own numbers — volume and units, which a
+ * scoped market sorts by its MLS sums with nulls last and the agent id to
+ * break ties (fn_filter_search 0119), exactly reproducible. A text order
+ * (name, brokerage, city, title) depends on the database's collation, which
+ * JavaScript's is not — those go to the database. So does the search box:
+ * under these two orders the database ignores it anyway, and any other
+ * order is a text one.
  */
-function ilikeContains(q: string): (s: string) => boolean {
-  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, "."), "is");
-  return (s) => re.test(s);
-}
+const MEMORY_SORTS = new Set(["sales_volume", "units"]);
 
-/** The comparator fn_filter_search orders by, then a.id. UNSUPPORTED for an order it does not reproduce. */
-function comparator(filters: Filters, sortBy: string, dir: "asc" | "desc", market: MemMarket): ((x: MemAgent, y: MemAgent) => number) | typeof UNSUPPORTED {
-  const col = (NUMBER_SORTS.has(sortBy) || TEXT_SORTS.has(sortBy)) ? sortBy : null;
-  if (!col) return UNSUPPORTED;
-  if (TEXT_SORTS.has(col) && !market.textSorts) return UNSUPPORTED;
+function comparator(sortBy: string, dir: "asc" | "desc"): ((x: MemAgent, y: MemAgent) => number) | typeof UNSUPPORTED {
+  if (!MEMORY_SORTS.has(sortBy)) return UNSUPPORTED;
   const sign = dir === "asc" ? 1 : -1;
-  const get = (a: MemAgent) => (a as unknown as Record<string, unknown>)[col] as number | string | null;
-  const byCol = (x: MemAgent, y: MemAgent) => {
+  const get = (a: MemAgent) => (sortBy === "units" ? a.units : a.sales_volume);
+  return (x, y) => {
     const a = get(x);
     const b = get(y);
-    if (a === null && b === null) return 0;
-    if (a === null) return 1; // nulls last, either way
-    if (b === null) return -1;
-    if (typeof a === "number" && typeof b === "number") return a === b ? 0 : (a < b ? -1 : 1) * sign;
-    return collator.compare(String(a), String(b)) * sign;
+    if (a !== b) {
+      if (a === null) return 1; // nulls last, either way
+      if (b === null) return -1;
+      return (a < b ? -1 : 1) * sign;
+    }
+    return x.id < y.id ? -1 : x.id > y.id ? 1 : 0;
   };
-  const byId = (x: MemAgent, y: MemAgent) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);
-
-  // The scoped branch REPLACES the order for its production sorts — the name search's
-  // "matches first" is not part of it (fn_filter_search 0119), so it is not here either.
-  const q = typeof filters.nameQuery === "string" ? filters.nameQuery : "";
-  if (!q || SCOPED_SORTS.has(col)) return (x, y) => byCol(x, y) || byId(x, y);
-  // fn_agent_order: an email or phone search orders by fields not held here.
-  if (q.includes("@") || q.replace(/[^0-9]/g, "").length >= 7) return UNSUPPORTED;
-  const hit = ilikeContains(q);
-  // (full_name ilike '%q%') desc nulls last: matches, then the rest, then no name.
-  const rank = (a: MemAgent) => (a.full_name === null ? 2 : hit(a.full_name) ? 0 : 1);
-  return (x, y) => rank(x) - rank(y) || byCol(x, y) || byId(x, y);
 }
 
 /**
@@ -341,17 +326,16 @@ export function searchMarket(
 ): MemResult | null {
   const pred = compile(filters, market);
   if (pred === UNSUPPORTED) return null;
-  const cmp = comparator(filters, sort.by, sort.dir, market);
+  // The search box: the database's (its scoped order ignores it — but it is not ours to assume).
+  if (typeof filters.nameQuery === "string" && filters.nameQuery !== "") return null;
+  const cmp = comparator(sort.by, sort.dir);
   if (cmp === UNSUPPORTED) return null;
-  // The market in this order, sorted once and kept: the name search only moves matches ahead
-  // (a stable split of that order), so it never needs its own sort.
-  const q = typeof filters.nameQuery === "string" ? filters.nameQuery : "";
-  const ranked = !!q && !SCOPED_SORTS.has(sort.by);
+  // The market in this order, sorted once and kept: a search then only filters.
   const key = `${sort.by}:${sort.dir}`;
   market.sorted ??= new Map();
   let order = market.sorted.get(key);
   if (!order) {
-    order = [...market.agents].sort(comparator({}, sort.by, sort.dir, market) as (x: MemAgent, y: MemAgent) => number);
+    order = [...market.agents].sort(cmp);
     market.sorted.set(key, order);
   }
   const want = Math.max(limit, 1);
@@ -365,35 +349,6 @@ export function searchMarket(
     total++;
     if (a.sales_volume !== null) cents += Math.round(a.sales_volume * 100);
   };
-  if (!ranked) for (const a of order) take(a);
-  else {
-    const hit = ilikeContains(q);
-    const rank = (a: MemAgent) => (a.full_name === null ? 2 : hit(a.full_name) ? 0 : 1);
-    for (const r of [0, 1, 2]) for (const a of order) if (rank(a) === r) take(a);
-  }
+  for (const a of order) take(a);
   return { rows, total, salesVolume: cents / 100 };
-}
-
-/**
- * The Brokerage filter's choices from memory: every brokerage (or office) of
- * the market exactly as the agent rows spell it — the string the filter then
- * matches — with its agents, largest first, searched as the person types.
- * The database's list grouped spellings ("KELLER WILLIAMS" with "Keller
- * Williams") under one name the filter then matched only one of; here each
- * count is exactly what picking it returns.
- */
-export function orgOptions(market: MemMarket, kind: "brand" | "office", text: string, limit = 50): Array<{ v: string; n: number }> {
-  market.orgs ??= new Map();
-  let all = market.orgs.get(kind);
-  if (!all) {
-    const counts = new Map<string, number>();
-    for (const a of market.agents) {
-      const v = kind === "brand" ? a.brand : a.office_name;
-      if (v !== null && v.trim()) counts.set(v, (counts.get(v) ?? 0) + 1);
-    }
-    all = [...counts].map(([v, n]) => ({ v, n })).sort((x, y) => y.n - x.n || (x.v < y.v ? -1 : x.v > y.v ? 1 : 0));
-    market.orgs.set(kind, all);
-  }
-  const needle = text.trim().toLowerCase();
-  return (needle ? all.filter((o) => o.v.toLowerCase().includes(needle)) : all).slice(0, limit);
 }

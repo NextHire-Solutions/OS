@@ -222,7 +222,10 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
        */
       let usage: { ok: boolean; text: string } | null = null;
       const chosen = PAY_PER_LEAD_PRODUCTS.find((p) => p.id === product);
-      if (chosen) {
+      if (chosen && madeBody.created === false) {
+        // An existing client (adopt found it by name): its pay-per-lead settings are never overwritten from here.
+        usage = { ok: false, text: `Pay per lead NOT saved: ${name} already existed — set or change its product on its Billing tab.` };
+      } else if (chosen) {
         try {
           const saved = await fetch("/api/workspace/clients/billing/usage", {
             method: "POST",

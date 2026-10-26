@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { cityEmbeddedState, cityMatchKey, orgOptions, searchMarket, titleTokens, type MemAgent, type MemMarket } from "./market-engine.ts";
+import { cityEmbeddedState, cityMatchKey, searchMarket, titleTokens, type MemAgent, type MemMarket } from "./market-engine.ts";
 
 const MLS = ["m-b", "m-a"];
 const base = () => ({ mls: { include: [...MLS], exclude: [] }, title: { include: ["Salesperson"], exclude: [] } });
@@ -30,7 +30,7 @@ const transacted = agent({ full_name: "Di Lee", brand: null, most_transacted_cit
 const nowhere = agent({ full_name: null, brand: "Compass", sales_volume: null, units: null });
 const noStats = agent({ full_name: "Ed Ng", brand: "Compass", office_city: "Decatur", office_city_key: "decatur", office_state: "GA", office_county: "DeKalb", sales_volume: null, units: null, est_time_in_industry_months: 24 });
 
-const market: MemMarket = { mlsIds: [...MLS].sort(), agents: [atl, atlEmbedded, atlTexas, transacted, nowhere, noStats], textSorts: true };
+const market: MemMarket = { mlsIds: [...MLS].sort(), agents: [atl, atlEmbedded, atlTexas, transacted, nowhere, noStats] };
 const run = (extra: Record<string, unknown>, sort: { by: string; dir: "asc" | "desc" } = { by: "sales_volume", dir: "desc" }, limit = 50, offset = 0) =>
   searchMarket(market, { ...base(), ...extra }, sort, limit, offset);
 const names = (r: ReturnType<typeof run>) => r!.rows.map((a) => a.full_name);
@@ -86,10 +86,9 @@ test("ranges: inclusive, on the market's numbers; an agent with no numbers never
   assert.equal(run({ salesVolume: { side: "all", buckets: [], min: "", max: "" } })!.total, 6, "no bounds: no filter");
 });
 
-test("the name search reorders other sorts but not the market's volume or units (the database's scoped order)", () => {
-  assert.deepEqual(names(run({ nameQuery: "smith" })), names(run({})), "volume: unchanged");
-  const byName = run({ nameQuery: "smith" }, { by: "full_name", dir: "asc" });
-  assert.deepEqual(names(byName), ["Ann Smith", "Cy Smith", "Bo Jones", "Di Lee", "Ed Ng", null], "matches first, then the rest, then no name");
+test("the two orders memory serves: the market's volume and units, nulls last either way, then id", () => {
+  assert.deepEqual(names(run({}, { by: "units", dir: "desc" })), ["Ann Smith", "Cy Smith", "Bo Jones", "Di Lee", null, "Ed Ng"]);
+  assert.deepEqual(names(run({}, { by: "sales_volume", dir: "asc" })), ["Di Lee", "Bo Jones", "Cy Smith", "Ann Smith", null, "Ed Ng"], "equal volumes by id; no volume last");
 });
 
 test("paging: the same order, sliced", () => {
@@ -104,16 +103,15 @@ test("anything it does not reproduce exactly goes to the database", () => {
   assert.equal(run(loc([{ f: "city", v: "Atlanta" }], { appliesTo: ["home"] })), null, "home places are not held");
   assert.equal(run({ salesVolume: { side: "all", buckets: ["1M+"], min: "", max: "" } }), null, "buckets");
   assert.equal(run({ salesVolume: { side: "list", buckets: [], min: "1", max: "" } }), null, "list side");
-  assert.equal(run({ nameQuery: "ann@x.com" }, { by: "full_name", dir: "asc" }), null, "an email search");
-  assert.equal(run({}, { by: "license_number", dir: "asc" }), null, "a sort it does not hold");
-  assert.equal(searchMarket({ ...market, textSorts: false }, base(), { by: "full_name", dir: "asc" }, 50, 0), null, "text order not proven against the database");
-  assert.ok(searchMarket({ ...market, textSorts: false }, base(), { by: "units", dir: "desc" }, 50, 0), "numbers still fine");
+  assert.equal(run({ nameQuery: "smith" }), null, "the search box — always the database's");
+  assert.equal(run({ nameQuery: "%%%%%%%%%%%%%%%%%%%%x" }), null, "a wildcard search never reaches a regular expression");
+  for (const by of ["full_name", "brand", "office_city", "most_transacted_city", "title", "license_number"]) assert.equal(run({}, { by, dir: "asc" }), null, `${by}: a text order is the database's collation`);
+  assert.equal(run(loc([{ f: "city", v: "Atlanta\u00a0, GA" }])), null, "a no-break space: trims differ");
+  assert.equal(run(loc([{ f: "city", v: "Atl\\anta" }])), null, "a backslash");
+  assert.equal(run(loc([{ f: "city", v: "Ángel, GA" }])), null, "beyond plain ASCII");
 });
 
-test("brokerage choices: exact spellings, largest first, each count what picking it returns", () => {
-  const opts = orgOptions(market, "brand", "");
-  assert.deepEqual(opts, [{ v: "Compass", n: 2 }, { v: "Keller Williams", n: 2 }, { v: "RE/MAX", n: 1 }]);
-  for (const o of opts) assert.equal(run({ officeSearch: { brand: { include: [o.v], exclude: [] }, office: { include: [], exclude: [] } } })!.total, o.n);
-  assert.deepEqual(orgOptions(market, "brand", "kel").map((o) => o.v), ["Keller Williams"]);
-  assert.deepEqual(orgOptions(market, "office", "").map((o) => o.v), ["KW Atlanta"]);
+test("a place filter that yields no condition is no filter — as the SQL adds none", () => {
+  assert.equal(run(loc([{ f: "city", v: "(x)" }]))!.total, 6);
+  assert.equal(run({ location: { field: "city", appliesTo: ["office", "transacted"], values: [], excludeValues: [{ f: "city", v: "(x)" }], excludeField: "city" } })!.total, 6);
 });

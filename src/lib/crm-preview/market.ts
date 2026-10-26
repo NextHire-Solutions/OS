@@ -7,7 +7,7 @@ import { readOnly } from "@/lib/tools/assistant/read-only";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
 import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
-import { orgOptions, searchMarket } from "@/lib/crm-preview/market-engine";
+import { searchMarket } from "@/lib/crm-preview/market-engine";
 import { marketFromMemory } from "@/lib/crm-preview/market-memory";
 import { agentsByIds, demoProspectIds, filterProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
@@ -362,11 +362,7 @@ export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: Face
   }
   const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
   if (isPlace(kind)) return searchPlaces(await placeList(base, kind, q.kinds), text);
-  const clean = text.replace(/[\u0000-\u001f%_]/g, " ").trim().slice(0, 60);
-  // Brokerages and offices from memory when the market is held (milliseconds per letter typed, not ~4 s).
-  const mem = q.list === "market" ? marketFromMemory(ctx.mls.ids, base, search) : null;
-  if (mem) return { options: orgOptions(mem, kind, clean) };
-  return { options: await orgList(base, kind, clean) };
+  return { options: await orgList(base, kind, text.replace(/[\u0000-\u001f%_]/g, " ").trim().slice(0, 60)) };
 }
 
 /** The chips' choices for a market: its brokerages and counties, largest first. */

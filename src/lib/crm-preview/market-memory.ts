@@ -8,7 +8,8 @@ import { MARKET_TITLE_TOKEN, searchMarket, titleTokens, type MemAgent, type MemM
 /*
  * The market held in memory (market-engine.ts says why and how it answers).
  *
- * LOADING. In the background, the first time a portal's Market is asked for:
+ * LOADING. In the background, the first time a portal's Market is asked for
+ * (one load at a time for the whole server):
  * the market's agents (agent_mls → agents) and their per-MLS numbers
  * (agent_mls_stats), read in 16 slices by agent id, four at a time — the
  * agent database is shared with the live apps. ~25 s for the Demo's 156,269
@@ -23,8 +24,10 @@ import { MARKET_TITLE_TOKEN, searchMarket, titleTokens, type MemAgent, type MemM
  * database's collation; they are proven separately and only used if they
  * match.
  *
- * Kept 30 minutes, then reloaded (and proven again) in the background; at
- * most three markets at once. OS_MARKET_MEMORY=0 switches it all off.
+ * Kept 30 minutes, then reloaded (and proven again) in the background, and
+ * dropped at once if the agent database refreshes the market's MLSs; at most
+ * three markets, never served past an hour. OS_MARKET_MEMORY=0 switches it
+ * all off.
  */
 
 type Row = Record<string, unknown>;
@@ -86,35 +89,62 @@ async function readSlices(db: Db, table: "agent_mls" | "agent_mls_stats", select
   return slices.flat();
 }
 
-/** Whether every MLS of the market is scoped (fn_agent_where: stats for at least 90% of members). */
-async function allScoped(db: Db, mlsIds: string[]): Promise<boolean> {
-  const { data, error } = await db.from("mls").select("id, stats_agents, member_agents").in("id", mlsIds);
+/** The market's MLS rows as loaded: whether each is scoped, and when its data was last refreshed. */
+type MlsStamp = Array<{ id: string; stats_agents: number; member_agents: number; refreshed: string | null }>;
+
+async function readStamp(db: Db, mlsIds: string[]): Promise<MlsStamp> {
+  const { data, error } = await db.from("mls").select("id, stats_agents, member_agents, bulk_refreshed_at").in("id", mlsIds);
   if (error) throw new Error(`mls: ${error.message}`);
-  const rows = (data ?? []) as Row[];
-  return rows.length === mlsIds.length && rows.every((r) => (Number(r.stats_agents) || 0) >= 0.9 * Math.max(Number(r.member_agents) || 0, 1));
+  return ((data ?? []) as Row[])
+    .map((r) => ({ id: String(r.id), stats_agents: Number(r.stats_agents) || 0, member_agents: Number(r.member_agents) || 0, refreshed: s(r.bulk_refreshed_at) }))
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
-/** Sums in whole cents, as numeric would: no float drift at a filter's edge. */
-function addCents(total: number | null, v: unknown): number | null {
+/** fn_agent_where's rule: every MLS with stats for at least 90% of its members. */
+const allScoped = (stamp: MlsStamp, mlsIds: string[]) =>
+  stamp.length === mlsIds.length && stamp.every((r) => r.stats_agents >= 0.9 * Math.max(r.member_agents, 1));
+
+const sameStamp = (a: MlsStamp, b: MlsStamp) => JSON.stringify(a) === JSON.stringify(b);
+
+/*
+ * Sums as whole numbers — numeric's exact sums, not floating point drift at a
+ * filter's edge: volume in cents, units in ten-thousandths (split deals). A
+ * value finer than that cannot be summed exactly here, and the market stays
+ * on the database.
+ */
+const SCALE = { volume: 100, units: 10_000 } as const;
+class Inexact extends Error {}
+function addScaled(total: number | null, v: unknown, scale: number): number | null {
   const n = nOrNull(v);
   if (n === null) return total;
-  return (total ?? 0) + Math.round(n * 100);
+  const scaled = n * scale;
+  if (Math.abs(scaled - Math.round(scaled)) > 1e-6) throw new Inexact(`a value of ${n} is finer than 1/${scale}`);
+  return (total ?? 0) + Math.round(scaled);
 }
 
-/** The market's salespeople with their per-MLS numbers — or null when the market is not scoped (the database answers it). */
-export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(getCorofySupabase()) as unknown as Db): Promise<MemMarket | null> {
+export type Loaded = { market: MemMarket; stamp: MlsStamp } | { unused: string };
+
+/** The market's salespeople with their per-MLS numbers — or why it stays on the database. */
+export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(getCorofySupabase()) as unknown as Db): Promise<Loaded> {
   const ids = [...new Set(mlsIds)].sort();
-  if (!ids.length || !(await allScoped(db, ids))) return null;
+  if (!ids.length) return { unused: "no MLS" };
+  const stamp = await readStamp(db, ids);
+  if (!allScoped(stamp, ids)) return { unused: "not scoped per MLS" };
   const [members, stats] = await Promise.all([
     readSlices(db, "agent_mls", `agent_id,mls_id,agents(${COLS})`, ids),
     readSlices(db, "agent_mls_stats", "agent_id,mls_id,sales_volume,units", ids),
   ]);
   const volume = new Map<string, number | null>();
   const units = new Map<string, number | null>();
-  for (const r of stats) {
-    const id = String(r.agent_id);
-    volume.set(id, addCents(volume.has(id) ? volume.get(id)! : null, r.sales_volume));
-    units.set(id, addCents(units.has(id) ? units.get(id)! : null, r.units));
+  try {
+    for (const r of stats) {
+      const id = String(r.agent_id);
+      volume.set(id, addScaled(volume.has(id) ? volume.get(id)! : null, r.sales_volume, SCALE.volume));
+      units.set(id, addScaled(units.has(id) ? units.get(id)! : null, r.units, SCALE.units));
+    }
+  } catch (e) {
+    if (e instanceof Inexact) return { unused: e.message };
+    throw e;
   }
   const agents = new Map<string, MemAgent>();
   for (const r of members) {
@@ -130,13 +160,13 @@ export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(ge
       office_city: s(a.office_city), office_state: s(a.office_state), office_county: s(a.office_county), office_city_key: s(a.office_city_key),
       most_transacted_city: s(a.most_transacted_city), transacted_state: s(a.transacted_state),
       most_transacted_county: s(a.most_transacted_county), most_transacted_city_key: s(a.most_transacted_city_key),
-      sales_volume: v === null ? null : v / 100,
-      units: u === null ? null : u / 100,
+      sales_volume: v === null ? null : v / SCALE.volume,
+      units: u === null ? null : u / SCALE.units,
       est_time_in_industry_months: nOrNull(a.est_time_in_industry_months),
       preferred_email: s(a.preferred_email), enriched_email: s(a.enriched_email),
     });
   }
-  return { mlsIds: ids, agents: [...agents.values()], textSorts: false };
+  return { market: { mlsIds: ids, agents: [...agents.values()] }, stamp };
 }
 
 /* ------------------------------------------------------------ the proof --- */
@@ -153,8 +183,8 @@ function most<T>(items: Iterable<T | null>): T | null {
   return best;
 }
 
-/** The real queries a market must answer exactly as the database does. */
-export function parityQueries(m: MemMarket, base: Record<string, unknown>): Array<{ label: string; filters: Record<string, unknown>; sort: { by: string; dir: "asc" | "desc" }; offset?: number; text?: boolean }> {
+/** The real queries a market must answer exactly as the database does — every order memory serves, first and last pages. */
+export function parityQueries(m: MemMarket, base: Record<string, unknown>): Array<{ label: string; filters: Record<string, unknown>; sort: { by: string; dir: "asc" | "desc" }; offset?: number }> {
   const city = most(m.agents.map((a) => (a.office_city_key && a.office_state ? `${a.office_city_key}, ${a.office_state}` : null)));
   const county = most(m.agents.map((a) => (a.office_county && a.office_state ? `${a.office_county}, ${a.office_state}` : null)));
   const state = most(m.agents.map((a) => a.office_state));
@@ -166,16 +196,18 @@ export function parityQueries(m: MemMarket, base: Record<string, unknown>): Arra
   const out: ReturnType<typeof parityQueries> = [
     { label: "the whole market", filters: { ...base }, sort: vol },
     { label: "page 2", filters: { ...base }, sort: vol, offset: 50 },
+    { label: "the last page a search may reach", filters: { ...base }, sort: vol, offset: 950 },
+    { label: "volume, smallest first", filters: { ...base }, sort: { by: "sales_volume", dir: "asc" } },
+    { label: "units, most first, page 3", filters: { ...base }, sort: { by: "units", dir: "desc" }, offset: 100 },
     { label: "units, fewest first", filters: { ...base }, sort: { by: "units", dir: "asc" } },
     { label: "volume ≥ $5M", filters: { ...base, salesVolume: { side: "all", buckets: [], min: "5000000", max: "" } }, sort: vol },
     { label: "units 4–20", filters: { ...base, closedUnits: { side: "all", buckets: [], min: "4", max: "20" } }, sort: vol },
     { label: "10+ years", filters: { ...base, estTimeInIndustry: { buckets: [], min: "10", max: "" } }, sort: vol },
-    { label: "a name search", filters: { ...base, nameQuery: "smith" }, sort: vol },
   ];
   if (city) {
     out.push({ label: `city ${city}`, filters: { ...base, ...loc([{ f: "city", v: city }]) }, sort: vol });
     out.push({ label: `not city ${city}`, filters: { ...base, ...loc([], [{ f: "city", v: city }]) }, sort: vol });
-    out.push({ label: `city ${city} + volume ≥ $2M + 4+ units`, filters: { ...base, ...loc([{ f: "city", v: city }]), salesVolume: { side: "all", buckets: [], min: "2000000", max: "" }, closedUnits: { side: "all", buckets: [], min: "4", max: "" } }, sort: vol });
+    out.push({ label: `city ${city} + volume ≥ $2M + 4+ units, by units`, filters: { ...base, ...loc([{ f: "city", v: city }]), salesVolume: { side: "all", buckets: [], min: "2000000", max: "" }, closedUnits: { side: "all", buckets: [], min: "4", max: "" } }, sort: { by: "units", dir: "desc" } });
   }
   if (county) out.push({ label: `county ${county}`, filters: { ...base, ...loc([{ f: "county", v: county }]) }, sort: vol });
   if (state) out.push({ label: `state ${state}`, filters: { ...base, ...loc([{ f: "state", v: state }]) }, sort: vol });
@@ -183,17 +215,11 @@ export function parityQueries(m: MemMarket, base: Record<string, unknown>): Arra
     out.push({ label: `brokerage ${brand}`, filters: { ...base, ...org([brand], []) }, sort: vol });
     out.push({ label: `not brokerage ${brand}`, filters: { ...base, ...org([], [brand]) }, sort: vol });
   }
-  // The collation-dependent orders, proven on their own.
-  out.push({ label: "by name", filters: { ...base }, sort: { by: "full_name", dir: "asc" }, text: true });
-  out.push({ label: "by brokerage, Z–A", filters: { ...base }, sort: { by: "brand", dir: "desc" }, text: true });
-  out.push({ label: "by office city", filters: { ...base }, sort: { by: "office_city", dir: "asc" }, text: true });
-  out.push({ label: "name search, by name", filters: { ...base, nameQuery: "smith" }, sort: { by: "full_name", dir: "asc" }, text: true });
   return out;
 }
 
 export interface Proof {
   ok: boolean;
-  textSorts: boolean;
   failures: string[];
   checked: number;
 }
@@ -201,9 +227,9 @@ export interface Proof {
 /** Each query both ways: the same total, the same volume to the cent, the same page in the same order. */
 export async function proveMarket(m: MemMarket, base: Record<string, unknown>, dbSearch: DbSearch): Promise<Proof> {
   const failures: string[] = [];
-  let textOk = true;
   let checked = 0;
-  const probe = { ...m, textSorts: true, sorted: new Map(), orgs: new Map() } as MemMarket;
+  // Its own sort cache: the copy that is served never inherits anything from the proof.
+  const probe: MemMarket = { mlsIds: m.mlsIds, agents: m.agents, sorted: new Map() };
   // Three at a time: the agent database is shared with the live apps.
   await pooled(parityQueries(m, base).map((q) => async () => {
     const mem = searchMarket(probe, q.filters, q.sort, 50, q.offset ?? 0);
@@ -211,12 +237,9 @@ export async function proveMarket(m: MemMarket, base: Record<string, unknown>, d
     const db = await dbSearch(q.filters, 50, q.offset ?? 0, q.sort);
     checked++;
     const why = differs(mem, db);
-    if (!why) return;
-    if (q.text) textOk = false;
-    failures.push(`${q.label}: ${why}`);
+    if (why) failures.push(`${q.label}: ${why}`);
   }), 3);
-  const hard = failures.filter((f) => !/^by |^name search, by name/.test(f));
-  return { ok: hard.length === 0, textSorts: textOk, failures, checked };
+  return { ok: failures.length === 0, failures, checked };
 }
 
 function differs(mem: MemResult, db: { rows: Array<Record<string, unknown>>; total: number; salesVolume: number }): string | null {
@@ -230,10 +253,28 @@ function differs(mem: MemResult, db: { rows: Array<Record<string, unknown>>; tot
 
 /* ----------------------------------------------------------- the holder --- */
 
+/*
+ * Bounded (audit, 26 Oct):
+ *   - ONE load at a time across all markets (a refresh counts): the raw rows
+ *     of a load are the biggest thing in memory, and the agent database is
+ *     shared. Others wait their turn — on the database, as before.
+ *   - at most MAX_MARKETS held; the one used longest ago goes first.
+ *   - a load or proof that fails waits COOL_DOWN before trying again — never
+ *     back-to-back against a struggling database.
+ *   - a market is never served older than MAX_AGE, refresh or not.
+ *   - FRESH: every minute in use, the market's MLS rows are read again (one
+ *     small query); if the agent database refreshed an MLS, or one stopped
+ *     being scoped, the copy stops being served at once and is reloaded.
+ */
+const COOL_DOWN_MS = 10 * 60_000;
+const MAX_AGE_MS = 2 * TTL_MS;
+const PROBE_MS = 60_000;
+const HUNG_MS = 10 * 60_000;
+
 type Slot =
   | { status: "loading"; since: number }
-  | { status: "ready"; market: MemMarket; at: number; refreshing?: boolean }
-  | { status: "unused"; reason: string; at: number };
+  | { status: "ready"; market: MemMarket; stamp: MlsStamp; at: number; lastUsed: number; lastProbe: number; refreshing: boolean; refreshAfter: number }
+  | { status: "unused"; reason: string; retryAfter: number };
 
 const GLOBAL_KEY = "__osMarketMemory";
 /* A plain object, shared by every bundle of the process (globalThis). Only memory — nothing here writes a database. */
@@ -244,67 +285,99 @@ function slots(): Record<string, Slot> {
 
 const keyOf = (mlsIds: readonly string[]) => [...new Set(mlsIds)].sort().join(",");
 
+function inFlight(all: Record<string, Slot>, now: number): number {
+  return Object.values(all).filter((v) => (v.status === "loading" && now - v.since < HUNG_MS) || (v.status === "ready" && v.refreshing)).length;
+}
+
+function startLoad(key: string, mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch) {
+  const all = slots();
+  void (async () => {
+    const t0 = Date.now();
+    try {
+      const loaded = await loadMarket(mlsIds);
+      if ("unused" in loaded) {
+        all[key] = { status: "unused", reason: loaded.unused, retryAfter: Date.now() + TTL_MS };
+        return;
+      }
+      const proof = await proveMarket(loaded.market, base, dbSearch);
+      if (!proof.ok) {
+        all[key] = { status: "unused", reason: proof.failures.join(" | "), retryAfter: Date.now() + TTL_MS };
+        console.error(`[market-memory] ${key}: NOT used — differs from the database: ${proof.failures.join(" | ")}`);
+        return;
+      }
+      const now = Date.now();
+      all[key] = { status: "ready", market: loaded.market, stamp: loaded.stamp, at: now, lastUsed: now, lastProbe: now, refreshing: false, refreshAfter: 0 };
+      evict(all);
+      console.log(`[market-memory] ${key}: ${loaded.market.agents.length} agents ready in ${Math.round((now - t0) / 1000)} s — ${proof.checked} checks matched`);
+    } catch (e) {
+      const cur = all[key];
+      if (cur?.status === "ready") { cur.refreshing = false; cur.refreshAfter = Date.now() + COOL_DOWN_MS; }
+      else all[key] = { status: "unused", reason: "load failed", retryAfter: Date.now() + COOL_DOWN_MS };
+      console.error(`[market-memory] ${key}: load failed — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  })();
+}
+
+/** Whether the agent database moved under a held market (an MLS refreshed, or no longer scoped): it then stops being served. */
+function probe(key: string, slot: Extract<Slot, { status: "ready" }>) {
+  void (async () => {
+    try {
+      const db = readOnly(getCorofySupabase()) as unknown as Db;
+      const now = await readStamp(db, slot.market.mlsIds);
+      if (!sameStamp(now, slot.stamp) || !allScoped(now, slot.market.mlsIds)) {
+        const all = slots();
+        if (all[key] === slot) all[key] = { status: "unused", reason: "the agent database refreshed this market", retryAfter: 0 };
+        console.log(`[market-memory] ${key}: the agent database moved — back to the database until reloaded`);
+      }
+    } catch {
+      /* a failed probe changes nothing; the next minute tries again */
+    }
+  })();
+}
+
 /**
- * The proven market for these MLSs, if it is ready — and, if not (or stale),
- * starts loading it in the background. Never waits.
+ * The proven market for these MLSs, if it is ready — and, if not, starts
+ * loading it in the background when it may. Never waits.
  */
 export function marketFromMemory(mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch, now = Date.now()): MemMarket | null {
   if (memoryOff() || !mlsIds.length) return null;
   const key = keyOf(mlsIds);
   const all = slots();
   const slot = all[key];
-  const start = () => {
-    void (async () => {
-      const t0 = Date.now();
-      try {
-        const m = await loadMarket(mlsIds);
-        if (!m) {
-          all[key] = { status: "unused", reason: "not scoped per MLS", at: Date.now() };
-          return;
-        }
-        const proof = await proveMarket(m, base, dbSearch);
-        if (!proof.ok) {
-          all[key] = { status: "unused", reason: proof.failures.join(" | "), at: Date.now() };
-          console.error(`[market-memory] ${key}: NOT used — differs from the database: ${proof.failures.join(" | ")}`);
-          return;
-        }
-        all[key] = { status: "ready", market: { ...m, textSorts: proof.textSorts }, at: Date.now() };
-        evict(all);
-        console.log(`[market-memory] ${key}: ${m.agents.length} agents ready in ${Math.round((Date.now() - t0) / 1000)} s — ${proof.checked} checks matched${proof.textSorts ? "" : " (text orders stay on the database)"}`);
-      } catch (e) {
-        // Failed: forget it, so a later request tries again.
-        const now2 = all[key];
-        if (now2?.status === "loading") delete all[key];
-        else if (now2?.status === "ready") now2.refreshing = false;
-        console.error(`[market-memory] ${key}: load failed — ${e instanceof Error ? e.message : String(e)}`);
-      }
-    })();
-  };
+  const canStart = inFlight(all, now) === 0;
+  const begin = () => { all[key] = { status: "loading", since: now }; startLoad(key, mlsIds, base, dbSearch); };
+
   if (!slot) {
-    all[key] = { status: "loading", since: now };
-    start();
+    if (canStart) begin();
     return null;
   }
   if (slot.status === "loading") {
-    // A load that never finished (a hung request): try again after 10 minutes.
-    if (now - slot.since > 10 * 60_000) { all[key] = { status: "loading", since: now }; start(); }
+    if (now - slot.since > HUNG_MS && canStart) begin();
     return null;
   }
   if (slot.status === "unused") {
-    if (now - slot.at > TTL_MS) { all[key] = { status: "loading", since: now }; start(); }
+    if (now >= slot.retryAfter && canStart) begin();
     return null;
   }
-  // Ready: served, and refreshed behind it once old.
-  if (now - slot.at > TTL_MS && !slot.refreshing) {
+  // Ready.
+  if (now - slot.at > MAX_AGE_MS) {
+    // Too old to serve, whatever happened to its refresh.
+    if (!slot.refreshing && canStart && now >= slot.refreshAfter) { slot.refreshing = true; startLoad(key, mlsIds, base, dbSearch); }
+    return null;
+  }
+  slot.lastUsed = now;
+  if (now - slot.lastProbe > PROBE_MS) { slot.lastProbe = now; probe(key, slot); }
+  if (now - slot.at > TTL_MS && !slot.refreshing && canStart && now >= slot.refreshAfter) {
     slot.refreshing = true;
-    start();
+    startLoad(key, mlsIds, base, dbSearch);
   }
   return slot.market;
 }
 
+/** At most MAX_MARKETS held — the one used longest ago goes first. */
 function evict(all: Record<string, Slot>) {
   const ready = Object.entries(all).filter(([, v]) => v.status === "ready") as Array<[string, Extract<Slot, { status: "ready" }>]>;
-  ready.sort((a, b) => a[1].at - b[1].at);
+  ready.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
   while (ready.length > MAX_MARKETS) delete all[ready.shift()![0]];
 }
 

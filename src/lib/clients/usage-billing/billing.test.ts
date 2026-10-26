@@ -160,6 +160,17 @@ test("calls (the per-call products): conversations of the client's portals marke
   assert.deepEqual(writes(), []);
 });
 
+test("an alias equal to another client's portal name never bills that client's calls or introductions", async () => {
+  for (const source of ["calls", "introductions"]) {
+    seed({ acmeSettings: { lead_source: source } });
+    // Acme's alias is the NAME of Beta's linked portal: by name alone it would look like Acme's.
+    db.rows("os_clients").find((c) => c.id === ACME)!.aliases = ["Acme Florida", "Beta Homes"];
+    const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });
+    assert.ok(!p.leads.some((l) => /beta/i.test(l.name) || /beta/i.test(l.key)), `${source}: Beta's portal is Beta's`);
+    assert.ok(p.leads.length > 0, `${source}: Acme's own still count`);
+  }
+});
+
 test("test and live periods are kept apart: a period billed in the other mode never counts as billed here", async () => {
   seed({ periods: [{ os_client_id: ACME, period_start: "2026-09-28", period_end: "2026-10-05", status: "paid", test_mode: false, leads: [{ key: "sam@harbor.test", name: "Sam Lee", at: "2026-09-30T12:00:00.000Z", source: "handoff" }] }] });
   const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });

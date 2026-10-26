@@ -2,7 +2,7 @@ import "server-only";
 
 import { osTable } from "@/lib/clients/os-db";
 import { CLIENT_ENTRY_SOURCE } from "@/lib/tools/master-inbox/portals/intro-counts";
-import { portalsOfClient, type World } from "@/lib/tools/master-inbox/relay/resolve";
+import { osClientForPortal, portalsOfClient, type World } from "@/lib/tools/master-inbox/relay/resolve";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 
 import { DEFAULT_LEAD_SOURCE, leadKey, periodWindow, type BillableLead, type LeadSource } from "./model.ts";
@@ -91,23 +91,30 @@ export const handoffLeads: LeadSourceFn = async (osClientId, periodStart, period
     });
 };
 
-/** The client's portals (Master Inbox `clients` rows): its link, its campaign → portal choices, its name and aliases. */
+/**
+ * The client's portals (Master Inbox `clients` rows) — only the ones that are
+ * THIS client's: a portal reached by name, alias or a campaign route is kept
+ * only if the OS's own rule (osClientForPortal: linked first, then routes,
+ * then a name that fits one client only) gives it to this client. Without
+ * that, an alias equal to another client's portal name would bill this
+ * client for the other's calls and introductions (audit, 26 Oct).
+ */
 async function portalsOf(osClientId: string): Promise<string[]> {
-  const { data: c, error } = await osTable("os_clients").select("id, name, aliases, mi_client_id").eq("id", osClientId).maybeSingle();
+  const { data: rows, error } = await osTable("os_clients").select("id, name, aliases, mi_client_id");
   if (error) throw new Error(`os_clients: ${error.message}`);
-  if (!c) return [];
-  const client = c as Row;
-  const { data: routes, error: rErr } = await osTable("os_campaign_portals").select("platform, campaign_id, os_client_id, mi_client_id").eq("os_client_id", osClientId);
+  const clients = ((rows ?? []) as Row[]).map((c) => ({ id: s(c.id), name: s(c.name), aliases: Array.isArray(c.aliases) ? (c.aliases as string[]) : [], miClientId: s(c.mi_client_id) || null }));
+  if (!clients.some((c) => c.id === osClientId)) return [];
+  const { data: routes, error: rErr } = await osTable("os_campaign_portals").select("platform, campaign_id, os_client_id, mi_client_id");
   if (rErr) throw new Error(`os_campaign_portals: ${rErr.message}`);
   const mi = getMasterInboxSupabase();
   const portals = await allPages((from, to) => mi.from("clients").select("id, name, slug, aliases").order("id", { ascending: true }).range(from, to), "clients");
   const world: World = {
     portals: portals.map((p) => ({ id: s(p.id), name: s(p.name), slug: s(p.slug) || null, aliases: Array.isArray(p.aliases) ? (p.aliases as string[]) : [] })),
-    clients: [{ id: osClientId, name: s(client.name), aliases: Array.isArray(client.aliases) ? (client.aliases as string[]) : [], miClientId: s(client.mi_client_id) || null }],
+    clients,
     campaignPortals: ((routes ?? []) as Row[]).map((r) => ({ platform: s(r.platform), campaignId: s(r.campaign_id), osClientId: s(r.os_client_id), miClientId: s(r.mi_client_id) })),
     teamCampaigns: [],
   };
-  return portalsOfClient(osClientId, world);
+  return portalsOfClient(osClientId, world).filter((p) => osClientForPortal(p, world) === osClientId);
 }
 
 /** The other definition: the introductions we put in the client's portal, in the period. */
