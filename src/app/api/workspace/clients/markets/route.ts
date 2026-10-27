@@ -12,6 +12,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
  * independent facts, not paired rows (the client, 30 Sep).
  *
  *   GET  ?clientId=…                              the three, plus board and area suggestions
+ *   GET  ?boards=1                                the suggestions alone (Onboard a client, before the client exists)
  *   PUT  { clientId, markets?, mls?, areas? }     change any of them
  *
  * After a change to MLS, the Database row's codes are rewritten from it
@@ -39,7 +40,17 @@ const fail = (e: unknown) =>
     : NextResponse.json({ error: e instanceof Error ? e.message : "Could not read markets" }, { status: 502 });
 
 export async function GET(request: Request) {
-  const clientId = new URL(request.url).searchParams.get("clientId");
+  const params = new URL(request.url).searchParams;
+  const clientId = params.get("clientId");
+  if (!clientId && params.get("boards") === "1") {
+    try {
+      const [boards, all] = await Promise.all([mlsBoards(), listCoverage()]);
+      const areas = [...new Set([...(all?.values() ?? [])].flatMap((c) => c.areas))].sort((a, b) => a.localeCompare(b));
+      return NextResponse.json({ boards, suggestions: { areas } });
+    } catch (e) {
+      return fail(e);
+    }
+  }
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   try {
     const [coverage, boards, all] = await Promise.all([getCoverage(clientId), mlsBoards(), listCoverage()]);

@@ -31,7 +31,8 @@ interface Payload {
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-function ListField({ label, values, onChange, placeholder, listId, disabled }: {
+/** A list of values with chips and an Add box (`listId`: a datalist of suggestions). Onboard a client uses it too, for the same MLS and Area lists. */
+export function ListField({ label, values, onChange, placeholder, listId, disabled }: {
   label: string; values: string[]; onChange: (v: string[]) => void; placeholder: string; listId: string; disabled: boolean;
 }) {
   const [draft, setDraft] = useState("");

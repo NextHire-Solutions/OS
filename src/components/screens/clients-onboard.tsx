@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SUBSCRIPTION_ID } from "@/lib/clients/stripe-link";
 import { useRouter } from "next/navigation";
@@ -10,6 +10,7 @@ import {
   type BillingInterval, type Plan,
 } from "@/lib/clients/onboard-plan";
 import { ModalDialog } from "@/components/ui/modal-dialog";
+import { ListField } from "@/components/screens/markets-panel";
 import { easternDay, OFFERED_PRODUCTS, PAY_PER_LEAD_PRODUCTS } from "@/lib/clients/usage-billing/model";
 import { PLAN_DEFAULT_TARGET } from "@/lib/tools/client-health/types";
 
@@ -90,6 +91,27 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
   const [extraSlots, setExtraSlots] = useState(0);
   const setExtra = (i: number, patch: Partial<(typeof extras)[number]>) =>
     setExtras((cur) => cur.map((p, n) => (n === i ? { ...p, ...patch } : p)));
+  /*
+   * Markets, MLS and Area (28 Oct, the user: "we cannot select markets in this
+   * onboarding form … then how we will show them their market agents?"). Saved
+   * after the run to the client's Markets section — the one editor of these —
+   * so the new portal's market (every salesperson on these MLS boards) is there
+   * from day one. Optional: without an MLS the portal shows no market yet.
+   */
+  const [marketCount, setMarketCount] = useState("");
+  const [mls, setMls] = useState<string[]>([]);
+  const [areas, setAreas] = useState<string[]>([]);
+  const [suggest, setSuggest] = useState<{ boards: { code: string; label: string }[]; areas: string[] }>({ boards: [], areas: [] });
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch("/api/workspace/clients/markets?boards=1", { signal: ctrl.signal, cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setSuggest({ boards: Array.isArray(j.boards) ? j.boards : [], areas: Array.isArray(j.suggestions?.areas) ? j.suggestions.areas : [] }))
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, []);
+  const knownBoard = (code: string) => suggest.boards.some((b) => b.code.toLowerCase() === code.toLowerCase());
+  const unknownBoards = suggest.boards.length ? mls.filter((c) => !knownBoard(c)) : [];
 
   const [failed, setFailed] = useState("");
   /*
@@ -120,6 +142,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
     /** The outcome of linking the Stripe subscription, when one was entered. */
     stripe?: { ok: boolean; text: string } | null;
     usage?: { ok: boolean; text: string } | null;
+    markets?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   } | null>(null);
 
@@ -191,6 +214,36 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
       if (!res.ok && !body?.legs) throw new Error(body?.error ?? `HTTP ${res.status}`);
 
       /*
+       * Markets, MLS and Area — through the Markets section's own save (which
+       * also gives the Database row its MLS codes for lead building). Never
+       * fatal, as Stripe; a client that already existed keeps its own.
+       */
+      let markets: { ok: boolean; text: string } | null = null;
+      const count = marketCount.trim() ? Number(marketCount) : null;
+      if (madeBody.created === false) {
+        markets = (mls.length || areas.length || count !== null) ? { ok: false, text: `Markets NOT saved: ${name} already existed — check its Markets section.` } : null;
+      } else if (mls.length || areas.length || count !== null) {
+        try {
+          const saved = await fetch("/api/workspace/clients/markets", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clientId: madeBody.id, markets: count, mls, areas }),
+          });
+          const sb = await saved.json().catch(() => null);
+          const unknown: string[] = Array.isArray(sb?.leadBuilding?.unknown) ? sb.leadBuilding.unknown : [];
+          markets = !saved.ok
+            ? { ok: false, text: `Markets NOT saved: ${sb?.error ?? `HTTP ${saved.status}`} Add them on the client's Markets section.` }
+            : !mls.length
+              ? { ok: false, text: "Markets saved, but no MLS board — their portal shows no market until one is added on the client's Markets section." }
+              : { ok: unknown.length === 0, text: `Markets saved — MLS ${mls.join(", ")}${areas.length ? ` · areas ${areas.join(", ")}` : ""}. Their portal's market is every salesperson on ${mls.length === 1 ? "this board" : "these boards"}.${unknown.length ? ` Not a board the Database knows, so not in their market: ${unknown.join(", ")}.` : ""}` };
+        } catch (e) {
+          markets = { ok: false, text: `Markets NOT saved: ${e instanceof Error ? e.message : String(e)} Add them on the client's Markets section.` };
+        }
+      } else {
+        markets = { ok: false, text: "No MLS board given — their portal shows no market until one is added on the client's Markets section." };
+      }
+
+      /*
        * Stripe, last — through the same checked save as the Edit dialog, which
        * asks Stripe who owns the subscription, fills in the customer from it,
        * and refuses anything it cannot confirm. After the run rather than
@@ -246,7 +299,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
           usage = { ok: false, text: `Pay per lead NOT saved: ${e instanceof Error ? e.message : String(e)} Set it on the client's Billing tab.` };
         }
       }
-      setRunResult({ ...body, stripe, usage });
+      setRunResult({ ...body, stripe, usage, markets });
     } catch (e) {
       setFailed(e instanceof Error ? e.message : String(e));
     } finally {
@@ -301,6 +354,32 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
               <input className="inp tnum" type="number" min={1} value={billingIntervalDays}
                 onChange={(e) => setBillingIntervalDays(e.target.value)} />
             </label>
+          ) : null}
+        </div>
+
+        <div className="mk" style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 12, gap: 4 }} data-onboard-markets="">
+          <div style={{ marginBottom: 8 }}>
+            <span style={LABEL}>Markets, MLS &amp; Area</span>
+            <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3, lineHeight: 1.55 }}>
+              Their portal&rsquo;s market is every salesperson on these MLS boards. Saved to the client&rsquo;s Markets section, where they can be changed later.
+            </div>
+          </div>
+          <datalist id="ob-mlses">{suggest.boards.map((b) => <option key={b.code} value={b.code}>{b.label}</option>)}</datalist>
+          <datalist id="ob-areas">{suggest.areas.map((v) => <option key={v} value={v} />)}</datalist>
+          <div className="mk-field">
+            <span className="mk-label">Markets</span>
+            <input className="mk-inp mk-num" inputMode="numeric" placeholder="How many" aria-label="Markets" value={marketCount} disabled={running}
+              onChange={(e) => setMarketCount(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} />
+          </div>
+          <ListField label="MLS" values={mls} onChange={setMls} placeholder="Add an MLS board, e.g. FMLS" listId="ob-mlses" disabled={running} />
+          {unknownBoards.length ? (
+            <p className="mk-err" style={{ marginTop: -6, marginBottom: 8 }}>Not an MLS board the Database knows, so it brings no agents: {unknownBoards.join(", ")}. Pick from the list.</p>
+          ) : null}
+          <ListField label="Area" values={areas} onChange={setAreas} placeholder="Add an area, e.g. greater Atlanta" listId="ob-areas" disabled={running} />
+          {mls.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 12, color: "var(--amber, #b54708)" }}>
+              No MLS board yet — their portal won&rsquo;t show a market until one is added, here or later on the client&rsquo;s Markets section.
+            </p>
           ) : null}
         </div>
 
@@ -478,6 +557,7 @@ function RunView({
     statusAlignment?: string | null;
     stripe?: { ok: boolean; text: string } | null;
     usage?: { ok: boolean; text: string } | null;
+    markets?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   };
 }) {
@@ -517,6 +597,11 @@ function RunView({
             margin: 0,
           }}>
             {result.statusAlignment}
+          </p>
+        ) : null}
+        {result.markets ? (
+          <p style={{ fontSize: 12, color: result.markets.ok ? "var(--muted)" : "var(--red)", margin: 0 }}>
+            {result.markets.text}
           </p>
         ) : null}
         {result.stripe ? (
