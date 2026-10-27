@@ -40,6 +40,7 @@ import { EditLeadDialog, PipelineAddDialog, PipelineUploadDialog } from "./dialo
 import { AgentPanel, ChooseMenu, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
 import { importCsv, isCanonicalStage, lock, moveTo, saveCsv, useDemo, type DemoAction } from "./demo-save";
 import { useBoardDrag } from "./board-drag";
+import { useColumnDrag } from "./column-drag";
 
 type Open = { kind: "agent" | "conversation" | "notes" | "edit"; entry: PipelineEntry } | { kind: "add" | "upload" } | null;
 
@@ -85,6 +86,24 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
   });
 
   const view = useMemo(() => pipelineView(shownEntries, stages, { range, search, chip, now }, furthest), [shownEntries, stages, range, search, chip, now, furthest]);
+  /*
+   * The board's columns can be dragged into a new order (Demo Portal, 27 Oct;
+   * column-drag.tsx) — when every stage is on the board, not one picked out.
+   * The new order saves as Manage stages saves it: the moved stages first,
+   * then every other stage and tag (hidden ones too) as they were.
+   */
+  const columnKeys = useMemo(() => stages.filter((s) => s.role === "stage").map((s) => s.key), [stages]);
+  const canReorder = live && !!allStages && mode === "board" && view.columns.length === columnKeys.length;
+  const cols = useColumnDrag(canReorder, columnKeys, (order) => {
+    if (!allStages) return;
+    const byKey = new Map(allStages.map((s) => [s.key, s]));
+    const moved = order.map((key) => byKey.get(key)).filter((s): s is ManagedStage => !!s);
+    const rest = allStages.filter((s) => !order.includes(s.key));
+    void save({ type: "stages.save", stages: payload([...moved, ...rest]) }).then((ok) => { if (!ok) cols.revert(); });
+  });
+  const boardColumns = canReorder
+    ? cols.order.map((key) => view.columns.find((c) => c.stage.key === key)).filter((c): c is (typeof view.columns)[number] => !!c)
+    : view.columns;
   const [listPageNo, setListPageNo] = useState(1);
   const page = useMemo(() => listPage(view.shown, listPageNo), [view.shown, listPageNo]);
   // A new filter starts the list again at its first page.
@@ -323,11 +342,21 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
             {mode === "board" ? (
               <div className={k("board")} data-board="">
                 {/* Every card, as the design's board (no client has more than a few hundred); each column scrolls. */}
-                {view.columns.map((c) => {
+                {boardColumns.map((c) => {
                   const target = board.drag && board.drag.over === c.stage.key && board.drag.from !== c.stage.key;
+                  const held = cols.held === c.stage.key;
                   return (
-                    <section key={c.stage.key} className={k("col")} aria-label={c.stage.label} data-col={c.stage.key} style={target ? { boxShadow: "0 0 0 2px #3e6bd1 inset", background: "#eef3fd" } : undefined}>
-                      <div className={k("colh")}>
+                    <section key={c.stage.key} className={k("col")} aria-label={c.stage.label} data-col={c.stage.key}
+                      style={target ? { boxShadow: "0 0 0 2px #3e6bd1 inset", background: "#eef3fd" } : held ? { boxShadow: "0 0 0 2px #3e6bd1 inset, 0 10px 24px rgba(30, 41, 59, .12)", background: "#f7f9fe" } : undefined}>
+                      <div className={k("colh")} {...(canReorder ? cols.headProps(c.stage.key) : {})}
+                        style={canReorder ? { cursor: held ? "grabbing" : "grab" } : undefined}
+                        title={canReorder ? "Drag to reorder stages" : undefined}>
+                        {canReorder ? (
+                          <button type="button" className="cpv-grip" data-grip="" aria-label={`Move ${c.stage.label} — left or right arrow`}
+                            title="Drag to reorder stages, or use the left and right arrow keys" onKeyDown={cols.gripKeys(c.stage.key)}>
+                            <Icon name="grip" size={14} />
+                          </button>
+                        ) : null}
                         <span className={k("dot")} style={{ background: c.stage.dot }} />
                         {c.stage.label}
                         {c.volume > 0 ? <span className={k("amt")}>{abbrevUsd(c.volume)}</span> : null}

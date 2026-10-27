@@ -289,3 +289,10 @@
  * contain .cpv-shell, so they are unchanged.
  */
 html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }
+
+/* A board column's grip (Demo Portal, 27 Oct; column-drag.tsx): drag the heading to reorder stages, or arrow keys on the grip. */
+.cpv-shell .cpv-grip { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 22px; margin: 0 -2px 0 -4px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #b3b9c4; cursor: inherit; flex: none; }
+.cpv-shell .crx-colh:hover .cpv-grip { color: #555a64; }
+.cpv-shell .cpv-grip:hover { background: #e4e8ee; color: #1f2124; }
+.cpv-shell .cpv-grip:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 1px; color: #1f2124; }
+.cpv-shell [data-colh] { user-select: none; -webkit-user-select: none; }
