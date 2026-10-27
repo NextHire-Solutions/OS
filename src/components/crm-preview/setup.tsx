@@ -141,14 +141,6 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
   return state;
 }
 
-/* The query string Market's "move everyone matching" reads (demo-market.ts) — the same keys as useMarket's. */
-function filterQuery(q: string, f: Picks): string {
-  const sp = new URLSearchParams();
-  if (q) sp.set("q", q);
-  pickParams(sp, f);
-  return sp.toString();
-}
-
 function useDebounced(value: string) {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -510,131 +502,96 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
   );
 }
 
-function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: (n: number) => void }) {
+/*
+ * Who we email (28 Oct, the user): the client's market to look through with Market's filters, and their prospects —
+ * the agents in their campaigns, shown and never chosen here ("we will not add prospect leads to campaigns. we just
+ * need to show the prospects data to client"). A new client has no campaign yet: the step says so and they carry on.
+ * Nothing here saves, the Demo Portal included, so a demo shows what a client gets.
+ */
+function TargetStep({ clientId }: { clientId: string }) {
   const [tab, setTab] = useState<"market" | "prospects">("market");
   const [search, setSearch] = useState("");
   const q = useDebounced(search);
   // Market's own filters (28 Oct), on whichever tab is open.
   const [f, setF] = useState<Picks>(NO_PICKS);
   const [page, setPage] = useState(1);
-  // After a save on the Demo, every count and row is read again.
-  const [version, setVersion] = useState(0);
-  const all = useMarket(clientId, "market", 1, "", NO_PICKS, true, version);
-  // Every prospect, for the tab's count and the step's "nothing chosen yet" — a search or filter never empties it.
-  const prospectsAll = useMarket(clientId, "prospects", 1, "", NO_PICKS, true, version);
-  const prospects = useMarket(clientId, "prospects", page, q, f, tab === "prospects", version);
-  const filtered = useMarket(clientId, "market", page, q, f, tab === "market", version);
-  const demo = useDemo();
-  const { live, save } = demo;
-  const [busy, setBusy] = useState(false);
-  /* Prospects in or out (23 Oct — drawn only before). Adding leaves out My Agents, the DNC List and the pipeline, as this step says. */
-  const [moved, setMoved] = useState<ReadonlyMap<string, string>>(new Map());
-  const change = async (action: Record<string, unknown> & { type: string }) => {
-    if (!live || busy) return;
-    setBusy(true);
-    const ok = await save(action);
-    setBusy(false);
-    if (ok) {
-      // Shown at once; the reload then confirms it.
-      if (Array.isArray(action.ids)) setMoved(new Map((action.ids as string[]).map((id) => [id, String(action.to)])));
-      setVersion((v) => v + 1);
-    }
-  };
-  const listed = (r: Row) => r.list === "My Agents" || r.list === "DNC List" || r.list === "In your pipeline";
-  const tickRow = (r: Row) => void change(inProspects(r) ? { type: "market.move", ids: [r.id], to: "Not on a list" } : { type: "market.move", ids: [r.id], to: "Prospects", onlyUnlisted: true });
-  const tickPage = () => {
-    const rows = shown.rows.filter((r) => !listed(r));
-    if (!rows.length) return;
-    const allIn = rows.every(inProspects);
-    void change(allIn ? { type: "market.move", ids: rows.map((r) => r.id), to: "Not on a list" } : { type: "market.move", ids: rows.filter((r) => !inProspects(r)).map((r) => r.id), to: "Prospects", onlyUnlisted: true });
-  };
+  const all = useMarket(clientId, "market", 1, "", NO_PICKS);
+  // Every prospect, for the tab's count — a search or filter never empties it.
+  const prospectsAll = useMarket(clientId, "prospects", 1, "", NO_PICKS);
+  const prospects = useMarket(clientId, "prospects", page, q, f, tab === "prospects");
+  const filtered = useMarket(clientId, "market", page, q, f, tab === "market");
   useEffect(() => setPage(1), [tab, q, f]);
-  useEffect(() => { if (prospectsAll.total !== null) onProspects(prospectsAll.total); }, [prospectsAll.total, onProspects]);
   const any = anyPicks(f) || !!q;
-  const loaded = tab === "market" ? filtered : prospects;
-  useEffect(() => setMoved(new Map()), [loaded.rows]);
-  const shown = { ...loaded, rows: loaded.rows.map((r) => (moved.has(r.id) ? { ...r, list: moved.get(r.id)! } : r)) };
+  const shown = tab === "market" ? filtered : prospects;
   const marketTotal = all.total ?? 0;
   // The filtered count is in, for these filters (not the last ones).
   const counted = !filtered.loading && filtered.total !== null;
-  // As the design draws it: a row is ticked when the agent is in the client's prospects; changing that is inert.
-  const inProspects = (r: Row) => tab === "prospects" || r.list === "Prospects";
+  // No campaign yet (or none we can read): nothing to list, and nothing for the client to do about it.
+  const noProspects = !prospectsAll.loading && (prospectsAll.total ?? 0) === 0;
   return (
     <>
-      <Head step={4} title="Choose who we email" text={"Every active agent in your market. Filter them, then add the ones you want to your prospects. My Agents and your DNC List are always left\u00a0out."} />
+      <Head step={4} title="Who we email" text={"Every active agent in your market — filter to look through it. Your prospects are the agents in your campaigns. My Agents and your DNC List are always left out."} />
       <div className={k("card")}>
         <Tabs tabs={[{ id: "market", label: "All agents in your market", count: all.total }, { id: "prospects", label: "Prospects", count: prospectsAll.total }]} on={tab} onTab={setTab} />
-        <div className={k("tbar")} style={{ flexWrap: "wrap" }}>
-          <label className={k("srch")} style={{ width: 280 }}>
-            <Icon name="search" size={15} />
-            <input id="crx-setup-target-search" type="search" placeholder={tab === "market" ? "Search agents in your market" : "Search your prospects"} aria-label={tab === "market" ? "Search agents in your market" : "Search your prospects"} value={search} onChange={(e) => setSearch(e.target.value)} />
-          </label>
-          <Divider />
-          <MarketFilters clientId={clientId} list={tab} value={f} onChange={setF} />
-          <button className={k("clr")} type="button" onClick={() => { setF(NO_PICKS); setSearch(""); }}>Clear all</button>
-        </div>
-        {tab === "prospects" ? (
-          <div className={k("sbulk idle")}>
-            <span className={k("bt")}><b className={k("num")}>{fmt(prospectsAll.total ?? 0)}</b>{" "}prospects — the agents we email{any && prospects.total !== null ? <> ·{" "}<span className={k("sub")}>{fmt(prospects.total)} match</span></> : null}</span>
-          </div>
-        ) : tab === "market" && any ? (
-          <div className={k("sbulk")}>
-            {/* Never "0 agents match" while the count is on its way (28 Oct: a slow first answer showed 0). */}
-            {counted ? (
-              <span className={k("bt")}><b className={k("num")}>{fmt(filtered.total ?? 0)}</b>{" "}agents match these filters ·{" "}<span className={k("sub")}>of {all.total === null ? "…" : fmt(marketTotal)} active in your market</span></span>
-            ) : (
-              <span className={k("bt")} role="status">{filtered.unavailable ?? "Counting the agents that match…"}</span>
-            )}
-            {live ? (
-              <button className={k("btn sm")} type="button" disabled={busy || !counted || filtered.total === 0} onClick={() => void change({ type: "market.moveAll", list: "market", query: filterQuery(q, f), to: "Prospects", onlyUnlisted: true })}>{busy ? "Adding…" : counted ? `Add ${fmt(filtered.total ?? 0)} to prospects` : "Add to prospects"}</button>
-            ) : (
-              <button className={k("btn sm")} type="button" {...RO}>{counted ? `Add ${fmt(filtered.total ?? 0)} to prospects` : "Add to prospects"}</button>
-            )}
+        {tab === "prospects" && noProspects ? (
+          <div className={k("emp")} style={{ borderTop: "1px solid #ebedf0" }}>
+            <span className={k("ei")}><Icon name="target" size={22} /></span>
+            <h2>No prospects yet</h2>
+            <p>We&apos;re building your first campaign. The agents we email will show here once it&apos;s&nbsp;ready.</p>
           </div>
         ) : (
-          <div className={k("sbulk idle")}>
-            <span className={k("bt")}><b className={k("num")}>{all.total === null ? "…" : fmt(marketTotal)}</b>{" "}active agents in your market ·{" "}<span className={k("sub")}>add filters to build your prospects</span></span>
-            <button className={k("btn sm")} type="button" disabled>Add to Prospects</button>
-          </div>
+          <>
+            <div className={k("tbar")} style={{ flexWrap: "wrap" }}>
+              <label className={k("srch")} style={{ width: 280 }}>
+                <Icon name="search" size={15} />
+                <input id="crx-setup-target-search" type="search" placeholder={tab === "market" ? "Search agents in your market" : "Search your prospects"} aria-label={tab === "market" ? "Search agents in your market" : "Search your prospects"} value={search} onChange={(e) => setSearch(e.target.value)} />
+              </label>
+              <Divider />
+              <MarketFilters clientId={clientId} list={tab} value={f} onChange={setF} />
+              <button className={k("clr")} type="button" onClick={() => { setF(NO_PICKS); setSearch(""); }}>Clear all</button>
+            </div>
+            <div className={k("sbulk idle")}>
+              {tab === "prospects" ? (
+                <span className={k("bt")}><b className={k("num")}>{fmt(prospectsAll.total ?? 0)}</b>{" "}prospects — the agents we email{any && prospects.total !== null && !prospects.loading ? <> ·{" "}<span className={k("sub")}>{fmt(prospects.total)} match</span></> : null}</span>
+              ) : !any ? (
+                <span className={k("bt")}><b className={k("num")}>{all.total === null ? "…" : fmt(marketTotal)}</b>{" "}active agents in your market ·{" "}<span className={k("sub")}>filter to look through it</span></span>
+              ) : counted ? (
+                <span className={k("bt")}><b className={k("num")}>{fmt(filtered.total ?? 0)}</b>{" "}agents match these filters ·{" "}<span className={k("sub")}>of {all.total === null ? "…" : fmt(marketTotal)} active in your market</span></span>
+              ) : (
+                // Never "0 agents match" while the count is on its way (28 Oct: a slow first answer showed 0).
+                <span className={k("bt")} role="status">{filtered.unavailable ?? "Counting the agents that match…"}</span>
+              )}
+            </div>
+            <table className={k("tb")}>
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Brokerage</th>
+                  <th>City</th>
+                  <th className={k("r")}>Sales volume</th>
+                  <th className={k("r")}>Units</th>
+                  <th className={k("r")}>Licensed</th>
+                  <th>List</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.rows.length === 0 && !shown.loading ? <tr><td colSpan={7} className="cpv-muted" style={{ padding: "18px 20px" }}>{shown.unavailable ?? "No agents match."}</td></tr> : null}
+                {shown.rows.map((r) => (
+                  <tr key={r.id}>
+                    <td className={k("nm")}>{r.name}</td>
+                    <td>{r.brokerage ?? "–"}</td>
+                    <td>{r.officeCity ?? "–"}</td>
+                    <td className={k("r")}>{r.salesVolume !== null ? abbrevUsd(r.salesVolume) : "–"}</td>
+                    <td className={k("r")}>{r.units ?? "–"}</td>
+                    <td className={k("r")}>{r.years !== null && r.years !== undefined ? `${r.years} yrs` : "–"}</td>
+                    <td><ListTag list={r.list} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Pager page={page} total={shown.total ?? 0} onPage={setPage} />
+          </>
         )}
-        <table className={k("tb")}>
-          <thead>
-            <tr>
-              <th style={{ width: 20 }}>
-                {live
-                  ? <input type="checkbox" aria-label="Select all on this page" checked={shown.rows.some((r) => !listed(r)) && shown.rows.filter((r) => !listed(r)).every(inProspects)} disabled={busy} onChange={tickPage} />
-                  : <input type="checkbox" aria-label="Select all" checked={shown.rows.length > 0 && shown.rows.every(inProspects)} readOnly {...RO} />}
-              </th>
-              <th>Agent</th>
-              <th>Brokerage</th>
-              <th>City</th>
-              <th className={k("r")}>Sales volume</th>
-              <th className={k("r")}>Units</th>
-              <th className={k("r")}>Licensed</th>
-              <th>List</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.rows.length === 0 && !shown.loading ? <NoRows cols={8} why={shown.unavailable ?? "No agents match."} /> : null}
-            {shown.rows.map((r) => (
-              <tr key={r.id} className={inProspects(r) ? k("sel") : undefined}>
-                <td>
-                  {live
-                    ? <input type="checkbox" aria-label={`Select ${r.name}`} checked={inProspects(r)} disabled={busy || listed(r)} title={listed(r) ? `On ${r.list === "In your pipeline" ? "your pipeline" : `your ${r.list}`} — always left out` : undefined} onChange={() => tickRow(r)} />
-                    : <input type="checkbox" aria-label={`Select ${r.name}`} checked={inProspects(r)} readOnly {...RO} />}
-                </td>
-                <td className={k("nm")}>{r.name}</td>
-                <td>{r.brokerage ?? "–"}</td>
-                <td>{r.officeCity ?? "–"}</td>
-                <td className={k("r")}>{r.salesVolume !== null ? abbrevUsd(r.salesVolume) : "–"}</td>
-                <td className={k("r")}>{r.units ?? "–"}</td>
-                <td className={k("r")}>{r.years !== null && r.years !== undefined ? `${r.years} yrs` : "–"}</td>
-                <td><ListTag list={r.list} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <Pager page={page} total={shown.total ?? 0} onPage={setPage} />
       </div>
     </>
   );
@@ -721,7 +678,6 @@ export function SetupWizard({
   onStep: (n: number) => void;
   onExit: () => void;
 }) {
-  const [prospects, setProspects] = useState<number | null>(null);
   const [offerDraft, setOfferDraft] = useState<OfferDraft>({ offers: offer?.offers ?? [], whyJoin: offer?.whyJoin ?? "", neverSay: offer?.neverSay ?? "" });
   const offerReady = offerDraft.offers.length > 0 && !!offerDraft.whyJoin.trim();
   const { live, save } = useDemo();
@@ -742,7 +698,8 @@ export function SetupWizard({
   };
   const link = (n: number) => (e: React.MouseEvent) => { e.preventDefault(); onStep(n); };
   // The design's -Empty variants: a step with nothing on its list offers "Skip for now", and can't be saved.
-  const empty = step === 2 ? agents.length === 0 : step === 3 ? dnc.length === 0 : step === 4 ? prospects === 0 : step === 5 ? !offerReady : false;
+  // Who we email (step 4) never holds anyone back: a new client has no prospects until their first campaign (28 Oct).
+  const empty = step === 2 ? agents.length === 0 : step === 3 ? dnc.length === 0 : step === 5 ? !offerReady : false;
   const next = step === 5 ? "Finish setup" : "Save and continue";
   return (
     <div className={k("ob")}>
@@ -773,7 +730,7 @@ export function SetupWizard({
             {step === 1 ? <TeamStep client={client} team={team} />
               : step === 2 ? <AgentsStep clientId={client.id} agents={agents} />
               : step === 3 ? <DncStep dnc={dnc} />
-              : step === 4 ? <TargetStep clientId={client.id} onProspects={setProspects} />
+              : step === 4 ? <TargetStep clientId={client.id} />
               : step === 5 ? <OfferStep value={offerDraft} onChange={setOfferDraft} />
               : <DoneStep client={client} onExit={onExit} />}
           </div>

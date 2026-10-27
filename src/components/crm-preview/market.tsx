@@ -579,9 +579,10 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
             <section className={k("card ec")}>
               <span className={k("ei")}><Icon name="target" size={22} /></span>
               <h2>No prospects yet</h2>
-              <p>Prospects are the agents we reach out to. Open Market, filter agents and add the ones you want to&nbsp;Prospects.</p>
+              {/* Prospects are the agents in the client's campaigns — shown, not chosen (28 Oct, the user). */}
+              <p>We&apos;re building your first campaign. The agents we email will show here once it&apos;s&nbsp;ready.</p>
               <div className={k("ea")}>
-                <button type="button" className={k("btn pri")} onClick={onOpenMarket}><Icon name="search" size={15} />Open Market</button>
+                <button type="button" className={k("btn")} onClick={onOpenMarket}><Icon name="search" size={15} />Look through your market</button>
               </div>
             </section>
           </div>

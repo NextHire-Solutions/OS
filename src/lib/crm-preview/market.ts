@@ -521,7 +521,8 @@ const cachedReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport> 
     ],
     allBrokerages: brandRows,
   };
-}, { ttlMs: 30 * 60_000, key: (ctx) => `report:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-report", inflightTimeoutMs: 180_000 });
+  // Fresh for 30 minutes; after that the last report is shown at once while a new one is counted (28 Oct, the user: "this reports section is slow" — a cold count is 20–35 s).
+}, { ttlMs: 30 * 60_000, staleMs: 24 * 60 * 60_000, key: (ctx) => `report:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-report", inflightTimeoutMs: 180_000 });
 
 /**
  * Every agent matching a page's filters, for "Select all that match" → Move to
@@ -549,11 +550,15 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
   return { ids: [...new Set(ids)], total: first.total };
 }
 
-/* A market into memory (its load starts if none is running; one at a time across the server), then its Location and Brokerage lists, one after another — the agent database is shared. */
+/*
+ * A market into memory (its load starts if none is running; one at a time across the server), then its Location and
+ * Brokerage lists and its Reports, one after another — the agent database is shared. So Reports opens counted.
+ */
 async function readyMarket(ctx: MarketContext, base: Record<string, unknown>): Promise<void> {
   await marketFromMemory(ctx.mls.ids, base, search);
   for (const level of ["city", "county", "state"] as const) await placeList(base, level, PLACE_KINDS).catch(() => []);
   await orgList(base, "brand", "").catch(() => []);
+  await cachedReport(ctx).catch(() => null);
 }
 
 /**
@@ -573,8 +578,8 @@ export async function warmPortalMarket(portalId: string): Promise<void> {
  * clients need to be able to see the data instantly as new filters are being
  * applied"). The markets likely to be shown — the Demo, every client in
  * Onboarding, and the portals whose Market was opened in the last two days —
- * are loaded into memory, with their name order, and their Location and
- * Brokerage lists read before anyone opens them, so the first look is as
+ * are loaded into memory, with their name order, their Location and
+ * Brokerage lists and their Reports read before anyone opens them, so the first look is as
  * fast as the hundredth. At most
  * three (market-memory holds four; one stays free for any other). Called
  * every two minutes by instrumentation (Railway only); once warm it costs a
