@@ -6,32 +6,47 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { DEMO_PORTAL_ID } from "./demo.ts";
-import { clientPortals, guardRole, mayOpenPortal, openToClients, type CrmViewer } from "./viewer-rules.ts";
+import { BILLING_TAB_PEOPLE } from "../clients/billing-access.ts";
+import { clientPortals, DEMO_CLIENT_TESTERS, guardRole, mayOpenPortal, openToClients, type CrmViewer } from "./viewer-rules.ts";
 
 const REAL = "6b787a4c-22e1-4ba7-96e2-f7a4f3eaf849";
 const OTHER = "492b2783-280f-4c6d-8807-a3de56c59ab1";
+const ME = "admin@outreachify.io";
+const OUTSIDER = "someone@client.test";
 
-test("until the user says to switch, only the Demo Portal is open to clients", () => {
-  assert.equal(openToClients(DEMO_PORTAL_ID), true);
-  for (const id of [REAL, OTHER, "", null, undefined]) assert.equal(openToClients(id), false, String(id));
-  assert.deepEqual(clientPortals([REAL, DEMO_PORTAL_ID, OTHER, DEMO_PORTAL_ID]), [DEMO_PORTAL_ID], "a real client on the list still sees only the Demo");
-  assert.deepEqual(clientPortals([REAL, OTHER]), [], "a real client: nothing here — their current portal, as before");
+test("the Demo opens as a client only to the named testers — never by the sign-in list alone (security review, 27 Oct)", () => {
+  assert.deepEqual([...DEMO_CLIENT_TESTERS], ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"]);
+  for (const t of DEMO_CLIENT_TESTERS) assert.ok(BILLING_TAB_PEOPLE.includes(t), `${t} is a by-name account, protected from takeover by an ordinary admin`);
+  assert.equal(openToClients(DEMO_PORTAL_ID, ME), true);
+  assert.equal(openToClients(DEMO_PORTAL_ID, " Eddy@BrokerStaffer.com "), true, "case and spaces aside");
+  assert.equal(openToClients(DEMO_PORTAL_ID, OUTSIDER), false, "on the list, not named: the holding page");
+  assert.equal(openToClients(DEMO_PORTAL_ID, ""), false);
 });
 
-test("staff open any portal; a client only their own, and only one open to clients", () => {
-  const staff: CrmViewer = { kind: "staff", email: "admin@outreachify.io" };
+test("until the user says to switch, no real client's portal opens to anyone", () => {
+  for (const id of [REAL, OTHER, "", null, undefined]) {
+    assert.equal(openToClients(id, ME), false, String(id));
+    assert.equal(openToClients(id, OUTSIDER), false, String(id));
+  }
+  assert.deepEqual(clientPortals([REAL, DEMO_PORTAL_ID, OTHER, DEMO_PORTAL_ID], ME), [DEMO_PORTAL_ID]);
+  assert.deepEqual(clientPortals([REAL, DEMO_PORTAL_ID], OUTSIDER), [], "an outsider on the Demo's list: nothing");
+  assert.deepEqual(clientPortals([REAL, OTHER], ME), []);
+});
+
+test("staff open any portal; a client only their own, open to them", () => {
+  const staff: CrmViewer = { kind: "staff", email: ME };
   for (const id of [REAL, OTHER, DEMO_PORTAL_ID]) assert.equal(mayOpenPortal(staff, id), true, id);
-  const client: CrmViewer = { kind: "client", email: "someone@client.test", portals: [DEMO_PORTAL_ID] };
-  assert.equal(mayOpenPortal(client, DEMO_PORTAL_ID), true);
-  assert.equal(mayOpenPortal(client, REAL), false, "not theirs");
-  // Even listed for a real portal (a forged or stale list), a real portal stays closed.
-  const listed: CrmViewer = { kind: "client", email: "someone@client.test", portals: [REAL] };
-  assert.equal(mayOpenPortal(listed, REAL), false, "not open to clients yet");
+  const tester: CrmViewer = { kind: "client", email: ME, portals: [DEMO_PORTAL_ID] };
+  assert.equal(mayOpenPortal(tester, DEMO_PORTAL_ID), true);
+  assert.equal(mayOpenPortal(tester, REAL), false, "not theirs");
+  // A viewer object that somehow lists a portal still cannot open it unless it is open to that address.
+  assert.equal(mayOpenPortal({ kind: "client", email: OUTSIDER, portals: [DEMO_PORTAL_ID] }, DEMO_PORTAL_ID), false);
+  assert.equal(mayOpenPortal({ kind: "client", email: ME, portals: [REAL] }, REAL), false);
   assert.equal(mayOpenPortal(null, DEMO_PORTAL_ID), false);
-  assert.equal(mayOpenPortal(client, ""), false);
+  assert.equal(mayOpenPortal(tester, ""), false);
 });
 
 test("clients are guarded and counted as clients", () => {
-  assert.equal(guardRole({ kind: "client", email: "a@b.c", portals: [DEMO_PORTAL_ID] }), "client");
-  assert.equal(guardRole({ kind: "staff", email: "a@b.c" }), "staff");
+  assert.equal(guardRole({ kind: "client", email: ME, portals: [DEMO_PORTAL_ID] }), "client");
+  assert.equal(guardRole({ kind: "staff", email: ME }), "staff");
 });

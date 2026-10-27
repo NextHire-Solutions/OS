@@ -23,7 +23,7 @@ export async function crmViewer(cookies: { sso: string | null | undefined; porta
   if (!cookies.portal) return null;
   const session = await readSession(createAdminSupabase(), cookies.portal, now).catch(() => null);
   if (!session) return null;
-  const portals = clientPortals(session.portals);
+  const portals = clientPortals(session.portals, session.email);
   return portals.length ? { kind: "client", email: session.email, portals } : null;
 }
 

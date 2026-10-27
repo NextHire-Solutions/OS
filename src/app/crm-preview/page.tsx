@@ -24,8 +24,8 @@
  *   - And CLIENTS (27 Oct, the user's Option B): someone signed in at
  *     /portal-signin opens their own portal here, as a client sees it — no
  *     preview bar, no other clients — but only a portal open to clients, which
- *     until the user says to switch is the Demo Portal alone
- *     (viewer-rules.ts). Every real client keeps their current portal.
+ *     until the user says to switch is the Demo Portal alone, for named
+ *     testers only (viewer-rules.ts). Every real client keeps their current portal.
  */
 
 import type { Metadata } from "next";
@@ -136,7 +136,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
     .select("id, name, slug, portal_token, stage_label_overrides, feature_flags, fub_api_key")
     .eq("id", clientId)
     .maybeSingle();
-  if (!client || client.slug === "unknown" || !client.portal_token) return shell(<ClientPicker portals={portals} missing />);
+  if (!client || client.slug === "unknown" || !client.portal_token) return shell(<ClientPicker portals={portals} missing audience={audience} />);
 
   const rawFlags = (client as { feature_flags?: unknown }).feature_flags;
   const featureFlags = rawFlags && typeof rawFlags === "object" && !Array.isArray(rawFlags) ? (rawFlags as Record<string, unknown>) : {};
