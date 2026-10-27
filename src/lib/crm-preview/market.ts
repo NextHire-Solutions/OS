@@ -549,6 +549,25 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
   return { ids: [...new Set(ids)], total: first.total };
 }
 
+/* A market into memory (its load starts if none is running; one at a time across the server), then its Location and Brokerage lists, one after another — the agent database is shared. */
+async function readyMarket(ctx: MarketContext, base: Record<string, unknown>): Promise<void> {
+  await marketFromMemory(ctx.mls.ids, base, search);
+  for (const level of ["city", "county", "state"] as const) await placeList(base, level, PLACE_KINDS).catch(() => []);
+  await orgList(base, "brand", "").catch(() => []);
+}
+
+/**
+ * One portal's market made ready as its client opens the portal (28 Oct): the
+ * Setup wizard's first step is the team, so by the market steps a minute later
+ * their filters answer from memory — even when warmMarkets' three are taken
+ * (several clients onboarding at once). Reads only; a cache hit once warm.
+ */
+export async function warmPortalMarket(portalId: string): Promise<void> {
+  const ctx = await marketContext(portalId);
+  if (!ctx || unavailable(ctx, "market")) return;
+  await readyMarket(ctx, marketBase(ctx));
+}
+
 /*
  * KEPT WARM (27 Oct — the client: "if we're using this during onboarding,
  * clients need to be able to see the data instantly as new filters are being
@@ -582,11 +601,7 @@ export async function warmMarkets(now = new Date()): Promise<string[]> {
     if (seen.has(key)) continue;
     seen.add(key);
     const base = marketBase(ctx);
-    // The market (starts its load if none is running; one at a time across the server).
-    await marketFromMemory(ctx.mls.ids, base, search);
-    // Its lists, one after another — the agent database is shared.
-    for (const level of ["city", "county", "state"] as const) await placeList(base, level, PLACE_KINDS).catch(() => []);
-    await orgList(base, "brand", "").catch(() => []);
+    await readyMarket(ctx, base);
     // The page's badges: the portal's own lists and, for a real client, its campaign set.
     await portalLists(ctx.portal.id).catch(() => null);
     if (ctx.orchClientId) heldClientSet(ctx.orchClientId);

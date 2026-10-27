@@ -16,6 +16,10 @@
  * person for every client (the user, 22 Oct: "Show only, don't save").
  * "Who we email" (prospects) and "Your offer" stay as drawn.
  *
+ * The two market steps (My Agents, Who we email) filter with Market's own
+ * filter bar (market.tsx MarketFilters, 28 Oct) — the same panels, the same
+ * query, so a count here is the count on Market.
+ *
  * Names here are the setup family's (scripts/crm-preview-css.mjs): .sbulk
  * .sacts .snx .ssec.
  */
@@ -25,13 +29,13 @@ import { useEffect, useMemo, useState } from "react";
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
 import { abbrevUsd, formatPhone, initials, SETUP_OFFERS, type PortalOffer } from "@/lib/crm-preview/model";
-import { maxPage, SETUP_PAGE_SIZE, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS } from "@/lib/crm-preview/market-model";
+import { maxPage, SETUP_PAGE_SIZE } from "@/lib/crm-preview/market-model";
 
 import { csvRowToAgent, csvRowToDnc } from "@/lib/tools/master-inbox/portals/csv";
 
 import { Icon } from "./icons";
 import { k, off, RO, withIds } from "./k";
-import { Chip, NO_FILTERS, type Filters, type Row } from "./market";
+import { anyPicks, Chip, MarketFilters, NO_PICKS, pickParams, type Picks, type Row } from "./market";
 import { DncAddDialog, ImportDialog, TeamAddForm } from "./dialogs";
 import { importCsv, useDemo } from "./demo-save";
 import logo from "./brokerstaffer-logo.png";
@@ -112,21 +116,16 @@ function NoRows({ cols, why }: { cols: number; why: string }) {
 /* The design's search box is 280px for "Search all 41,870 agents in your market"; a longer count widens it rather than cutting the word off. */
 const searchWidth = (placeholder: string) => Math.max(280, 280 + (placeholder.length - 39) * 7);
 
-/** A page of the client's market or prospects, eight at a time, from the preview's market route. */
-function useMarket(clientId: string, list: "market" | "prospects", page: number, q: string, f: Filters, enabled = true, version = 0) {
+/** A page of the client's market or prospects, eight at a time, from the preview's market route — filtered as Market filters (pickParams). */
+function useMarket(clientId: string, list: "market" | "prospects", page: number, q: string, f: Picks, enabled = true, version = 0) {
   const [state, setState] = useState<{ total: number | null; rows: Row[]; loading: boolean; unavailable: string | null }>({ total: null, rows: [], loading: true, unavailable: null });
+  const fKey = JSON.stringify(f);
   useEffect(() => {
     if (!enabled) return;
     const ctrl = new AbortController();
     const sp = new URLSearchParams({ client: clientId, list, page: String(page), per: String(PER) });
     if (q) sp.set("q", q);
-    if (f.minVolume) sp.set("minVolume", String(f.minVolume));
-    if (f.minUnits) sp.set("minUnits", String(f.minUnits));
-    if (f.minYears) sp.set("minYears", String(f.minYears));
-    if (f.brokerage) sp.set("brokerage", f.brokerage);
-    if (f.county) sp.set("county", f.county);
-    if (f.office) sp.set("office", f.office);
-    if (f.city) sp.set("city", f.city);
+    pickParams(sp, f);
     setState((s) => ({ ...s, loading: true }));
     fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
       .then(async (r) => {
@@ -137,52 +136,17 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
       })
       .catch((err) => { if (err?.name !== "AbortError") setState({ total: null, rows: [], loading: false, unavailable: "Couldn't reach the server. Please try again." }); });
     return () => ctrl.abort();
-  }, [clientId, list, page, q, f, enabled, version]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fKey stands for f
+  }, [clientId, list, page, q, fKey, enabled, version]);
   return state;
 }
 
-/* A filter's choices from the agent database (offices, cities): the largest 50 in the market. */
-function useChoices(clientId: string, facet: "office" | "city") {
-  const [choices, setChoices] = useState<string[] | null>(null);
-  useEffect(() => {
-    const ctrl = new AbortController();
-    const sp = new URLSearchParams({ client: clientId, list: "market", facet });
-    fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((j) => setChoices(Array.isArray(j.options) ? (j.options as Array<{ v: string }>).map((o) => o.v) : []))
-      .catch(() => {});
-    return () => ctrl.abort();
-  }, [clientId, facet]);
-  return choices;
-}
-
 /* The query string Market's "move everyone matching" reads (demo-market.ts) — the same keys as useMarket's. */
-function filterQuery(q: string, f: Filters): string {
+function filterQuery(q: string, f: Picks): string {
   const sp = new URLSearchParams();
   if (q) sp.set("q", q);
-  if (f.minVolume) sp.set("minVolume", String(f.minVolume));
-  if (f.minUnits) sp.set("minUnits", String(f.minUnits));
-  if (f.minYears) sp.set("minYears", String(f.minYears));
-  if (f.brokerage) sp.append("brokerage", f.brokerage);
-  if (f.county) sp.append("county", f.county);
-  if (f.office) sp.append("office", f.office);
-  if (f.city) sp.append("city", f.city);
+  pickParams(sp, f);
   return sp.toString();
-}
-
-/* The market's filter choices (Location, Brokerage) — the same lists as Market's chips. */
-function useOptions(clientId: string) {
-  const [options, setOptions] = useState<{ brokerages: string[]; counties: string[] } | null>(null);
-  useEffect(() => {
-    const ctrl = new AbortController();
-    const sp = new URLSearchParams({ client: clientId, list: "market", page: "1", per: String(PER), options: "1" });
-    fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((j) => { if (j.options) setOptions(j.options); })
-      .catch(() => {});
-    return () => ctrl.abort();
-  }, [clientId]);
-  return options;
 }
 
 function useDebounced(value: string) {
@@ -284,25 +248,11 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
   const [search, setSearch] = useState("");
   const q = useDebounced(search);
   const [page, setPage] = useState(1);
-  // Office, Brokerage, City and Years licensed (23 Oct — they were drawn only).
-  const [f, setF] = useState<Filters>(NO_FILTERS);
-  const [menu, setMenu] = useState<string | null>(null);
-  const options = useOptions(clientId);
-  const offices = useChoices(clientId, "office");
-  const cities = useChoices(clientId, "city");
+  // Market's own filters (28 Oct, the user: "the same filters ui … that we in markets page"; one pick each of Office, Brokerage, City and Years before).
+  const [f, setF] = useState<Picks>(NO_PICKS);
   const [version, setVersion] = useState(0);
   const market = useMarket(clientId, "market", tab === "market" ? page : 1, tab === "market" ? q : "", f, true, version);
   useEffect(() => setPage(1), [tab, q, f]);
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element)?.closest?.("[data-chip]")) setMenu(null);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
-  }, [menu]);
-  const setFilter = <K extends keyof Filters>(key: K, v: Filters[K]) => { setF((x) => ({ ...x, [key]: v })); setMenu(null); };
   const mine = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
   // Agents just added show on My Agents at once; the market's reload (a few seconds) then confirms it.
   const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
@@ -361,17 +311,19 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
       {importing ? <ImportDialog kind="agents" onClose={() => setImporting(false)} onFile={(f) => importCsv(f, csvRowToAgent, "agent.import", demo)} /> : null}
       <div className={k("card")}>
         <Tabs tabs={[{ id: "market", label: "All agents in your market", count: market.total }, { id: "mine", label: "My Agents", count: n }]} on={tab} onTab={setTab} />
-        <div className={k("tbar")}>
+        <div className={k("tbar")} style={{ flexWrap: "wrap" }}>
           <label className={k("srch")} style={{ width: searchWidth(placeholder) }}>
             <Icon name="search" size={15} />
             <input id="crx-setup-agents-search" type="search" placeholder={placeholder} aria-label="Search agents in your market" value={search} onChange={(e) => setSearch(e.target.value)} />
           </label>
-          <Divider />
-          <Chip id="office" label="Office" value={f.office} show={(v) => v} choices={offices ?? []} open={menu === "office"} onOpen={setMenu} onPick={(v) => setFilter("office", v)} />
-          <Chip id="brokerage" label="Brokerage" value={f.brokerage} show={(v) => v} choices={options?.brokerages ?? []} open={menu === "brokerage"} onOpen={setMenu} onPick={(v) => setFilter("brokerage", v)} />
-          <Chip id="city" label="City" value={f.city} show={(v) => v} choices={cities ?? []} open={menu === "city"} onOpen={setMenu} onPick={(v) => setFilter("city", v)} />
-          <Chip id="years" label="Years licensed" value={f.minYears} show={(v) => `${v}+`} choices={YEAR_PRESETS} open={menu === "years"} onOpen={setMenu} onPick={(v) => setFilter("minYears", v)} />
-          <button className={k("clr")} type="button" onClick={() => { setSearch(""); setF(NO_FILTERS); }}>Clear all</button>
+          {/* The filters are the market's; My Agents is their own short list, searched only. */}
+          {tab === "market" ? (
+            <>
+              <Divider />
+              <MarketFilters clientId={clientId} list="market" value={f} onChange={setF} />
+            </>
+          ) : null}
+          <button className={k("clr")} type="button" onClick={() => { setSearch(""); setF(NO_PICKS); }}>Clear all</button>
         </div>
         {n === 0 ? (
           <div className={k("sbulk idle")}>
@@ -562,14 +514,15 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
   const [tab, setTab] = useState<"market" | "prospects">("market");
   const [search, setSearch] = useState("");
   const q = useDebounced(search);
-  const [f, setF] = useState<Filters>(NO_FILTERS);
+  // Market's own filters (28 Oct), on whichever tab is open.
+  const [f, setF] = useState<Picks>(NO_PICKS);
   const [page, setPage] = useState(1);
-  const [menu, setMenu] = useState<string | null>(null);
-  const options = useOptions(clientId);
   // After a save on the Demo, every count and row is read again.
   const [version, setVersion] = useState(0);
-  const all = useMarket(clientId, "market", 1, "", NO_FILTERS, true, version);
-  const prospects = useMarket(clientId, "prospects", tab === "prospects" ? page : 1, tab === "prospects" ? q : "", NO_FILTERS, true, version);
+  const all = useMarket(clientId, "market", 1, "", NO_PICKS, true, version);
+  // Every prospect, for the tab's count and the step's "nothing chosen yet" — a search or filter never empties it.
+  const prospectsAll = useMarket(clientId, "prospects", 1, "", NO_PICKS, true, version);
+  const prospects = useMarket(clientId, "prospects", page, q, f, tab === "prospects", version);
   const filtered = useMarket(clientId, "market", page, q, f, tab === "market", version);
   const demo = useDemo();
   const { live, save } = demo;
@@ -596,54 +549,51 @@ function TargetStep({ clientId, onProspects }: { clientId: string; onProspects: 
     void change(allIn ? { type: "market.move", ids: rows.map((r) => r.id), to: "Not on a list" } : { type: "market.move", ids: rows.filter((r) => !inProspects(r)).map((r) => r.id), to: "Prospects", onlyUnlisted: true });
   };
   useEffect(() => setPage(1), [tab, q, f]);
-  useEffect(() => { if (prospects.total !== null) onProspects(prospects.total); }, [prospects.total, onProspects]);
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element)?.closest?.("[data-chip]")) setMenu(null);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
-  }, [menu]);
-  const set = <K extends keyof Filters>(key: K, v: Filters[K]) => { setF((x) => ({ ...x, [key]: v })); setMenu(null); };
-  const any = Object.values(f).some((v) => v !== null) || !!q;
+  useEffect(() => { if (prospectsAll.total !== null) onProspects(prospectsAll.total); }, [prospectsAll.total, onProspects]);
+  const any = anyPicks(f) || !!q;
   const loaded = tab === "market" ? filtered : prospects;
   useEffect(() => setMoved(new Map()), [loaded.rows]);
   const shown = { ...loaded, rows: loaded.rows.map((r) => (moved.has(r.id) ? { ...r, list: moved.get(r.id)! } : r)) };
   const marketTotal = all.total ?? 0;
+  // The filtered count is in, for these filters (not the last ones).
+  const counted = !filtered.loading && filtered.total !== null;
   // As the design draws it: a row is ticked when the agent is in the client's prospects; changing that is inert.
   const inProspects = (r: Row) => tab === "prospects" || r.list === "Prospects";
   return (
     <>
       <Head step={4} title="Choose who we email" text={"Every active agent in your market. Filter them, then add the ones you want to your prospects. My Agents and your DNC List are always left\u00a0out."} />
       <div className={k("card")}>
-        <Tabs tabs={[{ id: "market", label: "All agents in your market", count: all.total }, { id: "prospects", label: "Prospects", count: prospects.total }]} on={tab} onTab={setTab} />
-        <div className={k("tbar")}>
+        <Tabs tabs={[{ id: "market", label: "All agents in your market", count: all.total }, { id: "prospects", label: "Prospects", count: prospectsAll.total }]} on={tab} onTab={setTab} />
+        <div className={k("tbar")} style={{ flexWrap: "wrap" }}>
           <label className={k("srch")} style={{ width: 280 }}>
             <Icon name="search" size={15} />
-            <input id="crx-setup-target-search" type="search" placeholder="Search agents in your market" aria-label="Search agents in your market" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input id="crx-setup-target-search" type="search" placeholder={tab === "market" ? "Search agents in your market" : "Search your prospects"} aria-label={tab === "market" ? "Search agents in your market" : "Search your prospects"} value={search} onChange={(e) => setSearch(e.target.value)} />
           </label>
           <Divider />
-          <Chip bold id="county" label="Location" value={f.county} show={(v) => v} choices={options?.counties ?? []} open={menu === "county"} onOpen={setMenu} onPick={(v) => set("county", v)} />
-          <Chip bold id="volume" label="Sales volume" value={f.minVolume} show={(v) => `${abbrevUsd(v)}+`} choices={VOLUME_PRESETS} open={menu === "volume"} onOpen={setMenu} onPick={(v) => set("minVolume", v)} />
-          <Chip bold id="units" label="Units" value={f.minUnits} show={(v) => `${v}+`} choices={UNIT_PRESETS} open={menu === "units"} onOpen={setMenu} onPick={(v) => set("minUnits", v)} />
-          <Chip bold id="years" label="Years licensed" value={f.minYears} show={(v) => `${v}+`} choices={YEAR_PRESETS} open={menu === "years"} onOpen={setMenu} onPick={(v) => set("minYears", v)} />
-          <Chip bold id="brokerage" label="Brokerage" value={f.brokerage} show={(v) => v} choices={options?.brokerages ?? []} open={menu === "brokerage"} onOpen={setMenu} onPick={(v) => set("brokerage", v)} />
-          <button className={k("clr")} type="button" onClick={() => { setF(NO_FILTERS); setSearch(""); }}>Clear all</button>
+          <MarketFilters clientId={clientId} list={tab} value={f} onChange={setF} />
+          <button className={k("clr")} type="button" onClick={() => { setF(NO_PICKS); setSearch(""); }}>Clear all</button>
         </div>
-        {tab === "market" && any ? (
+        {tab === "prospects" ? (
+          <div className={k("sbulk idle")}>
+            <span className={k("bt")}><b className={k("num")}>{fmt(prospectsAll.total ?? 0)}</b>{" "}prospects — the agents we email{any && prospects.total !== null ? <> ·{" "}<span className={k("sub")}>{fmt(prospects.total)} match</span></> : null}</span>
+          </div>
+        ) : tab === "market" && any ? (
           <div className={k("sbulk")}>
-            <span className={k("bt")}><b className={k("num")}>{fmt(filtered.total ?? 0)}</b>{" "}agents match these filters ·{" "}<span className={k("sub")}>of {fmt(marketTotal)} active in your market</span></span>
-            {live ? (
-              <button className={k("btn sm")} type="button" disabled={busy} onClick={() => void change({ type: "market.moveAll", list: "market", query: filterQuery(q, f), to: "Prospects", onlyUnlisted: true })}>{busy ? "Adding…" : `Add ${fmt(filtered.total ?? 0)} to prospects`}</button>
+            {/* Never "0 agents match" while the count is on its way (28 Oct: a slow first answer showed 0). */}
+            {counted ? (
+              <span className={k("bt")}><b className={k("num")}>{fmt(filtered.total ?? 0)}</b>{" "}agents match these filters ·{" "}<span className={k("sub")}>of {all.total === null ? "…" : fmt(marketTotal)} active in your market</span></span>
             ) : (
-              <button className={k("btn sm")} type="button" {...RO}>Add {fmt(filtered.total ?? 0)} to prospects</button>
+              <span className={k("bt")} role="status">{filtered.unavailable ?? "Counting the agents that match…"}</span>
+            )}
+            {live ? (
+              <button className={k("btn sm")} type="button" disabled={busy || !counted || filtered.total === 0} onClick={() => void change({ type: "market.moveAll", list: "market", query: filterQuery(q, f), to: "Prospects", onlyUnlisted: true })}>{busy ? "Adding…" : counted ? `Add ${fmt(filtered.total ?? 0)} to prospects` : "Add to prospects"}</button>
+            ) : (
+              <button className={k("btn sm")} type="button" {...RO}>{counted ? `Add ${fmt(filtered.total ?? 0)} to prospects` : "Add to prospects"}</button>
             )}
           </div>
         ) : (
           <div className={k("sbulk idle")}>
-            <span className={k("bt")}><b className={k("num")}>{fmt(marketTotal)}</b>{" "}active agents in your market ·{" "}<span className={k("sub")}>add filters to build your prospects</span></span>
+            <span className={k("bt")}><b className={k("num")}>{all.total === null ? "…" : fmt(marketTotal)}</b>{" "}active agents in your market ·{" "}<span className={k("sub")}>add filters to build your prospects</span></span>
             <button className={k("btn sm")} type="button" disabled>Add to Prospects</button>
           </div>
         )}

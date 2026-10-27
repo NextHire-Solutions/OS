@@ -32,6 +32,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 
 import { SSO_COOKIE } from "@/lib/bs-auth";
 import { PORTAL_COOKIE } from "@/lib/portal-login/http";
@@ -52,6 +53,7 @@ import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags
 import { CrmPreview } from "@/components/crm-preview/crm-preview";
 import { clientForPortal, type OsClientRow } from "@/lib/crm-preview/market-model";
 import { isDemoPortal } from "@/lib/crm-preview/demo";
+import { warmPortalMarket } from "@/lib/crm-preview/market";
 import { osTable } from "@/lib/clients/os-db";
 import { ClientPicker } from "@/components/crm-preview/client-picker";
 import { SessionKeeper } from "@/components/shell/session-keeper";
@@ -130,6 +132,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
   if (!UUID.test(clientId)) return shell(<ClientPicker portals={portals} audience={audience} />);
   // Not one of theirs (a client) — Not found, as for an address that does not exist.
   if (!mayOpenPortal(viewer, clientId)) notFound();
+  // A client's market starts loading now, after the page is sent, so the wizard's market steps answer at once (market.ts warmPortalMarket).
+  if (audience === "client") after(() => warmPortalMarket(clientId).catch((e) => console.error("[crm-preview] warm", e instanceof Error ? e.message : e)));
 
   const { data: client } = await admin
     .from("clients")

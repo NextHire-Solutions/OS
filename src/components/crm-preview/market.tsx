@@ -43,9 +43,6 @@ export type Row = {
   mostTransactedCity: string | null; salesVolume: number | null; units: number | null; list: string; pill: string;
   office?: string | null; years?: number | null; email?: string | null;
 };
-export type Filters = { minVolume: number | null; minUnits: number | null; minYears: number | null; brokerage: string | null; county: string | null; office: string | null; city: string | null };
-export const NO_FILTERS: Filters = { minVolume: null, minUnits: null, minYears: null, brokerage: null, county: null, office: null, city: null };
-
 type Loaded = { total: number; salesVolume: number; page: number; rows: Row[]; client: string | null; mls: Mls | null };
 
 /*
@@ -110,16 +107,18 @@ type Pick = { f: Facet; v: string; ex: boolean };
  * No Title filter: the market is salespeople, set on the server (market-model.ts marketScope — 24 Oct, the user).
  * kinds: which of an agent's places Location looks at — the office, where it sold most: Market's Office city and Most transacted city columns (24 Oct).
  */
-type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[] };
+export type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[] };
 const NO_RANGE: Range = { min: null, max: null };
-const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS] };
+export const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS] };
 const isSet = (r: Range) => r.min !== null || r.max !== null;
+/** Is any filter set? */
+export const anyPicks = (f: Picks) => isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0;
 const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county", state: "state" };
 const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", county: "counties", state: "states" };
 const KIND_LABEL: Record<PlaceKind, string> = { office: "Office location", transacted: "Most transacted location" };
 
 /** The picks as the route's query string (several of a kind repeat their key; a left-out one is x-prefixed). */
-function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place") {
+export function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "place") {
   const range = (name: string, r: Range) => {
     if (r.min !== null) sp.set(`min${name}`, String(r.min));
     if (r.max !== null) sp.set(`max${name}`, String(r.max));
@@ -360,6 +359,80 @@ function ManyPanel({
   );
 }
 
+/**
+ * The filter bar — Location, Sales volume, Units, Years licensed, Brokerage — as Market draws it. The Setup wizard's
+ * market steps use this same bar (28 Oct, the user: "we need the same filters ui here in this setup wizard market ui
+ * that we in markets page"). It keeps which panel is open; the picks are the caller's (`onChange` takes an update).
+ */
+export function MarketFilters({ clientId, list, value: f, onChange }: { clientId: string; list: "market" | "prospects"; value: Picks; onChange: (update: (p: Picks) => Picks) => void }) {
+  const [menu, setMenu] = useState<string | null>(null);
+  // The open panel's "keep what I set" — run on a click outside it (Escape drops it).
+  const commit = useRef<(() => void) | null>(null);
+  const register = (fn: () => void) => { commit.current = fn; };
+
+  // The Location and Brokerage choices, asked for as the bar appears so they are ready when a panel is (the server keeps them 30 minutes).
+  useEffect(() => {
+    const ctrl = new AbortController();
+    for (const facet of ["city", "county", "state", "brand"]) {
+      const sp = new URLSearchParams({ client: clientId, list, facet });
+      void fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal }).catch(() => {});
+    }
+    return () => ctrl.abort();
+  }, [clientId, list]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent) {
+        if (e.key !== "Escape") return;
+        commit.current = null;
+        setMenu(null);
+        return;
+      }
+      if ((e.target as Element)?.closest?.("[data-chip]")) return;
+      const keep = commit.current;
+      commit.current = null;
+      setMenu(null);
+      keep?.();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [menu]);
+  const openMenu = (id: string | null) => { commit.current = null; setMenu(id); };
+  const apply = <K extends keyof Picks>(key: K, v: Picks[K]) => { commit.current = null; onChange((x) => ({ ...x, [key]: v })); setMenu(null); };
+  const applyPlaces = (places: Pick[], kinds: PlaceKind[]) => { commit.current = null; onChange((x) => ({ ...x, places, kinds })); setMenu(null); };
+
+  // What each filter shows when set: one pick by name, several by the filter's name and a count (the Database app's way).
+  return (
+    <>
+      <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
+        <ManyPanel
+          clientId={clientId} list={list} noun="places"
+          levels={[{ id: "city", label: "City" }, { id: "county", label: "County" }, { id: "state", label: "State" }]}
+          initial={f.places} kinds={f.kinds} onApply={(xs, kinds) => applyPlaces(xs, kinds ?? [...PLACE_KINDS])} register={register}
+        />
+      </FilterButton>
+      <FilterButton id="volume" label="Sales volume" value={isSet(f.volume) ? rangeText("usd", f.volume) : null} open={menu === "volume"} onOpen={openMenu}>
+        <RangePanel unit="usd" presets={VOLUME_PRESETS} value={f.volume} onApply={(r) => apply("volume", r)} register={register} />
+      </FilterButton>
+      <FilterButton id="units" label="Units" value={isSet(f.units) ? rangeText("count", f.units) : null} open={menu === "units"} onOpen={openMenu}>
+        <RangePanel unit="count" presets={UNIT_PRESETS} value={f.units} onApply={(r) => apply("units", r)} register={register} />
+      </FilterButton>
+      <FilterButton id="years" label="Years licensed" value={isSet(f.years) ? rangeText("years", f.years) : null} open={menu === "years"} onOpen={openMenu}>
+        <RangePanel unit="years" presets={YEAR_PRESETS} value={f.years} onApply={(r) => apply("years", r)} register={register} />
+      </FilterButton>
+      <FilterButton id="brokerage" label="Brokerage" value={pickText(f.brokerages)} count={f.brokerages.length} open={menu === "brokerage"} onOpen={openMenu}>
+        <ManyPanel
+          clientId={clientId} list={list} noun="brokerages"
+          levels={[{ id: "brand", label: "Brokerage" }, { id: "office", label: "Office" }]}
+          initial={f.brokerages} onApply={(xs) => apply("brokerages", xs)} register={register}
+        />
+      </FilterButton>
+    </>
+  );
+}
+
 /* A sortable column heading: ↕ when another column sorts, ↑ / ↓ when this one does. */
 function SortHead({ label, by, sort, onSort, right }: { label: string; by: SortKey; sort: { key: SortKey; dir: "asc" | "desc" }; onSort: (by: SortKey) => void; right?: boolean }) {
   const on = sort.key === by;
@@ -378,7 +451,6 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const [f, setF] = useState<Picks>(NO_PICKS);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "volume", dir: "desc" });
   const [page, setPage] = useState(1);
-  const [menu, setMenu] = useState<string | null>(null);
   const [state, setState] = useState<{ loading: boolean; error: string | null; unavailable: string | null; data: Loaded | null }>({ loading: true, error: null, unavailable: null, data: null });
   const bar = useRef<HTMLDivElement>(null);
   // Ticked rows, or every agent that matches (Prospects: "bulk selection"); moving anyone is inert. An open row menu (Market-Row).
@@ -389,19 +461,6 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const { live, save, say } = useDemo();
   const [moving, setMoving] = useState(false);
   const [reload, setReload] = useState(0);
-  // The open panel's "keep what I set" — run on a click outside it (Escape drops it).
-  const commit = useRef<(() => void) | null>(null);
-  const register = (fn: () => void) => { commit.current = fn; };
-
-  // The Location and Brokerage choices, asked for as the page opens so they are ready when a panel is (the server keeps them 30 minutes).
-  useEffect(() => {
-    const ctrl = new AbortController();
-    for (const facet of ["city", "county", "state", "brand"]) {
-      const sp = new URLSearchParams({ client: clientId, list, facet });
-      void fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal }).catch(() => {});
-    }
-    return () => ctrl.abort();
-  }, [clientId, list]);
 
   // Search waits for a pause in typing.
   useEffect(() => {
@@ -462,31 +521,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   // A new list, search or filter starts with nothing ticked.
   useEffect(() => { setPicked(new Set()); setAllPicked(false); }, [list, q, fKey]);
 
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent) {
-        if (e.key !== "Escape") return;
-        commit.current = null;
-        setMenu(null);
-        return;
-      }
-      if ((e.target as Element)?.closest?.("[data-chip]")) return;
-      const keep = commit.current;
-      commit.current = null;
-      setMenu(null);
-      keep?.();
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
-  }, [menu]);
-  const openMenu = (id: string | null) => { commit.current = null; setMenu(id); };
-
-  const apply = <K extends keyof Picks>(key: K, v: Picks[K]) => { commit.current = null; setF((x) => ({ ...x, [key]: v })); setPage(1); setMenu(null); };
-  const applyPlaces = (places: Pick[], kinds: PlaceKind[]) => { commit.current = null; setF((x) => ({ ...x, places, kinds })); setPage(1); setMenu(null); };
   const onSort = (by: SortKey) => { setSort((cur) => (cur.key === by ? { key: by, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: by, dir: FIRST_DIR[by] })); setPage(1); };
-  const any = isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0;
+  const any = anyPicks(f);
   const data = state.data;
   const total = data?.total ?? 0;
   // From the rows on screen, not the page asked for: while the next page loads, the footer still describes these.
@@ -505,34 +541,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const selected = allPicked ? total : picked.size;
   const clearAll = () => { setSearch(""); setQ(""); setF(NO_PICKS); setPage(1); };
 
-  // What each filter shows when set: one pick by name, several by the filter's name and a count (the Database app's way).
-  const filters = (
-    <>
-      <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
-        <ManyPanel
-          clientId={clientId} list={list} noun="places"
-          levels={[{ id: "city", label: "City" }, { id: "county", label: "County" }, { id: "state", label: "State" }]}
-          initial={f.places} kinds={f.kinds} onApply={(xs, kinds) => applyPlaces(xs, kinds ?? [...PLACE_KINDS])} register={register}
-        />
-      </FilterButton>
-      <FilterButton id="volume" label="Sales volume" value={isSet(f.volume) ? rangeText("usd", f.volume) : null} open={menu === "volume"} onOpen={openMenu}>
-        <RangePanel unit="usd" presets={VOLUME_PRESETS} value={f.volume} onApply={(r) => apply("volume", r)} register={register} />
-      </FilterButton>
-      <FilterButton id="units" label="Units" value={isSet(f.units) ? rangeText("count", f.units) : null} open={menu === "units"} onOpen={openMenu}>
-        <RangePanel unit="count" presets={UNIT_PRESETS} value={f.units} onApply={(r) => apply("units", r)} register={register} />
-      </FilterButton>
-      <FilterButton id="years" label="Years licensed" value={isSet(f.years) ? rangeText("years", f.years) : null} open={menu === "years"} onOpen={openMenu}>
-        <RangePanel unit="years" presets={YEAR_PRESETS} value={f.years} onApply={(r) => apply("years", r)} register={register} />
-      </FilterButton>
-      <FilterButton id="brokerage" label="Brokerage" value={pickText(f.brokerages)} count={f.brokerages.length} open={menu === "brokerage"} onOpen={openMenu}>
-        <ManyPanel
-          clientId={clientId} list={list} noun="brokerages"
-          levels={[{ id: "brand", label: "Brokerage" }, { id: "office", label: "Office" }]}
-          initial={f.brokerages} onApply={(xs) => apply("brokerages", xs)} register={register}
-        />
-      </FilterButton>
-    </>
-  );
+  const filters = <MarketFilters clientId={clientId} list={list} value={f} onChange={(update) => { setF(update); setPage(1); }} />;
 
   // Nothing matches a search or filter (Market-NoResults); or the client has no prospects yet (Prospects-Empty).
   if (data && !state.loading && total === 0 && (q || any)) {
