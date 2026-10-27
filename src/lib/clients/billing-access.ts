@@ -23,3 +23,15 @@ export function canSeeBillingTab(email: string | null | undefined): boolean {
   const key = (email ?? "").trim().toLowerCase();
   return key.length > 0 && BILLING_TAB_PEOPLE.includes(key);
 }
+
+/*
+ * Who may CANCEL a client's subscription (27 Oct). The user: "only eddy and amy
+ * should be able to do this". Narrower than the tab: admin@outreachify.io sees
+ * the Billing tab but does not get Cancel. By name; change only on the user's word.
+ */
+export const CANCEL_SUBSCRIPTION_PEOPLE: readonly string[] = ["eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
+
+export function canCancelSubscriptions(email: string | null | undefined): boolean {
+  const key = (email ?? "").trim().toLowerCase();
+  return key.length > 0 && CANCEL_SUBSCRIPTION_PEOPLE.includes(key);
+}

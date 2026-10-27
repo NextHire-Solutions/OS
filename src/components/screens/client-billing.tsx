@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { fmtDay } from "@/components/clients/cells";
+import { CancelSubscriptionDialog } from "@/components/screens/client-billing-cancel";
 import { RefundDialog } from "@/components/screens/client-billing-refund";
 import { givenBack } from "@/lib/clients/billing-refund";
 import { csvText, type CsvCell } from "@/lib/clients/billing-csv";
@@ -74,8 +75,9 @@ const today = () => new Date().toISOString().slice(0, 10);
 /* -------------------------------------------------------------- the tab --- */
 
 export function ClientBillingTab({ clientId, clientName, plan }: { clientId: string; clientName: string; plan: string | null }) {
-  const [state, setState] = useState<{ detail?: ClientBillingDetail; error?: string; hidden?: true } | null>(null);
+  const [state, setState] = useState<{ detail?: ClientBillingDetail; error?: string; hidden?: true; canCancel?: boolean } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [cancelling, setCancelling] = useState<null | "cancel" | "keep">(null);
 
   const load = async (fresh = false) => {
     if (fresh) setRefreshing(true);
@@ -84,7 +86,7 @@ export function ClientBillingTab({ clientId, clientName, plan }: { clientId: str
       if (res.status === 401 || res.status === 403) { setState({ hidden: true }); return; }
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.detail) setState((s) => ({ detail: s?.detail, error: body?.error ?? `HTTP ${res.status}` }));
-      else setState({ detail: body.detail });
+      else setState({ detail: body.detail, canCancel: body.canCancel === true });
     } catch (e) {
       setState((s) => ({ detail: s?.detail, error: e instanceof Error ? e.message : "Stripe could not be read" }));
     } finally {
@@ -156,6 +158,8 @@ export function ClientBillingTab({ clientId, clientName, plan }: { clientId: str
             <div>
               <small>Next billing</small>
               {n.state === "cancelled" ? <><b>—</b><span>no more charges</span></>
+                : n.cancelsOn && !n.nextBilling ? <><b>None</b><span>cancels {fmtDay(n.cancelsOn)}</span></>
+                : n.cancelsOn && n.nextBilling ? <><b>{fmtDay(n.nextBilling)}</b><span>then cancels {fmtDay(n.cancelsOn)}</span></>
                 : n.state === "paused" ? <><b>{n.nextBilling ? fmtDay(n.nextBilling) : "—"}</b><span>{n.nextBilling ? `resumes ${inDays(n.nextBilling)}` : "paused until resumed"}</span></>
                 : n.nextBilling ? <><b>{fmtDay(n.nextBilling)}</b><span>{inDays(n.nextBilling)}</span></>
                 : <><b>—</b><span>not scheduled</span></>}
@@ -169,6 +173,26 @@ export function ClientBillingTab({ clientId, clientName, plan }: { clientId: str
         ) : (
           <p className="rx-hint" style={{ marginTop: 6 }}>No Stripe subscription for this client. Link one or create one under <b>Subscriptions and Stripe</b> below.</p>
         )}
+        {n && n.state !== "cancelled" && (n.cancelsOn || state.canCancel) ? (
+          <div className={`rb-cx-bar${n.cancelsOn ? " set" : ""}`} data-testid="rb-cancel-bar">
+            {n.cancelsOn
+              ? <span><b>Set to cancel on {fmtDay(n.cancelsOn)}</b> — no charges on this subscription after that.</span>
+              : <span>Cancel this subscription in Stripe — at the end of the period or now. It asks before anything happens.</span>}
+            {/* Eddy and Amy only — the server says so (canCancel) and the route refuses everyone else. */}
+            {state.canCancel ? (
+              n.cancelsOn
+                ? <span className="rb-cx-acts">
+                    <button type="button" className="rx-btn" onClick={() => setCancelling("keep")}>Keep subscription</button>
+                    <button type="button" className="rb-cx-open" onClick={() => setCancelling("cancel")}>Cancel now…</button>
+                  </span>
+                : <button type="button" className="rb-cx-open" onClick={() => setCancelling("cancel")}>Cancel subscription…</button>
+            ) : null}
+          </div>
+        ) : null}
+        {cancelling && n ? (
+          <CancelSubscriptionDialog clientId={clientId} clientName={clientName} now={n} others={d.otherLive} mode={cancelling}
+            onClose={() => setCancelling(null)} onChanged={() => void load(true)} />
+        ) : null}
         {d.otherLive ? (
           <p className="rx-hint" style={{ marginTop: 0 }}>
             The client has {plural(d.otherLive, "other subscription")} not cancelled — every subscription is listed under <b>Subscriptions and Stripe</b> below.

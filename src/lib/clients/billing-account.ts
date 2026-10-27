@@ -59,6 +59,7 @@ async function all<T extends { id: string }>(path: string, max = 60): Promise<T[
 
 type RawSub = {
   id: string; customer: string; status: string; created: number; canceled_at: number | null;
+  cancel_at?: number | null; cancel_at_period_end?: boolean; ended_at?: number | null;
   current_period_end?: number;
   pause_collection: { behavior: string; resumes_at: number | null } | null;
   discount?: { coupon?: { percent_off?: number | null } } | null;
@@ -132,9 +133,11 @@ async function loadSnapshot(): Promise<AccountSnapshot> {
       const off = s.discount?.coupon?.percent_off
         ?? s.discounts?.map((d) => (typeof d === "string" ? null : d.coupon?.percent_off)).find((v) => typeof v === "number") ?? 0;
       return {
-        id: s.id, customer: s.customer, status: s.status, created: s.created, canceledAt: s.canceled_at,
+        id: s.id, customer: s.customer, status: s.status, created: s.created, canceledAt: s.canceled_at, endedAt: s.ended_at ?? null,
         pause: s.pause_collection ? { behavior: s.pause_collection.behavior, resumesAt: s.pause_collection.resumes_at } : null,
         periodEnd: s.items.data[0]?.current_period_end ?? s.current_period_end ?? null,
+        // A cancellation already set (the Billing tab's Cancel, or Stripe's dashboard): when it stops.
+        cancelAt: s.cancel_at ?? (s.cancel_at_period_end ? s.items.data[0]?.current_period_end ?? s.current_period_end ?? null : null),
         items: s.items.data.map((it) => ({
           amount: (it.price?.unit_amount ?? 0) / 100,
           interval: it.price?.recurring?.interval ?? "month",

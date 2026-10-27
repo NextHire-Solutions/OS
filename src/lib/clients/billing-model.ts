@@ -44,6 +44,14 @@ export interface StripeSubscription {
   pause: { behavior: string; resumesAt: number | null } | null;
   /** The next charge (the current period's end). */
   periodEnd: number | null;
+  /** A cancellation already set — when the subscription stops (Stripe's cancel_at / cancel_at_period_end). */
+  cancelAt?: number | null;
+  /**
+   * When it actually stopped. NOT canceledAt: Stripe stamps canceled_at the
+   * moment a cancellation is SET, weeks before a period-end one takes effect
+   * (seen 27 Oct, TEST mode).
+   */
+  endedAt?: number | null;
   items: { amount: number; interval: string; intervalCount: number; quantity: number; product?: string | null }[];
   percentOff: number;
   /** metadata.os_client_id — set on subscriptions the OS created. */
@@ -204,6 +212,9 @@ function stepDaysOf(it: StripeSubscription["items"][number]): number | null {
 }
 
 const isLive = (s: StripeSubscription) => ["active", "past_due"].includes(s.status) && !s.pause;
+const ended = (s: StripeSubscription) => s.status === "canceled" || s.status === "incomplete_expired";
+/** Set to cancel at or before `t`: no charge then (a cancellation at the period's end stops it before that charge). */
+const stopsBy = (s: StripeSubscription, t: number) => !!s.cancelAt && s.cancelAt <= t;
 
 export function subscriptionMonthly(s: StripeSubscription): number {
   let m = 0;
@@ -314,8 +325,8 @@ export function buildBilling(
         every: s.items[0] ? every(s.items[0]) : "",
         monthly: cents(subscriptionMonthly(s)),
         created: etDay(s.created),
-        canceled: DAY(s.canceledAt),
-        nextCharge: isLive(s) && s.periodEnd ? etDay(s.periodEnd) : s.pause?.resumesAt ? etDay(s.pause.resumesAt) : null,
+        canceled: ended(s) ? DAY(s.endedAt ?? s.canceledAt) : null,
+        nextCharge: isLive(s) && s.periodEnd ? (stopsBy(s, s.periodEnd) ? null : etDay(s.periodEnd)) : s.pause?.resumesAt ? etDay(s.pause.resumesAt) : null,
         current: s.id === current?.id,
         source: subOwner.get(s.id)?.source ?? "subscription",
       })),
@@ -365,6 +376,8 @@ export interface BillingNowView {
   nextBilling: string | null;
   since: string;
   canceled: string | null;
+  /** Set to cancel: the Eastern day it stops (no charge after it). */
+  cancelsOn: string | null;
   state: PayState;
   tone: BillingTone;
   /** Owed on invoices Stripe failed to collect, and how many. */
@@ -580,6 +593,7 @@ export function clientBillingDetail(
       nextBilling: ended ? null : view.nextCharge,
       since: view.created,
       canceled: view.canceled,
+      cancelsOn: !ended && cur.cancelAt ? etDay(cur.cancelAt) : null,
       state,
       tone,
       unpaid: failedUnpaid,
@@ -683,7 +697,10 @@ export function billingTotals(snap: AccountSnapshot, perClient: Map<string, Clie
     collectedLastMonthToDate,
     growthPct: collectedLastMonthToDate > 0 ? Math.round(((collectedThisMonth - collectedLastMonthToDate) / collectedLastMonthToDate) * 1000) / 10 : null,
     newMrr30: cents(snap.subscriptions.filter((s) => s.created >= since && isLive(s)).reduce((t, s) => t + subscriptionMonthly(s), 0)),
-    lostMrr30: cents(snap.subscriptions.filter((s) => s.canceledAt && s.canceledAt >= since).reduce((t, s) => t + subscriptionMonthly(s), 0)),
+    // Ended only: Stripe stamps canceled_at the moment a cancellation is SET for the period's end
+    // (seen 27 Oct, TEST mode) — that client is still paying, and still in MRR, until it ends.
+    // Ended in the window, by when it ENDED (endedAt): a cancellation set for the period's end counts when it stops, not when it was set.
+    lostMrr30: cents(snap.subscriptions.filter((s) => ended(s) && (s.endedAt ?? s.canceledAt ?? 0) >= since).reduce((t, s) => t + subscriptionMonthly(s), 0)),
   };
 }
 
@@ -701,6 +718,8 @@ export function upcomingCharges(snap: AccountSnapshot, perClient: Map<string, Cl
     const stepDays = it.interval === "day" ? it.intervalCount : it.interval === "week" ? 7 * it.intervalCount : null;
     let t = s.periodEnd;
     for (let i = 0; i < 12 && t <= end; i++) {
+      // A cancellation already set: no charge on or after the day it stops.
+      if (stopsBy(s, t)) break;
       if (t >= now / 1000 - 86_400) out.push({ date: etDay(t), clientId: owner.get(s.id) ?? null, subscription: s.id, amount: cents(s.items.reduce((a, x) => a + x.amount * x.quantity, 0) * (1 - s.percentOff / 100)), every: every(it) });
       if (stepDays) t += stepDays * 86_400;
       else { const d = new Date(t * 1000); d.setUTCMonth(d.getUTCMonth() + (it.interval === "year" ? 12 : 1) * it.intervalCount); t = d.getTime() / 1000; }
@@ -755,7 +774,7 @@ export function subscriptionRows(clients: BillingClientRef[], snap: AccountSnaps
       amount: cents(s.items.reduce((t, it) => t + it.amount * it.quantity, 0) * (1 - s.percentOff / 100)),
       every: s.items[0] ? every(s.items[0]) : "",
       stepDays: s.items[0] ? stepDaysOf(s.items[0]) : null,
-      nextCharge: state === "active" && s.periodEnd ? etDay(s.periodEnd) : null,
+      nextCharge: state === "active" && s.periodEnd && !stopsBy(s, s.periodEnd) ? etDay(s.periodEnd) : null,
       resumes: state === "paused" && s.pause?.resumesAt ? etDay(s.pause.resumesAt) : null,
     });
   }

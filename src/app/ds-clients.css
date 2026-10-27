@@ -486,6 +486,28 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rb-dlg .rx-btn:disabled { opacity: .55; cursor: default; }
 .rx-btn.solid.rb-danger { background: var(--st-churned); border-color: var(--st-churned); }
 .rx-btn.solid.rb-danger:hover:not(:disabled) { filter: brightness(.92); }
+/* Cancel subscription (27 Oct; client-billing-cancel.tsx) — Eddy and Amy only. */
+.rb-cx-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px 14px; flex-wrap: wrap; margin: -4px 0 12px; padding: 9px 12px; border: 1px solid var(--x-line); border-radius: 10px; font-size: 12.5px; color: var(--x-mute); }
+.rb-cx-bar.set { border-color: color-mix(in srgb, var(--st-paused) 45%, var(--x-line)); background: color-mix(in srgb, var(--st-paused) 7%, var(--x-surface)); color: var(--x-ink-2); }
+.rb-cx-bar.set b { color: var(--st-paused); font-weight: 600; }
+.rb-cx-open { appearance: none; border: 1px solid color-mix(in srgb, var(--st-churned) 35%, var(--x-line)); background: var(--x-surface); border-radius: 8px; padding: 6px 11px; font: inherit; font-size: 12.5px; font-weight: 500; color: var(--st-churned); cursor: pointer; white-space: nowrap; }
+.rb-cx-open:hover { background: color-mix(in srgb, var(--st-churned) 6%, var(--x-surface)); }
+.rb-cx-open:focus-visible { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+.rb-cx-when { gap: 8px; }
+.rb-cx-opt { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 11px 12px; border: 1px solid var(--x-line); border-radius: 10px; cursor: pointer; background: var(--x-surface); }
+.rb-cx-opt.on { border-color: var(--x-ink); box-shadow: 0 0 0 1px var(--x-ink) inset; }
+.rb-cx-opt.off { cursor: not-allowed; opacity: .6; }
+.rb-cx-opt input { margin: 2px 0 0; accent-color: var(--x-ink); }
+.rb-cx-opt > span { display: grid; gap: 3px; min-width: 0; }
+.rb-cx-opt b { font-size: 13.5px; font-weight: 600; color: var(--x-ink); font-variant-numeric: tabular-nums; }
+.rb-cx-opt small { font-size: 12.5px; color: var(--x-mute); line-height: 1.45; }
+.rb-cx-opt em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--st-active); white-space: nowrap; padding-top: 2px; }
+.rb-cx-opt:has(input:focus-visible) { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+.rb-cx-note { margin: 0; font-size: 12px; color: var(--x-mute); line-height: 1.5; }
+.rb-cx-warn { margin: 0; padding: 8px 11px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; color: var(--x-ink-2); background: color-mix(in srgb, var(--st-paused) 9%, var(--x-surface)); border: 1px solid color-mix(in srgb, var(--st-paused) 35%, var(--x-line)); }
+.rb-dlg header p.rb-cx-ident { margin-top: 2px; font-family: var(--mono); font-size: 11px; color: var(--x-faint); overflow-wrap: anywhere; }
+.rb-cx-acts { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rb-cx-name { font-weight: 600; color: var(--x-ink); }
 /* Profile completeness (6 Oct). */
 .cx-pct { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12.5px; }
 .cx-pct-bar { width: 46px; height: 6px; border-radius: 999px; background: var(--x-line); overflow: hidden; }

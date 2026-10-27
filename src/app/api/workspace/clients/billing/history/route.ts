@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { canCancelSubscriptions } from "@/lib/clients/billing-access";
 import { getClientBillingDetail } from "@/lib/clients/billing-account";
 import { billingTabUser } from "@/lib/clients/billing-user";
 
@@ -28,7 +29,8 @@ export async function GET(request: Request) {
   try {
     const detail = await getClientBillingDetail(clientId, u.searchParams.get("fresh") === "1");
     if (!detail) return NextResponse.json({ error: "No such client" }, { status: 404, headers: NO_STORE });
-    return NextResponse.json({ detail }, { headers: NO_STORE });
+    // Whether this person gets Cancel subscription (Eddy and Amy only) — decided here, never in the browser.
+    return NextResponse.json({ detail, canCancel: canCancelSubscriptions(who.email) }, { headers: NO_STORE });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Stripe could not be read" }, { status: 502, headers: NO_STORE });
   }

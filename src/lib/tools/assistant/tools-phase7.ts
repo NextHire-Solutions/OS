@@ -197,9 +197,11 @@ export async function clientBillingTool(query: string) {
   const s = byId[c.id] ?? null;
   let subscription: Record<string, unknown> | null = null;
   if (c.stripeSubscriptionId) {
-    const sub = await stripeJson<{ status: string; pause_collection: unknown; current_period_end?: number; items?: { data?: { current_period_end?: number }[] } }>(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(c.stripeSubscriptionId)}`);
+    const sub = await stripeJson<{ status: string; pause_collection: unknown; current_period_end?: number; cancel_at?: number | null; items?: { data?: { current_period_end?: number }[] } }>(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(c.stripeSubscriptionId)}`);
     const end = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end;
-    subscription = { status: sub.status, collectionPaused: Boolean(sub.pause_collection), nextCharge: end ? easternDay(end * 1000) : null };
+    // Set to cancel at or before the period's end: there is no next charge (27 Oct).
+    const stops = !!sub.cancel_at && !!end && sub.cancel_at <= end;
+    subscription = { status: sub.status, collectionPaused: Boolean(sub.pause_collection), nextCharge: end && !stops ? easternDay(end * 1000) : null, cancelsOn: sub.cancel_at ? easternDay(sub.cancel_at * 1000) : null };
   }
   let invoices: ReturnType<typeof invRow>[] = [];
   const customer = c.stripeCustomerId;
