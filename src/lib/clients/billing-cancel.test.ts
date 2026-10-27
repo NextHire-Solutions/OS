@@ -23,12 +23,13 @@ const ask = (o: Partial<CancelRequest> = {}): CancelRequest =>
 const sub = (o: Partial<SubscriptionNow> = {}): SubscriptionNow =>
   ({ id: SUB, status: "active", cancelAtPeriodEnd: false, cancelAt: null, canceledAt: null, periodEnd: 1_800_000_000, cancelledBy: null, ...o });
 
-test("Eddy and Amy only — not the rest of the Billing tab, not anyone else", () => {
-  assert.deepEqual([...CANCEL_SUBSCRIPTION_PEOPLE], ["eddy@brokerstaffer.com", "amy@brokerstaffer.com"], "exactly these two (the user, 27 Oct)");
+test("Eddy, Amy and admin@outreachify.io only — nobody else", () => {
+  assert.deepEqual([...CANCEL_SUBSCRIPTION_PEOPLE], ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"], "exactly these (the user, 27 Oct: Eddy and Amy; then 'I need this as well' for admin@outreachify.io)");
   for (const who of CANCEL_SUBSCRIPTION_PEOPLE) assert.ok(BILLING_TAB_PEOPLE.includes(who), `${who} is also on the Billing tab, so its by-name account protection covers them`);
   assert.equal(canCancelSubscriptions("Eddy@BrokerStaffer.com "), true);
   assert.equal(canCancelSubscriptions("amy@brokerstaffer.com"), true);
-  for (const who of ["admin@outreachify.io", "automation@outreachify.io", "ryan@brokerstaffer.com", "eddy@brokerstaffer.com.evil.com", "", null, undefined]) {
+  assert.equal(canCancelSubscriptions(" Admin@Outreachify.io"), true);
+  for (const who of ["automation@outreachify.io", "ryan@brokerstaffer.com", "eddy@brokerstaffer.com.evil.com", "", null, undefined]) {
     assert.equal(canCancelSubscriptions(who), false, String(who));
   }
 });

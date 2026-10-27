@@ -4,8 +4,8 @@
  * make sure it asks for confirmation before doing this. and only eddy and amy
  * should be able to do this".
  *
- *   - Eddy and Amy only, by name (billing-access.ts) — not the rest of the
- *     Billing tab's people;
+ *   - Eddy and Amy, and admin@outreachify.io (added the same day), by name
+ *     (billing-access.ts) — no one else, whatever their role;
  *   - the client's CURRENT subscription (the one the tab shows), as Stripe has
  *     it now, not the tab's copy;
  *   - two ways: at the end of the period already paid for (Stripe stops

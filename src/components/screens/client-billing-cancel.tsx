@@ -8,7 +8,8 @@ import type { CancelWhen } from "@/lib/clients/billing-cancel";
 
 /*
  * Cancel a client's subscription — or take back a cancellation set for the end
- * of the period — from the Billing tab (27 Oct; Eddy and Amy only; the plan is
+ * of the period — from the Billing tab (27 Oct; the people named in
+ * billing-access.ts only — Eddy, Amy, admin@outreachify.io; the plan is
  * in billing-cancel.ts). Always two steps: choose and review (the OS reads the
  * subscription from Stripe and checks it, sending nothing), then confirm.
  * Cancelling immediately cannot be undone, so its confirm button stays off

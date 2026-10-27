@@ -19,7 +19,7 @@ import { stripeKey } from "@/lib/tools/onboarding/stripe";
  *        takes back a cancellation set for the end of the period
  *
  * Anyone not on the Billing tab gets a bare 404, as on the tab; of the tab's
- * people, only Eddy and Amy may cancel (403 for the rest). Only from the OS's
+ * people, only those named in CANCEL_SUBSCRIPTION_PEOPLE may cancel (403 for the rest). Only from the OS's
  * own page. Only the client's CURRENT subscription by the tab's own rules.
  * A subscription already cancelled, or already set to, is answered as done.
  * When Stripe's answer is lost, the person is told it may have gone through.
@@ -43,7 +43,7 @@ const day = (s: number | null) => (s ? new Date(s * 1000).toISOString() : null);
 export async function POST(request: Request) {
   const who = await billingTabUser(request);
   if (who instanceof NextResponse) return who;
-  if (!canCancelSubscriptions(who.email)) return say(403, "Only Eddy and Amy can cancel a subscription.");
+  if (!canCancelSubscriptions(who.email)) return say(403, "Cancelling a subscription is not open to you.");
   if (!fromOwnPage(request)) return say(403, "Forbidden");
   const parsed = cancelRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return say(400, "That request could not be read — reload the page and try again.");

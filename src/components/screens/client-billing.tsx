@@ -178,7 +178,7 @@ export function ClientBillingTab({ clientId, clientName, plan }: { clientId: str
             {n.cancelsOn
               ? <span><b>Set to cancel on {fmtDay(n.cancelsOn)}</b> — no charges on this subscription after that.</span>
               : <span>Cancel this subscription in Stripe — at the end of the period or now. It asks before anything happens.</span>}
-            {/* Eddy and Amy only — the server says so (canCancel) and the route refuses everyone else. */}
+            {/* The people named in CANCEL_SUBSCRIPTION_PEOPLE only — the server says so (canCancel) and the route refuses everyone else. */}
             {state.canCancel ? (
               n.cancelsOn
                 ? <span className="rb-cx-acts">

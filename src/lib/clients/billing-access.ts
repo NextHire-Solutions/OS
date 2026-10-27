@@ -26,10 +26,11 @@ export function canSeeBillingTab(email: string | null | undefined): boolean {
 
 /*
  * Who may CANCEL a client's subscription (27 Oct). The user: "only eddy and amy
- * should be able to do this". Narrower than the tab: admin@outreachify.io sees
- * the Billing tab but does not get Cancel. By name; change only on the user's word.
+ * should be able to do this" — then, the same day, of admin@outreachify.io (the
+ * user's own account): "no no I need this as well". By name; change only on the
+ * user's word.
  */
-export const CANCEL_SUBSCRIPTION_PEOPLE: readonly string[] = ["eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
+export const CANCEL_SUBSCRIPTION_PEOPLE: readonly string[] = ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
 
 export function canCancelSubscriptions(email: string | null | undefined): boolean {
   const key = (email ?? "").trim().toLowerCase();
