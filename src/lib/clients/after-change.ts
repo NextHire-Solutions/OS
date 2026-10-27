@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getMasterClientList } from "@/lib/clients/master-list";
+import { marketContext } from "@/lib/crm-preview/market";
 import { getClientCounts } from "@/lib/reconcile/client-counts";
 import { getWeekly } from "@/lib/tools/client-health/weekly";
 import { getPerformance } from "@/lib/workspace/performance";
@@ -13,10 +14,16 @@ import { getPerformance } from "@/lib/workspace/performance";
  * serving the old value for up to a minute — and the master list's own
  * comment claimed otherwise. One call, used by every route that changes a
  * client, so none can be forgotten.
+ *
+ * The new portal's market context too (28 Oct, the user: "I have removed the
+ * mls but I can still see data in markets view in their portal"): it is kept a
+ * minute and then served stale while re-read, so a Markets save showed the old
+ * boards for a load or two after.
  */
 export function clientsChanged(): void {
   getMasterClientList.invalidate();
   getClientCounts.invalidate();
   getPerformance.invalidate();
   getWeekly.invalidate();
+  marketContext.invalidate();
 }

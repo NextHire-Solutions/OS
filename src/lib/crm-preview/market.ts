@@ -107,8 +107,9 @@ export async function portalClient(portalId: string): Promise<{ id: string; name
  * for no such portal. Kept a minute per portal (26 Oct, speed): every page,
  * filter change and choice list read the portal and every client record
  * first — ~0.7 s, the slowest part of a request once the market answers from
- * memory. A client's MLSs or a portal changed in the OS shows here within a
- * minute — the minute-old answer is served while the new one is read.
+ * memory. A change to a client in the OS (its Markets, its name) clears it at
+ * once (clients/after-change.ts); otherwise the minute-old answer is served
+ * while the new one is read.
  */
 export const marketContext = ttlCache(readMarketContext, { ttlMs: 60_000, staleMs: 30 * 60_000, key: (portalId) => portalId, shared: "crm-preview-market-context" });
 
