@@ -268,11 +268,18 @@ export function CrmPreview({
                 <small>{client.contactName ? client.name : audience === "client" ? "Your portal" : "Portal preview"}</small>
               </span>
             </div>
-            {/* A client's own way back to the Setup wizard and out (the design leaves both to a first sign-in). */}
+            {/*
+              A client's way out, and back to the Setup wizard only while it isn't finished — their offer not saved yet (28 Oct,
+              the user: "we should not be able to see this setup wizard button once client fills this section").
+            */}
             {audience === "client" ? (
               <div className="cpv-uacts">
-                <button type="button" onClick={openSetup}>Setup wizard</button>
-                <span aria-hidden="true">·</span>
+                {offer === null ? (
+                  <>
+                    <button type="button" onClick={openSetup}>Setup wizard</button>
+                    <span aria-hidden="true">·</span>
+                  </>
+                ) : null}
                 <button type="button" onClick={() => void signOut()} disabled={leaving}>{leaving ? "Signing out…" : "Sign out"}</button>
               </div>
             ) : null}

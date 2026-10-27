@@ -123,7 +123,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
 
   // SessionKeeper renews a STAFF sign-in as the workspace does (its 401 sends to the staff login — never for a client, whose sign-in lasts 30 days).
   const shell = (children: React.ReactNode) => (
-    <div className={`crx-root cpv-shell ${interTight.variable}`}>
+    <div className={`crx-root cpv-shell${audience === "client" ? " cpv-client" : ""} ${interTight.variable}`}>
       {children}
       {audience === "staff" ? <SessionKeeper /> : null}
     </div>
