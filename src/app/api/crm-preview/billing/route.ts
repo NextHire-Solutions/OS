@@ -1,8 +1,7 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
-import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { adminEmails } from "@/lib/identity/admin";
-import { canSeeCrmPreview } from "@/lib/crm-preview/access";
+import { crmViewerOf } from "@/lib/crm-preview/viewer";
+import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
 import { getAccountBilling } from "@/lib/clients/billing-account";
 import { BILLING_REFUSAL, pickBillingCustomer } from "@/lib/crm-preview/billing-pick";
 import { billingPortalUrl, portalConfiguration } from "@/lib/crm-preview/billing-portal";
@@ -17,7 +16,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
  * tab by the person's own click, answers with a redirect to that client's
  * Stripe billing page — or a short page saying why it cannot.
  *
- * Owners and Eddy only, as the preview page: anyone else gets a bare 404.
+ * The reviewers, or the portal's own signed-in client (27 Oct), as the
+ * preview page: anyone else gets a bare 404.
  * Then only a real click on the link (data-guard fromOwnClick — not a
  * prefetch, a link scanner, a script or a typed address) and a per-person cap.
  * The customer is the client's own (billing-pick.ts): never a card another
@@ -37,14 +37,17 @@ main{max-width:440px;margin:24px;padding:28px 28px 24px;background:#fff;border:1
 }
 
 export async function GET(request: NextRequest) {
-  const me = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
-  if (!canSeeCrmPreview(me?.email, adminEmails())) return new NextResponse(null, { status: 404 });
-  const who = me!.email.toLowerCase();
+  const viewer = await crmViewerOf(request);
+  if (!viewer) return new NextResponse(null, { status: 404 });
+  const who = viewer.email;
+  const role = guardRole(viewer);
 
   const client = request.nextUrl.searchParams.get("client") ?? "";
   if (!UUID.test(client)) return notice(400, "This link is not complete. Open Billing from the portal's sidebar.");
+  // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
+  if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
 
-  const gate = admit(who, "staff", "billing", request.headers);
+  const gate = admit(who, role, "billing", request.headers);
   if (!gate.ok) {
     console.warn(JSON.stringify({ at: "[crm-preview] refused", who, kind: "billing", client, reason: gate.reason }));
     return notice(gate.status, gate.reason === "not-own-page" ? "Open Billing from the portal's sidebar." : gate.message);
@@ -66,8 +69,8 @@ export async function GET(request: NextRequest) {
     const back = `${publicOrigin()}/crm-preview?client=${encodeURIComponent(client)}`;
     const url = await billingPortalUrl(pick.customer, back, configuration);
     served(who, "billing", 0);
-    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
-    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "billing", rows: 0, now: new Date() }));
+    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell (staff never do). Never refuses (usage.ts).
+    after(() => recordUse(createAdminSupabase(), { who, role, portalId: client, kind: "billing", rows: 0, now: new Date() }));
     console.info(JSON.stringify({ at: "[crm-preview] billing opened", who, client, customer: pick.customer }));
     return NextResponse.redirect(url, { status: 303, headers: NO_STORE_HEADERS });
   } catch (e) {

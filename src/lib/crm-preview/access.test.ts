@@ -53,20 +53,31 @@ function filesUnder(dir: string): string[] {
 const ROUTES = filesUnder("src/app/api/crm-preview");
 const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
 
-test("the preview's routes: Owners and Eddy only, checked first; anyone else a bare 404; GET, except the chat's POST", () => {
+test("the preview's routes: the reviewers, or a signed-in client on their own open portal — checked first; anyone else a bare 404; GET, except the chat's POST", () => {
   assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "demo/route.ts", "market/route.ts", "report/route.ts"]);
   for (const r of ROUTES) {
     const src = read(r);
     const methods = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
     assert.deepEqual(methods, [r.includes("/chat/") || r.includes("/demo/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
-    const gate = src.indexOf("canSeeCrmPreview(");
+    assert.doesNotMatch(src, /canSeeCrmPreview\(|verifySso\(/, `${r}: the one gate, not its own`);
+    const gate = src.indexOf("crmViewerOf(request)");
     assert.ok(gate > 0, `${r} calls the gate`);
-    assert.match(src.slice(gate, gate + 160), /new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for anyone else`);
+    assert.match(src.slice(gate, gate + 120), /if \(!viewer\) return new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for anyone else`);
+    // The portal asked for is one this viewer may open — a bare 404 otherwise — before anything about it is read.
+    const own = src.indexOf("if (!mayOpenPortal(viewer, ");
+    assert.ok(own > gate, `${r}: checks the portal is the viewer's`);
+    assert.match(src.slice(own, own + 120), /\)\) return new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for a portal not theirs`);
     const start = src.indexOf(`export async function ${methods[0]}`);
     for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "createAdminSupabase(", "portalBillingPage("]) {
       const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > gate, `${r}: ${load} only after the gate`);
     }
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "portalBillingPage(", "admit("]) {
+      const at = src.indexOf(load, start);
+      assert.ok(at === -1 || at > own, `${r}: ${load} only after the portal check`);
+    }
+    // Clients are counted and guarded as clients, staff as staff — never a role written in.
+    assert.doesNotMatch(src, /role: "(staff|client)"|admit\(who, "/, `${r}: the role comes from the viewer`);
   }
 });
 
@@ -81,15 +92,23 @@ test("the agent database is asked only through its two read-only search function
   }
 });
 
-test("the page checks the Owner before it reads anything", () => {
+test("the page checks who is looking before it reads anything, and the portal is theirs before it reads that portal", () => {
   const src = read("src/app/crm-preview/page.tsx");
-  const gate = src.indexOf("canSeeCrmPreview(");
+  const gate = src.indexOf("const viewer = await crmViewer(");
   assert.ok(gate > 0, "the page calls the gate");
-  assert.match(src.slice(gate, gate + 200), /notFound\(\)/, "and shows Not found to anyone else");
+  assert.match(src.slice(gate, gate + 200), /if \(!viewer\) notFound\(\)/, "and shows Not found to anyone else");
   for (const load of ["loadPipelineEntries(", "loadAgentEntries(", "loadDncEntries(", "loadTeamMembers(", ".from(\"clients\")", "osTable(", "pipeline_outcome_events"]) {
     const at = src.indexOf(load);
     assert.ok(at === -1 || at > gate, `${load} only after the gate`);
   }
+  const own = src.indexOf("if (!mayOpenPortal(viewer, clientId)) notFound();");
+  assert.ok(own > gate, "the portal is checked");
+  for (const load of ["loadPipelineEntries(", "loadAgentEntries(", "loadDncEntries(", "loadTeamMembers(", ".eq(\"id\", clientId)", "pipeline_outcome_events", "loadOffer("]) {
+    assert.ok(src.indexOf(load, gate) > own, `${load} only after the portal check`);
+  }
+  // A client's list of portals is only theirs; the staff session keeper never runs for a client (its 401 sends to the staff login).
+  assert.match(src, /if \(viewer\.kind === "client"\) portalQuery = portalQuery\.in\("id", viewer\.portals\);/);
+  assert.match(src, /\{audience === "staff" \? <SessionKeeper \/> : null\}/);
 });
 
 /* The one file that writes: the Demo Portal's saves (21 Oct), on the Demo Portal's rows only — demo.test.ts. */
@@ -114,11 +133,11 @@ test("usage is counted after serving, in the background — on every data route,
   for (const [r, kind] of [["market", "market"], ["report", "report"], ["chat", "chat"], ["billing", "billing"], ["conversation", "conversation"]] as const) {
     const src = read(`src/app/api/crm-preview/${r}/route.ts`);
     assert.match(src, /^import \{ recordUse \} from "@\/lib\/portal-usage\/usage";$/m, r);
-    const uses = [...src.matchAll(/after\(\(\) => recordUse\(createAdminSupabase\(\), \{ who, role: "staff", portalId: client, kind: "(\w+)"/g)];
+    const uses = [...src.matchAll(/after\(\(\) => recordUse\(createAdminSupabase\(\), \{ who, role, portalId: client, kind: "(\w+)"/g)];
     assert.ok(uses.length >= 1 && uses.every((u) => u[1] === kind), `${r}: counted as ${kind}`);
     assert.equal(uses.length, (src.match(/recordUse\(/g) ?? []).length, `${r}: only ever in after()`);
     for (const u of uses) {
-      assert.ok(u.index! > src.indexOf("canSeeCrmPreview("), `${r}: after the gate`);
+      assert.ok(u.index! > src.indexOf("crmViewerOf(request)"), `${r}: after the gate`);
       assert.ok(u.index! > src.indexOf("admit("), `${r}: after the guard`);
     }
   }
@@ -138,12 +157,14 @@ const BROWSER_REQUESTS = [
   /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/chat$/,
   /^\/api\/crm-preview\/demo$/,
+  // A signed-in client's Sign out (27 Oct): ends this browser's session.
+  /^\/api\/portal-signin\/signout$/,
 ];
 const SERVER_REQUESTS: Record<string, RegExp[]> = {
   "src/lib/crm-preview/chat.ts": [/^https:\/\/api\.openai\.com\/v1\/chat\/completions$/],
   "src/lib/crm-preview/billing-portal.ts": [/^\$\{STRIPE\}\/billing_portal\/configurations\?limit=100&active=true$/, /^\$\{STRIPE\}\/billing_portal\/sessions$/],
 };
-const POSTS: Record<string, number> = { "src/components/crm-preview/chat.tsx": 1, "src/components/crm-preview/demo-save.ts": 1, "src/lib/crm-preview/chat.ts": 1, "src/lib/crm-preview/billing-portal.ts": 1 };
+const POSTS: Record<string, number> = { "src/components/crm-preview/crm-preview.tsx": 1, "src/components/crm-preview/chat.tsx": 1, "src/components/crm-preview/demo-save.ts": 1, "src/lib/crm-preview/chat.ts": 1, "src/lib/crm-preview/billing-portal.ts": 1 };
 
 test("requests: the preview's reads, the chat's one POST, OpenAI from the server, and Stripe's billing page — nothing else", () => {
   for (const f of PREVIEW_FILES) {
@@ -159,10 +180,15 @@ test("requests: the preview's reads, the chat's one POST, OpenAI from the server
   assert.match(chatUi, /fetch\(`\/api\/crm-preview\/chat`, \{\s*method: "POST"/, "the chat window POSTs only to the chat route");
 });
 
-test("not a product: no menu item, no Team access switch, no grant, nothing opened in the proxy", () => {
-  for (const f of ["src/lib/workspace/nav.ts", "src/lib/identity/admin.ts", "src/lib/bs-auth.ts", "src/lib/workspace/tool-paths.ts", "src/proxy.ts", "src/components/screens/team-access.tsx"]) {
+test("not a product: no menu item, no Team access switch, no grant — and the proxy opens it only to a client's sign-in, on its exact paths", () => {
+  for (const f of ["src/lib/workspace/nav.ts", "src/lib/identity/admin.ts", "src/lib/bs-auth.ts", "src/lib/workspace/tool-paths.ts", "src/components/screens/team-access.tsx"]) {
     assert.doesNotMatch(read(f), /crm-preview|crmPreview/i, f);
   }
+  // proxy.ts names it only in CLIENT_PORTAL_PATHS, used once, behind a client's cookie and no staff session (proxy-public.test.ts runs it).
+  const proxy = read("src/proxy.ts");
+  const list = proxy.slice(proxy.indexOf("export const CLIENT_PORTAL_PATHS"), proxy.indexOf("]);", proxy.indexOf("export const CLIENT_PORTAL_PATHS")));
+  assert.equal((proxy.match(/crm-preview/g) ?? []).length, (list.match(/crm-preview/g) ?? []).length + (proxy.match(/lib\/crm-preview\/(viewer|viewer-rules)/g) ?? []).length, "named nowhere else");
+  assert.match(proxy, /if \(!session && CLIENT_PORTAL_PATHS\.has\(pathname\) && request\.cookies\.has\(CLIENT_PORTAL_COOKIE\)\) \{\n    return NextResponse\.next\(\);/);
 });
 
 test("a portal's token never reaches the browser — it alone opens that client's live portal (21 Oct review)", () => {

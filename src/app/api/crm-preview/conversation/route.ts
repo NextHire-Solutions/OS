@@ -1,8 +1,7 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
-import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { adminEmails } from "@/lib/identity/admin";
-import { canSeeCrmPreview } from "@/lib/crm-preview/access";
+import { crmViewerOf } from "@/lib/crm-preview/viewer";
+import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
 import { recordUse } from "@/lib/portal-usage/usage";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -18,7 +17,8 @@ import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
  * Now the browser names the client and the entry; the server checks who is
  * asking and reads by id. No token leaves the server.
  *
- * Owners and the named reviewers only, as the page: anyone else a bare 404.
+ * The reviewers, or the portal's own signed-in client (27 Oct), as the
+ * page: anyone else a bare 404.
  * Read-only.
  */
 
@@ -38,16 +38,19 @@ type Message = {
 };
 
 export async function GET(request: NextRequest) {
-  const me = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
-  if (!canSeeCrmPreview(me?.email, adminEmails())) return new NextResponse(null, { status: 404 });
-  const who = (me?.email ?? "").toLowerCase();
+  const viewer = await crmViewerOf(request);
+  if (!viewer) return new NextResponse(null, { status: 404 });
+  const who = viewer.email;
+  const role = guardRole(viewer);
 
   const params = request.nextUrl.searchParams;
   const client = params.get("client") ?? "";
   const entryId = params.get("entry") ?? "";
   if (!UUID.test(client) || !UUID.test(entryId)) return NextResponse.json({ error: "No such conversation." }, { status: 400, headers: NO_STORE_HEADERS });
+  // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
+  if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
 
-  const gate = admit(who, "staff", "conversation", request.headers);
+  const gate = admit(who, role, "conversation", request.headers);
   if (!gate.ok) {
     console.warn(JSON.stringify({ tag: "[crm-preview] refused", kind: "conversation", who, client, reason: gate.reason }));
     return NextResponse.json({ error: gate.message }, { status: gate.status, headers: NO_STORE_HEADERS });
@@ -72,8 +75,8 @@ export async function GET(request: NextRequest) {
         .range(from, to),
     );
     served(who, "conversation", 0);
-    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell. Never refuses (usage.ts). Everyone here is our own team.
-    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "conversation", rows: 0, now: new Date() }));
+    // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell (staff never do). Never refuses (usage.ts).
+    after(() => recordUse(createAdminSupabase(), { who, role, portalId: client, kind: "conversation", rows: 0, now: new Date() }));
     return NextResponse.json({ messages }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.error("[crm-preview] conversation", err);

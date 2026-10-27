@@ -83,6 +83,29 @@ export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
 /** The Claude connector's token-checked endpoints. Exact paths — see the block in proxy(). */
 const CLAUDE_CONNECTOR_PUBLIC = new Set(["/api/mcp", "/api/oauth/token", "/api/oauth/register"]);
 
+/*
+ * The new portal's page and its seven data routes, for a CLIENT signed in at
+ * /portal-signin (27 Oct, the user's Option B). A request carrying a client's
+ * sign-in cookie and NO staff session goes on to the page's or route's own
+ * check (lib/crm-preview/viewer.ts): the session read against the list on
+ * every request, and only portals open to clients — the Demo Portal alone
+ * until the user says to switch (viewer-rules.ts). Anyone else there gets Not
+ * found. Without that cookie nothing changes: the staff sign-in, as before.
+ * Exact paths only.
+ */
+export const CLIENT_PORTAL_PATHS: ReadonlySet<string> = new Set([
+  "/crm-preview",
+  "/api/crm-preview/market",
+  "/api/crm-preview/report",
+  "/api/crm-preview/chat",
+  "/api/crm-preview/billing",
+  "/api/crm-preview/billing-periods",
+  "/api/crm-preview/conversation",
+  "/api/crm-preview/demo",
+]);
+/** lib/portal-login/http.ts PORTAL_COOKIE — written out here: that module is server-only (node:crypto). A test keeps them equal. */
+export const CLIENT_PORTAL_COOKIE = "bs_portal";
+
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.has(pathname);
 }
@@ -169,6 +192,11 @@ export async function proxy(request: NextRequest) {
   // checks CLIENT_HEALTH_SYNC_SECRET and fails closed when it is unset.
   if ((pathname === "/api/tools/client-health/sync" || pathname === "/api/tools/client-health/sync/tick") &&
       request.headers.has("x-sync-secret")) {
+    return NextResponse.next();
+  }
+
+  // A client's sign-in, on the new portal's own paths only — checked there (see CLIENT_PORTAL_PATHS).
+  if (!session && CLIENT_PORTAL_PATHS.has(pathname) && request.cookies.has(CLIENT_PORTAL_COOKIE)) {
     return NextResponse.next();
   }
 

@@ -21,6 +21,11 @@
  *     disabled. The browser asks only the preview's own routes
  *     (api/crm-preview) — never with a portal's token, which stays on the
  *     server (21 Oct: a token alone opens that client's live portal).
+ *   - And CLIENTS (27 Oct, the user's Option B): someone signed in at
+ *     /portal-signin opens their own portal here, as a client sees it — no
+ *     preview bar, no other clients — but only a portal open to clients, which
+ *     until the user says to switch is the Demo Portal alone
+ *     (viewer-rules.ts). Every real client keeps their current portal.
  */
 
 import type { Metadata } from "next";
@@ -28,9 +33,10 @@ import localFont from "next/font/local";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { SSO_COOKIE, verifySso } from "@/lib/bs-auth";
-import { adminEmails } from "@/lib/identity/admin";
-import { canSeeCrmPreview } from "@/lib/crm-preview/access";
+import { SSO_COOKIE } from "@/lib/bs-auth";
+import { PORTAL_COOKIE } from "@/lib/portal-login/http";
+import { crmViewer } from "@/lib/crm-preview/viewer";
+import { mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
 import { furthestStages, managedStages, PREVIEW_VIEWS, previewStages, type PortalOffer, type PreviewView } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -57,7 +63,7 @@ import "./mobile.css";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Portal redesign preview",
+  title: "BrokerStaffer",
   robots: { index: false, follow: false },
 };
 
@@ -89,37 +95,41 @@ async function loadOffer(portalId: string): Promise<PortalOffer | null> {
 }
 
 export default async function CrmPreviewPage({ searchParams }: { searchParams: Search }) {
-  const me = await verifySso(process.env.AUTH_SECRET ?? "", (await cookies()).get(SSO_COOKIE)?.value);
-  if (!canSeeCrmPreview(me?.email, adminEmails())) notFound();
+  const jar = await cookies();
+  // Staff (the reviewers) first, else a client's sign-in, narrowed to the portals open to clients — anyone else: Not found.
+  const viewer = await crmViewer({ sso: jar.get(SSO_COOKIE)?.value, portal: jar.get(PORTAL_COOKIE)?.value });
+  if (!viewer) notFound();
+  const audience = viewer.kind;
 
   const params = await searchParams;
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
-  const clientId = one(params.client);
   const viewParam = one(params.view);
-  const view: PreviewView = (PREVIEW_VIEWS as readonly string[]).includes(viewParam) ? (viewParam as PreviewView) : "pipeline";
   // The Setup wizard's step (1–6).
   const stepParam = Math.floor(Number(one(params.step)));
   const step = stepParam >= 1 && stepParam <= 6 ? stepParam : 1;
 
   const admin = createAdminSupabase();
-  const { data: portalRows } = await admin
-    .from("clients")
-    .select("id, name, slug, portal_token")
-    .not("portal_token", "is", null)
-    .order("name", { ascending: true });
+  // Staff: every portal. A client: only their own, open to clients.
+  let portalQuery = admin.from("clients").select("id, name, slug, portal_token").not("portal_token", "is", null);
+  if (viewer.kind === "client") portalQuery = portalQuery.in("id", viewer.portals);
+  const { data: portalRows } = await portalQuery.order("name", { ascending: true });
   const portals = ((portalRows ?? []) as Array<{ id: string; name: string | null; slug: string | null }>)
     .filter((c) => c.slug !== "unknown")
     .map((c) => ({ id: c.id, name: c.name ?? "Unnamed client" }));
+  // A client with one portal goes straight to it.
+  const clientId = one(params.client) || (viewer.kind === "client" && portals.length === 1 ? portals[0].id : "");
 
-  // SessionKeeper renews the sign-in as the workspace does, so a long look at the preview doesn't end at the login page.
+  // SessionKeeper renews a STAFF sign-in as the workspace does (its 401 sends to the staff login — never for a client, whose sign-in lasts 30 days).
   const shell = (children: React.ReactNode) => (
     <div className={`crx-root cpv-shell ${interTight.variable}`}>
       {children}
-      <SessionKeeper />
+      {audience === "staff" ? <SessionKeeper /> : null}
     </div>
   );
 
-  if (!UUID.test(clientId)) return shell(<ClientPicker portals={portals} />);
+  if (!UUID.test(clientId)) return shell(<ClientPicker portals={portals} audience={audience} />);
+  // Not one of theirs (a client) — Not found, as for an address that does not exist.
+  if (!mayOpenPortal(viewer, clientId)) notFound();
 
   const { data: client } = await admin
     .from("clients")
@@ -160,6 +170,11 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
   const stages = previewStages(defs);
   const tagKeys = new Set(stages.filter((s) => s.role === "tag").map((s) => s.key));
   const tagged = new Set(entries.filter((e) => tagKeys.has(e.custom_stage_key ?? e.stage)).map((e) => e.id));
+  const offer = isDemoPortal(client.id as string) ? await loadOffer(client.id as string) : undefined;
+  // A client's first look opens the Setup wizard (their offer not told yet) — the design's "first sign-in"; staff open it from the preview bar.
+  const view: PreviewView = (PREVIEW_VIEWS as readonly string[]).includes(viewParam)
+    ? (viewParam as PreviewView)
+    : audience === "client" && offer === null ? "setup" : "pipeline";
 
   return shell(
     <CrmPreview
@@ -178,7 +193,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       // Every stage, hidden ones too — only where Manage stages saves (the Demo Portal); everyone else's panel is drawn from `stages`.
       allStages={isDemoPortal(client.id as string) && manageStages ? managedStages(defs) : undefined}
       // The wizard's "Tell us your offer", as saved (0039) — only where it saves (the Demo Portal).
-      offer={isDemoPortal(client.id as string) ? await loadOffer(client.id as string) : undefined}
+      offer={offer}
+      audience={audience}
       furthest={furthestStages(history, tagged)}
       entries={entries}
       agents={agents}

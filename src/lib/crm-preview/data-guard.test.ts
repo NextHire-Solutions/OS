@@ -64,7 +64,7 @@ test("both data routes admit before they read, count what they serve, and never 
     const gate = src.indexOf("admit(");
     assert.ok(gate > 0, `${f} admits`);
     assert.ok(gate < src.indexOf("marketContext("), `${f} admits before reading anything`);
-    assert.ok(gate > src.indexOf("canSeeCrmPreview("), `${f} still checks who first (a bare 404)`);
+    assert.ok(src.indexOf("crmViewerOf(request)") > 0 && gate > src.indexOf("mayOpenPortal(viewer, client)"), `${f} still checks who first, and the portal is theirs (a bare 404)`);
     assert.match(src, /served\(/, `${f} counts what it serves`);
     assert.ok((src.match(/NO_STORE_HEADERS/g) ?? []).length >= 4, `${f} sends no-store on every response`);
   }

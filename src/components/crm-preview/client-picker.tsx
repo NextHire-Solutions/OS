@@ -1,7 +1,29 @@
 import { initials } from "@/lib/crm-preview/model";
 
-/* Which client's data to preview the redesign on. Plain links: picking one reloads the page with it. */
-export function ClientPicker({ portals, missing = false }: { portals: Array<{ id: string; name: string }>; missing?: boolean }) {
+/*
+ * Which client's data to preview the redesign on. Plain links: picking one
+ * reloads the page with it. A client (27 Oct) with more than one portal open
+ * to them picks theirs: no preview bar, nothing about other clients.
+ */
+export function ClientPicker({ portals, missing = false, audience = "staff" }: { portals: Array<{ id: string; name: string }>; missing?: boolean; audience?: "staff" | "client" }) {
+  if (audience === "client") {
+    return (
+      <main className="cpv-pick">
+        <h1>Choose your portal</h1>
+        <p>You can open each of these portals.</p>
+        <ul>
+          {portals.map((p) => (
+            <li key={p.id}>
+              <a href={`/crm-preview?client=${encodeURIComponent(p.id)}`}>
+                <span className="cpv-av" aria-hidden="true">{initials(p.name)}</span>
+                <span>{p.name}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </main>
+    );
+  }
   return (
     <>
       <div className="cpv-bar" role="note">

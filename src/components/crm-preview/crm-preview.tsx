@@ -72,6 +72,7 @@ export function CrmPreview({
   initialView,
   initialStep,
   now,
+  audience = "staff",
 }: {
   client: PreviewClient;
   portals: Array<{ id: string; name: string }>;
@@ -89,6 +90,8 @@ export function CrmPreview({
   initialView: PreviewView;
   initialStep: number;
   now: string;
+  /** Staff see the preview bar; a client (27 Oct, signed in at /portal-signin) sees the portal as theirs. */
+  audience?: "staff" | "client";
 }) {
   const [view, setView] = useState<PreviewView>(initialView);
   const [step, setStep] = useState(initialStep);
@@ -162,8 +165,18 @@ export function CrmPreview({
   };
   const toastNote = toast ? <div className={toast.bad ? "cpv-toast cpv-bad" : "cpv-toast"} role={toast.bad ? "alert" : "status"}>{toast.text}</div> : null;
 
+  const openSetup = () => { setStep(1); setView("setup"); setContext(null); window.history.replaceState(null, "", `${hrefFor("setup")}&step=1`); window.scrollTo(0, 0); };
+  const [leaving, setLeaving] = useState(false);
+  // A client's sign-out: this browser's session ends (api/portal-signin/signout), back to the sign-in page.
+  const signOut = async () => {
+    setLeaving(true);
+    await fetch("/api/portal-signin/signout", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => null);
+    window.location.assign("/portal-signin");
+  };
+
   return (
     <DemoContext.Provider value={demo}>
+      {audience === "staff" ? (
       <div className="cpv-bar" role="note">
         <span className="cpv-tag">PREVIEW</span>
         <b>New client portal design</b>
@@ -175,7 +188,7 @@ export function CrmPreview({
         {context ? <span className="cpv-note cpv-context">{context}</span> : null}
         <span className="cpv-right">
           {/* The design doesn't say where a client meets its Setup wizard (a first sign-in); the preview opens it from here. */}
-          {view === "setup" ? <a href={hrefFor("pipeline")} onClick={(e) => { e.preventDefault(); go("pipeline"); }}>Close the Setup wizard</a> : <a href={`${hrefFor("setup")}&step=1`} onClick={(e) => { e.preventDefault(); setStep(1); setView("setup"); setContext(null); window.history.replaceState(null, "", `${hrefFor("setup")}&step=1`); window.scrollTo(0, 0); }}>Setup wizard</a>}
+          {view === "setup" ? <a href={hrefFor("pipeline")} onClick={(e) => { e.preventDefault(); go("pipeline"); }}>Close the Setup wizard</a> : <a href={`${hrefFor("setup")}&step=1`} onClick={(e) => { e.preventDefault(); openSetup(); }}>Setup wizard</a>}
           <select
             id="cpv-client"
             aria-label="Preview another client"
@@ -189,6 +202,7 @@ export function CrmPreview({
           <a href="/">Back to the OS</a>
         </span>
       </div>
+      ) : null}
 
       {view === "setup" ? (
         // The Setup wizard is a page of its own in the design: no sidebar, no chat button.
@@ -251,9 +265,17 @@ export function CrmPreview({
               <i>{initials(client.contactName ?? client.name)}</i>
               <span>
                 {client.contactName ?? client.name}
-                <small>{client.contactName ? client.name : "Portal preview"}</small>
+                <small>{client.contactName ? client.name : audience === "client" ? "Your portal" : "Portal preview"}</small>
               </span>
             </div>
+            {/* A client's own way back to the Setup wizard and out (the design leaves both to a first sign-in). */}
+            {audience === "client" ? (
+              <div className="cpv-uacts">
+                <button type="button" onClick={openSetup}>Setup wizard</button>
+                <span aria-hidden="true">·</span>
+                <button type="button" onClick={() => void signOut()} disabled={leaving}>{leaving ? "Signing out…" : "Sign out"}</button>
+              </div>
+            ) : null}
           </div>
         </nav>
 

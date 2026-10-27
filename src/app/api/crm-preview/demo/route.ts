@@ -1,8 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { adminEmails } from "@/lib/identity/admin";
-import { canSeeCrmPreview } from "@/lib/crm-preview/access";
+import { crmViewerOf } from "@/lib/crm-preview/viewer";
+import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
 import { admit, NO_STORE_HEADERS } from "@/lib/crm-preview/data-guard";
 import { DEMO_PORTAL_ID, demoAction, isDemoPortal, moveAgents, runDemoAction, type DemoResult } from "@/lib/crm-preview/demo";
 import { MAX_MOVE, marketAction, type MarketAction } from "@/lib/crm-preview/demo-market";
@@ -15,7 +14,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
  * (21 Oct; lib/crm-preview/demo.ts says what it writes and what it never sets
  * off).
  *
- * Owners and the named reviewers only, as the page: anyone else a bare 404.
+ * The reviewers, or the portal's own signed-in client (27 Oct), as the
+ * page: anyone else a bare 404.
  * Only the page's own fetch. Only the Demo Portal: any other client is
  * refused before anything is read — every other client in the preview stays
  * read-only. Every save is logged with who made it.
@@ -24,9 +24,10 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const me = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
-  if (!canSeeCrmPreview(me?.email, adminEmails())) return new NextResponse(null, { status: 404 });
-  const who = (me?.email ?? "").toLowerCase();
+  const viewer = await crmViewerOf(request);
+  if (!viewer) return new NextResponse(null, { status: 404 });
+  const who = viewer.email;
+  const role = guardRole(viewer);
 
   const body = (await request.json().catch(() => null)) as { client?: unknown; action?: unknown } | null;
   // A body that can't be read (a very large file is cut off on the way in) says so — not "only the Demo Portal" (22 Oct audit).
@@ -34,8 +35,10 @@ export async function POST(request: NextRequest) {
   if (!isDemoPortal(typeof body?.client === "string" ? body.client : null)) {
     return NextResponse.json({ error: "Only the Demo Portal can be changed from the preview. Every other portal here is read-only." }, { status: 403, headers: NO_STORE_HEADERS });
   }
+  // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
+  if (!mayOpenPortal(viewer, body.client as string)) return new NextResponse(null, { status: 404 });
 
-  const gate = admit(who, "staff", "demo", request.headers);
+  const gate = admit(who, role, "demo", request.headers);
   if (!gate.ok) {
     console.warn(JSON.stringify({ tag: "[crm-preview] refused", kind: "demo", who, reason: gate.reason }));
     return NextResponse.json({ error: gate.message }, { status: gate.status, headers: NO_STORE_HEADERS });

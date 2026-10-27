@@ -1,8 +1,7 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
-import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { adminEmails } from "@/lib/identity/admin";
-import { canSeeCrmPreview } from "@/lib/crm-preview/access";
+import { crmViewerOf } from "@/lib/crm-preview/viewer";
+import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
 import { answer, loadPortalChatData } from "@/lib/crm-preview/chat";
 import { parseTurns, type MarketTotals } from "@/lib/crm-preview/chat-tools";
 import { marketContext, marketReport } from "@/lib/crm-preview/market";
@@ -14,7 +13,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
  * The portal assistant (19 Oct). POST { client, messages: [{ role, text }] }
  * → { reply }.
  *
- * Owners and Eddy only, as the preview page: anyone else gets a bare 404.
+ * The reviewers, or the portal's own signed-in client (27 Oct), as the
+ * preview page: anyone else gets a bare 404.
  * Then the data guard (own page only, per-person limits). Then ONE portal's
  * data is loaded — the one named — and the assistant sees nothing else
  * (chat-tools.ts). It reads; it writes nothing anywhere.
@@ -25,9 +25,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MARKET_WAIT_MS = 25_000;
 
 export async function POST(request: NextRequest) {
-  const me = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
-  if (!canSeeCrmPreview(me?.email, adminEmails())) return new NextResponse(null, { status: 404 });
-  const who = me!.email.toLowerCase();
+  const viewer = await crmViewerOf(request);
+  if (!viewer) return new NextResponse(null, { status: 404 });
+  const who = viewer.email;
+  const role = guardRole(viewer);
 
   const body = (await request.json().catch(() => null)) as { client?: unknown; messages?: unknown } | null;
   const client = typeof body?.client === "string" ? body.client : "";
@@ -35,8 +36,10 @@ export async function POST(request: NextRequest) {
   if (!UUID.test(client) || !turns) {
     return NextResponse.json({ error: "A client and a conversation ending with your message are required." }, { status: 400, headers: NO_STORE_HEADERS });
   }
+  // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
+  if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
 
-  const gate = admit(who, "staff", "chat", request.headers);
+  const gate = admit(who, role, "chat", request.headers);
   if (!gate.ok) {
     console.warn(JSON.stringify({ at: "[crm-preview] refused", who, kind: "chat", client, reason: gate.reason }));
     return NextResponse.json({ error: gate.message }, { status: gate.status, headers: NO_STORE_HEADERS });
@@ -61,7 +64,7 @@ export async function POST(request: NextRequest) {
     const out = await answer(turns, data, marketTotals);
     // Counted once answered (22 Oct audit: a failed answer counted too).
     served(who, "chat", 0);
-    after(() => recordUse(createAdminSupabase(), { who, role: "staff", portalId: client, kind: "chat", rows: 0, now: new Date() }));
+    after(() => recordUse(createAdminSupabase(), { who, role, portalId: client, kind: "chat", rows: 0, now: new Date() }));
     console.info(JSON.stringify({ at: "[crm-preview] chat", who, client, turns: turns.length, tools: out.tools, tokens: out.tokens }));
     return NextResponse.json({ reply: out.reply }, { headers: NO_STORE_HEADERS });
   } catch (e) {

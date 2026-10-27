@@ -41,11 +41,11 @@ test("a current subscription whose customer is not counted as the client's is re
   assert.deepEqual(pickBillingCustomer({ clientId: "me", subscriptions: [sub("s", "cus_x", true)], customers: [cus("cus_y")] }), { ok: false, reason: "ambiguous" });
 });
 
-test("the route: Owners and Eddy only, a real click only, the client's own customer, Stripe's billing page only", () => {
+test("the route: the reviewers or the portal's own signed-in client only, a real click only, the client's own customer, Stripe's billing page only", () => {
   const route = readFileSync("src/app/api/crm-preview/billing/route.ts", "utf8");
-  const gate = route.indexOf("canSeeCrmPreview(");
-  assert.ok(gate > 0 && gate < route.indexOf("admit("), "who first");
-  assert.match(route, /admit\(who, "staff", "billing", request\.headers\)/);
+  const gate = route.indexOf("crmViewerOf(request)");
+  assert.ok(gate > 0 && gate < route.indexOf("mayOpenPortal(viewer, client)") && route.indexOf("mayOpenPortal(viewer, client)") < route.indexOf("admit("), "who first, then the portal is theirs");
+  assert.match(route, /admit\(who, role, "billing", request\.headers\)/);
   assert.ok(route.indexOf("admit(") < route.indexOf("getAccountBilling("), "the click check before any Stripe read");
   assert.ok(route.indexOf("pickBillingCustomer(") < route.indexOf("billingPortalUrl("), "the customer is checked before a page is made");
   assert.match(route, /pickBillingCustomer\(byClient\.get\(record\.id\), byClient\.values\(\)\)/, "every other client is checked too");

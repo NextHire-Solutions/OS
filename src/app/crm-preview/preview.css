@@ -296,3 +296,11 @@ html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }
 .cpv-shell .cpv-grip:hover { background: #e4e8ee; color: #1f2124; }
 .cpv-shell .cpv-grip:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 1px; color: #1f2124; }
 .cpv-shell [data-colh] { user-select: none; -webkit-user-select: none; }
+
+/* A signed-in client's own links under their name (27 Oct): the Setup wizard and Sign out. Quiet, aligned with the name; gone when the rail is collapsed. */
+.cpv-shell .cpv-uacts { display: flex; align-items: center; gap: 6px; padding: 0 10px 4px 46px; font-size: 12px; color: #9aa1ad; }
+.cpv-shell .cpv-uacts button { appearance: none; border: 0; background: none; padding: 2px 0; font: inherit; color: #555a64; cursor: pointer; }
+.cpv-shell .cpv-uacts button:hover { color: #1f2124; text-decoration: underline; text-underline-offset: 3px; }
+.cpv-shell .cpv-uacts button:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; border-radius: 3px; }
+.cpv-shell .cpv-uacts button:disabled { color: #9aa1ad; cursor: default; text-decoration: none; }
+.cpv-shell .crx-rail.crx-cl .cpv-uacts { display: none; }

@@ -264,7 +264,7 @@ test("the save path imports nothing that reaches outside the database, and the r
     const allowed = f.endsWith("demo.ts")
       // 23 Oct: Market's Move to reads the agent database (demo-market.ts, read-only) — still nothing that blocks, stops, posts or texts.
       ? ["zod", "@/lib/crm-preview/model", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market-model"]
-      : ["next/server", "@/lib/bs-auth", "@/lib/identity/admin", "@/lib/crm-preview/access", "@/lib/crm-preview/data-guard", "@/lib/crm-preview/demo", "@/lib/supabase/admin", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market", "@/lib/crm-preview/market-model"];
+      : ["next/server", "@/lib/crm-preview/viewer", "@/lib/crm-preview/viewer-rules", "@/lib/crm-preview/data-guard", "@/lib/crm-preview/demo", "@/lib/supabase/admin", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market", "@/lib/crm-preview/market-model"];
     // And what those read from: the agent database (read-only) and the Market helpers — never a blocklist, Slack, texts or Follow Up Boss.
     assert.deepEqual(imports.filter((i) => !allowed.includes(i)), [], `${f}: only the database and the preview's own checks — no blocklist, stop, Slack, texts, Follow Up Boss`);
     assert.doesNotMatch(src, /\bfetch\(|import\(/, `${f}: no outside requests, no dynamic imports`);
@@ -274,7 +274,8 @@ test("the save path imports nothing that reaches outside the database, and the r
   assert.match(dm, /const agentDb = \(\) => readOnly\(getCorofySupabase\(\)\);/, "the agent database only through the read-only wrapper");
   const route = read("src/app/api/crm-preview/demo/route.ts");
   const refuse = route.indexOf("isDemoPortal(");
-  assert.ok(refuse > route.indexOf("canSeeCrmPreview(") && refuse < route.indexOf("runDemoAction(") && refuse < route.indexOf("createAdminSupabase()"), "who first, then Demo-only, then the save");
+  const own = route.indexOf("mayOpenPortal(viewer, ");
+  assert.ok(route.indexOf("crmViewerOf(request)") > 0 && refuse > route.indexOf("crmViewerOf(request)") && own > refuse && own < route.indexOf("runDemoAction(") && refuse < route.indexOf("runDemoAction(") && refuse < route.indexOf("createAdminSupabase()"), "who first, then Demo-only, then the portal is theirs, then the save");
 });
 
 test("the Demo Portal's sample market: the design's own (C21 Results' MLSs) — and never anyone's lists as Prospects", () => {
