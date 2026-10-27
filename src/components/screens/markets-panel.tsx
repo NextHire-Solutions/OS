@@ -39,9 +39,11 @@ export type PickOption = { value: string; label?: string };
  * Backspace to take the last one off. Something not in the options can still be added (Enter); `isKnown` marks it.
  * The Markets section and Onboard a client use it for the same MLS and Area lists. Classes are `mkp-` (workspace.css).
  */
-export function ListField({ id, label, hint, values, onChange, placeholder, options, disabled, isKnown, addOnBlur = false, preferOptions = false }: {
+export function ListField({ id, label, hint, values, onChange, placeholder, options, disabled, isKnown, addOnBlur = false, preferOptions = false, listNote }: {
   id: string; label: string; hint?: string; values: string[]; onChange: (v: string[]) => void; placeholder: string;
   options: PickOption[]; disabled: boolean; isKnown?: (v: string) => boolean;
+  /** A line at the top of the list saying what it holds ("55 MLS boards we have agents for"), given how many show and whether a search is typed. */
+  listNote?: (shown: number, all: number, searching: boolean) => string;
   /** Typed text not picked from the list is added when the box is left (an area). */
   addOnBlur?: boolean;
   /** Enter takes the best match (an MLS board found by its name); otherwise Enter adds the text as typed (an area). */
@@ -55,11 +57,13 @@ export function ListField({ id, label, hint, values, onChange, placeholder, opti
   const input = useRef<HTMLInputElement>(null);
   const q = draft.trim().toLowerCase();
   const taken = new Set(values.map((v) => v.toLowerCase()));
-  // The code first when it starts with what was typed, then anything containing it; at most eight.
+  // Every option, the list scrolling (28 Oct: eight read as "only eight boards"); a code starting with what was typed comes first.
   const matches = options
     .filter((o) => !taken.has(o.value.toLowerCase()) && (!q || o.value.toLowerCase().includes(q) || (o.label ?? "").toLowerCase().includes(q)))
-    .sort((a, b) => Number(!a.value.toLowerCase().startsWith(q)) - Number(!b.value.toLowerCase().startsWith(q)))
-    .slice(0, 8);
+    .sort((a, b) => Number(!a.value.toLowerCase().startsWith(q)) - Number(!b.value.toLowerCase().startsWith(q)));
+  useEffect(() => {
+    if (nav) document.getElementById(`${id}-o${hi}`)?.scrollIntoView({ block: "nearest" });
+  }, [hi, nav, id]);
   const add = (raw: string) => {
     // A comma-separated paste adds several at once, as the sheet writes them; an option keeps its own spelling.
     const named = raw.split(",").map((part) => options.find((o) => o.value.toLowerCase() === part.trim().toLowerCase())?.value ?? part);
@@ -108,6 +112,7 @@ export function ListField({ id, label, hint, values, onChange, placeholder, opti
       </div>
       {showList ? (
         <ul className="mkp-list" role="listbox" id={`${id}-list`} aria-label={label}>
+          {listNote ? <li className="mkp-head" role="presentation">{listNote(matches.length, options.length, !!q)}</li> : null}
           {matches.map((o, i) => (
             <li key={o.value} id={`${id}-o${i}`} role="option" aria-selected={nav && i === hi} className={nav && i === hi ? "mkp-opt mkp-hi" : "mkp-opt"}
               onMouseDown={(e) => { e.preventDefault(); add(o.value); }} onMouseEnter={() => { setHi(i); setNav(true); }}>
@@ -217,10 +222,10 @@ export function MarketsPanel({ clientId, onChanged }: { clientId: string; onChan
   const known = (v: string) => !boards.length || boards.some((b) => b.value.toLowerCase() === v.toLowerCase());
   return (
     <div className="mk">
-      <ListField id="mk-mls" label="MLS boards" values={mls} onChange={setMls} placeholder="Search boards — e.g. BRIGHT, Virginia" options={boards} isKnown={known} preferOptions disabled={busy} />
+      <ListField id="mk-mls" label="MLS boards" values={mls} onChange={setMls} placeholder="Search boards — e.g. BRIGHT, Virginia" options={boards} isKnown={known} preferOptions listNote={(n, all, searching) => (searching ? `${n} of ${all} boards match` : `All ${all} MLS boards we have agents for — type a code, name or state`)} disabled={busy} />
       <MarketSize codes={mls} none="No MLS board — their new portal shows no market until one is added." />
       <div className="mkp-row">
-        <ListField id="mk-areas" label="Areas" hint="optional" values={areas} onChange={setAreas} placeholder="e.g. greater Richmond" options={data.suggestions.areas.map((v) => ({ value: v }))} addOnBlur disabled={busy} />
+        <ListField id="mk-areas" label="Areas" hint="optional" values={areas} onChange={setAreas} placeholder="e.g. greater Richmond" options={data.suggestions.areas.map((v) => ({ value: v }))} addOnBlur listNote={(n, all, searching) => (searching ? `${n} of ${all} areas match — or press Enter to add yours` : `${all} areas already used on clients — or type a new one`)} disabled={busy} />
         <label className="mkp">
           <span className="mkp-label">Markets<span className="mkp-hint">optional</span></span>
           <input className="mkp-box mkp-num" inputMode="numeric" placeholder="How many" aria-label="Markets" value={markets} disabled={busy}

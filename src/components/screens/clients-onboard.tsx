@@ -363,10 +363,10 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
             <div className="mkp-title">Market</div>
             <p className="mkp-note">Pick the MLS boards their agents are on. Their portal shows every salesperson on these boards; you can change them later on the client&rsquo;s Markets section.</p>
           </div>
-          <ListField id="ob-mls" label="MLS boards" values={mls} onChange={setMls} placeholder="Search boards — e.g. FMLS, Georgia" options={boardOptions} isKnown={knownBoard} preferOptions disabled={running} />
+          <ListField id="ob-mls" label="MLS boards" values={mls} onChange={setMls} placeholder="Search boards — e.g. FMLS, Georgia" options={boardOptions} isKnown={knownBoard} preferOptions listNote={(n, all, searching) => (searching ? `${n} of ${all} boards match` : `All ${all} MLS boards we have agents for — type a code, name or state`)} disabled={running} />
           <MarketSize codes={mls} none="No MLS board yet — their portal shows no market until one is added, here or later on the client's Markets section." />
           <div className="mkp-row">
-            <ListField id="ob-areas" label="Areas" hint="optional" values={areas} onChange={setAreas} placeholder="e.g. greater Atlanta" options={suggest.areas.map((v) => ({ value: v }))} addOnBlur disabled={running} />
+            <ListField id="ob-areas" label="Areas" hint="optional" values={areas} onChange={setAreas} placeholder="e.g. greater Atlanta" options={suggest.areas.map((v) => ({ value: v }))} addOnBlur listNote={(n, all, searching) => (searching ? `${n} of ${all} areas match — or press Enter to add yours` : `${all} areas already used on clients — or type a new one`)} disabled={running} />
             <label className="mkp">
               <span className="mkp-label">Markets<span className="mkp-hint">optional</span></span>
               <input className="mkp-box mkp-num" inputMode="numeric" placeholder="How many" aria-label="Markets" value={marketCount} disabled={running}

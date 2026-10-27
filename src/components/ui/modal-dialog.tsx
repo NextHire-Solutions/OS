@@ -93,6 +93,8 @@ export function ModalDialog({ open, onClose, width = 620, label, children }: Mod
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // An open list inside the dialog (a combobox showing its options) closes first — Escape there must not throw away the form (28 Oct).
+        if ((e.target as HTMLElement | null)?.getAttribute?.("aria-expanded") === "true") return;
         e.stopPropagation();
         closeRef.current();
         return;
