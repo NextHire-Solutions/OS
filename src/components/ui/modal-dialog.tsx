@@ -55,6 +55,18 @@ export function ModalDialog({ open, onClose, width = 620, label, children }: Mod
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  /*
+   * The latest onClose, so the effect below runs once per opening. A parent
+   * that passes a new function on every render (an inline arrow) used to re-run
+   * it on every keystroke: focus went back to the opener, then to the first
+   * field — typing in any other field lost its place after one letter (28 Oct,
+   * Portal logins' Name box).
+   */
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) return;
 
@@ -82,7 +94,7 @@ export function ModalDialog({ open, onClose, width = 620, label, children }: Mod
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        closeRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -115,7 +127,7 @@ export function ModalDialog({ open, onClose, width = 620, label, children }: Mod
       body.style.paddingRight = prevPad;
       restoreTo.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || !mounted) return null;
 
