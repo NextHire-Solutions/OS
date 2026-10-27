@@ -68,6 +68,18 @@ const mlsRows = ttlCache(async (): Promise<MlsRow[]> => {
   return (data ?? []) as MlsRow[];
 }, { ttlMs: 30 * 60_000, key: () => "mls", shared: "crm-preview-mls" });
 
+/**
+ * How many salespeople a list of MLS codes brings — Onboard a client's preview of the new portal's market before the
+ * client exists (28 Oct). The same rule as the portal's (resolveMls, marketScope), counted by the database — never
+ * loaded into memory, so a preview never pushes out a market someone is using. Kept 30 minutes per set; reads only.
+ */
+export const marketSizeFor = ttlCache(async (codes: readonly string[]): Promise<{ total: number; matched: Array<{ code: string; name: string }>; unmatched: string[] }> => {
+  const mls = resolveMls(codes, await mlsRows());
+  if (!mls.ids.length) return { total: 0, matched: [], unmatched: mls.unmatched };
+  const { total } = await search(marketScope(mls.ids), 1);
+  return { total, matched: mls.matched, unmatched: mls.unmatched };
+}, { ttlMs: 30 * 60_000, key: (codes) => [...codes].map((c) => c.trim().toUpperCase()).sort().join(","), shared: "crm-preview-market-size" });
+
 export interface MarketContext {
   portal: { id: string; name: string };
   client: { id: string; name: string } | null;

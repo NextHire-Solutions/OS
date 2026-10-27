@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cleanList, type Coverage } from "@/lib/clients/coverage";
 
@@ -31,37 +31,130 @@ interface Payload {
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-/** A list of values with chips and an Add box (`listId`: a datalist of suggestions). Onboard a client uses it too, for the same MLS and Area lists. */
-export function ListField({ label, values, onChange, placeholder, listId, disabled }: {
-  label: string; values: string[]; onChange: (v: string[]) => void; placeholder: string; listId: string; disabled: boolean;
+export type PickOption = { value: string; label?: string };
+
+/**
+ * A list of values as chips inside one box, with a searchable list under it (28 Oct, the user: "can we make this ui
+ * better"): type to search the options (an MLS board by code, name or state), arrow keys and Enter or a click to add,
+ * Backspace to take the last one off. Something not in the options can still be added (Enter); `isKnown` marks it.
+ * The Markets section and Onboard a client use it for the same MLS and Area lists. Classes are `mkp-` (workspace.css).
+ */
+export function ListField({ id, label, hint, values, onChange, placeholder, options, disabled, isKnown, addOnBlur = false, preferOptions = false }: {
+  id: string; label: string; hint?: string; values: string[]; onChange: (v: string[]) => void; placeholder: string;
+  options: PickOption[]; disabled: boolean; isKnown?: (v: string) => boolean;
+  /** Typed text not picked from the list is added when the box is left (an area). */
+  addOnBlur?: boolean;
+  /** Enter takes the best match (an MLS board found by its name); otherwise Enter adds the text as typed (an area). */
+  preferOptions?: boolean;
 }) {
   const [draft, setDraft] = useState("");
-  const add = () => {
-    // A comma-separated paste adds several at once, as the sheet writes them.
-    const next = cleanList([...values, ...draft.split(",")]);
-    onChange(next);
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  // Moved through the list with the arrow keys: Enter then takes the highlighted one.
+  const [nav, setNav] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const q = draft.trim().toLowerCase();
+  const taken = new Set(values.map((v) => v.toLowerCase()));
+  // The code first when it starts with what was typed, then anything containing it; at most eight.
+  const matches = options
+    .filter((o) => !taken.has(o.value.toLowerCase()) && (!q || o.value.toLowerCase().includes(q) || (o.label ?? "").toLowerCase().includes(q)))
+    .sort((a, b) => Number(!a.value.toLowerCase().startsWith(q)) - Number(!b.value.toLowerCase().startsWith(q)))
+    .slice(0, 8);
+  const add = (raw: string) => {
+    // A comma-separated paste adds several at once, as the sheet writes them; an option keeps its own spelling.
+    const named = raw.split(",").map((part) => options.find((o) => o.value.toLowerCase() === part.trim().toLowerCase())?.value ?? part);
+    onChange(cleanList([...values, ...named]));
     setDraft("");
+    setHi(0);
+    setNav(false);
   };
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" && matches.length) { e.preventDefault(); setOpen(true); setNav(true); setHi((h) => (nav ? Math.min(h + 1, matches.length - 1) : 0)); }
+    else if (e.key === "ArrowUp" && matches.length) { e.preventDefault(); setNav(true); setHi((h) => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      const exact = options.find((o) => o.value.toLowerCase() === q);
+      if (nav && matches[hi]) add(matches[hi].value);
+      else if (exact) add(exact.value);
+      else if (preferOptions && q && matches[0]) add(matches[0].value);
+      else if (draft.trim()) add(draft);
+    } else if (e.key === "Escape") { if (open) { e.stopPropagation(); setOpen(false); } }
+    else if (e.key === "Backspace" && !draft && values.length) onChange(values.slice(0, -1));
+  };
+  const showList = open && !disabled && (matches.length > 0 || !!q);
   return (
-    <div className="mk-field">
-      <span className="mk-label">{label}</span>
-      <div className="ds-multi">
-        {values.length === 0 ? <span className="ds-multi-empty">None recorded.</span> : null}
-        {values.map((v) => (
-          <span key={v} className="ds-chip on">
-            {v}
-            <button type="button" className="mk-x" aria-label={`Remove ${v}`} disabled={disabled}
-              onClick={() => onChange(values.filter((x) => x !== v))}>×</button>
-          </span>
-        ))}
+    <div className="mkp">
+      <label className="mkp-label" htmlFor={id}>{label}{hint ? <span className="mkp-hint">{hint}</span> : null}</label>
+      <div className={`mkp-box${disabled ? " mkp-off" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); input.current?.focus(); } }}>
+        {values.map((v) => {
+          const known = !isKnown || isKnown(v);
+          return (
+            <span key={v} className={known ? "mkp-chip" : "mkp-chip mkp-unknown"} title={known ? undefined : "Not a board we have agents for — it brings no one"}>
+              {v}
+              <button type="button" aria-label={`Remove ${v}`} disabled={disabled} onClick={() => onChange(values.filter((x) => x !== v))}>×</button>
+            </span>
+          );
+        })}
+        <input
+          ref={input} id={id} className="mkp-in" aria-label={`Add ${label}`} placeholder={values.length ? "Add another…" : placeholder}
+          value={draft} disabled={disabled} autoComplete="off"
+          role="combobox" aria-expanded={showList} aria-controls={`${id}-list`} aria-autocomplete="list"
+          aria-activedescendant={showList && nav && matches[hi] ? `${id}-o${hi}` : undefined}
+          onFocus={() => setOpen(true)}
+          onBlur={() => { setOpen(false); if (addOnBlur && draft.trim()) add(draft); }}
+          onChange={(e) => { setDraft(e.target.value); setOpen(true); setHi(0); setNav(false); }}
+          onKeyDown={onKey}
+        />
       </div>
-      <div className="mk-form">
-        <input className="mk-inp" list={listId} placeholder={placeholder} aria-label={`Add ${label}`} value={draft} disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) { e.preventDefault(); add(); } }} />
-        <button type="button" className="mk-btn" disabled={disabled || !draft.trim()} onClick={add}>Add</button>
-      </div>
+      {showList ? (
+        <ul className="mkp-list" role="listbox" id={`${id}-list`} aria-label={label}>
+          {matches.map((o, i) => (
+            <li key={o.value} id={`${id}-o${i}`} role="option" aria-selected={nav && i === hi} className={nav && i === hi ? "mkp-opt mkp-hi" : "mkp-opt"}
+              onMouseDown={(e) => { e.preventDefault(); add(o.value); }} onMouseEnter={() => { setHi(i); setNav(true); }}>
+              <b>{o.value}</b>{o.label ? <span>{o.label}</span> : null}
+            </li>
+          ))}
+          {q && !options.some((o) => o.value.toLowerCase() === q) ? (
+            <li className="mkp-opt mkp-free" onMouseDown={(e) => { e.preventDefault(); add(draft); }}>
+              Add &ldquo;{draft.trim()}&rdquo;{isKnown && !isKnown(draft.trim()) ? <span>not a board we have agents for</span> : null}
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * How many salespeople these MLS boards bring — the market the client's new portal shows — counted as the list
+ * changes (the markets route's ?size=, the portal's own rule). `none`: what to say with no board at all.
+ */
+export function MarketSize({ codes, none }: { codes: string[]; none: string }) {
+  const [s, setS] = useState<{ state: "counting" | "done" | "error"; total?: number; matched?: string[]; unmatched?: string[] }>({ state: "counting" });
+  const key = codes.join(",");
+  useEffect(() => {
+    if (!key) return;
+    const ctrl = new AbortController();
+    setS({ state: "counting" });
+    const t = setTimeout(() => {
+      fetch(`/api/workspace/clients/markets?size=${encodeURIComponent(key)}`, { signal: ctrl.signal, cache: "no-store" })
+        .then(async (r) => {
+          const j = await r.json();
+          if (!r.ok) throw new Error(j?.error ?? `HTTP ${r.status}`);
+          setS({ state: "done", total: Number(j.total) || 0, matched: (j.matched ?? []).map((m: { code: string }) => m.code), unmatched: j.unmatched ?? [] });
+        })
+        .catch((e) => { if (e?.name !== "AbortError") setS({ state: "error" }); });
+    }, 350);
+    return () => { clearTimeout(t); ctrl.abort(); };
+  }, [key]);
+  if (!key) return <p className="mkp-note mkp-warn">{none}</p>;
+  if (s.state === "counting") return <p className="mkp-note" role="status">Counting the salespeople on {codes.join(", ")}…</p>;
+  if (s.state === "error") return <p className="mkp-note">Couldn&rsquo;t count the market just now — the boards save either way.</p>;
+  return (
+    <p className="mkp-note" role="status" data-market-size={s.total}>
+      {s.total ? <><b>{s.total.toLocaleString("en-US")}</b> salespeople on {s.matched?.join(", ")} — the market their portal shows.</> : <>No salespeople on {codes.length === 1 ? "this board" : "these boards"} in our agent database.</>}
+      {s.unmatched?.length ? <span className="mkp-warn"> Not a board we have agents for: {s.unmatched.join(", ")}.</span> : null}
+    </p>
   );
 }
 
@@ -120,20 +213,20 @@ export function MarketsPanel({ clientId, onChanged }: { clientId: string; onChan
     }
   }
 
+  const boards = data.boards.map((b) => ({ value: b.code, label: b.label }));
+  const known = (v: string) => !boards.length || boards.some((b) => b.value.toLowerCase() === v.toLowerCase());
   return (
     <div className="mk">
-      <datalist id="mk-mlses">
-        {data.boards.map((b) => <option key={b.code} value={b.code}>{b.label}</option>)}
-      </datalist>
-      <datalist id="mk-areas">{data.suggestions.areas.map((v) => <option key={v} value={v} />)}</datalist>
-
-      <div className="mk-field">
-        <span className="mk-label">Markets</span>
-        <input className="mk-inp mk-num" inputMode="numeric" placeholder="How many" aria-label="Markets" value={markets} disabled={busy}
-          onChange={(e) => setMarkets(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} />
+      <ListField id="mk-mls" label="MLS boards" values={mls} onChange={setMls} placeholder="Search boards — e.g. BRIGHT, Virginia" options={boards} isKnown={known} preferOptions disabled={busy} />
+      <MarketSize codes={mls} none="No MLS board — their new portal shows no market until one is added." />
+      <div className="mkp-row">
+        <ListField id="mk-areas" label="Areas" hint="optional" values={areas} onChange={setAreas} placeholder="e.g. greater Richmond" options={data.suggestions.areas.map((v) => ({ value: v }))} addOnBlur disabled={busy} />
+        <label className="mkp">
+          <span className="mkp-label">Markets<span className="mkp-hint">optional</span></span>
+          <input className="mkp-box mkp-num" inputMode="numeric" placeholder="How many" aria-label="Markets" value={markets} disabled={busy}
+            onChange={(e) => setMarkets(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} />
+        </label>
       </div>
-      <ListField label="MLS" values={mls} onChange={setMls} placeholder="Add an MLS board, e.g. BRIGHT" listId="mk-mlses" disabled={busy} />
-      <ListField label="Area" values={areas} onChange={setAreas} placeholder="Add an area, e.g. greater Richmond" listId="mk-areas" disabled={busy} />
 
       {/* What the lead builder pulls agents from: the MLS codes the Database knows. */}
       {c.mls.length && data.leadBuilding ? (

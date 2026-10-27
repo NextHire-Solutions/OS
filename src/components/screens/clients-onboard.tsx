@@ -10,7 +10,7 @@ import {
   type BillingInterval, type Plan,
 } from "@/lib/clients/onboard-plan";
 import { ModalDialog } from "@/components/ui/modal-dialog";
-import { ListField } from "@/components/screens/markets-panel";
+import { ListField, MarketSize } from "@/components/screens/markets-panel";
 import { easternDay, OFFERED_PRODUCTS, PAY_PER_LEAD_PRODUCTS } from "@/lib/clients/usage-billing/model";
 import { PLAN_DEFAULT_TARGET } from "@/lib/tools/client-health/types";
 
@@ -110,8 +110,8 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
       .catch(() => {});
     return () => ctrl.abort();
   }, []);
-  const knownBoard = (code: string) => suggest.boards.some((b) => b.code.toLowerCase() === code.toLowerCase());
-  const unknownBoards = suggest.boards.length ? mls.filter((c) => !knownBoard(c)) : [];
+  const boardOptions = suggest.boards.map((b) => ({ value: b.code, label: b.label }));
+  const knownBoard = (code: string) => !suggest.boards.length || suggest.boards.some((b) => b.code.toLowerCase() === code.toLowerCase());
 
   const [failed, setFailed] = useState("");
   /*
@@ -357,31 +357,23 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
           ) : null}
         </div>
 
-        <div className="mk" style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 12, gap: 4 }} data-onboard-markets="">
-          <div style={{ marginBottom: 8 }}>
-            <span style={LABEL}>Markets, MLS &amp; Area</span>
-            <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3, lineHeight: 1.55 }}>
-              Their portal&rsquo;s market is every salesperson on these MLS boards. Saved to the client&rsquo;s Markets section, where they can be changed later.
-            </div>
+        {/* Their market (28 Oct): the boards first — they decide who the portal shows — with the count as they're picked; areas and how many, optional, under. */}
+        <section className="mkp-section" data-onboard-markets="" aria-label="Market">
+          <div>
+            <div className="mkp-title">Market</div>
+            <p className="mkp-note">Pick the MLS boards their agents are on. Their portal shows every salesperson on these boards; you can change them later on the client&rsquo;s Markets section.</p>
           </div>
-          <datalist id="ob-mlses">{suggest.boards.map((b) => <option key={b.code} value={b.code}>{b.label}</option>)}</datalist>
-          <datalist id="ob-areas">{suggest.areas.map((v) => <option key={v} value={v} />)}</datalist>
-          <div className="mk-field">
-            <span className="mk-label">Markets</span>
-            <input className="mk-inp mk-num" inputMode="numeric" placeholder="How many" aria-label="Markets" value={marketCount} disabled={running}
-              onChange={(e) => setMarketCount(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} />
+          <ListField id="ob-mls" label="MLS boards" values={mls} onChange={setMls} placeholder="Search boards — e.g. FMLS, Georgia" options={boardOptions} isKnown={knownBoard} preferOptions disabled={running} />
+          <MarketSize codes={mls} none="No MLS board yet — their portal shows no market until one is added, here or later on the client's Markets section." />
+          <div className="mkp-row">
+            <ListField id="ob-areas" label="Areas" hint="optional" values={areas} onChange={setAreas} placeholder="e.g. greater Atlanta" options={suggest.areas.map((v) => ({ value: v }))} addOnBlur disabled={running} />
+            <label className="mkp">
+              <span className="mkp-label">Markets<span className="mkp-hint">optional</span></span>
+              <input className="mkp-box mkp-num" inputMode="numeric" placeholder="How many" aria-label="Markets" value={marketCount} disabled={running}
+                onChange={(e) => setMarketCount(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} />
+            </label>
           </div>
-          <ListField label="MLS" values={mls} onChange={setMls} placeholder="Add an MLS board, e.g. FMLS" listId="ob-mlses" disabled={running} />
-          {unknownBoards.length ? (
-            <p className="mk-err" style={{ marginTop: -6, marginBottom: 8 }}>Not an MLS board the Database knows, so it brings no agents: {unknownBoards.join(", ")}. Pick from the list.</p>
-          ) : null}
-          <ListField label="Area" values={areas} onChange={setAreas} placeholder="Add an area, e.g. greater Atlanta" listId="ob-areas" disabled={running} />
-          {mls.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 12, color: "var(--amber, #b54708)" }}>
-              No MLS board yet — their portal won&rsquo;t show a market until one is added, here or later on the client&rsquo;s Markets section.
-            </p>
-          ) : null}
-        </div>
+        </section>
 
         {billing ? (
           <label style={FIELD}>

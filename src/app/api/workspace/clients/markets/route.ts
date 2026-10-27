@@ -4,6 +4,7 @@ import { CoverageError, getCoverage, listCoverage, setCoverage } from "@/lib/cli
 import { clientsChanged } from "@/lib/clients/after-change";
 import { deriveCodesFromList } from "@/lib/clients/markets-mls";
 import { syncDatabaseMls } from "@/lib/clients/markets-mls-sync";
+import { marketSizeFor } from "@/lib/crm-preview/market";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 
 /*
@@ -13,6 +14,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
  *
  *   GET  ?clientId=…                              the three, plus board and area suggestions
  *   GET  ?boards=1                                the suggestions alone (Onboard a client, before the client exists)
+ *   GET  ?size=FMLS,GAMLS                         how many salespeople those boards bring (the new portal's market)
  *   PUT  { clientId, markets?, mls?, areas? }     change any of them
  *
  * After a change to MLS, the Database row's codes are rewritten from it
@@ -42,6 +44,17 @@ const fail = (e: unknown) =>
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const clientId = params.get("clientId");
+  // How many salespeople these boards bring — the new portal's market, before the client exists.
+  const size = params.get("size");
+  if (size !== null) {
+    const codes = [...new Set(size.split(",").map((c) => c.trim()).filter((c) => c && c.length <= 40))].slice(0, 20);
+    if (!codes.length) return NextResponse.json({ total: 0, matched: [], unmatched: [] });
+    try {
+      return NextResponse.json(await marketSizeFor(codes));
+    } catch (e) {
+      return fail(e);
+    }
+  }
   if (!clientId && params.get("boards") === "1") {
     try {
       const [boards, all] = await Promise.all([mlsBoards(), listCoverage()]);

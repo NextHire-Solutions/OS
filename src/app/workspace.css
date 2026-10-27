@@ -1703,6 +1703,40 @@ body.rail-collapsed .acc-btn:focus-visible::after{opacity:1;transform:translateY
 .mk-x { border: 0; background: none; color: inherit; font: inherit; padding: 0 0 0 2px; cursor: pointer; opacity: .7; }
 .mk-x:hover { opacity: 1; }
 
+/* The MLS / Area picker (markets-panel.tsx ListField, 28 Oct — "can we make this ui better"): chips inside one box,
+   a searchable list under it, and the market's count (MarketSize). Onboard a client and the Markets section. */
+.mkp-section { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.mkp-title { font-size: 13.5px; font-weight: 650; color: var(--ink); }
+.mkp-note { margin: 3px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.mkp-note b { color: var(--ink); font-weight: 650; }
+.mkp-warn { color: var(--amber); }
+.mkp { position: relative; display: grid; gap: 6px; min-width: 0; }
+.mkp-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.mkp-hint { margin-left: 6px; font-weight: 500; opacity: .75; }
+.mkp-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 40px; padding: 5px 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; cursor: text; font: inherit; font-size: 13px; color: var(--ink); }
+.mkp-box:focus-within, input.mkp-box:focus { outline: 0; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(1, 101, 254, .14); }
+.mkp-off { opacity: .6; }
+.mkp-num { display: block; width: 100%; padding: 0 10px; }
+.mkp-num::placeholder, .mkp-in::placeholder { color: var(--muted); }
+.mkp-chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 3px 0 10px; border-radius: 999px;
+  background: rgba(1, 101, 254, .09); color: var(--blue); font-size: 12.5px; font-weight: 600; }
+.mkp-chip button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 999px;
+  background: none; color: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.mkp-chip button:hover { background: rgba(1, 101, 254, .14); }
+.mkp-chip.mkp-unknown { background: var(--amber-pale); color: var(--amber); }
+.mkp-chip.mkp-unknown button:hover { background: rgba(180, 83, 9, .12); }
+.mkp-in { flex: 1; min-width: 140px; height: 28px; padding: 0 2px; border: 0; outline: 0; background: transparent; font: inherit; font-size: 13px; color: var(--ink); }
+.mkp-list { position: absolute; left: 0; right: 0; top: 100%; z-index: 6; margin: 4px 0 0; padding: 4px; list-style: none; max-height: 264px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(16, 20, 28, .14); }
+.mkp-opt { display: flex; align-items: baseline; gap: 10px; padding: 7px 9px; border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--ink); }
+.mkp-opt b { flex: none; min-width: 68px; font-weight: 650; }
+.mkp-opt span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
+.mkp-opt:hover, .mkp-hi { background: var(--inset); }
+.mkp-free span { color: var(--amber); }
+.mkp-row { display: grid; grid-template-columns: minmax(0, 1fr) 128px; gap: 12px; align-items: start; }
+@media (max-width: 480px) { .mkp-row { grid-template-columns: minmax(0, 1fr); } }
+
 /* The notification bell (6 Oct): failed payments and portal blocks, admins only. */
 .nb{position:relative;margin-right:10px}
 .nb-btn{position:relative;width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;cursor:pointer;color:var(--ink-2)}
