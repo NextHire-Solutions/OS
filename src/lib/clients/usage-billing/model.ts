@@ -53,13 +53,20 @@ export const DEFAULT_LEAD_SOURCE: LeadSource = "handoffs";
  * is always its (lead_source, price_cents). "Per lead" follows
  * DEFAULT_LEAD_SOURCE until the client says what a lead is.
  */
-export const PAY_PER_LEAD_PRODUCTS: ReadonlyArray<{ id: string; label: string; leadSource: LeadSource; priceCents: number }> = [
-  { id: "lead-150", label: "$150 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 15_000 },
-  { id: "lead-250", label: "$250 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 25_000 },
-  { id: "call-500", label: "$500 per call", leadSource: "calls", priceCents: 50_000 },
-  { id: "call-1000", label: "$1,000 per call", leadSource: "calls", priceCents: 100_000 },
-  { id: "intro-5000", label: "$5,000 per introduction", leadSource: "introductions", priceCents: 500_000 },
+export const PAY_PER_LEAD_PRODUCTS: ReadonlyArray<{ id: string; label: string; leadSource: LeadSource; priceCents: number; offered: boolean }> = [
+  { id: "lead-150", label: "$150 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 15_000, offered: true },
+  { id: "lead-250", label: "$250 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 25_000, offered: true },
+  /*
+   * Not offered for now (Eddy, Slack, 27 Oct: "No need to set up 1. and 2. for
+   * now. Pay per lead are each interested replies") — kept so their labels
+   * still read right, out of every dropdown.
+   */
+  { id: "call-500", label: "$500 per call", leadSource: "calls", priceCents: 50_000, offered: false },
+  { id: "call-1000", label: "$1,000 per call", leadSource: "calls", priceCents: 100_000, offered: false },
+  { id: "intro-5000", label: "$5,000 per introduction", leadSource: "introductions", priceCents: 500_000, offered: false },
 ];
+/** What the dropdowns offer: per lead, a lead being each Interested reply handed over (Eddy and Amy, 27 Oct). */
+export const OFFERED_PRODUCTS = PAY_PER_LEAD_PRODUCTS.filter((p) => p.offered);
 
 /** "$500 per call" — the product's own words, or the same shape for a custom price. */
 export function productLabel(leadSource: LeadSource, priceCents: number): string {

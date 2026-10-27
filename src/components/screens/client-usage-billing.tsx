@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { addDays, LEAD_SOURCE_UNIT, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type LeadSource } from "@/lib/clients/usage-billing/model";
+import { addDays, LEAD_SOURCE_UNIT, OFFERED_PRODUCTS, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type LeadSource } from "@/lib/clients/usage-billing/model";
 
 /*
  * PAY PER LEAD — the TEST panel on a client's Billing tab (26 Oct 2026).
@@ -169,7 +169,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       {!view ? (error ? null : <p className="rx-hint" role="status">Loading…</p>) : (
         <>
           {/* --------------------------------------------------- settings */}
-          {/* The product first — the same five offered when a client is onboarded — or a custom price and what is counted. */}
+          {/* The product first — the same ones offered when a client is onboarded (a saved one no longer offered still shows) — or a custom price. */}
           <div className="rb-tools ub-settings">
             <label className="rb-field ub-product"><span>Product</span>
               <select className="ds-input" value={product} onChange={(e) => {
@@ -177,7 +177,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
                 setCustom(!p);
                 if (p) setForm({ ...form, price: String(p.priceCents / 100), leadSource: p.leadSource });
               }}>
-                {PAY_PER_LEAD_PRODUCTS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                {PAY_PER_LEAD_PRODUCTS.filter((p) => p.offered || p.id === product).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 <option value="custom">Custom price…</option>
               </select>
             </label>

@@ -168,6 +168,9 @@ test("the onboarding products: a price and what is counted, and their own words"
     ["$5,000 per introduction", "introductions", 500_000],
   ]);
   for (const p of PAY_PER_LEAD_PRODUCTS) assert.equal(productLabel(p.leadSource, p.priceCents), p.label);
+  const { OFFERED_PRODUCTS } = await import("./model.ts");
+  assert.deepEqual(OFFERED_PRODUCTS.map((p) => p.label), ["$150 per lead", "$250 per lead"], "per call and per introduction not offered for now (Eddy, 27 Oct)");
+  assert.ok(OFFERED_PRODUCTS.every((p) => p.leadSource === "handoffs"), "a lead is each Interested reply handed over");
   assert.equal(productLabel("calls", 75_050), "$750.50 per call", "a custom price reads the same way");
   for (const p of PAY_PER_LEAD_PRODUCTS) {
     const r = parseSettingsInput({ priceCents: p.priceCents, leadSource: p.leadSource, everyDays: 14, anchorDate: "2026-10-26" });

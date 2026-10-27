@@ -10,7 +10,7 @@ import {
   type BillingInterval, type Plan,
 } from "@/lib/clients/onboard-plan";
 import { ModalDialog } from "@/components/ui/modal-dialog";
-import { easternDay, PAY_PER_LEAD_PRODUCTS } from "@/lib/clients/usage-billing/model";
+import { easternDay, OFFERED_PRODUCTS, PAY_PER_LEAD_PRODUCTS } from "@/lib/clients/usage-billing/model";
 import { PLAN_DEFAULT_TARGET } from "@/lib/tools/client-health/types";
 
 /*
@@ -309,7 +309,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
             <span style={LABEL}>Pay per lead — test only</span>
             <select className="inp" value={product} onChange={(e) => setProduct(e.target.value)} aria-label="Pay per lead product">
               <option value="">None — subscription as above</option>
-              {PAY_PER_LEAD_PRODUCTS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              {OFFERED_PRODUCTS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
             <span className="mut" style={{ fontSize: 12 }}>
               {product
