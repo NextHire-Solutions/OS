@@ -1,9 +1,9 @@
 "use client";
 
 /*
- * The redesign's frame — the bar that says this is a preview, the design's
- * sidebar, and whichever page is open. See src/app/crm-preview/page.tsx for
- * who may see it and why it is read-only.
+ * The new client portal's frame — for staff, the bar that says whose portal it
+ * is and whether changes are real; the design's sidebar, and whichever page is
+ * open. See src/app/crm-preview/page.tsx for who may see and change it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -65,6 +65,7 @@ export function CrmPreview({
   allStages,
   offer,
   editable = false,
+  locked = null,
   furthest,
   entries,
   agents,
@@ -84,9 +85,12 @@ export function CrmPreview({
   offer?: PortalOffer | null;
   /**
    * This viewer's buttons save (viewer-rules.ts mayWritePortal, decided on the server and checked again by the save
-   * route on every save): the Demo for its viewers; a real portal for its own signed-in client, once open to them.
+   * route on every save): the Demo for its viewers; a real portal for its own signed-in client, once open to them, and
+   * for staff (29 Oct) unless it is `locked`.
    */
   editable?: boolean;
+  /** Staff on a real portal that can't be changed right now (switched off, held): why — the bar and read-only clicks say it. */
+  locked?: string | null;
   /** For agents in Nurture / Not a Fit / No Response: the furthest forward stage on record. */
   furthest: Record<string, string>;
   entries: PipelineEntry[];
@@ -138,7 +142,7 @@ export function CrmPreview({
     },
     [editable, client.demo, client.id, flash, router],
   );
-  const demo = useMemo(() => ({ live: editable, demo: client.demo, save, say: flash }), [editable, client.demo, save, flash]);
+  const demo = useMemo(() => ({ live: editable, demo: client.demo, staff: audience === "staff", save, say: flash }), [editable, client.demo, audience, save, flash]);
   /*
    * Every control that would change something carries data-ro (k.ts RO): it is
    * drawn as the design draws it, and its click stops here — before any
@@ -151,7 +155,7 @@ export function CrmPreview({
     e.stopPropagation();
     // A control that is off everywhere says why (k.ts off); otherwise: read-only to staff on a real portal, or not built yet.
     const reason = ro.getAttribute("data-ro-reason");
-    flash(reason && editable ? reason : editable ? (client.demo ? "Not built yet on the Demo Portal — this one is drawn only." : "This isn't available yet.") : `Read-only preview — nothing here changes ${client.name}'s portal.`);
+    flash(reason && editable ? reason : editable ? (client.demo ? "Not built yet on the Demo Portal — this one is drawn only." : "This isn't available yet.") : locked ? `${locked}.` : `Read-only preview — nothing here changes ${client.name}'s portal.`);
   };
   // The server's clock, so the first draw in the browser matches the server's.
   const today = useMemo(() => new Date(now), [now]);
@@ -184,10 +188,15 @@ export function CrmPreview({
     <DemoContext.Provider value={demo}>
       {audience === "staff" ? (
       <div className="cpv-bar" role="note">
-        <span className="cpv-tag">PREVIEW</span>
+        {/* A real client's portal is LIVE to staff (29 Oct): what they change is the client's own, and the bar says so. */}
+        <span className={!client.demo && editable ? "cpv-tag cpv-tag-live" : "cpv-tag"}>{!client.demo && editable ? "LIVE" : "PREVIEW"}</span>
         <b>New client portal design</b>
         {client.demo ? (
           <span className="cpv-note">Working copy · private · saves change the Demo Portal&apos;s own records only — nothing goes to campaigns, Slack, texts or Follow Up Boss</span>
+        ) : editable ? (
+          <span className="cpv-note cpv-note-live">Changes here are real — they change {client.name}&apos;s portal, as if the client made them (their current portal shows them too, and Slack, blocklists, introductions and Follow Up Boss follow)</span>
+        ) : locked ? (
+          <span className="cpv-note">Read-only · {locked}</span>
         ) : (
           <span className="cpv-note">Read-only · private: not visible to clients or the team · {client.name}&apos;s live portal is unchanged</span>
         )}

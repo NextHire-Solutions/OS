@@ -58,7 +58,7 @@ let agentDb: AgentRow[] = [];
 let matching: { ids: string[]; total: number } = { ids: [], total: 0 };
 let fubOutcome: unknown = { ok: true, mode: "created", personId: "p1" };
 
-let runPortalAction: (portalId: string, action: unknown, who: string) => Promise<DemoResult>;
+let runPortalAction: (portalId: string, action: unknown, who: string, role?: "client" | "staff") => Promise<DemoResult>;
 
 if (canMock) {
   for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, m, () => {});
@@ -704,4 +704,17 @@ test("'Delete selected' is the current portal's bulk delete even for one row (no
   okResult(await run({ type: "agent.delete", ids: [another.id] }));
   await settle();
   assert.equal((sentOf("slack.agent")[0]?.args[0] as { op: string } | undefined)?.op, "removed");
+});
+
+test("Staff on a real portal (29 Oct): the same save, in their own name — their Market use counted as staff's, never a client's", { skip }, async () => {
+  seed();
+  agentDb = [agent("a1", "Jane Agent", ["jane@kw.test", null])];
+  okResult(await runPortalAction(PORTAL, { type: "market.move", ids: ["a1"], to: "My Agents" }, "eddy@brokerstaffer.com", "staff"));
+  await settle();
+  const u = sentOf("usage")[0]?.args[1] as Record<string, unknown> | undefined;
+  assert.deepEqual([u?.who, u?.role, u?.kind, u?.rows], ["eddy@brokerstaffer.com", "staff", "market", 1]);
+  assert.equal((sentOf("moveAlert")[0]?.args[1] as { who?: string } | undefined)?.who, "eddy@brokerstaffer.com", "the bell names who moved them");
+  // Any other save: the current portal's own, exactly as the client's.
+  okResult(await runPortalAction(PORTAL, { type: "agent.add", name: "Staff Added", email: "staff.added@x.test", phone: null, license: null }, "eddy@brokerstaffer.com", "staff"));
+  assert.ok(fake.rows("client_agents").some((x) => x.client_id === PORTAL && x.name === "Staff Added"));
 });

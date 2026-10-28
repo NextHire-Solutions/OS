@@ -14,6 +14,9 @@ import { ListField, MarketSize } from "@/components/screens/markets-panel";
 import { easternDay, OFFERED_PRODUCTS, PAY_PER_LEAD_PRODUCTS } from "@/lib/clients/usage-billing/model";
 import { PLAN_DEFAULT_TARGET } from "@/lib/tools/client-health/types";
 
+/* An address as the sign-in list takes one (portal-login/login.ts isEmail checks it again on the server). */
+const SIGN_IN_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /*
  * Onboard a client — the form, and the plan it produces.
  *
@@ -92,6 +95,16 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
   const setExtra = (i: number, patch: Partial<(typeof extras)[number]>) =>
     setExtras((cur) => cur.map((p, n) => (n === i ? { ...p, ...patch } : p)));
   /*
+   * Who can sign in to their portal (29 Oct, the user: "when we onboard a new client it should also ask for emails
+   * from which client can login" — optional, with a reminder). Added after the run to the new portal's Portal logins,
+   * through that list's own save (the same Client Portals switch check). Each person signs in with their own address.
+   */
+  const [signIn, setSignIn] = useState("");
+  const signInEmails = [...new Set(signIn.split(/[\s,;]+/).map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const badSignIn = signInEmails.filter((e) => !SIGN_IN_EMAIL.test(e));
+  // The introduction contacts below, offered as a one-click start (only when that section is ticked).
+  const contactEmails = macroOn ? [contactEmail, ...extras.slice(0, extraSlots).map((p) => p.email)].map((e) => e.trim().toLowerCase()).filter((e) => SIGN_IN_EMAIL.test(e)) : [];
+  /*
    * Markets, MLS and Area (28 Oct, the user: "we cannot select markets in this
    * onboarding form … then how we will show them their market agents?"). Saved
    * after the run to the client's Markets section — the one editor of these —
@@ -143,6 +156,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
     stripe?: { ok: boolean; text: string } | null;
     usage?: { ok: boolean; text: string } | null;
     markets?: { ok: boolean; text: string } | null;
+    signIns?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   } | null>(null);
 
@@ -161,6 +175,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
    */
   const canOnboard =
     name.trim().length > 0 &&
+    badSignIn.length === 0 &&
     (!macroOn || (fullName.trim().length > 0 && role.trim().length > 0)) &&
     (!stripeSub.trim() || SUBSCRIPTION_ID.test(stripeSub.trim()));
 
@@ -244,6 +259,55 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
       }
 
       /*
+       * Who can sign in to their portal — through the portal's own Portal logins save, one address at a time. Never
+       * fatal, as Markets; without any, the result says no one can sign in yet.
+       */
+      let signIns: { ok: boolean; text: string } | null = null;
+      const portalId = (body?.legs as Array<{ leg: string; status: string; remoteId?: string | null }> | undefined)?.find((l) => l.leg === "master_inbox" && l.status === "done")?.remoteId ?? null;
+      if (madeBody.created === false) {
+        signIns = signInEmails.length ? { ok: false, text: `Sign-in emails NOT added: ${name} already existed — add them on its portal's Portal logins.` } : null;
+      } else if (!signInEmails.length) {
+        signIns = { ok: false, text: "No sign-in emails — no one can sign in to their portal until you add them on its Portal logins." };
+      } else if (!portalId) {
+        signIns = { ok: false, text: "Sign-in emails NOT added: the portal was not created — add them on its Portal logins once it is." };
+      } else {
+        const added: string[] = [];
+        const missed: string[] = [];
+        for (const email of signInEmails) {
+          try {
+            const r = await fetch("/api/tools/master-inbox/portals/logins", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ portal: portalId, email }),
+            });
+            const rb = await r.json().catch(() => null);
+            if (r.ok || r.status === 409) added.push(email);
+            else missed.push(`${email} (${r.status === 403 ? "needs the Client Portals switch" : rb?.error ?? `HTTP ${r.status}`})`);
+          } catch (e) {
+            missed.push(`${email} (${e instanceof Error ? e.message : String(e)})`);
+          }
+        }
+        // Read the list back: only an address that is on it counts as added (a 409 can also mean the table is missing).
+        if (added.length) {
+          try {
+            const lr = await fetch(`/api/tools/master-inbox/portals/logins?portal=${encodeURIComponent(portalId)}`, { cache: "no-store" });
+            if (!lr.ok) throw new Error(`HTTP ${lr.status}`);
+            const lb = (await lr.json().catch(() => null)) as { logins?: Array<{ email: string }> } | null;
+            const on = new Set((lb?.logins ?? []).map((l) => l.email.toLowerCase()));
+            for (const email of added.filter((e) => !on.has(e))) {
+              added.splice(added.indexOf(email), 1);
+              missed.push(`${email} (not on the list after saving)`);
+            }
+          } catch (e) {
+            missed.push(...added.splice(0).map((email) => `${email} (could not check the list: ${e instanceof Error ? e.message : String(e)})`));
+          }
+        }
+        signIns = missed.length
+          ? { ok: false, text: `Sign-in emails: ${added.length ? `added ${added.join(", ")}; ` : ""}NOT added ${missed.join(", ")} — add them on the portal's Portal logins.` }
+          : { ok: true, text: `Sign-in emails added to their portal: ${added.join(", ")}.` };
+      }
+
+      /*
        * Stripe, last — through the same checked save as the Edit dialog, which
        * asks Stripe who owns the subscription, fills in the customer from it,
        * and refuses anything it cannot confirm. After the run rather than
@@ -299,7 +363,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
           usage = { ok: false, text: `Pay per lead NOT saved: ${e instanceof Error ? e.message : String(e)} Set it on the client's Billing tab.` };
         }
       }
-      setRunResult({ ...body, stripe, usage, markets });
+      setRunResult({ ...body, stripe, usage, markets, signIns });
     } catch (e) {
       setFailed(e instanceof Error ? e.message : String(e));
     } finally {
@@ -373,6 +437,29 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
                 onChange={(e) => setMarketCount(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} />
             </label>
           </div>
+        </section>
+
+        {/* Who can sign in to their portal (29 Oct) — optional, with a reminder. */}
+        <section className="mkp-section" data-onboard-signins="" aria-label="Who can sign in to their portal">
+          <div>
+            <div className="mkp-title">Who can sign in to their portal<span className="mkp-hint" style={{ marginLeft: 6 }}>optional</span></div>
+            <p className="mkp-note">Their email addresses — one per line, or separated by commas. Each person signs in to the client portal with their own address. You can add or remove people later on the portal&rsquo;s Portal logins.</p>
+          </div>
+          <textarea className="as-ta" rows={2} id="ob-signins" aria-label="Sign-in email addresses" value={signIn} disabled={running}
+            onChange={(e) => setSignIn(e.target.value)} placeholder={"owner@brokerage.com\nmanager@brokerage.com"} />
+          {badSignIn.length ? (
+            <span style={{ fontSize: 12, color: "var(--red)" }}>Not an email address: {badSignIn.join(", ")}</span>
+          ) : signInEmails.length ? (
+            <span className="mut" style={{ fontSize: 12 }}>{signInEmails.length === 1 ? "1 person" : `${signInEmails.length} people`} will be able to sign in: {signInEmails.join(", ")}</span>
+          ) : (
+            <span style={{ fontSize: 12, color: "var(--amber, #b45309)" }}>No one added — no one can sign in to their portal until you add their emails (here, or later on its Portal logins).</span>
+          )}
+          {contactEmails.some((e) => !signInEmails.includes(e)) ? (
+            <button type="button" className="btn-ghost" style={{ alignSelf: "flex-start", fontSize: 11.5, padding: "3px 9px" }} disabled={running}
+              onClick={() => setSignIn([...new Set([...signInEmails, ...contactEmails])].join("\n"))}>
+              Use the contact emails below ({contactEmails.filter((e) => !signInEmails.includes(e)).length})
+            </button>
+          ) : null}
         </section>
 
         {billing ? (
@@ -521,7 +608,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
               style={{ flex: 2 }}
               disabled={running || !canOnboard}
               onClick={() => void runForReal()}
-              title={canOnboard ? undefined : "Fill in the client name, weekly target, and the macro fields if it is ticked"}
+              title={canOnboard ? undefined : badSignIn.length ? "Fix the sign-in email addresses" : "Fill in the client name, weekly target, and the macro fields if it is ticked"}
             >
               {running ? "Onboarding…" : "Onboard client"}
             </button>
@@ -550,6 +637,7 @@ function RunView({
     stripe?: { ok: boolean; text: string } | null;
     usage?: { ok: boolean; text: string } | null;
     markets?: { ok: boolean; text: string } | null;
+    signIns?: { ok: boolean; text: string } | null;
     legs: { leg: string; status: string; httpStatus?: number; remoteId?: string | null; error?: string }[];
   };
 }) {
@@ -594,6 +682,11 @@ function RunView({
         {result.markets ? (
           <p style={{ fontSize: 12, color: result.markets.ok ? "var(--muted)" : "var(--red)", margin: 0 }}>
             {result.markets.text}
+          </p>
+        ) : null}
+        {result.signIns ? (
+          <p data-onboard-signins-result="" style={{ fontSize: 12, color: result.signIns.ok ? "var(--muted)" : "var(--red)", margin: 0 }}>
+            {result.signIns.text}
           </p>
         ) : null}
         {result.stripe ? (

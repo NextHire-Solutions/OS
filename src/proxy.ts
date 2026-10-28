@@ -88,8 +88,9 @@ const CLAUDE_CONNECTOR_PUBLIC = new Set(["/api/mcp", "/api/oauth/token", "/api/o
  * /portal-signin (27 Oct, the user's Option B). A request carrying a client's
  * sign-in cookie and NO staff session goes on to the page's or route's own
  * check (lib/crm-preview/viewer.ts): the session read against the list on
- * every request, and only portals open to clients — the Demo Portal alone
- * until the user says to switch (viewer-rules.ts). Anyone else there gets Not
+ * every request, and only portals open to clients — with OS_CLIENT_SIGNIN on,
+ * each real portal to its own sign-in list; the Demo only to the named testers
+ * (viewer-rules.ts). Anyone else there gets Not
  * found. Without that cookie nothing changes: the staff sign-in, as before.
  * Exact paths only.
  */

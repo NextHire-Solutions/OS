@@ -54,6 +54,9 @@
   background: #3e6bd1; color: #fff; font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
 }
 .cpv-bar .cpv-note { color: #a9afba; }
+/* Staff on a real client's portal (29 Oct): LIVE, in amber — changes there are the client's own. */
+.cpv-bar .cpv-tag.cpv-tag-live { background: #b45309; color: #fff; }
+.cpv-bar .cpv-note.cpv-note-live { color: #fcd34d; }
 .cpv-bar .cpv-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .cpv-bar select {
   height: 26px; max-width: 260px; padding: 0 8px; border-radius: 6px; border: 1px solid #3d4048;
@@ -205,6 +208,9 @@
 .cpv-pick li a:hover { border-color: #c9d6f2; background: #f5f7fc; }
 .cpv-pick li a:focus-visible { outline: 2px solid var(--cpv-blue); outline-offset: 2px; }
 .cpv-pick li a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A staff note under a portal's name (29 Oct): the Demo, or switched off for the client. */
+.cpv-pick li a .cpv-pick-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.cpv-pick li a .cpv-pick-note { font-size: 11.5px; color: var(--cpv-sub); }
 .cpv-pick .cpv-av {
   flex: 0 0 26px; height: 26px; border-radius: 99px; background: #eef2fa; color: #2f55a8;
   display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600;

@@ -12,6 +12,8 @@ const SESSIONS: Record<string, { email: string; portals: string[] } | "throws"> 
   tester: { email: "admin@outreachify.io", portals: [DEMO, REAL] },
   outsider: { email: "someone@client.test", portals: [DEMO] },
   realonly: { email: "admin@outreachify.io", portals: [REAL] },
+  client: { email: "owner@client.test", portals: [REAL] },
+  clientdemo: { email: "owner@client.test", portals: [DEMO, REAL] },
   broken: "throws",
 };
 
@@ -41,15 +43,36 @@ test("staff first: a reviewer's sign-in is staff, whatever client cookie rides a
   assert.deepEqual(await crmViewer({ sso: "owner", portal: undefined }), { kind: "staff", email: "admin@outreachify.io" });
 });
 
+/* The client launch switch (viewer-rules.ts OS_CLIENT_SIGNIN), for the length of one check. */
+async function withClients<T>(on: boolean, run: () => Promise<T>): Promise<T> {
+  const was = process.env.OS_CLIENT_SIGNIN;
+  if (on) process.env.OS_CLIENT_SIGNIN = "1"; else delete process.env.OS_CLIENT_SIGNIN;
+  try { return await run(); } finally { if (was === undefined) delete process.env.OS_CLIENT_SIGNIN; else process.env.OS_CLIENT_SIGNIN = was; }
+}
+
 test("a colleague who is not a reviewer is not staff here — and falls to their client sign-in, if any", async () => {
-  assert.equal(await crmViewer({ sso: "colleague", portal: undefined }), null);
-  assert.deepEqual(await crmViewer({ sso: "colleague", portal: "tester" }), { kind: "client", email: "admin@outreachify.io", portals: [DEMO] });
+  await withClients(false, async () => {
+    assert.equal(await crmViewer({ sso: "colleague", portal: undefined }), null);
+    assert.deepEqual(await crmViewer({ sso: "colleague", portal: "tester" }), { kind: "client", email: "admin@outreachify.io", portals: [DEMO, REAL] });
+  });
 });
 
-test("a client: only portals open to them — the Demo, for a named tester; never a real portal; never an outsider", async () => {
-  assert.deepEqual(await crmViewer({ sso: undefined, portal: "tester" }), { kind: "client", email: "admin@outreachify.io", portals: [DEMO] });
-  assert.equal(await crmViewer({ sso: undefined, portal: "outsider" }), null, "on the Demo's list but not named: nothing");
-  assert.equal(await crmViewer({ sso: undefined, portal: "realonly" }), null, "a real portal only: nothing until the switch");
+test("switch OFF: a client gets nothing; a named tester the portals they are listed on", async () => {
+  await withClients(false, async () => {
+    assert.deepEqual(await crmViewer({ sso: undefined, portal: "tester" }), { kind: "client", email: "admin@outreachify.io", portals: [DEMO, REAL] });
+    assert.deepEqual(await crmViewer({ sso: undefined, portal: "realonly" }), { kind: "client", email: "admin@outreachify.io", portals: [REAL] });
+    assert.equal(await crmViewer({ sso: undefined, portal: "outsider" }), null, "on the Demo's list but not named: nothing");
+    assert.equal(await crmViewer({ sso: undefined, portal: "client" }), null, "a real client, before the launch: nothing");
+    assert.equal(await crmViewer({ sso: undefined, portal: "clientdemo" }), null);
+  });
+});
+
+test("switch ON (the launch): a client gets the real portals they are listed on — never the Demo", async () => {
+  await withClients(true, async () => {
+    assert.deepEqual(await crmViewer({ sso: undefined, portal: "client" }), { kind: "client", email: "owner@client.test", portals: [REAL] });
+    assert.deepEqual(await crmViewer({ sso: undefined, portal: "clientdemo" }), { kind: "client", email: "owner@client.test", portals: [REAL] }, "the Demo stays the testers'");
+    assert.equal(await crmViewer({ sso: undefined, portal: "outsider" }), null, "listed only on the Demo: nothing");
+  });
 });
 
 test("no sign-in, an unknown session, or the database failing: null (the caller answers Not found)", async () => {

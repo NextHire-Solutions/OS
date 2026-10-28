@@ -58,7 +58,7 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
   // Ticked rows (the list's checkboxes): the bulk bar switches on as the design's Pipeline-Selected; its actions are inert.
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [bulkMenu, setBulkMenu] = useState<"move" | "tag" | "assign" | null>(null);
-  // The Demo Portal saves (demo-save.ts); every other client stays read-only.
+  // Saves where this viewer may change the portal (demo-save.ts `live`: the Demo, a client's own, staff on any open one).
   const demo = useDemo();
   const { live, save } = demo;
   const bulkRef = useRef<HTMLDivElement>(null);

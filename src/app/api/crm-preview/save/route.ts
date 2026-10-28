@@ -17,8 +17,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
  *                             current portal's own parser (portals/csv.ts)
  *
  * WHO (viewer-rules.ts): anyone who may not open the portal gets a bare 404 before anything is read; someone who may
- * open it but not change it (staff on a real client's portal) is told it is read-only. Only the page's own fetch
- * (data-guard admit). Every save is logged with who made it.
+ * open it but not change it is told it is read-only (no one, since staff may change every portal — 29 Oct — but the
+ * check stays). Only the page's own fetch (data-guard admit). Every save is logged with who made it.
  *
  * WHAT: the Demo Portal — demo.ts / demo-market.ts, its own rows and nothing outside, as before. A real portal —
  * portal-save.ts: the current portal's own save code, with everything it sets off (blocklists, Slack, texts, Follow
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
       out = market.success ? await runDemoMarketMove(market.data, who) : await runDemoAction(createAdminSupabase(), parsed!.data!, who);
     } else {
       type = typeof (action as { type?: unknown } | null)?.type === "string" ? (action as { type: string }).type : "?";
-      out = await runPortalAction(portal, action, who);
+      out = await runPortalAction(portal, action, who, role);
     }
     console.info(JSON.stringify({ tag: "[crm-preview] save", who, role, client: portal, demo: isDemoPortal(portal), type, ok: out.ok }));
     // Any save can change a list the Market's pills read (kept 20 s): the next page reads them fresh.

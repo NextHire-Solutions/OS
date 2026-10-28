@@ -14,9 +14,9 @@ export const metadata: Metadata = { title: "Signed in — BrokerStaffer", robots
 export const dynamic = "force-dynamic";
 
 /*
- * Signed in. A portal already open to this address in the new design (27 Oct —
- * until the user says to switch, only the Demo Portal, and only for the named
- * testers; viewer-rules.ts) opens at once. Everyone else lands here, as before: who they are and which
+ * Signed in. A portal already open to this address in the new design opens at once (viewer-rules.ts:
+ * with OS_CLIENT_SIGNIN on, every real portal whose sign-in list has this address; off, only for the
+ * named testers — the Demo is always theirs alone). Everyone else lands here: who they are and which
  * portals they will open when the new portal launches.
  */
 export default async function DonePage() {

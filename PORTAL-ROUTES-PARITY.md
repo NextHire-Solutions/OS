@@ -373,8 +373,11 @@ portal".
 
 **Who.** The route checks the viewer (staff reviewer or a signed-in client), that the portal is
 theirs to open (`viewer-rules.ts` `mayOpenPortal` — a bare 404 otherwise), and that they may
-change it (`mayWritePortal`: the Demo's own viewers; a real portal only its own signed-in client —
-a staff preview of a real client stays read-only, 403). Then the usage guard. Then the save.
+change it (`mayWritePortal`: whoever may open it — the Demo's own viewers; a real portal's own
+signed-in client; and, since 29 Oct, the staff reviewers on every portal, saving in their own
+name). Then the usage guard. Then the save. Which real portals open to clients is one switch,
+`OS_CLIENT_SIGNIN` (the sign-in email's own): on, each to the addresses on its sign-in list; off,
+only to the named testers.
 
 **The Demo** keeps its own writer (`demo.ts`): its rows only, nothing outside.
 

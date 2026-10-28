@@ -457,7 +457,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [allPicked, setAllPicked] = useState(false);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
-  // The Demo Portal moves agents between its lists (23 Oct, demo-market.ts); every other client is read-only.
+  // Moves agents between the lists where this viewer may change the portal (demo-save.ts `live`; the Demo: demo-market.ts).
   const { live, demo, save, say } = useDemo();
   // A real portal's Prospects are the agents in its campaigns — shown, never chosen here (28 Oct); the Demo keeps its own.
   const canProspect = demo || !live;

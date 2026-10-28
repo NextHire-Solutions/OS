@@ -685,7 +685,7 @@ export function SetupWizard({
 }) {
   const [offerDraft, setOfferDraft] = useState<OfferDraft>({ offers: offer?.offers ?? [], whyJoin: offer?.whyJoin ?? "", neverSay: offer?.neverSay ?? "" });
   const offerReady = offerDraft.offers.length > 0 && !!offerDraft.whyJoin.trim();
-  const { live, save } = useDemo();
+  const { live, demo, staff, save } = useDemo();
   const [finishing, setFinishing] = useState(false);
   /*
    * "Finish setup" on the Demo Portal saves the offer first (the user, 22 Oct:
@@ -696,6 +696,8 @@ export function SetupWizard({
     e.preventDefault();
     if (!live) return onStep(6);
     if (finishing) return;
+    // Staff on a real portal (29 Oct audit): this saves the CLIENT's offer, and with it their own first-sign-in wizard is done.
+    if (staff && !demo && !window.confirm(`Save this as ${client.name}'s offer? It's saved as if they gave it — and they won't be shown the Setup wizard when they first sign in.`)) return;
     setFinishing(true);
     const ok = await save({ type: "offer.save", offers: offerDraft.offers, why_join: offerDraft.whyJoin.trim(), never_say: offerDraft.neverSay.trim() });
     setFinishing(false);

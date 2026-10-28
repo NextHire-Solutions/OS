@@ -185,10 +185,11 @@ async function openPortal(portalId: string): Promise<Portal | null> {
 }
 
 /**
- * One save on a real client's portal. The viewer was checked by the route (viewer-rules mayWritePortal); `who` is the
- * signed-in person, from the server.
+ * One save on a real client's portal. The viewer was checked by the route (viewer-rules mayWritePortal): the
+ * portal's own signed-in client, or staff (29 Oct). `who` is that person, from the server; `role` how their use is
+ * counted (portal-usage: staff are counted, never alerted on).
  */
-export async function runPortalAction(portalId: string, action: unknown, who: string): Promise<DemoResult> {
+export async function runPortalAction(portalId: string, action: unknown, who: string, role: "client" | "staff" = "client"): Promise<DemoResult> {
   const market = marketAction.safeParse(action);
   const fub = market.success ? null : fubAction.safeParse(action);
   const parsed = market.success || fub?.success ? null : demoAction.safeParse(action);
@@ -199,7 +200,7 @@ export async function runPortalAction(portalId: string, action: unknown, who: st
   // Held for an unpaid invoice: nothing changes, as the current portal (which shows only the notice).
   if (await portalBillingHold(portal.client.id)) return { ok: false, status: 409, error: "Your portal is paused while an invoice is unpaid. Please contact BrokerStaffer." };
 
-  if (market.success) return moveAgents(portal, market.data, who);
+  if (market.success) return moveAgents(portal, market.data, who, role);
   if (fub?.success) return followUpBoss(portal, fub.data);
   return save(portal, parsed!.data!, who);
 }
@@ -624,7 +625,7 @@ async function blockAll(table: "client_agents" | "client_dnc_entries", rows: Arr
  * agent's database emails blocked, as an added address is); on the DNC List, also stopped and posted to Slack (as an
  * imported DNC file is). The agent's email is never written onto the list.
  */
-async function moveAgents({ client, token }: Portal, a: MarketAction, who: string): Promise<DemoResult> {
+async function moveAgents({ client, token }: Portal, a: MarketAction, who: string, role: "client" | "staff"): Promise<DemoResult> {
   const C = client.id;
   if (a.to === "Prospects") return { ok: false, status: 400, error: "Prospects are the leads in your campaigns — agents aren't added to them from here." };
   let ids: string[];
@@ -729,7 +730,7 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     });
   }
   // Counted as Market use (it is agent-database data reaching the client's lists): heavy use reaches our team's bell, as a read does — never refused.
-  after(() => recordUse(createAdminSupabase(), { who, role: "client", portalId: C, kind: "market", rows: n, now: new Date() }));
+  after(() => recordUse(createAdminSupabase(), { who, role, portalId: C, kind: "market", rows: n, now: new Date() }));
   // And our team hears of every move onto a list (the user, 28 Oct): those blocks are permanent and bind every client's campaigns.
   if (a.to === "My Agents" || a.to === "DNC List") {
     const to = a.to;

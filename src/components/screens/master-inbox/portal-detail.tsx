@@ -20,7 +20,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft, ExternalLink, Workflow, UserCheck, Ban, Users } from "lucide-react";
+import { cookies } from "next/headers";
 import { requireSession } from "@/lib/auth/workspace";
+import { SSO_COOKIE } from "@/lib/bs-auth";
+import { crmViewer } from "@/lib/crm-preview/viewer";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
   loadPipelineEntries,
@@ -104,6 +107,8 @@ export async function PortalDetail({ clientId }: { clientId: string }) {
   // "Open live portal" must point at the brokerage-facing custom
   // domain so staff click-throughs land on the same URL clients see.
   const portalPublicUrl = publicPortalUrl(client.portal_token as string | null);
+  // The new client portal (29 Oct): offered to whoever the new portal itself opens every portal to — the staff reviewers.
+  const newPortal = (await crmViewer({ sso: (await cookies()).get(SSO_COOKIE)?.value, portal: null }))?.kind === "staff";
 
   // Mirror the client's per-stage label overrides on the staff view
   // so what the broker sees and what staff sees can never drift.
@@ -196,6 +201,12 @@ export async function PortalDetail({ clientId }: { clientId: string }) {
           <PortalLogins portalId={client.id as string} portalName={client.name as string} />
           {/* What the client gave in their portal's setup — their offer (22 Oct, migration 0039). */}
           <PortalOffer portalId={client.id as string} portalName={client.name as string} />
+          {newPortal && client.portal_token ? (
+            <a href={`/crm-preview?client=${encodeURIComponent(client.id as string)}`} target="_blank" rel="noopener" className="open-live" data-open-new-portal="">
+              Open new portal
+              <ExternalLink />
+            </a>
+          ) : null}
           {portalPublicUrl ? (
             <a href={portalPublicUrl} target="_blank" rel="noopener" className="open-live">
               Open live portal

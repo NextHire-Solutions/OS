@@ -1,13 +1,14 @@
 "use client";
 
 /*
- * The Demo Portal's saves, from the page (21 Oct). Every client in the preview
- * is read-only except the Demo Portal; there, the design's buttons work and
- * each one sends one action to /api/crm-preview/demo (lib/crm-preview/demo.ts
- * says what it writes — the Demo Portal's own rows, nothing outside).
+ * The new portal's saves, from the page (21 Oct; real portals 28 Oct). Each
+ * button sends one action to /api/crm-preview/save: on the Demo Portal,
+ * lib/crm-preview/demo.ts (its own rows, nothing outside); on a real portal,
+ * portal-save.ts (that portal's own save code, side effects and all).
  *
- * `live` is the server's word (page.tsx: isDemoPortal), and the route checks
- * the portal again on every save — the browser cannot widen it.
+ * `live` is the server's word (page.tsx: editable — viewer-rules.ts
+ * mayWritePortal), and the route checks the viewer and the portal again on
+ * every save — the browser cannot widen it.
  */
 
 import { createContext, useContext } from "react";
@@ -20,17 +21,19 @@ import { RO } from "./k";
 export type DemoAction = { type: string } & Record<string, unknown>;
 
 export interface DemoCtx {
-  /** This viewer's buttons save here (page.tsx editable: the Demo for its viewers, a real portal for its own signed-in client). */
+  /** This viewer's buttons save here (page.tsx editable: the Demo for its viewers; a real portal for its own signed-in client and for staff). */
   live: boolean;
   /** The Demo Portal — its saves reach nothing outside, and the wording says so. */
   demo: boolean;
+  /** Staff (the reviewers) acting on the portal, not its client (29 Oct) — asked first where a save would use up the client's own step. */
+  staff: boolean;
   /** One save; true when it was saved (the page then reloads its data). */
   save: (action: DemoAction) => Promise<boolean>;
   /** A note in the preview's toast (red when `bad`). */
   say: (text: string, bad?: boolean) => void;
 }
 
-export const DemoContext = createContext<DemoCtx>({ live: false, demo: false, save: async () => false, say: () => {} });
+export const DemoContext = createContext<DemoCtx>({ live: false, demo: false, staff: false, save: async () => false, say: () => {} });
 export const useDemo = () => useContext(DemoContext);
 
 /** The read-only marks (k.ts RO) where the portal cannot be changed; none on the Demo Portal. */

@@ -16,23 +16,18 @@
  *     access switch.
  *   - The OS only. Nothing here is served on portal.brokerstaffer.com, and the
  *     live portal's code, URLs, stages and leads are not touched.
- *   - Read-only for staff on a real client's portal. It reads what the live
- *     portal reads (portal-data.ts); every button that would change something
- *     is shown disabled. The browser asks only the preview's own routes
- *     (api/crm-preview) — never with a portal's token, which stays on the
- *     server (21 Oct: a token alone opens that client's live portal).
- *   - And CLIENTS (27 Oct, the user's Option B): someone signed in at
- *     /portal-signin opens their own portal here, as a client sees it — no
- *     preview bar, no other clients — but only a portal open to clients
- *     (viewer-rules.ts OPEN_PORTALS: until the user says to switch, the Demo
- *     Portal and BrokerStaffer's own, for named testers only). Every real
- *     client keeps their current portal.
- *   - Saves (viewer-rules.ts mayWritePortal): the Demo Portal's viewers on the
- *     Demo (demo.ts — nothing outside); on a real portal only its own signed-in
- *     client, through that portal's current save code (portal-save.ts, 28 Oct).
- *     Such a client sees what their current portal would: nothing while it is
- *     switched off, and only the "paused" notice while it is held for an unpaid
- *     invoice.
+ *   - Staff (the reviewers) open and CHANGE every client's portal here (29 Oct, the user: "me, eddy and amy …
+ *     should be able to see all the client portals and make actions there"): on a real portal a save is the
+ *     client's own — that portal's current save code (portal-save.ts) — in the staff member's name, and the bar
+ *     says LIVE. The browser asks only the preview's own routes (api/crm-preview) — never with a portal's token,
+ *     which stays on the server (21 Oct: a token alone opens that client's live portal).
+ *   - And CLIENTS (27 Oct, the user's Option B): someone signed in at /portal-signin opens their own portal here,
+ *     as a client sees it — no preview bar, no other clients. Which portals open to clients is one switch,
+ *     OS_CLIENT_SIGNIN (viewer-rules.ts): on, every real portal to the addresses on its own sign-in list; off,
+ *     only to the named testers. The Demo is the testers' alone. Every client's current portal
+ *     (portal.brokerstaffer.com) is untouched either way.
+ *   - Such a client sees what their current portal would: nothing while it is switched off, and only the
+ *     "paused" notice while it is held for an unpaid invoice.
  */
 
 import type { Metadata } from "next";
@@ -122,12 +117,13 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
 
   const admin = createAdminSupabase();
   // Staff: every portal. A client: only their own, open to clients.
-  let portalQuery = admin.from("clients").select("id, name, slug, portal_token").not("portal_token", "is", null);
+  let portalQuery = admin.from("clients").select("id, name, slug, portal_token, portal_enabled").not("portal_token", "is", null);
   if (viewer.kind === "client") portalQuery = portalQuery.in("id", viewer.portals);
   const { data: portalRows } = await portalQuery.order("name", { ascending: true });
-  const portals = ((portalRows ?? []) as Array<{ id: string; name: string | null; slug: string | null }>)
+  const portals = ((portalRows ?? []) as Array<{ id: string; name: string | null; slug: string | null; portal_enabled: boolean | null }>)
     .filter((c) => c.slug !== "unknown")
-    .map((c) => ({ id: c.id, name: c.name ?? "Unnamed client" }));
+    // Staff are told which is the practice portal and which the client cannot open (switched off) — never a client.
+    .map((c) => ({ id: c.id, name: c.name ?? "Unnamed client", note: viewer.kind !== "staff" ? undefined : isDemoPortal(c.id) ? "Practice — saves stay in the Demo" : c.portal_enabled === false ? "Switched off — the client can't open it" : undefined }));
   // A client with one portal goes straight to it.
   const clientId = one(params.client) || (viewer.kind === "client" && portals.length === 1 ? portals[0].id : "");
 
@@ -192,8 +188,22 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
   const stages = previewStages(defs);
   const tagKeys = new Set(stages.filter((s) => s.role === "tag").map((s) => s.key));
   const tagged = new Set(entries.filter((e) => tagKeys.has(e.custom_stage_key ?? e.stage)).map((e) => e.id));
-  // Who may change this portal from here (viewer-rules.ts): the Demo's viewers; a real portal, only its own signed-in client.
-  const editable = mayWritePortal(viewer, client.id as string);
+  /*
+   * Staff on a real portal its own save code would refuse (29 Oct audit): switched off, client portals off, or held for an
+   * unpaid invoice (portal-save.ts openPortal / billing hold). Shown read-only, saying why — never LIVE with every save
+   * refused. A client never gets this far on such a portal (above).
+   */
+  const locked = audience === "staff" && !isDemoPortal(client.id as string)
+    ? !CLIENT_PORTALS_ENABLED
+      ? "Client portals are switched off — nothing here can be saved"
+      : (client as { portal_enabled?: boolean | null }).portal_enabled === false
+        ? `Switched off — ${(client.name as string | null) ?? "this client"} can't open it, and it can't be changed until it is switched on`
+        : (await portalBillingHold(client.id as string))
+          ? "Paused for an unpaid invoice — nothing can be changed (the client sees only the paused notice)"
+          : null
+    : null;
+  // Who may change this portal from here (viewer-rules.ts): whoever may open it — the staff reviewers on every portal (29 Oct) — unless locked.
+  const editable = mayWritePortal(viewer, client.id as string) && !locked;
   // The wizard's "Tell us your offer", as saved (0039) — every portal; null: not told yet.
   const offer = await loadOffer(client.id as string);
   // A client's first look opens the Setup wizard (their offer not told yet) — the design's "first sign-in"; staff open it from the preview bar.
@@ -220,6 +230,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       // The wizard's "Tell us your offer", as saved (0039).
       offer={offer}
       editable={editable}
+      locked={locked}
       audience={audience}
       furthest={furthestStages(history, tagged)}
       entries={entries}

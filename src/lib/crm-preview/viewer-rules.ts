@@ -1,23 +1,22 @@
 /*
- * Who is looking at the new portal, which portals they may open, and which they may change (27–28 Oct).
+ * Who is looking at the new portal, which portals they may open, and which they may change (27–29 Oct).
  *
- * STAFF — the preview's reviewers (access.ts: Owners, Eddy, Amy, by name) —
- * open any portal, exactly as before. They change only the Demo Portal; every
- * real portal is read-only to them in the preview (a client's records are the
- * client's to change, from their own sign-in).
+ * STAFF — the preview's reviewers (access.ts: Owners, Eddy, Amy, by name) — open ANY portal and change it (29 Oct,
+ * the user: "me, eddy and amy … should be able to see all the client portals and make actions there"). On a real
+ * portal a staff save is the client's own save — the current portal's code, with everything it sets off
+ * (portal-save.ts) — made and logged in the staff member's name.
  *
- * A CLIENT — someone signed in at /portal-signin (lib/portal-login) — opens
- * only the portals their address is on the list for, AND only a portal on
- * OPEN_PORTALS, below. On a portal open to them they change their own records,
- * as their current portal does (portal-save.ts).
+ * A CLIENT — someone signed in at /portal-signin (lib/portal-login) — opens only the portals their address is on
+ * the sign-in list for, and changes their own records there, as their current portal does.
  *
- * The user, 27 Oct: "make sure even after deploying client's should see the
- * older portals only until I tell you to switch". Every real client keeps their
- * current portal until their line is added to OPEN_PORTALS — a change HERE, on
- * the user's word, never a role, a switch or a setting someone could flip.
+ * THE CLIENT LAUNCH (29 Oct, the user: "switch on the new client portals … clients too"): one switch,
+ * OS_CLIENT_SIGNIN — the same one that lets the sign-in email reach a client (portal-login/mail.ts). On: every real
+ * portal opens to the addresses on its own sign-in list. Off (as before the launch): a real portal opens only to the
+ * named testers, and no client receives a sign-in email. Either way the Demo opens only to the testers, and every
+ * client's current portal (portal.brokerstaffer.com) is untouched.
  */
 
-import { isDemoPortal, DEMO_PORTAL_ID } from "./demo.ts";
+import { isDemoPortal } from "./demo.ts";
 
 /*
  * THE NAMED TESTERS (security review, 27 Oct). The Demo is one shared space:
@@ -33,25 +32,32 @@ export const DEMO_CLIENT_TESTERS: readonly string[] = ["admin@outreachify.io", "
 /** BrokerStaffer's own portal (Master Inbox `clients`) — the house account, never counted as a client. */
 export const BROKERSTAFFER_PORTAL_ID = "54322dcf-7392-4022-918c-990ebc8469b8";
 
+/* The client launch switch (portal-login/mail.ts SIGNIN_ENV — viewer-rules.test.ts keeps the two the same name). */
+export const CLIENT_LAUNCH_ENV = "OS_CLIENT_SIGNIN";
+/** Is the new portal open to clients (their sign-in lists) — the launch switch exactly "1"? */
+export function clientsOn(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  return env[CLIENT_LAUNCH_ENV]?.trim() === "1";
+}
+
 /*
- * THE PORTALS OPEN TO CLIENTS, and to whom.
+ * How a portal opens to someone signed in as a client:
  *   "testers"  only DEMO_CLIENT_TESTERS (and only while their address is on the portal's sign-in list)
- *   "listed"   every address on the portal's sign-in list — a real client, switched to the new portal
- * The Demo, and BrokerStaffer's own portal as the pilot (the user, 28 Oct: "BrokerStaffer's own portal" first,
- * opened only to the testers — saves there are real, with everything the current portal sets off). A real
- * client is switched by adding `[their portal id]: "listed"`, on the user's word.
+ *   "listed"   every address on the portal's sign-in list
+ * The Demo: testers, always. A real portal: listed once clients are on; testers until then.
  */
-export const OPEN_PORTALS: Readonly<Record<string, "testers" | "listed">> = {
-  [DEMO_PORTAL_ID]: "testers",
-  [BROKERSTAFFER_PORTAL_ID]: "testers",
-};
+export type OpenRule = "testers" | "listed";
+export function openRule(portalId: string | null | undefined, env: Readonly<Record<string, string | undefined>> = process.env): OpenRule | undefined {
+  if (!portalId) return undefined;
+  if (isDemoPortal(portalId)) return "testers";
+  return clientsOn(env) ? "listed" : "testers";
+}
 
 export type CrmViewer =
   | { kind: "staff"; email: string }
   | { kind: "client"; email: string; portals: string[] };
 
-/** Does a portal open this way let this address in? (Pure — OPEN_PORTALS says which way each portal opens.) */
-export function opensTo(rule: "testers" | "listed" | undefined, email: string | null | undefined): boolean {
+/** Does a portal open this way let this address in? (Pure — openRule says which way each portal opens.) */
+export function opensTo(rule: OpenRule | undefined, email: string | null | undefined): boolean {
   const who = (email ?? "").trim().toLowerCase();
   if (rule === "listed") return who.length > 0;
   return rule === "testers" && DEMO_CLIENT_TESTERS.includes(who);
@@ -59,7 +65,7 @@ export function opensTo(rule: "testers" | "listed" | undefined, email: string | 
 
 /** May this signed-in address open this portal in the new design yet? */
 export function openToClients(portalId: string | null | undefined, email: string | null | undefined): boolean {
-  return opensTo(portalId ? OPEN_PORTALS[portalId] : undefined, email);
+  return opensTo(openRule(portalId), email);
 }
 
 /** Of the portals a client's address is on the list for, the ones they may open now. */
@@ -75,14 +81,12 @@ export function mayOpenPortal(v: CrmViewer | null, portalId: string | null | und
 }
 
 /**
- * May this viewer CHANGE this portal from the new design? The Demo Portal: anyone who may open it (its saves are
- * its own rows, nothing outside — demo.ts). A real portal: only its own signed-in client, once it is open to them —
- * never staff from the preview.
+ * May this viewer CHANGE this portal from the new design? Whoever may open it: the Demo Portal's viewers (its saves
+ * are its own rows, nothing outside — demo.ts); a real portal's own signed-in client; and staff, on any portal
+ * (29 Oct — on a real portal through its current save code, portal-save.ts, in their own name).
  */
 export function mayWritePortal(v: CrmViewer | null, portalId: string | null | undefined): boolean {
-  if (!v || !portalId) return false;
-  if (isDemoPortal(portalId)) return mayOpenPortal(v, portalId);
-  return v.kind === "client" && mayOpenPortal(v, portalId);
+  return mayOpenPortal(v, portalId);
 }
 
 /** How the data guard and the usage counts treat this viewer. */
