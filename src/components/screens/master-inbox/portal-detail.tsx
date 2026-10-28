@@ -190,16 +190,19 @@ export async function PortalDetail({ clientId }: { clientId: string }) {
             <b className="tnum">{counts.team}</b> team
           </span>
         </div>
-        {/* Who may sign in to the new client portal (21 Oct). */}
-        <PortalLogins portalId={client.id as string} portalName={client.name as string} />
-        {/* What the client gave in their portal's setup — their offer (22 Oct, migration 0039). */}
-        <PortalOffer portalId={client.id as string} portalName={client.name as string} />
-        {portalPublicUrl ? (
-          <a href={portalPublicUrl} target="_blank" rel="noopener" className="open-live">
-            Open live portal
-            <ExternalLink />
-          </a>
-        ) : null}
+        {/* The page's actions, together at the right (28 Oct — each pushed itself right, so they spread across the bar). */}
+        <div className="mi-portals-actions">
+          {/* Who may sign in to the new client portal (21 Oct). */}
+          <PortalLogins portalId={client.id as string} portalName={client.name as string} />
+          {/* What the client gave in their portal's setup — their offer (22 Oct, migration 0039). */}
+          <PortalOffer portalId={client.id as string} portalName={client.name as string} />
+          {portalPublicUrl ? (
+            <a href={portalPublicUrl} target="_blank" rel="noopener" className="open-live">
+              Open live portal
+              <ExternalLink />
+            </a>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
