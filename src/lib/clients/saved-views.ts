@@ -21,7 +21,11 @@ async function loadViews(): Promise<ViewRow[]> {
     return { id: String(v.id), name: v.name ?? "(untitled)", agents: typeof v.cached_count === "number" ? v.cached_count : null, orchClientIds: ids };
   });
 }
-export const getSavedViews = ttlCache(loadViews, { ttlMs: 5 * 60_000, staleMs: 30 * 60_000, key: () => "views", shared: "database-saved-views" });
+/*
+ * Re-read every minute (29 Oct: a view saved in the Database took ~10 minutes to show — a 5-minute TTL plus one stale
+ * serve). One small query. A served list is never older than ttlMs + staleMs (6 minutes).
+ */
+export const getSavedViews = ttlCache(loadViews, { ttlMs: 60_000, staleMs: 5 * 60_000, key: () => "views", shared: "database-saved-views" });
 
 export async function listViewLinks(): Promise<{ links: ViewLink[]; ready: boolean }> {
   const { data, error } = await osTable("os_client_saved_views").select("os_client_id, saved_list_id, excluded");
