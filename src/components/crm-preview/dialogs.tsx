@@ -22,7 +22,7 @@ import { formatPhone, panelFields, type Placement, type PreviewStage } from "@/l
 
 import { Icon } from "./icons";
 import { k, RO } from "./k";
-import { fieldValues } from "./demo-save";
+import { fieldValues, isCanonicalStage, useDemo } from "./demo-save";
 
 /*
  * On the Demo Portal (21 Oct) a dialog gets `onSave`: its Save / Add reads the
@@ -164,6 +164,33 @@ function DateField({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** A day as the date field holds it (yyyy-mm-dd), in the viewer's own calendar. */
+export function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/*
+ * The introduction date and the replacement mark, as the current portal's Add and Edit have them (28 Oct): the date
+ * can be changed; "Needs a replacement" always shows the Replacement mark by the agent's name. Drawn as before
+ * (the date only shown) where nothing saves.
+ */
+function IntroFields({ live, day, replacing }: { live: boolean; day: string; replacing: boolean }) {
+  if (!live) return <DateField label="Introduction date" value={day ? mdy(new Date(`${day}T12:00:00`)) : ""} />;
+  // Two labels, side by side in the flow: the tick box's own words tick it (28 Oct audit — inside the date's label they focused the date).
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <label className={k("fl")}>
+        Introduction date
+        <input className={k("in")} type="date" name="introduced" defaultValue={day} min="2000-01-01" max="2100-12-31" />
+      </label>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#374151", cursor: "pointer" }}>
+        <input type="checkbox" name="replacement" defaultChecked={replacing} style={{ marginTop: 3 }} />
+        <span>Needs a replacement <span style={{ color: "#6b7280" }}>— shows the Replacement mark by their name.</span></span>
+      </label>
+    </div>
+  );
+}
+
 export function PipelineAddDialog({ now, onClose, onSave }: { now: Date; onClose: () => void; onSave?: OnSave }) {
   const { ref, busy, run } = useSaving(onSave, onClose);
   return (
@@ -183,7 +210,7 @@ export function PipelineAddDialog({ now, onClose, onSave }: { now: Date; onClose
           <Field label="Company" name="company" placeholder="Compass" />
           <Field label="Agent profile" name="profile" placeholder="https://..." />
         </div>
-        <DateField label="Introduction date" value={mdy(now)} />
+        <IntroFields live={!!onSave} day={ymd(now)} replacing={false} />
       </div>
     </PipelineDialog>
   );
@@ -214,7 +241,7 @@ export function EditLeadDialog({ entry: e, placement, tags = [], onClose, onSave
   const { ref, busy, run } = useSaving(onSave, onClose);
   const live = !!onSave;
   const fields = panelFields(e);
-  const date = e.introduced_at ? mdy(new Date(e.introduced_at)) : "";
+  const day = e.introduced_at ? ymd(new Date(e.introduced_at)) : "";
   return (
     <PipelineDialog
       title="Edit lead"
@@ -233,12 +260,12 @@ export function EditLeadDialog({ entry: e, placement, tags = [], onClose, onSave
           <Field label="Agent profile" name="profile" value={e.agent_profile_url ?? ""} placeholder="https://..." />
         </div>
         <div className={k("g2")}>
-          <DateField label="Introduction date" value={date} />
+          <IntroFields live={live} day={day} replacing={e.needs_replacement} />
           {live ? (
             <label className={k("fl")}>
               Tags
               <select className={k("in")} name="tag" defaultValue={placement.tag?.key ?? ""}>
-                <option value="">No tag</option>
+                <option value="">{placement.tag && isCanonicalStage(placement.tag.key) ? `No tag — back to ${placement.stage.label}` : "No tag"}</option>
                 {tags.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
               </select>
             </label>
@@ -328,6 +355,8 @@ export function DncAddDialog({ initial = "agent", onClose, onSave, entry }: { in
   const [kind, setKind] = useState<"agent" | "company">(initial);
   const [name, setName] = useState(entry?.name ?? "");
   const { ref, busy, run } = useSaving(onSave ? (v) => onSave({ ...v, kind }) : undefined, onClose);
+  // The Demo's DNC List stays on the Demo; a real portal's company is blocked at every provider (its current portal's save).
+  const { demo } = useDemo();
   return (
     <PageDialog title={entry ? "Edit DNC entry" : "Add to DNC list"} width={460} top={kind === "agent" ? 150 : 170} onClose={onClose} foot={<AddFoot onClose={onClose} ready={!!name.trim()} label={entry ? "Save" : "Add"} onSave={onSave} busy={busy} onAdd={() => void run()} />}>
       <div ref={ref} style={{ display: "contents" }}>
@@ -351,7 +380,7 @@ export function DncAddDialog({ initial = "agent", onClose, onSave, entry }: { in
           <label className={k("fl")}>Company name<input key="cn" className={k("in")} name="name" type="text" placeholder="Acme Realty" value={name} onChange={(e) => setName(e.target.value)} /></label>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label className={k("fl")}>Domain<input className={k("in")} name="domain" type="text" placeholder="e.g. kellerwilliams.com" defaultValue={entry?.domain ?? ""} /></label>
-            <p className={k("hint")}>{onSave ? <>On the Demo Portal this is saved to its list only — it is not sent to the email&nbsp;providers.</> : <>We&apos;ll block every email at this domain across&nbsp;providers.</>}</p>
+            <p className={k("hint")}>{onSave && demo ? <>On the Demo Portal this is saved to its list only — it is not sent to the email&nbsp;providers.</> : <>We&apos;ll block every email at this domain across&nbsp;providers.</>}</p>
           </div>
         </>
       )}
@@ -365,6 +394,7 @@ export function DncAddDialog({ initial = "agent", onClose, onSave, entry }: { in
 const IMPORT_TITLE = { agents: "Import agents from CSV", team: "Import team members from CSV", dnc: "Import DNC entries from CSV" } as const;
 
 export function ImportDialog({ kind, onClose, onFile }: { kind: keyof typeof IMPORT_TITLE; onClose: () => void; onFile?: (file: File) => Promise<boolean> }) {
+  const { demo } = useDemo();
   return (
     <PageDialog title={IMPORT_TITLE[kind]} width={720} top={230} onClose={onClose} foot={<button type="button" className={k("btn")} onClick={onClose}>Cancel</button>}>
       <CsvDrop className="adrop" onFile={onFile} onClose={onClose} busyText={<><span style={{ color: "#6b7280" }}><Icon name="file" size={26} /></span><span className={k("dt")}>Importing…</span></>}>
@@ -375,7 +405,7 @@ export function ImportDialog({ kind, onClose, onFile }: { kind: keyof typeof IMP
         ) : kind === "team" ? (
           <span className={k("dc")}>Columns we recognise:{" "}<code>name</code>,{" "}<code>email</code>,{" "}<code>title</code>,{" "}<code>phone</code><br />Headers don&apos;t need to match exactly, e.g.{" "}<code>Full Name</code>,{" "}<code>Email Address</code>,{" "}<code>Job Title</code>,{" "}<code>Phone Number</code>{" "}all&nbsp;work.</span>
         ) : (
-          <span className={k("dc")}>Columns we recognise:{" "}<code>name</code>,{" "}<code>email</code>,{" "}<code>phone</code>,{" "}<code>brokerage</code>,{" "}<code>domain</code>,{" "}<code>kind</code>{" "}(agent or company),{" "}<code>notes</code><br />Headers don&apos;t need to match exactly, e.g.{" "}<code>Full Name</code>,{" "}<code>Email Address</code>,{" "}<code>Current Brokerage</code>{" "}all&nbsp;work.<br />{onFile ? <>On the Demo Portal company rows are saved to its list only — not sent to the email providers; if a row only has an email we extract the domain from&nbsp;it.</> : <>For company rows the{" "}<code>domain</code>{" "}is blocked at every provider; if a row only has an email we extract the domain from&nbsp;it.</>}</span>
+          <span className={k("dc")}>Columns we recognise:{" "}<code>name</code>,{" "}<code>email</code>,{" "}<code>phone</code>,{" "}<code>brokerage</code>,{" "}<code>domain</code>,{" "}<code>kind</code>{" "}(agent or company),{" "}<code>notes</code><br />Headers don&apos;t need to match exactly, e.g.{" "}<code>Full Name</code>,{" "}<code>Email Address</code>,{" "}<code>Current Brokerage</code>{" "}all&nbsp;work.<br />{onFile && demo ? <>On the Demo Portal company rows are saved to its list only — not sent to the email providers; if a row only has an email we extract the domain from&nbsp;it.</> : <>For company rows the{" "}<code>domain</code>{" "}is blocked at every provider; if a row only has an email we extract the domain from&nbsp;it.</>}</span>
         )}
       </CsvDrop>
     </PageDialog>

@@ -16,16 +16,23 @@
  *     access switch.
  *   - The OS only. Nothing here is served on portal.brokerstaffer.com, and the
  *     live portal's code, URLs, stages and leads are not touched.
- *   - Read-only. It reads what the live portal reads (portal-data.ts) and
- *     writes nothing; every button that would change something is shown
- *     disabled. The browser asks only the preview's own routes
+ *   - Read-only for staff on a real client's portal. It reads what the live
+ *     portal reads (portal-data.ts); every button that would change something
+ *     is shown disabled. The browser asks only the preview's own routes
  *     (api/crm-preview) — never with a portal's token, which stays on the
  *     server (21 Oct: a token alone opens that client's live portal).
  *   - And CLIENTS (27 Oct, the user's Option B): someone signed in at
  *     /portal-signin opens their own portal here, as a client sees it — no
- *     preview bar, no other clients — but only a portal open to clients, which
- *     until the user says to switch is the Demo Portal alone, for named
- *     testers only (viewer-rules.ts). Every real client keeps their current portal.
+ *     preview bar, no other clients — but only a portal open to clients
+ *     (viewer-rules.ts OPEN_PORTALS: until the user says to switch, the Demo
+ *     Portal and BrokerStaffer's own, for named testers only). Every real
+ *     client keeps their current portal.
+ *   - Saves (viewer-rules.ts mayWritePortal): the Demo Portal's viewers on the
+ *     Demo (demo.ts — nothing outside); on a real portal only its own signed-in
+ *     client, through that portal's current save code (portal-save.ts, 28 Oct).
+ *     Such a client sees what their current portal would: nothing while it is
+ *     switched off, and only the "paused" notice while it is held for an unpaid
+ *     invoice.
  */
 
 import type { Metadata } from "next";
@@ -37,7 +44,7 @@ import { after } from "next/server";
 import { SSO_COOKIE } from "@/lib/bs-auth";
 import { PORTAL_COOKIE } from "@/lib/portal-login/http";
 import { crmViewer } from "@/lib/crm-preview/viewer";
-import { mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
+import { mayOpenPortal, mayWritePortal } from "@/lib/crm-preview/viewer-rules";
 import { furthestStages, managedStages, PREVIEW_VIEWS, previewStages, type PortalOffer, type PreviewView } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -55,6 +62,9 @@ import { clientForPortal, type OsClientRow } from "@/lib/crm-preview/market-mode
 import { isDemoPortal } from "@/lib/crm-preview/demo";
 import { warmPortalMarket } from "@/lib/crm-preview/market";
 import { osTable } from "@/lib/clients/os-db";
+import { CLIENT_PORTALS_ENABLED } from "@/lib/tools/master-inbox/portals/flag";
+import { portalBillingHold } from "@/lib/tools/master-inbox/portals/billing-hold";
+import { PortalBillingHold } from "@/components/master-inbox/portals-ui/billing-hold";
 import { ClientPicker } from "@/components/crm-preview/client-picker";
 import { SessionKeeper } from "@/components/shell/session-keeper";
 
@@ -137,10 +147,18 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
 
   const { data: client } = await admin
     .from("clients")
-    .select("id, name, slug, portal_token, stage_label_overrides, feature_flags, fub_api_key")
+    .select("id, name, slug, portal_token, portal_enabled, stage_label_overrides, feature_flags, fub_api_key")
     .eq("id", clientId)
     .maybeSingle();
   if (!client || client.slug === "unknown" || !client.portal_token) return shell(<ClientPicker portals={portals} missing audience={audience} />);
+  // (The Demo Portal is the testers' sample, no client's: it stays open — portal-open.ts.)
+  if (audience === "client" && !isDemoPortal(client.id as string)) {
+    // A client sees what their current portal would show (Master Inbox app/portal/[token]/layout.tsx): nothing while portals are off or theirs is switched off …
+    if (!CLIENT_PORTALS_ENABLED || (client as { portal_enabled?: boolean | null }).portal_enabled === false) notFound();
+    // … and only the notice while it is held for an unpaid invoice (billing-hold.ts — fails open). Staff still see the portal.
+    const hold = await portalBillingHold(client.id as string);
+    if (hold) return <PortalBillingHold clientName={(client.name as string | null) ?? "Your portal"} hold={hold} />;
+  }
 
   const rawFlags = (client as { feature_flags?: unknown }).feature_flags;
   const featureFlags = rawFlags && typeof rawFlags === "object" && !Array.isArray(rawFlags) ? (rawFlags as Record<string, unknown>) : {};
@@ -174,7 +192,10 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
   const stages = previewStages(defs);
   const tagKeys = new Set(stages.filter((s) => s.role === "tag").map((s) => s.key));
   const tagged = new Set(entries.filter((e) => tagKeys.has(e.custom_stage_key ?? e.stage)).map((e) => e.id));
-  const offer = isDemoPortal(client.id as string) ? await loadOffer(client.id as string) : undefined;
+  // Who may change this portal from here (viewer-rules.ts): the Demo's viewers; a real portal, only its own signed-in client.
+  const editable = mayWritePortal(viewer, client.id as string);
+  // The wizard's "Tell us your offer", as saved (0039) — every portal; null: not told yet.
+  const offer = await loadOffer(client.id as string);
   // A client's first look opens the Setup wizard (their offer not told yet) — the design's "first sign-in"; staff open it from the preview bar.
   const view: PreviewView = (PREVIEW_VIEWS as readonly string[]).includes(viewParam)
     ? (viewParam as PreviewView)
@@ -194,10 +215,11 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       }}
       portals={portals}
       stages={stages}
-      // Every stage, hidden ones too — only where Manage stages saves (the Demo Portal); everyone else's panel is drawn from `stages`.
-      allStages={isDemoPortal(client.id as string) && manageStages ? managedStages(defs) : undefined}
-      // The wizard's "Tell us your offer", as saved (0039) — only where it saves (the Demo Portal).
+      // Every stage, hidden ones too — only where Manage stages saves (a portal this viewer may change, with manage_stages); otherwise the panel is drawn from `stages`.
+      allStages={editable && manageStages ? managedStages(defs) : undefined}
+      // The wizard's "Tell us your offer", as saved (0039).
       offer={offer}
+      editable={editable}
       audience={audience}
       furthest={furthestStages(history, tagged)}
       entries={entries}

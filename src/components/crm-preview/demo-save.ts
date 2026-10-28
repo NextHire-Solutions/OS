@@ -20,15 +20,17 @@ import { RO } from "./k";
 export type DemoAction = { type: string } & Record<string, unknown>;
 
 export interface DemoCtx {
-  /** True only on the Demo Portal. */
+  /** This viewer's buttons save here (page.tsx editable: the Demo for its viewers, a real portal for its own signed-in client). */
   live: boolean;
+  /** The Demo Portal — its saves reach nothing outside, and the wording says so. */
+  demo: boolean;
   /** One save; true when it was saved (the page then reloads its data). */
   save: (action: DemoAction) => Promise<boolean>;
   /** A note in the preview's toast (red when `bad`). */
   say: (text: string, bad?: boolean) => void;
 }
 
-export const DemoContext = createContext<DemoCtx>({ live: false, save: async () => false, say: () => {} });
+export const DemoContext = createContext<DemoCtx>({ live: false, demo: false, save: async () => false, say: () => {} });
 export const useDemo = () => useContext(DemoContext);
 
 /** The read-only marks (k.ts RO) where the portal cannot be changed; none on the Demo Portal. */
@@ -46,7 +48,7 @@ export function moveTo(ids: readonly string[], key: string): DemoAction {
 
 export async function postDemo(client: string, action: DemoAction): Promise<{ ok: true; id?: string; message?: string } | { ok: false; error: string }> {
   try {
-    const res = await fetch(`/api/crm-preview/demo`, {
+    const res = await fetch(`/api/crm-preview/save`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ client, action }),
@@ -57,7 +59,8 @@ export async function postDemo(client: string, action: DemoAction): Promise<{ ok
     return res.ok ? { ok: true, id: j.id, message: j.message } : { ok: false, error: j.error ?? "That could not be saved." };
   } catch {
     // An import may have finished on the server after the browser stopped waiting (22 Oct audit): say so, so it isn't simply run twice.
-    return { ok: false, error: action.type.endsWith(".import") ? "No answer within two minutes — the import may still have finished. Check the list before importing the file again." : "Couldn't reach the server — nothing was saved." };
+    // A save that timed out may still have been made (28 Oct audit): never "nothing was saved" — run twice, an Add is a duplicate.
+    return { ok: false, error: action.type.endsWith(".import") ? "No answer within two minutes — the import may still have finished. Check the list before importing the file again." : "No answer from the server — it may still have saved. Reload the page and check before trying again." };
   }
 }
 
@@ -194,6 +197,9 @@ export function csvSafe(v: string): string {
 export function fieldValues(root: HTMLElement | null): Record<string, string> {
   const out: Record<string, string> = {};
   if (!root) return out;
-  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input[name], textarea[name], select[name]")) out[el.name] = el.value.trim();
+  // A tick box is "true" when ticked, else "" (its value is "on" either way).
+  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input[name], textarea[name], select[name]")) {
+    out[el.name] = el instanceof HTMLInputElement && el.type === "checkbox" ? (el.checked ? "true" : "") : el.value.trim();
+  }
   return out;
 }

@@ -458,7 +458,9 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const [allPicked, setAllPicked] = useState(false);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   // The Demo Portal moves agents between its lists (23 Oct, demo-market.ts); every other client is read-only.
-  const { live, save, say } = useDemo();
+  const { live, demo, save, say } = useDemo();
+  // A real portal's Prospects are the agents in its campaigns — shown, never chosen here (28 Oct); the Demo keeps its own.
+  const canProspect = demo || !live;
   const [moving, setMoving] = useState(false);
   const [reload, setReload] = useState(0);
 
@@ -488,10 +490,22 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, list, page, q, fKey, sort.key, sort.dir, reload]);
 
-  /* Ticked agents, every agent that matches, or one row's agent, to a list (Demo Portal). */
+  /*
+   * Ticked agents, every agent that matches, or one row's agent, to a list. A real client's own portal (28 Oct): at
+   * most 500 at once, and asked first — there My Agents and the DNC List block the agents' emails in every campaign.
+   */
   const moveAgents = async (to: "Prospects" | "My Agents" | "DNC List" | "Not on a list", one?: string) => {
     if (!live || moving) return;
-    if (!one && !allPicked && picked.size > 1000) { say("Move at most 1,000 agents at once — tick fewer, or narrow the filters.", true); return; }
+    const cap = demo ? 1000 : 500;
+    if (!one && !allPicked && picked.size > cap) { say(`Move at most ${cap.toLocaleString("en-US")} agents at once — tick fewer, or narrow the filters.`, true); return; }
+    if (!demo) {
+      const n = one ? 1 : allPicked ? (state.data?.total ?? 0) : picked.size;
+      const who = n === 1 ? "this agent" : `${n.toLocaleString("en-US")} agents`;
+      const ask = to === "DNC List" ? `Add ${who} to your DNC List? We'll stop emailing them in every campaign. This can't be undone.`
+        : to === "My Agents" ? `Add ${who} to My Agents? We'll never email them in any campaign. This can't be undone.`
+        : `Take ${who} off My Agents and your DNC List?`;
+      if (!window.confirm(ask)) return;
+    }
     const sp = new URLSearchParams({ sort: sort.key, dir: sort.dir });
     if (q) sp.set("q", q);
     pickParams(sp, f);
@@ -638,7 +652,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                 <span style={{ width: 1, height: 18, background: "#d9e1f2", margin: "0 4px" }} />
                 <span style={{ fontSize: 12, color: "#555a64" }}>Move to</span>
                 {/* Not on Prospects itself: they are there already (24 Oct, the user). */}
-                {list === "market" ? <button className={k("btn sm pri")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Prospects") : undefined}><Icon name="plus" size={13} />Prospects</button> : null}
+                {list === "market" && canProspect ? <button className={k("btn sm pri")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Prospects") : undefined}><Icon name="plus" size={13} />Prospects</button> : null}
                 <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("My Agents") : undefined}><Icon name="users" size={13} />My Agents</button>
                 <button className={k("btn sm")} type="button" style={{ color: "#b42318" }} disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("DNC List") : undefined}><Icon name="ban" size={13} />DNC List</button>
                 <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Not on a list") : undefined}><Icon name="x" size={13} />Remove from all lists</button>
@@ -695,7 +709,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                           {rowMenu === String(r.id) ? (
                             <div className={k("mmenu")} role="menu" style={{ top: 36, right: "0", width: 200 }}>
                               <div style={{ padding: "6px 10px 4px", fontSize: 11, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.04em" }}>Move to list</div>
-                              {MOVE_LISTS.map((l) => (
+                              {MOVE_LISTS.filter((l) => l !== "Prospects" || canProspect).map((l) => (
                                 <button
                                   key={l}
                                   type="button"

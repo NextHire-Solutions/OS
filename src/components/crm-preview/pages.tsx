@@ -109,8 +109,8 @@ function RowActions({ name, onEdit, onDelete }: { name: string; onEdit?: () => v
   );
 }
 
-/* "Delete …?" before a Demo Portal delete. */
-const sure = (what: string) => window.confirm(`Delete ${what} from the Demo Portal?`);
+/* "Delete …?" before a delete — naming the Demo Portal there; a real client's own portal is "your list". */
+const sure = (what: string, demo: boolean) => window.confirm(demo ? `Delete ${what} from the Demo Portal?` : `Delete ${what}?`);
 
 function Dash() {
   return <span className={k("dash")}>&ndash;</span>;
@@ -179,7 +179,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
   const demo = useDemo();
   const { live, save } = demo;
   const csv = (rows: AgentEntry[]) => saveCsv("my-agents.csv", ["Name", "Email", "Phone"], rows.map((a) => [a.name, a.email, a.phone]));
-  const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "agent.delete", ids }))) clear(); };
+  const remove = async (ids: string[], what: string, bulk = false) => { if (sure(what, demo.demo) && (await save({ type: "agent.delete", ids, ...(bulk ? { bulk: true } : {}) }))) clear(); };
   const found = useMemo(() => agents.filter((a) => has(q, a.name, a.email, a.phone)), [agents, q]);
   const shown = pageOf(found, pageNo);
   const pageIds = shown.rows.map((a) => a.id);
@@ -207,7 +207,7 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
               count={count}
               onCancel={clear}
               onExport={live ? () => csv(found.filter((a) => picked.has(a.id))) : undefined}
-              onDelete={live ? () => void remove(found.filter((a) => picked.has(a.id)).map((a) => a.id), `${count} ${count === 1 ? "agent" : "agents"}`) : undefined}
+              onDelete={live ? () => void remove(found.filter((a) => picked.has(a.id)).map((a) => a.id), `${count} ${count === 1 ? "agent" : "agents"}`, true) : undefined}
             />
             {pageAll && found.length > pageIds.length ? <SelAll onPage={pageIds.length} total={found.length} onAll={() => pick(found.map((a) => a.id), true)} /> : null}
             <div className={k("card")} style={{ overflow: "hidden" }}>
@@ -261,7 +261,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
   const demo = useDemo();
   const { live, save } = demo;
   const csv = (rows: DncEntry[]) => saveCsv("dnc-list.csv", ["Kind", "Name", "Email", "Phone", "Brokerage", "Domain", "Notes"], rows.map((d) => [d.kind, d.name, d.email, d.phone, d.brokerage, d.domain, d.notes]));
-  const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "dnc.delete", ids }))) clear(); };
+  const remove = async (ids: string[], what: string, bulk = false) => { if (sure(what, demo.demo) && (await save({ type: "dnc.delete", ids, ...(bulk ? { bulk: true } : {}) }))) clear(); };
   const close = () => setDialog(null);
   const people = useMemo(() => dnc.filter((d) => d.kind === "agent"), [dnc]);
   const companies = useMemo(() => dnc.filter((d) => d.kind === "company"), [dnc]);
@@ -305,7 +305,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
               count={count}
               onCancel={clear}
               onExport={live ? () => csv(pickedRows) : undefined}
-              onDelete={live ? () => void remove(pickedRows.map((d) => d.id), `${count} ${count === 1 ? "entry" : "entries"}`) : undefined}
+              onDelete={live ? () => void remove(pickedRows.map((d) => d.id), `${count} ${count === 1 ? "entry" : "entries"}`, true) : undefined}
             />
             <div className={k("sec")}>Agents<span>{foundPeople.length.toLocaleString("en-US")}</span></div>
             {pageAll && foundPeople.length > pageIds.length ? <SelAll onPage={pageIds.length} total={foundPeople.length} onAll={() => pick(foundPeople.map((d) => d.id), true)} /> : null}
@@ -422,7 +422,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
   const demo = useDemo();
   const { live, save } = demo;
   const csv = (rows: TeamMember[]) => saveCsv("team.csv", ["Name", "Title", "Email", "Phone", "Active"], rows.map((m) => [m.name, m.title, m.email, m.phone, m.active ? "yes" : "no"]));
-  const remove = async (ids: string[], what: string) => { if (sure(what) && (await save({ type: "team.delete", ids }))) clear(); };
+  const remove = async (ids: string[], what: string, bulk = false) => { if (sure(what, demo.demo) && (await save({ type: "team.delete", ids, ...(bulk ? { bulk: true } : {}) }))) clear(); };
   const found = useMemo(() => team.filter((m) => has(q, m.name, m.email, m.title, m.phone)), [team, q]);
   const ids = found.map((m) => m.id);
   const all = ids.length > 0 && ids.every((id) => picked.has(id));
@@ -451,7 +451,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
               count={count}
               onCancel={clear}
               onExport={live ? () => csv(found.filter((m) => picked.has(m.id))) : undefined}
-              onDelete={live ? () => void remove(found.filter((m) => picked.has(m.id)).map((m) => m.id), `${count} team ${count === 1 ? "member" : "members"}`) : undefined}
+              onDelete={live ? () => void remove(found.filter((m) => picked.has(m.id)).map((m) => m.id), `${count} team ${count === 1 ? "member" : "members"}`, true) : undefined}
             />
             <div className={k("card")} style={{ overflow: "hidden" }}>
               <table className={k("tb")}>
@@ -515,7 +515,27 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
 const FUB_DEMO = "The Demo Portal never connects to Follow Up Boss. On a real portal, this is where the client saves its API key.";
 
 export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) {
-  const { live } = useDemo();
+  const { live, demo, save } = useDemo();
+  // A real portal's own client saves its Follow Up Boss key (28 Oct) — the current portal's save, which checks the key
+  // with Follow Up Boss first. The Demo never connects. The key is never sent back to the page.
+  const canConnect = live && !demo;
+  const [key, setKey] = useState("");
+  const [shown, setShown] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const connect = async () => {
+    if (!key.trim() || busy) return;
+    setBusy(true);
+    const ok = await save({ type: "fub.connect", api_key: key.trim() });
+    setBusy(false);
+    if (ok) setKey("");
+  };
+  // The current portal's Disconnect, with its own question.
+  const disconnect = async () => {
+    if (busy || !window.confirm("Disconnect Follow Up Boss? Leads marked as Introduction will stop syncing until you reconnect.")) return;
+    setBusy(true);
+    await save({ type: "fub.disconnect" });
+    setBusy(false);
+  };
   return (
     <>
       <Header title="Integrations" />
@@ -538,8 +558,17 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
             <div style={{ padding: "18px 20px 20px", borderTop: "1px solid #ebedf0", display: "flex", flexDirection: "column", gap: 8 }}>
               <label className={k("fl")} htmlFor="crx-fubkey">API key</label>
               <div className={k("inw")}>
-                <input id="crx-fubkey" className={k("in")} type="password" placeholder={fubConnected ? "A key is saved for this client" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} readOnly {...(live ? off(FUB_DEMO) : RO)} />
-                <button type="button" className={k("ib")} aria-label="Show API key" {...(live ? off(FUB_DEMO) : RO)}><Icon name="eye" size={16} /></button>
+                {canConnect ? (
+                  <>
+                    <input id="crx-fubkey" className={k("in")} type={shown ? "text" : "password"} autoComplete="off" spellCheck={false} placeholder={fubConnected ? "A key is saved — paste a new one to replace it" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} value={key} disabled={busy} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void connect(); } }} />
+                    <button type="button" className={k("ib")} aria-label={shown ? "Hide API key" : "Show API key"} aria-pressed={shown} onClick={() => setShown((v) => !v)}><Icon name="eye" size={16} /></button>
+                  </>
+                ) : (
+                  <>
+                    <input id="crx-fubkey" className={k("in")} type="password" placeholder={fubConnected ? "A key is saved for this client" : "Paste your Follow Up Boss API key"} style={{ height: 38, paddingRight: 40 }} readOnly {...(live ? off(FUB_DEMO) : RO)} />
+                    <button type="button" className={k("ib")} aria-label="Show API key" {...(live ? off(FUB_DEMO) : RO)}><Icon name="eye" size={16} /></button>
+                  </>
+                )}
               </div>
               <p className={k("hint")}>
                 Find it in Follow Up Boss under <b style={{ color: "#1f2124", fontWeight: 500 }}>My Settings &rarr; API</b>.{" "}
@@ -547,8 +576,13 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
                   View instructions<Icon name="externalSmall" size={12} />
                 </a>
               </p>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-                <button type="button" className={k("btn pri dim")} {...(live ? off(FUB_DEMO) : RO)}>{fubConnected ? "Update key" : "Connect"}</button>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+                {canConnect && fubConnected ? <button type="button" className={k("btn")} disabled={busy} onClick={() => void disconnect()}>Disconnect</button> : null}
+                {canConnect ? (
+                  <button type="button" className={k(key.trim() && !busy ? "btn pri" : "btn pri dim")} disabled={!key.trim() || busy} onClick={() => void connect()}>{busy ? "Checking the key…" : fubConnected ? "Update key" : "Connect"}</button>
+                ) : (
+                  <button type="button" className={k("btn pri dim")} {...(live ? off(FUB_DEMO) : RO)}>{fubConnected ? "Update key" : "Connect"}</button>
+                )}
               </div>
             </div>
           </section>

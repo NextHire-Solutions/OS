@@ -98,8 +98,36 @@ async function alert(db: Db, input: { who: string; portalId: string; kind: Usage
           body: `${whose} on ${name}'s portal has passed ${amount.toLocaleString("en-US")} ${KIND_TEXT[input.kind]} today. Nothing was stopped.`,
           ref: `portal_usage:${day(input.now)}:${input.portalId}:${input.scope === "person" ? norm(input.who) : "*"}:${input.kind}`,
         };
+  await bell(db, row);
+}
+
+/* One bell notice for our team — once per ref (a second with the same ref is dropped). */
+async function bell(db: Db, row: { kind: string; severity: string; title: string; body: string; ref: string }): Promise<void> {
   const n: Res = await db.from("os_notifications").upsert(row, { onConflict: "ref", ignoreDuplicates: true });
   fail(n, "os_notifications");
+}
+
+/**
+ * A client moved agents from Market onto My Agents or the DNC List on their own portal (28 Oct — the user: alert our
+ * team on every move): each move its own notice, because those blocks are permanent and bind every client's campaigns.
+ * Never refuses, never throws — the move is already made.
+ */
+export async function alertMarketMove(db: Db, input: { who: string; portalId: string; to: "My Agents" | "DNC List"; agents: number; now: Date }): Promise<void> {
+  try {
+    const p: Res = await db.from("clients").select("name").eq("id", input.portalId).maybeSingle();
+    const name = ((p.data as { name?: string | null } | null)?.name ?? "").trim() || "a client portal";
+    const n = input.agents.toLocaleString("en-US");
+    const them = input.agents === 1 ? "agent" : "agents";
+    await bell(db, {
+      kind: "portal_market_move",
+      severity: "warning",
+      title: `Market move: ${n} ${them} to ${input.to} — ${name}`,
+      body: `${norm(input.who)} moved ${n} ${them} from Market onto ${name}'s ${input.to}. Their preferred emails are now blocked in every campaign${input.to === "DNC List" ? " and their conversations stopped" : ""} — a block can't be undone. Nothing was stopped on the portal.`,
+      ref: `portal_market_move:${input.now.toISOString()}:${input.portalId}:${norm(input.who)}`,
+    });
+  } catch (err) {
+    console.error("[portal-usage] market move alert", err instanceof Error ? err.message : err);
+  }
 }
 
 /** Today's agents viewed per person on a portal, for the Portal logins list. */

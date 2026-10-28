@@ -50,15 +50,19 @@ function filesUnder(dir: string): string[] {
   }
   return out;
 }
-const ROUTES = filesUnder("src/app/api/crm-preview");
+// /api/crm-preview/demo only forwards to /save (28 Oct; pinned below and in demo.test.ts) — every other route is gated here.
+const FORWARDER = "src/app/api/crm-preview/demo/route.ts";
+const ROUTES = filesUnder("src/app/api/crm-preview").filter((r) => r !== FORWARDER);
 const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
 
 test("the preview's routes: the reviewers, or a signed-in client on their own open portal — checked first; anyone else a bare 404; GET, except the chat's POST", () => {
-  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "demo/route.ts", "market/route.ts", "report/route.ts"]);
+  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "market/route.ts", "report/route.ts", "save/route.ts"]);
+  assert.match(read(FORWARDER), /^export \{ POST \} from "\.\.\/save\/route";$/m, "the old address only forwards to /save");
+  assert.doesNotMatch(read(FORWARDER), /function|import /, "and has nothing of its own");
   for (const r of ROUTES) {
     const src = read(r);
     const methods = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
-    assert.deepEqual(methods, [r.includes("/chat/") || r.includes("/demo/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
+    assert.deepEqual(methods, [r.includes("/chat/") || r.includes("/save/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
     assert.doesNotMatch(src, /canSeeCrmPreview\(|verifySso\(/, `${r}: the one gate, not its own`);
     const gate = src.indexOf("crmViewerOf(request)");
     assert.ok(gate > 0, `${r} calls the gate`);
@@ -68,13 +72,22 @@ test("the preview's routes: the reviewers, or a signed-in client on their own op
     assert.ok(own > gate, `${r}: checks the portal is the viewer's`);
     assert.match(src.slice(own, own + 120), /\)\) return new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for a portal not theirs`);
     const start = src.indexOf(`export async function ${methods[0]}`);
-    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "createAdminSupabase(", "portalBillingPage("]) {
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "runPortalAction(", "createAdminSupabase(", "portalBillingPage("]) {
       const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > gate, `${r}: ${load} only after the gate`);
     }
-    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "portalBillingPage(", "admit("]) {
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "runPortalAction(", "portalBillingPage(", "admit("]) {
       const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > own, `${r}: ${load} only after the portal check`);
+    }
+    // A client's portal switched off or held serves them nothing (28 Oct audit) — checked right after it is theirs; saves are refused in portal-save.ts.
+    if (!r.includes("/save/")) {
+      const closed = src.indexOf("if (await closedToClient(viewer, client as string)) return new NextResponse(null, { status: 404 });");
+      assert.ok(closed > own, `${r}: a switched-off or held portal is closed to its client`);
+      for (const load of ["marketContext(", "marketPage(", "marketReport(", "portalClient(", "loadPortalChatData(", "getAccountBilling(", "billingPortalUrl(", "portalBillingPage(", "admit("]) {
+        const at = src.indexOf(load, start);
+        assert.ok(at === -1 || at > closed, `${r}: ${load} only after the closed check`);
+      }
     }
     // Clients are counted and guarded as clients, staff as staff — never a role written in.
     assert.doesNotMatch(src, /role: "(staff|client)"|admit\(who, "/, `${r}: the role comes from the viewer`);
@@ -106,22 +119,53 @@ test("the page checks who is looking before it reads anything, and the portal is
   for (const load of ["loadPipelineEntries(", "loadAgentEntries(", "loadDncEntries(", "loadTeamMembers(", ".eq(\"id\", clientId)", "pipeline_outcome_events", "loadOffer("]) {
     assert.ok(src.indexOf(load, gate) > own, `${load} only after the portal check`);
   }
+  // A client sees what their current portal would (28 Oct): Not found while portals are off or theirs is switched off,
+  // the "paused" notice while it is held — both before any of its lists are read. Staff still see the portal.
+  const held = src.indexOf("const hold = await portalBillingHold(client.id as string);");
+  assert.ok(held > own, "the hold is checked for the portal asked for");
+  // (Not the Demo Portal — the testers' sample, no client's.)
+  assert.match(src.slice(src.lastIndexOf('if (audience === "client" && !isDemoPortal(client.id as string)) {', held), held), /if \(!CLIENT_PORTALS_ENABLED \|\| \(client as \{ portal_enabled\?: boolean \| null \}\)\.portal_enabled === false\) notFound\(\);/);
+  assert.match(src.slice(held, held + 200), /if \(hold\) return <PortalBillingHold /);
+  for (const load of ["loadPipelineEntries(", "loadAgentEntries(", "loadDncEntries(", "loadTeamMembers(", "loadOffer("]) assert.ok(src.indexOf(load, gate) > held, `${load} only after the hold check`);
   // A client's list of portals is only theirs; the staff session keeper never runs for a client (its 401 sends to the staff login).
   assert.match(src, /if \(viewer\.kind === "client"\) portalQuery = portalQuery\.in\("id", viewer\.portals\);/);
   assert.match(src, /\{audience === "staff" \? <SessionKeeper \/> : null\}/);
 });
 
-/* The one file that writes: the Demo Portal's saves (21 Oct), on the Demo Portal's rows only — demo.test.ts. */
+/*
+ * The two files that write: the Demo Portal's saves (21 Oct), on the Demo Portal's rows only — demo.test.ts; and a
+ * real client's own saves (28 Oct), through their current portal's own save code — portal-save.test.ts.
+ */
 const WRITER = "src/lib/crm-preview/demo.ts";
+const PORTAL_WRITER = "src/lib/crm-preview/portal-save.ts";
 
-test("read-only: nothing in the preview writes to a database or calls a server action — except the Demo Portal's saves, in one file", () => {
+test("read-only: nothing in the preview writes to a database or calls a server action — except the saves, in two files", () => {
   assert.ok(PREVIEW_FILES.length >= 4, PREVIEW_FILES.join(", "));
-  assert.ok(PREVIEW_FILES.includes(WRITER));
+  assert.ok(PREVIEW_FILES.includes(WRITER) && PREVIEW_FILES.includes(PORTAL_WRITER));
   const WRITES = [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /["']use server["']/, /formAction/, /navigator\.sendBeacon/];
-  for (const f of PREVIEW_FILES.filter((f) => f !== WRITER)) for (const w of WRITES) assert.doesNotMatch(read(f), w, `${f} matches ${w}`);
+  for (const f of PREVIEW_FILES.filter((f) => f !== WRITER && f !== PORTAL_WRITER)) for (const w of WRITES) assert.doesNotMatch(read(f), w, `${f} matches ${w}`);
   assert.doesNotMatch(read(WRITER), /\.upsert\(|["']use server["']/);
-  // Only the demo route runs it.
-  for (const f of PREVIEW_FILES.filter((f) => f !== WRITER && f !== "src/app/api/crm-preview/demo/route.ts")) assert.doesNotMatch(read(f), /runDemoAction/, f);
+  // Only the save route runs them (the old /demo address forwards to it).
+  for (const f of PREVIEW_FILES.filter((f) => f !== WRITER && f !== "src/app/api/crm-preview/save/route.ts")) assert.doesNotMatch(read(f), /runDemoAction/, f);
+  for (const f of PREVIEW_FILES.filter((f) => f !== PORTAL_WRITER && f !== "src/app/api/crm-preview/save/route.ts")) assert.doesNotMatch(read(f), /runPortalAction/, f);
+});
+
+/*
+ * portal-save.ts writes through the current portal's own handlers. Its few writes of its own are Market's Move to
+ * (adding to My Agents / the DNC List, and noting how each block went) and, after a bulk stage move, taking agents out
+ * of a custom stage — nothing else, never a delete (a removal is the current portal's own), never the clients table.
+ */
+test("a real portal's own writes: exactly these tables, never a delete, never `clients`", () => {
+  const src = read(PORTAL_WRITER);
+  assert.doesNotMatch(src, /\.upsert\(|\.delete\(|["']use server["']|\.rpc\(/);
+  const writes = [...src.matchAll(/\.from\(([^)]+)\)\s*\.(insert|update)\(/g)].map((m) => `${m[1]}.${m[2]}`).sort();
+  assert.deepEqual(writes, ['"client_agents".insert', '"client_dnc_entries".insert', '"client_pipeline_entries".update', '"os_market_dnc_emails".insert', "table.update"]);
+  // The custom-stage clear: only that column, only this portal's agents.
+  assert.match(src, /\.from\("client_pipeline_entries"\)\.update\(\{ custom_stage_key: null \}\)\.eq\("client_id", client\.id\)/);
+  // How a block went: only the push columns, by the row just added.
+  assert.match(src, /\.update\(\{\s*pushed_to_instantly: [^}]+pushed_to_emailbison: [^}]+push_error: [^}]+\}\)\s*\.eq\("id", row\.id\)/);
+  assert.match(src, /async function blockAll\(table: "client_agents" \| "client_dnc_entries"/);
+  assert.doesNotMatch(src, /from\("clients"\)\.(update|insert)/);
 });
 
 /*
@@ -156,7 +200,7 @@ const BROWSER_REQUESTS = [
   /^\/api\/crm-preview\/market\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/chat$/,
-  /^\/api\/crm-preview\/demo$/,
+  /^\/api\/crm-preview\/save$/,
   // A signed-in client's Sign out (27 Oct): ends this browser's session.
   /^\/api\/portal-signin\/signout$/,
 ];

@@ -79,6 +79,39 @@ test("another client's rows never change — ids from another portal are filtere
   assert.deepEqual(fake.blocked, [], "nothing but the database was asked");
 });
 
+test("the current portal's Add and Edit extras (28 Oct): the introduction day at noon UTC, the replacement mark, a blanked field, notes edited and deleted", async () => {
+  const s = seed();
+  const added = await run({ type: "entry.add", lead_name: "Dana Reyes", introduced_at: "2026-09-15", needs_replacement: true });
+  assert.equal(added.ok, true);
+  const r = row("client_pipeline_entries", (added as { id: string }).id);
+  assert.equal(r.introduced_at, "2026-09-15T12:00:00.000Z");
+  assert.equal(r.needs_replacement, true);
+  // Not a date, or not a real one: refused before anything is written.
+  assert.equal(demoAction.safeParse({ type: "entry.add", lead_name: "X", introduced_at: "2026-02-30" }).success, false);
+  assert.equal(demoAction.safeParse({ type: "entry.add", lead_name: "X", introduced_at: "45212" }).success, false);
+  // An edit that leaves the date out keeps it; the mark changes on its own.
+  assert.equal((await run({ type: "entry.edit", id: r.id, lead_name: "Dana Reyes", needs_replacement: false })).ok, true);
+  assert.equal(row("client_pipeline_entries", r.id as string).introduced_at, "2026-09-15T12:00:00.000Z");
+  assert.equal(row("client_pipeline_entries", r.id as string).needs_replacement, false);
+  // A blank value blanks the field (as the current portal); null takes the client's own value off.
+  row("client_pipeline_entries", r.id as string).custom_fields_overrides = { Kept: "x", Gone: "y" };
+  assert.equal((await run({ type: "entry.fields", id: r.id, fields: { "Sales Volume": "", Gone: null } })).ok, true);
+  assert.deepEqual(row("client_pipeline_entries", r.id as string).custom_fields_overrides, { Kept: "x", "Sales Volume": "" });
+  // Notes: edited and deleted on the Demo's own agents only.
+  const note = await run({ type: "note.add", entry: r.id, body: "first" });
+  const noteId = (note as { id: string }).id;
+  assert.equal((await run({ type: "note.edit", entry: r.id, note: noteId, body: "second" })).ok, true);
+  assert.equal(row("client_pipeline_notes", noteId).body, "second");
+  const [theirNote] = fake.seed("client_pipeline_notes", [...fake.rows("client_pipeline_notes"), { entry_id: s.theirs.id, body: "theirs" }]).slice(-1);
+  assert.deepEqual(await run({ type: "note.edit", entry: s.theirs.id, note: theirNote.id, body: "x" }), { ok: false, status: 404, error: "That agent is not on this portal." });
+  assert.deepEqual(await run({ type: "note.delete", entry: r.id, note: theirNote.id }), { ok: false, status: 404, error: "That note is no longer there." });
+  assert.equal(row("client_pipeline_notes", theirNote.id).body, "theirs");
+  assert.equal((await run({ type: "note.delete", entry: r.id, note: noteId })).ok, true);
+  assert.equal(fake.rows("client_pipeline_notes").some((n) => n.id === noteId), false);
+  // The Demo never connects to Follow Up Boss.
+  assert.deepEqual(await run({ type: "entry.push", id: r.id }), { ok: false, status: 400, error: "The Demo Portal never connects to Follow Up Boss." });
+});
+
 test("the live portal's rows: a manual add is a Client Entry at Introduction; a move clears a custom stage", async () => {
   seed();
   const added = await run({ type: "entry.add", lead_name: "Jordan Ellis", lead_email: "Jordan@Coastal.test" });
@@ -255,27 +288,39 @@ test("input is checked before anything is read", () => {
   assert.equal(companyDomain("kw"), null);
 });
 
-test("the save path imports nothing that reaches outside the database, and the route refuses any other portal first", () => {
+test("the Demo's save path imports nothing that reaches outside the database; the save route checks who, the portal and the right to change it before any save, and keeps the Demo off the real-portal path (28 Oct)", () => {
   const read = (p: string) => fs.readFileSync(p, "utf8");
-  const files = ["src/lib/crm-preview/demo.ts", "src/app/api/crm-preview/demo/route.ts"];
-  for (const f of files) {
-    const src = read(f);
-    const imports = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
-    const allowed = f.endsWith("demo.ts")
-      // 23 Oct: Market's Move to reads the agent database (demo-market.ts, read-only) — still nothing that blocks, stops, posts or texts.
-      ? ["zod", "@/lib/crm-preview/model", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market-model"]
-      : ["next/server", "@/lib/crm-preview/viewer", "@/lib/crm-preview/viewer-rules", "@/lib/crm-preview/data-guard", "@/lib/crm-preview/demo", "@/lib/supabase/admin", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market", "@/lib/crm-preview/market-model"];
-    // And what those read from: the agent database (read-only) and the Market helpers — never a blocklist, Slack, texts or Follow Up Boss.
-    assert.deepEqual(imports.filter((i) => !allowed.includes(i)), [], `${f}: only the database and the preview's own checks — no blocklist, stop, Slack, texts, Follow Up Boss`);
-    assert.doesNotMatch(src, /\bfetch\(|import\(/, `${f}: no outside requests, no dynamic imports`);
-  }
+  const importsOf = (src: string) => [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
+  // demo.ts — the Demo's one writer: the database and the preview's own helpers, never a blocklist, Slack, texts or Follow Up Boss.
+  const demo = read("src/lib/crm-preview/demo.ts");
+  // 23 Oct: Market's Move to reads the agent database (demo-market.ts, read-only).
+  const demoAllowed = ["zod", "@/lib/crm-preview/model", "@/lib/tools/master-inbox/db/paginated-select", "@/lib/tools/master-inbox/portals/stages-shared", "@/lib/tools/master-inbox/portals/stage-config", "@/lib/crm-preview/demo-market", "@/lib/crm-preview/market-model"];
+  assert.deepEqual(importsOf(demo).filter((i) => !demoAllowed.includes(i)), [], "demo.ts: only the database and the preview's own checks");
+  assert.doesNotMatch(demo, /\bfetch\(|import\(/, "demo.ts: no outside requests, no dynamic imports");
   const dm = read("src/lib/crm-preview/demo-market.ts");
-  assert.deepEqual([...dm.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]).filter((i) => !["server-only", "zod", "@/lib/tools/assistant/read-only", "@/lib/tools/corofy/supabase", "./demo", "./market-model"].includes(i)), [], "demo-market.ts: the agent database read-only, nothing else");
+  assert.deepEqual(importsOf(dm).filter((i) => !["server-only", "zod", "@/lib/tools/assistant/read-only", "@/lib/tools/corofy/supabase", "./demo", "./market-model"].includes(i)), [], "demo-market.ts: the agent database read-only, nothing else");
   assert.match(dm, /const agentDb = \(\) => readOnly\(getCorofySupabase\(\)\);/, "the agent database only through the read-only wrapper");
-  const route = read("src/app/api/crm-preview/demo/route.ts");
-  const refuse = route.indexOf("isDemoPortal(");
-  const own = route.indexOf("mayOpenPortal(viewer, ");
-  assert.ok(route.indexOf("crmViewerOf(request)") > 0 && refuse > route.indexOf("crmViewerOf(request)") && own > refuse && own < route.indexOf("runDemoAction(") && refuse < route.indexOf("runDemoAction(") && refuse < route.indexOf("createAdminSupabase()"), "who first, then Demo-only, then the portal is theirs, then the save");
+
+  // The save route: who first; a portal they may not open — nothing; may not change — read-only; then the save.
+  const route = read("src/app/api/crm-preview/save/route.ts");
+  assert.doesNotMatch(route, /\bfetch\(|import\(/, "the route: no outside requests, no dynamic imports");
+  const at = (needle: string, from = 0) => { const i = route.indexOf(needle, from); assert.ok(i > 0, `the route has ${needle}`); return i; };
+  const who = at("crmViewerOf(request)");
+  const open = at("if (!mayOpenPortal(viewer, client))");
+  const write = at("if (!mayWritePortal(viewer, client))");
+  const gate = at("admit(who, role,");
+  const demoBranch = at("if (isDemoPortal(portal)) {");
+  const realBranch = at("} else {", demoBranch);
+  assert.ok(who < open && open < write && write < gate && gate < demoBranch, "who, then the portal is theirs, then they may change it, then the guard, then the save");
+  assert.ok(at("runDemoAction(") > demoBranch && route.indexOf("runDemoAction(") < realBranch, "the Demo's saves are the Demo's own (demo.ts)");
+  // On the Demo nothing reaches the real-portal path (portal-save.ts sets off blocklists, Slack, texts, Follow Up Boss).
+  assert.doesNotMatch(route.slice(demoBranch, realBranch), /runPortal/, "the Demo branch never calls portal-save");
+  assert.ok(at("runPortalAction(") > realBranch);
+  assert.equal(route.match(/runPortalAction\(/g)?.length, 1, "one call, in the real-portal branch");
+  // The first address only forwards.
+  const old = read("src/app/api/crm-preview/demo/route.ts");
+  assert.deepEqual(importsOf(old), ["../save/route"]);
+  assert.match(old, /export \{ POST \} from "\.\.\/save\/route";/);
 });
 
 test("the Demo Portal's sample market: the design's own (C21 Results' MLSs) — and never anyone's lists as Prospects", () => {

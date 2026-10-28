@@ -2,6 +2,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 
 import { crmViewerOf } from "@/lib/crm-preview/viewer";
 import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
+import { closedToClient } from "@/lib/crm-preview/portal-open";
 import { answer, loadPortalChatData } from "@/lib/crm-preview/chat";
 import { parseTurns, type MarketTotals } from "@/lib/crm-preview/chat-tools";
 import { marketContext, marketReport } from "@/lib/crm-preview/market";
@@ -38,6 +39,8 @@ export async function POST(request: NextRequest) {
   }
   // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
   if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
+  // A client's portal that is switched off or held serves them nothing, as their current portal (portal-open.ts).
+  if (await closedToClient(viewer, client as string)) return new NextResponse(null, { status: 404 });
 
   const gate = admit(who, role, "chat", request.headers);
   if (!gate.ok) {

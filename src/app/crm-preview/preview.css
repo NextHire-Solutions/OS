@@ -167,7 +167,7 @@
  */
 .cpv-shell button.crx-kc { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .cpv-shell button.crx-kc .crx-co { display: block; }
-.cpv-shell button.crx-kc .cpv-cardtag { display: block; margin-top: 8px; }
+.cpv-shell button.crx-kc .cpv-cardtag { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .cpv-shell button.crx-kc:hover { border-color: #d9e1f2; }
 .cpv-shell .crx-kc:focus-visible,
 .cpv-shell .crx-nmc a:focus-visible,
@@ -327,3 +327,10 @@ html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }
 .cpv-shell .cpv-uacts button:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; border-radius: 3px; }
 .cpv-shell .cpv-uacts button:disabled { color: #9aa1ad; cursor: default; text-decoration: none; }
 .cpv-shell .crx-rail.crx-cl .cpv-uacts { display: none; }
+
+/*
+ * The support chat's round button sits over the bottom-right corner of the page — where a side panel's and a pop-up's
+ * own buttons are (the Notes panel's "Save note" was hidden under it, 28 Oct). While one is open the button steps
+ * aside; it comes back when the panel closes. The chat window itself is not a panel, so its close button stays.
+ */
+.cpv-shell:has(aside.crx-pnl, .crx-pnl-ov, div.crx-ov[role="dialog"], .crx-aov) a.crx-aiask { display: none !important; }

@@ -379,7 +379,41 @@ async function loadDnc(mi: Mi, portals: string[]): Promise<DncEntry[]> {
     "client_dnc_entries",
     DNC_MAX_ROWS,
   );
-  return rows.map((r) => ({ kind: str(r.kind), name: str(r.name), email: str(r.email), domain: str(r.domain) }));
+  const out: DncEntry[] = rows.map((r) => ({ kind: str(r.kind), name: str(r.name), email: str(r.email), domain: str(r.domain) }));
+  /*
+   * An agent the client moved to the DNC List from the new portal's Market (28 Oct) is on it by name; its address is
+   * kept apart (os_market_dnc_emails, migration 0044 — never shown to the client). Each is matched here as an address
+   * on that entry, every page of them. Before the migration the table is not there (PostgREST's own "no such table"
+   * codes only): the list is as before. Any other failure throws, and the hand-off is held, as for the list itself.
+   */
+  let hidden: Array<Record<string, unknown>> = [];
+  try {
+    hidden = await readAll(
+      (from, to, first) =>
+        mi
+          .from("os_market_dnc_emails")
+          .select("entry_id, email", first ? { count: "exact" } : undefined)
+          .in("client_id", portals)
+          .order("entry_id", { ascending: true })
+          .order("email", { ascending: true })
+          .range(from, to),
+      "os_market_dnc_emails",
+      DNC_MAX_ROWS,
+    );
+  } catch (err) {
+    if (!(await hiddenTableMissing(mi))) throw err;
+  }
+  const nameOf = new Map(rows.map((r) => [String(r.id), str(r.name)]));
+  for (const h of hidden as Array<{ entry_id: string; email: string }>) {
+    if (nameOf.has(String(h.entry_id))) out.push({ kind: "agent", name: nameOf.get(String(h.entry_id)) ?? null, email: str(h.email), domain: null });
+  }
+  return out;
+}
+
+/* Whether os_market_dnc_emails is simply not there yet (migration 0044 not run) — PostgREST's own codes, nothing broader. */
+async function hiddenTableMissing(mi: Mi): Promise<boolean> {
+  const { error } = await mi.from("os_market_dnc_emails").select("entry_id").limit(1);
+  return !!error && (error.code === "PGRST205" || error.code === "42P01");
 }
 
 /** On the brokerage's My Agents roster under the same first and last name (sameName). Candidates are read by last name. */

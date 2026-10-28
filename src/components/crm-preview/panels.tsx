@@ -87,6 +87,15 @@ export function TagChip({ stage }: { stage: PreviewStage }) {
   return <span className={k("tg")}><i style={{ background: stage.dot }} />{stage.label}</span>;
 }
 
+/*
+ * The current portal's Replacement mark (28 Oct): an agent marked "Needs a replacement", or at No Response — "This
+ * introduction will be replaced."
+ */
+export function ReplacementMark({ entry }: { entry: Pick<PipelineEntry, "needs_replacement" | "stage"> }) {
+  if (!entry.needs_replacement && entry.stage !== "no_show") return null;
+  return <span className={k("tg")} title="This introduction will be replaced."><i style={{ background: "#d97706" }} />Replacement</span>;
+}
+
 /** A forward stage as the design's pill; an agent who is only tagged has none. */
 export function StageCell({ stage }: { stage: PreviewStage }) {
   return stage.role === "stage" ? <span className={k(`pill p-${stage.pill}`)}>{stage.label}</span> : <span className={k("dash")}>&ndash;</span>;
@@ -111,6 +120,7 @@ export function AgentPanel({
   placement,
   tags,
   onTag,
+  onPush,
   onClose,
   onEdit,
 }: {
@@ -119,6 +129,8 @@ export function AgentPanel({
   /** The portal's tags, and what choosing one does — only on the Demo Portal. */
   tags: PreviewStage[];
   onTag?: (key: string) => void;
+  /** "Push to Follow Up Boss" — a client's own portal with Follow Up Boss connected (as the current portal shows it). */
+  onPush?: () => Promise<boolean>;
   onClose: () => void;
   onEdit: () => void;
 }) {
@@ -140,7 +152,7 @@ export function AgentPanel({
           <span className={k("av big")}>{initials(name)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 600 }}>{name}</div>
-            <span style={{ display: "inline-flex", marginTop: 6 }}><Source entry={e} /></span>
+            <span style={{ display: "inline-flex", gap: 6, marginTop: 6 }}><Source entry={e} /><ReplacementMark entry={e} /></span>
           </div>
           <button type="button" className={k("btn sm")} onClick={onEdit}><Icon name="pencil" size={14} />Edit</button>
           <button type="button" className={k("ib")} aria-label="Close" style={{ marginLeft: 2 }} onClick={onClose}><Icon name="x" size={16} /></button>
@@ -156,6 +168,7 @@ export function AgentPanel({
           {row("Phone", formatPhone(e.lead_phone) ?? "–")}
           {row("Company", e.current_brokerage || "–")}
           {row("Source", sourceLabel(e))}
+          {onPush ? row("Follow Up Boss", <FubPush entry={e} onPush={onPush} />) : null}
           {fields.map((f) => row(f.label, f.href ? <a href={f.href} target="_blank" rel="noopener noreferrer" style={{ color: "#3e6bd1", overflowWrap: "anywhere" }}>{f.value}</a> : f.value))}
         </dl>
         <div style={{ margin: "0 20px", paddingTop: 18, borderTop: "1px solid #ebedf0" }}>
@@ -164,6 +177,30 @@ export function AgentPanel({
         </div>
       </aside>
     </div>
+  );
+}
+
+/* The current portal's per-agent Follow Up Boss chip: not sent yet, sent (and when), or the last attempt's error — each with its button. */
+function FubPush({ entry: e, onPush }: { entry: PipelineEntry; onPush: () => Promise<boolean> }) {
+  const [busy, setBusy] = useState(false);
+  const push = async () => {
+    if (busy) return;
+    setBusy(true);
+    await onPush();
+    setBusy(false);
+  };
+  const label = busy ? "Sending…" : e.fub_last_error ? "Retry push" : e.fub_pushed_at ? "Push again" : "Push to Follow Up Boss";
+  return (
+    <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+      {e.fub_last_error ? (
+        <span style={{ color: "#b91c1c" }} title={e.fub_last_error}>Last push failed</span>
+      ) : e.fub_pushed_at ? (
+        <span>In Follow Up Boss · {longDate(e.fub_pushed_at)}</span>
+      ) : (
+        <span>Not sent yet</span>
+      )}
+      <button type="button" className={k("btn sm")} style={{ height: 24 }} disabled={busy} onClick={() => void push()}>{label}</button>
+    </span>
   );
 }
 
@@ -280,6 +317,21 @@ export function NotesPanel({ entry: e, onClose }: { entry: PipelineEntry; onClos
     if (await save({ type: "note.add", entry: e.id, body: note.trim() })) setNote("");
     setBusy(false);
   };
+  // The current portal's note Edit and Delete (28 Oct).
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const editNote = async (id: string) => {
+    if (!draft.trim() || busy) return;
+    setBusy(true);
+    if (await save({ type: "note.edit", entry: e.id, note: id, body: draft.trim() })) setEditing(null);
+    setBusy(false);
+  };
+  const removeNote = async (id: string) => {
+    if (busy || !window.confirm("Delete this note?")) return;
+    setBusy(true);
+    await save({ type: "note.delete", entry: e.id, note: id });
+    setBusy(false);
+  };
   return (
     <>
       <button type="button" className={k("ov")} style={{ zIndex: 10 }} aria-label="Close notes" onClick={onClose} />
@@ -298,8 +350,29 @@ export function NotesPanel({ entry: e, onClose }: { entry: PipelineEntry; onClos
           ) : (
             e.notes_log.map((n) => (
               <div key={n.id} className={k("msg")}>
-                <div className={k("mh")}><span><b>Note</b></span><span>{stamp(n.created_at)}</span></div>
-                <Paragraphs text={n.body} />
+                <div className={k("mh")}>
+                  <span><b>Note</b></span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    {stamp(n.created_at)}{n.updated_at && n.updated_at !== n.created_at ? " · edited" : ""}
+                    {live && editing !== n.id ? (
+                      <>
+                        <button type="button" className={k("btn sm")} style={{ height: 22 }} disabled={busy} onClick={() => { setEditing(n.id); setDraft(n.body); }}>Edit</button>
+                        <button type="button" className={k("btn sm")} style={{ height: 22 }} disabled={busy} onClick={() => void removeNote(n.id)}>Delete</button>
+                      </>
+                    ) : null}
+                  </span>
+                </div>
+                {editing === n.id ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <textarea className={k("ta")} rows={4} aria-label="Edit note" value={draft} onChange={(ev) => setDraft(ev.target.value)} autoFocus />
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                      <button type="button" className={k("btn sm")} onClick={() => setEditing(null)}>Cancel</button>
+                      <button type="button" className={k(draft.trim() && !busy ? "btn sm pri" : "btn sm pri dim")} disabled={!draft.trim() || busy} onClick={() => void editNote(n.id)}>{busy ? "Saving…" : "Save"}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <Paragraphs text={n.body} />
+                )}
               </div>
             ))
           )}

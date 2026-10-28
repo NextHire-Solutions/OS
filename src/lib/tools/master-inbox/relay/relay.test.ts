@@ -611,6 +611,37 @@ test("never for anyone on that brokerage's Do Not Contact list — by address, c
   assert.deepEqual(await outcomeOf(() => add("client_dnc_entries", [{ client_id: P.wag, kind: "agent", name: "Jordan Ellis", email: "jordan@coastal.test" }])), ["practice", null, null]);
 });
 
+test("never for an agent the brokerage moved to its DNC List from the new portal's Market — by the address kept apart (0044)", async () => {
+  // The entry is by name only ("Someone Else" — a name that would not match); its address is in os_market_dnc_emails.
+  assert.deepEqual(await outcomeOf(() => {
+    const [e] = add("client_dnc_entries", [{ client_id: P.jeff, kind: "agent", name: "Someone Else", email: null, notes: "From Market" }]);
+    add("os_market_dnc_emails", [{ entry_id: e.id, client_id: P.jeff, email: "jordan@coastal.test" }]);
+  }), ["skipped", "dnc", "by email"]);
+  // Another brokerage's kept address is not this brokerage's.
+  assert.deepEqual(await outcomeOf(() => {
+    const [e] = add("client_dnc_entries", [{ client_id: P.wag, kind: "agent", name: "Someone Else", email: null, notes: "From Market" }]);
+    add("os_market_dnc_emails", [{ entry_id: e.id, client_id: P.wag, email: "jordan@coastal.test" }]);
+  }), ["practice", null, null]);
+  // Before migration 0044 the table is not there: the list is read as before (nothing held for it).
+  assert.deepEqual(await outcomeOf(() => db.missingTables.add("os_market_dnc_emails")), ["practice", null, null]);
+  // Any other failure reading it holds the hand-off, as the list's own does — a refused permission naming the table too.
+  const out = await outcomeOf(() => { db.failWhen = ({ table }) => table === "os_market_dnc_emails"; });
+  db.failWhen = null;
+  assert.equal(out[0], "held");
+  assert.equal(out[1], "read_error");
+  const denied = await outcomeOf(() => { db.failWhen = ({ table }) => (table === "os_market_dnc_emails" ? { code: "42501", message: "permission denied for table os_market_dnc_emails", status: 403 } : false); });
+  db.failWhen = null;
+  assert.equal(denied[0], "held");
+  // Every page of it (28 Oct audit: one read stopped at the database's 1,000-row page): the address on the last page still holds.
+  const paged = await outcomeOf(() => {
+    db.pageLimit = 2;
+    const entries = add("client_dnc_entries", [1, 2, 3].map((i) => ({ client_id: P.jeff, kind: "agent", name: `Market Person ${i}`, email: null, notes: "From Market" })));
+    add("os_market_dnc_emails", entries.map((e, i) => ({ entry_id: e.id, client_id: P.jeff, email: i === 2 ? "jordan@coastal.test" : `other${i}@x.test` })));
+  });
+  db.pageLimit = null;
+  assert.deepEqual(paged, ["skipped", "dnc", "by email"]);
+});
+
 test("not for an agent the brokerage already has, or one the team already introduced", async () => {
   assert.deepEqual(await outcomeOf(() => add("client_agents", [{ client_id: P.jeff, name: "Jordan Ellis", email: "jordan@coastal.test" }])), ["skipped", "their_agent", null]);
   // On My Agents under another address, or none — matched by first and last name (21 Oct review).

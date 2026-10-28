@@ -122,7 +122,28 @@ export async function gatherSafetyFacts(input: GatherFactsInput): Promise<Safety
         .ilike("email", email)
         .limit(1);
       if (dErr) throw new Error(dErr.message);
-      doNotContact = (dnc ?? []).length > 0;
+      let listed = (dnc ?? []).length > 0;
+      /*
+       * And an agent a client moved to their DNC List from the new portal's
+       * Market (28 Oct): that entry carries no address (the client never sees
+       * the agent database's email); its address is kept apart, in
+       * os_market_dnc_emails (migration 0044). Before that migration is run the
+       * table is not there (PostgREST's own "no such table" codes only) — read
+       * as "not on it", so nothing else is held. Any other failure (a refused
+       * permission included) throws, and the reply is held: the answer is set
+       * only once every lookup has answered. Addresses are kept lower-case, as
+       * `email` is here.
+       */
+      if (!listed) {
+        const { data: hidden, error: hErr } = await admin
+          .from("os_market_dnc_emails")
+          .select("entry_id")
+          .eq("email", email)
+          .limit(1);
+        if (hErr && hErr.code !== "PGRST205" && hErr.code !== "42P01") throw new Error(hErr.message);
+        listed = (hidden ?? []).length > 0;
+      }
+      doNotContact = listed;
     }
   } catch (err) {
     console.error("[agent-safety] do-not-contact lookup failed; holding", err);

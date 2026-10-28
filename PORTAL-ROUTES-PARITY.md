@@ -363,3 +363,85 @@ scans this folder: every `.update()` and `.delete()` in the 13 files is scoped.
 `updated_at`, scoped `.eq("id", client.id)`). Unlike `stage-labels`, it is kept
 verbatim and does **not** go through `assertNoPortalColumns()`. Its patch is a
 literal with three fixed keys, so the guard could never fire there.
+
+## The new client portal's saves (28 Oct)
+
+`src/lib/crm-preview/portal-save.ts`, called only by `src/app/api/crm-preview/save/route.ts`
+(the old `/api/crm-preview/demo` address only re-exports it). The user: "exact same
+functionality of the old client portals for the features that are present in new client
+portal".
+
+**Who.** The route checks the viewer (staff reviewer or a signed-in client), that the portal is
+theirs to open (`viewer-rules.ts` `mayOpenPortal` — a bare 404 otherwise), and that they may
+change it (`mayWritePortal`: the Demo's own viewers; a real portal only its own signed-in client —
+a staff preview of a real client stays read-only, 403). Then the usage guard. Then the save.
+
+**The Demo** keeps its own writer (`demo.ts`): its rows only, nothing outside.
+
+**A real portal** goes through `runPortalAction`:
+
+1. The portal's token is read from `clients` on the server, then `resolvePortalClient(token)` —
+   the same answer the current portal gives (portals switched on, not the Unknown bucket,
+   `portal_enabled` not false). The token never reaches the browser.
+2. **Held for an unpaid invoice** (`portals/billing-hold.ts`, byte-identical to the tool's): the
+   save is refused before any handler runs. This closes difference 1 above for the new portal;
+   the staff drill-down's routes are unchanged. The page (`app/crm-preview/page.tsx`) shows a
+   client the tool's own "Your portal is paused" screen (`portals-ui/billing-hold.tsx`,
+   byte-identical) and Not found for a switched-off portal, as the current portal does.
+3. Each action calls the handler the current portal's UI calls for it, in-process, with the
+   body that UI sends: one agent's stage/assign/delete → the single-entry route; several → the
+   bulk route, 200 ids a request; notes add/edit/delete; push to Follow Up Boss; My Agents,
+   DNC and Team add/edit/active/delete (a row's own delete → the `id` route, which posts to
+   Slack; "Delete selected" → `bulk-delete` whatever the count, as the current portal — for
+   My Agents and DNC that posts nothing, for Team it posts each member when five or fewer,
+   else one summary); CSV imports → each list's `csv` handler; Manage stages → `stages`;
+   Follow Up Boss connect/disconnect → `followup-boss`. Every side effect is the handler's own.
+
+Where it deliberately does more than the current portal (each is a known gap there; none adds
+a side effect):
+
+| | current portal | new portal |
+|---|---|---|
+| Edit lead | re-sends the date (rewriting it to noon UTC) and the replacement mark on every save | sends each only when changed |
+| Assign | does not check the team member is the portal's | refused with a sentence if not |
+| Bulk move with Manage stages | leaves `custom_stage_key`, so the agent stays in a custom column | then clears it for this portal's agents, as the single move does |
+| Custom stage without the flag | silently ignored and answered "ok" | refused with a sentence |
+| DNC company with an unreadable domain | saved with no domain (blocks nothing) | refused with a sentence |
+| CSV imports (Agents, DNC, Team) | one bad row fails the whole file | bad rows skipped and named by line; the rest go through the same handler |
+| Pipeline CSV stage column | raw keys only (`phone_screen`) | also the portal's own stage names ("First Call"), mapped to the key the handler takes |
+
+Inherited, not new: the Introduction announcement fires only on a real move into Introduction
+(difference 2 above).
+
+What the new portal adds with no current-portal equivalent: the Setup wizard's offer
+(`os_portal_offers`, nothing outside), and Market's **Move to** on a real portal (and the
+wizard's "Add to My Agents") — My Agents, the DNC List or off every list, at most 500 a move,
+asked first ("This can't be undone"), each counted as Market use (the OS heavy-use alert), and
+each move onto My Agents or the DNC List puts its own notice in the OS bell (the user, 28 Oct:
+"Market move: N agents to DNC List — <client>", `portal-usage/usage.ts alertMarketMove` —
+it never refuses or pauses the client):
+
+- saved by **name** (and brokerage, on the DNC List) only — never the agent database's email or
+  phone (the no-scraping rule: no exportable list carries what Market itself never shows);
+- the agent's **preferred** email only (the user's choice, 28 Oct — the enriched one is a guess)
+  is blocked (`enforceBlocklist`, as an added address is) — for every agent moved onto the list,
+  those already on it by name too; on the DNC List it is also stopped (`stopEntries`), one Slack
+  summary names those added (names only), and the address is kept in `os_market_dnc_emails`
+  (migration 0044) against the entry, where the OS reply agent (`ai/safety-facts.ts`) and the
+  Postmark relay (`relay/relay.ts`) look — both hold if that read fails for any reason but "no
+  such table" (before 0044 is run);
+- the entry is added first, the side effects set off as soon as it is, then the agent is taken
+  off the lists it leaves (the current portal's `bulk-delete`): a later step failing says so and a
+  retry finishes it — never an agent on no list, never a block lost;
+- an agent is recognised on a list by its preferred address, or by name where an entry has none —
+  and only an entry Market made is taken off by name: a client's own same-name entry stays.
+
+Prospects are never added on a real portal. Master Inbox's own reply agent (the one its sync
+webhooks trigger) gets the same `os_market_dnc_emails` lookup in its `lib/ai/safety-facts.ts`
+(the user, 28 Oct: "Port the check to Master Inbox"; with `lib/ai/safety-facts-dnc.test.ts`) —
+that app's change ships only with its own deploy.
+
+`portal-save.test.ts` runs every one of these through the real handlers against a fake
+database, with every outside call recorded; `access.test.ts` pins the only tables portal-save
+writes itself (`client_agents` / `client_dnc_entries` inserts for Market, their push columns,
+and the custom-stage clear) — never a delete, never `clients`.

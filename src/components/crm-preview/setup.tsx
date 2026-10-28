@@ -279,13 +279,18 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
   const pickedShown = mine.filter((a) => picked.has(a.id)).map((a) => a.id);
   const removePicked = async () => {
     const ids = pickedShown;
-    if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "agent" : "agents"} from My Agents?`)) await save({ type: "agent.delete", ids });
+    if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "agent" : "agents"} from My Agents?`)) await save({ type: "agent.delete", ids, bulk: true });
   };
   // Ticked market agents onto My Agents (23 Oct, demo-market.ts): by name, brokerage and phone — never the agent database's email.
   const [adding, setAdding] = useState(false);
   const addMarked = async () => {
-    const ids = rows.filter((r) => marked.has(r.id) && !onList(r)).map((r) => r.id);
+    // Every agent ticked, on any page or search (only agents not on My Agents can be ticked).
+    const ids = [...marked];
     if (!ids.length) { demo.say("Tick the agents on your team first."); return; }
+    // At most 500 at once on a client's own portal, as Market (portal-save.ts PORTAL_MAX_MOVE).
+    if (!demo.demo && ids.length > 500) { demo.say(`That's ${fmt(ids.length)} agents — add 500 or fewer at once.`, true); return; }
+    // Asked first on a client's own portal, as Market asks (28 Oct audit): My Agents are never emailed, by any campaign, for good.
+    if (!demo.demo && !window.confirm(`Add ${ids.length === 1 ? "this agent" : `${fmt(ids.length)} agents`} to My Agents? We'll never email them in any campaign. This can't be undone.`)) return;
     setAdding(true);
     const ok = await save({ type: "market.move", ids, to: "My Agents" });
     setAdding(false);
@@ -321,7 +326,7 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
           <div className={k("sbulk idle")}>
             <span className={k("bt")}>No agents added yet. Filter by your office to find them, or import a&nbsp;CSV.</span>
             {live && tab === "market" ? (
-              <button className={k("btn sm")} type="button" disabled={adding || marked.size === 0} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(rows.filter((r) => marked.has(r.id) && !onList(r)).length)} to My Agents` : "Add to My Agents"}</button>
+              <button className={k("btn sm")} type="button" disabled={adding || marked.size === 0} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(marked.size)} to My Agents` : "Add to My Agents"}</button>
             ) : (
               <button className={k("btn sm")} type="button" disabled>Add to My Agents</button>
             )}
@@ -335,7 +340,7 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
           <div className={k("sbulk idle")}>
             <span className={k("bt")}><b className={k("num")}>{fmt(total)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{fmt(n)} added to My Agents</span></span>
             {live ? (
-              <button className={k("btn sm")} type="button" disabled={adding} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(rows.filter((r) => marked.has(r.id) && !onList(r)).length)} to My Agents` : "Add to My Agents"}</button>
+              <button className={k("btn sm")} type="button" disabled={adding} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(marked.size)} to My Agents` : "Add to My Agents"}</button>
             ) : (
               <button className={k("btn sm")} type="button" {...RO}>{ticked ? "Remove selected" : "Add to My Agents"}</button>
             )}
@@ -412,7 +417,7 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
   // Only ticked entries on the tab and search shown (22 Oct audit: ticks on the other tab were deleted too).
   const pickedIn = (rows: DncEntry[]) => rows.filter((d) => picked.has(d.id)).map((d) => d.id);
   const removePicked = async (ids: string[]) => {
-    if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "entry" : "entries"} from the DNC List?`)) await save({ type: "dnc.delete", ids });
+    if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "entry" : "entries"} from the DNC List?`)) await save({ type: "dnc.delete", ids, bulk: true });
   };
   if (dnc.length === 0) {
     return (

@@ -77,7 +77,7 @@ export class FakePostgrest {
    * database error would (500) — to prove what a failed read leaves behind.
    * Cleared by reset.
    */
-  failWhen: ((call: { method: string; table: string; query: URLSearchParams }) => boolean) | null = null;
+  failWhen: ((call: { method: string; table: string; query: URLSearchParams }) => boolean | { code: string; message: string; status?: number }) | null = null;
 
   /** Seeds a table (replacing it) and returns the rows, each with an id. */
   seed(table: string, rows: Row[]): Array<Row & { id: string }> {
@@ -190,8 +190,11 @@ export class FakePostgrest {
     const table = parts[0] === "rpc" ? `rpc:${parts[1]}` : parts[0];
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     this.calls.push({ method, table, query: url.searchParams, body, headers });
-    if (this.failWhen?.({ method, table, query: url.searchParams })) {
-      return new Response(JSON.stringify({ code: "XX000", message: "injected failure" }), { status: 500, headers: { "content-type": "application/json" } });
+    // An injected failure: a generic database error, or exactly the one given (its code, message and status).
+    const fail = this.failWhen?.({ method, table, query: url.searchParams });
+    if (fail) {
+      const f = fail === true ? { code: "XX000", message: "injected failure", status: 500 } : { status: 500, ...fail };
+      return new Response(JSON.stringify({ code: f.code, message: f.message }), { status: f.status, headers: { "content-type": "application/json" } });
     }
 
     const respond = (rows: Row[], status = 200) => {

@@ -2,6 +2,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 
 import { crmViewerOf } from "@/lib/crm-preview/viewer";
 import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
+import { closedToClient } from "@/lib/crm-preview/portal-open";
 import { getAccountBilling } from "@/lib/clients/billing-account";
 import { BILLING_REFUSAL, pickBillingCustomer } from "@/lib/crm-preview/billing-pick";
 import { billingPortalUrl, portalConfiguration } from "@/lib/crm-preview/billing-portal";
@@ -46,6 +47,8 @@ export async function GET(request: NextRequest) {
   if (!UUID.test(client)) return notice(400, "This link is not complete. Open Billing from the portal's sidebar.");
   // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
   if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
+  // A client's portal that is switched off or held serves them nothing, as their current portal (portal-open.ts).
+  if (await closedToClient(viewer, client as string)) return new NextResponse(null, { status: 404 });
 
   const gate = admit(who, role, "billing", request.headers);
   if (!gate.ok) {

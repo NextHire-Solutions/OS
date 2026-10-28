@@ -11,7 +11,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
-import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
+import { DEFAULT_STAGE_LABELS, type PipelineEntry, type PipelineStage, type TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
   ALWAYS_SHOWN,
   CUSTOM_TAG_PREFIX,
@@ -32,12 +32,13 @@ import {
   type TimeRange,
 } from "@/lib/crm-preview/model";
 import { csvRowToPipeline } from "@/lib/tools/master-inbox/portals/csv";
+import { PHONE_KEYS, pickFirstString } from "@/components/master-inbox/portals-ui/custom-field-helpers";
 import { GLOBAL_CUSTOM_STAGE_KEYS, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
 
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
-import { EditLeadDialog, PipelineAddDialog, PipelineUploadDialog } from "./dialogs";
-import { AgentPanel, ChooseMenu, ConversationPanel, NotesPanel, StageCell, TagChip } from "./panels";
+import { EditLeadDialog, PipelineAddDialog, PipelineUploadDialog, ymd } from "./dialogs";
+import { AgentPanel, ChooseMenu, ConversationPanel, NotesPanel, ReplacementMark, StageCell, TagChip } from "./panels";
 import { importCsv, isCanonicalStage, lock, moveTo, saveCsv, useDemo, type DemoAction } from "./demo-save";
 import { useBoardDrag } from "./board-drag";
 import { useColumnDrag } from "./column-drag";
@@ -45,7 +46,7 @@ import { useColumnDrag } from "./column-drag";
 type Open = { kind: "agent" | "conversation" | "notes" | "edit"; entry: PipelineEntry } | { kind: "add" | "upload" } | null;
 
 
-export function PipelineScreen({ entries, stages, allStages, furthest, team, clientId, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; allStages?: ManagedStage[]; furthest: Record<string, string>; team: TeamMember[]; clientId: string; now: Date }) {
+export function PipelineScreen({ entries, stages, allStages, furthest, team, clientId, fubConnected = false, now }: { entries: PipelineEntry[]; stages: PreviewStage[]; allStages?: ManagedStage[]; furthest: Record<string, string>; team: TeamMember[]; fubConnected?: boolean; clientId: string; now: Date }) {
   const [mode, setMode] = useState<"board" | "list">("board");
   const [range, setRange] = useState<TimeRange>("all");
   const [search, setSearch] = useState("");
@@ -112,6 +113,33 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
   const pageAllPicked = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
   // Only ticked rows still on screen count (a filter can hide one).
   const pickedShown = useMemo(() => view.shown.filter((x) => picked.has(x.id)), [view.shown, picked]);
+  /*
+   * The current portal's bulk Copy and Export (28 Oct): its toasts, and its export's columns — Name, Email, Phone,
+   * Company, Agent profile, Location, Stage (the agent's pipeline stage by this portal's name for it, so the file
+   * imports back), Assigned, Introduced, then each custom field the agents have.
+   */
+  const copy = (what: string, values: Array<string | null | undefined>) => {
+    const list = values.map((v) => (v ?? "").trim()).filter(Boolean);
+    if (!list.length) return demo.say("Nothing to copy", true);
+    navigator.clipboard?.writeText(list.join("\n")).then(() => demo.say(list.length === 1 ? `Copied: ${list[0]}` : `Copied ${list.length.toLocaleString("en-US")} ${what}`), () => demo.say("Could not access clipboard", true));
+  };
+  // A phone as the current portal copies it: the entry's own, else the campaign's (its PHONE_KEYS).
+  const phoneOf = (x: PipelineEntry) => x.lead_phone || pickFirstString((x.lead_detail as { custom_fields?: Record<string, unknown> } | null)?.custom_fields ?? {}, PHONE_KEYS);
+  const stageName = (s: PipelineStage) => stages.find((x) => x.key === s)?.label ?? allStages?.find((x) => x.key === s)?.label ?? DEFAULT_STAGE_LABELS[s] ?? s;
+  const exportPicked = () => {
+    const extra = new Map<string, string>();
+    // Headed as the current portal heads them: the first letter capitalised ("Buy-side", "Sales volume").
+    for (const x of pickedShown) for (const f of panelFields(x)) if (!extra.has(f.label.toLowerCase())) extra.set(f.label.toLowerCase(), f.label.charAt(0).toUpperCase() + f.label.slice(1));
+    const fieldsOf = (x: PipelineEntry) => new Map(panelFields(x).map((f) => [f.label.toLowerCase(), f.value]));
+    saveCsv(
+      `pipeline-${ymd(now)}.csv`,
+      ["Name", "Email", "Phone", "Company", "Agent profile", "Location", "Stage", "Assigned", "Introduced", ...extra.values()],
+      pickedShown.map((x) => {
+        const own = fieldsOf(x);
+        return [x.lead_name, x.lead_email, x.lead_phone, x.current_brokerage, x.agent_profile_url, x.lead_location, stageName(x.stage), x.assigned_team_member?.name, (x.introduced_at ?? "").slice(0, 10), ...[...extra.keys()].map((key) => own.get(key))];
+      }),
+    );
+  };
   const pick = (ids: readonly string[], on: boolean) => setPicked((cur) => withIds(cur, ids, on));
   useEffect(() => {
     if (!bulkMenu) return;
@@ -157,17 +185,32 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
    * custom field changed, cleared or added, then the tag — each its own save.
    */
   const saveEdit = async (e: PipelineEntry, v: Record<string, string>) => {
-    if (!(await save({ type: "entry.edit", id: e.id, lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }))) return false;
+    // The date and the replacement mark only when changed (the current portal re-sends both, rewriting the time of day).
+    const day = e.introduced_at ? ymd(new Date(e.introduced_at)) : "";
+    const replacing = v.replacement === "true";
+    if (!(await save({
+      type: "entry.edit", id: e.id, lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile,
+      introduced_at: v.introduced && v.introduced !== day ? v.introduced : undefined,
+      needs_replacement: replacing !== e.needs_replacement ? replacing : undefined,
+    }))) return false;
     const before = new Map(panelFields(e).filter((f) => f.key).map((f) => [f.key as string, f.value]));
+    // As the current portal: a field the client added themselves comes off when emptied; one from the campaign is blanked.
+    const own = new Set(e.manual_custom_field_keys ?? []);
     const fields: Record<string, string | null> = {};
     for (const [name, value] of Object.entries(v)) {
-      if (name.startsWith("cf:") && before.get(name.slice(3)) !== value) fields[name.slice(3)] = value || null;
+      if (name.startsWith("cf:") && before.get(name.slice(3)) !== value) fields[name.slice(3)] = value || (own.has(name.slice(3)) ? null : "");
       if (name.startsWith("nf:name:") && value) fields[value] = v[`nf:value:${name.slice(8)}`] || null;
     }
     if (Object.keys(fields).length && !(await save({ type: "entry.fields", id: e.id, fields }))) return false;
     const place = placeOf(e);
     const tagNow = place.tag?.key ?? "";
-    if ((v.tag ?? "") !== tagNow && !(await save(moveTo([e.id], v.tag || place.stage.key)))) return false;
+    if ((v.tag ?? "") !== tagNow) {
+      // "No tag": one of the portal's own tags just comes off (the agent keeps its stage — 28 Oct audit); a pipeline
+      // tag (Nurture, Not a Fit, No Response) IS a stage, so the agent goes to the stage the board shows it at, which
+      // the option names.
+      const untag: DemoAction = tagNow && !isCanonicalStage(tagNow) ? { type: "entry.customStage", ids: [e.id], key: null } : moveTo([e.id], place.stage.key);
+      if (!(await save(v.tag ? moveTo([e.id], v.tag) : untag))) return false;
+    }
     return true;
   };
   const toggleChip = (key: string) => setChip((c) => (c === key ? null : key));
@@ -265,6 +308,7 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
                 <button type="button" className={k("btn sm dis")} disabled>Assign to... <Icon name="chevDown" size={12} /></button>
                 <button type="button" className={k("btn sm dis")} disabled><Icon name="copy" size={14} />Copy names</button>
                 <button type="button" className={k("btn sm dis")} disabled><Icon name="copy" size={14} />Copy emails</button>
+                <button type="button" className={k("btn sm dis")} disabled><Icon name="copy" size={14} />Copy phones</button>
                 <button type="button" className={k("btn sm dis")} disabled><Icon name="download" size={14} />Export CSV</button>
                 <button type="button" className={k("btn sm dis")} disabled><Icon name="trash" size={14} />Delete</button>
               </div>
@@ -309,14 +353,15 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
                       </div>
                     ) : null}
                   </span>
-                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => void navigator.clipboard?.writeText(pickedShown.map((x) => x.lead_name ?? "").filter(Boolean).join("\n")) : undefined}><Icon name="copy" size={14} />Copy names</button>
-                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => void navigator.clipboard?.writeText(pickedShown.map((x) => x.lead_email ?? "").filter(Boolean).join("\n")) : undefined}><Icon name="copy" size={14} />Copy emails</button>
-                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => saveCsv("pipeline.csv", ["Name", "Email", "Phone", "Company", "Stage", "Introduced"], pickedShown.map((x) => [x.lead_name, x.lead_email, x.lead_phone, x.current_brokerage, placeOf(x).stage.label, (x.introduced_at ?? "").slice(0, 10)])) : undefined}><Icon name="download" size={14} />Export CSV</button>
+                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => copy("names", pickedShown.map((x) => x.lead_name || x.lead_email)) : undefined}><Icon name="copy" size={14} />Copy names</button>
+                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => copy("emails", pickedShown.map((x) => x.lead_email)) : undefined}><Icon name="copy" size={14} />Copy emails</button>
+                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? () => copy("phone numbers", pickedShown.map(phoneOf)) : undefined}><Icon name="copy" size={14} />Copy phones</button>
+                  <button type="button" className={k("btn sm")} {...lock(live)} onClick={live ? exportPicked : undefined}><Icon name="download" size={14} />Export CSV</button>
                   <button
                     type="button"
                     className={k("btn sm del")}
                     {...lock(live)}
-                    onClick={live ? () => { if (window.confirm(`Delete ${pickedIds.length} ${pickedIds.length === 1 ? "agent" : "agents"} from the Demo Portal's pipeline?`)) void bulk({ type: "entry.delete", ids: pickedIds }); } : undefined}
+                    onClick={live ? () => { if (window.confirm(`Delete ${pickedIds.length} ${pickedIds.length === 1 ? "agent" : "agents"} from your pipeline?`)) void bulk({ type: "entry.delete", ids: pickedIds }); } : undefined}
                   >
                     <Icon name="trash" size={14} />Delete
                   </button>
@@ -382,7 +427,7 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
                               <span><Icon name="calendar" size={13} />{shortDate(e.introduced_at, now)}</span>
                               <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>
                             </span>
-                            {place.tag ? <span className="cpv-cardtag"><TagChip stage={place.tag} /></span> : null}
+                            {place.tag || e.needs_replacement || e.stage === "no_show" ? <span className="cpv-cardtag">{place.tag ? <TagChip stage={place.tag} /> : null}<ReplacementMark entry={e} /></span> : null}
                           </button>
                         );
                       })}
@@ -476,6 +521,7 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
           placement={placeOf(fresh(open.entry))}
           tags={tags}
           onTag={live ? (key) => void save(moveTo([open.entry.id], key)) : undefined}
+          onPush={live && !demo.demo && fubConnected ? () => save({ type: "entry.push", id: open.entry.id }) : undefined}
           onClose={() => setOpen(null)}
           onEdit={() => setOpen({ kind: "edit", entry: fresh(open.entry) })}
         />
@@ -493,7 +539,7 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
         <PipelineAddDialog
           now={now}
           onClose={() => setOpen(null)}
-          onSave={live ? (v) => save({ type: "entry.add", lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile }) : undefined}
+          onSave={live ? (v) => save({ type: "entry.add", lead_name: v.name, lead_email: v.email, lead_phone: v.phone, current_brokerage: v.company, agent_profile_url: v.profile, introduced_at: v.introduced || undefined, needs_replacement: v.replacement === "true" }) : undefined}
         />
       ) : null}
       {board.drag ? <div className="cpv-drag-ghost" style={{ left: board.drag.x + 14, top: board.drag.y + 10 }} aria-hidden="true">{board.drag.name}</div> : null}
@@ -906,6 +952,7 @@ function ListRow({
             ) : null}
             <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>
             {placement.tag ? <TagChip stage={placement.tag} /> : null}
+            <ReplacementMark entry={e} />
           </div>
         </div>
       </td>

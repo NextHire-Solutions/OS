@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 import { DEMO_PORTAL_ID } from "./demo.ts";
 import { BILLING_TAB_PEOPLE } from "../clients/billing-access.ts";
-import { clientPortals, DEMO_CLIENT_TESTERS, guardRole, mayOpenPortal, openToClients, type CrmViewer } from "./viewer-rules.ts";
+import { BROKERSTAFFER_PORTAL_ID, clientPortals, DEMO_CLIENT_TESTERS, guardRole, mayOpenPortal, mayWritePortal, OPEN_PORTALS, opensTo, openToClients, type CrmViewer } from "./viewer-rules.ts";
 
 const REAL = "6b787a4c-22e1-4ba7-96e2-f7a4f3eaf849";
 const OTHER = "492b2783-280f-4c6d-8807-a3de56c59ab1";
@@ -49,4 +49,34 @@ test("staff open any portal; a client only their own, open to them", () => {
 test("clients are guarded and counted as clients", () => {
   assert.equal(guardRole({ kind: "client", email: ME, portals: [DEMO_PORTAL_ID] }), "client");
   assert.equal(guardRole({ kind: "staff", email: ME }), "staff");
+});
+
+test("open to clients: exactly the Demo and BrokerStaffer's own portal (the pilot), both to the testers only — no real client yet (28 Oct)", () => {
+  assert.deepEqual(OPEN_PORTALS, { [DEMO_PORTAL_ID]: "testers", [BROKERSTAFFER_PORTAL_ID]: "testers" });
+  assert.equal(openToClients(BROKERSTAFFER_PORTAL_ID, ME), true);
+  assert.equal(openToClients(BROKERSTAFFER_PORTAL_ID, "Amy@BrokerStaffer.com"), true);
+  assert.equal(openToClients(BROKERSTAFFER_PORTAL_ID, OUTSIDER), false, "on its list but not a tester: not yet");
+  assert.deepEqual(clientPortals([BROKERSTAFFER_PORTAL_ID, REAL, OTHER], ME), [BROKERSTAFFER_PORTAL_ID]);
+});
+
+test("a switched client (\"listed\") opens to everyone on its list; anything else to no one", () => {
+  assert.equal(opensTo("listed", OUTSIDER), true);
+  assert.equal(opensTo("listed", "  "), false);
+  assert.equal(opensTo("testers", OUTSIDER), false);
+  assert.equal(opensTo("testers", ME), true);
+  assert.equal(opensTo(undefined, ME), false);
+});
+
+test("who may CHANGE a portal: the Demo, its viewers; a real portal, only its own signed-in client — never staff from the preview", () => {
+  const staff: CrmViewer = { kind: "staff", email: ME };
+  assert.equal(mayWritePortal(staff, DEMO_PORTAL_ID), true, "staff change the Demo, as before");
+  for (const id of [BROKERSTAFFER_PORTAL_ID, REAL, OTHER]) assert.equal(mayWritePortal(staff, id), false, `staff never change ${id} from the preview`);
+  const pilot: CrmViewer = { kind: "client", email: ME, portals: [BROKERSTAFFER_PORTAL_ID, DEMO_PORTAL_ID] };
+  assert.equal(mayWritePortal(pilot, BROKERSTAFFER_PORTAL_ID), true, "a tester signed in on the pilot changes it");
+  assert.equal(mayWritePortal(pilot, DEMO_PORTAL_ID), true);
+  assert.equal(mayWritePortal(pilot, OTHER), false, "not on their list");
+  assert.equal(mayWritePortal({ kind: "client", email: OUTSIDER, portals: [BROKERSTAFFER_PORTAL_ID] }, BROKERSTAFFER_PORTAL_ID), false, "on the list, not a tester");
+  assert.equal(mayWritePortal({ kind: "client", email: ME, portals: [OTHER] }, OTHER), false, "a real client not switched: no one changes it");
+  assert.equal(mayWritePortal(null, DEMO_PORTAL_ID), false);
+  assert.equal(mayWritePortal(pilot, ""), false);
 });

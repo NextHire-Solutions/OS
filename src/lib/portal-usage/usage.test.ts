@@ -10,7 +10,7 @@ import fs from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 
 import { FakePostgrest } from "../tools/master-inbox/test/fake-postgrest.ts";
-import { HEAVY_USE, PAGING_PAGES, recordUse, todayRows } from "./usage.ts";
+import { alertMarketMove, HEAVY_USE, PAGING_PAGES, recordUse, todayRows } from "./usage.ts";
 
 const fake = new FakePostgrest();
 globalThis.fetch = fake.fetch as typeof fetch;
@@ -52,7 +52,8 @@ const titles = () => (fake.rows("os_notifications") as Row[]).map((n) => String(
 
 test("nothing here refuses, pauses or slows a client — there is no such function", () => {
   const src = fs.readFileSync("src/lib/portal-usage/usage.ts", "utf8");
-  assert.deepEqual([...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["recordUse", "todayRows"]);
+  // alertMarketMove (28 Oct) only tells our team — it refuses nothing either.
+  assert.deepEqual([...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["recordUse", "alertMarketMove", "todayRows"]);
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "");
   assert.doesNotMatch(code, /os_portal_locks|status: 4\d\d|status: 5\d\d/);
   // What it writes: its own counts, and one bell notice — nothing else.
@@ -111,4 +112,22 @@ test("migration 0038 only adds — one new table and one new function, nothing e
   for (const a of sql.matchAll(/ALTER TABLE\s+public\.(\w+)/gi)) assert.equal(a[1], "os_portal_usage");
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.os_portal_usage_add[^;]+FROM PUBLIC, anon, authenticated;/, "not callable from a browser");
   assert.match(sql, /BEGIN;[\s\S]*COMMIT;/);
+});
+
+test("a client's Market move to My Agents or the DNC List: our team hears every time — and nothing is refused", async () => {
+  seed();
+  const now = new Date("2026-10-28T15:00:00.000Z");
+  await alertMarketMove(db, { who: "Owner@Elite.test", portalId: P, to: "DNC List", agents: 25, now });
+  await alertMarketMove(db, { who: "owner@elite.test", portalId: P, to: "My Agents", agents: 1, now: new Date(now.getTime() + 1000) });
+  const rows = fake.rows("os_notifications") as Row[];
+  assert.deepEqual(rows.map((r) => [r.kind, r.severity, r.title]), [
+    ["portal_market_move", "warning", "Market move: 25 agents to DNC List — C21 Results - Elite Team"],
+    ["portal_market_move", "warning", "Market move: 1 agent to My Agents — C21 Results - Elite Team"],
+  ]);
+  assert.match(String(rows[0].body), /owner@elite\.test moved 25 agents from Market onto C21 Results - Elite Team's DNC List\. Their preferred emails are now blocked in every campaign and their conversations stopped — a block can't be undone\./);
+  assert.doesNotMatch(String(rows[1].body), /conversations stopped/);
+  // A failure to tell us never reaches the client's move.
+  fake.failWhen = ({ table }) => table === "os_notifications";
+  await alertMarketMove(db, { who: "x@y.test", portalId: P, to: "DNC List", agents: 3, now: new Date(now.getTime() + 2000) });
+  fake.failWhen = null;
 });

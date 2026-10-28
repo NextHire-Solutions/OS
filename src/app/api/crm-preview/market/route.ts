@@ -2,6 +2,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 
 import { crmViewerOf } from "@/lib/crm-preview/viewer";
 import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
+import { closedToClient } from "@/lib/crm-preview/portal-open";
 import { marketContext, marketFacet, marketOptions, marketPage, type FacetKind } from "@/lib/crm-preview/market";
 import { parseMarketQuery } from "@/lib/crm-preview/market-model";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
@@ -34,6 +35,8 @@ export async function GET(request: NextRequest) {
   if (!UUID.test(client)) return NextResponse.json({ error: "No such client." }, { status: 400, headers: NO_STORE_HEADERS });
   // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
   if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
+  // A client's portal that is switched off or held serves them nothing, as their current portal (portal-open.ts).
+  if (await closedToClient(viewer, client as string)) return new NextResponse(null, { status: 404 });
   const who = viewer.email;
   const role = guardRole(viewer);
   const gate = admit(who, role, "market", request.headers);

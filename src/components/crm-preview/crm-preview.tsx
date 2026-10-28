@@ -27,7 +27,7 @@ import logo from "./brokerstaffer-logo.png";
 export interface PreviewClient {
   id: string;
   name: string;
-  /** The Demo Portal: its buttons save (21 Oct). Every other client is read-only. Decided on the server. */
+  /** The Demo Portal (21 Oct): its saves are its own rows, nothing outside — and the wording says so. */
   demo: boolean;
   fubConnected: boolean;
   /** The client's main contact (os_clients.contact_name), shown where the design shows the signed-in person. */
@@ -64,6 +64,7 @@ export function CrmPreview({
   stages,
   allStages,
   offer,
+  editable = false,
   furthest,
   entries,
   agents,
@@ -77,10 +78,15 @@ export function CrmPreview({
   client: PreviewClient;
   portals: Array<{ id: string; name: string }>;
   stages: PreviewStage[];
-  /** Every stage, hidden ones too — the Demo Portal's Manage stages only. */
+  /** Every stage, hidden ones too — only where Manage stages saves. */
   allStages?: ManagedStage[];
-  /** The wizard's saved offer — the Demo Portal only (null: not filled in yet). */
+  /** The wizard's saved offer (null: not filled in yet). */
   offer?: PortalOffer | null;
+  /**
+   * This viewer's buttons save (viewer-rules.ts mayWritePortal, decided on the server and checked again by the save
+   * route on every save): the Demo for its viewers; a real portal for its own signed-in client, once open to them.
+   */
+  editable?: boolean;
   /** For agents in Nurture / Not a Fit / No Response: the furthest forward stage on record. */
   furthest: Record<string, string>;
   entries: PipelineEntry[];
@@ -120,19 +126,19 @@ export function CrmPreview({
   const router = useRouter();
   const save = useCallback(
     async (action: DemoAction) => {
-      if (!client.demo) return false;
+      if (!editable) return false;
       const r = await postDemo(client.id, action);
       if (!r.ok) {
         flash(r.error, true);
         return false;
       }
-      flash(r.message ?? "Saved on the Demo Portal.");
+      flash(r.message ?? (client.demo ? "Saved on the Demo Portal." : "Saved."));
       router.refresh();
       return true;
     },
-    [client.demo, client.id, flash, router],
+    [editable, client.demo, client.id, flash, router],
   );
-  const demo = useMemo(() => ({ live: client.demo, save, say: flash }), [client.demo, save, flash]);
+  const demo = useMemo(() => ({ live: editable, demo: client.demo, save, say: flash }), [editable, client.demo, save, flash]);
   /*
    * Every control that would change something carries data-ro (k.ts RO): it is
    * drawn as the design draws it, and its click stops here — before any
@@ -143,9 +149,9 @@ export function CrmPreview({
     if (!ro) return;
     e.preventDefault();
     e.stopPropagation();
-    // A control that is off everywhere says why (k.ts off); otherwise: read-only, unless this is the Demo Portal.
+    // A control that is off everywhere says why (k.ts off); otherwise: read-only to staff on a real portal, or not built yet.
     const reason = ro.getAttribute("data-ro-reason");
-    flash(reason && client.demo ? reason : client.demo ? "Not built yet on the Demo Portal — this one is drawn only." : `Read-only preview — nothing here changes ${client.name}'s portal.`);
+    flash(reason && editable ? reason : editable ? (client.demo ? "Not built yet on the Demo Portal — this one is drawn only." : "This isn't available yet.") : `Read-only preview — nothing here changes ${client.name}'s portal.`);
   };
   // The server's clock, so the first draw in the browser matches the server's.
   const today = useMemo(() => new Date(now), [now]);
@@ -294,7 +300,7 @@ export function CrmPreview({
             <img src={logo.src} alt="BrokerStaffer" style={{ height: 26, width: "auto" }} />
           </div>
           {view === "pipeline" ? (
-            <PipelineScreen entries={entries} stages={stages} allStages={allStages} furthest={furthest} team={team} clientId={client.id} now={today} />
+            <PipelineScreen entries={entries} stages={stages} allStages={allStages} furthest={furthest} team={team} clientId={client.id} fubConnected={client.fubConnected} now={today} />
           ) : view === "market" || view === "prospects" ? (
             <MarketScreen key={view} clientId={client.id} list={view} onContext={setContext} onOpenMarket={() => go("market")} />
           ) : view === "reports" ? (

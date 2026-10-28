@@ -104,6 +104,16 @@ const noNul = (v: unknown): unknown =>
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, noNul(x)]))
   : v;
 
+/*
+ * The introduction date as the date field gives it (yyyy-mm-dd), saved at noon UTC as the current portal saves it —
+ * the same calendar day everywhere in the US.
+ */
+const introDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date.").refine((d) => {
+  const t = new Date(`${d}T12:00:00.000Z`);
+  return !Number.isNaN(t.getTime()) && t.toISOString().startsWith(d) && t.getUTCFullYear() >= 2000 && t.getUTCFullYear() <= 2100;
+}, "Choose a real date.").optional();
+export const introAt = (d: string) => `${d}T12:00:00.000Z`;
+
 /* The spreadsheet's own line number of each row the browser sends (blank lines are dropped by the parser, so it can't be counted here). */
 const lines = z.array(z.number().int().min(1).max(10_000_000)).max(MAX_IMPORT_ROWS).optional();
 
@@ -117,6 +127,8 @@ export const demoAction = z.preprocess(noNul, z.discriminatedUnion("type", [
     current_brokerage: optional(200),
     agent_profile_url: optional(500),
     stage: z.enum(STAGES).optional(),
+    introduced_at: introDate,
+    needs_replacement: z.boolean().optional(),
   }),
   z.object({ type: z.literal("entry.stage"), ids, stage: z.enum(STAGES) }),
   z.object({ type: z.literal("entry.customStage"), ids, key: z.string().max(64).nullable() }),
@@ -129,18 +141,28 @@ export const demoAction = z.preprocess(noNul, z.discriminatedUnion("type", [
     lead_phone: optional(80),
     current_brokerage: optional(200),
     agent_profile_url: optional(500),
+    // Sent only when changed (the current portal re-sends both on every save).
+    introduced_at: introDate,
+    needs_replacement: z.boolean().optional(),
   }),
   // The Edit form's custom fields (23 Oct): set (a value) or cleared (null), merged into the entry's own overrides, as the live portal keeps them.
   z.object({
     type: z.literal("entry.fields"),
     id,
-    fields: z.record(z.string().trim().min(1).max(60), z.string().trim().max(500).nullable()).refine((o) => Object.keys(o).length <= 30, "At most 30 fields at once."),
+    // The current portal's limits (pipeline/[id]/route.ts): names up to 120, values up to 2,000, 60 at once.
+    fields: z.record(z.string().trim().min(1).max(120), z.string().trim().max(2000).nullable()).refine((o) => Object.keys(o).length <= 60, "At most 60 fields at once."),
   }),
   z.object({ type: z.literal("entry.delete"), ids }),
   z.object({ type: z.literal("note.add"), entry: id, body: text(20_000).min(1) }),
+  // The current portal's note Edit and Delete (28 Oct).
+  z.object({ type: z.literal("note.edit"), entry: id, note: id, body: text(20_000).min(1) }),
+  z.object({ type: z.literal("note.delete"), entry: id, note: id }),
+  // "Push to Follow Up Boss" on one agent (28 Oct) — a real portal's; the Demo Portal never connects.
+  z.object({ type: z.literal("entry.push"), id }),
   z.object({ type: z.literal("agent.add"), name: text(160).min(1), email: optionalEmail, phone: optional(40), license: optional(80) }),
   z.object({ type: z.literal("agent.edit"), id, name: text(160).min(1), email: optionalEmail, phone: optional(40), license: optional(80) }),
-  z.object({ type: z.literal("agent.delete"), ids }),
+  // `bulk`: sent by the "Delete selected" button — the current portal's bulk delete, whatever the count (it posts nothing to Slack; one row's own delete does).
+  z.object({ type: z.literal("agent.delete"), ids, bulk: z.boolean().optional() }),
   z.object({
     type: z.literal("dnc.add"),
     kind: z.enum(["agent", "company"]),
@@ -152,11 +174,11 @@ export const demoAction = z.preprocess(noNul, z.discriminatedUnion("type", [
     notes: optional(2000),
   }),
   z.object({ type: z.literal("dnc.edit"), id, name: text(160).min(1), email: optionalEmail, phone: optional(40), brokerage: optional(160), domain: optional(255), notes: optional(2000) }),
-  z.object({ type: z.literal("dnc.delete"), ids }),
+  z.object({ type: z.literal("dnc.delete"), ids, bulk: z.boolean().optional() }),
   z.object({ type: z.literal("team.add"), name: text(120).min(1), email, title: optional(120), phone: optional(40) }),
   z.object({ type: z.literal("team.edit"), id, name: text(120).min(1), email, title: optional(120), phone: optional(40) }),
   z.object({ type: z.literal("team.active"), id, active: z.boolean() }),
-  z.object({ type: z.literal("team.delete"), ids }),
+  z.object({ type: z.literal("team.delete"), ids, bulk: z.boolean().optional() }),
   z.object({ type: z.literal("entry.import"), rows: csvRows, lines }),
   z.object({ type: z.literal("agent.import"), rows: csvRows, lines }),
   z.object({ type: z.literal("dnc.import"), rows: csvRows, lines }),
@@ -251,9 +273,9 @@ function stageFromCsv(raw: string, own: ReadonlyMap<string, CsvStage>): CsvStage
   if ((STAGE_ORDER as string[]).includes(word)) return { stage: word as PipelineStage, custom: null };
   return own.get(word) ?? null;
 }
-const plural = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+export const plural = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
-function imported(saved: number, dupes: number, skipped: Skip[], noun: [string, string]): DemoResult {
+export function imported(saved: number, dupes: number, skipped: Skip[], noun: [string, string]): DemoResult {
   const why = skipped.slice(0, 3).map((s) => `row ${s.row}: ${s.reason}`).join("; ") + (skipped.length > 3 ? "; …" : "");
   if (saved === 0 && dupes === 0) return { ok: false, status: 400, error: `Nothing was imported — ${why}.` };
   const parts = [`Imported ${plural(saved, noun[0], noun[1])}.`];
@@ -482,20 +504,26 @@ async function saveStages(db: Db, stages: Array<z.infer<typeof stageRow>>): Prom
   return { ok: true, message: moved ? `Saved. ${plural(moved, "agent", "agents")} moved back to ${moved === 1 ? "its" : "their"} pipeline stage.` : "Saved on the Demo Portal." };
 }
 
+/**
+ * The wizard's "Tell us your offer" (migration 0039): one row per portal, with who saved it. The Demo's from
+ * runDemoAction; a real portal's own client's from portal-save.ts (28 Oct) — the same row, nothing outside.
+ */
+export async function saveOffer(db: Db, portalId: string, a: Extract<DemoAction, { type: "offer.save" }>, who: string | null): Promise<DemoResult> {
+  const row = { offers: [...new Set(a.offers)], why_join: a.why_join, never_say: a.never_say, updated_by: who, updated_at: now() };
+  const had: Res = await db.from("os_portal_offers").select("portal_id").eq("portal_id", portalId).maybeSingle();
+  if (had.error) return failed(had)!;
+  const r: Res = had.data
+    ? await db.from("os_portal_offers").update(row).eq("portal_id", portalId).select("portal_id")
+    : await db.from("os_portal_offers").insert({ portal_id: portalId, ...row }).select("portal_id");
+  return failed(r) ?? { ok: true, message: "Your offer is saved." };
+}
+
 /** Runs one save, on the Demo Portal's rows only. `who` is the signed-in person, from the server — never the browser. */
 export async function runDemoAction(db: Db, a: DemoAction, who: string | null = null): Promise<DemoResult> {
   const C = DEMO_PORTAL_ID;
   switch (a.type) {
-    case "offer.save": {
-      // The wizard's "Tell us your offer" (migration 0039): one row per portal — the Demo's.
-      const row = { offers: [...new Set(a.offers)], why_join: a.why_join, never_say: a.never_say, updated_by: who, updated_at: now() };
-      const had: Res = await db.from("os_portal_offers").select("portal_id").eq("portal_id", C).maybeSingle();
-      if (had.error) return failed(had)!;
-      const r: Res = had.data
-        ? await db.from("os_portal_offers").update(row).eq("portal_id", C).select("portal_id")
-        : await db.from("os_portal_offers").insert({ portal_id: C, ...row }).select("portal_id");
-      return failed(r) ?? { ok: true, message: "Your offer is saved." };
-    }
+    case "offer.save":
+      return saveOffer(db, C, a, who);
     case "entry.import":
     case "agent.import":
     case "dnc.import":
@@ -510,13 +538,13 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
         .insert({
           client_id: C,
           stage: a.stage ?? "introduction",
-          needs_replacement: false,
+          needs_replacement: a.needs_replacement ?? false,
           lead_name: a.lead_name,
           lead_email: a.lead_email,
           lead_phone: a.lead_phone,
           current_brokerage: a.current_brokerage,
           agent_profile_url: a.agent_profile_url,
-          introduced_at: now(),
+          introduced_at: a.introduced_at ? introAt(a.introduced_at) : now(),
           source: "Client Entry",
         })
         .select("id")
@@ -546,7 +574,12 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
     case "entry.edit": {
       const r: Res = await db
         .from("client_pipeline_entries")
-        .update({ lead_name: a.lead_name, lead_email: a.lead_email, lead_phone: a.lead_phone, current_brokerage: a.current_brokerage, agent_profile_url: a.agent_profile_url, updated_at: now() })
+        .update({
+          lead_name: a.lead_name, lead_email: a.lead_email, lead_phone: a.lead_phone, current_brokerage: a.current_brokerage, agent_profile_url: a.agent_profile_url,
+          ...(a.introduced_at ? { introduced_at: introAt(a.introduced_at) } : {}),
+          ...(a.needs_replacement !== undefined ? { needs_replacement: a.needs_replacement } : {}),
+          updated_at: now(),
+        })
         .eq("client_id", C)
         .eq("id", a.id)
         .select("id");
@@ -558,8 +591,9 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
       if (failed(cur)) return failed(cur)!;
       if (!cur.data) return { ok: false, status: 404, error: "That agent is not on this portal." };
       const merged: Record<string, unknown> = { ...(((cur.data as { custom_fields_overrides?: Record<string, unknown> | null }).custom_fields_overrides) ?? {}) };
+      // As the current portal: a blank value blanks the field (the client's own value wins); null takes the client's own value off.
       for (const [key, value] of Object.entries(a.fields)) {
-        if (value === null || value === "") delete merged[key];
+        if (value === null) delete merged[key];
         else merged[key] = value;
       }
       const r: Res = await db.from("client_pipeline_entries").update({ custom_fields_overrides: merged, updated_at: now() }).eq("client_id", C).eq("id", a.id).select("id");
@@ -576,6 +610,21 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
       const r: Res = await db.from("client_pipeline_notes").insert({ entry_id: a.entry, body: a.body }).select("id").single();
       return failed(r) ?? { ok: true, id: String((r.data as { id: string }).id) };
     }
+    case "note.edit":
+    case "note.delete": {
+      // The note must be on one of the Demo Portal's agents (notes have no client column of their own).
+      const e: Res = await db.from("client_pipeline_entries").select("id").eq("client_id", C).eq("id", a.entry).maybeSingle();
+      if (e.error) return failed(e)!;
+      if (!e.data) return { ok: false, status: 404, error: "That agent is not on this portal." };
+      const notes = () => db.from("client_pipeline_notes");
+      const r: Res = a.type === "note.edit"
+        ? await notes().update({ body: a.body, updated_at: now() }).eq("id", a.note).eq("entry_id", a.entry).select("id")
+        : await notes().delete().eq("id", a.note).eq("entry_id", a.entry).select("id");
+      if (failed(r)) return failed(r)!;
+      return (r.data as unknown[]).length ? { ok: true } : { ok: false, status: 404, error: "That note is no longer there." };
+    }
+    case "entry.push":
+      return { ok: false, status: 400, error: "The Demo Portal never connects to Follow Up Boss." };
     case "agent.add": {
       // Never pushed to a provider from here: the flags say so.
       const r: Res = await db

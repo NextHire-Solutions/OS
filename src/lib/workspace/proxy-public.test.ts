@@ -99,16 +99,16 @@ test("a signed-in teammate still gets in as before", async () => {
   assert.equal(await ask("/inbox/all-email", { cookie: `bs_sso=${token}` }), "status 307 https://os.brokerstaffer.com/?denied=inbox");
 });
 
-test("a client's sign-in reaches the new portal's page and its seven routes — those exact paths, nothing else (27 Oct)", async () => {
+test("a client's sign-in reaches the new portal's page and its eight routes — those exact paths, nothing else (27–28 Oct)", async () => {
   const { PORTAL_COOKIE } = await import("@/lib/portal-login/http");
   assert.equal(CLIENT_PORTAL_COOKIE, PORTAL_COOKIE, "the same cookie the sign-in sets");
   // Each is a real page or route.
   const real = new Set(["src/app/crm-preview", "src/app/api/crm-preview"].flatMap(routesUnder));
   for (const p of CLIENT_PORTAL_PATHS) assert.ok(real.has(p), `${p} is a real page or route`);
-  assert.equal(CLIENT_PORTAL_PATHS.size, 8);
+  assert.equal(CLIENT_PORTAL_PATHS.size, 9);
   const client = { cookie: `${CLIENT_PORTAL_COOKIE}=anything` };
   // Through to their own checks (lib/crm-preview/viewer.ts), which read the session against the list.
-  for (const p of CLIENT_PORTAL_PATHS) assert.equal(await ask(p, { ...client, method: /chat|demo/.test(p) ? "POST" : "GET" }), "open", p);
+  for (const p of CLIENT_PORTAL_PATHS) assert.equal(await ask(p, { ...client, method: /chat|demo|save/.test(p) ? "POST" : "GET" }), "open", p);
   // Without it, exactly as before: the staff sign-in.
   assert.equal(await ask("/crm-preview"), "to login");
   for (const p of CLIENT_PORTAL_PATHS) if (p.startsWith("/api/")) assert.equal(await ask(p), "401", p);
