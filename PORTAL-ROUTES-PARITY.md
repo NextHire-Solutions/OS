@@ -251,3 +251,115 @@ Every `.update()` and `.delete()` in the new routes carries a scope — most of
 them two (`.eq("id", …)` **and** `.eq("client_id", client.id)`), which is what
 makes the cross-client checks above come out refused rather than merely
 unauthorised.
+
+## Portal write handlers as library modules (28 Oct)
+
+The new client portal needs the writes the live portal's own tabs make (Your
+Agents, DNC, Team, Follow Up Boss). Those were the 13 handlers left out above
+because nothing in the OS called them. They are now copied, as **library
+modules, not routes**.
+
+### What was copied, and where
+
+Source (read-only): `Master Inbox/app/api/portal/[token]/**` at `beba2ed`.
+Destination: `src/lib/tools/master-inbox/portal-routes/`, keeping the same
+layout. The only renaming is the folder `[id]` → `id`, and every file keeps the
+name `route.ts` so the diff stays mechanical.
+
+| source | copy | exports |
+|---|---|---|
+| `agents/route.ts` | `portal-routes/agents/route.ts` | POST |
+| `agents/bulk-delete/route.ts` | `portal-routes/agents/bulk-delete/route.ts` | POST |
+| `agents/csv/route.ts` | `portal-routes/agents/csv/route.ts` | POST |
+| `agents/[id]/route.ts` | `portal-routes/agents/id/route.ts` | PATCH, DELETE |
+| `dnc/route.ts` | `portal-routes/dnc/route.ts` | POST |
+| `dnc/bulk-delete/route.ts` | `portal-routes/dnc/bulk-delete/route.ts` | POST |
+| `dnc/csv/route.ts` | `portal-routes/dnc/csv/route.ts` | POST |
+| `dnc/[id]/route.ts` | `portal-routes/dnc/id/route.ts` | PATCH, DELETE |
+| `team/route.ts` | `portal-routes/team/route.ts` | POST |
+| `team/bulk-delete/route.ts` | `portal-routes/team/bulk-delete/route.ts` | POST |
+| `team/csv/route.ts` | `portal-routes/team/csv/route.ts` | POST |
+| `team/[id]/route.ts` | `portal-routes/team/id/route.ts` | PATCH, DELETE |
+| `followup-boss/route.ts` | `portal-routes/followup-boss/route.ts` | PATCH, DELETE |
+
+Not copied: `team/[id]/avatar` and `ideal-agent-profile`.
+
+The import mapping is the one in the table above. Every helper these files
+import was already in the OS and is identical to the tool's apart from import
+paths and comments: `enforce-blocklist.ts`, `stop-person.ts`
+(`stop-person-plan.ts` is byte-identical), `slack-portal.ts`,
+`feature-flags.ts`, `team-sms.ts` (only a header comment differs; the
+`TEAM_SMS_FLAG` value is the same), `integrations/followup-boss.ts`
+(byte-identical), and `supabase/admin`. Nothing new was written under
+`src/lib/` apart from these 13 files.
+
+### Why they are not routes
+
+Nothing was created under `src/app/`. These files add **no HTTP surface**.
+Only the new client portal's own save route will import them, and it will call
+the handler functions in-process, after its own sign-in and per-portal checks,
+passing the token it resolved on the server. A token from a browser never
+reaches them through a URL.
+
+Copying them as routes would put a second, token-only door onto customer data
+next to the one `portal.brokerstaffer.com` already runs. That is the
+"second writer" this document refuses for `app/portal/**`.
+
+The `dynamic` and `maxDuration` exports in each file have no effect outside
+`src/app/`. They are kept so the files stay the same as the tool's. The calling
+route must set its own segment config. The handlers call `after()` from
+`next/server`, so they must run inside a request (a route handler or server
+action), never from a script or a unit test.
+
+### The proof
+
+For each of the 13 files:
+
+```
+diff <source> <copy> | grep '^[<>]' | grep -v '^[<>] import ' | grep -v '^[<>] } from '   →  empty (0 lines) for all 13
+```
+
+The brief's form of this command, without `grep '^[<>]'`, prints only diff's
+own hunk headers (`4,6c4,6`) and `---` separators. Every hunk is a `c`
+(change), and source and copy have the same line count, so no line was added
+or removed.
+
+A stricter check was also run. Mapping the four import prefixes back to the
+tool's spelling and running `cmp` against the source gives **byte-identical**
+for all 13.
+
+`npx tsc --noEmit -p .` reports 0 errors in these files. On this worktree it
+also prints 5 `TS2307 Cannot find module './logo.png'` errors elsewhere. They
+come from the worktree having no `next-env.d.ts` (gitignored, written by
+`next dev`/`next build`), which supplies the image module types. With
+`next/image-types/global.d.ts` added, the whole project checks clean.
+
+`npm test` passes 2510/2510. That includes `blast-radius.test.ts`, which now
+scans this folder: every `.update()` and `.delete()` in the 13 files is scoped.
+
+### Two differences found while checking, not fixed here
+
+1. **`resolvePortalClient` no longer matches the tool's.** Since `20f6af9`,
+   the tool's version also returns null for a portal held for an unpaid invoice
+   (`portalBillingHold`, which reads `os_portal_blocks` rows with mode
+   `'blocked'` and `lifted_at` null, and fails open). The tool also gained
+   `resolvePortalRow` and `currentTokenFor` (0079 old-link forwarding). The OS's
+   `portals/token.ts` has none of these, so these handlers and the nine routes
+   above **accept writes for a held portal** that the live portal would refuse.
+   No portal is held today, because blocking is a dry run behind
+   `OS_PORTAL_BLOCK_ENABLED`. This changes the moment blocking is switched on.
+2. **Two of the nine earlier routes are no longer byte-identical to the tool.**
+   They carry an OS fix the tool does not have, so they are ahead of it, not
+   behind:
+   - `pipeline/route.ts` (bulk stage move): only entries that moved into
+     Introduction are sent to n8n.
+   - `pipeline/[id]/route.ts`: the n8n and Follow Up Boss Introduction hooks
+     fire only on a real move into Introduction.
+
+   `stage-labels` differs only by the guard described above. The other six are
+   still identical modulo imports.
+
+`followup-boss/route.ts` writes to `clients` (`fub_api_key`, `fub_connected_at`,
+`updated_at`, scoped `.eq("id", client.id)`). Unlike `stage-labels`, it is kept
+verbatim and does **not** go through `assertNoPortalColumns()`. Its patch is a
+literal with three fixed keys, so the guard could never fire there.
