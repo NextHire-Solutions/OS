@@ -224,3 +224,42 @@ test("an agent's email reaches the page only when the client already has that ex
   assert.equal(ownListEmail(["jo@park.test"], sets), "jo@park.test");
   assert.equal(ownListEmail([], sets), null);
 });
+
+/*
+ * BrokerStaffer's own portal is its own CRM (29 Oct, the user): its market is team leaders and managing brokers —
+ * "that is the only portal where this would be the case". Every other portal stays salespeople only.
+ */
+import fs from "node:fs";
+import { BROKERSTAFFER_MARKET_TITLES, BROKERSTAFFER_PORTAL_ID, marketTitles, marketWho, salespeopleOnly } from "./market-model.ts";
+import { BROKERSTAFFER_PORTAL_ID as VIEWER_RULES_BS } from "./viewer-rules.ts";
+import { DEMO_PORTAL_ID } from "./demo.ts";
+
+test("market titles: BrokerStaffer's own portal is team leaders and managing brokers; every other portal salespeople", () => {
+  assert.equal(BROKERSTAFFER_PORTAL_ID, VIEWER_RULES_BS, "one id for BrokerStaffer's portal");
+  assert.deepEqual([...marketTitles(BROKERSTAFFER_PORTAL_ID)], ["Team Leader", "Managing Broker"]);
+  for (const other of ["492b2783-280f-4c6d-8807-a3de56c59ab1", DEMO_PORTAL_ID, "", null, undefined]) assert.deepEqual([...marketTitles(other)], [MARKET_TITLE], String(other));
+  assert.deepEqual(marketScope(["m1"], marketTitles(BROKERSTAFFER_PORTAL_ID)), { mls: { include: ["m1"], exclude: [] }, title: { include: ["Team Leader", "Managing Broker"], exclude: [] } });
+  assert.deepEqual(marketScope(["m1"]), { mls: { include: ["m1"], exclude: [] }, title: { include: ["Salesperson"], exclude: [] } }, "the default is unchanged");
+});
+
+test("market titles: only the salesperson market is held in memory; the bar says who a market is", () => {
+  assert.equal(salespeopleOnly([MARKET_TITLE]), true);
+  assert.equal(salespeopleOnly(BROKERSTAFFER_MARKET_TITLES), false);
+  assert.equal(marketWho([MARKET_TITLE]), "every salesperson");
+  assert.equal(marketWho(BROKERSTAFFER_MARKET_TITLES), "every team leader and managing broker");
+});
+
+test("market titles: a client's filter can never widen the market's titles (a title in the request is ignored)", () => {
+  const f = marketFilters(marketScope(["m1"], BROKERSTAFFER_MARKET_TITLES), parseMarketQuery(new URLSearchParams("title=Salesperson")));
+  assert.deepEqual(f.title, { include: ["Team Leader", "Managing Broker"], exclude: [] });
+});
+
+test("market.ts asks the memory market only for the salesperson market (memory keys a market by its MLSs alone)", () => {
+  const src = fs.readFileSync("src/lib/crm-preview/market.ts", "utf8");
+  const calls = src.split("\n").filter((l) => /marketFromMemory\(/.test(l) && !/^import/.test(l.trim()));
+  assert.ok(calls.length >= 2, "the page and the warm-up read memory");
+  for (const l of calls) assert.match(l, /inMemory\(ctx\)/, `guarded: ${l.trim()}`);
+  assert.match(src, /if \(inMemory\(ctx\)\) held\.push/, "name orders only for markets held in memory");
+  assert.match(src, /key: \(ctx\) => `report:\$\{titlesKey\(ctx\)\}/, "Reports cached per market titles");
+  assert.match(src, /key: \(ctx\) => `options:\$\{titlesKey\(ctx\)\}/, "choice lists cached per market titles");
+});

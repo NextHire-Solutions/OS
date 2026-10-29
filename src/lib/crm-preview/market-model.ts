@@ -14,6 +14,8 @@
  *              "we can remove this filter but in backend salesperson should be
  *              pre filled"): the page has no Title filter, and a title in a
  *              request for the market is ignored (marketScope, parseMarketQuery).
+ *              BrokerStaffer's own portal is the one exception (29 Oct): its
+ *              market is team leaders and managing brokers (marketTitles).
  *              A code the agent database does not have is named, never guessed
  *              (ECOAR is not silently read as ECAOR).
  *   Prospects  the agents in the client's lists in the agent database — the
@@ -81,12 +83,38 @@ export function resolveMls(codes: readonly string[] | null | undefined, rows: re
 
 export type MarketList = "market" | "prospects";
 
-/** The only title a market holds (see the top of this file). */
+/** The title every client's market holds (see the top of this file). */
 export const MARKET_TITLE = "Salesperson";
 
-/** The Database app's p_filters for a client's market: the salespeople in its MLSs. */
-export function marketScope(mlsIds: readonly string[]): Record<string, unknown> {
-  return { mls: { include: [...mlsIds], exclude: [] }, title: { include: [MARKET_TITLE], exclude: [] } };
+/** BrokerStaffer's own portal (Master Inbox `clients`) — the house account (viewer-rules.ts re-exports it). */
+export const BROKERSTAFFER_PORTAL_ID = "54322dcf-7392-4022-918c-990ebc8469b8";
+
+/*
+ * BrokerStaffer's own portal is its own CRM, and what it recruits is clients — team leaders and managing brokers — so
+ * its market is them (29 Oct, the user: "Team Leader and Managing Broker instead of salesperson. That is the only portal
+ * where this would be the case."). An agent with either title is in it ("Salesperson, Team Leader" too).
+ */
+export const BROKERSTAFFER_MARKET_TITLES: readonly string[] = ["Team Leader", "Managing Broker"];
+
+/** The titles a portal's market holds: salespeople, but for BrokerStaffer's own portal. */
+export function marketTitles(portalId: string | null | undefined): readonly string[] {
+  return portalId === BROKERSTAFFER_PORTAL_ID ? BROKERSTAFFER_MARKET_TITLES : [MARKET_TITLE];
+}
+
+/** The salesperson market — the only one held in memory (market-memory.ts keys a market by its MLSs alone). */
+export function salespeopleOnly(titles: readonly string[]): boolean {
+  return titles.length === 1 && titles[0] === MARKET_TITLE;
+}
+
+/** Who a market is, in words: "every salesperson", "every team leader and managing broker". */
+export function marketWho(titles: readonly string[]): string {
+  const t = titles.map((x) => x.toLowerCase());
+  return `every ${t.length > 1 ? `${t.slice(0, -1).join(", ")} and ${t[t.length - 1]}` : t[0] ?? "salesperson"}`;
+}
+
+/** The Database app's p_filters for a client's market: the agents with its titles (salespeople) in its MLSs. */
+export function marketScope(mlsIds: readonly string[], titles: readonly string[] = [MARKET_TITLE]): Record<string, unknown> {
+  return { mls: { include: [...mlsIds], exclude: [] }, title: { include: [...titles], exclude: [] } };
 }
 
 /** The design's filter chips, as presets (the values a chip offers), so nothing free-form reaches the database. */

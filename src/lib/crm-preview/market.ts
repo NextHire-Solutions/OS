@@ -12,7 +12,7 @@ import { marketFromMemory, requestNameOrder } from "@/lib/crm-preview/market-mem
 import { agentsByIds, demoProspectIds, filterProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
-  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, ownListEmail, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, marketTitles, ownListEmail, salespeopleOnly, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type ReportGroup,
 } from "./market-model";
 
@@ -82,6 +82,8 @@ export const marketSizeFor = ttlCache(async (codes: readonly string[]): Promise<
 
 export interface MarketContext {
   portal: { id: string; name: string };
+  /** The titles its market holds — salespeople; BrokerStaffer's own portal: team leaders and managing brokers (market-model marketTitles). */
+  titles: readonly string[];
   client: { id: string; name: string } | null;
   mls: { ids: string[]; matched: Array<{ code: string; name: string }>; unmatched: string[] };
   orchClientId: string | null;
@@ -125,18 +127,26 @@ async function readMarketContext(portalId: string): Promise<MarketContext | null
   const client = clientForPortal({ id: p.id, name: p.name ?? "" }, (rows ?? []) as unknown as OsClientRow[]);
   // The Demo Portal has no client record: a sample market (demo.ts), and no lists of anyone's.
   if (!client && isDemoPortal(p.id)) {
-    return { portal: { id: p.id, name: p.name ?? "Demo Portal" }, client: { id: "demo-portal", name: p.name ?? "Demo Portal" }, mls: resolveMls([...DEMO_MARKET_MLS], mls), orchClientId: null };
+    return { portal: { id: p.id, name: p.name ?? "Demo Portal" }, titles: marketTitles(p.id), client: { id: "demo-portal", name: p.name ?? "Demo Portal" }, mls: resolveMls([...DEMO_MARKET_MLS], mls), orchClientId: null };
   }
   return {
     portal: { id: p.id, name: p.name ?? "Unnamed client" },
+    titles: marketTitles(p.id),
     client: client ? { id: client.id, name: client.name } : null,
     mls: resolveMls(client?.mls_codes, mls),
     orchClientId: client?.orch_client_id ?? null,
   };
 }
 
-// Salespeople only — the page, its choices and counts, Reports and every move read the market through this (market-model.ts).
-const marketBase = (ctx: MarketContext) => marketScope(ctx.mls.ids);
+// Salespeople (BrokerStaffer's own: team leaders and managing brokers) — the page, its choices and counts, Reports and every move read the market through this (market-model.ts).
+const marketBase = (ctx: MarketContext) => marketScope(ctx.mls.ids, ctx.titles);
+/*
+ * Memory holds only the salesperson market, keyed by its MLSs alone (market-memory.ts): any other market never asks it
+ * — asking with another title would prove a salesperson copy against the wrong market and set it aside for everyone.
+ */
+const inMemory = (ctx: MarketContext) => salespeopleOnly(ctx.titles);
+/** A cache key's part for the market's titles: "sp" for salespeople (as before), the titles otherwise. */
+const titlesKey = (ctx: MarketContext) => (salespeopleOnly(ctx.titles) ? "sp" : ctx.titles.join("+"));
 const prospectsBase = (ctx: MarketContext) => ({ orchClientIds: [ctx.orchClientId], orchClientMode: "include" });
 
 /** Why a list cannot be shown for this client, or null when it can. */
@@ -301,7 +311,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
      * milliseconds instead of seconds; otherwise, and for anything the memory
      * does not reproduce exactly, the database as before.
      */
-    const mem = q.list === "market" ? await marketFromMemory(ctx.mls.ids, base, search) : null;
+    const mem = q.list === "market" && inMemory(ctx) ? await marketFromMemory(ctx.mls.ids, base, search) : null;
     // A name sort before this market's name order is read: the database answers, and the order starts loading.
     if (mem && sort.by === "full_name" && !mem.namesReady) requestNameOrder(ctx.mls.ids, base, search);
     const fast = mem ? searchMarket(mem, filters, sort, q.per, offset) : null;
@@ -440,7 +450,7 @@ export const marketOptions = ttlCache(async (ctx: MarketContext): Promise<{ brok
     brokerages: ((Array.isArray(brands) ? brands : []) as Array<{ v: string }>).map((b) => b.v).slice(0, 40),
     counties: (((counties as { options?: Array<{ v: string }> } | null)?.options ?? []).map((c) => c.v)).slice(0, 40),
   };
-}, { ttlMs: 30 * 60_000, staleMs: 6 * 60 * 60_000, key: (ctx) => `options:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-options", inflightTimeoutMs: 120_000 });
+}, { ttlMs: 30 * 60_000, staleMs: 6 * 60 * 60_000, key: (ctx) => `options:${titlesKey(ctx)}:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-options", inflightTimeoutMs: 120_000 });
 
 /*
  * Reports › All market. Every figure is an exact count of agents in the
@@ -535,7 +545,7 @@ const cachedReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport> 
     allBrokerages: brandRows,
   };
   // Fresh for 30 minutes; after that the last report is shown at once while a new one is counted (28 Oct, the user: "this reports section is slow" — a cold count is 20–35 s).
-}, { ttlMs: 30 * 60_000, staleMs: 24 * 60 * 60_000, key: (ctx) => `report:sp:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-report", inflightTimeoutMs: 180_000 });
+}, { ttlMs: 30 * 60_000, staleMs: 24 * 60 * 60_000, key: (ctx) => `report:${titlesKey(ctx)}:${[...ctx.mls.ids].sort().join(",")}`, shared: "crm-preview-market-report", inflightTimeoutMs: 180_000 });
 
 /**
  * Every agent matching a page's filters, for "Select all that match" → Move to
@@ -568,7 +578,7 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
  * Brokerage lists and its Reports, one after another — the agent database is shared. So Reports opens counted.
  */
 async function readyMarket(ctx: MarketContext, base: Record<string, unknown>): Promise<void> {
-  await marketFromMemory(ctx.mls.ids, base, search);
+  if (inMemory(ctx)) await marketFromMemory(ctx.mls.ids, base, search);
   for (const level of ["city", "county", "state"] as const) await placeList(base, level, PLACE_KINDS).catch(() => []);
   await orgList(base, "brand", "").catch(() => []);
   await cachedReport(ctx).catch(() => null);
@@ -615,7 +625,7 @@ export async function warmMarkets(now = new Date()): Promise<string[]> {
     if (warmed.length >= 3) break;
     const ctx = await marketContext(portalId).catch(() => null);
     if (!ctx || unavailable(ctx, "market")) continue;
-    const key = [...ctx.mls.ids].sort().join(",");
+    const key = `${titlesKey(ctx)}:${[...ctx.mls.ids].sort().join(",")}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const base = marketBase(ctx);
@@ -623,7 +633,7 @@ export async function warmMarkets(now = new Date()): Promise<string[]> {
     // The page's badges: the portal's own lists and, for a real client, its campaign set.
     await portalLists(ctx.portal.id).catch(() => null);
     if (ctx.orchClientId) heldClientSet(ctx.orchClientId);
-    held.push({ ids: ctx.mls.ids, base });
+    if (inMemory(ctx)) held.push({ ids: ctx.mls.ids, base });
     warmed.push(ctx.portal.name);
   }
   // Then their name orders — only once no market is loading (markets first), one at a time.

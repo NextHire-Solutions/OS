@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
     // Counted in the database; heavy or automated-looking CLIENT use rings the OS bell (staff never do). Never refuses (usage.ts).
     after(() => recordUse(createAdminSupabase(), { who, role, portalId: client, kind: "market", rows, page: q.page, now: new Date() }));
     console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "market", who, client, list: q.list, page: q.page, per: q.per, rows, q: q.q ? "set" : "", sort: `${q.sort}:${q.dir}`, filters: [q.volume.min, q.volume.max, q.units.min, q.units.max, q.years.min, q.years.max].filter((v) => v !== null).length + q.titles.length + q.brokerages.length + q.offices.length + q.cities.length + q.counties.length + q.states.length + Object.values(q.not).reduce((n, xs) => n + xs.length, 0) }));
-    return NextResponse.json({ ...page, options, mls: ctx.mls, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
+    return NextResponse.json({ ...page, options, mls: ctx.mls, titles: ctx.titles, client: ctx.client?.name ?? null }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.error("[crm-preview] market", err);
     // The reason is logged above; the browser gets the plain words, never a database message.

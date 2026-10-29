@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
-import { FIRST_DIR, interestedReport, LIST_PILL, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
+import { FIRST_DIR, interestedReport, LIST_PILL, marketWho, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
 import { k, off, withIds } from "./k";
@@ -27,13 +27,13 @@ type Mls = { matched: Array<{ code: string; name: string }>; unmatched: string[]
  * What the page counts, for the preview's bar (never inside the design): the
  * design does not say where a client's market comes from (market-model.ts).
  */
-function definition(list: "market" | "prospects", client: string | null, mls: Mls | null): string | null {
+function definition(list: "market" | "prospects", client: string | null, mls: Mls | null, titles?: readonly string[] | null): string | null {
   if (!client) return null;
   if (list === "prospects") return `Prospects here = the agents in ${client}'s lists in the agent database (its campaign leads).`;
   if (!mls) return null;
   const codes = mls.matched.map((m) => m.code).join(", ");
   const missing = mls.unmatched.length ? ` Not in the agent database, so not counted: ${mls.unmatched.join(", ")}.` : "";
-  return `Market here = every salesperson in the MLS on ${client}'s record${codes ? ` (${codes})` : ""}.${missing}`;
+  return `Market here = ${marketWho(titles?.length ? titles : ["Salesperson"])} in the MLS on ${client}'s record${codes ? ` (${codes})` : ""}.${missing}`;
 }
 
 // ---------------------------------------------------------------- Market ---
@@ -104,7 +104,8 @@ const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agent
 type Facet = "brand" | "office" | "city" | "county" | "state";
 type Pick = { f: Facet; v: string; ex: boolean };
 /*
- * No Title filter: the market is salespeople, set on the server (market-model.ts marketScope — 24 Oct, the user).
+ * No Title filter: the market's titles are set on the server — salespeople; BrokerStaffer's own portal: team leaders and
+ * managing brokers (market-model.ts marketScope / marketTitles — 24 and 29 Oct, the user).
  * kinds: which of an agent's places Location looks at — the office, where it sold most: Market's Office city and Most transacted city columns (24 Oct).
  */
 export type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[] };
@@ -483,7 +484,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
         if (!ok) return setState((s) => ({ ...s, loading: false, error: j?.error ?? "The agent database could not be read." }));
         if (j.unavailable) return setState({ loading: false, error: null, unavailable: j.unavailable, data: null });
         setState({ loading: false, error: null, unavailable: null, data: { total: j.total ?? 0, salesVolume: j.salesVolume ?? 0, page: j.page ?? 1, rows: j.rows ?? [], client: j.client ?? null, mls: j.mls ?? null } });
-        onContext?.(definition(list, j.client ?? null, j.mls ?? null));
+        onContext?.(definition(list, j.client ?? null, j.mls ?? null, j.titles ?? null));
       })
       .catch((err) => { if (err?.name !== "AbortError") setState((s) => ({ ...s, loading: false, error: "Couldn't reach the server." })); });
     return () => ctrl.abort();
@@ -822,7 +823,7 @@ export function ReportsScreen({ clientId, entries, onContext }: { clientId: stri
         if (!ok) return setRep({ loading: false, error: j?.error ?? "The agent database could not be read.", unavailable: null, data: null });
         if (j.unavailable) return setRep({ loading: false, error: null, unavailable: j.unavailable, data: null });
         setRep({ loading: false, error: null, unavailable: null, data: { total: j.total, groups: j.groups ?? [], allBrokerages: j.allBrokerages ?? [], client: j.client ?? null, mls: j.mls } });
-        onContext?.(definition("market", j.client ?? null, j.mls ?? null));
+        onContext?.(definition("market", j.client ?? null, j.mls ?? null, j.titles ?? null));
       })
       .catch(() => { if (!cancelled) setRep({ loading: false, error: "Couldn't reach the server.", unavailable: null, data: null }); });
     return () => { cancelled = true; };

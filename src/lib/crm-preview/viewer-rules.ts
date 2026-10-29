@@ -29,8 +29,8 @@ import { isDemoPortal } from "./demo.ts";
  */
 export const DEMO_CLIENT_TESTERS: readonly string[] = ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
 
-/** BrokerStaffer's own portal (Master Inbox `clients`) — the house account, never counted as a client. */
-export const BROKERSTAFFER_PORTAL_ID = "54322dcf-7392-4022-918c-990ebc8469b8";
+/** BrokerStaffer's own portal (Master Inbox `clients`) — the house account, never counted as a client. One id: market-model.ts. */
+export { BROKERSTAFFER_PORTAL_ID } from "./market-model.ts";
 
 /* The client launch switch (portal-login/mail.ts SIGNIN_ENV — viewer-rules.test.ts keeps the two the same name). */
 export const CLIENT_LAUNCH_ENV = "OS_CLIENT_SIGNIN";
