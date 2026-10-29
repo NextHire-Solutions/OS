@@ -219,8 +219,9 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
   const kinds = PLACE_KINDS.filter((x) => p.getAll("kind").includes(x));
   const page = Math.floor(Number(p.get("page")));
   const list: MarketList = p.get("list") === "prospects" ? "prospects" : "market";
-  // A market is salespeople, set by marketScope: a title asked for there is ignored, so the market can never be widened.
-  const titles = (k: string) => (list === "market" ? [] : many(k).filter((t) => (TITLES as readonly string[]).includes(t)));
+  // Titles, only the three. A market's own titles are its scope (marketScope): marketFilters lets a title pick only narrow a
+  // market that holds several — BrokerStaffer's own (29 Oct) — and ignores it on a salesperson market, so none is ever widened.
+  const titles = (k: string) => many(k).filter((t) => (TITLES as readonly string[]).includes(t));
   const per = p.get("per") === String(SETUP_PAGE_SIZE) ? SETUP_PAGE_SIZE : PAGE_SIZE;
   const sortRaw = p.get("sort") ?? "";
   const sort: SortKey = sortRaw in SORTS ? (sortRaw as SortKey) : "volume";
@@ -272,7 +273,16 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
     const field = (places[0] ?? notPlaces[0]).f;
     f.location = { field, appliesTo: [...q.kinds], values: places, excludeValues: notPlaces, excludeField: (notPlaces[0] ?? places[0]).f };
   }
-  if (q.titles.length || x.titles.length) f.title = { include: [...q.titles], exclude: [...x.titles] };
+  const scope = (base.title as { include?: string[] } | undefined)?.include;
+  if (scope) {
+    /*
+     * A market's titles (marketScope): a title pick narrows them, never widens — only where the market holds several
+     * (BrokerStaffer's own portal: team leaders and managing brokers, 29 Oct). A salesperson market ignores title picks.
+     */
+    const inc = q.titles.filter((t) => scope.includes(t));
+    const exc = x.titles.filter((t) => scope.includes(t));
+    if (scope.length > 1 && (inc.length || exc.length)) f.title = { include: inc.length ? inc : [...scope], exclude: exc };
+  } else if (q.titles.length || x.titles.length) f.title = { include: [...q.titles], exclude: [...x.titles] };
   /*
    * "Search agents": the agents whose name contains the text, any case — the
    * Database app's own name filter (fn_agent_where `name`: full_name ILIKE

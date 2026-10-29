@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
-import { FIRST_DIR, interestedReport, LIST_PILL, marketWho, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
+import { FIRST_DIR, interestedReport, LIST_PILL, marketTitles, marketWho, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
 
 import { Icon } from "./icons";
 import { k, off, withIds } from "./k";
@@ -101,21 +101,22 @@ const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agent
  * ticked on the other side (the Database app's rule — flipping the switch
  * never silently turns a filter around).
  */
-type Facet = "brand" | "office" | "city" | "county" | "state";
+type Facet = "brand" | "office" | "city" | "county" | "state" | "title";
 type Pick = { f: Facet; v: string; ex: boolean };
 /*
- * No Title filter: the market's titles are set on the server — salespeople; BrokerStaffer's own portal: team leaders and
- * managing brokers (market-model.ts marketScope / marketTitles — 24 and 29 Oct, the user).
+ * The market's titles are set on the server — salespeople; BrokerStaffer's own portal: team leaders and managing
+ * brokers (market-model.ts marketScope / marketTitles — 24 and 29 Oct, the user). A Title filter only where the market
+ * holds several (BrokerStaffer's own, 29 Oct): it narrows among them, never widens (market-model marketFilters).
  * kinds: which of an agent's places Location looks at — the office, where it sold most: Market's Office city and Most transacted city columns (24 Oct).
  */
-export type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[] };
+export type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[]; titles: Pick[] };
 const NO_RANGE: Range = { min: null, max: null };
-export const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS] };
+export const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS], titles: [] };
 const isSet = (r: Range) => r.min !== null || r.max !== null;
 /** Is any filter set? */
-export const anyPicks = (f: Picks) => isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0;
-const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county", state: "state" };
-const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", county: "counties", state: "states" };
+export const anyPicks = (f: Picks) => isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0 || f.titles.length > 0;
+const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county", state: "state", title: "title" };
+const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", county: "counties", state: "states", title: "titles" };
 const KIND_LABEL: Record<PlaceKind, string> = { office: "Office location", transacted: "Most transacted location" };
 
 /** The picks as the route's query string (several of a kind repeat their key; a left-out one is x-prefixed). */
@@ -128,6 +129,7 @@ export function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "
   range("Units", p.units);
   range("Years", p.years);
   if (skip !== "brokerage") for (const x of p.brokerages) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
+  for (const x of p.titles) sp.append(`${x.ex ? "x" : ""}title`, x.v);
   if (skip !== "place") {
     for (const x of p.places) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
     // Both is the default; one only matters with a place picked.
@@ -370,16 +372,18 @@ export function MarketFilters({ clientId, list, value: f, onChange }: { clientId
   // The open panel's "keep what I set" — run on a click outside it (Escape drops it).
   const commit = useRef<(() => void) | null>(null);
   const register = (fn: () => void) => { commit.current = fn; };
+  // A Title filter only where the market holds several titles — BrokerStaffer's own portal (29 Oct).
+  const withTitle = list === "market" && marketTitles(clientId).length > 1;
 
-  // The Location and Brokerage choices, asked for as the bar appears so they are ready when a panel is (the server keeps them 30 minutes).
+  // The Location, Brokerage (and Title) choices, asked for as the bar appears so they are ready when a panel is (the server keeps them 30 minutes).
   useEffect(() => {
     const ctrl = new AbortController();
-    for (const facet of ["city", "county", "state", "brand"]) {
+    for (const facet of ["city", "county", "state", "brand", ...(withTitle ? ["title"] : [])]) {
       const sp = new URLSearchParams({ client: clientId, list, facet });
       void fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal }).catch(() => {});
     }
     return () => ctrl.abort();
-  }, [clientId, list]);
+  }, [clientId, list, withTitle]);
 
   useEffect(() => {
     if (!menu) return;
@@ -407,6 +411,15 @@ export function MarketFilters({ clientId, list, value: f, onChange }: { clientId
   // What each filter shows when set: one pick by name, several by the filter's name and a count (the Database app's way).
   return (
     <>
+      {withTitle ? (
+        <FilterButton id="title" label="Title" value={pickText(f.titles)} count={f.titles.length} open={menu === "title"} onOpen={openMenu}>
+          <ManyPanel
+            clientId={clientId} list={list} noun="titles"
+            levels={[{ id: "title", label: "Title" }]}
+            initial={f.titles} onApply={(xs) => apply("titles", xs)} register={register}
+          />
+        </FilterButton>
+      ) : null}
       <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
         <ManyPanel
           clientId={clientId} list={list} noun="places"

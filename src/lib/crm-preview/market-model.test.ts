@@ -109,7 +109,7 @@ test("a market is salespeople, decided on the server (24 Oct, the user): a title
   assert.deepEqual(scope, { mls: { include: ["m1", "m2"], exclude: [] }, title: { include: ["Salesperson"], exclude: [] } });
   for (const qs of ["", "title=Team Leader", "title=Managing Broker&title=Team Leader", "xtitle=Salesperson", "list=market&title=Team Leader&xtitle=Salesperson"]) {
     const q = parseMarketQuery(new URLSearchParams(qs));
-    assert.deepEqual([q.titles, q.not.titles], [[], []], qs);
+    // (A title may be read from the request — 29 Oct, for BrokerStaffer's own market — but a salesperson market ignores it.)
     assert.deepEqual((marketFilters(scope, q) as { title: unknown }).title, { include: ["Salesperson"], exclude: [] }, `still salespeople only: ${qs}`);
   }
   // The other filters sit on top of it.
@@ -262,4 +262,22 @@ test("market.ts asks the memory market only for the salesperson market (memory k
   assert.match(src, /if \(inMemory\(ctx\)\) held\.push/, "name orders only for markets held in memory");
   assert.match(src, /key: \(ctx\) => `report:\$\{titlesKey\(ctx\)\}/, "Reports cached per market titles");
   assert.match(src, /key: \(ctx\) => `options:\$\{titlesKey\(ctx\)\}/, "choice lists cached per market titles");
+});
+
+test("BrokerStaffer's Title filter (29 Oct): picks narrow its two titles — never widen, never reach another title", () => {
+  const scope = marketScope(["m1"], BROKERSTAFFER_MARKET_TITLES);
+  const title = (qs: string) => (marketFilters(scope, parseMarketQuery(new URLSearchParams(qs))) as { title: unknown }).title;
+  assert.deepEqual(title(""), { include: ["Team Leader", "Managing Broker"], exclude: [] }, "no pick: the whole market");
+  assert.deepEqual(title("title=Team Leader"), { include: ["Team Leader"], exclude: [] }, "team leaders only");
+  assert.deepEqual(title("title=Managing Broker"), { include: ["Managing Broker"], exclude: [] });
+  assert.deepEqual(title("xtitle=Managing Broker"), { include: ["Team Leader", "Managing Broker"], exclude: ["Managing Broker"] }, "not managing brokers: team leaders who aren't");
+  assert.deepEqual(title("title=Team Leader&xtitle=Managing Broker"), { include: ["Team Leader"], exclude: ["Managing Broker"] });
+  for (const qs of ["title=Salesperson", "xtitle=Salesperson", "title=Salesperson&title=Team Leader"]) {
+    const t = title(qs) as { include: string[]; exclude: string[] };
+    assert.ok(!t.include.includes("Salesperson") && !t.exclude.includes("Salesperson"), `Salesperson never reaches BrokerStaffer's market: ${qs}`);
+  }
+  assert.deepEqual(title("title=Salesperson&title=Team Leader"), { include: ["Team Leader"], exclude: [] });
+  // And the filter is offered only there.
+  assert.equal(marketTitles(BROKERSTAFFER_PORTAL_ID).length > 1, true);
+  assert.equal(marketTitles("492b2783-280f-4c6d-8807-a3de56c59ab1").length > 1, false);
 });

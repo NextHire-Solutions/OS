@@ -351,9 +351,19 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   return { total: page.total, salesVolume: page.salesVolume, page: q.page, pageSize: q.per, rows };
 }
 
-export type FacetKind = "brand" | "office" | "city" | "county" | "state";
+export type FacetKind = "brand" | "office" | "city" | "county" | "state" | "title";
 type PlaceLevel = "city" | "county" | "state";
-const isPlace = (k: FacetKind): k is PlaceLevel => k !== "brand" && k !== "office";
+const isPlace = (k: FacetKind): k is PlaceLevel => k !== "brand" && k !== "office" && k !== "title";
+
+/*
+ * The Title filter's choices (29 Oct — BrokerStaffer's own portal only): each of the market's titles with its agents,
+ * counted by the agent database, kept 30 minutes. Only a market with several titles has the filter.
+ */
+const titleCounts = ttlCache(async (mlsIds: readonly string[], titles: readonly string[]): Promise<Array<{ v: string; n: number }>> => {
+  const out: Array<{ v: string; n: number }> = [];
+  for (const t of titles) out.push({ v: t, n: (await search(marketScope(mlsIds, [t]), 1)).total });
+  return out;
+}, { ttlMs: 30 * 60_000, staleMs: 6 * 60 * 60_000, key: (mlsIds, titles) => `titles:${[...titles].join("+")}:${[...mlsIds].sort().join(",")}`, shared: "crm-preview-title-counts" });
 
 /** A filter's choices: names and agent counts; for places also how many match the search and the agents they cover. */
 export type FacetResult = { unavailable: string } | { options: Array<{ v: string; n: number }>; total?: number; agents?: number };
@@ -412,6 +422,11 @@ function searchPlaces(all: ReadonlyArray<{ v: string; n: number }>, text: string
 export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: FacetKind, text: string): Promise<FacetResult> {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
+  if (kind === "title") {
+    if (q.list !== "market" || ctx.titles.length < 2) return { options: [] };
+    const needle = text.trim().toLowerCase();
+    return { options: (await titleCounts(ctx.mls.ids, ctx.titles)).filter((o) => o.v.toLowerCase().includes(needle)) };
+  }
   if (isDemoPortal(ctx.portal.id) && q.list === "prospects") {
     // The Demo's own prospects (a short list): the choices among all of them, as the market's are.
     const ids = await demoProspectIds(mi(), DEMO_PORTAL_ID);
