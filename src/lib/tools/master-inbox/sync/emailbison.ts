@@ -9,6 +9,7 @@ import type {
 } from "@/lib/tools/master-inbox/emailbison/types";
 import {
   homeThreadFor,
+  type FiledMessage,
   inboundFromReply,
   leadFields,
   normalizeRecipientList,
@@ -303,15 +304,17 @@ async function backfillConversation(
   leadEmail: string | null | undefined,
   ebTeamId: number | undefined,
   seedSender: { id: number; email: string } | null = null,
-  /** The lead's campaign emails — not for someone on a client's own team (clientTeamOf): that campaign is not theirs to show. */
-  campaignEmails = true,
-): Promise<string> {
+  /** Who sent the reply (its From address). */
+  replier: string | null = null,
+  /** The conversation as it was before this reply's webhook touched it (null: the webhook made it). */
+  before: ThreadSnapshot | null = null,
+): Promise<{ target: string; asLead: boolean }> {
   let client;
   try {
     client = createEmailBisonClient();
   } catch (err) {
     console.error("[emailbison] cannot construct client for backfill", err);
-    return threadId;
+    return { target: threadId, asLead: true };
   }
 
   // Switch EmailBison API context to the team this lead belongs to. Without
@@ -368,13 +371,13 @@ async function backfillConversation(
   } catch (err) {
     console.error("[emailbison] getReplyThread failed", err);
   }
-  const home = await homeOf(ctx, threadId, all, ebReplyId);
-  if (home) await moveReplyHome(ctx, threadId, home, ebReplyId);
+  const found = await homeOf(ctx, threadId, all, ebReplyId, replier);
+  const home = found && (await moveReplyHome(ctx, threadId, found.threadId, ebReplyId, before)) ? found.threadId : null;
   const target = home ?? threadId;
 
   // (2) Outbound scheduled emails for this lead, filtered to this campaign — only into the lead's own (lead, campaign)
   // conversation: a reply moved home is another conversation's, not this lead's campaign history.
-  if (!home && campaignEmails) {
+  if (!home) {
     try {
       const res = await client.getLeadSentEmails(ebLeadId);
       const sent = (res.data ?? []).filter(
@@ -462,52 +465,57 @@ async function backfillConversation(
   } catch (err) {
     console.error("[emailbison] conversation backfill failed", err);
   }
-  return target;
-}
-
-/*
- * An email from a client's own team (29 Oct) — someone on a portal's Team list, as Sergei is on Rise Real Estate
- * Tujunga's — is never a lead's reply for another client, whatever campaign EmailBison files it under (Sergei is also a
- * lead in The Rafeh Group's): it is tagged with their own client and not handled as a lead. Only when exactly one
- * client's team has the address; otherwise null — filed as before.
- */
-async function clientTeamOf(address: string | null): Promise<string | null> {
-  const a = (address ?? "").trim().toLowerCase();
-  if (!a.includes("@")) return null;
-  const { data, error } = await createAdminSupabase()
-    .from("client_team_members")
-    .select("client_id")
-    .ilike("email", a.replace(/[\\%_]/g, "\\$&"));
-  if (error) {
-    console.error("[emailbison] team lookup failed — filed as before", error.message);
-    return null;
-  }
-  const ids = [...new Set(((data ?? []) as Array<{ client_id: string | null }>).map((r) => r.client_id).filter((x): x is string => !!x))];
-  return ids.length === 1 ? ids[0] : null;
+  return { target, asLead: home ? found!.asLead : true };
 }
 
 /** The reply's home among our conversations, from what we already hold of its EmailBison conversation (homeThreadFor). */
-async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvReply[], ebReplyId: number): Promise<string | null> {
+async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvReply[], ebReplyId: number, replier: string | null): Promise<{ threadId: string; asLead: boolean } | null> {
   const others = conversation.filter((r) => r.id !== ebReplyId).map((r) => replyExternalId(r.id));
-  if (!others.length) return null;
-  const { data, error } = await createAdminSupabase()
+  if (!others.length || !replier) return null;
+  const supabase = createAdminSupabase();
+  const { data, error } = await supabase
     .from("messages")
-    .select("thread_id, direction, sent_at")
+    .select("thread_id, direction, sent_at, recipients")
     .eq("workspace_id", ctx.workspaceId)
     .in("external_message_id", others);
   if (error) {
     console.error("[emailbison] home lookup failed — filed as before", error.message);
     return null;
   }
-  return homeThreadFor(threadId, (data ?? []) as Array<{ thread_id: string | null; direction: string | null; sent_at: string | null }>);
+  const filed = (data ?? []) as FiledMessage[];
+  // The lead of each conversation those messages sit in (homeThreadFor follows an email only to its To person's).
+  const threadIds = [...new Set(filed.map((m) => m.thread_id).filter((x): x is string => !!x))];
+  const leadOf = new Map<string, string | null>();
+  if (threadIds.length) {
+    const { data: ts } = await supabase.from("threads").select("id, lead_id").eq("workspace_id", ctx.workspaceId).in("id", threadIds);
+    const leadIds = [...new Set(((ts ?? []) as Array<{ lead_id: string | null }>).map((t) => t.lead_id).filter((x): x is string => !!x))];
+    const { data: ls } = leadIds.length ? await supabase.from("leads").select("id, email").in("id", leadIds) : { data: [] };
+    const emailOf = new Map(((ls ?? []) as Array<{ id: string; email: string | null }>).map((l) => [l.id, l.email]));
+    for (const t of (ts ?? []) as Array<{ id: string; lead_id: string | null }>) leadOf.set(t.id, t.lead_id ? emailOf.get(t.lead_id) ?? null : null);
+  }
+  return homeThreadFor(threadId, filed, replier, (id) => leadOf.get(id) ?? null);
+}
+
+/* The conversation's fields the webhook overwrites (upsertThread), as they were. */
+type ThreadSnapshot = Record<string, unknown> & { id: string };
+const SNAPSHOT_FIELDS = "id, lead_id, channel_id, subject, last_message_at, last_message_preview, needs_reply, seen, outbound_sender_email, client_id, campaign_id, campaign_name";
+async function snapshotThread(ctx: SyncContext, externalThreadId: string): Promise<ThreadSnapshot | null> {
+  const { data } = await createAdminSupabase()
+    .from("threads")
+    .select(SNAPSHOT_FIELDS)
+    .eq("workspace_id", ctx.workspaceId)
+    .eq("emailbison_thread_id", externalThreadId)
+    .maybeSingle();
+  return (data as ThreadSnapshot | null) ?? null;
 }
 
 /*
  * The reply into its home conversation, which shows it as the newest and as needing a reply (as the webhook does for
- * the conversation it made). The conversation the webhook made just for it is removed when nothing else is in it — a
- * minute-old empty one; any other stays as it was.
+ * the conversation it was put in). The conversation it leaves is put back as it was before this reply (`before`), or —
+ * when the webhook made it just for this reply and nothing else is in it — removed. False: the move failed, and the
+ * reply stays where it is.
  */
-async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebReplyId: number): Promise<void> {
+async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebReplyId: number, before: ThreadSnapshot | null): Promise<boolean> {
   const supabase = createAdminSupabase();
   const { data: moved, error } = await supabase
     .from("messages")
@@ -518,17 +526,24 @@ async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebRep
     .select("sent_at, body_text");
   if (error) {
     console.error("[emailbison] moving the reply home failed", error.message);
-    return;
+    return false;
   }
   const m = (moved ?? [])[0] as { sent_at: string | null; body_text: string | null } | undefined;
+  if (!m) return true; // already moved (a replay of this webhook, or a second backfill)
   console.info(JSON.stringify({ tag: "[emailbison] reply filed with the email it answers", reply: ebReplyId, from, home }));
-  if (m) {
+  if (m.sent_at) {
     await supabase
       .from("threads")
-      .update({ last_message_at: m.sent_at, last_message_preview: m.body_text, needs_reply: true, seen: false, updated_at: new Date().toISOString() })
+      .update({ last_message_at: m.sent_at, last_message_preview: m.body_text?.slice(0, 200) ?? null, needs_reply: true, seen: false, updated_at: new Date().toISOString() })
       .eq("workspace_id", ctx.workspaceId)
       .eq("id", home)
-      .lt("last_message_at", m.sent_at ?? "");
+      .or(`last_message_at.is.null,last_message_at.lt.${m.sent_at}`);
+  }
+  if (before && before.id === from) {
+    const { id: _id, ...fields } = before;
+    void _id;
+    await supabase.from("threads").update(fields).eq("workspace_id", ctx.workspaceId).eq("id", from);
+    return true;
   }
   const { data: left, error: leftErr } = await supabase.from("messages").select("id").eq("thread_id", from).limit(1);
   const { data: made } = await supabase.from("threads").select("created_at").eq("id", from).maybeSingle();
@@ -537,6 +552,7 @@ async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebRep
     const { error: delErr } = await supabase.from("threads").delete().eq("workspace_id", ctx.workspaceId).eq("id", from);
     if (delErr) console.error("[emailbison] the emptied conversation could not be removed", delErr.message);
   }
+  return true;
 }
 
 export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope): Promise<{
@@ -563,16 +579,17 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
   const externalThreadId = threadExternalId(payload.lead.id, payload.campaign?.id);
   const msg = inboundFromReply(payload.reply, payload.lead.email ?? null);
 
-  // From a client's own team (29 Oct)? Then it is that client's, and not a lead's reply (clientTeamOf).
-  const fromTeam = await clientTeamOf(payload.reply.from_email_address ?? msg.sender ?? null);
 
   // Tag thread with the matching BrokerStaffer client (or "Unknown") based on the
   // EmailBison campaign name. Webhook payload carries it directly, so we
   // never hit the EmailBison /campaigns endpoint just for this lookup.
-  const clientId = fromTeam ?? await deriveClientIdFromCampaign(payload.campaign?.name ?? null, {
+  const clientId = await deriveClientIdFromCampaign(payload.campaign?.name ?? null, {
     platform: "emailbison",
     id: payload.campaign?.id,
   });
+
+  // The conversation as it was, should the reply turn out to belong elsewhere (moveReplyHome puts it back).
+  const before = await snapshotThread(ctx, externalThreadId);
 
   const threadId = await upsertThread(ctx, ourLeadId, externalThreadId, {
     subject: msg.subject,
@@ -633,8 +650,9 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
   void (async () => {
     // The conversation the reply belongs to — this one, or the one the email it answers was sent from (29 Oct).
     let home = threadId;
+    let asLead = true;
     try {
-      home = await backfillConversation(
+      ({ target: home, asLead } = await backfillConversation(
         ctx,
         threadId,
         lead.id,
@@ -643,14 +661,16 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
         lead.email,
         eventBlockWorkspaceId,
         senderEmail,
-        !fromTeam,
-      );
+        reply.from_email_address ?? msg.sender ?? null,
+        before,
+      ));
     } catch (err) {
       console.error("[emailbison] async backfill failed", err);
     }
-    // A client's own team member is not a lead: never labelled (no Interested alert, no hand-off) nor answered by the agent.
-    if (fromTeam) {
-      console.info(JSON.stringify({ tag: "[emailbison] from a client's own team — not handled as a lead", thread: home, client: fromTeam }));
+    // Someone CC'd on the email the reply answers (Sergei, Rise's team lead, on Jeffrey's introduction) is not that
+    // conversation's lead: a person handles the reply — never labelled (no Interested alert, no hand-off) nor answered.
+    if (!asLead) {
+      console.info(JSON.stringify({ tag: "[emailbison] a CC'd person's reply, filed with the email it answers — left to a person", thread: home }));
       return;
     }
     try {

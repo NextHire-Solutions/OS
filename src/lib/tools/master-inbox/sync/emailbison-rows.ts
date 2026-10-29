@@ -109,17 +109,44 @@ export function replyExternalId(replyId: number): string {
  * answered by Sergei — Rise's own team lead, CC'd — whom EmailBison knows as a lead in The Rafeh Group's campaign: it
  * keyed the reply to Sergei + Rafeh, and a new "Rafeh" conversation took the reply AND the introduction.
  *
- * `filed`: the messages of the reply's EmailBison conversation we already hold. When the latest one WE sent sits in
- * another conversation, that one is the reply's home. Only our own sends anchor it; otherwise null — filed as before.
+ * `filed`: the messages of the reply's EmailBison conversation we already hold. The latest one WE sent anchors the reply
+ * — only when (a) the person replying was on its To or Cc, and (b) it is filed with the person it was sent to (its
+ * conversation's lead is on its To). (b) refuses to follow an email an earlier sync misfiled (Adam Treat's conversation
+ * holds introductions to five other people): those replies are filed as before. `asLead`: the replier was on To — the
+ * lead; Cc only (Sergei) — someone else, whose reply a person handles (no labelling, no reply agent).
  */
+export type FiledMessage = { thread_id: string | null; direction: string | null; sent_at: string | null; recipients: unknown };
+
+const ADDRESS = /[^\s<>"',;]+@[^\s<>"',;]+/;
+/** Addresses, lower case, from a stored recipient list (strings or {address|email} objects, "Name <a@b>" too). */
+export function addressesOf(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((x) => (typeof x === "string" ? x : x && typeof x === "object" ? String((x as Record<string, unknown>).address ?? (x as Record<string, unknown>).email ?? "") : ""))
+    .map((x) => (ADDRESS.exec(x)?.[0] ?? "").toLowerCase())
+    .filter(Boolean);
+}
+
 export function homeThreadFor(
   newThreadId: string,
-  filed: ReadonlyArray<{ thread_id: string | null; direction: string | null; sent_at: string | null }>,
-): string | null {
+  filed: ReadonlyArray<FiledMessage>,
+  replier: string | null,
+  leadOf: (threadId: string) => string | null,
+): { threadId: string; asLead: boolean } | null {
   const ours = filed.filter((m) => m.thread_id && m.direction === "outbound");
   if (!ours.length) return null;
   const latest = [...ours].sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""))[0];
-  return latest.thread_id !== newThreadId ? latest.thread_id : null;
+  const home = latest.thread_id!;
+  if (home === newThreadId) return null;
+  const who = (ADDRESS.exec(replier ?? "")?.[0] ?? "").toLowerCase();
+  if (!who) return null;
+  const r = (latest.recipients ?? {}) as { to?: unknown; cc?: unknown; bcc?: unknown };
+  const to = addressesOf(r.to);
+  const cc = [...addressesOf(r.cc), ...addressesOf(r.bcc)];
+  if (!to.includes(who) && !cc.includes(who)) return null;
+  const lead = (leadOf(home) ?? "").trim().toLowerCase();
+  if (!lead || !to.includes(lead)) return null;
+  return { threadId: home, asLead: to.includes(who) };
 }
 
 /** Outbound scheduled sends, from /leads/{id}/sent-emails. */

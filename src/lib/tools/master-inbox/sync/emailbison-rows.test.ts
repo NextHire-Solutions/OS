@@ -126,27 +126,42 @@ test("to: structured list first, primary_to as the fallback", () => {
  * homeThreadFor (29 Oct): Sergei — Rise Tujunga's own team lead, CC'd on Nicole's introduction to Jeffrey — replied;
  * EmailBison knew him as a lead in The Rafeh Group's campaign. His reply belongs with the introduction it answers.
  */
-import { homeThreadFor } from "./emailbison-rows.ts";
+import { addressesOf, homeThreadFor } from "./emailbison-rows.ts";
 
-test("homeThreadFor: a reply to an email we sent from another conversation goes to that conversation", () => {
-  const filed = [{ thread_id: "JEFF", direction: "outbound", sent_at: "2026-10-29T13:10:56Z" }];
-  assert.equal(homeThreadFor("NEW_RAFEH", filed), "JEFF");
+const INTRO = { thread_id: "JEFF", direction: "outbound", sent_at: "2026-10-29T13:10:56Z", recipients: { to: ["jeff@firstsourcecare.com"], cc: ["nicole.c@brokerstaffer.com", "SergeiHovsepyan@outlook.com"] } };
+const leads: Record<string, string> = { JEFF: "jeff@firstsourcecare.com", ADAM: "adam.treat@propertiesandestates.com" };
+const leadOf = (id: string) => leads[id] ?? null;
+
+test("homeThreadFor: a CC'd person's reply to an email we sent goes to that email's conversation — not as the lead", () => {
+  assert.deepEqual(homeThreadFor("NEW_RAFEH", [INTRO], "SergeiHovsepyan@outlook.com", leadOf), { threadId: "JEFF", asLead: false });
+  assert.deepEqual(homeThreadFor("NEW_RAFEH", [INTRO], "Sergei <sergeihovsepyan@OUTLOOK.com>", leadOf), { threadId: "JEFF", asLead: false }, "case and display names aside");
 });
 
-test("homeThreadFor: the lead's own conversation stays its home (the ordinary reply)", () => {
-  assert.equal(homeThreadFor("T", [{ thread_id: "T", direction: "outbound", sent_at: "2026-10-01T00:00:00Z" }]), null);
-  assert.equal(homeThreadFor("T", []), null);
+test("homeThreadFor: the lead (on To) replying under another EmailBison key goes home, handled as the lead", () => {
+  assert.deepEqual(homeThreadFor("NEW", [INTRO], "jeff@firstsourcecare.com", leadOf), { threadId: "JEFF", asLead: true });
 });
 
-test("homeThreadFor: only OUR sends anchor a reply — someone else's message elsewhere never moves it", () => {
-  assert.equal(homeThreadFor("T", [{ thread_id: "OTHER", direction: "inbound", sent_at: "2026-10-29T13:00:00Z" }]), null);
+test("homeThreadFor: someone who was on neither To nor Cc never follows the email", () => {
+  assert.equal(homeThreadFor("NEW", [INTRO], "stranger@example.com", leadOf), null);
+  assert.equal(homeThreadFor("NEW", [INTRO], null, leadOf), null);
 });
 
-test("homeThreadFor: our latest send decides, when several are held", () => {
-  const filed = [
-    { thread_id: "OLD", direction: "outbound", sent_at: "2026-10-01T00:00:00Z" },
-    { thread_id: "T", direction: "outbound", sent_at: "2026-10-29T00:00:00Z" },
-  ];
-  assert.equal(homeThreadFor("T", filed), null, "the latest is in the reply's own conversation");
-  assert.equal(homeThreadFor("X", filed), "T");
+test("homeThreadFor: an email filed with someone other than its To person is not followed (an earlier misfiling)", () => {
+  const misfiled = { ...INTRO, thread_id: "ADAM", recipients: { to: ["raulrpneto@gmail.com"], cc: ["adam.treat@propertiesandestates.com"] } };
+  assert.equal(homeThreadFor("RAUL_OWN", [misfiled], "raulrpneto@gmail.com", leadOf), null, "Raul's reply stays in Raul's own conversation");
+  assert.equal(homeThreadFor("ADAM2", [misfiled], "adam.treat@propertiesandestates.com", leadOf), null);
+  assert.equal(homeThreadFor("NEW", [INTRO], "SergeiHovsepyan@outlook.com", () => null), null, "no lead known: not followed");
+});
+
+test("homeThreadFor: the lead's own conversation stays its home; only OUR sends anchor; the latest decides", () => {
+  assert.equal(homeThreadFor("JEFF", [INTRO], "SergeiHovsepyan@outlook.com", leadOf), null);
+  assert.equal(homeThreadFor("NEW", [{ ...INTRO, direction: "inbound" }], "SergeiHovsepyan@outlook.com", leadOf), null);
+  assert.equal(homeThreadFor("NEW", [], "SergeiHovsepyan@outlook.com", leadOf), null);
+  const older = { ...INTRO, thread_id: "OLD", sent_at: "2026-10-01T00:00:00Z" };
+  assert.deepEqual(homeThreadFor("NEW", [older, INTRO], "SergeiHovsepyan@outlook.com", (id) => (id === "OLD" ? "jeff@firstsourcecare.com" : leadOf(id))), { threadId: "JEFF", asLead: false });
+});
+
+test("addressesOf: strings, objects and display names, lower case", () => {
+  assert.deepEqual(addressesOf(["A@B.com", { address: "c@d.com" }, { email: "E@F.com" }, "Name <g@h.com>", 7, null]), ["a@b.com", "c@d.com", "e@f.com", "g@h.com"]);
+  assert.deepEqual(addressesOf(undefined), []);
 });

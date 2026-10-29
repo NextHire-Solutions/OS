@@ -292,10 +292,13 @@ async function upsertHistoricalEmail(
 
   if (existing) {
     // Preserve raw_payload (first write wins). Update everything else so
-    // body/subject corrections from the canonical /emails row land.
+    // body/subject corrections from the canonical /emails row land — but not
+    // its conversation (29 Oct): a message already filed stays where it is.
+    const { thread_id: _stays, ...keep } = row;
+    void _stays;
     await supabase
       .from("messages")
-      .update(row)
+      .update(keep)
       .eq("workspace_id", ctx.workspaceId)
       .eq("id", existing.id);
   } else {
