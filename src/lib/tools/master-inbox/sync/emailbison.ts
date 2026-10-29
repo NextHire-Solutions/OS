@@ -303,6 +303,8 @@ async function backfillConversation(
   leadEmail: string | null | undefined,
   ebTeamId: number | undefined,
   seedSender: { id: number; email: string } | null = null,
+  /** The lead's campaign emails — not for someone on a client's own team (clientTeamOf): that campaign is not theirs to show. */
+  campaignEmails = true,
 ): Promise<string> {
   let client;
   try {
@@ -372,7 +374,7 @@ async function backfillConversation(
 
   // (2) Outbound scheduled emails for this lead, filtered to this campaign — only into the lead's own (lead, campaign)
   // conversation: a reply moved home is another conversation's, not this lead's campaign history.
-  if (!home) {
+  if (!home && campaignEmails) {
     try {
       const res = await client.getLeadSentEmails(ebLeadId);
       const sent = (res.data ?? []).filter(
@@ -463,6 +465,27 @@ async function backfillConversation(
   return target;
 }
 
+/*
+ * An email from a client's own team (29 Oct) — someone on a portal's Team list, as Sergei is on Rise Real Estate
+ * Tujunga's — is never a lead's reply for another client, whatever campaign EmailBison files it under (Sergei is also a
+ * lead in The Rafeh Group's): it is tagged with their own client and not handled as a lead. Only when exactly one
+ * client's team has the address; otherwise null — filed as before.
+ */
+async function clientTeamOf(address: string | null): Promise<string | null> {
+  const a = (address ?? "").trim().toLowerCase();
+  if (!a.includes("@")) return null;
+  const { data, error } = await createAdminSupabase()
+    .from("client_team_members")
+    .select("client_id")
+    .ilike("email", a.replace(/[\\%_]/g, "\\$&"));
+  if (error) {
+    console.error("[emailbison] team lookup failed — filed as before", error.message);
+    return null;
+  }
+  const ids = [...new Set(((data ?? []) as Array<{ client_id: string | null }>).map((r) => r.client_id).filter((x): x is string => !!x))];
+  return ids.length === 1 ? ids[0] : null;
+}
+
 /** The reply's home among our conversations, from what we already hold of its EmailBison conversation (homeThreadFor). */
 async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvReply[], ebReplyId: number): Promise<string | null> {
   const others = conversation.filter((r) => r.id !== ebReplyId).map((r) => replyExternalId(r.id));
@@ -540,10 +563,13 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
   const externalThreadId = threadExternalId(payload.lead.id, payload.campaign?.id);
   const msg = inboundFromReply(payload.reply, payload.lead.email ?? null);
 
+  // From a client's own team (29 Oct)? Then it is that client's, and not a lead's reply (clientTeamOf).
+  const fromTeam = await clientTeamOf(payload.reply.from_email_address ?? msg.sender ?? null);
+
   // Tag thread with the matching BrokerStaffer client (or "Unknown") based on the
   // EmailBison campaign name. Webhook payload carries it directly, so we
   // never hit the EmailBison /campaigns endpoint just for this lookup.
-  const clientId = await deriveClientIdFromCampaign(payload.campaign?.name ?? null, {
+  const clientId = fromTeam ?? await deriveClientIdFromCampaign(payload.campaign?.name ?? null, {
     platform: "emailbison",
     id: payload.campaign?.id,
   });
@@ -617,9 +643,15 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
         lead.email,
         eventBlockWorkspaceId,
         senderEmail,
+        !fromTeam,
       );
     } catch (err) {
       console.error("[emailbison] async backfill failed", err);
+    }
+    // A client's own team member is not a lead: never labelled (no Interested alert, no hand-off) nor answered by the agent.
+    if (fromTeam) {
+      console.info(JSON.stringify({ tag: "[emailbison] from a client's own team — not handled as a lead", thread: home, client: fromTeam }));
+      return;
     }
     try {
       const r = await labelInboundMessage({

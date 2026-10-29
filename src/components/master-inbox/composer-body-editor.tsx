@@ -79,7 +79,9 @@ export const ComposerBodyEditor = forwardRef<
       attributes: {
         class: cn(
           "tiptap min-h-[200px] outline-none text-sm leading-relaxed",
-          "[&_p]:my-1 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1",
+          // A blank line between paragraphs (29 Oct) — what the email shows (inbox/plain-text-html.ts emailParagraphs):
+          // a 4px gap read as "no spacing", so people added empty lines the email then dropped.
+          "[&_p]:my-0 [&_p+p]:mt-[1.625em] [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1",
           "[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5",
           // `!`-prefix forces !important so the brand-blue + underline
           // wins over the global anchor reset in app/globals.css

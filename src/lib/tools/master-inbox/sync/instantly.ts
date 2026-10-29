@@ -250,9 +250,12 @@ async function upsertMessage(args: {
     .maybeSingle();
 
   if (existing) {
+    // A message already filed stays in its conversation (29 Oct — emailbison.ts upsertMessage says why).
+    const { thread_id: _stays, ...keep } = row;
+    void _stays;
     await supabase
       .from("messages")
-      .update(row)
+      .update(keep)
       .eq("workspace_id", ctx.workspaceId)
       .eq("id", existing.id);
   } else {

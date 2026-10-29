@@ -59,9 +59,10 @@ const isBlank = (inner: string) => inner.replace(/<br\s*\/?>/gi, "").replace(/&n
  * has no height, and a bare `<p>` gets no margin there. Same as the first lesson above: the stored row looked fine; only
  * the received email showed it.
  *
- * So a run of bare paragraphs is sent the way Gmail's own composer writes: one `<div>` per paragraph, and a blank line
- * (`<div><br></div>`) between paragraphs — one more for every empty paragraph the person added. Only bare `<p>` tags
- * are touched (a signature's styled paragraphs, tables and the rest are left exactly as they were).
+ * So a run of bare paragraphs is sent the way Gmail's own composer writes: one `<div>` per paragraph and a blank line
+ * (`<div><br></div>`) between paragraphs; an empty paragraph the person added is a blank line of its own — as the
+ * composer shows them (a blank line between paragraphs there too). Only bare `<p>` tags are touched (a signature's
+ * styled paragraphs, tables and the rest are left exactly as they were).
  */
 export function emailParagraphs(html: string): string {
   if (!html) return html;
@@ -72,7 +73,7 @@ export function emailParagraphs(html: string): string {
     if (!run) return;
     run.forEach((inner, i) => {
       if (i > 0) out.push("<div><br></div>");
-      if (!isBlank(inner)) out.push(`<div>${inner}</div>`);
+      out.push(isBlank(inner) ? "<div><br></div>" : `<div>${inner}</div>`);
     });
     run = null;
   };

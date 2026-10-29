@@ -67,9 +67,9 @@ test("emailParagraphs: a blank line between paragraphs, written as Gmail's own c
   assert.equal(emailParagraphs("<p>one</p><p>two</p>"), `<div>one</div>${B}<div>two</div>`);
 });
 
-test("emailParagraphs: each blank line the person added is one more blank line", () => {
-  assert.equal(emailParagraphs("<p>one</p><p></p><p>two</p>"), `<div>one</div>${B}${B}<div>two</div>`);
-  assert.equal(emailParagraphs("<p>one</p><p><br></p><p></p><p>two</p>"), `<div>one</div>${B}${B}${B}<div>two</div>`);
+test("emailParagraphs: a blank line the person added is a blank line of its own — as the composer shows it", () => {
+  assert.equal(emailParagraphs("<p>one</p><p></p><p>two</p>"), `<div>one</div>${B}${B}${B}<div>two</div>`);
+  assert.equal(emailParagraphs("<p>one</p><p><br></p><p></p><p>two</p>"), `<div>one</div>${B}${B}${B}${B}${B}<div>two</div>`);
 });
 
 test("emailParagraphs: line breaks inside a paragraph stay as they are (the signature block)", () => {
@@ -79,7 +79,7 @@ test("emailParagraphs: line breaks inside a paragraph stay as they are (the sign
 test("emailParagraphs: the Jeffrey Holland introduction — every paragraph and every added blank line survives", () => {
   const sent = "<p>Hey Jeffrey,</p><p>I'd like to introduce you to Sergei Hovsepyan, Team Lead at Rise Real Estate Tujunga.</p><p></p><p>Sergei, we recently connected with Jeffrey.</p><p></p><p>I hope you have a productive conversation!</p><p></p><p>Best,<br>Nicole Collins</p>";
   const out = emailParagraphs(sent);
-  assert.equal(out, `<div>Hey Jeffrey,</div>${B}<div>I'd like to introduce you to Sergei Hovsepyan, Team Lead at Rise Real Estate Tujunga.</div>${B}${B}<div>Sergei, we recently connected with Jeffrey.</div>${B}${B}<div>I hope you have a productive conversation!</div>${B}${B}<div>Best,<br>Nicole Collins</div>`);
+  assert.equal(out, `<div>Hey Jeffrey,</div>${B}<div>I'd like to introduce you to Sergei Hovsepyan, Team Lead at Rise Real Estate Tujunga.</div>${B}${B}${B}<div>Sergei, we recently connected with Jeffrey.</div>${B}${B}${B}<div>I hope you have a productive conversation!</div>${B}${B}${B}<div>Best,<br>Nicole Collins</div>`);
   assert.doesNotMatch(out, /<p>/, "no bare paragraph left for a mail app to squash");
 });
 

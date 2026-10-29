@@ -31,7 +31,11 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (/\/api\/leads\/\d+\/sent-emails$/.test(url.pathname)) return json({ data: leadSent });
   return json({ data: [] });
 }) as typeof fetch;
-for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, m, () => {});
+const infos: string[] = [];
+const logs: string[] = [];
+for (const m of ["warn", "error"] as const) mock.method(console, m, () => {});
+mock.method(console, "log", (...a: unknown[]) => { logs.push(a.map(String).join(" ")); });
+mock.method(console, "info", (...a: unknown[]) => { infos.push(a.map(String).join(" ")); });
 
 let handle: ((e: Record<string, unknown>) => Promise<{ ok: boolean; reason?: string }>) | null = null;
 try {
@@ -68,7 +72,11 @@ function seedJeffrey() {
     { workspace_id: WS, thread_id: thread.id, direction: "inbound", external_message_id: "eb:reply:2552250", sender: "jeff@firstsourcecare.com", sent_at: "2026-10-29T00:11:00.000Z" },
     { workspace_id: WS, thread_id: thread.id, direction: "outbound", external_message_id: "eb:reply:2552502", emailbison_reply_id: "2552502", sender: "nicole.c@brokerstaffer.com", subject: INTRO.subject, sent_at: "2026-10-29T13:10:56.000Z" },
   ]);
+  // Sergei is on Rise Tujunga's Team list (as he is on the portal).
+  db.seed("client_team_members", [{ client_id: "client-rise", name: "Sergei Hovsepyan", email: "SergeiHovsepyan@outlook.com", active: true }]);
   ebCalls.length = 0;
+  infos.length = 0;
+  logs.length = 0;
   return thread.id as string;
 }
 
@@ -102,6 +110,8 @@ test("an ordinary reply is filed as before: its own conversation, with its campa
   const id = own()!.id;
   assert.equal(db.rows("messages").find((m) => m.external_message_id === "eb:reply:777")?.thread_id, id);
   assert.equal(db.rows("messages").find((m) => m.external_message_id === "eb:sched:900")?.thread_id, id, "its campaign's email is in its conversation");
+  await settle(() => logs.some((l) => l.startsWith(`[agents] thread ${id}`)));
+  assert.ok(logs.some((l) => l.startsWith(`[agents] thread ${id}`)), `an ordinary lead's reply goes to the reply agent: ${J(logs)}`);
 });
 
 test("a message already filed never moves — even when another lead's backfill holds it (and someone else's message anchors nothing)", { skip }, async () => {
@@ -115,6 +125,46 @@ test("a message already filed never moves — even when another lead's backfill 
   await settle(() => ebCalls.some((c) => c.includes("/conversation-thread")) && ebCalls.some((c) => c.includes("/sent-emails")));
   assert.equal(db.rows("messages").find((m) => m.external_message_id === "eb:reply:2552250")?.thread_id, jeff, "Jeffrey's reply stays in Jeffrey's conversation");
   assert.equal(db.rows("messages").find((m) => m.external_message_id === "eb:reply:888")?.thread_id, own()!.id, "Bo's reply in Bo's own conversation");
+});
+
+test("Sergei's reply (a client's own team member): not handled as a lead — no labelling, no reply agent", { skip }, async () => {
+  const jeff = seedJeffrey();
+  conversation = { older_messages: [INTRO], current_reply: SERGEI, newer_messages: [] };
+  leadSent = [];
+  await handle!(envelope(SERGEI, { id: 125733, email: "sergeihovsepyan@outlook.com", first_name: "Sergei" }, { id: 264, name: "The Rafeh Group 1 + Santa Clarita & Antelope Valley + ZF NS1 (PST)" }));
+  await settle(() => infos.some((l) => l.includes("not handled as a lead")));
+  assert.ok(infos.some((l) => l.includes("not handled as a lead") && l.includes(jeff) && l.includes("client-rise")), J(infos));
+  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(!logs.some((l) => l.startsWith("[agents] thread")), `the reply agent never ran (the ordinary reply's test shows it does): ${J(logs)}`);
+});
+
+test("a FRESH email from Sergei (not a reply) under Rafeh's campaign: tagged Rise Tujunga — his own client — and not handled as a lead", { skip }, async () => {
+  seedJeffrey();
+  const fresh = { ...SERGEI, id: 2560000, email_subject: "Quick question", subject: "Quick question", html_body: "<p>Can we talk?</p>", text_body: "Can we talk?" };
+  conversation = { older_messages: [], current_reply: fresh, newer_messages: [] };
+  leadSent = [{ id: 501, campaign_id: 264, sent_at: "2026-09-18T18:34:00.000Z", email_subject: "Confidential conversation?", email_body: "<p>Rafeh outreach</p>", sender_email: { email: "nicole@howerealtyteam.com" } }];
+  await handle!(envelope(fresh, { id: 125733, email: "sergeihovsepyan@outlook.com", first_name: "Sergei" }, { id: 264, name: "The Rafeh Group 1 + Santa Clarita & Antelope Valley + ZF NS1 (PST)" }));
+  const t = () => db.rows("threads").find((x) => x.emailbison_thread_id === "eb:lead:125733:campaign:264");
+  await settle(() => infos.some((l) => l.includes("not handled as a lead")));
+  assert.equal(t()?.client_id, "client-rise", "his own client, never The Rafeh Group");
+  assert.equal(db.rows("messages").find((m) => m.external_message_id === "eb:reply:2560000")?.thread_id, t()!.id);
+  assert.ok(!ebCalls.some((c) => c.includes("/sent-emails")) && !db.rows("messages").some((m) => m.external_message_id === "eb:sched:501"), "Rafeh's campaign emails to him are not pulled in");
+});
+
+test("someone on two clients' teams is not guessed: the campaign tags the conversation, as before", { skip }, async () => {
+  seedJeffrey();
+  db.seed("client_team_members", [
+    { client_id: "client-rise", email: "both@example.com", name: "Both" },
+    { client_id: "client-rafeh", email: "both@example.com", name: "Both" },
+  ]);
+  const reply = { id: 2570000, email_subject: "Re: hi", subject: "Re: hi", html_body: "<p>hi</p>", text_body: "hi", from_name: "Both", from_email_address: "both@example.com", to: [{ address: "nicole.c@brokerstaffer.com" }], date_received: "2026-10-29T16:00:00.000Z" };
+  conversation = { older_messages: [], current_reply: reply, newer_messages: [] };
+  leadSent = [];
+  await handle!(envelope(reply, { id: 9191, email: "both@example.com", first_name: "Both" }, { id: 264, name: "The Rafeh Group 1 + Santa Clarita & Antelope Valley + ZF NS1 (PST)" }));
+  const t = () => db.rows("threads").find((x) => x.emailbison_thread_id === "eb:lead:9191:campaign:264");
+  await settle(() => !!t() && ebCalls.some((c) => c.includes("/sent-emails")));
+  assert.notEqual(t()?.client_id, "client-rise");
+  assert.ok(!infos.some((l) => l.includes("not handled as a lead")), "handled as a lead, as before");
 });
 
 const J = JSON.stringify;
