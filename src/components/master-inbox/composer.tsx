@@ -1523,15 +1523,22 @@ function escapeHtml(s: string): string {
 // Plain-text → HTML, preserving paragraph + line breaks so the rich
 // editor (and the eventual email recipient) sees the same visual
 // structure the user typed. Single newlines become <br>; blank lines
-// become paragraph breaks. Safe to feed into the editor's
-// initialHtml or insertContent.
+// become paragraph breaks — and each further blank line in a row a <br>
+// opening the next paragraph (29 Oct: a saved introduction's double gaps
+// were squeezed to one). Safe to feed into the editor's initialHtml or
+// insertContent. Kept the same as inbox/plain-text-html.ts.
 function plainTextToHtml(s: string): string {
   if (!s) return "";
-  const paragraphs = s.split(/\n{2,}/).map((para) => {
-    const inner = escapeHtml(para).replace(/\n/g, "<br>");
-    return `<p>${inner || "<br>"}</p>`;
+  const parts = s.split(/(\n{2,})/);
+  let out = "";
+  let lead = "";
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { lead = "<br>".repeat(part.length - 2); return; }
+    const inner = escapeHtml(part).replace(/\n/g, "<br>");
+    out += `<p>${lead}${inner || (lead ? "" : "<br>")}</p>`;
+    lead = "";
   });
-  return paragraphs.join("");
+  return out;
 }
 
 function stripHtml(html: string): string {

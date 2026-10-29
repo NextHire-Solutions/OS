@@ -35,17 +35,24 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * Single newlines become `<br>`; blank lines become paragraph breaks.
+ * Single newlines become `<br>`; blank lines become paragraph breaks — and each
+ * further blank line in a row a `<br>` opening the next paragraph (29 Oct: a
+ * saved introduction's double gaps were squeezed to one).
  *
  * Deliberately the same rule as the composer's own `plainTextToHtml`, so a
  * reply sent through the API and one typed in the UI arrive looking identical.
  */
 export function plainTextToHtml(s: string): string {
   if (!s) return "";
-  return s
-    .split(/\n{2,}/)
-    .map((para) => `<p>${escapeHtml(para).replace(/\n/g, "<br>") || "<br>"}</p>`)
-    .join("");
+  const parts = s.split(/(\n{2,})/);
+  let out = "";
+  let lead = "";
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { lead = "<br>".repeat(part.length - 2); return; }
+    out += `<p>${lead}${escapeHtml(part).replace(/\n/g, "<br>") || (lead ? "" : "<br>")}</p>`;
+    lead = "";
+  });
+  return out;
 }
 
 const BARE_P = /<p>([\s\S]*?)<\/p>/g;

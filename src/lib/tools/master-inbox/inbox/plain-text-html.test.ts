@@ -16,6 +16,13 @@ test("a blank line becomes a paragraph break", () => {
   assert.equal(plainTextToHtml("one\n\ntwo"), "<p>one</p><p>two</p>");
 });
 
+test("a second blank line in a row is kept — a line opening the next paragraph (a template's double gap stays double)", () => {
+  assert.equal(plainTextToHtml("one\n\n\ntwo"), "<p>one</p><p><br>two</p>");
+  assert.equal(plainTextToHtml("one\n\n\n\ntwo"), "<p>one</p><p><br><br>two</p>");
+  // …and sent as two blank lines (a paragraph break, then that line).
+  assert.equal(emailParagraphs(plainTextToHtml("one\n\n\ntwo")), "<div>one</div><div><br></div><div><br>two</div>");
+});
+
 test("a single newline becomes a line break, not a paragraph", () => {
   assert.equal(plainTextToHtml("one\ntwo"), "<p>one<br>two</p>");
 });
@@ -36,8 +43,9 @@ test("HTML in the text is escaped, never rendered", () => {
   assert.equal(plainTextToHtml("<b>x</b>").includes("<b>"), false);
 });
 
-test("three or more newlines collapse to one paragraph break, not empty ones", () => {
-  assert.equal(plainTextToHtml("one\n\n\n\ntwo"), "<p>one</p><p>two</p>");
+test("three or more newlines: one paragraph break, the further blank lines kept as lines — never empty paragraphs (29 Oct)", () => {
+  assert.equal(plainTextToHtml("one\n\n\n\ntwo"), "<p>one</p><p><br><br>two</p>");
+  assert.ok(!/<p><\/p>|<p><br><\/p>/.test(plainTextToHtml("one\n\n\n\ntwo")));
 });
 
 test("an empty string stays empty rather than becoming an empty paragraph", () => {
