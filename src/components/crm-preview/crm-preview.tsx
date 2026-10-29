@@ -30,8 +30,10 @@ export interface PreviewClient {
   /** The Demo Portal (21 Oct): its saves are its own rows, nothing outside — and the wording says so. */
   demo: boolean;
   fubConnected: boolean;
-  /** The client's main contact (os_clients.contact_name), shown where the design shows the signed-in person. */
+  /** The signed-in person's name (page.tsx signedInPerson — 29 Oct; it was the client record's contact), where the design shows them. */
   contactName: string | null;
+  /** The signed-in person's address — their row on the team is "You". */
+  youEmail?: string | null;
   /** The client record's areas (else MLS), for the Setup wizard's welcome line. */
   coverage: string | null;
 }
@@ -222,7 +224,7 @@ export function CrmPreview({
       {view === "setup" ? (
         // The Setup wizard is a page of its own in the design: no sidebar, no chat button.
         <div onClickCapture={onClickCapture}>
-          <SetupWizard client={{ id: client.id, name: client.name, contactName: client.contactName, coverage: client.coverage }} team={team} agents={agents} dnc={dnc} offer={offer ?? null} step={step} onStep={goStep} onExit={() => go("pipeline")} />
+          <SetupWizard client={{ id: client.id, name: client.name, contactName: client.contactName, youEmail: client.youEmail ?? null, coverage: client.coverage }} team={team} agents={agents} dnc={dnc} offer={offer ?? null} step={step} onStep={goStep} onExit={() => go("pipeline")} />
           {toastNote}
         </div>
       ) : (

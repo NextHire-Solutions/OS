@@ -39,7 +39,9 @@ import { after } from "next/server";
 import { SSO_COOKIE } from "@/lib/bs-auth";
 import { PORTAL_COOKIE } from "@/lib/portal-login/http";
 import { crmViewer } from "@/lib/crm-preview/viewer";
-import { mayOpenPortal, mayWritePortal } from "@/lib/crm-preview/viewer-rules";
+import { mayOpenPortal, mayWritePortal, type CrmViewer } from "@/lib/crm-preview/viewer-rules";
+import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
+import { personName, teamName } from "@/lib/crm-preview/signed-in";
 import { furthestStages, managedStages, PREVIEW_VIEWS, previewStages, type PortalOffer, type PreviewView } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -204,8 +206,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
     : null;
   // Who may change this portal from here (viewer-rules.ts): whoever may open it — the staff reviewers on every portal (29 Oct) — unless locked.
   const editable = mayWritePortal(viewer, client.id as string) && !locked;
-  // The wizard's "Tell us your offer", as saved (0039) — every portal; null: not told yet.
-  const offer = await loadOffer(client.id as string);
+  // The wizard's "Tell us your offer", as saved (0039) — every portal; null: not told yet. And who is signed in.
+  const [offer, you] = await Promise.all([loadOffer(client.id as string), signedInPerson(viewer, client.id as string, team)]);
   // A client's first look opens the Setup wizard (their offer not told yet) — the design's "first sign-in"; staff open it from the preview bar.
   const view: PreviewView = (PREVIEW_VIEWS as readonly string[]).includes(viewParam)
     ? (viewParam as PreviewView)
@@ -219,7 +221,9 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
         demo: isDemoPortal(client.id as string),
         // Whether a Follow Up Boss key is saved — never the key itself.
         fubConnected: Boolean((client as { fub_api_key?: string | null }).fub_api_key),
-        contactName: record?.contact_name?.trim() || null,
+        // The signed-in person, never the record's contact (29 Oct).
+        contactName: you.name,
+        youEmail: you.email,
         // What the record covers, for the Setup wizard's welcome line: its areas, else its MLS.
         coverage: (record?.areas ?? []).filter(Boolean).join(", ") || (record?.mls_codes ?? []).filter(Boolean).join(", ") || null,
       }}
@@ -242,4 +246,20 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       now={new Date().toISOString()}
     />,
   );
+}
+
+/*
+ * Who is signed in, for the design's "you" (signed-in.ts — 29 Oct; it showed the client record's contact). Kept below
+ * the page: it reads only after the page's gate has passed (access.test.ts checks the order in this file).
+ */
+async function signedInPerson(viewer: CrmViewer, portalId: string, team: TeamMember[]): Promise<{ name: string; email: string }> {
+  const email = viewer.email.trim().toLowerCase();
+  const onTeam = teamName(email, team);
+  if (onTeam) return { name: onTeam, email };
+  if (viewer.kind === "client") {
+    const { data } = await createAdminSupabase().from("os_portal_logins").select("name").eq("portal_id", portalId).eq("email", email).is("removed_at", null).maybeSingle();
+    return { name: personName(email, { listed: (data as { name: string | null } | null)?.name }), email };
+  }
+  const { data } = await osTable("os_users").select("name").eq("email", email).maybeSingle();
+  return { name: personName(email, { account: (data as { name: string | null } | null)?.name }), email };
 }

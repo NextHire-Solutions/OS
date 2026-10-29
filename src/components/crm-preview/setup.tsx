@@ -38,6 +38,7 @@ import { k, off, RO, withIds } from "./k";
 import { anyPicks, Chip, MarketFilters, NO_PICKS, pickParams, type Picks, type Row } from "./market";
 import { DncAddDialog, ImportDialog, TeamAddForm } from "./dialogs";
 import { importCsv, useDemo } from "./demo-save";
+import { firstName } from "@/lib/crm-preview/signed-in";
 import logo from "./brokerstaffer-logo.png";
 
 const STEPS = ["Welcome and your team", "My Agents", "DNC List", "Who we email", "Your offer"] as const;
@@ -47,6 +48,8 @@ export interface SetupClient {
   id: string;
   name: string;
   contactName: string | null;
+  /** The signed-in person's address: their team row is "You" (and can't be removed). */
+  youEmail?: string | null;
   /** What the client's record says it covers (areas, else MLS), for the welcome line. */
   coverage: string | null;
 }
@@ -153,7 +156,7 @@ function useDebounced(value: string) {
 // ------------------------------------------------------------- the steps ---
 
 function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] }) {
-  const first = (client.contactName ?? client.name).split(/\s+/)[0];
+  const first = firstName(client.contactName ?? client.name);
   const you = (client.contactName ?? "").trim().toLowerCase();
   const { live, save } = useDemo();
   const [form, setForm] = useState<"add" | TeamMember | null>(null);
@@ -161,7 +164,7 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
   const remove = async (m: TeamMember) => { if (window.confirm(`Remove ${m.name} from the team?`)) await save({ type: "team.delete", ids: [m.id] }); };
   return (
     <>
-      <Head step={1} title={`Welcome to BrokerStaffer, ${first}.`} text={client.coverage ?? client.name} />
+      <Head step={1} title={first ? `Welcome to BrokerStaffer, ${first}.` : "Welcome to BrokerStaffer."} text={client.coverage ?? client.name} />
       <div className={k("card")}>
         <div className={k("ssec")}>
           <div>
@@ -193,7 +196,7 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
           </thead>
           <tbody>
             {team.map((m) => {
-              const isYou = !!you && m.name.trim().toLowerCase() === you;
+              const isYou = client.youEmail ? (m.email ?? "").trim().toLowerCase() === client.youEmail : !!you && m.name.trim().toLowerCase() === you;
               return (
                 <tr key={m.id}>
                   <td>
@@ -639,13 +642,13 @@ function OfferStep({ value, onChange }: { value: OfferDraft; onChange: (v: Offer
 }
 
 function DoneStep({ client, onExit }: { client: SetupClient; onExit: () => void }) {
-  const first = (client.contactName ?? client.name).split(/\s+/)[0];
+  const first = firstName(client.contactName ?? client.name);
   return (
     <div className={k("card")} style={{ padding: "36px 40px", maxWidth: 560, display: "flex", flexDirection: "column", gap: 20 }}>
       <span style={{ width: 44, height: 44, borderRadius: 99, background: "#e9f6ee", color: "#1a7f38", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Icon name="check" size={22} stroke={2.4} />
       </span>
-      <h1 style={{ margin: "0", fontSize: 22, fontWeight: 600, letterSpacing: "-0.01em" }}>You&apos;re all set, {first}.</h1>
+      <h1 style={{ margin: "0", fontSize: 22, fontWeight: 600, letterSpacing: "-0.01em" }}>You&apos;re all set{first ? `, ${first}` : ""}.</h1>
       <div style={{ borderTop: "1px solid #f1f2f4", paddingTop: 16 }}>
         <p className={k("cttl")} style={{ marginBottom: 12 }}>What happens next</p>
         <ol className={k("snx")}>

@@ -15,8 +15,10 @@
 import { Fragment, useEffect, useReducer, useRef, useState } from "react";
 
 import { SUPPORT_EMAIL } from "@/lib/crm-preview/chat-tools";
+import { firstName } from "@/lib/crm-preview/signed-in";
 
 import { Icon } from "./icons";
+
 
 interface Turn { role: "user" | "assistant"; text: string; at: number; local?: boolean; failed?: boolean }
 
@@ -88,7 +90,7 @@ export function ChatWindow({ client, onClose }: { client: { id: string; contactN
   }, []);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight }); }, [turns, busy]);
 
-  const first = client.contactName?.trim().split(/\s+/)[0] ?? "";
+  const first = firstName(client.contactName);
 
   async function send(text: string) {
     const id = client.id;
