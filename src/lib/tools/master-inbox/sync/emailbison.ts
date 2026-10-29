@@ -530,10 +530,10 @@ async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebRep
       .eq("id", home)
       .lt("last_message_at", m.sent_at ?? "");
   }
-  const { count } = await supabase.from("messages").select("id", { count: "exact", head: true }).eq("thread_id", from);
+  const { data: left, error: leftErr } = await supabase.from("messages").select("id").eq("thread_id", from).limit(1);
   const { data: made } = await supabase.from("threads").select("created_at").eq("id", from).maybeSingle();
   const fresh = !!made && Date.now() - new Date((made as { created_at: string }).created_at).getTime() < 10 * 60_000;
-  if (count === 0 && fresh) {
+  if (!leftErr && (left ?? []).length === 0 && fresh) {
     const { error: delErr } = await supabase.from("threads").delete().eq("workspace_id", ctx.workspaceId).eq("id", from);
     if (delErr) console.error("[emailbison] the emptied conversation could not be removed", delErr.message);
   }

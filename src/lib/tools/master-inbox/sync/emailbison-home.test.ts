@@ -110,8 +110,10 @@ test("an ordinary reply is filed as before: its own conversation, with its campa
   const id = own()!.id;
   assert.equal(db.rows("messages").find((m) => m.external_message_id === "eb:reply:777")?.thread_id, id);
   assert.equal(db.rows("messages").find((m) => m.external_message_id === "eb:sched:900")?.thread_id, id, "its campaign's email is in its conversation");
-  await settle(() => logs.some((l) => l.startsWith(`[agents] thread ${id}`)));
-  assert.ok(logs.some((l) => l.startsWith(`[agents] thread ${id}`)), `an ordinary lead's reply goes to the reply agent: ${J(logs)}`);
+  // "[agents] thread <id>: …" in the OS, "[agent] thread <id> -> …" in the standalone app.
+  const ran = () => logs.some((l) => l.startsWith(`[agents] thread ${id}`) || l.startsWith(`[agent] thread ${id}`));
+  await settle(ran);
+  assert.ok(ran(), `an ordinary lead's reply goes to the reply agent: ${J(logs)}`);
 });
 
 test("a message already filed never moves — even when another lead's backfill holds it (and someone else's message anchors nothing)", { skip }, async () => {
@@ -135,7 +137,7 @@ test("Sergei's reply (a client's own team member): not handled as a lead — no 
   await settle(() => infos.some((l) => l.includes("not handled as a lead")));
   assert.ok(infos.some((l) => l.includes("not handled as a lead") && l.includes(jeff) && l.includes("client-rise")), J(infos));
   await new Promise((r) => setTimeout(r, 80));
-  assert.ok(!logs.some((l) => l.startsWith("[agents] thread")), `the reply agent never ran (the ordinary reply's test shows it does): ${J(logs)}`);
+  assert.ok(!logs.some((l) => /^\[agents?\] thread/.test(l)), `the reply agent never ran (the ordinary reply's test shows it does): ${J(logs)}`);
 });
 
 test("a FRESH email from Sergei (not a reply) under Rafeh's campaign: tagged Rise Tujunga — his own client — and not handled as a lead", { skip }, async () => {
