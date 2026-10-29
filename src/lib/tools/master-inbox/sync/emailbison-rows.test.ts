@@ -121,3 +121,32 @@ test("to: structured list first, primary_to as the fallback", () => {
   assert.deepEqual(inboundFromReply({ id: 1, to: [], primary_to_email_address: "n@b.com" }).recipients.to, ["n@b.com"]);
   assert.deepEqual(inboundFromReply({ id: 1 }).recipients.to, []);
 });
+
+/*
+ * homeThreadFor (29 Oct): Sergei — Rise Tujunga's own team lead, CC'd on Nicole's introduction to Jeffrey — replied;
+ * EmailBison knew him as a lead in The Rafeh Group's campaign. His reply belongs with the introduction it answers.
+ */
+import { homeThreadFor } from "./emailbison-rows.ts";
+
+test("homeThreadFor: a reply to an email we sent from another conversation goes to that conversation", () => {
+  const filed = [{ thread_id: "JEFF", direction: "outbound", sent_at: "2026-10-29T13:10:56Z" }];
+  assert.equal(homeThreadFor("NEW_RAFEH", filed), "JEFF");
+});
+
+test("homeThreadFor: the lead's own conversation stays its home (the ordinary reply)", () => {
+  assert.equal(homeThreadFor("T", [{ thread_id: "T", direction: "outbound", sent_at: "2026-10-01T00:00:00Z" }]), null);
+  assert.equal(homeThreadFor("T", []), null);
+});
+
+test("homeThreadFor: only OUR sends anchor a reply — someone else's message elsewhere never moves it", () => {
+  assert.equal(homeThreadFor("T", [{ thread_id: "OTHER", direction: "inbound", sent_at: "2026-10-29T13:00:00Z" }]), null);
+});
+
+test("homeThreadFor: our latest send decides, when several are held", () => {
+  const filed = [
+    { thread_id: "OLD", direction: "outbound", sent_at: "2026-10-01T00:00:00Z" },
+    { thread_id: "T", direction: "outbound", sent_at: "2026-10-29T00:00:00Z" },
+  ];
+  assert.equal(homeThreadFor("T", filed), null, "the latest is in the reply's own conversation");
+  assert.equal(homeThreadFor("X", filed), "T");
+});

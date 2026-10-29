@@ -103,6 +103,25 @@ export function replyExternalId(replyId: number): string {
   return `eb:reply:${replyId}`;
 }
 
+/*
+ * Which of our conversations a reply belongs to, when EmailBison files it under another lead (29 Oct). A reply belongs
+ * with the email it answers. Nicole's introduction to Jeffrey (Rise Real Estate Tujunga, sent from his conversation) was
+ * answered by Sergei — Rise's own team lead, CC'd — whom EmailBison knows as a lead in The Rafeh Group's campaign: it
+ * keyed the reply to Sergei + Rafeh, and a new "Rafeh" conversation took the reply AND the introduction.
+ *
+ * `filed`: the messages of the reply's EmailBison conversation we already hold. When the latest one WE sent sits in
+ * another conversation, that one is the reply's home. Only our own sends anchor it; otherwise null — filed as before.
+ */
+export function homeThreadFor(
+  newThreadId: string,
+  filed: ReadonlyArray<{ thread_id: string | null; direction: string | null; sent_at: string | null }>,
+): string | null {
+  const ours = filed.filter((m) => m.thread_id && m.direction === "outbound");
+  if (!ours.length) return null;
+  const latest = [...ours].sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""))[0];
+  return latest.thread_id !== newThreadId ? latest.thread_id : null;
+}
+
 /** Outbound scheduled sends, from /leads/{id}/sent-emails. */
 export function scheduledExternalId(scheduledId: number): string {
   return `eb:sched:${scheduledId}`;

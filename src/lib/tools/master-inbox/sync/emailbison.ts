@@ -8,6 +8,7 @@ import type {
   EmailBisonLead,
 } from "@/lib/tools/master-inbox/emailbison/types";
 import {
+  homeThreadFor,
   inboundFromReply,
   leadFields,
   normalizeRecipientList,
@@ -268,8 +269,11 @@ export async function upsertMessage(input: MessageUpsertInput): Promise<void> {
     // canonical source (webhook envelope for the triggering reply, vs
     // backfill writes that only have the reply object). Preserving lets
     // us inspect what the webhook actually delivered.
-    const { raw_payload: _drop, ...preserveable } = row;
+    // Nor its conversation (29 Oct): a message already filed stays where it is. A backfill for another lead's reply
+    // moved an introduction out of the conversation it was sent from (homeThreadFor says why).
+    const { raw_payload: _drop, thread_id: _stays, ...preserveable } = row;
     void _drop;
+    void _stays;
     await supabase
       .from("messages")
       .update(preserveable)
@@ -288,6 +292,8 @@ export async function upsertMessage(input: MessageUpsertInput): Promise<void> {
 //   - the full reply chain (older + current + newer) via
 //     /api/replies/{reply_id}/conversation-thread
 // Upserts each into the messages table. Idempotent — re-runs are safe.
+// Returns the conversation the reply belongs to (29 Oct): `threadId`, or — when the email it answers was sent from
+// another of our conversations — that one (homeThreadFor), and the reply is moved there.
 async function backfillConversation(
   ctx: SyncContext,
   threadId: string,
@@ -297,13 +303,13 @@ async function backfillConversation(
   leadEmail: string | null | undefined,
   ebTeamId: number | undefined,
   seedSender: { id: number; email: string } | null = null,
-): Promise<void> {
+): Promise<string> {
   let client;
   try {
     client = createEmailBisonClient();
   } catch (err) {
     console.error("[emailbison] cannot construct client for backfill", err);
-    return;
+    return threadId;
   }
 
   // Switch EmailBison API context to the team this lead belongs to. Without
@@ -347,45 +353,59 @@ async function backfillConversation(
     console.warn("[emailbison] sender_email map is empty — outbound sender lookups will fail");
   }
 
-  // (1) Outbound scheduled emails for this lead, filtered to this campaign.
-  try {
-    const res = await client.getLeadSentEmails(ebLeadId);
-    const sent = (res.data ?? []).filter(
-      (s) => !campaignId || s.campaign_id === campaignId,
-    );
-    for (const s of sent) {
-      if (!s.sent_at) continue; // skip not-yet-sent
-      // Prefer the nested sender_email.email (always present on scheduled
-      // emails); fall back to the legacy flat sender_email_id lookup.
-      const senderAddr =
-        s.sender_email?.email ??
-        (s.sender_email_id ? senderEmailMap.get(s.sender_email_id) ?? null : null);
-      await upsertMessage({
-        ctx,
-        threadId,
-        direction: "outbound",
-        externalMessageId: scheduledExternalId(s.id),
-        sender: senderAddr,
-        recipients: leadEmail ? { to: [leadEmail] } : {},
-        subject: s.email_subject ?? null,
-        body_html: s.email_body ?? null,
-        body_text: stripHtml(s.email_body ?? ""),
-        sent_at: s.sent_at,
-        raw_payload: s,
-      });
-    }
-  } catch (err) {
-    console.error("[emailbison] getLeadSentEmails failed", err);
-  }
-
-  // (2) Conversation thread (other replies before/after this one).
+  // (1) The conversation thread (the replies before and after this one) — read first (29 Oct): it says where the
+  // reply belongs.
+  let all: ConvReply[] = [];
   try {
     const res = await client.getReplyThread(ebReplyId);
-    const all: ConvReply[] = [
+    all = [
       ...(res.data?.older_messages ?? []),
       ...(res.data?.current_reply ? [res.data.current_reply] : []),
       ...(res.data?.newer_messages ?? []),
     ];
+  } catch (err) {
+    console.error("[emailbison] getReplyThread failed", err);
+  }
+  const home = await homeOf(ctx, threadId, all, ebReplyId);
+  if (home) await moveReplyHome(ctx, threadId, home, ebReplyId);
+  const target = home ?? threadId;
+
+  // (2) Outbound scheduled emails for this lead, filtered to this campaign — only into the lead's own (lead, campaign)
+  // conversation: a reply moved home is another conversation's, not this lead's campaign history.
+  if (!home) {
+    try {
+      const res = await client.getLeadSentEmails(ebLeadId);
+      const sent = (res.data ?? []).filter(
+        (s) => !campaignId || s.campaign_id === campaignId,
+      );
+      for (const s of sent) {
+        if (!s.sent_at) continue; // skip not-yet-sent
+        // Prefer the nested sender_email.email (always present on scheduled
+        // emails); fall back to the legacy flat sender_email_id lookup.
+        const senderAddr =
+          s.sender_email?.email ??
+          (s.sender_email_id ? senderEmailMap.get(s.sender_email_id) ?? null : null);
+        await upsertMessage({
+          ctx,
+          threadId,
+          direction: "outbound",
+          externalMessageId: scheduledExternalId(s.id),
+          sender: senderAddr,
+          recipients: leadEmail ? { to: [leadEmail] } : {},
+          subject: s.email_subject ?? null,
+          body_html: s.email_body ?? null,
+          body_text: stripHtml(s.email_body ?? ""),
+          sent_at: s.sent_at,
+          raw_payload: s,
+        });
+      }
+    } catch (err) {
+      console.error("[emailbison] getLeadSentEmails failed", err);
+    }
+  }
+
+  // (3) The conversation's messages, into the reply's conversation (one already filed stays where it is — upsertMessage).
+  try {
     // Build a lowercase set of OUR sender addresses. The ONLY reliable
     // direction signal is `from_email_address` — EmailBison sets
     // `sender_email_id` on BOTH inbound and outbound (it's the id of OUR
@@ -416,7 +436,7 @@ async function backfillConversation(
       const backfillTo = normalizeRecipientList(r.to);
       await upsertMessage({
         ctx,
-        threadId,
+        threadId: target,
         direction,
         externalMessageId,
         sender: r.from_email_address ?? r.from_name ?? fallbackSender,
@@ -438,7 +458,61 @@ async function backfillConversation(
       });
     }
   } catch (err) {
-    console.error("[emailbison] getReplyThread failed", err);
+    console.error("[emailbison] conversation backfill failed", err);
+  }
+  return target;
+}
+
+/** The reply's home among our conversations, from what we already hold of its EmailBison conversation (homeThreadFor). */
+async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvReply[], ebReplyId: number): Promise<string | null> {
+  const others = conversation.filter((r) => r.id !== ebReplyId).map((r) => replyExternalId(r.id));
+  if (!others.length) return null;
+  const { data, error } = await createAdminSupabase()
+    .from("messages")
+    .select("thread_id, direction, sent_at")
+    .eq("workspace_id", ctx.workspaceId)
+    .in("external_message_id", others);
+  if (error) {
+    console.error("[emailbison] home lookup failed — filed as before", error.message);
+    return null;
+  }
+  return homeThreadFor(threadId, (data ?? []) as Array<{ thread_id: string | null; direction: string | null; sent_at: string | null }>);
+}
+
+/*
+ * The reply into its home conversation, which shows it as the newest and as needing a reply (as the webhook does for
+ * the conversation it made). The conversation the webhook made just for it is removed when nothing else is in it — a
+ * minute-old empty one; any other stays as it was.
+ */
+async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebReplyId: number): Promise<void> {
+  const supabase = createAdminSupabase();
+  const { data: moved, error } = await supabase
+    .from("messages")
+    .update({ thread_id: home })
+    .eq("workspace_id", ctx.workspaceId)
+    .eq("external_message_id", replyExternalId(ebReplyId))
+    .eq("thread_id", from)
+    .select("sent_at, body_text");
+  if (error) {
+    console.error("[emailbison] moving the reply home failed", error.message);
+    return;
+  }
+  const m = (moved ?? [])[0] as { sent_at: string | null; body_text: string | null } | undefined;
+  console.info(JSON.stringify({ tag: "[emailbison] reply filed with the email it answers", reply: ebReplyId, from, home }));
+  if (m) {
+    await supabase
+      .from("threads")
+      .update({ last_message_at: m.sent_at, last_message_preview: m.body_text, needs_reply: true, seen: false, updated_at: new Date().toISOString() })
+      .eq("workspace_id", ctx.workspaceId)
+      .eq("id", home)
+      .lt("last_message_at", m.sent_at ?? "");
+  }
+  const { count } = await supabase.from("messages").select("id", { count: "exact", head: true }).eq("thread_id", from);
+  const { data: made } = await supabase.from("threads").select("created_at").eq("id", from).maybeSingle();
+  const fresh = !!made && Date.now() - new Date((made as { created_at: string }).created_at).getTime() < 10 * 60_000;
+  if (count === 0 && fresh) {
+    const { error: delErr } = await supabase.from("threads").delete().eq("workspace_id", ctx.workspaceId).eq("id", from);
+    if (delErr) console.error("[emailbison] the emptied conversation could not be removed", delErr.message);
   }
 }
 
@@ -531,8 +605,10 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
   const senderEmailAddr = payload.sender_email?.email ?? null;
   const eventBlockWorkspaceId = eventBlock?.workspace_id;
   void (async () => {
+    // The conversation the reply belongs to — this one, or the one the email it answers was sent from (29 Oct).
+    let home = threadId;
     try {
-      await backfillConversation(
+      home = await backfillConversation(
         ctx,
         threadId,
         lead.id,
@@ -548,16 +624,16 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
     try {
       const r = await labelInboundMessage({
         workspaceId: ctx.workspaceId,
-        threadId,
+        threadId: home,
         messageId: msg.externalMessageId,
         subject: msg.subject,
         bodyText: msg.body_text,
         bodyHtml: msg.body_html,
       });
       if (r.status === "labeled") {
-        console.log(`[ai] thread ${threadId} -> ${r.label}`);
+        console.log(`[ai] thread ${home} -> ${r.label}`);
       } else if (r.status === "errored") {
-        console.error(`[ai] thread ${threadId} errored: ${r.error}`);
+        console.error(`[ai] thread ${home} errored: ${r.error}`);
       }
     } catch (err) {
       console.error("[ai] labelInboundMessage failed", err);
@@ -574,8 +650,8 @@ export async function handleEmailBisonEvent(envelope: EmailBisonWebhookEnvelope)
        * thread. It never throws — every failure is an outcome, not an error.
        */
     try {
-      const outcome = await runReplyAgentForThread(ctx.workspaceId, threadId);
-      console.log(`[agents] thread ${threadId}: ${outcome.status}${"mode" in outcome && outcome.mode ? ` / ${outcome.mode}` : ""}`);
+      const outcome = await runReplyAgentForThread(ctx.workspaceId, home);
+      console.log(`[agents] thread ${home}: ${outcome.status}${"mode" in outcome && outcome.mode ? ` / ${outcome.mode}` : ""}`);
     } catch (err) {
       console.error("[agents] draft generation pass failed", err);
     }
