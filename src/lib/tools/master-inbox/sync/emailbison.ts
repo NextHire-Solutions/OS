@@ -306,8 +306,8 @@ async function backfillConversation(
   seedSender: { id: number; email: string } | null = null,
   /** Who sent the reply (its From address). */
   replier: string | null = null,
-  /** The conversation as it was before this reply's webhook touched it (null: the webhook made it). */
-  before: ThreadSnapshot | null = null,
+  /** The conversation as it was before this reply's webhook touched it (null: the webhook made it; "unknown": unreadable). */
+  before: ThreadSnapshot | null | "unknown" = null,
 ): Promise<{ target: string; asLead: boolean }> {
   let client;
   try {
@@ -371,8 +371,9 @@ async function backfillConversation(
   } catch (err) {
     console.error("[emailbison] getReplyThread failed", err);
   }
-  const found = await homeOf(ctx, threadId, all, ebReplyId, replier);
-  const home = found && (await moveReplyHome(ctx, threadId, found.threadId, ebReplyId, before)) ? found.threadId : null;
+  // An unreadable snapshot (the conversation could not be put back): filed as before.
+  const found = before === "unknown" ? null : await homeOf(ctx, threadId, all, ebReplyId, replier);
+  const home = found && (await moveReplyHome(ctx, threadId, found, ebReplyId, before as ThreadSnapshot | null)) ? found : null;
   const target = home ?? threadId;
 
   // (2) Outbound scheduled emails for this lead, filtered to this campaign — only into the lead's own (lead, campaign)
@@ -465,11 +466,12 @@ async function backfillConversation(
   } catch (err) {
     console.error("[emailbison] conversation backfill failed", err);
   }
-  return { target, asLead: home ? found!.asLead : true };
+  // A reply filed home is a copied-in person's (homeThreadFor): not the lead's.
+  return { target, asLead: !home };
 }
 
 /** The reply's home among our conversations, from what we already hold of its EmailBison conversation (homeThreadFor). */
-async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvReply[], ebReplyId: number, replier: string | null): Promise<{ threadId: string; asLead: boolean } | null> {
+async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvReply[], ebReplyId: number, replier: string | null): Promise<string | null> {
   const others = conversation.filter((r) => r.id !== ebReplyId).map((r) => replyExternalId(r.id));
   if (!others.length || !replier) return null;
   const supabase = createAdminSupabase();
@@ -487,9 +489,13 @@ async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvRepl
   const threadIds = [...new Set(filed.map((m) => m.thread_id).filter((x): x is string => !!x))];
   const leadOf = new Map<string, string | null>();
   if (threadIds.length) {
-    const { data: ts } = await supabase.from("threads").select("id, lead_id").eq("workspace_id", ctx.workspaceId).in("id", threadIds);
+    const { data: ts, error: tErr } = await supabase.from("threads").select("id, lead_id").eq("workspace_id", ctx.workspaceId).in("id", threadIds);
     const leadIds = [...new Set(((ts ?? []) as Array<{ lead_id: string | null }>).map((t) => t.lead_id).filter((x): x is string => !!x))];
-    const { data: ls } = leadIds.length ? await supabase.from("leads").select("id, email").in("id", leadIds) : { data: [] };
+    const { data: ls, error: lErr } = leadIds.length ? await supabase.from("leads").select("id, email").in("id", leadIds) : { data: [], error: null };
+    if (tErr || lErr) {
+      console.error("[emailbison] home lead lookup failed — filed as before", (tErr ?? lErr)!.message);
+      return null;
+    }
     const emailOf = new Map(((ls ?? []) as Array<{ id: string; email: string | null }>).map((l) => [l.id, l.email]));
     for (const t of (ts ?? []) as Array<{ id: string; lead_id: string | null }>) leadOf.set(t.id, t.lead_id ? emailOf.get(t.lead_id) ?? null : null);
   }
@@ -499,21 +505,26 @@ async function homeOf(ctx: SyncContext, threadId: string, conversation: ConvRepl
 /* The conversation's fields the webhook overwrites (upsertThread), as they were. */
 type ThreadSnapshot = Record<string, unknown> & { id: string };
 const SNAPSHOT_FIELDS = "id, lead_id, channel_id, subject, last_message_at, last_message_preview, needs_reply, seen, outbound_sender_email, client_id, campaign_id, campaign_name";
-async function snapshotThread(ctx: SyncContext, externalThreadId: string): Promise<ThreadSnapshot | null> {
-  const { data } = await createAdminSupabase()
+async function snapshotThread(ctx: SyncContext, externalThreadId: string): Promise<ThreadSnapshot | null | "unknown"> {
+  const { data, error } = await createAdminSupabase()
     .from("threads")
     .select(SNAPSHOT_FIELDS)
     .eq("workspace_id", ctx.workspaceId)
     .eq("emailbison_thread_id", externalThreadId)
     .maybeSingle();
+  if (error) {
+    console.error("[emailbison] conversation snapshot failed — the reply will be filed as before", error.message);
+    return "unknown";
+  }
   return (data as ThreadSnapshot | null) ?? null;
 }
 
 /*
  * The reply into its home conversation, which shows it as the newest and as needing a reply (as the webhook does for
- * the conversation it was put in). The conversation it leaves is put back as it was before this reply (`before`), or —
- * when the webhook made it just for this reply and nothing else is in it — removed. False: the move failed, and the
- * reply stays where it is.
+ * the conversation it was put in). The conversation it leaves is put back as it was before this reply (`before`) —
+ * unless something else changed it since — or, when the webhook made it just for this reply and nothing else is in
+ * it, removed. A replay of the webhook (the reply already home) tidies the same way. False: the reply is not in its
+ * home (the move failed, or it was filed elsewhere) — it is labelled where it is.
  */
 async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebReplyId: number, before: ThreadSnapshot | null): Promise<boolean> {
   const supabase = createAdminSupabase();
@@ -528,21 +539,34 @@ async function moveReplyHome(ctx: SyncContext, from: string, home: string, ebRep
     console.error("[emailbison] moving the reply home failed", error.message);
     return false;
   }
+  let sentAt: string | null;
   const m = (moved ?? [])[0] as { sent_at: string | null; body_text: string | null } | undefined;
-  if (!m) return true; // already moved (a replay of this webhook, or a second backfill)
-  console.info(JSON.stringify({ tag: "[emailbison] reply filed with the email it answers", reply: ebReplyId, from, home }));
-  if (m.sent_at) {
-    await supabase
-      .from("threads")
-      .update({ last_message_at: m.sent_at, last_message_preview: m.body_text?.slice(0, 200) ?? null, needs_reply: true, seen: false, updated_at: new Date().toISOString() })
-      .eq("workspace_id", ctx.workspaceId)
-      .eq("id", home)
-      .or(`last_message_at.is.null,last_message_at.lt.${m.sent_at}`);
+  if (m) {
+    sentAt = m.sent_at;
+    console.info(JSON.stringify({ tag: "[emailbison] reply filed with the email it answers", reply: ebReplyId, from, home }));
+    if (m.sent_at) {
+      await supabase
+        .from("threads")
+        .update({ last_message_at: m.sent_at, last_message_preview: m.body_text?.slice(0, 200) ?? null, needs_reply: true, seen: false, updated_at: new Date().toISOString() })
+        .eq("workspace_id", ctx.workspaceId)
+        .eq("id", home)
+        .or(`last_message_at.is.null,last_message_at.lt.${m.sent_at}`);
+    }
+  } else {
+    // Nothing moved: a replay of this webhook, or a second backfill. Home only if the reply really is there.
+    const { data: now } = await supabase.from("messages").select("thread_id, sent_at").eq("workspace_id", ctx.workspaceId).eq("external_message_id", replyExternalId(ebReplyId)).maybeSingle();
+    const at = now as { thread_id: string | null; sent_at: string | null } | null;
+    if (!at || at.thread_id !== home) return false;
+    sentAt = at.sent_at;
   }
+  if (from === home) return true;
   if (before && before.id === from) {
+    // Back as it was — only while it still shows this reply as its newest (the webhook's write): a later change stays.
     const { id: _id, ...fields } = before;
     void _id;
-    await supabase.from("threads").update(fields).eq("workspace_id", ctx.workspaceId).eq("id", from);
+    let put = supabase.from("threads").update(fields).eq("workspace_id", ctx.workspaceId).eq("id", from);
+    if (sentAt) put = put.eq("last_message_at", sentAt);
+    await put;
     return true;
   }
   const { data: left, error: leftErr } = await supabase.from("messages").select("id").eq("thread_id", from).limit(1);

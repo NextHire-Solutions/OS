@@ -100,15 +100,32 @@ test("Sergei (CC'd) answers the introduction: filed with it in Jeffrey's convers
   assert.ok(!agentRan(jeff) && !logs.some((l) => /^\[agents?\] thread/.test(l)), `no reply agent on a CC'd person's reply: ${J(logs)}`);
 });
 
-test("Jeffrey himself (on To) answering under another EmailBison key: filed home and handled as the lead", { skip }, async () => {
+test("Jeffrey himself (on To) answering under another EmailBison key — a follow-up campaign: filed as before, its campaign's emails and all", { skip }, async () => {
   const jeff = seedJeffrey();
   const JEFF_REPLY = { ...SERGEI, id: 2554000, from_name: "Jeffrey Holland", from_email_address: "jeff@firstsourcecare.com", text_body: "Thanks!", html_body: "<p>Thanks!</p>" };
   conversation = { older_messages: [INTRO], current_reply: JEFF_REPLY, newer_messages: [] };
+  leadSent = [{ id: 950, campaign_id: 900, sent_at: "2026-10-29T14:00:00.000Z", email_subject: "Following up", email_body: "<p>Following up</p>", sender_email: { email: "nicole.c@brokerstaffer.com" } }];
+  await handle!(envelope(JEFF_REPLY, { id: 99001, email: "jeff@firstsourcecare.com", first_name: "Jeffrey" }, { id: 900, name: "Some follow-up campaign" }));
+  const own = () => db.rows("threads").find((t) => t.emailbison_thread_id === "eb:lead:99001:campaign:900");
+  await settle(() => !!own() && where("eb:sched:950") === own()!.id && agentRan(own()!.id as string));
+  assert.equal(where("eb:reply:2554000"), own()!.id, "his reply in the follow-up campaign's conversation, as before");
+  assert.equal(where("eb:sched:950"), own()!.id, "with the follow-up email he answered");
+  assert.equal(where("eb:reply:2552502"), jeff, "the introduction never moves");
+  assert.ok(agentRan(own()!.id as string), `handled as the lead: ${J(logs)}`);
+});
+
+test("the same webhook delivered twice: Sergei's reply once, in Jeffrey's conversation — no Rafeh conversation left behind", { skip }, async () => {
+  const jeff = seedJeffrey();
+  conversation = { older_messages: [INTRO], current_reply: SERGEI, newer_messages: [] };
   leadSent = [];
-  await handle!(envelope(JEFF_REPLY, { id: 99001, email: "jeff@firstsourcecare.com", first_name: "Jeffrey" }, { id: 900, name: "Some other campaign" }));
-  await settle(() => where("eb:reply:2554000") === jeff && agentRan(jeff));
-  assert.equal(where("eb:reply:2554000"), jeff);
-  assert.ok(agentRan(jeff), `the reply agent runs on the lead's own reply: ${J(logs)}`);
+  for (let i = 0; i < 2; i++) {
+    infos.length = 0;
+    await handle!(envelope(SERGEI, SERGEI_LEAD, RAFEH));
+    await settle(() => infos.some((l) => l.includes("left to a person")) && !db.rows("threads").some((t) => t.emailbison_thread_id === "eb:lead:125733:campaign:264"));
+  }
+  assert.equal(db.rows("messages").filter((m) => m.external_message_id === "eb:reply:2553538").length, 1);
+  assert.equal(where("eb:reply:2553538"), jeff);
+  assert.equal(db.rows("threads").filter((t) => t.emailbison_thread_id === "eb:lead:125733:campaign:264").length, 0, "no empty Rafeh conversation after the replay");
 });
 
 test("someone on neither To nor Cc of our email is filed as before (never follows it)", { skip }, async () => {
@@ -150,6 +167,12 @@ test("a reply moved out of a conversation that already existed leaves it exactly
   assert.ok(after, "the conversation that already existed is kept");
   for (const k of ["needs_reply", "seen", "last_message_at", "last_message_preview", "outbound_sender_email", "subject", "lead_id"] as const) assert.deepEqual(after[k], (prior as Record<string, unknown>)[k], k);
   assert.equal(where("eb:reply:1000"), old.id, "its own message stays");
+  // …and a replay of the same webhook puts it back again.
+  infos.length = 0;
+  await handle!(envelope(SERGEI, SERGEI_LEAD, RAFEH));
+  await settle(() => db.rows("threads").find((t) => t.id === old.id)?.needs_reply === false && infos.some((l) => l.includes("left to a person")));
+  const again = db.rows("threads").find((t) => t.id === old.id)!;
+  for (const k of ["needs_reply", "seen", "last_message_at", "last_message_preview"] as const) assert.deepEqual(again[k], (prior as Record<string, unknown>)[k], `after the replay: ${k}`);
 });
 
 test("an ordinary reply is filed as before: its own conversation, its campaign's emails, the reply agent", { skip }, async () => {

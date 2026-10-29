@@ -132,13 +132,13 @@ const INTRO = { thread_id: "JEFF", direction: "outbound", sent_at: "2026-10-29T1
 const leads: Record<string, string> = { JEFF: "jeff@firstsourcecare.com", ADAM: "adam.treat@propertiesandestates.com" };
 const leadOf = (id: string) => leads[id] ?? null;
 
-test("homeThreadFor: a CC'd person's reply to an email we sent goes to that email's conversation — not as the lead", () => {
-  assert.deepEqual(homeThreadFor("NEW_RAFEH", [INTRO], "SergeiHovsepyan@outlook.com", leadOf), { threadId: "JEFF", asLead: false });
-  assert.deepEqual(homeThreadFor("NEW_RAFEH", [INTRO], "Sergei <sergeihovsepyan@OUTLOOK.com>", leadOf), { threadId: "JEFF", asLead: false }, "case and display names aside");
+test("homeThreadFor: a CC'd person's reply to an email we sent goes to that email's conversation", () => {
+  assert.equal(homeThreadFor("NEW_RAFEH", [INTRO], "SergeiHovsepyan@outlook.com", leadOf), "JEFF");
+  assert.equal(homeThreadFor("NEW_RAFEH", [INTRO], "Sergei <sergeihovsepyan@OUTLOOK.com>", leadOf), "JEFF", "case and display names aside");
 });
 
-test("homeThreadFor: the lead (on To) replying under another EmailBison key goes home, handled as the lead", () => {
-  assert.deepEqual(homeThreadFor("NEW", [INTRO], "jeff@firstsourcecare.com", leadOf), { threadId: "JEFF", asLead: true });
+test("homeThreadFor: the lead (on To) is filed as before — never moved (a follow-up campaign's reply keeps its own conversation)", () => {
+  assert.equal(homeThreadFor("NEW", [INTRO], "jeff@firstsourcecare.com", leadOf), null);
 });
 
 test("homeThreadFor: someone who was on neither To nor Cc never follows the email", () => {
@@ -158,7 +158,7 @@ test("homeThreadFor: the lead's own conversation stays its home; only OUR sends 
   assert.equal(homeThreadFor("NEW", [{ ...INTRO, direction: "inbound" }], "SergeiHovsepyan@outlook.com", leadOf), null);
   assert.equal(homeThreadFor("NEW", [], "SergeiHovsepyan@outlook.com", leadOf), null);
   const older = { ...INTRO, thread_id: "OLD", sent_at: "2026-10-01T00:00:00Z" };
-  assert.deepEqual(homeThreadFor("NEW", [older, INTRO], "SergeiHovsepyan@outlook.com", (id) => (id === "OLD" ? "jeff@firstsourcecare.com" : leadOf(id))), { threadId: "JEFF", asLead: false });
+  assert.equal(homeThreadFor("NEW", [older, INTRO], "SergeiHovsepyan@outlook.com", (id) => (id === "OLD" ? "jeff@firstsourcecare.com" : leadOf(id))), "JEFF");
 });
 
 test("addressesOf: strings, objects and display names, lower case", () => {

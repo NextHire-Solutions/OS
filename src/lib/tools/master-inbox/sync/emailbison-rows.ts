@@ -104,16 +104,16 @@ export function replyExternalId(replyId: number): string {
 }
 
 /*
- * Which of our conversations a reply belongs to, when EmailBison files it under another lead (29 Oct). A reply belongs
- * with the email it answers. Nicole's introduction to Jeffrey (Rise Real Estate Tujunga, sent from his conversation) was
- * answered by Sergei — Rise's own team lead, CC'd — whom EmailBison knows as a lead in The Rafeh Group's campaign: it
- * keyed the reply to Sergei + Rafeh, and a new "Rafeh" conversation took the reply AND the introduction.
+ * Which of our conversations a reply belongs to, when EmailBison files it under another lead (29 Oct). Nicole's
+ * introduction to Jeffrey (Rise Real Estate Tujunga, sent from his conversation) was answered by Sergei — Rise's own
+ * team lead, CC'd — whom EmailBison knows as a lead in The Rafeh Group's campaign: it keyed the reply to Sergei + Rafeh,
+ * and a new "Rafeh" conversation took the reply AND the introduction.
  *
- * `filed`: the messages of the reply's EmailBison conversation we already hold. The latest one WE sent anchors the reply
- * — only when (a) the person replying was on its To or Cc, and (b) it is filed with the person it was sent to (its
- * conversation's lead is on its To). (b) refuses to follow an email an earlier sync misfiled (Adam Treat's conversation
- * holds introductions to five other people): those replies are filed as before. `asLead`: the replier was on To — the
- * lead; Cc only (Sergei) — someone else, whose reply a person handles (no labelling, no reply agent).
+ * `filed`: the messages of the reply's EmailBison conversation we already hold. The latest one WE sent is the reply's
+ * home only when (a) the person replying was on its Cc (or Bcc) and NOT its To — someone copied in, never the lead —
+ * and (b) it is filed with the person it was sent To (its conversation's lead is on its To): an email an earlier sync
+ * misfiled (Adam Treat's conversation holds five other leads' introductions) is not followed. A lead's own reply, and
+ * anyone else's, is filed exactly as before. Such a reply is left to a person (no labelling, no reply agent).
  */
 export type FiledMessage = { thread_id: string | null; direction: string | null; sent_at: string | null; recipients: unknown };
 
@@ -132,7 +132,7 @@ export function homeThreadFor(
   filed: ReadonlyArray<FiledMessage>,
   replier: string | null,
   leadOf: (threadId: string) => string | null,
-): { threadId: string; asLead: boolean } | null {
+): string | null {
   const ours = filed.filter((m) => m.thread_id && m.direction === "outbound");
   if (!ours.length) return null;
   const latest = [...ours].sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""))[0];
@@ -142,11 +142,10 @@ export function homeThreadFor(
   if (!who) return null;
   const r = (latest.recipients ?? {}) as { to?: unknown; cc?: unknown; bcc?: unknown };
   const to = addressesOf(r.to);
-  const cc = [...addressesOf(r.cc), ...addressesOf(r.bcc)];
-  if (!to.includes(who) && !cc.includes(who)) return null;
+  if (to.includes(who) || ![...addressesOf(r.cc), ...addressesOf(r.bcc)].includes(who)) return null;
   const lead = (leadOf(home) ?? "").trim().toLowerCase();
   if (!lead || !to.includes(lead)) return null;
-  return { threadId: home, asLead: to.includes(who) };
+  return home;
 }
 
 /** Outbound scheduled sends, from /leads/{id}/sent-emails. */
