@@ -32,6 +32,8 @@
 
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+// The agent's sends go out with their paragraphs spaced as every mail app shows them (29 Oct).
+import { emailParagraphs } from "../inbox/plain-text-html.ts";
 import { readFileSync } from "node:fs";
 
 import { configureFakeEnvironment, FakePostgrest, type Row } from "../test/fake-postgrest.ts";
@@ -368,7 +370,7 @@ test("emailbison: a live handover sends once through the composer's path with th
   );
   const html = composerHtml(plan.body);
   assert.deepEqual(sendCalls()[0].body, {
-    message: html,
+    message: emailParagraphs(html),
     content_type: "html",
     to_emails: [{ email_address: "jane@example.com", name: "Jane Doe" }],
     cc_emails: plan.cc.map((email_address) => ({ email_address })),
@@ -382,7 +384,7 @@ test("emailbison: a live handover sends once through the composer's path with th
   // ---- the same rows a person's send writes ----
   const outbound = db.rows("messages").find((m) => m.direction === "outbound")!;
   assert.ok(outbound);
-  assert.equal(outbound.body_html, html);
+  assert.equal(outbound.body_html, emailParagraphs(html));
   assert.equal(outbound.subject, "Re: Quick question about your team");
   assert.equal(outbound.sender, "nicole@brokerstaffer.com");
   assert.equal(outbound.external_message_id, "eb:reply:987654");
@@ -444,7 +446,7 @@ test("instantly: the same handover goes out as /emails/reply with the CC list an
   assert.deepEqual(db.providerCalls[0].body, {
     reply_to_uuid: "in-email-5551",
     subject: "Re: Quick question about your team",
-    body: { html: composerHtml(plan.body) },
+    body: { html: emailParagraphs(composerHtml(plan.body)) },
     eaccount: "nicole@brokerstaffer.com",
     cc_address_email_list: plan.cc.join(","),
     include_original_body: true,
@@ -478,7 +480,7 @@ test("an ordinary (non-handover) reply carries no CC and applies no label", { sk
   });
   assert.equal(result.status, "sent");
   const body = sendCalls()[0].body as Record<string, unknown>;
-  assert.equal(body.message, composerHtml(ORDINARY_DRAFT));
+  assert.equal(body.message, emailParagraphs(composerHtml(ORDINARY_DRAFT)));
   assert.equal(body.cc_emails, undefined);
   assert.equal(db.rows("label_assignments").length, 0);
   const s = await engine!.loadThreadState(id(thread), agent.id);
@@ -517,7 +519,7 @@ test("release: a held handover is sent through the same transport with its CC li
 
   assert.equal(sendCalls().length, 1, "exactly one provider send");
   const body = sendCalls()[0].body as Record<string, unknown>;
-  assert.equal(body.message, composerHtml(plan.body));
+  assert.equal(body.message, emailParagraphs(composerHtml(plan.body)));
   assert.deepEqual(body.cc_emails, plan.cc.map((email_address) => ({ email_address })));
   assert.deepEqual(body.to_emails, [{ email_address: "jane@example.com", name: "Jane Doe" }]);
 

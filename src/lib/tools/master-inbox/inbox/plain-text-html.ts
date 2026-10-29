@@ -47,3 +47,43 @@ export function plainTextToHtml(s: string): string {
     .map((para) => `<p>${escapeHtml(para).replace(/\n/g, "<br>") || "<br>"}</p>`)
     .join("");
 }
+
+const BARE_P = /<p>([\s\S]*?)<\/p>/g;
+const isBlank = (inner: string) => inner.replace(/<br\s*\/?>/gi, "").replace(/&nbsp;|\s/g, "") === "";
+
+/**
+ * Paragraphs the way every mail app shows them (29 Oct).
+ *
+ * The composer writes each paragraph as a bare `<p>`, and a blank line the person added as an empty `<p></p>`. In Gmail
+ * both arrived with no space at all: every paragraph run together, and the added blank lines gone — an empty paragraph
+ * has no height, and a bare `<p>` gets no margin there. Same as the first lesson above: the stored row looked fine; only
+ * the received email showed it.
+ *
+ * So a run of bare paragraphs is sent the way Gmail's own composer writes: one `<div>` per paragraph, and a blank line
+ * (`<div><br></div>`) between paragraphs — one more for every empty paragraph the person added. Only bare `<p>` tags
+ * are touched (a signature's styled paragraphs, tables and the rest are left exactly as they were).
+ */
+export function emailParagraphs(html: string): string {
+  if (!html) return html;
+  const out: string[] = [];
+  let at = 0;
+  let run: string[] | null = null;
+  const flush = () => {
+    if (!run) return;
+    run.forEach((inner, i) => {
+      if (i > 0) out.push("<div><br></div>");
+      if (!isBlank(inner)) out.push(`<div>${inner}</div>`);
+    });
+    run = null;
+  };
+  for (const m of html.matchAll(BARE_P)) {
+    const between = html.slice(at, m.index);
+    // Paragraphs next to each other (only whitespace between) are one run; anything else ends it.
+    if (between.trim()) { flush(); out.push(between); } else if (!run) out.push(between);
+    (run ??= []).push(m[1]);
+    at = m.index + m[0].length;
+  }
+  flush();
+  out.push(html.slice(at));
+  return out.join("");
+}

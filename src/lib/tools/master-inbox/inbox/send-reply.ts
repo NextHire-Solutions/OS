@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createEmailBisonClient } from "@/lib/tools/master-inbox/emailbison/client";
 import { createInstantlyClient, InstantlyError } from "@/lib/tools/master-inbox/instantly/client";
-import { plainTextToHtml } from "@/lib/tools/master-inbox/inbox/plain-text-html";
+import { emailParagraphs, plainTextToHtml } from "@/lib/tools/master-inbox/inbox/plain-text-html";
 import { recordSendFeedback, type RecordSendResult } from "@/lib/tools/master-inbox/ai/feedback";
 
 /*
@@ -134,11 +134,19 @@ type ThreadRow = {
   subject: string | null;
 };
 
-/** The route's view of the body: the string it sent and the content_type it named. */
+/**
+ * The route's view of the body: the string it sent and the content_type it named. An HTML body goes out with its
+ * paragraphs spaced as every mail app shows them (plain-text-html.ts emailParagraphs, 29 Oct).
+ */
 function flatten(body: OutboundBody): { text: string; contentType: "html" | "text" } {
   return body.kind === "html"
-    ? { text: body.html, contentType: "html" }
+    ? { text: emailParagraphs(body.html), contentType: "html" }
     : { text: body.text, contentType: "text" };
+}
+
+/** What the person (or the agent) wrote, before the spacing above — the learning loop compares the draft with this. */
+function written(body: OutboundBody): string {
+  return body.kind === "html" ? body.html : body.text;
 }
 
 export async function sendOutboundReply(input: SendOutboundReplyInput): Promise<SendOutboundReplyResult> {
@@ -226,6 +234,7 @@ export async function sendOutboundReply(input: SendOutboundReplyInput): Promise<
       outboundSenderEmail:
         senderOverride?.instantlyEaccount ?? thread.outbound_sender_email,
       payload,
+      writtenBody: written(input.body),
       attachments,
       threadSubject: thread.subject ?? null,
       actor,
@@ -504,7 +513,7 @@ export async function sendOutboundReply(input: SendOutboundReplyInput): Promise<
   const feedback = await recordSendFeedback({
     workspaceId: thread.workspace_id,
     threadId,
-    sentBody: payload.text,
+    sentBody: written(input.body),
     sentIsHtml: payload.contentType === "html",
   });
 
@@ -562,12 +571,14 @@ async function sendInstantlyReply(args: {
     inject_previous_email_body: boolean;
     source_message_id?: string;
   };
+  /** What was written, before the paragraph spacing — for the learning loop. */
+  writtenBody: string;
   attachments: Array<{ name: string; blob: Blob }>;
   /** The conversation's own subject, used when the request omits one. */
   threadSubject: string | null;
   actor: SendActor;
 }): Promise<SendOutboundReplyResult> {
-  const { admin, threadId, workspaceId, outboundSenderEmail, payload, attachments, threadSubject } = args;
+  const { admin, threadId, workspaceId, outboundSenderEmail, payload, writtenBody, attachments, threadSubject } = args;
 
   if (attachments.length > 0) {
     return {
@@ -658,7 +669,7 @@ async function sendInstantlyReply(args: {
         body:
           payload.contentType === "html"
             ? { html: payload.text }
-            : { html: plainTextToHtml(payload.text) },
+            : { html: emailParagraphs(plainTextToHtml(payload.text)) },
         cc_address_email_list: recipientsCsv(payload.cc),
         bcc_address_email_list: recipientsCsv(payload.bcc),
         include_original_body: payload.inject_previous_email_body,
@@ -695,7 +706,7 @@ async function sendInstantlyReply(args: {
         body:
           payload.contentType === "html"
             ? { html: payload.text }
-            : { html: plainTextToHtml(payload.text) },
+            : { html: emailParagraphs(plainTextToHtml(payload.text)) },
         eaccount: outboundSenderEmail ?? undefined,
         cc_address_email_list: recipientsCsv(payload.cc),
         bcc_address_email_list: recipientsCsv(payload.bcc),
@@ -791,7 +802,7 @@ async function sendInstantlyReply(args: {
   const feedback = await recordSendFeedback({
     workspaceId: workspaceId,
     threadId,
-    sentBody: payload.text,
+    sentBody: writtenBody,
     sentIsHtml: payload.contentType === "html",
   });
 

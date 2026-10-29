@@ -24,6 +24,8 @@
 
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+// Sends go out with their paragraphs spaced as every mail app shows them (29 Oct).
+import { emailParagraphs } from "./plain-text-html.ts";
 
 import { configureFakeEnvironment, FakePostgrest } from "../test/fake-postgrest.ts";
 
@@ -174,7 +176,7 @@ test("emailbison: the composer's request goes out as /replies/{id}/reply and eve
   );
   assert.deepEqual(db.providerCalls[0].body, { team_id: 7 });
   assert.deepEqual(db.providerCalls[1].body, {
-    message: html,
+    message: emailParagraphs(html),
     content_type: "html",
     to_emails: [{ email_address: "jane@example.com", name: "Jane Doe" }],
     cc_emails: [{ email_address: "nicole@brokerstaffer.com" }],
@@ -191,8 +193,8 @@ test("emailbison: the composer's request goes out as /replies/{id}/reply and eve
   assert.equal(outbound.workspace_id, WORKSPACE);
   assert.equal(outbound.sender, "nicole@brokerstaffer.com");
   assert.equal(outbound.subject, "Re: Quick question about your team");
-  assert.equal(outbound.body_html, html);
-  assert.equal(outbound.body_text, html.replace(/<[^>]+>/g, ""));
+  assert.equal(outbound.body_html, emailParagraphs(html));
+  assert.equal(outbound.body_text, emailParagraphs(html).replace(/<[^>]+>/g, ""));
   assert.equal(outbound.external_message_id, "eb:reply:987654");
   assert.equal(outbound.emailbison_reply_id, "987654");
   assert.deepEqual(outbound.recipients, { to: ["jane@example.com"], cc: ["nicole@brokerstaffer.com"], bcc: [] });
@@ -232,7 +234,7 @@ test("emailbison: a changed subject goes through /replies/new with the subject a
   );
   assert.deepEqual(db.providerCalls[1].body, {
     subject: "A different subject",
-    message: "<p>New topic</p>",
+    message: "<div>New topic</div>",
     sender_email_id: 42,
     content_type: "html",
     to_emails: [{ email_address: "jane@example.com" }],
@@ -317,7 +319,7 @@ test("instantly: the composer's request goes out as /emails/reply and every row 
   assert.deepEqual(db.providerCalls[0].body, {
     reply_to_uuid: "in-email-5551",
     subject: "Re: Quick question about your team",
-    body: { html },
+    body: { html: emailParagraphs(html) },
     eaccount: "nicole@brokerstaffer.com",
     cc_address_email_list: "nicole@brokerstaffer.com,team@client.example",
     include_original_body: true,
@@ -327,7 +329,7 @@ test("instantly: the composer's request goes out as /emails/reply and every row 
   const outbound = db.rows("messages").find((m) => m.direction === "outbound")!;
   assert.equal(outbound.source_provider, "instantly");
   assert.equal(outbound.sender, "nicole@brokerstaffer.com");
-  assert.equal(outbound.body_html, html);
+  assert.equal(outbound.body_html, emailParagraphs(html));
   assert.equal(outbound.external_message_id, "in:email:instantly-email-uuid-1");
   assert.equal(outbound.instantly_email_id, "instantly-email-uuid-1");
   assert.deepEqual(outbound.recipients, {
@@ -360,7 +362,7 @@ test("instantly: a TO that is not the original sender is a forward through /emai
     reply_to_uuid: "in-email-5551",
     to_address_email_list: "colleague@brokerstaffer.com",
     subject: "Fwd: Quick question about your team",
-    body: { html: "<p>FYI</p>" },
+    body: { html: "<div>FYI</div>" },
     include_original_body: true,
   });
 });
@@ -372,7 +374,7 @@ test("instantly: a text body is converted to HTML and a missing subject falls ba
   assert.deepEqual(db.providerCalls[0].body, {
     reply_to_uuid: "in-email-5551",
     subject: "Quick question about your team",
-    body: { html: "<p>Line one<br>Line two</p><p>Para two</p>" },
+    body: { html: "<div>Line one<br>Line two</div><div><br></div><div>Para two</div>" },
     eaccount: "nicole@brokerstaffer.com",
     include_original_body: true,
   });
