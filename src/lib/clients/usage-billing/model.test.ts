@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import {
   addDays, amountCents, dedupeLeads, DEFAULT_LEAD_SOURCE, duePeriods, easternDay, easternMidnight, invoiceDescription, isDay, isPeriodStart,
   keysAlreadyBilled, lastCompletedPeriod, lineDescription, parseFakeLeads, parseSettingsInput, periodKey, periodLabel, periodOf, periodWindow,
-  scheduledChargeAllowed, schedulerAllowed, shortHash, testBillingRefusal, type BillableLead,
+  modeOf, scheduledChargeAllowed, schedulerAllowed, settingsRefusal, shortHash, testBillingRefusal, type BillableLead,
 } from "./model.ts";
 
 const lead = (key: string, at: string, name = key): BillableLead => ({ key, name, at, source: "handoff" });
@@ -148,14 +148,23 @@ test("the switches: the scheduled run needs OS_USAGE_BILLING_ENABLED=1 AND Railw
   assert.equal(scheduledChargeAllowed({ OS_USAGE_BILLING_CHARGE: "1" }), true);
 });
 
-test("only a client marked test_only may be billed in this version", () => {
+test("test or live (31 Oct): only test_only = false is live; valid settings bill in either mode; the test tools are for test clients only", () => {
   const ok = { test_only: true, price_cents: 10_000, every_days: 7, anchor_date: "2026-10-05" };
+  assert.equal(modeOf(ok), "test");
+  assert.equal(modeOf({ test_only: false }), "live");
+  assert.equal(modeOf({ test_only: null as unknown as boolean }), "test", "anything but false is a test row — never live by accident");
+  assert.equal(settingsRefusal(ok), null);
+  const liveRow: Parameters<typeof settingsRefusal>[0] & { test_only: boolean } = { ...ok, test_only: false };
+  assert.equal(settingsRefusal(liveRow), null, "a live client can be billed");
+  assert.match(settingsRefusal(null)!, /no pay-per-lead settings/);
+  for (const bad of [{ every_days: 30 }, { price_cents: 0 }, { anchor_date: "" }]) {
+    assert.ok(settingsRefusal({ ...ok, ...bad }), JSON.stringify(bad));
+    assert.ok(testBillingRefusal({ ...ok, ...bad }), JSON.stringify(bad));
+  }
   assert.equal(testBillingRefusal(ok), null);
+  assert.match(testBillingRefusal({ ...ok, test_only: false })!, /live — the test tools are for test clients only/);
+  assert.ok(testBillingRefusal({ ...ok, test_only: null as unknown as boolean }), "anything but true is refused the test tools");
   assert.match(testBillingRefusal(null)!, /no pay-per-lead settings/);
-  assert.match(testBillingRefusal({ ...ok, test_only: false })!, /not marked as a test client/);
-  assert.match(testBillingRefusal({ ...ok, test_only: null as unknown as boolean })!, /not marked as a test client/, "anything but true is refused");
-  assert.ok(testBillingRefusal({ ...ok, every_days: 30 }));
-  assert.ok(testBillingRefusal({ ...ok, price_cents: 0 }));
 });
 
 test("the onboarding products: a price and what is counted, and their own words", async () => {

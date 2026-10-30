@@ -11,8 +11,10 @@
  *     run after a person: one invoice, one charge;
  *   - a claim that died half way is resumed with the same lines, the missing
  *     ones only, and checked before it is charged;
- *   - only a client marked test_only is billed; the scheduled run is off
- *     without its switch and only previews without the second.
+ *   - a client is billed in its own mode only (test or live); the scheduled
+ *     run is off without its switch, only previews without the second, and
+ *     never charges a live client;
+ *   - a retry is claimed once, even by two people at the same moment.
  */
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
@@ -204,10 +206,15 @@ test("saving: a new client is written test_only = true, and test_only is never w
   assert.equal(s.price_cents, 20_000);
   assert.equal(s.created_by, ADMIN);
   db.calls.length = 0;
-  db.rows("os_usage_billing_settings")[0].test_only = false; // as if someone changed it in SQL
-  await billing.saveSettings(ACME, { priceCents: 10_000, everyDays: 7, anchorDate: ANCHOR, leadSource: "introductions", enabled: true }, ADMIN);
+  db.rows("os_usage_billing_settings")[0].test_only = false; // live, as connectCard leaves it
+  // A live client's schedule and what counts are fixed (they would move billed periods) — refused, nothing written.
+  await assert.rejects(billing.saveSettings(ACME, { priceCents: 10_000, everyDays: 7, anchorDate: ANCHOR, leadSource: "introductions", enabled: true }, ADMIN), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 409 && /live: its billing schedule/.test(e.message));
+  assert.deepEqual(writes(), []);
+  // Its price and switch can change — and saving never touches test_only.
+  await billing.saveSettings(ACME, { priceCents: 25_000, everyDays: 14, anchorDate: ANCHOR, leadSource: "handoffs", enabled: true }, ADMIN);
   for (const w of writes()) assert.ok(!("test_only" in (w.body as Row)), "an update never touches test_only");
   assert.equal(db.rows("os_usage_billing_settings")[0].test_only, false);
+  assert.equal(db.rows("os_usage_billing_settings")[0].price_cents, 25_000);
   await assert.rejects(billing.saveSettings("20000000-0000-4000-8000-00000000000f", { priceCents: 10_000, everyDays: 7, anchorDate: ANCHOR, leadSource: "handoffs", enabled: false }, ADMIN), /No such client/);
 });
 
@@ -364,11 +371,12 @@ test("fake leads (the test path) bill exactly what was typed, in the period", as
   assert.equal(rowsOf()[0].lead_source, "test");
 });
 
-test("only a client marked test_only: anything else is refused before Stripe is asked", async () => {
+test("a live client is never billed with the TEST Stripe nor given the test tools; no settings, nothing — before Stripe is asked", async () => {
   seed({ acmeSettings: { test_only: false } });
   await withCard();
-  await assert.rejects(billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW }), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 403 && /not marked as a test client/.test(e.message));
-  await assert.rejects(billing.createSetupLink(ACME, stripe, "https://os.example"), /not marked as a test client/);
+  await assert.rejects(billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW, approved: { periodStart: WEEK.start, count: 3, amountCents: 30_000 } }), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 500 && /This client is live; refused to use test Stripe/.test(e.message));
+  await assert.rejects(billing.refreshPeriod(ACME, WEEK.start, stripe), /This client is live; refused to use test Stripe/);
+  await assert.rejects(billing.createSetupLink(ACME, stripe, "https://os.example"), /live — the test tools are for test clients only/);
   seed({ acmeSettings: null });
   await assert.rejects(billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW }), /no pay-per-lead settings/);
   assert.deepEqual(fake.calls, []);
@@ -419,7 +427,7 @@ test("enabled without OS_USAGE_BILLING_CHARGE: it records previews and charges n
   assert.equal((await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW })).outcome, "paid");
 });
 
-test("with OS_USAGE_BILLING_CHARGE=1: a TEST client is charged once; a client not marked test is only previewed", async () => {
+test("with OS_USAGE_BILLING_CHARGE=1: a TEST client is charged once; a LIVE client is only previewed — a live period, never charged by the run", async () => {
   seed({ betaSettings: { stripe_customer_id: "cus_beta", default_payment_method_id: "pm_beta" } });
   await withCard();
   const env = { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1", OS_USAGE_BILLING_CHARGE: "1" };
@@ -428,7 +436,9 @@ test("with OS_USAGE_BILLING_CHARGE=1: a TEST client is charged once; a client no
   assert.equal(r.charged, 1);
   assert.equal(r.previews, 1);
   assert.equal(rowsOf().find((x) => x.os_client_id === ACME)!.status, "paid");
-  assert.equal(rowsOf().find((x) => x.os_client_id === BETA)!.status, "preview");
+  const beta = rowsOf().find((x) => x.os_client_id === BETA)!;
+  assert.equal(beta.status, "preview");
+  assert.equal(beta.test_mode, false, "Beta is live: its preview is a live period");
   assert.ok(fake.calls.every((c) => c.params.customer !== "cus_beta" && !c.path.includes("cus_beta")), "Beta never reaches Stripe");
   const calls = fake.calls.length;
   const again = await billing.runUsageBilling({ env, now: NOW, stripe });
@@ -445,4 +455,19 @@ test("the scheduled run without a usable TEST key charges nothing (and says why)
   assert.equal(r.previews, 1);
   assert.match(r.errors.join(" "), /not a Stripe TEST key/);
   assert.deepEqual(db.blocked, [], "no request to Stripe was even attempted");
+});
+
+test("retry: the claim is conditional — a retry that read 'failed' just before someone else claimed it is told someone is retrying, and never pays", async () => {
+  seed();
+  await withCard();
+  fake.declineNextPay = true;
+  await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW });
+  assert.equal(rowsOf()[0].status, "failed");
+  // While this retry asks Stripe about the invoice — after it read the row, before it claims it — someone else claims it.
+  fake.failWhen = (c) => {
+    if (c.method === "GET" && /^\/invoices\/[^/]+$/.test(c.path)) { rowsOf()[0].status = "charged"; fake.failWhen = null; }
+    return false;
+  };
+  await assert.rejects(billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN), /Someone is retrying/);
+  assert.equal(fake.creates(/\/pay$/).length, 1, "only the first charge asked Stripe to pay — the retry never did");
 });

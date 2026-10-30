@@ -18,11 +18,15 @@ import {
   lastCompletedPeriod,
   lineDescription,
   MAX_LEADS_PER_PERIOD,
+  modeOf,
   parseFakeLeads,
   periodKey,
   periodOf,
   scheduledChargeAllowed,
   schedulerAllowed,
+  settingsRefusal,
+  leadsHash,
+  shortHash,
   testBillingRefusal,
   type BillableLead,
   type Deduped,
@@ -34,13 +38,21 @@ import {
   type SettingsRow,
 } from "./model.ts";
 import { usageBillingStripeKey } from "./stripe-key.ts";
-import { usageStripe, type InvoiceSummary, type UsageStripe } from "./stripe.ts";
+import { usageStripe, type CustomerCards, type InvoiceSummary, type UsageStripe } from "./stripe.ts";
 
 /*
- * Pay per lead — the database side and the order of things (26 Oct 2026).
- * TEST MODE ONLY: every path that reaches Stripe is handed a client built from
- * a TEST key (stripe-key.ts), and bills only a client whose settings row is
- * test_only (model.ts testBillingRefusal).
+ * Pay per lead — the database side and the order of things (26 Oct 2026; live
+ * clients 31 Oct).
+ *
+ * TEST OR LIVE, per client (model.ts modeOf): a row starts as a test client,
+ * billed in Stripe test mode with the test key; it becomes LIVE only through
+ * connectCard, a person connecting the client's card on file in live Stripe.
+ * Every function here checks that the Stripe client it is handed is of the
+ * client's own mode, and every period row carries that mode (test_mode), so
+ * test and live billing never meet. A live client is charged only when a
+ * person approves the amount (chargePeriod's `approved`), only for a period
+ * that has ended, and never with typed-in test leads; the scheduled run never
+ * charges a live client.
  *
  * ---------------------------------------------------------------------------
  * NEVER TWICE
@@ -142,6 +154,11 @@ export async function saveSettings(osClientId: string, input: SettingsInput, by:
     updated_at: now.toISOString(),
   };
   const existing = await loadSettings(osClientId);
+  // A live client's periods are fixed by its schedule: moving the first day, the cadence or what counts would move
+  // periods already billed. The price and the switch can change.
+  if (existing && modeOf(existing) === "live" && (existing.every_days !== input.everyDays || existing.anchor_date !== input.anchorDate || existing.lead_source !== input.leadSource)) {
+    throw new UsageBillingError("This client is live: its billing schedule and what counts as a lead can't be changed (it would move periods already billed). The price can.", 409);
+  }
   if (existing) {
     const { error } = await osTable("os_usage_billing_settings").update(fields).eq("os_client_id", osClientId);
     if (error) throw dbError("os_usage_billing_settings", error.message);
@@ -162,13 +179,28 @@ async function patchSettings(osClientId: string, patch: Row): Promise<void> {
   if (error) throw dbError("os_usage_billing_settings", error.message);
 }
 
-/** The settings of a client that may be billed in TEST mode — or a refusal. */
+/** The settings of a TEST client, for the test-only tools — or a refusal. */
 async function testClient(osClientId: string): Promise<SettingsRow> {
   const s = await loadSettings(osClientId);
   const refusal = testBillingRefusal(s);
   if (refusal) throw new UsageBillingError(refusal, 403);
   return s!;
 }
+
+/** The settings of a client that can be billed — test or live — or a refusal. */
+async function billableClient(osClientId: string): Promise<SettingsRow> {
+  const s = await loadSettings(osClientId);
+  const refusal = settingsRefusal(s);
+  if (refusal) throw new UsageBillingError(refusal, 403);
+  return s!;
+}
+
+/** The Stripe client must be of the client's own mode — a test client is never billed in live Stripe, nor the reverse. */
+function sameMode(s: SettingsRow, stripe: UsageStripe): void {
+  if (stripe.mode !== modeOf(s)) throw new UsageBillingError(`This client is ${modeOf(s)}; refused to use ${stripe.mode} Stripe for it.`, 500);
+}
+
+const testModeOf = (s: SettingsRow) => modeOf(s) === "test";
 
 /* ------------------------------------------------------- card on file --- */
 
@@ -206,23 +238,22 @@ export async function confirmSetup(osClientId: string, stripe: UsageStripe): Pro
 }
 
 /*
- * Every period this version writes or reads is a TEST period. Test and live
- * periods are kept apart (UNIQUE includes test_mode, and every lookup filters
- * on it), so a test charge on a real client's period can never make that
- * period — or its agents — count as already billed once billing goes live.
+ * A period row is of the client's mode (test_mode). Test and live periods are
+ * kept apart (UNIQUE includes test_mode, and every lookup filters on it), so a
+ * test charge on a real client's period can never make that period — or its
+ * agents — count as already billed once the client is live.
  */
-const TEST_MODE = true;
 
 /* ------------------------------------------------------------- periods --- */
 
-export async function listPeriods(osClientId: string, limit = 52): Promise<PeriodRow[]> {
-  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("test_mode", TEST_MODE).order("period_start", { ascending: false }).limit(limit);
+export async function listPeriods(osClientId: string, limit = 52, testMode = true): Promise<PeriodRow[]> {
+  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("test_mode", testMode).order("period_start", { ascending: false }).limit(limit);
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return (data ?? []) as PeriodRow[];
 }
 
-async function periodRow(osClientId: string, start: string): Promise<PeriodRow | null> {
-  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("period_start", start).eq("test_mode", TEST_MODE).maybeSingle();
+async function periodRow(osClientId: string, start: string, testMode: boolean): Promise<PeriodRow | null> {
+  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("period_start", start).eq("test_mode", testMode).maybeSingle();
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return (data as PeriodRow | null) ?? null;
 }
@@ -230,23 +261,28 @@ async function periodRow(osClientId: string, start: string): Promise<PeriodRow |
 /**
  * Which period: the one asked for (it must begin a period of this schedule
  * and not lie in the future), else the last one that has ended, else — for a
- * test, while the first period is still running — the current one.
+ * test, while the first period is still running — the current one. With
+ * `endedOnly` (a live client) only a period that has ended: a live client is
+ * never billed for a period still running.
  */
-export function choosePeriod(s: Pick<SettingsRow, "anchor_date" | "every_days">, today: string, asked?: string | null): Period {
+export function choosePeriod(s: Pick<SettingsRow, "anchor_date" | "every_days">, today: string, asked?: string | null, endedOnly = false): Period {
   const every = s.every_days as EveryDays;
+  let p: Period | null;
   if (asked) {
     if (!isPeriodStart(s.anchor_date, every, asked)) throw new UsageBillingError(`${asked} does not begin a billing period (every ${every} days from ${s.anchor_date}).`, 400);
     if (asked > today) throw new UsageBillingError("That period has not started yet.", 400);
-    return periodOf(s.anchor_date, every, asked)!;
+    p = periodOf(s.anchor_date, every, asked)!;
+  } else {
+    p = lastCompletedPeriod(s.anchor_date, every, today) ?? (endedOnly ? null : periodOf(s.anchor_date, every, today));
+    if (!p) throw new UsageBillingError(endedOnly ? `The first period has not ended yet — it ends ${periodOf(s.anchor_date, every, today)?.end ?? s.anchor_date}.` : `The first period starts ${s.anchor_date}.`, 400);
   }
-  const p = lastCompletedPeriod(s.anchor_date, every, today) ?? periodOf(s.anchor_date, every, today);
-  if (!p) throw new UsageBillingError(`The first period starts ${s.anchor_date}.`, 400);
+  if (endedOnly && p.end > today) throw new UsageBillingError("That period has not ended yet — a live client is billed only for a period that has ended.", 400);
   return p;
 }
 
 /** Every lead key billed for this client on any OTHER period — never billed again (model.ts keysAlreadyBilled). */
-async function keysBilledElsewhere(osClientId: string, exceptStart: string): Promise<Set<string>> {
-  const { data, error } = await osTable("os_usage_billing_periods").select("period_start, status, leads").eq("os_client_id", osClientId).eq("test_mode", TEST_MODE).in("status", [...BILLED_STATUSES]);
+async function keysBilledElsewhere(osClientId: string, exceptStart: string, testMode: boolean): Promise<Set<string>> {
+  const { data, error } = await osTable("os_usage_billing_periods").select("period_start, status, leads").eq("os_client_id", osClientId).eq("test_mode", testMode).in("status", [...BILLED_STATUSES]);
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return keysAlreadyBilled((data ?? []) as Array<{ period_start: string; status: string; leads: unknown }>, exceptStart);
 }
@@ -254,6 +290,8 @@ async function keysBilledElsewhere(osClientId: string, exceptStart: string): Pro
 export interface Preview {
   period: Period;
   periodKey: string;
+  /** Which leads, as a short fingerprint: the screen sends it back with the approval (leadsHash). */
+  leadsHash: string;
   leadSource: LeadSource | "test";
   priceCents: number;
   leads: BillableLead[];
@@ -267,32 +305,38 @@ export interface Preview {
 
 export interface PreviewOptions {
   periodStart?: string | null;
-  /** TEST PATH ONLY: leads typed in instead of the lead source. */
+  /** TEST CLIENTS ONLY: leads typed in instead of the lead source. */
   fakeLeads?: unknown;
   now?: Date;
   /** Tests: another lead source. */
   source?: LeadSourceFn;
 }
 
+const hasFakeLeads = (v: unknown) => v !== undefined && v !== null && v !== "";
+
+
 /** What the period's invoice would be. Reads only — nothing is written anywhere. */
 export async function previewPeriod(osClientId: string, s: SettingsRow, o: PreviewOptions = {}): Promise<Preview> {
+  const live = modeOf(s) === "live";
+  if (live && hasFakeLeads(o.fakeLeads)) throw new UsageBillingError("Fake leads are for test clients only — a live client is billed for its real leads.", 403);
   const today = easternDay(o.now ?? new Date());
-  const period = choosePeriod(s, today, o.periodStart ?? null);
+  const period = choosePeriod(s, today, o.periodStart ?? null, live);
   const source = ((LEAD_SOURCES_ALL as readonly string[]).includes(s.lead_source) ? s.lead_source : DEFAULT_LEAD_SOURCE) as LeadSource;
   let raw: BillableLead[];
-  if (o.fakeLeads !== undefined && o.fakeLeads !== null && o.fakeLeads !== "") {
+  if (hasFakeLeads(o.fakeLeads)) {
     const parsed = parseFakeLeads(o.fakeLeads, period);
     if ("error" in parsed) throw new UsageBillingError(parsed.error, 400);
     raw = parsed;
   } else {
     raw = await (o.source ? o.source(osClientId, period.start, period.end) : billableLeads(osClientId, period.start, period.end, source));
   }
-  const d = dedupeLeads(raw, await keysBilledElsewhere(osClientId, period.start));
+  const d = dedupeLeads(raw, await keysBilledElsewhere(osClientId, period.start, !live));
   if (d.billable.length > MAX_LEADS_PER_PERIOD) throw new UsageBillingError(`${d.billable.length} leads in one period is more than the ${MAX_LEADS_PER_PERIOD} allowed — check the lead source before billing.`, 409);
   const price = s.price_cents;
   return {
     period,
     periodKey: periodKey(osClientId, period.start),
+    leadsHash: leadsHash(d.billable),
     leadSource: o.fakeLeads ? "test" : source,
     priceCents: price,
     leads: d.billable,
@@ -301,7 +345,7 @@ export async function previewPeriod(osClientId: string, s: SettingsRow, o: Previ
     amountCents: amountCents(d.billable.length, price),
     description: invoiceDescription(period, d.billable.length, price, source),
     lines: d.billable.map((l) => ({ description: lineDescription(l), amountCents: price })),
-    existing: await periodRow(osClientId, period.start),
+    existing: await periodRow(osClientId, period.start, !live),
   };
 }
 
@@ -320,6 +364,28 @@ export interface ChargeResult {
 export interface ChargeOptions extends PreviewOptions {
   stripe: UsageStripe;
   by: string;
+  /**
+   * What the person saw and approved on the Billing tab — required for a LIVE
+   * client, checked for any client when sent. The charge goes ahead only if
+   * the period, the number of leads and the amount are exactly these now —
+   * anything else (a lead marked since, a price changed, another tab) is
+   * refused, and they preview again.
+   */
+  approved?: Approved | null;
+}
+
+/**
+ * What a person approved on the Billing tab: the period, how many leads and the amount — and, from the same screen,
+ * the client's mode, the card and which leads (a fingerprint). A page left open from before the client went live or
+ * changed its card, or a lead set that changed with the same count, is refused rather than charged.
+ */
+export interface Approved {
+  periodStart: string;
+  count: number;
+  amountCents: number;
+  mode?: "test" | "live";
+  paymentMethodId?: string | null;
+  leadsHash?: string;
 }
 
 async function updateRow(id: string, from: PeriodStatus, patch: Row): Promise<PeriodRow | null> {
@@ -332,7 +398,7 @@ async function updateRow(id: string, from: PeriodStatus, patch: Row): Promise<Pe
 async function ensurePeriodRow(osClientId: string, s: SettingsRow, period: Period): Promise<void> {
   const { error } = await osTable("os_usage_billing_periods").upsert(
     {
-      os_client_id: osClientId, period_start: period.start, period_end: period.end, test_mode: TEST_MODE, status: "preview",
+      os_client_id: osClientId, period_start: period.start, period_end: period.end, test_mode: testModeOf(s), status: "preview",
       lead_source: s.lead_source, price_cents: s.price_cents, lead_count: 0, amount_cents: 0, leads: [],
     },
     { onConflict: "os_client_id,period_start,test_mode", ignoreDuplicates: true },
@@ -349,30 +415,47 @@ export async function recordPreview(osClientId: string, s: SettingsRow, period: 
       leads: p.leads, lead_count: p.count, amount_cents: p.amountCents, price_cents: p.priceCents, lead_source: p.leadSource,
       note: `Preview ${new Date().toISOString().slice(0, 16)}Z — not charged`, updated_at: new Date().toISOString(),
     })
-    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("test_mode", TEST_MODE).eq("status", "preview")
+    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("test_mode", testModeOf(s)).eq("status", "preview")
     .select("*");
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return ((data ?? []) as PeriodRow[])[0] ?? null;
 }
 
 /**
- * Bills one period of a TEST client: claims it, builds the invoice (one line
- * per lead), checks it, finalizes it and charges the saved card — all in
- * Stripe TEST mode. A period already claimed is never billed again.
+ * Bills one period: claims it, builds the invoice (one line per lead), checks
+ * it, finalizes it and charges the saved card — in the client's own mode. A
+ * test client in Stripe test mode; a live client in live Stripe, and only with
+ * the amount the person approved (`approved`) for a period that has ended. A
+ * period already claimed is never billed again.
  */
 export async function chargePeriod(osClientId: string, o: ChargeOptions): Promise<ChargeResult> {
-  const s = await testClient(osClientId);
-  if (!s.stripe_customer_id || !s.default_payment_method_id) throw new UsageBillingError("No card is saved for this client yet — send the card-setup link first.", 409);
+  const s = await billableClient(osClientId);
+  sameMode(s, o.stripe);
+  const live = modeOf(s) === "live";
+  if (live && hasFakeLeads(o.fakeLeads)) throw new UsageBillingError("Fake leads are for test clients only — a live client is billed for its real leads.", 403);
+  if (!s.stripe_customer_id || !s.default_payment_method_id) throw new UsageBillingError(live ? "No card is connected for this client." : "No card is saved for this client yet — send the card-setup link first.", 409);
+  if (live && (!o.approved || !o.approved.mode || !o.approved.paymentMethodId || !o.approved.leadsHash)) {
+    throw new UsageBillingError("A live charge needs the amount, card and leads a person approved — preview it first.", 400);
+  }
   const now = o.now ?? new Date();
-  const period = choosePeriod(s, easternDay(now), o.periodStart ?? null);
+  const period = choosePeriod(s, easternDay(now), o.periodStart ?? null, live);
+  const changed = () => new UsageBillingError("The amount has changed since you looked (a lead was marked, or the price changed) — preview again before charging. Nothing was charged.", 409);
+  // The approved amount is checked whenever it is sent (the screen always sends it); a live charge cannot go without it.
+  const approved = o.approved ?? null;
+  if (approved && approved.periodStart !== period.start) throw changed();
+  if (approved && ((approved.mode !== undefined && approved.mode !== modeOf(s)) || (approved.paymentMethodId !== undefined && approved.paymentMethodId !== s.default_payment_method_id))) {
+    throw new UsageBillingError("This client changed since you looked (it went live, or its card changed) — reload the page and preview again. Nothing was charged.", 409);
+  }
 
   // Already claimed? Billed (or settled) periods are final; a claim that died is resumed once stale.
-  const existing = await periodRow(osClientId, period.start);
+  const existing = await periodRow(osClientId, period.start, !live);
   if (existing && existing.status !== "preview") {
     const stale = existing.status === "draft" && (!existing.claimed_at || now.getTime() - Date.parse(existing.claimed_at) > CLAIM_STALE_MS);
     if (!stale) {
       return { outcome: existing.status === "draft" ? "in_progress" : "already", period, row: existing, invoice: null, message: alreadyMessage(existing) };
     }
+    // A resume charges what was claimed: it must be what the person approved.
+    if (approved && (approved.amountCents !== existing.amount_cents || approved.count !== existing.lead_count || (approved.leadsHash !== undefined && approved.leadsHash !== leadsHash(Array.isArray(existing.leads) ? existing.leads : [])))) throw changed();
     // Take over the dead claim — one process only (conditional on the claim we read).
     const take = osTable("os_usage_billing_periods")
       .update({ claimed_by: o.by, claimed_at: now.toISOString(), note: `Resumed by ${o.by}`, updated_at: now.toISOString() })
@@ -385,6 +468,7 @@ export async function chargePeriod(osClientId: string, o: ChargeOptions): Promis
   }
 
   const p = await previewPeriod(osClientId, s, o);
+  if (approved && (approved.amountCents !== p.amountCents || approved.count !== p.count || (approved.leadsHash !== undefined && approved.leadsHash !== p.leadsHash))) throw changed();
   await ensurePeriodRow(osClientId, s, period);
   const claimed = await osTable("os_usage_billing_periods")
     .update({
@@ -394,12 +478,12 @@ export async function chargePeriod(osClientId: string, o: ChargeOptions): Promis
       note: p.count ? null : "No billable leads in this period — nothing charged.",
       updated_at: now.toISOString(),
     })
-    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("test_mode", TEST_MODE).eq("status", "preview")
+    .eq("os_client_id", osClientId).eq("period_start", period.start).eq("test_mode", !live).eq("status", "preview")
     .select("*");
   if (claimed.error) throw dbError("os_usage_billing_periods", claimed.error.message);
   const row = ((claimed.data ?? []) as PeriodRow[])[0];
   if (!row) {
-    const now2 = await periodRow(osClientId, period.start);
+    const now2 = await periodRow(osClientId, period.start, !live);
     return { outcome: now2?.status === "draft" ? "in_progress" : "already", period, row: now2, invoice: null, message: now2 ? alreadyMessage(now2) : "Taken by another run." };
   }
   if (!p.count) return { outcome: "nothing", period, row, invoice: null, message: "No billable leads in this period — nothing charged." };
@@ -411,7 +495,7 @@ function alreadyMessage(r: PeriodRow): string {
     case "draft": return "This period is being billed right now — try again in a few minutes.";
     case "charged": return "This period's invoice has been charged; waiting for Stripe's answer.";
     case "paid": return "This period has been billed and paid already.";
-    case "failed": return "This period has been billed; the card was refused — the invoice is open and payable by its link.";
+    case "failed": return "This period has been billed; the card was refused — the invoice is open: retry the charge, or the client pays it by its link.";
     case "void": return r.note ?? "This period is closed.";
     default: return "This period is taken.";
   }
@@ -436,12 +520,19 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
       invoiceId = (await stripe.createDraftInvoice({
         customerId, paymentMethodId: s.default_payment_method_id, osClientId: row.os_client_id, period, periodKey: key,
         description: invoiceDescription(period, leads.length, row.price_cents, row.lead_source), leadCount: leads.length,
+        // This claim's own key: a period opened again (its never-finished draft removed) is billed on a new invoice.
+        // A resume never makes a second one — it first finds the period's invoice (on the row, or by its metadata).
+        attempt: shortHash(row.claimed_at ?? row.id),
       })).invoiceId;
     }
     if (invoiceId !== row.stripe_invoice_id) await updateRow(row.id, "draft", { stripe_invoice_id: invoiceId });
 
     // 2. One line per lead — only the ones not on it yet.
     let inv = await stripe.getInvoice(invoiceId);
+    // A resume after the client's Stripe customer changed: that invoice is the earlier customer's — never charged here.
+    if (inv.customerId && inv.customerId !== customerId) {
+      return fail(`This period's invoice ${invoiceId} is on the client's earlier Stripe customer — not charged. ${inv.status === "open" ? "The client can pay it by its link." : "Retry removes it (it was never charged) so the period can be charged again."}`);
+    }
     if (inv.status === "draft") {
       const have = new Set((await stripe.invoiceLines(invoiceId)).map((l) => l.leadKey).filter(Boolean));
       for (const lead of leads) {
@@ -459,13 +550,23 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
     }
 
     // 4. Finalize, then charge the saved card.
-    if (inv.status === "draft") inv = await stripe.finalizeInvoice(invoiceId, `${key}:finalize`);
+    if (inv.status === "draft") inv = await stripe.finalizeInvoice(invoiceId, `${key}:finalize:${invoiceId}`);
     const charged = await updateRow(row.id, "draft", {
       status: "charged", charged_at: new Date().toISOString(), stripe_invoice_number: inv.number, hosted_invoice_url: inv.hostedUrl,
     });
     const from: PeriodStatus = charged ? "charged" : "draft";
     if (inv.status === "open") {
-      const paid = await stripe.payInvoice(invoiceId, `${key}:pay`);
+      let paid: Awaited<ReturnType<UsageStripe["payInvoice"]>>;
+      try {
+        // The card connected now — the one the person approved (chargePeriod checked it) — and a key of its own per card.
+        paid = await stripe.payInvoice(invoiceId, `${key}:pay:${invoiceId}:${shortHash(s.default_payment_method_id ?? "")}`, s.default_payment_method_id);
+      } catch (e) {
+        // No answer (a timeout, Stripe busy): never left 'charged' with nothing to press — 'failed', so Retry (which
+        // first asks Stripe whether it went through) or Refresh settles it. Never charged twice: Stripe pays an invoice once.
+        const message = e instanceof Error ? e.message : String(e);
+        const r = await updateRow(row.id, from, { status: "failed", error: `Stripe did not answer the charge (${message}) — Refresh shows whether it went through; Retry charges it if it didn't.`.slice(0, 1000), hosted_invoice_url: inv.hostedUrl });
+        return { outcome: "failed", period, row: r ?? row, invoice: inv, message: `Stripe did not answer the charge (${message}). Refresh the period to see whether it went through; Retry charges it if it didn't.` };
+      }
       if (!paid.ok) {
         const now = await stripe.getInvoice(invoiceId).catch(() => inv);
         const r = await updateRow(row.id, from, { status: "failed", error: paid.error.slice(0, 1000), hosted_invoice_url: now.hostedUrl });
@@ -492,13 +593,147 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
  * refused card), still open, or voided in Stripe. Writes only the period row.
  */
 export async function refreshPeriod(osClientId: string, periodStart: string, stripe: UsageStripe): Promise<PeriodRow | null> {
-  const row = await periodRow(osClientId, periodStart);
+  const s = await billableClient(osClientId);
+  sameMode(s, stripe);
+  const row = await periodRow(osClientId, periodStart, testModeOf(s));
   if (!row || !row.stripe_invoice_id || !["charged", "failed", "paid"].includes(row.status)) return row;
   const inv = await stripe.getInvoice(row.stripe_invoice_id);
   const patch: Row = { stripe_invoice_number: inv.number, hosted_invoice_url: inv.hostedUrl };
   if (inv.status === "paid" && row.status !== "paid") Object.assign(patch, { status: "paid", paid_at: new Date().toISOString(), error: null });
   else if (inv.status === "void" && row.status !== "paid") Object.assign(patch, { status: "void", note: "Voided in Stripe." });
+  // Charged, but Stripe still has it unpaid a while later: a refused payment in all but name — so it can be retried.
+  // (Not within the first two minutes: that is a charge still going through.)
+  else if (inv.status === "open" && row.status === "charged" && Date.now() - Date.parse(row.charged_at ?? "") > 2 * 60_000) {
+    Object.assign(patch, { status: "failed", error: "Stripe says this invoice is still unpaid — retry the charge, or the client pays it by its link." });
+  }
   return (await updateRow(row.id, row.status, patch)) ?? row;
+}
+
+/**
+ * A refused charge, tried again (31 Oct): the period's open invoice, charged to
+ * the card connected NOW (the client may have updated it). One person at a
+ * time — the row moves from 'failed' to 'charged' first, with a conditional
+ * update, so two clicks or two people charge once. Paid in the meantime (the
+ * client paid by the link)? Recorded, nothing charged.
+ */
+export async function retryPeriod(osClientId: string, periodStart: string, stripe: UsageStripe, by: string, approved?: Pick<Approved, "amountCents" | "mode" | "paymentMethodId"> | null): Promise<ChargeResult> {
+  const s = await billableClient(osClientId);
+  sameMode(s, stripe);
+  if (!s.stripe_customer_id || !s.default_payment_method_id) throw new UsageBillingError("No card is connected for this client.", 409);
+  // As a charge: a live retry goes with what the person saw — the amount, the mode, the card — and a page left open from
+  // before a change is refused, never charged.
+  if (modeOf(s) === "live" && (!approved || !approved.mode || !approved.paymentMethodId)) throw new UsageBillingError("A live retry needs the amount and card a person approved.", 400);
+  if (approved && ((approved.mode !== undefined && approved.mode !== modeOf(s)) || (approved.paymentMethodId !== undefined && approved.paymentMethodId !== s.default_payment_method_id))) {
+    throw new UsageBillingError("This client changed since you looked (it went live, or its card changed) — reload the page and try again. Nothing was charged.", 409);
+  }
+  const row = await periodRow(osClientId, periodStart, testModeOf(s));
+  if (!row || row.status !== "failed" || !row.stripe_invoice_id) throw new UsageBillingError("Only a charge the card refused can be retried.", 409);
+  if (approved && approved.amountCents !== row.amount_cents) throw new UsageBillingError("The amount has changed since you looked — reload the page. Nothing was charged.", 409);
+  const period: Period = { start: row.period_start, end: row.period_end };
+  const invoiceId = row.stripe_invoice_id;
+  const before = await stripe.getInvoice(invoiceId);
+  // Never finalized (it didn't match its leads): never charged. Removed, and the period opened again to preview and charge.
+  if (before.status === "draft") {
+    await stripe.deleteDraftInvoice(invoiceId);
+    const r = await updateRow(row.id, "failed", {
+      status: "preview", stripe_invoice_id: null, stripe_invoice_number: null, hosted_invoice_url: null, leads: [], lead_count: 0, amount_cents: 0,
+      claimed_by: null, claimed_at: null, error: null, note: `An unfinished invoice was removed by ${by} (never charged) — preview the period and charge it again.`,
+    });
+    return { outcome: "nothing", period, row: r ?? row, invoice: null, message: "That invoice was never finished, so it was removed (nothing was ever charged). Preview the period again and charge it." };
+  }
+  if (before.status === "paid") {
+    const r = await updateRow(row.id, "failed", { status: "paid", paid_at: new Date().toISOString(), stripe_invoice_number: before.number, hosted_invoice_url: before.hostedUrl, error: null });
+    return { outcome: "paid", period, row: r ?? row, invoice: before, message: "Already paid in Stripe (by its link) — recorded; nothing charged." };
+  }
+  if (before.status !== "open") throw new UsageBillingError(`The invoice is ${before.status} in Stripe — it cannot be charged.`, 409);
+  // Billed to the client's earlier Stripe customer: a card of the customer connected now can't pay it (Stripe refuses).
+  if (before.customerId && before.customerId !== s.stripe_customer_id) {
+    throw new UsageBillingError("This period was billed to the client's earlier Stripe customer, so the card connected now can't pay it. The client can pay it by its pay link.", 409);
+  }
+  // The invoice is what the person sees on the screen — or nothing is charged.
+  if (before.total !== row.amount_cents) throw new UsageBillingError(`The invoice in Stripe is ${(before.total / 100).toFixed(2)}, not the ${(row.amount_cents / 100).toFixed(2)} on this period — not charged.`, 409);
+  const claimed = await updateRow(row.id, "failed", { status: "charged", charged_at: new Date().toISOString(), note: `Retried by ${by}`, error: null });
+  if (!claimed) throw new UsageBillingError("Someone is retrying this charge right now — refresh in a moment.", 409);
+  // A new key for each attempt: the row's last change, which every attempt moves on.
+  const key = `${periodKey(osClientId, periodStart)}:retry:${invoiceId}:${Date.parse(row.updated_at ?? "") || 0}`;
+  let paid: Awaited<ReturnType<UsageStripe["payInvoice"]>>;
+  try {
+    paid = await stripe.payInvoice(invoiceId, key, s.default_payment_method_id);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await updateRow(row.id, "charged", { status: "failed", error: `Stripe did not answer the retry (${message}) — Refresh shows whether it went through.`.slice(0, 1000) });
+    throw new UsageBillingError(`Stripe did not answer (${message}). Refresh the period to see whether it went through before retrying.`, 502);
+  }
+  if (!paid.ok) {
+    const now = await stripe.getInvoice(invoiceId).catch(() => before);
+    const r = await updateRow(row.id, "charged", { status: "failed", error: paid.error.slice(0, 1000), hosted_invoice_url: now.hostedUrl });
+    return { outcome: "failed", period, row: r ?? row, invoice: now, message: `The card was refused again: ${paid.error}` };
+  }
+  const inv = paid.invoice;
+  if (inv.status === "paid") {
+    const r = await updateRow(row.id, "charged", { status: "paid", paid_at: new Date().toISOString(), stripe_invoice_number: inv.number, hosted_invoice_url: inv.hostedUrl, error: null });
+    return { outcome: "paid", period, row: r ?? row, invoice: inv, message: "Charged and paid." };
+  }
+  return { outcome: "charged", period, row: claimed, invoice: inv, message: `Charged; Stripe says the invoice is ${inv.status}.` };
+}
+
+/* ------------------------------------------------------ cards on file --- */
+
+const CUSTOMER_ID = /^cus_[A-Za-z0-9]{6,64}$/;
+const PAYMENT_METHOD_ID = /^(pm|card|src)_[A-Za-z0-9]{6,64}$/;
+
+/** These customers and their cards, as the person picks from them (at most 8, each once). Reads only. */
+export async function cardOptions(stripe: UsageStripe, customerIds: ReadonlyArray<string | null | undefined>): Promise<CustomerCards[]> {
+  const ids = [...new Set(customerIds.filter((id): id is string => typeof id === "string" && CUSTOMER_ID.test(id)))].slice(0, 8);
+  const out: CustomerCards[] = [];
+  for (const id of ids) {
+    const c = await stripe.cardsOnFile(id);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+/**
+ * Connects a card already on file in Stripe to a client (31 Oct). With the
+ * TEST Stripe, a test client's test customer and card. With the LIVE Stripe,
+ * the client's real customer and card — and this is the ONE way a client
+ * becomes live (test_only = false); nothing sets it back. Checked in Stripe
+ * first: the customer exists, the card is on it and has not expired, and no
+ * other client uses that customer. Nothing is charged.
+ */
+export async function connectCard(osClientId: string, pick: { customerId: string; paymentMethodId: string; claimedBy?: readonly string[] }, stripe: UsageStripe, by: string, now = new Date()): Promise<SettingsRow> {
+  const s = await billableClient(osClientId);
+  if (modeOf(s) === "live" && stripe.mode === "test") throw new UsageBillingError("This client is live — a test card can't be connected to it.", 409);
+  if (!CUSTOMER_ID.test(pick.customerId) || !PAYMENT_METHOD_ID.test(pick.paymentMethodId)) throw new UsageBillingError("Pick a customer and one of its cards.", 400);
+  // Never another client's customer: on another client's pay-per-lead row, or on another client's record.
+  const [others, records] = await Promise.all([
+    osTable("os_usage_billing_settings").select("os_client_id").eq("stripe_customer_id", pick.customerId).neq("os_client_id", osClientId),
+    osTable("os_clients").select("id, name").eq("stripe_customer_id", pick.customerId).neq("id", osClientId),
+  ]);
+  if (others.error) throw dbError("os_usage_billing_settings", others.error.message);
+  if (records.error) throw dbError("os_clients", records.error.message);
+  const owner = ((records.data ?? []) as Row[])[0];
+  if ((others.data ?? []).length || owner) throw new UsageBillingError(`That Stripe customer belongs to ${owner ? String(owner.name ?? "another client") : "another client"} — not connected.`, 409);
+  // And never one the Billing tab counts for another client (its link, its subscription, its name — billing-model.ts).
+  if (pick.claimedBy?.length) throw new UsageBillingError(`That Stripe customer is counted for ${pick.claimedBy.join(", ")} on the Billing tab — not connected. If it is really this client's, press "Not this client" on that client's Billing tab first.`, 409);
+  const customer = await stripe.cardsOnFile(pick.customerId, now);
+  if (!customer) throw new UsageBillingError("That Stripe customer doesn't exist (or was deleted).", 404);
+  const card = customer.cards.find((c) => c.id === pick.paymentMethodId);
+  if (!card) throw new UsageBillingError("That card is not on this customer in Stripe.", 409);
+  if (card.expired) throw new UsageBillingError(`That card expired (${card.expires}) — ask the client to update it in Stripe first.`, 409);
+  const goingLive = stripe.mode === "live";
+  const { data, error } = await osTable("os_usage_billing_settings")
+    .update({
+      stripe_customer_id: customer.id, default_payment_method_id: card.id, card_label: card.expires ? `${card.label} · exp ${card.expires}` : card.label,
+      setup_session_id: null, ...(goingLive ? { test_only: false } : {}), updated_by: by, updated_at: now.toISOString(),
+    })
+    // Only the row as it was read: two people connecting at once, the second is told.
+    .eq("os_client_id", osClientId).eq("test_only", s.test_only)
+    .select("os_client_id");
+  if (error) throw dbError("os_usage_billing_settings", error.message);
+  if (!(data ?? []).length) throw new UsageBillingError("These settings changed while you were picking — reload and try again.", 409);
+  console.log(`[usage-billing] ${by} connected ${customer.id} / ${card.id} (${card.label}) to ${osClientId}${goingLive ? " — the client is now LIVE" : " (test)"}`);
+  return (await loadSettings(osClientId))!;
 }
 
 /* ------------------------------------------------------ scheduled run --- */
@@ -517,7 +752,8 @@ export interface RunResult {
  * OS_USAGE_BILLING_ENABLED=1 on Railway. Then, for each ENABLED client, the
  * periods that have ended (at most two back): with OS_USAGE_BILLING_CHARGE=1
  * and a TEST key it bills TEST clients; otherwise it only records previews.
- * A client that is not test_only is never charged by this version.
+ * A LIVE client is never charged here — only by a person approving the amount
+ * on the Billing tab; the run records its previews (as live periods).
  */
 export async function runUsageBilling(o: { env?: Record<string, string | undefined>; now?: Date; stripe?: UsageStripe | null; source?: LeadSourceFn } = {}): Promise<RunResult> {
   const env = o.env ?? process.env;
@@ -539,15 +775,15 @@ export async function runUsageBilling(o: { env?: Record<string, string | undefin
     out.clients += 1;
     // Invoices charged or refused earlier: paid since (a retry, or the client through the link)?
     if (stripe && s.test_only === true) {
-      const open = (await listPeriods(s.os_client_id, 8)).filter((r) => r.status === "charged" || r.status === "failed");
+      const open = (await listPeriods(s.os_client_id, 8, true)).filter((r) => r.status === "charged" || r.status === "failed");
       for (const r of open) {
         try { await refreshPeriod(s.os_client_id, r.period_start, stripe); } catch (e) { out.errors.push(`${s.os_client_id} ${r.period_start} refresh: ${e instanceof Error ? e.message : e}`); }
       }
     }
-    if (testBillingRefusal({ ...s, test_only: true })) { out.skipped += 1; continue; }
+    if (settingsRefusal(s)) { out.skipped += 1; continue; }
     for (const period of duePeriods(s.anchor_date, s.every_days as EveryDays, today)) {
       try {
-        const existing = await periodRow(s.os_client_id, period.start);
+        const existing = await periodRow(s.os_client_id, period.start, testModeOf(s));
         if (existing && existing.status !== "preview") { out.skipped += 1; continue; }
         const canCharge = stripe && s.test_only === true && s.stripe_customer_id && s.default_payment_method_id;
         if (canCharge) {

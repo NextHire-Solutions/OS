@@ -76,7 +76,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
   const [billingIntervalDays, setBillingIntervalDays] = useState("");
   // Optional: link billing at creation (§2 "connect their Stripe subscription").
   const [stripeSub, setStripeSub] = useState("");
-  // Pay per lead (26 Oct) — TEST MODE ONLY: saved on the client's Billing tab, switched off; nothing is charged.
+  // Pay per lead (26 Oct): saved on the client's Billing tab in test mode — live only when someone presses Go live there (31 Oct).
   const [product, setProduct] = useState("");
   const [macroOn, setMacroOn] = useState(false);
   const [brokerage, setBrokerage] = useState("");
@@ -357,7 +357,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
           });
           const sb = await saved.json().catch(() => null);
           usage = saved.ok
-            ? { ok: true, text: `Pay per lead: ${chosen.label} saved in test mode (Billing tab). Nothing is charged.` }
+            ? { ok: true, text: `Pay per lead: ${chosen.label} saved on the Billing tab, in test mode until someone presses Go live there. Nothing is charged.` }
             : { ok: false, text: `Pay per lead NOT saved: ${sb?.error ?? `HTTP ${saved.status}`} Set it on the client's Billing tab.` };
         } catch (e) {
           usage = { ok: false, text: `Pay per lead NOT saved: ${e instanceof Error ? e.message : String(e)} Set it on the client's Billing tab.` };
@@ -464,15 +464,15 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
 
         {billing ? (
           <label style={FIELD}>
-            <span style={LABEL}>Pay per lead — test only</span>
+            <span style={LABEL}>Pay per lead</span>
             <select className="inp" value={product} onChange={(e) => setProduct(e.target.value)} aria-label="Pay per lead product">
               <option value="">None — subscription as above</option>
               {OFFERED_PRODUCTS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
             <span className="mut" style={{ fontSize: 12 }}>
               {product
-                ? `Saved on the client's Billing tab in Stripe test mode, billed every ${billingInterval === "biweekly" ? 14 : 7} days from today — switched off. Nothing is charged and the plan above is unchanged.`
-                : "Not live for any client yet: a product chosen here is saved in test mode only."}
+                ? `Saved on the client's Billing tab, every ${billingInterval === "biweekly" ? 14 : 7} days from today, in test mode: nothing is charged until someone presses Go live there with the client's card on file. The plan above is unchanged.`
+                : "Optional — it can also be set up later, on the client's Billing tab."}
             </span>
           </label>
         ) : null}

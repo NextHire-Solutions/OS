@@ -283,6 +283,11 @@ export function periodKey(osClientId: string, periodStart: string): string {
   return `os-usage:${osClientId}:${periodStart}`;
 }
 
+/** Which leads, as a short fingerprint (their keys, in any order) — what a person approved, checked again before a charge. */
+export function leadsHash(leads: ReadonlyArray<{ key: string }>): string {
+  return shortHash(leads.map((l) => l.key).sort().join("\n"));
+}
+
 /** A short, stable digest of a lead key, for its invoice item's Idempotency-Key (keys can be long emails). */
 export function shortHash(s: string): string {
   let h1 = 0x811c9dc5, h2 = 0x01000193;
@@ -393,16 +398,33 @@ export interface SettingsRow {
   updated_at?: string | null;
 }
 
-/**
- * Why a client may not be billed in TEST mode, or null when it may. This
- * version bills only clients marked test_only (the default for every row, and
- * the OS never clears it) — anything else is refused before Stripe is asked.
+/*
+ * TEST OR LIVE (31 Oct). Every row starts test_only = true (saveSettings, and
+ * the column's default). Only billing.ts connectCard sets it false — a person
+ * on the Billing tab connecting the client's card on file in LIVE Stripe — and
+ * nothing sets it back. A row that is not exactly `false` is a test row.
  */
-export function testBillingRefusal(row: Pick<SettingsRow, "test_only" | "price_cents" | "every_days" | "anchor_date"> | null): string | null {
+export function modeOf(row: Pick<SettingsRow, "test_only">): "test" | "live" {
+  return row.test_only === false ? "live" : "test";
+}
+
+/** Why a client's settings cannot be billed at all (either mode), or null when they can. */
+export function settingsRefusal(row: Pick<SettingsRow, "price_cents" | "every_days" | "anchor_date"> | null): string | null {
   if (!row) return "This client has no pay-per-lead settings — save them first (it is then a test client).";
-  if (row.test_only !== true) return "This client is not marked as a test client. Pay per lead runs in test mode only.";
   if (row.every_days !== 7 && row.every_days !== 14) return "The billing cadence is not 7 or 14 days.";
   if (!isDay(row.anchor_date)) return "The first billing day is missing.";
   if (!Number.isInteger(row.price_cents) || row.price_cents < MIN_PRICE_CENTS || row.price_cents > MAX_PRICE_CENTS) return "The price per lead is not set.";
+  return null;
+}
+
+/**
+ * Why a client may not use a TEST-only tool (a card-setup page, fake leads, a
+ * test charge of a period still running), or null when it may: its settings
+ * are valid and it is still a test client.
+ */
+export function testBillingRefusal(row: Pick<SettingsRow, "test_only" | "price_cents" | "every_days" | "anchor_date"> | null): string | null {
+  const refusal = settingsRefusal(row);
+  if (refusal) return refusal;
+  if (row!.test_only !== true) return "This client is live — the test tools are for test clients only.";
   return null;
 }

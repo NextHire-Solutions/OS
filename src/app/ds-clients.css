@@ -560,3 +560,43 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .cl-card .rx-btn.solid:disabled:hover, [data-testid="usage-billing"] .rx-btn.solid:disabled:hover { background: var(--x-ink); }
 /* Pay per lead's summary: four boxes, two by two in the Billing tab's width (the Billing tab's own .rb-grid is unchanged). */
 .rb-grid.ub-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+/* Pay per lead, live clients (31 Oct): the LIVE pill, the boxes (go live, the card finder, charge a period), the spelled-out confirmations. */
+[data-testid="usage-billing"] .rx-hint.ub-tight, [data-testid="usage-billing"] .ub-tight { margin: 0; }
+[data-testid="usage-billing"] .rx-hint.ub-note { margin: 6px 0 0; color: var(--st-active); }
+.rb-pill.ub-live { color: #fff; background: var(--st-churned); letter-spacing: .04em; }
+.ub-box { display: grid; gap: 8px; margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--x-line); border-radius: 10px; background: var(--x-surface); min-width: 0; }
+.ub-box.ub-golive { border-style: dashed; }
+.ub-box-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--x-ink); }
+.ub-box-h b { font-weight: 600; }
+.ub-box .rb-tools { margin: 0; }
+.ub-self-end { align-self: flex-end; }
+.ub-customers { display: grid; gap: 8px; }
+.ub-customer { margin: 0; padding: 8px 10px 6px; border: 1px solid var(--x-line-2); border-radius: 8px; min-width: 0; display: grid; gap: 2px; }
+.ub-customer legend { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 0 4px; font-size: 12.5px; color: var(--x-ink); max-width: 100%; }
+.ub-customer legend span { color: var(--x-mute); overflow-wrap: anywhere; }
+.ub-customer legend code { font-family: var(--mono); font-size: 11px; color: var(--x-faint); overflow-wrap: anywhere; }
+.ub-card { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 30px; font-size: 13px; color: var(--x-ink); cursor: pointer; }
+.ub-card small { font-size: 12px; color: var(--x-mute); font-variant-numeric: tabular-nums; }
+.ub-card em { font-style: normal; }
+.ub-card.off { color: var(--x-faint); cursor: not-allowed; }
+.ub-card input { margin: 0; }
+.ub-paste { flex: 0 1 260px; min-width: 0; }
+.ub-paste .ds-input, .ub-period { width: 100%; min-width: 0; max-width: 340px; }
+.ub-fake { flex: 1 1 260px; min-width: 0; }
+.ub-fake textarea.ds-input { width: 100%; height: auto; padding: 8px 11px; }
+.ub-confirm { display: grid; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--x-line-2); border: 1px solid var(--x-line); font-size: 13px; line-height: 1.5; color: var(--x-ink); }
+.ub-confirm.live { background: #FEF2F2; border-color: #FECACA; }
+.ub-confirm p { margin: 0; }
+.ub-gap { margin-left: 8px; }
+[data-testid="usage-billing"] .ds-field-err.ub-msg, [data-testid="usage-billing"] .ub-box > .ds-field-err { margin: 0; }
+[data-testid="usage-billing"] .ub-bad { color: var(--st-churned); }
+/* Long money-and-card buttons wrap rather than push the panel sideways on a phone. */
+[data-testid="usage-billing"] .rx-btn.ub-wrap { white-space: normal; height: auto; min-height: 30px; padding-block: 5px; text-align: left; line-height: 1.3; }
+/* A red button stays red while disabled ("Charging…") — the panel's generic disabled hover would turn it black. */
+[data-testid="usage-billing"] .rx-btn.solid.rb-danger:disabled, [data-testid="usage-billing"] .rx-btn.solid.rb-danger:disabled:hover { background: var(--st-churned); border-color: var(--st-churned); }
+.ub-confirm:focus { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+.ub-charge-tools { align-items: flex-end; }
+@media (max-width: 560px) {
+  .ub-paste, .ub-fake { flex-basis: 100%; }
+  .ub-box .rb-tools .sp { display: none; }
+}

@@ -1,13 +1,15 @@
 /*
- * A fake Stripe (test mode) behind an injected fetch — for the pay-per-lead
- * tests. No test reaches Stripe: the real stripe.ts is pointed at this, and
+ * A fake Stripe behind an injected fetch — for the pay-per-lead tests. Test
+ * mode by default; `new FakeStripe({ live: true })` plays live Stripe (only
+ * live keys, every object livemode: true) for the live clients' tests. No test reaches Stripe: the real stripe.ts is pointed at this, and
  * it answers the handful of endpoints pay per lead uses with the shapes
  * Stripe returns, keeps the objects in memory, and honours Idempotency-Key the
  * way Stripe does (same key + same request → the first answer again; same key
  * + a different request → 400 idempotency_error).
  *
- * Every request is recorded in `calls`; any request whose key is not a TEST
- * key is recorded in `liveKeySeen` (tests assert it stays empty) and refused.
+ * Every request is recorded in `calls`; any request whose key is not of this
+ * fake's mode is recorded in `liveKeySeen` (named for the test fake, where it
+ * means "a live key reached it" — tests assert it stays empty) and refused.
  */
 
 type Json = Record<string, unknown>;
@@ -46,12 +48,21 @@ export class FakeStripe {
   private n = 0;
   /** The next /pay is refused as a declined card (consumed). */
   declineNextPay = false;
+  /** Cards (payment method ids) every /pay with them is refused. */
+  readonly declineCards = new Set<string>();
+  /** Cards whose bank wants the client to confirm each payment (3-D Secure): /pay answers 402 invoice_payment_intent_requires_action. */
+  readonly actionCards = new Set<string>();
+  readonly live: boolean;
+
+  constructor(o: { live?: boolean } = {}) {
+    this.live = o.live === true;
+  }
   /** Fail every request matching this (a lost answer, an outage). */
   failWhen: ((c: StripeCall) => boolean) | null = null;
 
   private id(prefix: string) {
     this.n += 1;
-    return `${prefix}_test${String(this.n).padStart(6, "0")}`;
+    return `${prefix}_${this.live ? "Live" : "test"}${String(this.n).padStart(6, "0")}`;
   }
 
   reset() {
@@ -63,7 +74,32 @@ export class FakeStripe {
     this.paymentMethods.clear();
     this.idem.clear();
     this.declineNextPay = false;
+    this.declineCards.clear();
+    this.actionCards.clear();
     this.failWhen = null;
+  }
+
+  /**
+   * A customer made in Stripe's dashboard, its card already on file — what a
+   * real client's Stripe looks like. `asDefault`: the invoice default (the
+   * default), the legacy default source, or neither.
+   */
+  addCustomerWithCard(o: { name: string; email?: string | null; metadata?: Record<string, string>; brand?: string; last4?: string; expMonth?: number; expYear?: number; asDefault?: "invoice" | "source" | "none"; percentOff?: number } ): { customerId: string; paymentMethodId: string } {
+    // `percentOff`: a coupon on the customer, which Stripe copies onto a new invoice unless `discounts` is passed empty.
+    const c: Json = { id: this.id("cus"), object: "customer", livemode: this.live, name: o.name, email: o.email ?? null, metadata: o.metadata ?? {}, invoice_settings: { default_payment_method: null }, default_source: null, percent_off: o.percentOff ?? 0 };
+    this.customers.set(String(c.id), c);
+    const pm = this.addCard(String(c.id), o);
+    const as = o.asDefault ?? "invoice";
+    if (as === "invoice") (c.invoice_settings as Json).default_payment_method = pm;
+    if (as === "source") c.default_source = pm;
+    return { customerId: String(c.id), paymentMethodId: pm };
+  }
+
+  /** Another card on a customer (not its default). */
+  addCard(customerId: string, o: { brand?: string; last4?: string; expMonth?: number; expYear?: number } = {}): string {
+    const pm = { id: this.id("pm"), object: "payment_method", livemode: this.live, type: "card", customer: customerId, card: { brand: o.brand ?? "visa", last4: o.last4 ?? "4242", exp_month: o.expMonth ?? 12, exp_year: o.expYear ?? 2030 } };
+    this.paymentMethods.set(pm.id, pm);
+    return pm.id;
   }
 
   /** Stripe keeps idempotency keys for at least 24 hours; this is "a day later". */
@@ -79,7 +115,7 @@ export class FakeStripe {
   completeSetup(sessionId: string) {
     const s = this.sessions.get(sessionId);
     if (!s) throw new Error(`no session ${sessionId}`);
-    const pm = { id: this.id("pm"), object: "payment_method", livemode: false, customer: s.customer, card: { brand: "visa", last4: "4242" } };
+    const pm = { id: this.id("pm"), object: "payment_method", livemode: this.live, customer: s.customer, card: { brand: "visa", last4: "4242" } };
     this.paymentMethods.set(pm.id, pm);
     Object.assign(s, { status: "complete", setup_intent: { id: this.id("seti"), object: "setup_intent", payment_method: pm } });
   }
@@ -109,9 +145,9 @@ export class FakeStripe {
     const call: StripeCall = { method, path, params, idempotencyKey: headers.get("idempotency-key") };
     this.calls.push(call);
     const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-    if (!/^Bearer (sk|rk)_test_/.test(auth)) {
+    if (!(this.live ? /^Bearer (sk|rk)_live_/ : /^Bearer (sk|rk)_test_/).test(auth)) {
       this.liveKeySeen.push(path);
-      return reply(401, { error: { type: "invalid_request_error", message: "fake-stripe: only test keys" } });
+      return reply(401, { error: { type: "invalid_request_error", message: `fake-stripe: only ${this.live ? "live" : "test"} keys` } });
     }
     if (this.failWhen?.(call)) return reply(500, { error: { type: "api_error", message: "injected failure" } });
 
@@ -132,8 +168,22 @@ export class FakeStripe {
     const notFound: [number, unknown] = [404, { error: { type: "invalid_request_error", message: `No such resource: ${path}` } }];
     let m: RegExpMatchArray | null;
 
+    // The whole-account reads the Billing tab makes (billing-account.ts): nothing of these in the fake.
+    if (method === "GET" && ["/subscriptions", "/charges", "/invoice_payments", "/refunds", "/products", "/credit_notes"].includes(path)) {
+      return [200, { object: "list", data: [], has_more: false }];
+    }
+    if (method === "GET" && path === "/customers") {
+      const all = [...this.customers.values()];
+      const from = p.starting_after ? all.findIndex((c) => c.id === p.starting_after) + 1 : 0;
+      const limit = Number(p.limit ?? 10);
+      return [200, { object: "list", data: all.slice(from, from + limit), has_more: from + limit < all.length }];
+    }
+    if (method === "GET" && path === "/payment_methods") {
+      const data = [...this.paymentMethods.values()].filter((pm) => pm.customer === p.customer && (!p.type || pm.type === undefined || pm.type === p.type)).reverse().slice(0, Number(p.limit ?? 10));
+      return [200, { object: "list", data, has_more: false }];
+    }
     if (method === "POST" && path === "/customers") {
-      const c = { id: this.id("cus"), object: "customer", livemode: false, name: p.name ?? null, email: p.email ?? null, metadata: nested(p, "metadata"), invoice_settings: { default_payment_method: null } };
+      const c = { id: this.id("cus"), object: "customer", livemode: this.live, name: p.name ?? null, email: p.email ?? null, metadata: nested(p, "metadata"), invoice_settings: { default_payment_method: null } };
       this.customers.set(c.id, c);
       return [200, c];
     }
@@ -151,7 +201,7 @@ export class FakeStripe {
     if (method === "POST" && path === "/checkout/sessions") {
       if (p.mode !== "setup") return [400, { error: { message: "fake-stripe: only setup sessions" } }];
       const id = this.id("cs");
-      const s = { id, object: "checkout.session", livemode: false, mode: "setup", status: "open", customer: p.customer, url: `https://checkout.stripe.com/c/pay/${id}`, success_url: p.success_url, metadata: nested(p, "metadata"), setup_intent: null };
+      const s = { id, object: "checkout.session", livemode: this.live, mode: "setup", status: "open", customer: p.customer, url: `https://checkout.stripe.com/c/pay/${id}`, success_url: p.success_url, metadata: nested(p, "metadata"), setup_intent: null };
       this.sessions.set(id, s);
       return [200, s];
     }
@@ -161,7 +211,7 @@ export class FakeStripe {
     }
     if ((m = path.match(/^\/payment_methods\/([^/]+)\/attach$/)) && method === "POST") {
       if (!this.customers.has(p.customer)) return notFound;
-      const pm = { id: this.id("pm"), object: "payment_method", livemode: false, customer: p.customer, card: { brand: "visa", last4: "4242" } };
+      const pm = { id: this.id("pm"), object: "payment_method", livemode: this.live, customer: p.customer, card: { brand: "visa", last4: "4242" } };
       this.paymentMethods.set(pm.id, pm);
       return [200, pm];
     }
@@ -172,9 +222,11 @@ export class FakeStripe {
     if (method === "POST" && path === "/invoices") {
       if (!this.customers.has(p.customer)) return notFound;
       const inv: Invoice = {
-        id: this.id("in"), object: "invoice", livemode: false, customer: p.customer, status: "draft", number: null, total: 0, amount_paid: 0, amount_due: 0,
+        id: this.id("in"), object: "invoice", livemode: this.live, customer: p.customer, status: "draft", number: null, total: 0, amount_paid: 0, amount_due: 0,
         created: Math.floor(Date.now() / 1000), collection_method: p.collection_method, auto_advance: p.auto_advance === "true", description: p.description ?? null,
-        default_payment_method: p.default_payment_method ?? null, pending_invoice_items_behavior: p.pending_invoice_items_behavior,
+        default_payment_method: p.default_payment_method ?? p.default_source ?? null, pending_invoice_items_behavior: p.pending_invoice_items_behavior,
+        // Stripe copies the customer's coupon unless `discounts` is passed (empty: none).
+        percent_off: p.discounts === undefined ? Number((this.customers.get(p.customer) as Json).percent_off ?? 0) : 0, discounts_param: p.discounts ?? null,
         metadata: nested(p, "metadata"), hosted_invoice_url: null, invoice_pdf: null, lines: [],
       };
       this.invoices.set(inv.id, inv);
@@ -186,9 +238,10 @@ export class FakeStripe {
       if (inv.status !== "draft") return [400, { error: { message: "fake-stripe: invoice is not a draft" } }];
       const item = { id: this.id("ii"), amount: Number(p.amount), description: p.description, metadata: nested(p, "metadata") };
       inv.lines.push(item);
-      inv.total += item.amount;
+      const sum = inv.lines.reduce((t, l) => t + l.amount, 0);
+      inv.total = Math.round(sum * (1 - Number(inv.percent_off ?? 0) / 100));
       inv.amount_due = inv.total;
-      return [200, { ...item, object: "invoiceitem", livemode: false, invoice: inv.id }];
+      return [200, { ...item, object: "invoiceitem", livemode: this.live, invoice: inv.id }];
     }
     if ((m = path.match(/^\/invoices\/([^/]+)\/lines$/)) && method === "GET") {
       const inv = this.invoices.get(m[1]);
@@ -209,6 +262,9 @@ export class FakeStripe {
       const inv = this.invoices.get(m[1]);
       if (!inv) return notFound;
       if (inv.status !== "open") return [400, { error: { message: `fake-stripe: invoice is ${inv.status}` } }];
+      if (p.payment_method || p.source) inv.default_payment_method = p.payment_method ?? p.source;
+      if (this.actionCards.has(String(inv.default_payment_method))) return [402, { error: { type: "invalid_request_error", code: "invoice_payment_intent_requires_action", message: "This payment requires additional user action before it can be completed successfully." } }];
+      if (this.declineCards.has(String(inv.default_payment_method))) return [402, { error: { type: "card_error", code: "card_declined", message: "Your card was declined." } }];
       if (this.declineNextPay) {
         this.declineNextPay = false;
         return [402, { error: { type: "card_error", code: "card_declined", message: "Your card was declined." } }];
@@ -216,12 +272,19 @@ export class FakeStripe {
       Object.assign(inv, { status: "paid", amount_paid: inv.total, amount_due: 0 });
       return [200, this.view(inv)];
     }
+    if ((m = path.match(/^\/invoices\/([^/]+)$/)) && method === "DELETE") {
+      const inv = this.invoices.get(m[1]);
+      if (!inv) return notFound;
+      if (inv.status !== "draft") return [400, { error: { message: "fake-stripe: only a draft invoice can be deleted" } }];
+      this.invoices.delete(m[1]);
+      return [200, { id: m[1], object: "invoice", deleted: true }];
+    }
     if ((m = path.match(/^\/invoices\/([^/]+)$/)) && method === "GET") {
       const inv = this.invoices.get(m[1]);
       return inv ? [200, this.view(inv)] : notFound;
     }
     if (path === "/invoices" && method === "GET") {
-      const data = [...this.invoices.values()].filter((i) => i.customer === p.customer).reverse().slice(0, Number(p.limit ?? 10)).map((i) => this.view(i));
+      const data = [...this.invoices.values()].filter((i) => !p.customer || i.customer === p.customer).reverse().slice(0, Number(p.limit ?? 10)).map((i) => this.view(i));
       return [200, { object: "list", data, has_more: false }];
     }
     return notFound;
