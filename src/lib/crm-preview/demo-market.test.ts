@@ -175,3 +175,48 @@ test("the Edit form's custom fields: set, changed, cleared — on the Demo's own
   assert.equal(other.ok, false);
   assert.deepEqual(fake.rows("client_pipeline_entries").find((x) => x.id === theirs.id)!.custom_fields_overrides, {});
 });
+
+test("a real client's Prospects: campaign agents and the ones moved from Market as one list — in order, paged, each once, both counted", async () => {
+  const { mergeProspects } = await import("./demo-market.ts");
+  type Row = Parameters<typeof mergeProspects>[1][number];
+  const vol = (id: string, sales_volume: number | null) => agent(id, { sales_volume }) as unknown as Row;
+  const byVolume = { ...parseMarketQuery(new URLSearchParams("sort=volume&dir=desc")), per: 2 };
+  // The campaigns' first rows, in the database's order (9, 7, 5 …) of 10 in all; two agents moved there (8 and 1).
+  const top = { rows: [vol("c9", 9), vol("c7", 7), vol("c5", 5), vol("c3", 3)], total: 10, salesVolume: 40 };
+  const moved = [vol("m1", 1), vol("m8", 8)];
+  const p1 = mergeProspects(top, moved, byVolume, 0);
+  assert.deepEqual(p1.rows.map((r) => r.id), ["c9", "m8"], "a moved agent takes its place in the order");
+  assert.equal(p1.total, 12);
+  assert.equal(p1.salesVolume, 49);
+  assert.deepEqual(mergeProspects(top, moved, byVolume, 2).rows.map((r) => r.id), ["c7", "c5"], "page 2 carries on from page 1");
+  // Already among the campaign rows: once, and counted once.
+  const dup = mergeProspects(top, [vol("c7", 7), vol("m8", 8)], byVolume, 0);
+  assert.equal(dup.total, 11);
+  assert.deepEqual(mergeProspects(top, [vol("c7", 7), vol("m8", 8)], { ...byVolume, per: 10 }, 0).rows.map((r) => r.id), ["c9", "m8", "c7", "c5", "c3"]);
+  // Blanks last; by name, A to Z.
+  const blank = mergeProspects({ rows: [vol("c2", 2)], total: 1, salesVolume: 2 }, [vol("mx", null)], { ...byVolume, per: 5 }, 0);
+  assert.deepEqual(blank.rows.map((r) => r.id), ["c2", "mx"]);
+  const byName = { ...parseMarketQuery(new URLSearchParams("sort=name&dir=asc")), per: 5 };
+  const named = mergeProspects({ rows: [agent("b", { full_name: "Bea" }) as unknown as Row, agent("d", { full_name: "Dan" }) as unknown as Row], total: 2, salesVolume: 0 }, [agent("c", { full_name: "Cal" }) as unknown as Row], byName, 0);
+  assert.deepEqual(named.rows.map((r) => r.full_name), ["Bea", "Cal", "Dan"]);
+});
+
+test("Prospects pages never repeat or skip an agent, even where the database orders text its own way (31 Oct review)", async () => {
+  const { mergeProspects } = await import("./demo-market.ts");
+  type Row = Parameters<typeof mergeProspects>[1][number];
+  // The database's order by brokerage A to Z: two blank brokerages FIRST (Postgres), which this code would put last.
+  const db = [...["", ""], ...Array.from({ length: 23 }, (_, i) => `Brand ${String(i).padStart(2, "0")}`)].map((brand, i) => agent(`c${i}`, { brand }) as unknown as Row);
+  const moved = [agent("m1", { brand: "Brand 10x" }) as unknown as Row, agent("m2", { brand: "" }) as unknown as Row];
+  const q = { ...parseMarketQuery(new URLSearchParams("sort=brokerage&dir=asc")), per: 5 };
+  const seen: string[] = [];
+  for (let page = 1; page <= 6; page++) {
+    const offset = (page - 1) * q.per;
+    // Each page asks the database for its first offset + per, as prospectsPage does.
+    const p = mergeProspects({ rows: db.slice(0, offset + q.per), total: db.length, salesVolume: 0 }, moved, q, offset);
+    assert.equal(p.total, 27);
+    seen.push(...p.rows.map((r) => r.id));
+  }
+  assert.equal(seen.length, 27);
+  assert.equal(new Set(seen).size, 27, "no agent twice");
+  assert.deepEqual(seen.filter((id) => id.startsWith("c")), db.map((r) => r.id), "the campaign agents in the database's own order");
+});

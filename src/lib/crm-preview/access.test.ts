@@ -153,13 +153,17 @@ test("read-only: nothing in the preview writes to a database or calls a server a
 /*
  * portal-save.ts writes through the current portal's own handlers. Its few writes of its own are Market's Move to
  * (adding to My Agents / the DNC List, and noting how each block went) and, after a bulk stage move, taking agents out
- * of a custom stage — nothing else, never a delete (a removal is the current portal's own), never the clients table.
+ * of a custom stage — nothing else, never a delete of a client's rows (a removal is the current portal's own), never
+ * the clients table. Since 31 Oct also Move to Prospects: the agent's id on os_demo_prospects, and off it again.
  */
-test("a real portal's own writes: exactly these tables, never a delete, never `clients`", () => {
+test("a real portal's own writes: exactly these tables, never a delete of a client's rows, never `clients`", () => {
   const src = read(PORTAL_WRITER);
-  assert.doesNotMatch(src, /\.upsert\(|\.delete\(|["']use server["']|\.rpc\(/);
+  assert.doesNotMatch(src, /\.upsert\(|["']use server["']|\.rpc\(/);
   const writes = [...src.matchAll(/\.from\(([^)]+)\)\s*\.(insert|update)\(/g)].map((m) => `${m[1]}.${m[2]}`).sort();
-  assert.deepEqual(writes, ['"client_agents".insert', '"client_dnc_entries".insert', '"client_pipeline_entries".update', '"os_market_dnc_emails".insert', "table.update"]);
+  assert.deepEqual(writes, ['"client_agents".insert', '"client_dnc_entries".insert', '"client_pipeline_entries".update', '"os_demo_prospects".insert', '"os_market_dnc_emails".insert', "table.update"]);
+  // The one delete (31 Oct): agents leaving the Prospects they were moved to — the OS's own list, only this portal's rows.
+  assert.equal((src.match(/\.delete\(/g) ?? []).length, 1);
+  assert.match(src, /\.from\("os_demo_prospects"\)\.delete\(\)\.eq\("portal_id", C\)\.in\("agent_id", /);
   // The custom-stage clear: only that column, only this portal's agents.
   assert.match(src, /\.from\("client_pipeline_entries"\)\.update\(\{ custom_stage_key: null \}\)\.eq\("client_id", client\.id\)/);
   // How a block went: only the push columns, by the row just added.

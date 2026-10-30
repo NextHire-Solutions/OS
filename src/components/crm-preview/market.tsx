@@ -29,7 +29,7 @@ type Mls = { matched: Array<{ code: string; name: string }>; unmatched: string[]
  */
 function definition(list: "market" | "prospects", client: string | null, mls: Mls | null, titles?: readonly string[] | null): string | null {
   if (!client) return null;
-  if (list === "prospects") return `Prospects here = the agents in ${client}'s lists in the agent database (its campaign leads).`;
+  if (list === "prospects") return `Prospects here = the agents in ${client}'s lists in the agent database (its campaign leads), and any moved here from Market (listed only — never added to a campaign).`;
   if (!mls) return null;
   const codes = mls.matched.map((m) => m.code).join(", ");
   const missing = mls.unmatched.length ? ` Not in the agent database, so not counted: ${mls.unmatched.join(", ")}.` : "";
@@ -473,8 +473,6 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   // Moves agents between the lists where this viewer may change the portal (demo-save.ts `live`; the Demo: demo-market.ts).
   const { live, demo, save, say } = useDemo();
-  // A real portal's Prospects are the agents in its campaigns — shown, never chosen here (28 Oct); the Demo keeps its own.
-  const canProspect = demo || !live;
   const [moving, setMoving] = useState(false);
   const [reload, setReload] = useState(0);
 
@@ -517,7 +515,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       const who = n === 1 ? "this agent" : `${n.toLocaleString("en-US")} agents`;
       const ask = to === "DNC List" ? `Add ${who} to your DNC List? We'll stop emailing them in every campaign. This can't be undone.`
         : to === "My Agents" ? `Add ${who} to My Agents? We'll never email them in any campaign. This can't be undone.`
-        : `Take ${who} off My Agents and your DNC List?`;
+        : to === "Prospects" ? `Add ${who} to your Prospects? Anyone on My Agents, your DNC List or your pipeline stays there.`
+        : `Take ${who} off My Agents, your DNC List and your Prospects?`;
       if (!window.confirm(ask)) return;
     }
     const sp = new URLSearchParams({ sort: sort.key, dir: sort.dir });
@@ -527,8 +526,9 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
     const ok = await save(one ? { type: "market.move", ids: [one], to } : allPicked ? { type: "market.moveAll", list, query: sp.toString(), to } : { type: "market.move", ids: [...picked], to });
     setMoving(false);
     if (ok) {
-      // Shown at once; the reload (from the agent database, a few seconds) then confirms it.
-      const moved = one ? [one] : allPicked ? null : [...picked];
+      // Shown at once; the reload (from the agent database, a few seconds) then confirms it. Not to a real client's
+      // Prospects: anyone on another list stays there, so only the reload knows who moved.
+      const moved = allPicked || (to === "Prospects" && !demo) ? null : one ? [one] : [...picked];
       if (moved) setState((st) => (st.data ? { ...st, data: { ...st.data, rows: st.data.rows.map((r) => (moved.includes(String(r.id)) ? { ...r, list: to, pill: LIST_PILL[to] } : r)) } } : st));
       setPicked(new Set());
       setAllPicked(false);
@@ -546,8 +546,12 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
     document.addEventListener("keydown", close);
     return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
   }, [rowMenu]);
-  // A new list, search or filter starts with nothing ticked.
-  useEffect(() => { setPicked(new Set()); setAllPicked(false); }, [list, q, fKey]);
+  /*
+   * Ticked agents stay ticked through a new search or filter (31 Oct, the user: "when we select any agents and search
+   * something new, the already selected agents gets unselected"), so a list can be gathered across searches. Only
+   * "Select all that match" ends there: it meant the agents matching the search before.
+   */
+  useEffect(() => { setAllPicked(false); }, [q, fKey]);
 
   const onSort = (by: SortKey) => { setSort((cur) => (cur.key === by ? { key: by, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: by, dir: FIRST_DIR[by] })); setPage(1); };
   const any = anyPicks(f);
@@ -562,8 +566,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const isPicked = (id: string) => allPicked || picked.has(id);
   const pageAll = rowIds.length > 0 && rowIds.every(isPicked);
   const pickRows = (ids: string[], on: boolean) => {
-    // Unticking one of "all that match" leaves the rest of this page ticked.
-    if (allPicked) { setAllPicked(false); setPicked(new Set(on ? rowIds : rowIds.filter((x) => !ids.includes(x)))); return; }
+    // Unticking one of "all that match" leaves the rest of this page ticked — and the agents ticked in earlier searches.
+    if (allPicked) { setAllPicked(false); setPicked((cur) => withIds(withIds(cur, rowIds, true), ids, on)); return; }
     setPicked((cur) => withIds(cur, ids, on));
   };
   const selected = allPicked ? total : picked.size;
@@ -607,8 +611,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
             <section className={k("card ec")}>
               <span className={k("ei")}><Icon name="target" size={22} /></span>
               <h2>No prospects yet</h2>
-              {/* Prospects are the agents in the client's campaigns — shown, not chosen (28 Oct, the user). */}
-              <p>We&apos;re building your first campaign. The agents we email will show here once it&apos;s&nbsp;ready.</p>
+              {/* The agents in the client's campaigns, and any it moves here from Market (31 Oct). */}
+              <p>We&apos;re building your first campaign. The agents we email will show here once it&apos;s ready, and so will any you add from your&nbsp;market.</p>
               <div className={k("ea")}>
                 <button type="button" className={k("btn")} onClick={onOpenMarket}><Icon name="search" size={15} />Look through your market</button>
               </div>
@@ -665,8 +669,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                 {!allPicked && pageAll && total > rowIds.length ? <button type="button" className="cpv-link" onClick={() => setAllPicked(true)}>Select all {total.toLocaleString("en-US")} that match</button> : null}
                 <span style={{ width: 1, height: 18, background: "#d9e1f2", margin: "0 4px" }} />
                 <span style={{ fontSize: 12, color: "#555a64" }}>Move to</span>
-                {/* Not on Prospects itself: they are there already (24 Oct, the user). */}
-                {list === "market" && canProspect ? <button className={k("btn sm pri")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Prospects") : undefined}><Icon name="plus" size={13} />Prospects</button> : null}
+                {/* Not on Prospects itself: they are there already (24 Oct, the user). A real client's too, since 31 Oct — listed, never added to a campaign. */}
+                {list === "market" ? <button className={k("btn sm pri")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Prospects") : undefined}><Icon name="plus" size={13} />Prospects</button> : null}
                 <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("My Agents") : undefined}><Icon name="users" size={13} />My Agents</button>
                 <button className={k("btn sm")} type="button" style={{ color: "#b42318" }} disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("DNC List") : undefined}><Icon name="ban" size={13} />DNC List</button>
                 <button className={k("btn sm")} type="button" disabled={moving} {...lock(live)} onClick={live ? () => void moveAgents("Not on a list") : undefined}><Icon name="x" size={13} />Remove from all lists</button>
@@ -723,7 +727,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                           {rowMenu === String(r.id) ? (
                             <div className={k("mmenu")} role="menu" style={{ top: 36, right: "0", width: 200 }}>
                               <div style={{ padding: "6px 10px 4px", fontSize: 11, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.04em" }}>Move to list</div>
-                              {MOVE_LISTS.filter((l) => l !== "Prospects" || canProspect).map((l) => (
+                              {MOVE_LISTS.map((l) => (
                                 <button
                                   key={l}
                                   type="button"

@@ -513,7 +513,8 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
 /*
  * Who we email (28 Oct, the user): the client's market to look through with Market's filters, and their prospects —
  * the agents in their campaigns, shown and never chosen here ("we will not add prospect leads to campaigns. we just
- * need to show the prospects data to client"). A new client has no campaign yet: the step says so and they carry on.
+ * need to show the prospects data to client"), and since 31 Oct any they moved there from Market (listed only). A new
+ * client has no campaign yet: the step says so and they carry on.
  * Nothing here saves, the Demo Portal included, so a demo shows what a client gets.
  */
 function TargetStep({ clientId }: { clientId: string }) {
@@ -538,7 +539,7 @@ function TargetStep({ clientId }: { clientId: string }) {
   const noProspects = !prospectsAll.loading && (prospectsAll.total ?? 0) === 0;
   return (
     <>
-      <Head step={4} title="Who we email" text={"Every active agent in your market — filter to look through it. Your prospects are the agents in your campaigns. My Agents and your DNC List are always left out."} />
+      <Head step={4} title="Who we email" text={"Every active agent in your market — filter to look through it. Your prospects are the agents in your campaigns, and any you add from Market. My Agents and your DNC List are always left out."} />
       <div className={k("card")}>
         <Tabs tabs={[{ id: "market", label: "All agents in your market", count: all.total }, { id: "prospects", label: "Prospects", count: prospectsAll.total }]} on={tab} onTab={setTab} />
         {tab === "prospects" && noProspects ? (
@@ -560,7 +561,7 @@ function TargetStep({ clientId }: { clientId: string }) {
             </div>
             <div className={k("sbulk idle")}>
               {tab === "prospects" ? (
-                <span className={k("bt")}><b className={k("num")}>{fmt(prospectsAll.total ?? 0)}</b>{" "}prospects — the agents we email{any && prospects.total !== null && !prospects.loading ? <> ·{" "}<span className={k("sub")}>{fmt(prospects.total)} match</span></> : null}</span>
+                <span className={k("bt")}><b className={k("num")}>{fmt(prospectsAll.total ?? 0)}</b>{" "}prospects{any && prospects.total !== null && !prospects.loading ? <> ·{" "}<span className={k("sub")}>{fmt(prospects.total)} match</span></> : null}</span>
               ) : !any ? (
                 <span className={k("bt")}><b className={k("num")}>{all.total === null ? "…" : fmt(marketTotal)}</b>{" "}active agents in your market ·{" "}<span className={k("sub")}>filter to look through it</span></span>
               ) : counted ? (

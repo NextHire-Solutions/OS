@@ -154,7 +154,7 @@ function seed(opts: { flags?: Record<string, unknown>; fubKey?: string | null; e
     { client_id: PORTAL, kind: "company", name: "Big Co", email: "keep@bigco.test", phone: "555-0100", domain: "bigco.test", notes: null, dedup_key: "bigco.test" },
     { client_id: OTHER, kind: "agent", name: "Their DNC", email: "their.dnc@x.test", domain: null, dedup_key: "their.dnc@x.test" },
   ]);
-  for (const t of ["client_pipeline_notes", "client_pipeline_stages", "os_portal_offers"]) fake.seed(t, []);
+  for (const t of ["client_pipeline_notes", "client_pipeline_stages", "os_portal_offers", "os_demo_prospects"]) fake.seed(t, []);
   return { mineEntry, intro, theirsEntry, member, otherMember, myAgent, theirAgent, myCompany, theirDnc };
 }
 
@@ -484,12 +484,39 @@ test("Market → My Agents takes them off the DNC List (by name where it has no 
   assert.equal(sentOf("stop").length, 0);
 });
 
-test("Market: Prospects are never added on a real portal; at most 500 a move; Not on a list only takes off", { skip }, async () => {
+test("Market: to Prospects only lists the agent — no block, no campaign, nothing sent; anyone on a list stays there", { skip }, async () => {
+  seed();
+  agentDb = [agent("a1", "My Agent", ["my.agent@x.test", null]), agent("a2", "New Prospect", ["new.prospect@x.test", null]), agent("a3", "Big Co Agent", ["sam@bigco.test", null])];
+  const r = await run({ type: "market.move", ids: ["a1", "a2", "a3"], to: "Prospects" });
+  okResult(r);
+  assert.match(r.ok ? r.message ?? "" : "", /^New Prospect moved to Prospects\. 2 on My Agents, your DNC List or your pipeline stayed there\.$/);
+  const mine = () => fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).map((x) => x.agent_id);
+  assert.deepEqual(mine(), ["a2"], "only the agent on no list; My Agent and the DNC'd company's agent stay where they are");
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL).length, 1, "My Agents untouched");
+  assert.equal(fake.rows("client_dnc_entries").filter((x) => x.client_id === PORTAL).length, 1, "the DNC List untouched");
+  // Again: already there, not added twice.
+  okResult(await run({ type: "market.move", ids: ["a2"], to: "Prospects" }));
+  assert.deepEqual(mine(), ["a2"]);
+  await settle();
+  assert.deepEqual(sent.map((x) => x.what), ["usage", "usage"], "nothing blocked, stopped, posted or alerted — only counted as Market use");
+  // Moved on to another list, or off every list: off Prospects too. Another portal's prospects are never touched.
+  // (seed replaces the whole table, so this portal's rows are seeded with the other's.)
+  const both = (ids: string[]) => fake.seed("os_demo_prospects", [...ids.map((id) => ({ portal_id: PORTAL, agent_id: id, added_by: "x" })), { portal_id: OTHER, agent_id: "a2", added_by: "someone" }, { portal_id: OTHER, agent_id: "a4", added_by: "someone" }]);
+  both(["a2", "a4"]);
+  assert.deepEqual(mine().sort(), ["a2", "a4"]);
+  okResult(await run({ type: "market.move", ids: ["a2"], to: "Not on a list" }));
+  assert.deepEqual(mine(), ["a4"], "only the agent moved");
+  agentDb.push(agent("a4", "Fourth Agent", ["fourth@x.test", null]));
+  okResult(await run({ type: "market.move", ids: ["a4"], to: "My Agents" }));
+  assert.deepEqual(mine(), [], "on to My Agents: off Prospects");
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL && x.name === "Fourth Agent").length, 1);
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === OTHER).length, 2, "the other portal's prospects untouched");
+});
+
+test("Market: at most 500 a move; Not on a list only takes off", { skip }, async () => {
   seed();
   agentDb = [agent("a1", "My Agent", ["my.agent@x.test", null])];
-  let r = await run({ type: "market.move", ids: ["a1"], to: "Prospects" });
-  assert.equal(r.ok, false);
-  r = await run({ type: "market.move", ids: Array.from({ length: 501 }, (_, i) => `a${i}`), to: "DNC List" });
+  let r = await run({ type: "market.move", ids: Array.from({ length: 501 }, (_, i) => `a${i}`), to: "DNC List" });
   assert.equal(r.ok, false);
   assert.match(r.ok ? "" : r.error, /500 or fewer/);
   matching = { ids: ["a1"], total: 501 };

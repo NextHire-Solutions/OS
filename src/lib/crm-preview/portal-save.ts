@@ -39,7 +39,7 @@ import * as teamCsvRoute from "@/lib/tools/master-inbox/portal-routes/team/csv/r
 import * as fubRoute from "@/lib/tools/master-inbox/portal-routes/followup-boss/route";
 
 import { demoAction, imported, introAt, saveOffer, type Db, type DemoAction, type DemoResult } from "./demo";
-import { agentsByIds, emailsOf, lower, marketAction, type AgentRow, type MarketAction } from "./demo-market";
+import { agentsByIds, demoProspectIds, emailsOf, lower, marketAction, type AgentRow, type MarketAction } from "./demo-market";
 import { marketContext, matchingIds } from "./market";
 import { parseMarketQuery, personKey } from "./market-model";
 
@@ -62,7 +62,11 @@ import { parseMarketQuery, personKey } from "./market-model";
  *     keep emails hidden"): the entry is saved by name (and brokerage, on the DNC List) — never the agent database's
  *     email or phone — and the agent's PREFERRED email is blocked as an added address is (on the DNC List also
  *     stopped, and kept in os_market_dnc_emails for the reply agent and the relay); at most PORTAL_MAX_MOVE agents a
- *     move, each counted as Market use. Prospects are a client's campaign leads — never added from here.
+ *     move, each counted as Market use;
+ *   - Market's "Move to" Prospects (31 Oct, the user: "we just need to move the agents to prospects view. we do not
+ *     have to add them in campaigns"): the agent's id on the portal's Prospects (os_demo_prospects — the Demo's table,
+ *     keyed by portal) and nothing else — no campaign, no block, no email. An agent on My Agents, the DNC List or the
+ *     pipeline stays where it is (left out, as the Setup wizard's moves leave it).
  *
  * Imports: the browser maps the file with the current portal's own mapper (portals/csv.ts) and sends the rows. A row
  * the current import would refuse is skipped and named, rather than failing the whole file; the rest go through the
@@ -627,7 +631,9 @@ async function blockAll(table: "client_agents" | "client_dnc_entries", rows: Arr
  */
 async function moveAgents({ client, token }: Portal, a: MarketAction, who: string, role: "client" | "staff"): Promise<DemoResult> {
   const C = client.id;
-  if (a.to === "Prospects") return { ok: false, status: 400, error: "Prospects are the leads in your campaigns — agents aren't added to them from here." };
+  const toProspects = a.to === "Prospects";
+  // To Prospects, only agents on none of the client's lists (a DNC or My Agents entry is never undone from here).
+  const unlistedOnly = a.onlyUnlisted || toProspects;
   let ids: string[];
   if (a.type === "market.move") {
     if (a.ids.length > PORTAL_MAX_MOVE) return { ok: false, status: 409, error: `That's ${a.ids.length.toLocaleString("en-US")} agents — move ${PORTAL_MAX_MOVE.toLocaleString("en-US")} or fewer at once.` };
@@ -653,10 +659,11 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
   const [mine, dnc, pipeline] = await Promise.all([
     all<{ id: string; name: string | null; email: string | null; notes: string | null }>("client_agents", "id, name, email, notes"),
     all<{ id: string; kind: string; name: string | null; email: string | null; domain: string | null; notes: string | null }>("client_dnc_entries", "id, kind, name, email, domain, notes"),
-    a.onlyUnlisted ? all<{ id: string; lead_name: string | null; lead_email: string | null }>("client_pipeline_entries", "id, lead_name, lead_email") : Promise.resolve([]),
+    unlistedOnly ? all<{ id: string; lead_name: string | null; lead_email: string | null }>("client_pipeline_entries", "id, lead_name, lead_email") : Promise.resolve([]),
   ]);
 
-  if (a.onlyUnlisted) {
+  const asked = agents.length;
+  if (unlistedOnly) {
     const people = [
       ...mine,
       ...dnc.filter((d) => d.kind === "agent"),
@@ -667,6 +674,23 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     const domains = new Set(dnc.filter((d) => d.kind === "company").map((d) => lower(d.domain).replace(/^@/, "")).filter(Boolean));
     agents = agents.filter((ag) => !emailsOf(ag).some((e) => listedEmails.has(e) || domains.has(e.split("@")[1] ?? "")) && !listedNames.has(personKey(ag.full_name)));
     if (!agents.length) return { ok: true, message: "They're all on My Agents, your DNC List or your pipeline already — left out, as always." };
+  }
+
+  if (toProspects) {
+    // Already there: left as it was (who added it, and when).
+    const there = await demoProspectIds(db as unknown as Db, C).catch(() => null);
+    if (there === null) return { ok: false, status: 400, error: TRY_AGAIN };
+    const have = new Set(there);
+    const fresh = agents.filter((ag) => !have.has(ag.id));
+    if (fresh.length) {
+      const { error } = await db.from("os_demo_prospects").insert(fresh.map((ag) => ({ portal_id: C, agent_id: ag.id, added_by: who })));
+      if (error) return { ok: false, status: 400, error: TRY_AGAIN };
+    }
+    after(() => recordUse(createAdminSupabase(), { who, role, portalId: C, kind: "market", rows: agents.length, now: new Date() }));
+    const left = asked - agents.length;
+    const moved1 = agents.length === 1 ? (agents[0].full_name ?? "1 agent") : `${agents.length.toLocaleString("en-US")} agents`;
+    console.info(JSON.stringify({ tag: "[crm-preview] market move", who, client: C, to: a.to, agents: agents.length, leftOut: left }));
+    return { ok: true, message: `${moved1} moved to Prospects.${left ? ` ${left.toLocaleString("en-US")} on My Agents, your DNC List or your pipeline stayed there.` : ""}` };
   }
 
   // An agent is recognised on a list by its PREFERRED address (or, where an entry has none, by name): the enriched one is
@@ -765,6 +789,12 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
   if (offDnc.length) {
     const r = await inParts(offDnc.map((x) => x.id), (part) => call(dncBulkRoute.POST, "POST", { token }, { ids: part }));
     if (!r.ok) return onto ? unfinished : r;
+  }
+  // And off Prospects — the agents moved there; one in the client's campaigns stays a prospect while it is in them. The
+  // one delete of this file's own: the OS's own list, this portal's rows, with no current-portal equivalent or side effect.
+  for (let i = 0; i < agents.length; i += 100) {
+    const { error } = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", agents.slice(i, i + 100).map((ag) => ag.id));
+    if (error) return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };
   }
 
   console.info(JSON.stringify({ tag: "[crm-preview] market move", who, client: C, to: a.to, agents: agents.length, added: adding.length, offMine: offMine.length, offDnc: offDnc.length }));

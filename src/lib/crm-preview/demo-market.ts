@@ -169,14 +169,43 @@ const SORT_FIELD: Record<MarketQuery["sort"], (a: AgentRow) => string | number |
   title: (a) => a.title, volume: (a) => a.sales_volume, units: (a) => a.units,
 };
 
-export function sortProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
+/** The page's order for agents sorted here: by the sort's field, blanks last either way. */
+function prospectOrder(q: MarketQuery): (a: AgentRow, b: AgentRow) => number {
   const get = SORT_FIELD[q.sort];
   const dir = q.dir === "asc" ? 1 : -1;
-  return [...rows].sort((a, b) => {
+  return (a, b) => {
     const x = get(a), y = get(b);
-    // Blanks last, either way.
     if (x === null || x === "") return y === null || y === "" ? 0 : 1;
     if (y === null || y === "") return -1;
     return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y))) * dir;
-  });
+  };
+}
+
+export function sortProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
+  return [...rows].sort(prospectOrder(q));
+}
+
+/**
+ * One page of a real client's Prospects (31 Oct): its campaigns' agents — `top`, the first offset + per of them in the
+ * database's order, which is all any page needs — and the agents it moved there from Market, each agent once. The
+ * totals count both.
+ *
+ * The campaign agents keep the database's own order and the moved ones are slotted in between them — never all
+ * re-sorted here: the database orders text its own way (a blank brokerage first, A to Z), and re-sorting a longer
+ * stretch for each later page repeated agents on two pages and skipped others (review, 31 Oct). Merged this way,
+ * every page is a slice of the same one list.
+ */
+export function mergeProspects(top: { rows: AgentRow[]; total: number; salesVolume: number }, moved: readonly AgentRow[], q: MarketQuery, offset: number): { rows: AgentRow[]; total: number; salesVolume: number } {
+  const seen = new Set(top.rows.map((a) => a.id));
+  const extra = sortProspects(moved.filter((a) => !seen.has(a.id)), q);
+  const order = prospectOrder(q);
+  const out: AgentRow[] = [];
+  for (let i = 0, j = 0; out.length < offset + q.per && (i < top.rows.length || j < extra.length);) {
+    out.push(j < extra.length && (i >= top.rows.length || order(extra[j], top.rows[i]) < 0) ? extra[j++] : top.rows[i++]);
+  }
+  return {
+    rows: out.slice(offset, offset + q.per),
+    total: top.total + extra.length,
+    salesVolume: top.salesVolume + extra.reduce((t, a) => t + (a.sales_volume ?? 0), 0),
+  };
 }
