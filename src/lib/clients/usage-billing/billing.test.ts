@@ -62,21 +62,9 @@ function seed(o: { acmeSettings?: Row | null; betaSettings?: Row | null; periods
     ...(o.betaSettings ? [{ os_client_id: BETA, ...base, test_only: false, ...o.betaSettings }] : []),
   ]);
   db.seed("os_usage_billing_periods", (o.periods ?? []).map((r) => ({ test_mode: true, ...r })));
-  const relay = (r: Row) => ({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: ACME, thread_id: crypto.randomUUID(), ...r });
+  // A hand-off the brokerage relay sent is NOT a lead by itself (31 Oct): only a conversation marked Interested is.
   db.seed("os_brokerage_relays", [
-    relay({ agent_email: "Jordan@Coastal.test", agent_name: "Jordan Ellis", sent_at: "2026-10-06T14:00:00.000Z" }),
-    relay({ agent_email: "sam@harbor.test", agent_name: "Sam Lee", sent_at: "2026-10-07T18:30:00.000Z" }),
-    // Sunday 10 p.m. Eastern = Monday in UTC: still the week of Oct 5.
-    relay({ agent_email: "pat@bay.test", agent_name: "Pat Kim", sent_at: "2026-10-12T02:00:00.000Z" }),
-    // Never billable:
-    relay({ agent_email: "jordan@coastal.test", agent_name: "Jordan again", sent_at: "2026-10-09T10:00:00.000Z" }), // same agent, same week
-    relay({ agent_email: "practice@x.test", agent_name: "Practice", sent_at: "2026-10-06T15:00:00.000Z", practice: true, status: "practice" }),
-    relay({ agent_email: "held@x.test", agent_name: "Held", sent_at: null, status: "held" }),
-    relay({ agent_email: "failed@x.test", agent_name: "Failed", sent_at: "2026-10-06T16:00:00.000Z", status: "failed" }),
-    relay({ agent_email: "later@x.test", agent_name: "Follow up", sent_at: "2026-10-06T17:00:00.000Z", kind: "follow_up" }),
-    relay({ agent_email: "beta@x.test", agent_name: "Beta's", sent_at: "2026-10-06T17:00:00.000Z", os_client_id: BETA }),
-    relay({ agent_email: "early@x.test", agent_name: "Before", sent_at: "2026-10-05T03:59:00.000Z" }), // Oct 4, Eastern
-    relay({ agent_email: "next@x.test", agent_name: "Next week", sent_at: "2026-10-12T04:00:00.000Z" }), // Oct 12, Eastern
+    { workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: ACME, thread_id: "relay-only", agent_email: "relay@x.test", agent_name: "Relay Only", sent_at: "2026-10-06T15:00:00.000Z" },
   ]);
   db.seed("client_pipeline_entries", [
     { client_id: BOSTON, thread_id: "t1", lead_name: "Ivy Intro", lead_email: "ivy@x.test", source: "Introduction", introduced_at: "2026-10-06T12:00:00.000Z" },
@@ -91,20 +79,41 @@ function seed(o: { acmeSettings?: Row | null; betaSettings?: Row | null; periods
     { id: "l1", email: "Cal@Call.test", full_name: "Cal Caller" },
     { id: "l2", email: "dee@call.test", full_name: "Dee Dialer" },
     { id: "l3", email: "beta-call@x.test", full_name: "Beta's Call" },
-    { id: "l4", email: "int@x.test", full_name: "Only Interested" },
+    // Interested replies (the "per lead" products):
+    { id: "l5", email: "Jordan@Coastal.test", full_name: "Jordan Ellis" },
+    { id: "l6", email: "sam@harbor.test", full_name: "Sam Lee" },
+    { id: "l7", email: "pat@bay.test", full_name: "Pat Kim" },
+    { id: "l8", email: "jordan@coastal.test", full_name: "Jordan again" },
+    { id: "l9", email: "beta@x.test", full_name: "Beta's" },
+    { id: "l10", email: "early@x.test", full_name: "Before" },
+    { id: "l11", email: "next@x.test", full_name: "Next week" },
   ]);
   db.seed("threads", [
     { id: "th1", client_id: BOSTON, lead_id: "l1" },
     { id: "th2", client_id: FLORIDA, lead_id: "l2" },
     { id: "th3", client_id: LIVE, lead_id: "l3" },
-    { id: "th4", client_id: BOSTON, lead_id: "l4" },
     { id: "th5", client_id: BOSTON, lead_id: "l1" },
+    { id: "ti-jordan", client_id: BOSTON, lead_id: "l5" },
+    { id: "ti-sam", client_id: FLORIDA, lead_id: "l6" }, // the alias portal
+    { id: "ti-pat", client_id: BOSTON, lead_id: "l7" },
+    { id: "ti-jordan2", client_id: BOSTON, lead_id: "l8" },
+    { id: "ti-beta", client_id: LIVE, lead_id: "l9" },
+    { id: "ti-early", client_id: BOSTON, lead_id: "l10" },
+    { id: "ti-next", client_id: BOSTON, lead_id: "l11" },
   ]);
   db.seed("label_assignments", [
     { label_id: "lab-mb", target_type: "thread", target_id: "th1", assigned_at: "2026-10-06T15:00:00.000Z" },
     { label_id: "lab-mb", target_type: "thread", target_id: "th2", assigned_at: "2026-10-09T15:00:00.000Z" },
     { label_id: "lab-mb", target_type: "thread", target_id: "th3", assigned_at: "2026-10-09T15:00:00.000Z" }, // Beta's portal
-    { label_id: "lab-int", target_type: "thread", target_id: "th4", assigned_at: "2026-10-09T15:00:00.000Z" }, // Interested only
+    { label_id: "lab-int", target_type: "thread", target_id: "ti-jordan", assigned_at: "2026-10-06T14:00:00.000Z" },
+    { label_id: "lab-int", target_type: "thread", target_id: "ti-sam", assigned_at: "2026-10-07T18:30:00.000Z" },
+    // Sunday 10 p.m. Eastern = Monday in UTC: still the week of Oct 5.
+    { label_id: "lab-int", target_type: "thread", target_id: "ti-pat", assigned_at: "2026-10-12T02:00:00.000Z" },
+    // Never billable this week:
+    { label_id: "lab-int", target_type: "thread", target_id: "ti-jordan2", assigned_at: "2026-10-09T10:00:00.000Z" }, // same agent, same week
+    { label_id: "lab-int", target_type: "thread", target_id: "ti-beta", assigned_at: "2026-10-06T17:00:00.000Z" }, // Beta's portal
+    { label_id: "lab-int", target_type: "thread", target_id: "ti-early", assigned_at: "2026-10-05T03:59:00.000Z" }, // Oct 4, Eastern
+    { label_id: "lab-int", target_type: "thread", target_id: "ti-next", assigned_at: "2026-10-12T04:00:00.000Z" }, // Oct 12, Eastern
     { label_id: "lab-mb", target_type: "thread", target_id: "th5", assigned_at: "2026-10-10T15:00:00.000Z" }, // Cal again
     { label_id: "lab-mb", target_type: "thread", target_id: "th1", assigned_at: "2026-10-13T15:00:00.000Z" }, // next week
   ]);
@@ -128,13 +137,14 @@ const writes = () => db.calls.filter((c) => c.method !== "GET" && c.method !== "
 
 /* ------------------------------------------------------------ lead sources --- */
 
-test("hand-offs: sent, live, in the Eastern week, once per agent — the preview writes nothing", async () => {
+test("per lead: conversations of the client's portals marked Interested, in the Eastern week, once per agent — nothing has to be sent; the preview writes nothing", async () => {
   seed();
   db.calls.length = 0;
   const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });
   assert.deepEqual(p.period, WEEK);
   assert.deepEqual(p.leads.map((l) => [l.key, l.name]), [["jordan@coastal.test", "Jordan Ellis"], ["sam@harbor.test", "Sam Lee"], ["pat@bay.test", "Pat Kim"]]);
-  assert.equal(p.skipped.length, 1, "Jordan's second hand-off");
+  assert.equal(p.skipped.length, 1, "Jordan's second Interested reply");
+  assert.ok(!p.leads.some((l) => l.key === "relay@x.test"), "a hand-off alone is not a lead");
   assert.equal(p.amountCents, 30_000);
   assert.deepEqual(p.lines.map((l) => l.description), ["Lead: Jordan Ellis — Oct 6, 2026", "Lead: Sam Lee — Oct 7, 2026", "Lead: Pat Kim — Oct 11, 2026"]);
   assert.equal(p.description, "Pay per lead · Oct 5 – Oct 11, 2026 · 3 leads × $100.00");
@@ -160,8 +170,8 @@ test("calls (the per-call products): conversations of the client's portals marke
   assert.deepEqual(writes(), []);
 });
 
-test("an alias equal to another client's portal name never bills that client's calls or introductions", async () => {
-  for (const source of ["calls", "introductions"]) {
+test("an alias equal to another client's portal name never bills that client's leads, calls or introductions", async () => {
+  for (const source of ["handoffs", "calls", "introductions"]) {
     seed({ acmeSettings: { lead_source: source } });
     // Acme's alias is the NAME of Beta's linked portal: by name alone it would look like Acme's.
     db.rows("os_clients").find((c) => c.id === ACME)!.aliases = ["Acme Florida", "Beta Homes"];
@@ -338,7 +348,7 @@ test("a refused card: the period is 'failed', the invoice open with its pay link
 test("no billable leads: the period is closed with nothing charged and Stripe is not asked", async () => {
   seed();
   await withCard();
-  db.seed("os_brokerage_relays", []);
+  db.seed("label_assignments", []);
   const r = await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW });
   assert.equal(r.outcome, "nothing");
   assert.equal(rowsOf()[0].status, "void");

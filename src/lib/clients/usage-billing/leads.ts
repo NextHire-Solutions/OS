@@ -10,8 +10,9 @@ import { DEFAULT_LEAD_SOURCE, leadKey, periodWindow, type BillableLead, type Lea
 /*
  * Pay per lead — WHERE THE LEADS COME FROM (26 Oct 2026).
  *
- * WHAT COUNTS AS A BILLABLE LEAD IS NOT DECIDED YET — the client is being
- * asked. So the source is a plain function,
+ * A lead is each Interested reply (decided 27 Oct by the client; 31 Oct the
+ * user: "we do not have to send conversations. interested lead means count
+ * that in for payment"). The source is a plain function,
  *
  *   billableLeads(osClientId, periodStart, periodEnd) → [{ key, name, at, source }]
  *
@@ -19,12 +20,13 @@ import { DEFAULT_LEAD_SOURCE, leadKey, periodWindow, type BillableLead, type Lea
  * there are three of them. Which one a client uses is its row's lead_source;
  * the default for new rows is DEFAULT_LEAD_SOURCE in model.ts — one line.
  *
- *   handoffs       (the default candidate) each Interested reply handed to
- *                  the client by the brokerage hand-off, once per agent:
- *                  os_brokerage_relays rows of this client with kind
- *                  'handoff', status 'sent', practice false, sent within the
- *                  period (migrations/0035, relay/relay.ts). Practice runs,
- *                  held, skipped, failed and bounced hand-offs never count.
+ *   handoffs       (the "per lead" products, the default) each conversation
+ *                  on the client's portals labelled "Interested" within the
+ *                  period, once per agent — the label the AI and the team put
+ *                  on an Interested reply. Nothing has to be sent to the
+ *                  client for it to count. Stored as 'handoffs' (the CHECK in
+ *                  migrations/0043): until 31 Oct a lead counted only once the
+ *                  brokerage hand-off had emailed the reply to the client.
  *   introductions  each entry WE put in the client's portal: Master Inbox's
  *                  client_pipeline_entries rows on any of the client's
  *                  portals whose source is not "Client Entry" (the client's
@@ -60,36 +62,6 @@ async function allPages(page: (from: number, to: number) => PromiseLike<{ data: 
 }
 
 const s = (v: unknown) => (typeof v === "string" ? v : "");
-
-/** The default candidate: Interested replies handed to the brokerage, live and sent, in the period. */
-export const handoffLeads: LeadSourceFn = async (osClientId, periodStart, periodEnd) => {
-  const w = periodWindow({ start: periodStart, end: periodEnd });
-  const rows = await allPages(
-    (from, to) =>
-      osTable("os_brokerage_relays")
-        .select("id, thread_id, agent_email, agent_name, sent_at")
-        .eq("os_client_id", osClientId)
-        .eq("kind", "handoff")
-        .eq("status", "sent")
-        .eq("practice", false)
-        .gte("sent_at", w.from)
-        .lt("sent_at", w.to)
-        .order("sent_at", { ascending: true })
-        .range(from, to),
-    "os_brokerage_relays",
-  );
-  return rows
-    .filter((r) => s(r.sent_at))
-    .map((r) => {
-      const email = leadKey(s(r.agent_email));
-      return {
-        key: email || `thread:${s(r.thread_id) || s(r.id)}`,
-        name: s(r.agent_name).trim() || email || "Agent",
-        at: new Date(s(r.sent_at)).toISOString(),
-        source: "handoff",
-      };
-    });
-};
 
 /**
  * The client's portals (Master Inbox `clients` rows) — only the ones that are
@@ -149,16 +121,17 @@ export const introductionLeads: LeadSourceFn = async (osClientId, periodStart, p
     });
 };
 
-/** The label that marks a booked call (labels.name, as open-responses.ts and the relay read it). */
+/** The labels that mark an Interested reply and a booked call (labels.name, as open-responses.ts and the relay read them). */
+const INTERESTED_LABEL = "Interested";
 const CALL_LABEL = "Meetings Booked";
 
-/** The "per call" products: conversations of the client's portals labelled Meetings Booked in the period. */
-export const callLeads: LeadSourceFn = async (osClientId, periodStart, periodEnd) => {
+/** Conversations of the client's portals given `label` in the period — each at the first time it was given it there. */
+const labelLeads = (label: string, source: string): LeadSourceFn => async (osClientId, periodStart, periodEnd) => {
   const portals = new Set(await portalsOf(osClientId));
   if (!portals.size) return [];
   const w = periodWindow({ start: periodStart, end: periodEnd });
   const mi = getMasterInboxSupabase();
-  const { data: labels, error } = await mi.from("labels").select("id").eq("name", CALL_LABEL);
+  const { data: labels, error } = await mi.from("labels").select("id").eq("name", label);
   if (error) throw new Error(`labels: ${error.message}`);
   const labelIds = ((labels ?? []) as Row[]).map((l) => s(l.id)).filter(Boolean);
   if (!labelIds.length) return [];
@@ -201,14 +174,19 @@ export const callLeads: LeadSourceFn = async (osClientId, periodStart, periodEnd
         key: email || `thread:${s(t.id)}`,
         name: s(lead?.full_name).trim() || email || "Agent",
         at: new Date(firstAt.get(s(t.id)) ?? w.from).toISOString(),
-        source: "call",
+        source,
       };
     })
     .sort((a, b) => a.at.localeCompare(b.at));
 };
 
+/** The "per lead" products: Interested replies. */
+export const interestedLeads = labelLeads(INTERESTED_LABEL, "interested");
+/** The "per call" products: booked calls. */
+export const callLeads = labelLeads(CALL_LABEL, "call");
+
 export const LEAD_SOURCES: Record<LeadSource, LeadSourceFn> = {
-  handoffs: handoffLeads,
+  handoffs: interestedLeads,
   introductions: introductionLeads,
   calls: callLeads,
 };

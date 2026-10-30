@@ -33,17 +33,17 @@ export const EVERY_DAYS: readonly EveryDays[] = [7, 14];
 export type LeadSource = "handoffs" | "introductions" | "calls";
 export const LEAD_SOURCES_ALL: readonly LeadSource[] = ["handoffs", "introductions", "calls"];
 export const LEAD_SOURCE_NAMES: Record<LeadSource, string> = {
-  handoffs: "Interested replies handed to the brokerage (once per agent)",
+  handoffs: "Interested replies — conversations marked Interested (once per agent)",
   introductions: "Introductions in the client's portal",
   calls: "Booked calls — conversations marked Meetings Booked (once per agent)",
 };
 /** What one charge is for, in words: "$500 per call". */
 export const LEAD_SOURCE_UNIT: Record<LeadSource, string> = { handoffs: "lead", introductions: "introduction", calls: "call" };
 /*
- * WHAT COUNTS AS A BILLABLE LEAD IS NOT DECIDED YET (the client is being
- * asked). The default candidate is the brokerage hand-off; switching every new
- * client to the other definition is this one line. Each client's row also
- * carries its own choice (lead_source).
+ * A lead is each Interested reply (the client, 27 Oct; the user, 31 Oct:
+ * "interested lead means count that in for payment") — 'handoffs', the name
+ * kept from when it counted replies the brokerage hand-off had sent (leads.ts).
+ * Each client's row also carries its own choice (lead_source).
  */
 export const DEFAULT_LEAD_SOURCE: LeadSource = "handoffs";
 
@@ -211,7 +211,7 @@ export function usd(cents: number): string {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-const LINE_WORD: Record<string, string> = { handoff: "Lead", introduction: "Introduction", call: "Call" };
+const LINE_WORD: Record<string, string> = { interested: "Lead", handoff: "Lead", introduction: "Introduction", call: "Call" };
 
 /** One invoice line: "Lead: Jordan Ellis — Oct 7, 2026" (the Eastern day it came); "Call: …" / "Introduction: …" by what was counted. */
 export function lineDescription(lead: BillableLead): string {
