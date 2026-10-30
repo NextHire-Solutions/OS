@@ -340,3 +340,13 @@ html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }
  * aside; it comes back when the panel closes. The chat window itself is not a panel, so its close button stays.
  */
 .cpv-shell:has(aside.crx-pnl, .crx-pnl-ov, div.crx-ov[role="dialog"], .crx-aov) a.crx-aiask { display: none !important; }
+
+/*
+ * …and every page ends clear of it (30 Oct, a client: the button "is impairing the next button on the market page").
+ * It is 56px tall, 24px off the bottom; a page ended 28px off the bottom, so whatever came last — the market's
+ * Previous / Next, the last My Agents row's Edit and Delete — sat under it. A page now ends 96px up. A phone already
+ * keeps 88px (mobile.css); a board that fills the window keeps its own (above, more specific).
+ */
+@media (min-width: 761px) {
+  .cpv-shell .crx-content { padding-bottom: 96px; }
+}
