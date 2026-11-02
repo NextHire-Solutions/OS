@@ -511,25 +511,66 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
 }
 
 /*
- * Who we email (28 Oct, the user): the client's market to look through with Market's filters, and their prospects —
- * the agents in their campaigns, shown and never chosen here ("we will not add prospect leads to campaigns. we just
- * need to show the prospects data to client"), and since 31 Oct any they moved there from Market (listed only). A new
- * client has no campaign yet: the step says so and they carry on.
- * Nothing here saves, the Demo Portal included, so a demo shows what a client gets.
+ * Who we email: the client's market to look through with Market's filters, and their prospects — the agents in their
+ * campaigns, and any they added. Since 2 Nov (Eddy: "Add their selected prospects as leads") the client picks here:
+ * ticked agents, or every one matching the filters, go onto their Prospects — the Market move, with the setup's own
+ * limit a click (portal-save.ts SETUP_MAX_MOVE) and no limit in all — and from there into their campaign
+ * (clients/prospect-sync; a new client's first campaign is made when it finishes setup). Anyone on My Agents, the DNC
+ * List or the pipeline is left out, as always. Picking needs a viewer who may change the portal (`live`).
  */
+const SETUP_MAX_PICK = 10_000;
+/** Agents ticked one by one in one add (the save's limit on named agents, demo-market.ts MAX_MOVE). */
+const MAX_TICKED = 1_000;
+
 function TargetStep({ clientId }: { clientId: string }) {
+  const { live, save, say } = useDemo();
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [allPicked, setAllPicked] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [version, setVersion] = useState(0);
   const [tab, setTab] = useState<"market" | "prospects">("market");
   const [search, setSearch] = useState("");
   const q = useDebounced(search);
   // Market's own filters (28 Oct), on whichever tab is open.
   const [f, setF] = useState<Picks>(NO_PICKS);
   const [page, setPage] = useState(1);
-  const all = useMarket(clientId, "market", 1, "", NO_PICKS);
+  const all = useMarket(clientId, "market", 1, "", NO_PICKS, true, version);
   // Every prospect, for the tab's count — a search or filter never empties it.
-  const prospectsAll = useMarket(clientId, "prospects", 1, "", NO_PICKS);
-  const prospects = useMarket(clientId, "prospects", page, q, f, tab === "prospects");
-  const filtered = useMarket(clientId, "market", page, q, f, tab === "market");
+  const prospectsAll = useMarket(clientId, "prospects", 1, "", NO_PICKS, true, version);
+  const prospects = useMarket(clientId, "prospects", page, q, f, tab === "prospects", version);
+  const filtered = useMarket(clientId, "market", page, q, f, tab === "market", version);
   useEffect(() => setPage(1), [tab, q, f]);
+  // "All that match" meant the agents matching the search then; ticked ones stay ticked through a new search (as Market).
+  useEffect(() => setAllPicked(false), [q, f]);
+  const rowIds = filtered.rows.map((r) => String(r.id));
+  const isPicked = (id: string) => allPicked || picked.has(id);
+  const pageAll = rowIds.length > 0 && rowIds.every(isPicked);
+  const pickRows = (ids: string[], on: boolean) => {
+    if (allPicked) { setAllPicked(false); setPicked((cur) => withIds(withIds(cur, rowIds, true), ids, on)); return; }
+    setPicked((cur) => withIds(cur, ids, on));
+  };
+  const selected = allPicked ? (filtered.total ?? 0) : picked.size;
+  const addToProspects = async () => {
+    if (!live || adding || !selected) return;
+    if (selected > SETUP_MAX_PICK) { say(`Add up to ${SETUP_MAX_PICK.toLocaleString("en-US")} at a time — narrow the filters (a city, say), add them, then the next.`, true); return; }
+    // Ticked one by one: a thousand at a time (more go as "Select all", which sends the filters, not the names).
+    if (!allPicked && picked.size > MAX_TICKED) { say(`Tick up to ${MAX_TICKED.toLocaleString("en-US")} at a time — or filter and use "Select all" for more.`, true); return; }
+    const who = selected === 1 ? "this agent" : `${selected.toLocaleString("en-US")} agents`;
+    if (!window.confirm(`Add ${who} to your Prospects — the agents we email? Anyone on My Agents, your DNC List or your pipeline is left out.`)) return;
+    const sp = new URLSearchParams();
+    if (q) sp.set("q", q);
+    pickParams(sp, f);
+    setAdding(true);
+    const ok = await save(allPicked
+      ? { type: "market.moveAll", list: "market", query: sp.toString(), to: "Prospects", setup: true }
+      : { type: "market.move", ids: [...picked], to: "Prospects", setup: true });
+    setAdding(false);
+    if (ok) {
+      setPicked(new Set());
+      setAllPicked(false);
+      setVersion((n) => n + 1);
+    }
+  };
   const any = anyPicks(f) || !!q;
   const shown = tab === "market" ? filtered : prospects;
   const marketTotal = all.total ?? 0;
@@ -539,14 +580,18 @@ function TargetStep({ clientId }: { clientId: string }) {
   const noProspects = !prospectsAll.loading && (prospectsAll.total ?? 0) === 0;
   return (
     <>
-      <Head step={4} title="Who we email" text={"Every active agent in your market — filter to look through it. Your prospects are the agents in your campaigns, and any you add from Market. My Agents and your DNC List are always left out."} />
+      <Head step={4} title="Who we email" text={live
+        ? "Every active agent in your market — filter it, tick the agents you want us to email, and add them to your Prospects. My Agents and your DNC List are always left out."
+        : "Every active agent in your market — filter to look through it. Your prospects are the agents in your campaigns, and any you add from Market. My Agents and your DNC List are always left out."} />
       <div className={k("card")}>
         <Tabs tabs={[{ id: "market", label: "All agents in your market", count: all.total }, { id: "prospects", label: "Prospects", count: prospectsAll.total }]} on={tab} onTab={setTab} />
         {tab === "prospects" && noProspects ? (
           <div className={k("emp")} style={{ borderTop: "1px solid #ebedf0" }}>
             <span className={k("ei")}><Icon name="target" size={22} /></span>
             <h2>No prospects yet</h2>
-            <p>We&apos;re building your first campaign. The agents we email will show here once it&apos;s&nbsp;ready.</p>
+            {live
+              ? <p>Pick agents on &ldquo;All agents in your market&rdquo; and add them — they&apos;re who we&nbsp;email.</p>
+              : <p>We&apos;re building your first campaign. The agents we email will show here once it&apos;s&nbsp;ready.</p>}
           </div>
         ) : (
           <>
@@ -565,15 +610,30 @@ function TargetStep({ clientId }: { clientId: string }) {
               ) : !any ? (
                 <span className={k("bt")}><b className={k("num")}>{all.total === null ? "…" : fmt(marketTotal)}</b>{" "}active agents in your market ·{" "}<span className={k("sub")}>filter to look through it</span></span>
               ) : counted ? (
-                <span className={k("bt")}><b className={k("num")}>{fmt(filtered.total ?? 0)}</b>{" "}agents match these filters ·{" "}<span className={k("sub")}>of {all.total === null ? "…" : fmt(marketTotal)} active in your market</span></span>
+                <span className={k("bt")}><b className={k("num")}>{fmt(filtered.total ?? 0)}</b>{" "}agents match these filters ·{" "}<span className={k("sub")}>of {all.total === null ? "…" : fmt(marketTotal)} active in your market</span>
+                  {live && (filtered.total ?? 0) > 0 && !allPicked ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={() => setAllPicked(true)}>Select all {fmt(filtered.total ?? 0)}</button></> : null}
+                </span>
               ) : (
                 // Never "0 agents match" while the count is on its way (28 Oct: a slow first answer showed 0).
                 <span className={k("bt")} role="status">{filtered.unavailable ?? "Counting the agents that match…"}</span>
               )}
             </div>
+            {tab === "market" && live && selected > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, padding: "8px 14px", background: "#f5f7fc", borderTop: "1px solid #e4e9f5", borderBottom: "1px solid #e4e9f5" }} data-testid="setup-picks">
+                <span style={{ fontWeight: 600 }}>{allPicked ? `All ${fmt(selected)} selected` : `${fmt(selected)} selected`}</span>
+                {!allPicked && pageAll && (filtered.total ?? 0) > rowIds.length ? <button type="button" className="cpv-link" onClick={() => setAllPicked(true)}>Select all {fmt(filtered.total ?? 0)} that match</button> : null}
+                <span style={{ width: 1, height: 18, background: "#d9e1f2", margin: "0 4px" }} />
+                <button className={k("btn sm pri")} type="button" disabled={adding} onClick={() => void addToProspects()}><Icon name="plus" size={13} />{adding ? "Adding…" : "Add to Prospects"}</button>
+                {selected > SETUP_MAX_PICK ? <span style={{ fontSize: 12, color: "#b42318" }}>Up to {fmt(SETUP_MAX_PICK)} at a time — narrow the filters.</span>
+                  : !allPicked && picked.size > MAX_TICKED ? <span style={{ fontSize: 12, color: "#b42318" }}>Tick up to {fmt(MAX_TICKED)} at a time — or use Select all.</span> : null}
+                <span style={{ flexGrow: 1 }} />
+                <button type="button" className={k("dd")} style={{ height: 30, fontSize: 12, color: "#555a64" }} onClick={() => { setPicked(new Set()); setAllPicked(false); }}><Icon name="x" size={13} />Clear selection</button>
+              </div>
+            ) : null}
             <table className={k("tb")}>
               <thead>
                 <tr>
+                  {tab === "market" && live ? <th scope="col" style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label="Select all on this page" checked={pageAll} onChange={() => pickRows(rowIds, !pageAll)} /></th> : null}
                   <th>Agent</th>
                   <th>Brokerage</th>
                   <th>City</th>
@@ -584,9 +644,10 @@ function TargetStep({ clientId }: { clientId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {shown.rows.length === 0 && !shown.loading ? <tr><td colSpan={7} className="cpv-muted" style={{ padding: "18px 20px" }}>{shown.unavailable ?? "No agents match."}</td></tr> : null}
+                {shown.rows.length === 0 && !shown.loading ? <tr><td colSpan={tab === "market" && live ? 8 : 7} className="cpv-muted" style={{ padding: "18px 20px" }}>{shown.unavailable ?? "No agents match."}</td></tr> : null}
                 {shown.rows.map((r) => (
                   <tr key={r.id}>
+                    {tab === "market" && live ? <td style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label={`Select ${r.name}`} checked={isPicked(String(r.id))} onChange={() => pickRows([String(r.id)], !isPicked(String(r.id)))} /></td> : null}
                     <td className={k("nm")}>{r.name}</td>
                     <td>{r.brokerage ?? "–"}</td>
                     <td>{r.officeCity ?? "–"}</td>

@@ -105,6 +105,8 @@ export const CLIENT_PORTAL_PATHS: ReadonlySet<string> = new Set([
   "/api/crm-preview/demo",
   // One save from the new portal (28 Oct) — the Demo's, or a real portal's own client (crm-preview/portal-save.ts).
   "/api/crm-preview/save",
+  // A client's own Prospects as a file (2 Nov) — export/route.ts; Market only for staff.
+  "/api/crm-preview/export",
 ]);
 /** lib/portal-login/http.ts PORTAL_COOKIE — written out here: that module is server-only (node:crypto). A test keeps them equal. */
 export const CLIENT_PORTAL_COOKIE = "bs_portal";

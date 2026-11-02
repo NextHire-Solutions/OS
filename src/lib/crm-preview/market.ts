@@ -227,6 +227,11 @@ async function inClientLists(orchClientId: string, agentIds: string[]): Promise<
   return out;
 }
 
+/** Which of these agents are prospects through the client's campaigns (its campaign leads in the agent database). */
+export async function campaignProspectsAmong(ctx: MarketContext, agentIds: string[]): Promise<Set<string>> {
+  return ctx.orchClientId ? inClientLists(ctx.orchClientId, agentIds) : new Set();
+}
+
 export interface MarketRow {
   id: string;
   name: string;
@@ -646,6 +651,14 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
     return { ids: rows.slice(0, cap).map((a) => a.id), total: rows.length };
   }
   const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
+  /*
+   * Market from memory when this market is held and proven (market-memory.ts) — milliseconds, where the database pages
+   * 500 at a time, ~5 s a page deep into a large market (2 Nov: 9,266 of Keyes' agents took 104 s — past a setup pick's
+   * time). Anything the memory does not reproduce exactly (searchMarket → null), or a market not held yet, as before.
+   */
+  const mem = q.list === "market" && inMemory(ctx) ? await marketFromMemory(ctx.mls.ids, base, search) : null;
+  const fast = mem ? searchMarket(mem, marketFilters(base, q), { by: SORTS[q.sort], dir: q.dir }, cap, 0) : null;
+  if (fast) return fast.total > cap ? { ids: [], total: fast.total } : { ids: fast.rows.map((r) => String(r.id)), total: fast.total };
   // A real client's Prospects: the moved ones that match too (movedProspects).
   const moved = q.list === "prospects" ? (await movedProspects(ctx, q)).map((a) => a.id) : [];
   const first = await search(marketFilters(base, q), Math.min(cap, 500), 0, { by: SORTS[q.sort], dir: q.dir });

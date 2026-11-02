@@ -537,6 +537,9 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx-hint.cl-hint { margin: 0; }
 .cl-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
 .cl-pick select.ds-input { flex: 1 1 280px; min-width: 0; max-width: 100%; }
+.cl-mls { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid var(--x-line); min-width: 0; }
+.cl-mls-name { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; min-width: 0; font-size: 13px; color: var(--x-ink); }
+.cl-mls-name span { color: var(--x-mute, #667085); font-size: 12.5px; overflow-wrap: anywhere; }
 .rx-hint.cl-meta { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rx-hint.cl-bad { margin: 0; color: var(--st-churned, #b42318); }
 .cl-dot { width: 7px; height: 7px; border-radius: 50%; background: #D4D4D8; flex: none; }

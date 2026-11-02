@@ -43,6 +43,12 @@ const CAMPAIGNS: Record<string, { id: string; name: string; status: string }[]> 
   "c-keyes": [{ id: "642", name: "Keyes + West Florida", status: "active" }, { id: "700", name: "Keyes + Miami", status: "paused" }],
   "c-jeff": [{ id: "653", name: "Jeff Cook + Charleston", status: "active" }],
 };
+/** Keyes has two markets (a campaign each); Jeff Cook one. */
+const MARKETS: Record<string, Array<{ code: string; name: string }>> = {
+  "c-keyes": [{ code: "MFRMLS", name: "Stellar MLS" }, { code: "SEFMLS", name: "Southeast Florida MLS" }],
+  "c-jeff": [{ code: "CHSMLS", name: "Charleston Trident MLS" }],
+};
+let SETUPS: Record<string, Array<{ mlsCode: string; id: string; name: string }>> = {};
 /** Every address is on 642, 700, 653 and someone else's 999 — the plan must keep only the client's own. */
 const LEADS = (email: string) => [{ id: email.length, email, campaigns: [642, 700, 653, 999].map((campaignId) => ({ campaignId, status: "in_sequence" })) }];
 
@@ -65,6 +71,8 @@ function deps(env: Record<string, string> = {}) {
     clients: async () => [KEYES, JEFF],
     portals: async () => [{ id: "p-keyes", name: "Keyes", slug: "keyes" }, { id: "p-jeff", name: "Jeff Cook", slug: "jeff" }, { id: DEMO_PORTAL_ID, name: "Demo Portal", slug: "demo" }, { id: "p-orphan", name: "Nobody", slug: "nobody" }],
     campaigns: async (c: { id: string }) => CAMPAIGNS[c.id] ?? [],
+    markets: async (id: string) => MARKETS[id] ?? [],
+    setupCampaigns: async (id: string) => SETUPS[id] ?? [],
     findLeads: async (email: string) => { lookups.push(email); return LEADS(email); },
     remove: async (campaignId: number, leadIds: number[], actor: string) => {
       removed.push({ campaignId, leadIds, actor });
@@ -80,6 +88,7 @@ function reset(settings: Row | null, clients: Row[] = []) {
   lookups = [];
   reads = 0;
   duringRemove = null;
+  SETUPS = {};
   db.seed("os_campaign_list_settings", settings ? [{ id: "default", per_run: 40, updated_at: at(-60), ...settings }] : []);
   db.seed("os_campaign_list_clients", clients);
   db.seed("os_campaign_removals", []);
@@ -330,4 +339,50 @@ test("the Prospects campaign: pre-selected until a person picks one; a chosen on
   if (!v.available) return;
   assert.equal(v.prospects.source, "suggested");
   assert.equal(v.prospects.savedMissing?.id, "555", "and it says the chosen one is gone");
+});
+
+test("a client with several MLSs: a Prospects campaign picked per MLS — each one of the client's own, each MLS one of its markets; only the MLSs sent change; the made-at-setup one shown until one is picked", async () => {
+  reset({ enabled: false, practice_mode: true, cursor_at: at(-60) });
+  let v = await clientListView("c-keyes", deps());
+  if (!v.available) throw new Error("unavailable");
+  assert.equal(v.byMls.several, true);
+  assert.deepEqual(v.byMls.markets.map((m) => [m.code, m.picked, m.setup]), [["MFRMLS", null, null], ["SEFMLS", null, null]], "never pre-selected — a guess could be the wrong market");
+  assert.equal(v.autoAdd, "off");
+  await assert.rejects(saveClientListSettings("c-keyes", { prospectsByMls: { MFRMLS: "653" } }, "x", deps()), /not one of this client's EmailBison campaigns/);
+  await assert.rejects(saveClientListSettings("c-keyes", { prospectsByMls: { CRMLS: "642" } }, "x", deps()), /CRMLS is not one of this client's MLSs/);
+  await assert.rejects(saveClientListSettings("c-keyes", { prospectsByMls: ["642"] }, "x", deps()), /must be an object/);
+  let saved = await saveClientListSettings("c-keyes", { prospectsByMls: { MFRMLS: "642" } }, "amy@brokerstaffer.com", deps());
+  assert.deepEqual(saved.prospectsByMls, { MFRMLS: { id: "642", name: "Keyes + West Florida" } });
+  saved = await saveClientListSettings("c-keyes", { prospectsByMls: { SEFMLS: "700" }, ifUpdatedAt: saved.updatedAt }, "amy@brokerstaffer.com", deps());
+  assert.deepEqual(Object.keys(saved.prospectsByMls).sort(), ["MFRMLS", "SEFMLS"], "the other MLS's pick is kept");
+  assert.equal(saved.prospectsCampaignId, null, "the one-campaign pick untouched");
+  saved = await saveClientListSettings("c-keyes", { prospectsByMls: { MFRMLS: null } }, "x", deps());
+  assert.deepEqual(Object.keys(saved.prospectsByMls), ["SEFMLS"], "cleared");
+  // A pick that is no longer the client's; one made at setup shown where none is picked.
+  db.rows("os_campaign_list_clients")[0].prospects_by_mls = { SEFMLS: { id: "555", name: "Keyes + Gone" } };
+  SETUPS = { "c-keyes": [{ mlsCode: "MFRMLS", id: "901", name: "Keyes + MFRMLS + Prospects (EST)" }] };
+  v = await clientListView("c-keyes", deps({ OS_PROSPECT_SYNC: "1", OS_PROSPECT_SYNC_ONLY: "p-keyes" }));
+  if (!v.available) throw new Error("unavailable");
+  assert.deepEqual(v.byMls.markets.map((m) => [m.code, m.picked?.id ?? null, m.savedMissing?.id ?? null, m.setup?.id ?? null]), [["MFRMLS", null, null, "901"], ["SEFMLS", null, "555", null]]);
+  assert.equal(v.autoAdd, "test");
+  // One market: the one-campaign pick, as before.
+  const j = await clientListView("c-jeff", deps({ OS_PROSPECT_SYNC: "1" }));
+  if (!j.available) throw new Error("unavailable");
+  assert.equal(j.byMls.several, false);
+  assert.equal(j.autoAdd, "live");
+});
+
+test("two saves at once on the Campaigns tab: the second is told someone else changed it — never both 'saved' with one pick lost", async () => {
+  reset({ enabled: false, practice_mode: true, cursor_at: at(-60) });
+  const first = await saveClientListSettings("c-keyes", { prospectsByMls: { MFRMLS: "642" } }, "amy@brokerstaffer.com", deps());
+  // Another person's save lands between this one's read and its write.
+  db.failWhen = (c) => {
+    if (c.method === "PATCH" && c.table === "os_campaign_list_clients") {
+      Object.assign(db.rows("os_campaign_list_clients")[0], { prospects_by_mls: { MFRMLS: { id: "642", name: "Keyes + West Florida" }, SEFMLS: { id: "700", name: "Keyes + Miami" } }, updated_at: at(5) });
+      db.failWhen = null;
+    }
+    return false;
+  };
+  await assert.rejects(saveClientListSettings("c-keyes", { prospectsByMls: { MFRMLS: "700" }, ifUpdatedAt: first.updatedAt }, "eddy@brokerstaffer.com", deps()), /changed by someone else just now/);
+  assert.deepEqual(Object.keys(db.rows("os_campaign_list_clients")[0].prospects_by_mls as object).sort(), ["MFRMLS", "SEFMLS"], "the other person's pick kept");
 });

@@ -56,7 +56,7 @@ const ROUTES = filesUnder("src/app/api/crm-preview").filter((r) => r !== FORWARD
 const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
 
 test("the preview's routes: the reviewers, or a signed-in client on their own open portal — checked first; anyone else a bare 404; GET, except the chat's POST", () => {
-  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "market/route.ts", "report/route.ts", "save/route.ts"]);
+  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "export/route.ts", "market/route.ts", "report/route.ts", "save/route.ts"]);
   assert.match(read(FORWARDER), /^export \{ POST \} from "\.\.\/save\/route";$/m, "the old address only forwards to /save");
   assert.doesNotMatch(read(FORWARDER), /function|import /, "and has nothing of its own");
   for (const r of ROUTES) {
@@ -178,7 +178,8 @@ test("a real portal's own writes: exactly these tables, never a delete of a clie
  * holds for every preview file. It never refuses anything (usage.test.ts).
  */
 test("usage is counted after serving, in the background — on every data route, and never before the gate", () => {
-  for (const [r, kind] of [["market", "market"], ["report", "report"], ["chat", "chat"], ["billing", "billing"], ["conversation", "conversation"]] as const) {
+  // export (2 Nov): a file of a list is counted as the pages it holds.
+  for (const [r, kind] of [["market", "market"], ["report", "report"], ["chat", "chat"], ["billing", "billing"], ["conversation", "conversation"], ["export", "market"]] as const) {
     const src = read(`src/app/api/crm-preview/${r}/route.ts`);
     assert.match(src, /^import \{ recordUse \} from "@\/lib\/portal-usage\/usage";$/m, r);
     const uses = [...src.matchAll(/after\(\(\) => recordUse\(createAdminSupabase\(\), \{ who, role, portalId: client, kind: "(\w+)"/g)];
@@ -205,6 +206,8 @@ const BROWSER_REQUESTS = [
   /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/chat$/,
   /^\/api\/crm-preview\/save$/,
+  // Export (2 Nov): the list on screen as a file — a client's own Prospects; staff, Market too.
+  /^\/api\/crm-preview\/export\?\$\{[^}]+\}$/,
   // A signed-in client's Sign out (27 Oct): ends this browser's session.
   /^\/api\/portal-signin\/signout$/,
 ];

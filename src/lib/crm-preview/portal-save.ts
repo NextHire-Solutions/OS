@@ -15,6 +15,8 @@ import { stopEntries } from "@/lib/tools/master-inbox/portals/stop-person";
 import { resolvePortalClient, type PortalClient } from "@/lib/tools/master-inbox/portals/token";
 import { notifyPortalDncBulkAdd } from "@/lib/tools/master-inbox/webhooks/slack-portal";
 import { alertMarketMove, recordUse } from "@/lib/portal-usage/usage";
+import { shownCampaigns } from "@/lib/clients/prospect-sync/agents";
+import { postToPortalChannel, recordProspectChanges, unrecordedAlert, type ShownCampaign } from "@/lib/clients/prospect-sync/queue";
 
 // The current portal's own save code (Master Inbox app/api/portal/[token]/*): the OS's copies, byte for byte.
 import * as pipelineRoute from "@/app/api/tools/master-inbox/portal/[token]/pipeline/route";
@@ -40,7 +42,7 @@ import * as fubRoute from "@/lib/tools/master-inbox/portal-routes/followup-boss/
 
 import { demoAction, imported, introAt, saveOffer, type Db, type DemoAction, type DemoResult } from "./demo";
 import { agentsByIds, demoProspectIds, emailsOf, lower, marketAction, type AgentRow, type MarketAction } from "./demo-market";
-import { marketContext, matchingIds } from "./market";
+import { campaignProspectsAmong, marketContext, matchingIds } from "./market";
 import { parseMarketQuery, personKey } from "./market-model";
 
 /*
@@ -63,10 +65,12 @@ import { parseMarketQuery, personKey } from "./market-model";
  *     email or phone — and the agent's PREFERRED email is blocked as an added address is (on the DNC List also
  *     stopped, and kept in os_market_dnc_emails for the reply agent and the relay); at most PORTAL_MAX_MOVE agents a
  *     move, each counted as Market use;
- *   - Market's "Move to" Prospects (31 Oct, the user: "we just need to move the agents to prospects view. we do not
- *     have to add them in campaigns"): the agent's id on the portal's Prospects (os_demo_prospects — the Demo's table,
- *     keyed by portal) and nothing else — no campaign, no block, no email. An agent on My Agents, the DNC List or the
- *     pipeline stays where it is (left out, as the Setup wizard's moves leave it).
+ *   - Market's "Move to" Prospects (31 Oct): the agent's id on the portal's Prospects (os_demo_prospects — the Demo's
+ *     table, keyed by portal) — no block, no email. An agent on My Agents, the DNC List or the pipeline stays where it
+ *     is (left out, as the Setup wizard's moves leave it). Since 2 Nov (Eddy: "auto add/remove leads from campaigns as
+ *     they add/remove/edit their prospects lists") every agent onto Prospects, and every prospect moved off it, is
+ *     recorded for the client's campaign (clients/prospect-sync, only with OS_PROSPECT_SYNC=1) and told to
+ *     #portal-update. The Setup wizard's picks ("Who we email") are the same move, up to SETUP_MAX_MOVE at once.
  *
  * Imports: the browser maps the file with the current portal's own mapper (portals/csv.ts) and sends the rows. A row
  * the current import would refuse is skipped and named, rather than failing the whole file; the rest go through the
@@ -74,10 +78,40 @@ import { parseMarketQuery, personKey } from "./market-model";
  */
 
 export const PORTAL_MAX_MOVE = 500;
+/** The Setup wizard's "Who we email": as many agents as the client picks in all (the user, 2 Nov), this many a click. */
+export const SETUP_MAX_MOVE = 10_000;
+
+/**
+ * A change to the portal's Prospects, recorded for the client's campaign (prospect-sync) — BEFORE the list changes:
+ * the run acts on the list as it is when it gets there, so a save that stops half way (a timeout mid-insert) never
+ * leaves list and campaign apart. Recorded whether or not the sync is on yet (applied once it is); it never fails the
+ * move — a record that could not be made rings our team's bell instead.
+ */
+async function syncProspects(C: string, action: "add" | "remove", setup: boolean, agents: readonly AgentRow[], who: string, shown?: ReadonlyMap<string, ShownCampaign[]>): Promise<void> {
+  if (!agents.length) return;
+  try {
+    // Every one recorded — the run asks EmailBison, live, whether it is already in the client's campaigns (3 Nov
+    // re-audit: a filter here on the agent database's older campaign record dropped picks for good).
+    const ctx = await marketContext(C);
+    await recordProspectChanges(
+      { portalId: C, isDemo: false, osClientId: ctx?.client?.id ?? null, clientName: ctx?.client?.name ?? ctx?.portal.name ?? "A client", action, source: setup ? "setup" : "prospects", agents: agents.map((ag) => ({ id: ag.id, name: ag.full_name, inCampaigns: shown?.get(ag.id) })), who },
+      { slack: async (text) => { after(() => postToPortalChannel(text)); } },
+    );
+  } catch (err) {
+    console.error("[crm-preview] prospects not recorded", err instanceof Error ? err.message : err);
+    after(() => unrecordedAlert({ portalId: C, action, agents: agents.length, who, error: err instanceof Error ? err.message : String(err) }));
+  }
+}
 /* What an entry Market made says in its notes — how a later move knows it is Market's own to take off. */
 const FROM_MARKET = "From Market";
 /* The address a Market move blocks, stops and keeps: the agent's preferred email only (the user, 28 Oct). */
 const preferredOf = (ag: AgentRow): string[] => (lower(ag.preferred_email) ? [lower(ag.preferred_email)] : []);
+
+/* Whether a portal's setup is finished (its offer saved — "Finish setup"). Unreadable: taken as finished (the smaller limit). */
+async function setupFinished(C: string): Promise<boolean> {
+  const { data, error } = await (createAdminSupabase() as unknown as Db).from("os_portal_offers").select("portal_id").eq("portal_id", C).limit(1);
+  return !!error || ((data ?? []) as unknown[]).length > 0;
+}
 
 /* A table the database does not have — PostgREST's own codes for it, nothing broader (a permission refusal is not "missing"). */
 export const tableMissing = (e: { code?: string } | null | undefined) => !!e && (e.code === "PGRST205" || e.code === "42P01");
@@ -632,19 +666,28 @@ async function blockAll(table: "client_agents" | "client_dnc_entries", rows: Arr
 async function moveAgents({ client, token }: Portal, a: MarketAction, who: string, role: "client" | "staff"): Promise<DemoResult> {
   const C = client.id;
   const toProspects = a.to === "Prospects";
+  // The Setup wizard's picks: to Prospects only, with the setup's own limit a click — and a client's only while its
+  // setup isn't finished (the wizard is closed to it then; 3 Nov audit: otherwise any save could ask for 10,000 at once).
+  const setup = !!a.setup && toProspects && (role === "staff" || !(await setupFinished(C)));
+  const cap = setup ? SETUP_MAX_MOVE : PORTAL_MAX_MOVE;
   // To Prospects, only agents on none of the client's lists (a DNC or My Agents entry is never undone from here).
   const unlistedOnly = a.onlyUnlisted || toProspects;
   let ids: string[];
   if (a.type === "market.move") {
-    if (a.ids.length > PORTAL_MAX_MOVE) return { ok: false, status: 409, error: `That's ${a.ids.length.toLocaleString("en-US")} agents — move ${PORTAL_MAX_MOVE.toLocaleString("en-US")} or fewer at once.` };
+    if (a.ids.length > cap) return { ok: false, status: 409, error: `That's ${a.ids.length.toLocaleString("en-US")} agents — move ${cap.toLocaleString("en-US")} or fewer at once.` };
     ids = a.ids;
   } else {
     const ctx = await marketContext(C);
     if (!ctx) return { ok: false, status: 404, error: UNAVAILABLE };
-    const found = await matchingIds(ctx, { ...parseMarketQuery(new URLSearchParams(a.query)), list: a.list }, PORTAL_MAX_MOVE);
+    const found = await matchingIds(ctx, { ...parseMarketQuery(new URLSearchParams(a.query)), list: a.list }, cap);
     if ("unavailable" in found) return { ok: false, status: 409, error: found.unavailable };
-    if (found.total > PORTAL_MAX_MOVE) {
-      return { ok: false, status: 409, error: `That's ${found.total.toLocaleString("en-US")} agents — narrow the filters to ${PORTAL_MAX_MOVE.toLocaleString("en-US")} or fewer to move them all at once.` };
+    if (found.total > cap) {
+      return {
+        ok: false, status: 409,
+        error: setup
+          ? `That's ${found.total.toLocaleString("en-US")} agents — add up to ${cap.toLocaleString("en-US")} at a time: narrow the filters (a city, say), add them, then the next.`
+          : `That's ${found.total.toLocaleString("en-US")} agents — narrow the filters to ${cap.toLocaleString("en-US")} or fewer to move them all at once.`,
+      };
     }
     if (!found.ids.length) return { ok: false, status: 404, error: "No agents match these filters." };
     ids = found.ids;
@@ -682,9 +725,15 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     if (there === null) return { ok: false, status: 400, error: TRY_AGAIN };
     const have = new Set(there);
     const fresh = agents.filter((ag) => !have.has(ag.id));
-    if (fresh.length) {
-      const { error } = await db.from("os_demo_prospects").insert(fresh.map((ag) => ({ portal_id: C, agent_id: ag.id, added_by: who })));
-      if (error) return { ok: false, status: 400, error: TRY_AGAIN };
+    await syncProspects(C, "add", setup, fresh, who);
+    // In parts (a setup pick can be thousands); one that fails stops here — those already in stay (their campaign
+    // changes were recorded above; the run skips any that never made it onto the list).
+    let inserted = 0;
+    for (let i = 0; i < fresh.length; i += 1000) {
+      const part = fresh.slice(i, i + 1000);
+      const { error } = await db.from("os_demo_prospects").insert(part.map((ag) => ({ portal_id: C, agent_id: ag.id, added_by: who })));
+      if (error) return { ok: false, status: 400, error: inserted ? `${inserted.toLocaleString("en-US")} were added, but the rest didn't save — please try again.` : TRY_AGAIN };
+      inserted += part.length;
     }
     after(() => recordUse(createAdminSupabase(), { who, role, portalId: C, kind: "market", rows: agents.length, now: new Date() }));
     const left = asked - agents.length;
@@ -790,8 +839,25 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     const r = await inParts(offDnc.map((x) => x.id), (part) => call(dncBulkRoute.POST, "POST", { token }, { ids: part }));
     if (!r.ok) return onto ? unfinished : r;
   }
-  // And off Prospects — the agents moved there; one in the client's campaigns stays a prospect while it is in them. The
-  // one delete of this file's own: the OS's own list, this portal's rows, with no current-portal equivalent or side effect.
+  // And off Prospects — the agents moved there. The one delete of this file's own: the OS's own list, this portal's
+  // rows, with no current-portal equivalent or side effect. Every one that WAS a prospect — moved there, or in the
+  // client's campaigns — is recorded to come out of the client's campaigns (prospect-sync; the user, 2 Nov: always).
+  // Which of them are prospects — if that can't be read, nothing is taken off (a prospect taken off unrecorded would
+  // stay in the campaign): try again.
+  // Each one's campaigns, as the portal showed them, go with it: the run looks there too (3 Nov audit).
+  let leaving: AgentRow[];
+  let shown: Map<string, ShownCampaign[]>;
+  try {
+    const movedThere = new Set((await demoProspectIds(db as unknown as Db, C)) ?? []);
+    const leaveCtx = await marketContext(C);
+    const ids = agents.map((ag) => ag.id);
+    const inCampaigns = leaveCtx ? await campaignProspectsAmong(leaveCtx, ids) : new Set<string>();
+    shown = leaveCtx?.orchClientId ? await shownCampaigns(leaveCtx.orchClientId, ids) : new Map();
+    leaving = agents.filter((ag) => movedThere.has(ag.id) || inCampaigns.has(ag.id) || shown.has(ag.id));
+  } catch {
+    return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };
+  }
+  await syncProspects(C, "remove", false, leaving, who, shown);
   for (let i = 0; i < agents.length; i += 100) {
     const { error } = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", agents.slice(i, i + 100).map((ag) => ag.id));
     if (error) return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };

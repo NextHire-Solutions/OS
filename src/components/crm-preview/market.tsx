@@ -29,7 +29,7 @@ type Mls = { matched: Array<{ code: string; name: string }>; unmatched: string[]
  */
 function definition(list: "market" | "prospects", client: string | null, mls: Mls | null, titles?: readonly string[] | null): string | null {
   if (!client) return null;
-  if (list === "prospects") return `Prospects here = the agents in ${client}'s lists in the agent database (its campaign leads), and any moved here from Market (listed only — never added to a campaign).`;
+  if (list === "prospects") return `Prospects here = the agents in ${client}'s campaigns (its campaign leads in the agent database), and any added here from Market or in setup — those go into its Prospects campaign; one taken off Prospects comes out of its campaigns (since 2 Nov).`;
   if (!mls) return null;
   const codes = mls.matched.map((m) => m.code).join(", ");
   const missing = mls.unmatched.length ? ` Not in the agent database, so not counted: ${mls.unmatched.join(", ")}.` : "";
@@ -472,8 +472,42 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   const [allPicked, setAllPicked] = useState(false);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   // Moves agents between the lists where this viewer may change the portal (demo-save.ts `live`; the Demo: demo-market.ts).
-  const { live, demo, save, say } = useDemo();
+  const { live, demo, staff, save, say } = useDemo();
   const [moving, setMoving] = useState(false);
+  /*
+   * Export (2 Nov — Amy asked; the user: "Clients: Prospects only"): the list on screen, filtered and sorted, as a CSV
+   * file — a client its own Prospects, our staff Prospects and Market. Never an email or a phone (export.ts).
+   */
+  const exportable = list === "prospects" || !!staff;
+  const [exporting, setExporting] = useState(false);
+  const doExport = async () => {
+    if (!exportable || exporting) return;
+    const sp = new URLSearchParams({ client: clientId, list, sort: sort.key, dir: sort.dir });
+    if (q) sp.set("q", q);
+    pickParams(sp, f);
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/crm-preview/export?${sp.toString()}`, { signal: AbortSignal.timeout(120_000) });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        say(j.error ?? "The file could not be made just now. Please try again.", true);
+        return;
+      }
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? `${list}.csv`;
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      say("No answer from the server — please try again.", true);
+    } finally {
+      setExporting(false);
+    }
+  };
   const [reload, setReload] = useState(0);
 
   // Search waits for a pause in typing.
@@ -515,8 +549,8 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       const who = n === 1 ? "this agent" : `${n.toLocaleString("en-US")} agents`;
       const ask = to === "DNC List" ? `Add ${who} to your DNC List? We'll stop emailing them in every campaign. This can't be undone.`
         : to === "My Agents" ? `Add ${who} to My Agents? We'll never email them in any campaign. This can't be undone.`
-        : to === "Prospects" ? `Add ${who} to your Prospects? Anyone on My Agents, your DNC List or your pipeline stays there.`
-        : `Take ${who} off My Agents, your DNC List and your Prospects?`;
+        : to === "Prospects" ? `Add ${who} to your Prospects — the agents we email? Anyone on My Agents, your DNC List or your pipeline stays there.`
+        : `Take ${who} off My Agents, your DNC List and your Prospects? Anyone taken off your Prospects stops being emailed.`;
       if (!window.confirm(ask)) return;
     }
     const sp = new URLSearchParams({ sort: sort.key, dir: sort.dir });
@@ -629,7 +663,11 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
         <div className={k("ttl")}><h1>{title}</h1></div>
         <div className={k("hr")}>
           {/* No Import CSV here (26 Oct, the user: "you can remove this") — the design drew one; it never had a job. My Agents and the DNC List import. */}
-          <button type="button" className={k("btn")} {...off("Export is off on purpose: agent details from the agent database can't be downloaded from the portal.")}><Icon name="download" size={15} />Export</button>
+          {exportable ? (
+            <button type="button" className={k("btn")} disabled={exporting || !state.data?.total} title={`Download this list as a CSV file (no emails or phones${state.data && state.data.total > 10_000 ? "; up to 10,000 — narrow the filters" : ""})`} onClick={() => void doExport()}><Icon name="download" size={15} />{exporting ? "Exporting…" : "Export"}</button>
+          ) : (
+            <button type="button" className={k("btn")} {...off("Market can't be exported: agent details from the agent database stay in the portal. Your Prospects can be exported.")}><Icon name="download" size={15} />Export</button>
+          )}
         </div>
       </header>
       <div className={k("content")}>

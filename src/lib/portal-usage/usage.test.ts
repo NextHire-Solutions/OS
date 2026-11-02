@@ -52,8 +52,8 @@ const titles = () => (fake.rows("os_notifications") as Row[]).map((n) => String(
 
 test("nothing here refuses, pauses or slows a client — there is no such function", () => {
   const src = fs.readFileSync("src/lib/portal-usage/usage.ts", "utf8");
-  // alertMarketMove (28 Oct) only tells our team — it refuses nothing either.
-  assert.deepEqual([...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["recordUse", "alertMarketMove", "todayRows"]);
+  // alertMarketMove (28 Oct) and alertExport (2 Nov) only tell our team — they refuse nothing either.
+  assert.deepEqual([...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["recordUse", "alertMarketMove", "alertExport", "todayRows"]);
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "");
   assert.doesNotMatch(code, /os_portal_locks|status: 4\d\d|status: 5\d\d/);
   // What it writes: its own counts, and one bell notice — nothing else.

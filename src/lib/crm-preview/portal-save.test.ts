@@ -57,6 +57,11 @@ let hold: unknown = null;
 let agentDb: AgentRow[] = [];
 let matching: { ids: string[]; total: number } = { ids: [], total: 0 };
 let fubOutcome: unknown = { ok: true, mode: "created", personId: "p1" };
+/* Prospects ↔ campaign (2 Nov): the agents in the client's campaigns, and whether recording a change fails. */
+let campaignAgents: string[] = [];
+let recordFails = false;
+/* The agent database's v_agent_campaigns, as the portal shows each agent's campaigns. */
+let shownDb = new Map<string, Array<{ provider: string; id: string; name: string | null }>>();
 
 let runPortalAction: (portalId: string, action: unknown, who: string, role?: "client" | "staff") => Promise<DemoResult>;
 
@@ -107,10 +112,28 @@ if (canMock) {
   mock.module("../portal-usage/usage", { namedExports: { recordUse: record("usage"), alertMarketMove: record("moveAlert") } });
   const realMarket = await import("./demo-market.ts");
   mock.module("./demo-market", { namedExports: { ...realMarket, agentsByIds: async (ids: readonly string[]) => agentDb.filter((a) => ids.includes(a.id)) } });
+  mock.module("../clients/prospect-sync/queue", {
+    namedExports: {
+      // As the real one: told the change, then Slack (which the save hands to after()).
+      recordProspectChanges: async (input: unknown, o: { slack?: (t: string) => Promise<unknown> } = {}) => {
+        sent.push({ what: "prospects", args: [input] });
+        if (recordFails) throw new Error("os_prospect_sync: relation does not exist");
+        // As the real one: Slack only once the sync is on.
+        if (process.env.OS_PROSPECT_SYNC === "1") await o.slack?.(`prospects ${(input as { action: string }).action}`);
+        return { mode: "test", recorded: (input as { agents: unknown[] }).agents.length };
+      },
+      postToPortalChannel: record("prospectsSlack"),
+      unrecordedAlert: record("unrecorded"),
+    },
+  });
+  mock.module("../clients/prospect-sync/agents", {
+    namedExports: { shownCampaigns: async (_orch: string, ids: readonly string[]) => new Map([...shownDb].filter(([id]) => ids.includes(id))) },
+  });
   mock.module("./market", {
     namedExports: {
-      marketContext: async () => ({ portal: PORTAL }),
+      marketContext: async () => ({ portal: { id: PORTAL, name: "BrokerStaffer" }, client: { id: "os-bs", name: "BrokerStaffer" }, orchClientId: "orch-bs", mls: { ids: [], matched: [], unmatched: [] }, titles: [] }),
       matchingIds: async (_ctx: unknown, _q: unknown, max: number) => ({ ids: matching.ids.slice(0, max), total: matching.total }),
+      campaignProspectsAmong: async (_ctx: unknown, ids: string[]) => new Set(ids.filter((id) => campaignAgents.includes(id))),
     },
   });
   ({ runPortalAction } = await import("./portal-save.ts"));
@@ -129,6 +152,11 @@ function seed(opts: { flags?: Record<string, unknown>; fubKey?: string | null; e
   hold = null;
   agentDb = [];
   matching = { ids: [], total: 0 };
+  campaignAgents = [];
+  shownDb = new Map();
+  recordFails = false;
+  delete process.env.OS_PROSPECT_SYNC;
+  delete process.env.OS_PROSPECT_SYNC_ONLY;
   fubOutcome = { ok: true, mode: "created", personId: "p1" };
   const [client] = fake.seed("clients", [
     { slug: "brokerstaffer", name: "BrokerStaffer", portal_token: TOKEN, portal_enabled: opts.enabled ?? true, stage_label_overrides: { phone_screen: "First Call" }, feature_flags: opts.flags ?? {}, fub_api_key: opts.fubKey ?? null, fub_connected_at: null, ideal_agent_profile: {} },
@@ -498,7 +526,7 @@ test("Market: to Prospects only lists the agent — no block, no campaign, nothi
   okResult(await run({ type: "market.move", ids: ["a2"], to: "Prospects" }));
   assert.deepEqual(mine(), ["a2"]);
   await settle();
-  assert.deepEqual(sent.map((x) => x.what), ["usage", "usage"], "nothing blocked, stopped, posted or alerted — only counted as Market use");
+  assert.deepEqual(sent.map((x) => x.what), ["prospects", "usage", "usage"], "nothing blocked, stopped, posted or alerted — counted as Market use, and the change recorded for the client's campaign (2 Nov)");
   // Moved on to another list, or off every list: off Prospects too. Another portal's prospects are never touched.
   // (seed replaces the whole table, so this portal's rows are seeded with the other's.)
   const both = (ids: string[]) => fake.seed("os_demo_prospects", [...ids.map((id) => ({ portal_id: PORTAL, agent_id: id, added_by: "x" })), { portal_id: OTHER, agent_id: "a2", added_by: "someone" }, { portal_id: OTHER, agent_id: "a4", added_by: "someone" }]);
@@ -527,6 +555,116 @@ test("Market: at most 500 a move; Not on a list only takes off", { skip }, async
   assert.equal(fake.rows("client_agents").filter((x) => x.client_id === OTHER).length, 1);
   await settle();
   assert.deepEqual(sent.filter((x) => x.what !== "usage").map((x) => x.what), [], "taking off sends nothing outside, and alerts no one (only counted as Market use)");
+});
+
+/* ---------------------------------------- Prospects ↔ the client's campaign (2 Nov) --- */
+
+const syncOn = (portal = PORTAL) => { process.env.OS_PROSPECT_SYNC = "1"; process.env.OS_PROSPECT_SYNC_ONLY = portal; };
+const recorded = () => sentOf("prospects").map((x) => x.args[0] as { action: string; source: string; agents: Array<{ id: string; name: string | null; inCampaigns?: unknown }>; who: string; osClientId: string | null; clientName: string });
+
+test("Prospects ↔ campaign: every agent newly on Prospects is recorded (the run asks EmailBison whether one is already in a campaign); Slack after the answer", { skip }, async () => {
+  seed();
+  syncOn();
+  campaignAgents = ["a5"];
+  agentDb = [agent("a2", "New Prospect", ["new.prospect@x.test", null]), agent("a5", "In A Campaign", ["camp@x.test", null])];
+  okResult(await run({ type: "market.move", ids: ["a2", "a5"], to: "Prospects" }));
+  assert.deepEqual(recorded().map((r) => ({ action: r.action, source: r.source, agents: r.agents.map((a) => a.id).sort(), client: r.osClientId })), [{ action: "add", source: "prospects", agents: ["a2", "a5"], client: "os-bs" }]);
+  assert.equal(sentOf("prospectsSlack").length, 0, "Slack waits for the answer");
+  await settle();
+  assert.equal(sentOf("prospectsSlack").length, 1);
+  // Already on Prospects: nothing new to record.
+  sent.length = 0;
+  okResult(await run({ type: "market.move", ids: ["a2"], to: "Prospects" }));
+  assert.deepEqual(recorded(), []);
+});
+
+test("Prospects ↔ campaign: moved off Prospects (no list, My Agents, DNC) — recorded to come out of the campaigns only for agents that WERE prospects", { skip }, async () => {
+  seed();
+  syncOn();
+  fake.seed("os_demo_prospects", [{ portal_id: PORTAL, agent_id: "a2", added_by: "x" }]);
+  campaignAgents = ["a6"];
+  agentDb = [agent("a2", "Moved There", ["moved@x.test", null]), agent("a6", "In Campaign", ["in.campaign@x.test", null]), agent("a7", "Never A Prospect", ["never@x.test", null])];
+  shownDb = new Map([["a6", [{ provider: "emailbison", id: "292", name: "BrokerStaffer 1 + Philly (EST)" }]], ["a9", [{ provider: "instantly", id: "uuid-1", name: "BrokerStaffer + Nicole" }]]]);
+  agentDb.push(agent("a9", "Only Shown", ["only.shown@x.test", null]));
+  okResult(await run({ type: "market.move", ids: ["a2", "a6", "a7", "a9"], to: "Not on a list" }));
+  assert.deepEqual(recorded().map((r) => ({ action: r.action, agents: r.agents.map((a) => a.id).sort() })), [{ action: "remove", agents: ["a2", "a6", "a9"] }], "a prospect through any campaign the portal shows — Instantly's too");
+  assert.deepEqual(recorded()[0].agents.find((a) => a.id === "a6")?.inCampaigns, [{ provider: "emailbison", id: "292", name: "BrokerStaffer 1 + Philly (EST)" }], "its campaigns go with it — the run looks there too");
+  assert.equal(recorded()[0].agents.find((a) => a.id === "a2")?.inCampaigns, undefined);
+  sent.length = 0;
+  agentDb.push(agent("a8", "Campaign To DNC", ["c2dnc@x.test", null]));
+  campaignAgents = ["a8"];
+  okResult(await run({ type: "market.move", ids: ["a8"], to: "DNC List" }));
+  assert.deepEqual(recorded().map((r) => ({ action: r.action, agents: r.agents.map((a) => a.id) })), [{ action: "remove", agents: ["a8"] }], "onto the DNC List: blocked AND out of the campaigns");
+});
+
+test("Prospects ↔ campaign: recorded whether or not the sync is on yet (2 Nov audit: a pick made while off was lost) — the queue decides what is done", { skip }, async () => {
+  seed();
+  agentDb = [agent("a2", "New Prospect", ["new.prospect@x.test", null])];
+  okResult(await run({ type: "market.move", ids: ["a2"], to: "Prospects" }));
+  assert.deepEqual(recorded().map((r) => [r.action, r.agents.map((a) => a.id)]), [["add", ["a2"]]], "switch off: recorded");
+  seed();
+  syncOn(OTHER);
+  agentDb = [agent("a2", "New Prospect", ["new.prospect@x.test", null])];
+  okResult(await run({ type: "market.move", ids: ["a2"], to: "Prospects" }));
+  assert.deepEqual(recorded().map((r) => r.action), ["add"], "outside the fence: recorded");
+});
+
+test("Prospects ↔ campaign: the change is recorded BEFORE the list changes — a save that fails half way is settled by the run", { skip }, async () => {
+  seed();
+  agentDb = [agent("a2", "New Prospect", ["new.prospect@x.test", null])];
+  fake.failWhen = (c) => c.method === "POST" && c.table === "os_demo_prospects";
+  const r = await run({ type: "market.move", ids: ["a2"], to: "Prospects" });
+  assert.equal(r.ok, false);
+  assert.deepEqual(recorded().map((x) => x.action), ["add"], "recorded first (the run skips it: the agent never made it onto the list)");
+});
+
+test("Prospects ↔ campaign: the Setup wizard's pick — up to 10,000 a click (Market stays at 500), recorded as setup", { skip }, async () => {
+  seed();
+  syncOn();
+  agentDb = Array.from({ length: 600 }, (_, i) => agent(`s${i}`, `Setup Agent ${i}`, [`setup${i}@x.test`, null]));
+  matching = { ids: agentDb.map((a) => a.id), total: 600 };
+  let r = await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects" });
+  assert.match(r.ok ? "" : r.error, /narrow the filters to 500 or fewer/, "Market's own limit without the setup flag");
+  okResult(await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true }));
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).length, 600);
+  assert.deepEqual(recorded().map((r) => ({ action: r.action, source: r.source, n: r.agents.length })), [{ action: "add", source: "setup", n: 600 }]);
+  matching = { ids: [], total: 10_001 };
+  r = await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true });
+  assert.match(r.ok ? "" : r.error, /add up to 10,000 at a time/);
+  // The flag means nothing for the other lists: still 500.
+  matching = { ids: agentDb.map((a) => a.id), total: 600 };
+  r = await run({ type: "market.moveAll", list: "market", query: "", to: "My Agents", setup: true });
+  assert.match(r.ok ? "" : r.error, /narrow the filters to 500 or fewer/);
+  // Setup finished (the wizard is closed to the client): a client's save is held to Market's 500 — staff's is not.
+  fake.seed("os_portal_offers", [{ portal_id: PORTAL, offers: ["Path to leadership"] }]);
+  fake.seed("os_demo_prospects", []);
+  r = await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true });
+  assert.match(r.ok ? "" : r.error, /narrow the filters to 500 or fewer/, "the setup limit only while setup isn't finished");
+  okResult(await runPortalAction(PORTAL, { type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true }, "admin@outreachify.io", "staff"));
+});
+
+test("Prospects ↔ campaign: if who is a prospect can't be read, nothing is taken off (try again) — never off the list unrecorded", { skip }, async () => {
+  seed();
+  syncOn();
+  fake.seed("os_demo_prospects", [{ portal_id: PORTAL, agent_id: "a2", added_by: "x" }]);
+  agentDb = [agent("a2", "Moved There", ["moved@x.test", null])];
+  fake.failWhen = (c) => c.method === "GET" && c.table === "os_demo_prospects";
+  const r = await run({ type: "market.move", ids: ["a2"], to: "Not on a list" });
+  fake.failWhen = null;
+  assert.equal(r.ok, false);
+  assert.deepEqual(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).map((x) => x.agent_id), ["a2"], "still on Prospects");
+  assert.deepEqual(recorded(), []);
+});
+
+test("Prospects ↔ campaign: a change that can't be recorded never fails the move — our team is told", { skip }, async () => {
+  seed();
+  syncOn();
+  recordFails = true;
+  agentDb = [agent("a2", "New Prospect", ["new.prospect@x.test", null])];
+  okResult(await run({ type: "market.move", ids: ["a2"], to: "Prospects" }));
+  assert.deepEqual(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).map((x) => x.agent_id), ["a2"], "on Prospects");
+  await settle();
+  assert.equal(sentOf("unrecorded").length, 1);
 });
 
 /* ------------------------------------------------ never another client --- */
@@ -744,4 +882,19 @@ test("Staff on a real portal (29 Oct): the same save, in their own name — thei
   // Any other save: the current portal's own, exactly as the client's.
   okResult(await runPortalAction(PORTAL, { type: "agent.add", name: "Staff Added", email: "staff.added@x.test", phone: null, license: null }, "eddy@brokerstaffer.com", "staff"));
   assert.ok(fake.rows("client_agents").some((x) => x.client_id === PORTAL && x.name === "Staff Added"));
+});
+
+test("a portal's Prospects are read page by page in one fixed order — rows saved together share a time, and a tie must never skip or repeat an agent between pages (3 Nov audit)", { skip }, async () => {
+  seed();
+  const orders: string[] = [];
+  fake.failWhen = (c) => {
+    if (c.method === "GET" && c.table === "os_demo_prospects") orders.push(String(c.query.get("order")));
+    return false;
+  };
+  fake.seed("os_demo_prospects", [{ portal_id: PORTAL, agent_id: "a2", added_by: "x" }]);
+  agentDb = [agent("a2", "Moved There", ["moved@x.test", null])];
+  okResult(await run({ type: "market.move", ids: ["a2"], to: "Not on a list" }));
+  fake.failWhen = null;
+  assert.ok(orders.length > 0);
+  assert.ok(orders.every((o) => /^added_at\.desc,agent_id\.asc$/.test(o)), `ordered by a unique tie-break too: ${orders.join(" | ")}`);
 });

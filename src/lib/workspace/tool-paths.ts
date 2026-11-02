@@ -154,7 +154,8 @@ function analyticsApiGrants(family: string | undefined, method: string): ToolId[
   if (family === "inboxes") return ["inboxes"];
   if (family === "sync") return write ? ["analytics", "campaigns"] : ["analytics", "campaigns", "inboxes"];
   if (!write) return ["analytics", "campaigns"];
-  if (family === "campaigns" || family === "clients" || family === "copy") return ["campaigns"];
+  // setup-template (2 Nov): which campaign a new client's first campaign is copied from — a campaign decision.
+  if (family === "campaigns" || family === "clients" || family === "copy" || family === "setup-template") return ["campaigns"];
   if (family === "reply-dimensions" || family === "outcomes") return ["analytics"];
   return ["analytics", "campaigns"];
 }

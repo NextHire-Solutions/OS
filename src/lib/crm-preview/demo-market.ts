@@ -38,9 +38,10 @@ export const MAX_MOVE = 1000;
 
 const agentId = z.string().regex(/^[A-Za-z0-9-]{1,64}$/);
 export const marketAction = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("market.move"), ids: z.array(agentId).min(1).max(MAX_MOVE), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional() }),
+  // `setup`: the Setup wizard's "Who we email" — its picks go to Prospects with the setup's own limit (portal-save.ts).
+  z.object({ type: z.literal("market.move"), ids: z.array(agentId).min(1).max(MAX_MOVE), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional(), setup: z.boolean().optional() }),
   // Every agent matching the page's filters (the query string the page sends for its list).
-  z.object({ type: z.literal("market.moveAll"), list: z.enum(["market", "prospects"]), query: z.string().max(4000), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional() }),
+  z.object({ type: z.literal("market.moveAll"), list: z.enum(["market", "prospects"]), query: z.string().max(4000), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional(), setup: z.boolean().optional() }),
 ]);
 export type MarketAction = z.infer<typeof marketAction>;
 
@@ -89,7 +90,7 @@ export const PROSPECTS_MIGRATION = "The Demo Portal's Prospects need migration 0
 export async function demoProspectIds(db: Db, portalId: string): Promise<string[] | null> {
   const out: string[] = [];
   for (let from = 0; ; from += 1000) {
-    const r: Res = await db.from("os_demo_prospects").select("agent_id").eq("portal_id", portalId).order("added_at", { ascending: false }).range(from, from + 999);
+    const r: Res = await db.from("os_demo_prospects").select("agent_id").eq("portal_id", portalId).order("added_at", { ascending: false }).order("agent_id", { ascending: true }).range(from, from + 999);
     if (missingTable(r)) return null;
     if (r.error) throw new Error(`os_demo_prospects: ${r.error.message}`);
     const rows = (r.data ?? []) as Array<{ agent_id: string }>;

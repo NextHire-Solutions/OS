@@ -4,6 +4,8 @@ import { osTable } from "@/lib/clients/os-db";
 import { listOsClients } from "@/lib/clients/os-clients";
 import { campaignsOfClient, type CampaignRow } from "@/lib/clients/pause-campaigns";
 import { DEMO_PORTAL_ID } from "@/lib/crm-preview/demo";
+import { clientMarkets } from "@/lib/clients/prospect-sync/markets";
+import { parseByMls, severalMarkets, syncMode, type CampaignPick } from "@/lib/clients/prospect-sync/rules";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { removeLeads, type MembershipResult } from "@/lib/tools/analytics/campaigns/lead-membership";
 import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
@@ -59,6 +61,10 @@ export interface SweepDeps {
   clients?: () => Promise<OwnerClient[]>;
   portals?: () => Promise<{ id: string; name: string; slug: string | null }[]>;
   campaigns?: (client: OwnerClient) => Promise<ClientCampaign[]>;
+  /** The client's MLSs as its portal resolves them — a Prospects campaign is picked per MLS when it has several. */
+  markets?: (osClientId: string) => Promise<Array<{ code: string; name: string }>>;
+  /** The campaigns made at the client's portal setup (prospect-sync), by MLS ("" for a client with one market). */
+  setupCampaigns?: (osClientId: string) => Promise<Array<{ mlsCode: string; id: string; name: string }>>;
   findLeads?: (email: string) => Promise<BisonLead[]>;
   remove?: (campaignId: number, leadIds: number[], actor: string) => Promise<MembershipResult>;
 }
@@ -161,11 +167,13 @@ export interface ClientListSettings {
   removeEnabled: boolean;
   prospectsCampaignId: string | null;
   prospectsCampaignName: string | null;
+  /** A client with several MLSs: its Prospects campaign per MLS code. */
+  prospectsByMls: Record<string, CampaignPick>;
   updatedAt: string | null;
   updatedBy: string | null;
 }
 
-const CLIENT_OFF: ClientListSettings = { removeEnabled: false, prospectsCampaignId: null, prospectsCampaignName: null, updatedAt: null, updatedBy: null };
+const CLIENT_OFF: ClientListSettings = { removeEnabled: false, prospectsCampaignId: null, prospectsCampaignName: null, prospectsByMls: {}, updatedAt: null, updatedBy: null };
 
 function clientFromRow(r: Row | null): ClientListSettings {
   if (!r) return CLIENT_OFF;
@@ -173,6 +181,7 @@ function clientFromRow(r: Row | null): ClientListSettings {
     removeEnabled: r.remove_enabled === true,
     prospectsCampaignId: typeof r.prospects_campaign_id === "string" ? r.prospects_campaign_id : null,
     prospectsCampaignName: typeof r.prospects_campaign_name === "string" ? r.prospects_campaign_name : null,
+    prospectsByMls: parseByMls(r.prospects_by_mls),
     updatedAt: typeof r.updated_at === "string" ? r.updated_at : null,
     updatedBy: typeof r.updated_by === "string" ? r.updated_by : null,
   };
@@ -228,6 +237,14 @@ async function portalRows(): Promise<{ id: string; name: string; slug: string | 
   return (data ?? []) as { id: string; name: string; slug: string | null }[];
 }
 
+async function setupCampaignRows(osClientId: string): Promise<Array<{ mlsCode: string; id: string; name: string }>> {
+  const { data, error } = await osTable("os_setup_campaigns").select("mls_code, status, campaign_id, campaign_name").eq("os_client_id", osClientId);
+  if (error) return []; // before migration 0046: none
+  return ((data ?? []) as Array<{ mls_code: string | null; status: string; campaign_id: string | null; campaign_name: string | null }>)
+    .filter((r) => r.status === "ready" && r.campaign_id)
+    .map((r) => ({ mlsCode: r.mls_code ?? "", id: String(r.campaign_id), name: r.campaign_name ?? String(r.campaign_id) }));
+}
+
 /** EmailBison only — every Instantly campaign is archived (rules.ts). */
 async function bisonCampaigns(client: OwnerClient): Promise<ClientCampaign[]> {
   const rows: CampaignRow[] = await campaignsOfClient(client);
@@ -243,6 +260,8 @@ function realDeps(d: SweepDeps) {
     clients: d.clients ?? ownerClients,
     portals: d.portals ?? portalRows,
     campaigns: d.campaigns ?? bisonCampaigns,
+    markets: d.markets ?? clientMarkets,
+    setupCampaigns: d.setupCampaigns ?? setupCampaignRows,
     findLeads: d.findLeads ?? ((email: string) => createEmailBisonClient().findLeadsByEmail(email)),
     remove: d.remove ?? ((campaignId: number, leadIds: number[], actor: string) => removeLeads(campaignId, leadIds, actor, analyticsTeamId())),
   };
@@ -747,10 +766,13 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
   const client = clients.find((c) => c.id === osClientId);
   if (!client) throw new CampaignListError("No such client.", 404);
   let campaignsError: string | null = null;
-  const [row, campaigns, recent] = await Promise.all([
+  let marketsError: string | null = null;
+  const [row, campaigns, recent, markets, setups] = await Promise.all([
     x.os("os_campaign_list_clients").select("*").eq("os_client_id", osClientId).maybeSingle(),
     x.campaigns(client).catch((e) => { campaignsError = e instanceof Error ? e.message : String(e); return [] as ClientCampaign[]; }),
     recentRemovals(osClientId, 20, x.os),
+    x.markets(osClientId).catch((e) => { marketsError = e instanceof Error ? e.message : String(e); return [] as Array<{ code: string; name: string }>; }),
+    x.setupCampaigns(osClientId).catch(() => [] as Array<{ mlsCode: string; id: string; name: string }>),
   ]);
   const saved = clientFromRow((row.data ?? null) as Row | null);
   return {
@@ -761,11 +783,46 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
     campaigns: campaignChoiceOrder(campaigns),
     campaignsError: campaignsError as string | null,
     prospects: prospectsCampaign(saved, campaigns),
+    byMls: prospectsByMls(saved, campaigns, markets, setups),
+    marketsError: marketsError as string | null,
+    autoAdd: autoAddState(client.miClientId, x.env),
     recent,
   };
 }
 
-/** { removeEnabled?, prospectsCampaignId? (null clears), ifUpdatedAt? } — the campaign must be one of the client's own. */
+/**
+ * A client with several MLSs: each MLS's Prospects campaign — the one picked (if it is still one of the client's), else
+ * the one made at setup, else none (its prospects wait, the bell asks). `several` false: the one campaign above applies.
+ */
+export function prospectsByMls(saved: ClientListSettings, campaigns: readonly ClientCampaign[], markets: ReadonlyArray<{ code: string; name: string }>, setups: ReadonlyArray<{ mlsCode: string; id: string; name: string }>) {
+  const codes = markets.map((m) => m.code);
+  return {
+    several: severalMarkets(codes),
+    markets: markets.map((m) => {
+      const saved1 = saved.prospectsByMls[m.code] ?? null;
+      const picked = saved1 ? campaigns.find((c) => c.id === saved1.id) ?? null : null;
+      const setup = setups.find((x) => x.mlsCode === m.code) ?? null;
+      return {
+        code: m.code,
+        name: m.name,
+        picked,
+        savedMissing: saved1 && !picked ? saved1 : null,
+        setup: !picked && setup ? setup : null,
+      };
+    }),
+  };
+}
+
+/** Whether adding Prospects to campaigns is on for the client's portal: "off", "test" (a few portals first) or "live". */
+function autoAddState(portalId: string | null, env: Env): "off" | "test" | "live" {
+  if (!portalId) return "off";
+  return syncMode(portalId, portalId === DEMO_PORTAL_ID, env);
+}
+
+/**
+ * { removeEnabled?, prospectsCampaignId? (null clears), prospectsByMls? ({ "<MLS code>": id | null } — only the MLSs
+ * given change), ifUpdatedAt? } — a campaign must be one of the client's own, an MLS one of its markets.
+ */
 export async function saveClientListSettings(osClientId: string, body: unknown, who: string, deps: SweepDeps = {}) {
   const x = realDeps(deps);
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
@@ -800,7 +857,34 @@ export async function saveClientListSettings(osClientId: string, body: unknown, 
       patch.prospects_campaign_name = c.name;
     }
   }
-  const saved = await x.os("os_campaign_list_clients").upsert(patch, { onConflict: "os_client_id" });
-  if (saved.error) throw new CampaignListError(saved.error.message, 502);
+  if ("prospectsByMls" in b) {
+    const want = b.prospectsByMls;
+    if (!want || typeof want !== "object" || Array.isArray(want)) throw new CampaignListError("prospectsByMls must be an object of MLS code → campaign id.");
+    const client = (await x.clients()).find((c) => c.id === osClientId);
+    if (!client) throw new CampaignListError("No such client.", 404);
+    const [markets, campaigns] = await Promise.all([x.markets(osClientId), x.campaigns(client)]);
+    const codes = new Set(markets.map((m) => m.code));
+    const next: Record<string, CampaignPick> = { ...current.prospectsByMls };
+    for (const [code, id] of Object.entries(want as Record<string, unknown>)) {
+      if (!codes.has(code)) throw new CampaignListError(`${code} is not one of this client's MLSs.`);
+      if (id === null || id === "") { delete next[code]; continue; }
+      const c = campaigns.find((k) => k.id === String(id));
+      if (!c) throw new CampaignListError(`That campaign (for ${code}) is not one of this client's EmailBison campaigns.`);
+      next[code] = { id: c.id, name: c.name };
+    }
+    patch.prospects_by_mls = next;
+  }
+  // Written only over the row as it was read (3 Nov audit: two saves at once must never both "win" — the second is told).
+  const changedMeanwhile = new CampaignListError("This client's settings were changed by someone else just now — nothing was saved. Reload and try again.", 409);
+  if (data) {
+    let q = x.os("os_campaign_list_clients").update(patch).eq("os_client_id", osClientId);
+    q = current.updatedAt === null ? q.is("updated_at", null) : q.eq("updated_at", current.updatedAt);
+    const saved = await q.select("os_client_id");
+    if (saved.error) throw new CampaignListError(saved.error.message, 502);
+    if (!((saved.data ?? []) as unknown[]).length) throw changedMeanwhile;
+  } else {
+    const saved = await x.os("os_campaign_list_clients").insert(patch);
+    if (saved.error) throw /duplicate|unique/i.test(saved.error.message) ? changedMeanwhile : new CampaignListError(saved.error.message, 502);
+  }
   return clientFromRow(patch);
 }

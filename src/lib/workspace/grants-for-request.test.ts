@@ -84,6 +84,7 @@ test("changing a campaign needs Campaign Management — Campaign Analytics can l
     ["campaigns/123/leads/remove", "POST"], ["campaigns/123/fan-out", "POST"], ["campaigns/123/copy-sequence", "POST"],
     ["campaigns/123/client", "PUT"], ["campaigns/123/re-campaign", "POST"], ["campaigns/123/unsupported-servers", "POST"],
     ["clients", "POST"], ["clients/9", "PATCH"], ["clients/9", "DELETE"], ["copy/tags", "PUT"],
+    ["setup-template", "POST"],
   ];
   for (const [fam, method] of writes) {
     const p = `/api/tools/analytics/${fam}`;
@@ -112,7 +113,8 @@ test("every write route under the analytics API is classified (a new one fails h
   const known = new Set(["clients", "clients/[id]", "reply-dimensions", "outcomes", "copy/tags", "sync/run",
     "campaigns/[id]/settings", "campaigns/inboxes", "campaigns/[id]/unsupported-servers", "campaigns/[id]/launch",
     "campaigns/actions", "campaigns/[id]/leads/remove", "campaigns/[id]/sequence", "campaigns/[id]/fan-out",
-    "campaigns/[id]/copy-sequence", "campaigns/[id]/sequence/live", "campaigns/[id]/client", "campaigns/[id]/re-campaign"]);
+    "campaigns/[id]/copy-sequence", "campaigns/[id]/sequence/live", "campaigns/[id]/client", "campaigns/[id]/re-campaign",
+    "setup-template"]);
   for (const r of routes) {
     const src = fs.readFileSync(r, "utf8");
     if (!/export (async )?function (POST|PATCH|PUT|DELETE)|export const (POST|PATCH|PUT|DELETE)/.test(src)) continue;

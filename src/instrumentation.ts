@@ -304,4 +304,30 @@ export async function register() {
     setTimeout(runUsageSafely, 120_000).unref?.();
     setInterval(runUsageSafely, 60 * 60_000).unref?.();
   }
+
+  /*
+   * A portal's Prospects kept in step with the client's campaign (2 Nov; lib/clients/prospect-sync/): every minute,
+   * the changes the portals recorded — an agent added goes into the client's Prospects campaign (a new client's first
+   * campaign, a draft, is made here once), one removed comes out of the client's campaigns. Railway only, and only
+   * with OS_PROSPECT_SYNC=1 (while OS_PROSPECT_SYNC_ONLY lists portals, only theirs). A slow run is never overlapped;
+   * each change is claimed before anything is done, so replicas never do the same work.
+   */
+  let prospectsRunning = false;
+  const syncProspects = async () => {
+    if (prospectsRunning || process.env.OS_PROSPECT_SYNC !== "1") return;
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    prospectsRunning = true;
+    try {
+      const { runProspectSync } = await import("./lib/clients/prospect-sync/run");
+      const r = await runProspectSync();
+      if (r.claimed || r.notes.length) {
+        console.log(`[prospect-sync] ${r.claimed} claimed · ${r.done} done · ${r.skipped} skipped · ${r.waiting} waiting · ${r.failed} failed${r.notes.length ? ` · ${r.notes.slice(0, 5).join(" | ")}` : ""}`);
+      }
+    } finally {
+      prospectsRunning = false;
+    }
+  };
+  const syncProspectsSafely = () => { syncProspects().catch((e) => console.error("[prospect-sync] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(syncProspectsSafely, 50_000).unref?.();
+  setInterval(syncProspectsSafely, 60_000).unref?.();
 }

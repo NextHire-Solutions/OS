@@ -63,6 +63,12 @@ export const OS_TABLES = [
   // one record per billing period — see migrations/0043_usage_billing.sql.
   "os_usage_billing_settings",
   "os_usage_billing_periods",
+  // A portal's Prospects kept in step with the client's campaign: every change,
+  // the first campaign made at setup, and the setup template — see
+  // migrations/0046_prospect_campaigns.sql.
+  "os_prospect_sync",
+  "os_setup_campaigns",
+  "os_prospect_sync_settings",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

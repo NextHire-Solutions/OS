@@ -130,6 +130,29 @@ export async function alertMarketMove(db: Db, input: { who: string; portalId: st
   }
 }
 
+/**
+ * A client downloaded its Prospects (2 Nov — export allowed for a client's own Prospects only): each export its own
+ * notice, as agent data leaving the portal is what the no-scraping rule watches for. Never refuses, never throws — the
+ * file is already sent.
+ */
+export async function alertExport(db: Db, input: { who: string; portalId: string; agents: number; now: Date }): Promise<void> {
+  try {
+    const p: Res = await db.from("clients").select("name").eq("id", input.portalId).maybeSingle();
+    const name = ((p.data as { name?: string | null } | null)?.name ?? "").trim() || "a client portal";
+    const n = input.agents.toLocaleString("en-US");
+    const them = input.agents === 1 ? "agent" : "agents";
+    await bell(db, {
+      kind: "portal_export",
+      severity: "info",
+      title: `Prospects exported: ${n} ${them} — ${name}`,
+      body: `${norm(input.who)} downloaded ${name}'s Prospects as a file: ${n} ${them} — names, brokerages, offices, cities and sales; no emails or phones.`,
+      ref: `portal_export:${input.now.toISOString()}:${input.portalId}:${norm(input.who)}`,
+    });
+  } catch (err) {
+    console.error("[portal-usage] export alert", err instanceof Error ? err.message : err);
+  }
+}
+
 /** Today's agents viewed per person on a portal, for the Portal logins list. */
 export async function todayRows(db: Db, portalId: string, now: Date): Promise<Record<string, number>> {
   const r: Res = await db.from("os_portal_usage").select("who, rows").eq("day", day(now)).eq("portal_id", portalId).eq("kind", "market");

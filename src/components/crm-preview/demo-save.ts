@@ -56,7 +56,8 @@ export async function postDemo(client: string, action: DemoAction): Promise<{ ok
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ client, action }),
       // An import of a few thousand rows takes longer than one save.
-      signal: AbortSignal.timeout(action.type.endsWith(".import") ? 120_000 : 30_000),
+      // So does the Setup wizard's "Who we email" pick (up to 10,000 agents at once).
+      signal: AbortSignal.timeout(action.type.endsWith(".import") || ("setup" in action && action.setup) ? 120_000 : 30_000),
     });
     const j = (await res.json().catch(() => ({}))) as { id?: string; error?: string; message?: string };
     return res.ok ? { ok: true, id: j.id, message: j.message } : { ok: false, error: j.error ?? "That could not be saved." };

@@ -247,8 +247,17 @@ async function campaignsFor(clientIds: string[], { strict = false }: { strict?: 
  * any EmailBison mapping that was excluded or left ambiguous. Used by the My
  * Agents / DNC clean-up (campaign-lists/), which removes people from them.
  */
-export async function campaignsOfClient(client: { name: string; aliases?: string[] | null }): Promise<CampaignRow[]> {
-  return campaignsFor(await analyticsRowIdsFor(client), { strict: true });
+export async function campaignsOfClient(client: { name: string; aliases?: string[] | null }, extraAnalyticsIds: readonly string[] = []): Promise<CampaignRow[]> {
+  return campaignsFor([...new Set([...(await analyticsRowIdsFor(client)), ...extraAnalyticsIds])], { strict: true });
+}
+
+/**
+ * Every campaign the client has on either platform under ANY mapping — excluded or ambiguous ones too — by its
+ * name, aliases or its own Analytics link. For "has this client no campaign at all?" (a new client's first campaign
+ * is made only then — prospect-sync), where a campaign missed would mean a second, unwanted one.
+ */
+export async function allCampaignsOfClient(client: { name: string; aliases?: string[] | null }, extraAnalyticsIds: readonly string[] = []): Promise<CampaignRow[]> {
+  return campaignsFor([...new Set([...(await analyticsRowIdsFor(client)), ...extraAnalyticsIds])], { strict: false });
 }
 
 /**

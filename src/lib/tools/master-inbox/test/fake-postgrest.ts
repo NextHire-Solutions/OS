@@ -165,12 +165,14 @@ export class FakePostgrest {
   private orderBy(rows: Row[], key: string): Row[] {
     const [col, ...mods] = key.split(".");
     const desc = mods.includes("desc");
+    // Nulls last, as Postgres sorts ascending — first with .nullsfirst.
+    const nullAt = mods.includes("nullsfirst") ? -1 : 1;
     return [...rows].sort((a, b) => {
       const av = a[col] as string | number | null | undefined;
       const bv = b[col] as string | number | null | undefined;
       if (av === bv) return 0;
-      if (av === null || av === undefined) return 1;
-      if (bv === null || bv === undefined) return -1;
+      if (av === null || av === undefined) return nullAt;
+      if (bv === null || bv === undefined) return -nullAt;
       return (av < bv ? -1 : 1) * (desc ? -1 : 1);
     });
   }

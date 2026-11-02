@@ -471,6 +471,35 @@ function Sequence({
   const [reCampaigning, setReCampaigning] = useState(false);
   const [fanningOut, setFanningOut] = useState(false);
   const deploy = useBulkDeploy(onChanged);
+  /*
+   * The setup template (2 Nov): the campaign a new client's first campaign is a draft copy of, made when it finishes
+   * setting up its portal (lib/clients/prospect-sync/setup-campaign.ts). Undefined while it is read.
+   */
+  const [template, setTemplate] = useState<{ campaignId: string; campaignName: string | null } | null | undefined>(undefined);
+  const [templating, setTemplating] = useState(false);
+  useEffect(() => {
+    if (platform !== "emailbison") return;
+    fetch("/api/tools/analytics/setup-template", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null)).then((j) => setTemplate(j?.template ?? null)).catch(() => setTemplate(null));
+  }, [campaignId, platform]);
+  async function setAsNewClientTemplate() {
+    const ask = `Use "${campaignName}" for new clients?\n\nWhen a new client with no campaign finishes setting up its portal, it gets a draft copy of this campaign — its emails, schedule and sending inboxes — named for the client, with the prospects it picked. Nothing is launched: the team writes the emails from the client's offer and launches it.`;
+    if (!window.confirm(ask)) return;
+    setTemplating(true);
+    try {
+      const res = await fetch("/api/tools/analytics/setup-template", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId: Number(campaignId), confirm: true }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      setTemplate(body.template);
+      show({ text: `New clients' first campaigns will be copied from ${campaignName}.` });
+    } catch (e) {
+      show({ text: e instanceof Error ? e.message : "Could not set the template", bad: true });
+    } finally {
+      setTemplating(false);
+    }
+  }
 
   /*
    * Variants are flattened back out for editing. The read view nests them under
@@ -531,6 +560,13 @@ function Sequence({
           and nothing else, which is the gap this closes. */}
       <Btn disabled={ebOnly} title={ebTitle} onClick={() => setReCampaigning(true)}>Re-campaign…</Btn>
       <Btn disabled={ebOnly} title={ebTitle} onClick={() => setFanningOut(true)}>For multiple clients…</Btn>
+      <Btn
+        disabled={ebOnly || templating || template === undefined || template?.campaignId === campaignId}
+        title={ebTitle ?? (template?.campaignId === campaignId ? "New clients' first campaigns are copied from this one" : template ? `Now: ${template.campaignName ?? template.campaignId}` : "No campaign is used for new clients yet")}
+        onClick={() => void setAsNewClientTemplate()}
+      >
+        {template?.campaignId === campaignId ? "Used for new clients ✓" : templating ? "Saving…" : "Use for new clients…"}
+      </Btn>
     </div>
   );
 

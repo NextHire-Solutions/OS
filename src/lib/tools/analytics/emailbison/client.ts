@@ -57,7 +57,8 @@ export class EmailBisonClient {
     this.apiKey = apiKey;
   }
 
-  async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  /** `retry: false` — never sent twice (a create whose answer was lost may have been made: a retry would make two). */
+  async request<T>(endpoint: string, options: RequestInit = {}, opts: { retry?: boolean } = {}): Promise<T> {
     return limited(async () => {
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         ...options,
@@ -111,7 +112,7 @@ export class EmailBisonClient {
        */
       assertApplied(payload, endpoint);
       return payload as T;
-    }, retryPolicy);
+    }, opts.retry === false ? () => null : retryPolicy);
   }
 
   /**
@@ -292,10 +293,10 @@ export class EmailBisonClient {
     return this.request<unknown>(`/api/campaigns/${id}/archive`, { method: "PATCH" });
   }
 
-  async duplicateCampaign(id: number) {
+  async duplicateCampaign(id: number, opts: { retry?: boolean } = {}) {
     return this.request<{ data?: EBCampaign }>(`/api/campaigns/${id}/duplicate`, {
       method: "POST",
-    });
+    }, opts);
   }
 
   /** Settings only — name, limits, tracking flags. Never status. */
@@ -379,6 +380,19 @@ export class EmailBisonClient {
   // `…/leads` itself, and inboxes use `attach-`/`remove-` prefixes on the
   // campaign. Being one segment out returns a plain 404 that reads exactly like
   // "EmailBison cannot do this" — which is what it cost me the first time.
+
+  /**
+   * Creates or updates up to 500 leads by email (POST /api/leads/create-or-update/multiple), with the fields the
+   * Database app's enrichment worker gives a lead (prospect-sync/lead-map.ts). "patch" (the default) changes only the
+   * fields sent and keeps the rest of a lead that exists; "put" replaces them all, as the worker does. The answer
+   * lists the leads it took; a personal-domain address the workspace does not accept is left out of it.
+   */
+  async upsertLeads(leads: ReadonlyArray<Record<string, unknown>>, existing: "put" | "patch" = "patch") {
+    return this.request<{ data?: Array<{ id: number | string; email?: string }> }>(`/api/leads/create-or-update/multiple`, {
+      method: "POST",
+      body: JSON.stringify({ existing_lead_behavior: existing, leads }),
+    });
+  }
 
   /**
    * Adds existing leads to a campaign. Idempotent: EmailBison replies
