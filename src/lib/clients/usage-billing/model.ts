@@ -39,6 +39,11 @@ export const LEAD_SOURCE_NAMES: Record<LeadSource, string> = {
 };
 /** What one charge is for, in words: "$500 per call". */
 export const LEAD_SOURCE_UNIT: Record<LeadSource, string> = { handoffs: "lead", introductions: "introduction", calls: "call" };
+/**
+ * The first day Interested replies are on record (Master Inbox 0080's history: the Interested alert's record is
+ * complete from 14 Oct 2026). A per-lead schedule can't start before it — earlier periods would be undercounted.
+ */
+export const INTERESTED_ON_RECORD_FROM = "2026-10-14";
 /*
  * A lead is each Interested reply (the client, 27 Oct; the user, 31 Oct:
  * "interested lead means count that in for payment") — 'handoffs', the name

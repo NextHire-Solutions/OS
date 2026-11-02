@@ -29,7 +29,7 @@ for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, 
 
 const billing = await import("./billing.ts");
 const { usageStripe } = await import("./stripe.ts");
-const { periodKey } = await import("./model.ts");
+const { periodKey, leadsHash } = await import("./model.ts");
 
 const fake = new FakeStripe();
 const stripe = usageStripe("sk_test_51FakeFakeFakeFake", fake.fetch as typeof fetch);
@@ -119,6 +119,12 @@ function seed(o: { acmeSettings?: Row | null; betaSettings?: Row | null; periods
     { label_id: "lab-mb", target_type: "thread", target_id: "th5", assigned_at: "2026-10-10T15:00:00.000Z" }, // Cal again
     { label_id: "lab-mb", target_type: "thread", target_id: "th1", assigned_at: "2026-10-13T15:00:00.000Z" }, // next week
   ]);
+  // The label history (Master Inbox 0080) — what the Interested count reads: here, every label as given above.
+  const threadOf = new Map(db.rows("threads").map((t) => [t.id, t]));
+  db.seed("label_history", db.rows("label_assignments").map((a, i) => ({
+    id: i + 1, thread_id: a.target_id, label_id: a.label_id, label_name: a.label_id === "lab-int" ? "Interested" : "Meetings Booked",
+    assigned_at: a.assigned_at, client_id: threadOf.get(a.target_id)?.client_id ?? null, lead_id: threadOf.get(a.target_id)?.lead_id ?? null, source: "trigger",
+  })));
 }
 
 async function withCard() {
@@ -201,17 +207,23 @@ test("introductions (the other definition): our entries in any of the client's p
 
 test("saving: a new client is written test_only = true, and test_only is never written again", async () => {
   seed({ acmeSettings: null });
+  const ANCHOR = "2026-10-19"; // per lead starts on or after 14 Oct (Interested replies on record)
   const s = await billing.saveSettings(ACME, { priceCents: 20_000, everyDays: 14, anchorDate: ANCHOR, leadSource: "handoffs", enabled: false }, ADMIN);
   assert.equal(s.test_only, true);
   assert.equal(s.price_cents, 20_000);
   assert.equal(s.created_by, ADMIN);
   db.calls.length = 0;
   db.rows("os_usage_billing_settings")[0].test_only = false; // live, as connectCard leaves it
-  // A live client's schedule and what counts are fixed (they would move billed periods) — refused, nothing written.
-  await assert.rejects(billing.saveSettings(ACME, { priceCents: 10_000, everyDays: 7, anchorDate: ANCHOR, leadSource: "introductions", enabled: true }, ADMIN), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 409 && /live: its billing schedule/.test(e.message));
+  // Live but never billed: a schedule set wrongly can still be put right.
+  await billing.saveSettings(ACME, { priceCents: 20_000, everyDays: 7, anchorDate: ANCHOR, leadSource: "handoffs", enabled: false }, ADMIN);
+  assert.equal(db.rows("os_usage_billing_settings")[0].every_days, 7);
+  // Once a live period is billed, its schedule and what counts are fixed (they would move billed periods) — refused, nothing written.
+  db.seed("os_usage_billing_periods", [{ os_client_id: ACME, period_start: ANCHOR, period_end: "2026-10-26", test_mode: false, status: "paid", leads: [], lead_count: 1, price_cents: 20_000, amount_cents: 20_000, lead_source: "handoffs" }]);
+  db.calls.length = 0;
+  await assert.rejects(billing.saveSettings(ACME, { priceCents: 10_000, everyDays: 14, anchorDate: ANCHOR, leadSource: "introductions", enabled: true }, ADMIN), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 409 && /live and has been billed/.test(e.message));
   assert.deepEqual(writes(), []);
   // Its price and switch can change — and saving never touches test_only.
-  await billing.saveSettings(ACME, { priceCents: 25_000, everyDays: 14, anchorDate: ANCHOR, leadSource: "handoffs", enabled: true }, ADMIN);
+  await billing.saveSettings(ACME, { priceCents: 25_000, everyDays: 7, anchorDate: ANCHOR, leadSource: "handoffs", enabled: true }, ADMIN);
   for (const w of writes()) assert.ok(!("test_only" in (w.body as Row)), "an update never touches test_only");
   assert.equal(db.rows("os_usage_billing_settings")[0].test_only, false);
   assert.equal(db.rows("os_usage_billing_settings")[0].price_cents, 25_000);
@@ -355,7 +367,8 @@ test("a refused card: the period is 'failed', the invoice open with its pay link
 test("no billable leads: the period is closed with nothing charged and Stripe is not asked", async () => {
   seed();
   await withCard();
-  db.seed("label_assignments", []);
+  db.seed("label_history", []);
+  db.seed("label_assignments", db.rows("label_assignments").filter((a) => a.label_id !== "lab-int"));
   const r = await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW });
   assert.equal(r.outcome, "nothing");
   assert.equal(rowsOf()[0].status, "void");
@@ -471,3 +484,176 @@ test("retry: the claim is conditional — a retry that read 'failed' just before
   await assert.rejects(billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN), /Someone is retrying/);
   assert.equal(fake.creates(/\/pay$/).length, 1, "only the first charge asked Stripe to pay — the retry never did");
 });
+
+/* ------------------------------------ the Interested count's rules (the user, 2 Nov) --- */
+
+/** One more conversation on a portal: its agent, the thread, and its Interested in the history (and its label now). */
+function addInterested(o: { thread: string; lead: string; email: string; name: string; at: string; portal?: string; now?: string; status?: string; noThread?: boolean }) {
+  db.rows("leads").push({ id: o.lead, email: o.email, full_name: o.name });
+  if (!o.noThread) db.rows("threads").push({ id: o.thread, client_id: o.portal ?? BOSTON, lead_id: o.lead, status: o.status ?? "open" });
+  db.rows("label_history").push({ id: db.rows("label_history").length + 100, thread_id: o.thread, label_id: "lab-int", label_name: "Interested", assigned_at: o.at, client_id: o.portal ?? BOSTON, lead_id: o.lead, source: "trigger" });
+  if (o.now) db.rows("label_assignments").push({ label_id: o.now, target_type: "thread", target_id: o.thread, assigned_at: o.at });
+}
+
+test("per lead: EVER marked Interested counts after it moves on (Introduction, No Show); a correction to a 'no' label, Trash and a deleted conversation do not", async () => {
+  seed();
+  db.rows("labels").push({ id: "lab-intro", name: "Introduction" }, { id: "lab-noshow", name: "No Show / No Response" }, { id: "lab-no", name: "Not Interested" }, { id: "lab-nq", name: "Not Qualified" });
+  // Jordan was introduced since: the label he carries now is Introduction — the history still has his Interested.
+  for (const a of db.rows("label_assignments")) if (a.target_id === "ti-jordan") a.label_id = "lab-intro";
+  // Sam was corrected by a person to Not Interested; Pat's conversation is in Trash.
+  for (const a of db.rows("label_assignments")) if (a.target_id === "ti-sam") a.label_id = "lab-no";
+  for (const t of db.rows("threads")) if (t.id === "ti-pat") t.status = "trash";
+  addInterested({ thread: "ti-noshow", lead: "l20", email: "noshow@x.test", name: "No Show Agent", at: "2026-10-08T12:00:00.000Z", now: "lab-noshow" });
+  addInterested({ thread: "ti-nq", lead: "l21", email: "nq@x.test", name: "Not Qualified Agent", at: "2026-10-08T13:00:00.000Z", now: "lab-nq" });
+  addInterested({ thread: "ti-gone", lead: "l22", email: "gone@x.test", name: "Deleted Conversation", at: "2026-10-08T14:00:00.000Z", noThread: true });
+  const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW });
+  assert.deepEqual(p.leads.map((l) => l.key).sort(), ["jordan@coastal.test", "noshow@x.test"].sort(), "introduced and no-show still count; corrected, Trash and deleted do not");
+  assert.deepEqual(writes(), []);
+});
+
+test("per lead: counted in the period of its FIRST Interested — marked again later bills nothing new; an agent the client had before its start is not billed", async () => {
+  seed({ acmeSettings: { anchor_date: "2026-09-21" } }); // first period Sep 21; the week asked for is Oct 5 – 11
+  // Marked Interested in an earlier period (Sep 30) and again this week: it belonged to the earlier period.
+  addInterested({ thread: "ti-again", lead: "l30", email: "again@x.test", name: "Marked Twice", at: "2026-09-30T12:00:00.000Z" });
+  db.rows("label_history").push({ id: 900, thread_id: "ti-again", label_id: "lab-int", label_name: "Interested", assigned_at: "2026-10-08T12:00:00.000Z", client_id: BOSTON, lead_id: "l30", source: "trigger" });
+  // Before the client's start (Sep 21): introduced (history), and introduced in the portal — then Interested again this week.
+  db.rows("leads").push({ id: "l31", email: "before@x.test", full_name: "Introduced Before" }, { id: "l32", email: "portal@x.test", full_name: "Portal Intro Before" });
+  db.rows("label_history").push({ id: 901, thread_id: "ti-old1", label_id: "lab-intro", label_name: "Introduction", assigned_at: "2026-09-10T12:00:00.000Z", client_id: BOSTON, lead_id: "l31", source: "backfill:current" });
+  addInterested({ thread: "ti-before", lead: "l31", email: "before@x.test", name: "Introduced Before", at: "2026-10-08T15:00:00.000Z" });
+  db.rows("client_pipeline_entries").push({ id: "pe-old", client_id: FLORIDA, thread_id: "t-old", lead_name: "Portal Intro Before", lead_email: "Portal@x.test", source: "Introduction", introduced_at: "2026-09-15T12:00:00.000Z" });
+  addInterested({ thread: "ti-portal", lead: "l32", email: "portal@x.test", name: "Portal Intro Before", at: "2026-10-09T15:00:00.000Z" });
+  addInterested({ thread: "ti-fresh", lead: "l33", email: "fresh@x.test", name: "New Agent", at: "2026-10-10T15:00:00.000Z" });
+  const p = await billing.previewPeriod(ACME, await settingsOf(), { now: NOW, periodStart: "2026-10-05" });
+  const keys = p.leads.map((l) => l.key);
+  assert.ok(keys.includes("fresh@x.test"), "a new agent counts");
+  for (const k of ["again@x.test", "before@x.test", "portal@x.test"]) assert.ok(!keys.includes(k), k);
+});
+
+test("per lead: before Master Inbox migration 0080 nothing is counted — said plainly (503), never a guess", async () => {
+  seed();
+  db.missingTables.add("label_history");
+  await assert.rejects(billing.previewPeriod(ACME, await settingsOf(), { now: NOW }), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 503 && /0080_label_history/.test(e.message));
+});
+
+test("two periods charged at the same moment cannot both bill the same agent: the second lets go and says so", async () => {
+  seed();
+  await withCard();
+  // At the very moment this period is claimed, another period (Sep 28) is claimed with Jordan on it — as a second tab
+  // would, after this one's preview had seen it unbilled.
+  db.failWhen = (c) => {
+    if (c.method === "PATCH" && c.table === "os_usage_billing_periods" && c.query.get("status") === "eq.preview") {
+      db.rows("os_usage_billing_periods").push({ id: "other", os_client_id: ACME, period_start: "2026-09-28", period_end: "2026-10-05", test_mode: true, status: "draft", leads: [{ key: "jordan@coastal.test", name: "Jordan", at: "2026-10-01T12:00:00.000Z", source: "interested" }], lead_count: 1, price_cents: 10_000, amount_cents: 10_000, claimed_at: new Date().toISOString() });
+      db.failWhen = null;
+    }
+    return false;
+  };
+  await assert.rejects(billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW }), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 409 && /just billed in another period/.test(e.message));
+  assert.equal(rowsOf().find((r) => r.period_start === WEEK.start)!.status, "preview", "let go — free to preview and charge again");
+  assert.equal(fake.creates(/^\/invoices$/).length, 0, "nothing sent to Stripe");
+});
+
+test("a charge whose claim was taken over (a resume after it went stale) stops: it never finalizes or pays a second invoice", async () => {
+  seed();
+  await withCard();
+  // As this charge creates its invoice, someone else takes the claim over (a resume): it must stop.
+  fake.failWhen = (c) => {
+    if (c.method === "POST" && c.path === "/invoices") { const r = rowsOf().find((x) => x.period_start === WEEK.start)!; r.claimed_at = "2099-01-01T00:00:00.000Z"; fake.failWhen = null; }
+    return false;
+  };
+  const r = await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW });
+  assert.equal(r.outcome, "in_progress");
+  assert.match(r.message, /took over/);
+  assert.equal(fake.creates(/\/finalize$/).length, 0);
+  assert.equal(fake.creates(/\/pay$/).length, 0);
+});
+
+/* ---------------------------------------------------- re-audit fixes (2 Nov) --- */
+
+test("a charge Stripe refuses the same way every time is never stuck: once stale it can be removed (nothing taken) and the period charged again", async () => {
+  seed();
+  await withCard();
+  // Every invoice line is refused (a deleted customer, a currency mismatch…): the draft invoice exists, the period is 'draft'.
+  fake.failWhen = (c) => c.method === "POST" && c.path === "/invoiceitems";
+  await assert.rejects(billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW }), /remove the unfinished charge/);
+  assert.equal(rowsOf()[0].status, "draft");
+  assert.equal(fake.invoices.size, 1);
+  const row = rowsOf()[0] as { amount_cents: number; lead_count: number; leads: { key: string }[] };
+  const seen = { amountCents: row.amount_cents, count: row.lead_count, leadsHash: leadsHash(row.leads) };
+  // Not while it may still be running.
+  await assert.rejects(billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN, seen, new Date(NOW.getTime() + 60_000)), /being billed right now/);
+  // From a page that saw other leads: refused.
+  await assert.rejects(billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN, { ...seen, leadsHash: "other" }, new Date(NOW.getTime() + 60 * 60_000)), /changed since you looked/);
+  const r = await billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN, seen, new Date(NOW.getTime() + 60 * 60_000));
+  assert.equal(r.outcome, "nothing");
+  assert.match(r.message, /nothing was taken/);
+  assert.equal(fake.invoices.size, 0, "its draft invoice deleted in Stripe");
+  assert.equal(fake.creates(/\/finalize$|\/pay$/).length, 0, "nothing charged");
+  assert.equal(rowsOf()[0].status, "preview");
+  assert.equal(rowsOf()[0].lead_count, 0, "its agents are free again");
+  // The cause fixed: charged on a new invoice, once.
+  fake.failWhen = null;
+  const again = await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: new Date(NOW.getTime() + 2 * 60 * 60_000) });
+  assert.equal(again.outcome, "paid");
+  assert.equal(fake.creates(/\/pay$/).length, 1);
+});
+
+test("an unfinished charge whose invoice was already finalized is never removed — it is resumed instead", async () => {
+  seed();
+  const { customerId, pm } = await withCard();
+  const leads = [{ key: "jordan@coastal.test", name: "Jordan Ellis", at: "2026-10-06T14:00:00.000Z", source: "interested" }];
+  const { invoiceId } = await stripe.createDraftInvoice({ customerId, paymentMethodId: pm, osClientId: ACME, period: WEEK, periodKey: PK, description: "x", leadCount: 1 });
+  await stripe.addLeadLine({ customerId, invoiceId, periodKey: PK, lead: leads[0], priceCents: 10_000 });
+  await stripe.finalizeInvoice(invoiceId, "k");
+  db.seed("os_usage_billing_periods", [{ os_client_id: ACME, period_start: WEEK.start, period_end: WEEK.end, test_mode: true, status: "draft", leads, lead_count: 1, price_cents: 10_000, amount_cents: 10_000, lead_source: "handoffs", claimed_at: "2026-10-13T00:00:00.000Z", stripe_invoice_id: invoiceId }]);
+  await assert.rejects(billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN, null, NOW), /already open in Stripe — press "Try the charge again"/);
+  assert.equal(rowsOf()[0].status, "draft");
+  assert.equal(fake.invoices.get(invoiceId)!.status, "open");
+});
+
+test("a retry goes with the leads the person saw: another lead set at the same amount is refused", async () => {
+  seed();
+  await withCard();
+  fake.declineNextPay = true;
+  await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW });
+  const row = rowsOf()[0] as { amount_cents: number; lead_count: number; leads: { key: string }[] };
+  await assert.rejects(billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN, { amountCents: row.amount_cents, count: row.lead_count, leadsHash: "seen-before" }), /changed since you looked/);
+  await assert.rejects(billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN, { amountCents: row.amount_cents, count: row.lead_count + 1, leadsHash: leadsHash(row.leads) }), /changed since you looked/);
+  const r = await billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN, { amountCents: row.amount_cents, count: row.lead_count, leadsHash: leadsHash(row.leads) });
+  assert.equal(r.outcome, "paid");
+});
+
+test("an invoice marked uncollectible in Stripe: Refresh shows the period unpaid, and Retry charges it", async () => {
+  seed();
+  await withCard();
+  fake.declineNextPay = true;
+  await billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW });
+  const row = rowsOf()[0];
+  Object.assign(row, { status: "charged", charged_at: "2026-10-14T15:00:00.000Z", error: null });
+  fake.markUncollectible(String(row.stripe_invoice_id));
+  const refreshed = await billing.refreshPeriod(ACME, WEEK.start, stripe);
+  assert.equal(refreshed?.status, "failed");
+  assert.match(String(refreshed?.error), /uncollectible/);
+  const r = await billing.retryPeriod(ACME, WEEK.start, stripe, ADMIN);
+  assert.equal(r.outcome, "paid");
+});
+
+test("the Interested count refuses rather than undercount: history missing a label, or no portal linked", async () => {
+  seed();
+  // Jordan carries Interested now, given this week — but the history has no row for it: the history stopped.
+  db.seed("label_history", db.rows("label_history").filter((h) => h.thread_id !== "ti-jordan"));
+  await assert.rejects(billing.previewPeriod(ACME, await settingsOf(), { now: NOW }), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 503 && /missing 1 conversation marked Interested/.test(e.message));
+  seed();
+  const acme = db.rows("os_clients").find((c) => c.id === ACME)!;
+  Object.assign(acme, { mi_client_id: null, aliases: [] });
+  await assert.rejects(billing.previewPeriod(ACME, await settingsOf(), { now: NOW }), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 503 && /no Master Inbox portal linked/.test(e.message));
+});
+
+test("a per-lead schedule can't start before Interested replies are on record (14 Oct 2026)", async () => {
+  seed({ acmeSettings: null });
+  const input = { enabled: false, priceCents: 25_000, everyDays: 14 as const, leadSource: "handoffs" as const };
+  await assert.rejects(billing.saveSettings(ACME, { ...input, anchorDate: "2026-10-13" }, ADMIN), (e: unknown) => e instanceof billing.UsageBillingError && e.status === 400 && /on record from Oct 14, 2026/.test(e.message));
+  assert.equal(db.rows("os_usage_billing_settings").length, 0);
+  await billing.saveSettings(ACME, { ...input, anchorDate: "2026-10-14" }, ADMIN);
+  assert.equal(db.rows("os_usage_billing_settings")[0].anchor_date, "2026-10-14");
+});
+

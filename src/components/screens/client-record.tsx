@@ -485,7 +485,7 @@ export function ClientRecord({
                     {fieldsIn("billing").map((f) => row(f.key, f.label, f))}
                   </section>
                   {/* Pay per lead (26 Oct): Stripe TEST mode only — renders nothing for anyone the route refuses. */}
-                  <UsageBillingPanel clientId={c.id} />
+                  <UsageBillingPanel clientId={c.id} clientName={c.name} />
                 </>
               ) : null}
               {tab === "campaigns" ? (

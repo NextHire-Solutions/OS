@@ -64,6 +64,8 @@ export interface InvoiceSummary {
   total: number;
   amountPaid: number;
   amountDue: number;
+  /** What paying it now would take from the card (amount_due less what is paid). */
+  amountRemaining: number;
   created: number;
   description: string | null;
   /** Stripe's page to pay it — only while it is open (unpaid). */
@@ -134,6 +136,8 @@ export interface UsageStripe {
    * payment (3-D Secure) — is an answer, not an error: { ok: false, error, code }.
    */
   payInvoice(invoiceId: string, idempotencyKey: string, paymentMethodId?: string | null): Promise<{ ok: true; invoice: InvoiceSummary } | { ok: false; error: string; code: string | null }>;
+  /** The customer's balance (cents): positive = owed, negative = credit. Stripe adds it to the next finalized invoice. */
+  customerBalance(customerId: string): Promise<number>;
   /** A customer and its cards on file; null if it does not exist or was deleted. */
   cardsOnFile(customerId: string, now?: Date): Promise<CustomerCards | null>;
   /** TEST mode only: the customers made for this client (metadata os_client_id). */
@@ -168,6 +172,7 @@ export function invoiceSummary(j: Json): InvoiceSummary {
     total: num(j.total),
     amountPaid: num(j.amount_paid),
     amountDue: num(j.amount_due),
+    amountRemaining: typeof j.amount_remaining === "number" ? j.amount_remaining : num(j.amount_due) - num(j.amount_paid),
     created: num(j.created),
     description: str(j.description),
     payUrl: status === "open" ? str(j.hosted_invoice_url) : null,
@@ -379,9 +384,22 @@ export function usageStripe(key: string, f: typeof fetch = fetch, mode: UsageMod
     },
 
     async findPeriodInvoice(customerId, periodKey) {
-      const j = await call("GET", "/invoices", { customer: customerId, limit: 100 });
-      const hit = ((j.data as Json[] | undefined) ?? []).find((i) => ((i.metadata ?? {}) as Json).os_usage_period === periodKey && i.status !== "void");
-      return hit ? invoiceSummary(hit) : null;
+      // Every page (up to 1,000 invoices): a customer with a long subscription history still has its period found.
+      let after: string | undefined;
+      for (let page = 0; page < 10; page++) {
+        const j = await call("GET", "/invoices", { customer: customerId, limit: 100, starting_after: after });
+        const data = (j.data as Json[] | undefined) ?? [];
+        const hit = data.find((i) => ((i.metadata ?? {}) as Json).os_usage_period === periodKey && i.status !== "void");
+        if (hit) return invoiceSummary(hit);
+        if (!j.has_more || !data.length) break;
+        after = String(data[data.length - 1].id);
+      }
+      return null;
+    },
+
+    async customerBalance(customerId) {
+      const c = await call("GET", `/customers/${enc(customerId)}`);
+      return typeof c.balance === "number" ? c.balance : 0;
     },
 
     async listInvoices(customerId, limit = 24) {

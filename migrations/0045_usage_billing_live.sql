@@ -1,0 +1,12 @@
+-- 0045 — pay per lead, live clients (2 Nov 2026).
+--
+-- Run once in the Master Inbox database (Supabase → SQL editor). Safe to run
+-- again. It changes nothing a client sees.
+--
+-- The first version of 0043 also created UNIQUE (os_client_id, period_start)
+-- on os_usage_billing_periods — one row per period whatever the mode. The
+-- version that was run keeps test and live apart with the unique index on
+-- (os_client_id, period_start, test_mode) instead; if the older constraint
+-- exists anywhere, a live charge of a period that already has a TEST row would
+-- fail. This drops it if it is there, and only then.
+alter table public.os_usage_billing_periods drop constraint if exists os_usage_billing_periods_os_client_id_period_start_key;

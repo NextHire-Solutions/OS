@@ -595,6 +595,9 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 /* A red button stays red while disabled ("Charging…") — the panel's generic disabled hover would turn it black. */
 [data-testid="usage-billing"] .rx-btn.solid.rb-danger:disabled, [data-testid="usage-billing"] .rx-btn.solid.rb-danger:disabled:hover { background: var(--st-churned); border-color: var(--st-churned); }
 .ub-confirm:focus { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+/* A chip that can't be pressed looks it (the base .rb-chip has no disabled look, and kept its hover). */
+[data-testid="usage-billing"] .rb-chip:disabled { opacity: .45; cursor: not-allowed; }
+[data-testid="usage-billing"] .rb-chip:disabled:hover { background: var(--x-surface); }
 .ub-charge-tools { align-items: flex-end; }
 @media (max-width: 560px) {
   .ub-paste, .ub-fake { flex-basis: 100%; }

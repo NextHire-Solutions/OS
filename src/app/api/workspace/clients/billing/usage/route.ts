@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { clientsChanged } from "@/lib/clients/after-change";
 import { getAccountBilling } from "@/lib/clients/billing-account";
 import { billingTabUser } from "@/lib/clients/billing-user";
 import { osTable } from "@/lib/clients/os-db";
@@ -96,6 +97,29 @@ function approvedOf(v: unknown): Approved | null {
     ...(typeof a.paymentMethodId === "string" || a.paymentMethodId === null ? { paymentMethodId: a.paymentMethodId as string | null } : {}),
     ...(typeof a.leadsHash === "string" ? { leadsHash: a.leadsHash } : {}),
   };
+}
+
+/**
+ * The Billing tab counts a client's payments by its Stripe customers (billing-model.ts). A live pay-per-lead customer
+ * that it does not count for the client yet — a name that doesn't match, no link — is linked, as its own "Link" does,
+ * so the payments show on the client's Billing tab, can be refunded there, and are the client's revenue.
+ */
+async function countForClient(clientId: string, customerId: string, by: string): Promise<"already" | "linked" | "failed"> {
+  try {
+    const billing = await getAccountBilling().catch(() => null);
+    if (billing?.byClient.get(clientId)?.customers.some((c) => c.id === customerId)) return "already";
+    await osTable("os_client_stripe_links").delete().eq("os_client_id", clientId).eq("stripe_customer_id", customerId).eq("excluded", true);
+    const { error } = await osTable("os_client_stripe_links").insert({ os_client_id: clientId, stripe_customer_id: customerId, stripe_subscription_id: null, created_by: by });
+    if (error && !/duplicate|unique/i.test(error.message)) {
+      console.error("[usage-billing] linking the Stripe customer for the Billing tab failed:", error.message);
+      return "failed";
+    }
+    clientsChanged();
+    return "linked";
+  } catch (e) {
+    console.error("[usage-billing] linking the Stripe customer for the Billing tab failed:", e instanceof Error ? e.message : e);
+    return "failed";
+  }
 }
 
 /**
@@ -241,8 +265,15 @@ export async function POST(request: Request) {
           notFound: pasted && !customers.some((c) => c.id === pasted) ? pasted : null,
         }, { headers: NO_STORE });
       }
-      // connect_card — going live needs it said in so many words.
+      // connect_card — going live needs it said in so many words, for the price and schedule the person saw.
       if (want === "live" && mode === "test" && body?.goLive !== true) return say(400, "Connecting a live card makes this client live — confirm it (goLive).");
+      if (want === "live" && mode === "live" && body?.goLive === true) return say(409, "This client is already live — reload the page.");
+      if (want === "live" && mode === "test") {
+        const seen = body?.expect as { priceCents?: unknown; everyDays?: unknown; anchorDate?: unknown } | undefined;
+        if (!seen || seen.priceCents !== s.price_cents || seen.everyDays !== s.every_days || seen.anchorDate !== s.anchor_date) {
+          return say(409, "This client's price or schedule changed since you looked — reload the page and check them before going live. Nothing was changed.");
+        }
+      }
       const customerId = typeof body?.customerId === "string" ? body.customerId : "";
       const paymentMethodId = typeof body?.paymentMethodId === "string" ? body.paymentMethodId : "";
       let claimedBy: string[] = [];
@@ -252,7 +283,9 @@ export async function POST(request: Request) {
         claimedBy = claims.get(customerId) ?? [];
       }
       const saved = await connectCard(clientId, { customerId, paymentMethodId, claimedBy }, stripeFor(want), who.email);
-      return NextResponse.json({ ok: true, settings: saved, mode: modeOf(saved) }, { headers: NO_STORE });
+      // Live: the customer counts for this client on the Billing tab too — its pay-per-lead payments, refunds and revenue.
+      const linked = want === "live" ? await countForClient(clientId, customerId, who.email) : null;
+      return NextResponse.json({ ok: true, settings: saved, mode: modeOf(saved), linked }, { headers: NO_STORE });
     }
 
     const stripe = stripeFor(mode);
@@ -263,7 +296,10 @@ export async function POST(request: Request) {
     }
     if (action === "retry") {
       if (!periodStart) return say(400, "periodStart is required.");
-      const r = await retryPeriod(clientId, periodStart, stripe, who.email, approvedOf({ ...(body?.approved as Record<string, unknown> | undefined), periodStart, count: 0 }));
+      // What the person saw: the amount, the leads (count and fingerprint), the mode and the card — checked against the period.
+      const seen = body?.approved as Record<string, unknown> | undefined;
+      const a = approvedOf({ ...seen, periodStart, count: Number.isInteger(seen?.count) ? seen!.count : 0 });
+      const r = await retryPeriod(clientId, periodStart, stripe, who.email, a && { ...a, ...(Number.isInteger(seen?.count) ? {} : { count: undefined }) });
       console.log(`[usage-billing] ${who.email} ${mode.toUpperCase()} retry for ${clientId} ${periodStart}: ${r.outcome}${r.invoice ? ` (${r.invoice.id}, ${r.invoice.total}c, ${r.invoice.status})` : ""}`);
       return NextResponse.json({ ok: true, ...r, label: periodLabel(r.period), periods: await listPeriods(clientId, 52, mode === "test") }, { headers: NO_STORE });
     }

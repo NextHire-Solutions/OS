@@ -26,7 +26,7 @@ import assert from "node:assert/strict";
 import { configureFakeEnvironment, FakePostgrest } from "../../../../../../lib/tools/master-inbox/test/fake-postgrest.ts";
 import { FakeStripe } from "../../../../../../lib/clients/usage-billing/test/fake-stripe.ts";
 import { mintSso } from "../../../../../../lib/bs-auth.ts";
-import { addDays, easternDay } from "../../../../../../lib/clients/usage-billing/model.ts";
+import { addDays, easternDay, leadsHash } from "../../../../../../lib/clients/usage-billing/model.ts";
 
 configureFakeEnvironment("MASTER_INBOX_");
 process.env.AUTH_SECRET = "s".repeat(40);
@@ -35,6 +35,11 @@ delete process.env.SSO_SESSIONS_NOT_BEFORE;
 for (const v of ["OS_USAGE_BILLING_STRIPE_KEY", "OS_USAGE_BILLING_ENABLED", "OS_USAGE_BILLING_CHARGE", "ONBOARDING_STRIPE_SECRET_KEY", "ONBOARDING_STRIPE_SECRET_KEY_TEST", "ONBOARDING_STRIPE_MODE", "STRIPE_MODE"]) delete process.env[v];
 const TEST_KEY = "sk_test_51FakeFakeFakeFake";
 const LIVE_KEY = "sk_live_51FakeFakeFakeFake";
+/** What the screen showed when "Go live" was pressed: the client's saved price and schedule, as they are now. */
+const expectOf = () => {
+  const st = db.rows("os_usage_billing_settings").find((r) => r.os_client_id === ACME)!;
+  return { priceCents: st.price_cents, everyDays: st.every_days, anchorDate: st.anchor_date };
+};
 
 const db = new FakePostgrest();
 const stripe = new FakeStripe();
@@ -252,11 +257,11 @@ test("the whole test path: save → card-setup link → card stored → preview 
 
 /* ------------------------------------------------------------------ live --- */
 
-/** Retry as the screen sends it: the period's amount, and the client's mode and card as they are now. */
+/** Retry as the screen sends it: the period's amount and leads, and the client's mode and card as they are now. */
 const retry = (o: Record<string, unknown> = {}) => {
   const st = db.rows("os_usage_billing_settings").find((r) => r.os_client_id === ACME)!;
   const row = db.rows("os_usage_billing_periods").find((r) => r.os_client_id === ACME && r.period_start === ANCHOR);
-  return post(ADMIN, { clientId: ACME, action: "retry", periodStart: ANCHOR, approved: { amountCents: row?.amount_cents, mode: st.test_only === false ? "live" : "test", paymentMethodId: st.default_payment_method_id, ...o } });
+  return post(ADMIN, { clientId: ACME, action: "retry", periodStart: ANCHOR, approved: { amountCents: row?.amount_cents, count: row?.lead_count, leadsHash: leadsHash(Array.isArray(row?.leads) ? row.leads : []), mode: st.test_only === false ? "live" : "test", paymentMethodId: st.default_payment_method_id, ...o } });
 };
 
 
@@ -278,6 +283,9 @@ function seedLeads() {
     { label_id: "lab-int", target_type: "thread", target_id: "t2", assigned_at: `${addDays(ANCHOR, 3)}T15:00:00.000Z` },
     { label_id: "lab-int", target_type: "thread", target_id: "t3", assigned_at: `${TODAY}T15:00:00.000Z` }, // this week: not yet
   ]);
+  // The label history (Master Inbox 0080) — what the count reads.
+  db.seed("label_history", db.rows("label_assignments").map((a, i) => ({ id: i + 1, thread_id: a.target_id, label_id: a.label_id, label_name: "Interested", assigned_at: a.assigned_at, client_id: PORTAL, lead_id: `l${String(a.target_id).slice(1)}`, source: "trigger" })));
+  db.seed("client_pipeline_entries", []);
 }
 
 test("the LIVE path: card on file → go live (said so) → preview (real leads only) → charge only what was approved → paid in live Stripe → never twice", async () => {
@@ -299,10 +307,10 @@ test("the LIVE path: card on file → go live (said so) → preview (real leads 
   assert.equal(unsaid.status, 400);
   assert.equal(db.rows("os_usage_billing_settings")[0].test_only, true);
   const expiredCard = liveStripe.addCard(customerId, { last4: "0005", expMonth: 1, expYear: 2021 });
-  const exp = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId: expiredCard, goLive: true });
+  const exp = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId: expiredCard, goLive: true, expect: expectOf() });
   assert.equal(exp.status, 409);
   assert.match((await exp.json()).error, /expired/);
-  const connected = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true });
+  const connected = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() });
   assert.equal(connected.status, 200);
   const cbody = await connected.json();
   assert.equal(cbody.mode, "live");
@@ -376,7 +384,7 @@ test("LIVE: a refused card — the period is failed; the client's new card conne
   seedLeads();
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const { customerId, paymentMethodId } = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
-  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true })).status, 200);
+  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() })).status, 200);
   liveStripe.declineCards.add(paymentMethodId);
   const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   const r = await (await post(ADMIN, { clientId: ACME, action: "charge", approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId, leadsHash: pv.leadsHash } })).json();
@@ -408,17 +416,17 @@ test("LIVE: another client's Stripe customer is never connected; a customer that
   const mine = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
   const theirs = liveStripe.addCustomerWithCard({ name: "Beta Homes" });
   db.rows("os_usage_billing_settings").find((r) => r.os_client_id === BETA)!.stripe_customer_id = theirs.customerId;
-  const t = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: theirs.customerId, paymentMethodId: theirs.paymentMethodId, goLive: true });
+  const t = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: theirs.customerId, paymentMethodId: theirs.paymentMethodId, goLive: true, expect: expectOf() });
   assert.equal(t.status, 409);
   assert.match((await t.json()).error, /belongs to another client/);
   db.rows("os_clients").find((c) => c.id === BETA)!.stripe_customer_id = mine.customerId; // on Beta's record
-  const rec = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: mine.customerId, paymentMethodId: mine.paymentMethodId, goLive: true });
+  const rec = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: mine.customerId, paymentMethodId: mine.paymentMethodId, goLive: true, expect: expectOf() });
   assert.equal(rec.status, 409);
   assert.match((await rec.json()).error, /belongs to Beta Homes/);
   db.rows("os_clients").find((c) => c.id === BETA)!.stripe_customer_id = null;
-  const ghost = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: "cus_LiveNope0001", paymentMethodId: mine.paymentMethodId, goLive: true });
+  const ghost = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: "cus_LiveNope0001", paymentMethodId: mine.paymentMethodId, goLive: true, expect: expectOf() });
   assert.equal(ghost.status, 404);
-  const notOn = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: mine.customerId, paymentMethodId: theirs.paymentMethodId, goLive: true });
+  const notOn = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: mine.customerId, paymentMethodId: theirs.paymentMethodId, goLive: true, expect: expectOf() });
   assert.equal(notOn.status, 409);
   assert.match((await notOn.json()).error, /not on this customer/);
   assert.equal(db.rows("os_usage_billing_settings").find((r) => r.os_client_id === ACME)!.test_only, true, "still a test client");
@@ -432,7 +440,7 @@ test("LIVE: a customer the Billing tab counts for another client (by its name) i
   const found = await (await post(ADMIN, { clientId: ACME, action: "find_cards", mode: "live", customerId: theirs.customerId })).json();
   assert.equal(found.claimsChecked, true);
   assert.deepEqual(found.customers[0].claimedBy, ["Beta Homes"]);
-  const r = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: theirs.customerId, paymentMethodId: theirs.paymentMethodId, goLive: true });
+  const r = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: theirs.customerId, paymentMethodId: theirs.paymentMethodId, goLive: true, expect: expectOf() });
   assert.equal(r.status, 409);
   assert.match((await r.json()).error, /counted for Beta Homes on the Billing tab/);
   assert.equal(db.rows("os_usage_billing_settings")[0].test_only, true);
@@ -447,7 +455,7 @@ test("LIVE: Stripe not answering the payment leaves the period 'card refused' �
   seedLeads();
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const { customerId, paymentMethodId } = liveStripe.addCustomerWithCard({ name: "Acme Realty", percentOff: 20 }); // a coupon on the customer
-  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true })).status, 200);
+  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() })).status, 200);
   const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   liveStripe.failWhen = (c) => c.method === "POST" && /\/pay$/.test(c.path);
   const r = await (await post(ADMIN, { clientId: ACME, action: "charge", approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId, leadsHash: pv.leadsHash } })).json();
@@ -468,7 +476,7 @@ test("LIVE: a card whose bank wants 3-D Secure — said plainly, the pay link ke
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const { customerId, paymentMethodId } = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
   liveStripe.actionCards.add(paymentMethodId);
-  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true })).status, 200);
+  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() })).status, 200);
   const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   const r = await (await post(ADMIN, { clientId: ACME, action: "charge", approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId, leadsHash: pv.leadsHash } })).json();
   assert.equal(r.outcome, "failed");
@@ -484,7 +492,7 @@ test("LIVE: a new Stripe customer connected later — an earlier period's invoic
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const first = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
   liveStripe.declineCards.add(first.paymentMethodId);
-  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: first.customerId, paymentMethodId: first.paymentMethodId, goLive: true })).status, 200);
+  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: first.customerId, paymentMethodId: first.paymentMethodId, goLive: true, expect: expectOf() })).status, 200);
   const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   await post(ADMIN, { clientId: ACME, action: "charge", approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId: first.paymentMethodId, leadsHash: pv.leadsHash } });
   const second = liveStripe.addCustomerWithCard({ name: "Acme Realty LLC" });
@@ -501,7 +509,7 @@ test("LIVE retry from a page left open: another card, the test mode, another amo
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const { customerId, paymentMethodId } = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
   liveStripe.declineCards.add(paymentMethodId);
-  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true });
+  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() });
   const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   await post(ADMIN, { clientId: ACME, action: "charge", approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId, leadsHash: pv.leadsHash } });
   const pays = liveStripe.creates(/\/pay$/).length;
@@ -520,7 +528,7 @@ test("LIVE 'Try the charge again' (a charge that stopped half way): the card con
   seedLeads();
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const first = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
-  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: first.customerId, paymentMethodId: first.paymentMethodId, goLive: true });
+  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: first.customerId, paymentMethodId: first.paymentMethodId, goLive: true, expect: expectOf() });
   const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   // The charge dies at finalize: the row stays 'draft' with its invoice.
   liveStripe.failWhen = (c) => c.method === "POST" && /\/finalize$/.test(c.path);
@@ -543,7 +551,7 @@ test("LIVE 'Try the charge again' (a charge that stopped half way): the card con
   seedLeads();
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const a = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
-  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: a.customerId, paymentMethodId: a.paymentMethodId, goLive: true });
+  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId: a.customerId, paymentMethodId: a.paymentMethodId, goLive: true, expect: expectOf() });
   const pv2 = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   liveStripe.failWhen = (c) => c.method === "POST" && /\/finalize$/.test(c.path);
   await post(ADMIN, { clientId: ACME, action: "charge", approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId: a.paymentMethodId, leadsHash: pv2.leadsHash } });
@@ -573,7 +581,7 @@ test("Refresh: charged but still unpaid in Stripe becomes 'card refused', so it 
   seedLeads();
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   const { customerId, paymentMethodId } = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
-  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true });
+  await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() });
   const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
   liveStripe.declineCards.add(paymentMethodId);
   await post(ADMIN, { clientId: ACME, action: "charge", approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId, leadsHash: pv.leadsHash } });
@@ -586,4 +594,118 @@ test("Refresh: charged but still unpaid in Stripe becomes 'card refused', so it 
   const r = await (await post(ADMIN, { clientId: ACME, action: "refresh", periodStart: ANCHOR })).json();
   assert.equal(r.row.status, "failed");
   assert.match(r.row.error, /still unpaid/);
+});
+
+/* ---------------------------------------- live money: never more or less than approved; never stuck --- */
+
+/** A live client with its card connected and the week previewed; returns what to approve. */
+async function liveClient(o: { balance?: number } = {}) {
+  seed([testRow({ price_cents: 25_000 })]);
+  seedLeads();
+  process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
+  const { customerId, paymentMethodId } = liveStripe.addCustomerWithCard({ name: "Acme Realty" });
+  if (o.balance) (liveStripe.customers.get(customerId) as Record<string, unknown>).balance = o.balance;
+  assert.equal((await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() })).status, 200);
+  const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
+  return { customerId, paymentMethodId, approved: { periodStart: ANCHOR, count: 2, amountCents: 50_000, mode: "live", paymentMethodId, leadsHash: pv.leadsHash } };
+}
+
+test("LIVE: a balance on the client's Stripe customer (owed or credit) — never finalized or charged; Retry removes the draft and opens the period; charged exactly once the balance is cleared", async () => {
+  for (const balance of [30_000, -20_000]) {
+    const { customerId, approved } = await liveClient({ balance });
+    const r = await (await post(ADMIN, { clientId: ACME, action: "charge", approved })).json();
+    assert.equal(r.outcome, "failed", String(balance));
+    assert.match(r.message, balance > 0 ? /\$300\.00 owed/ : /\$200\.00 in credit/);
+    assert.equal(liveStripe.creates(/\/finalize$/).length, 0, "never finalized — Stripe applies a balance at finalize");
+    assert.equal(liveStripe.creates(/\/pay$/).length, 0);
+    const reopened = await (await retry()).json();
+    assert.equal(reopened.outcome, "nothing");
+    assert.equal(db.rows("os_usage_billing_periods")[0].status, "preview");
+    assert.equal(liveStripe.invoices.size, 0, "the unfinished draft is gone");
+    (liveStripe.customers.get(customerId) as Record<string, unknown>).balance = 0;
+    const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
+    const ok = await (await post(ADMIN, { clientId: ACME, action: "charge", approved: { ...approved, leadsHash: pv.leadsHash } })).json();
+    assert.equal(ok.outcome, "paid");
+    assert.equal([...liveStripe.invoices.values()][0].amount_paid, 50_000, "exactly the amount approved");
+  }
+});
+
+test("LIVE: Stripe would charge more than approved after finalizing (amount due ≠ total) — nothing paid, said plainly", async () => {
+  const { approved } = await liveClient();
+  liveStripe.finalizeExtraDue = 12_345;
+  const r = await (await post(ADMIN, { clientId: ACME, action: "charge", approved })).json();
+  assert.equal(r.outcome, "failed");
+  assert.match(r.message, /Stripe would charge 623\.45 instead of the 500\.00 approved, so nothing was charged/);
+  assert.equal(liveStripe.creates(/\/pay$/).length, 0);
+  // Retry refuses it too, and says what to do.
+  const again = await retry();
+  assert.equal(again.status, 409);
+  assert.match((await again.json()).error, /Void the invoice in Stripe, press Refresh/);
+  assert.equal(liveStripe.creates(/\/pay$/).length, 0);
+});
+
+test("LIVE: an invoice voided in Stripe opens its period again (nothing was collected) — then it charges cleanly", async () => {
+  const { approved } = await liveClient();
+  liveStripe.finalizeExtraDue = 100; // something wrong with it, so it is left open, unpaid
+  await post(ADMIN, { clientId: ACME, action: "charge", approved });
+  liveStripe.finalizeExtraDue = 0;
+  const inv = [...liveStripe.invoices.values()][0];
+  inv.status = "void"; // a person voids it in Stripe
+  const refreshed = await (await post(ADMIN, { clientId: ACME, action: "refresh", periodStart: ANCHOR })).json();
+  assert.equal(refreshed.row.status, "void");
+  const reopened = await (await retry()).json();
+  assert.equal(reopened.outcome, "nothing");
+  assert.match(reopened.message, /voided in Stripe/);
+  assert.equal(db.rows("os_usage_billing_periods")[0].status, "preview");
+  const pv = (await (await post(ADMIN, { clientId: ACME, action: "preview" })).json()).preview;
+  const ok = await (await post(ADMIN, { clientId: ACME, action: "charge", approved: { ...approved, leadsHash: pv.leadsHash } })).json();
+  assert.equal(ok.outcome, "paid");
+  assert.equal(liveStripe.creates(/\/pay$/).length, 1, "paid once, on the new invoice");
+});
+
+test("LIVE: an unfinished invoice deleted in Stripe — 'Try again' and Retry and Refresh open the period again instead of failing for ever", async () => {
+  // A 'draft' row whose invoice is gone: Try again.
+  const { approved } = await liveClient();
+  liveStripe.failWhen = (c) => c.method === "POST" && /\/finalize$/.test(c.path);
+  await post(ADMIN, { clientId: ACME, action: "charge", approved });
+  liveStripe.failWhen = null;
+  const row = db.rows("os_usage_billing_periods")[0];
+  row.claimed_at = new Date(Date.now() - 60 * 60_000).toISOString();
+  liveStripe.invoices.clear(); // deleted in Stripe's dashboard
+  const tryAgain = await (await post(ADMIN, { clientId: ACME, action: "charge", periodStart: ANCHOR, approved })).json();
+  assert.equal(tryAgain.outcome, "nothing");
+  assert.match(tryAgain.message, /no longer exists in Stripe — it was never charged/);
+  assert.equal(db.rows("os_usage_billing_periods")[0].status, "preview");
+
+  // A 'failed' row whose invoice is gone (the answer to Retry's delete was lost): Retry, and Refresh.
+  for (const how of ["retry", "refresh"] as const) {
+    const live = await liveClient();
+    (liveStripe.customers.get(live.customerId) as Record<string, unknown>).balance = 100; // leaves a failed row with a draft invoice
+    await post(ADMIN, { clientId: ACME, action: "charge", approved: live.approved });
+    assert.equal(db.rows("os_usage_billing_periods")[0].status, "failed");
+    liveStripe.invoices.clear();
+    const r = how === "retry" ? await (await retry()).json() : await (await post(ADMIN, { clientId: ACME, action: "refresh", periodStart: ANCHOR })).json();
+    assert.equal(db.rows("os_usage_billing_periods")[0].status, "preview", how);
+    assert.ok(r, how);
+  }
+});
+
+test("LIVE go-live: refused when the price or schedule changed since the page was loaded, or the client is already live; the customer is linked so the Billing tab counts its payments", async () => {
+  seed([testRow({ price_cents: 25_000 })]);
+  process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
+  const { customerId, paymentMethodId } = liveStripe.addCustomerWithCard({ name: "Coastal Billing Co" }); // not named like the client
+  for (const expect of [undefined, { ...expectOf(), priceCents: 15_000 }, { ...expectOf(), everyDays: 14 }, { ...expectOf(), anchorDate: "2026-01-01" }]) {
+    const r = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect });
+    assert.equal(r.status, 409, JSON.stringify(expect));
+    assert.match((await r.json()).error, /changed since you looked/);
+  }
+  assert.equal(db.rows("os_usage_billing_settings")[0].test_only, true);
+  db.seed("os_client_stripe_links", []);
+  const ok = await (await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() })).json();
+  assert.equal(ok.mode, "live");
+  assert.equal(ok.linked, "linked");
+  assert.deepEqual(db.rows("os_client_stripe_links").map((l) => [l.os_client_id, l.stripe_customer_id, l.created_by]), [[ACME, customerId, ADMIN]]);
+  const again = await post(ADMIN, { clientId: ACME, action: "connect_card", mode: "live", customerId, paymentMethodId, goLive: true, expect: expectOf() });
+  assert.equal(again.status, 409);
+  assert.match((await again.json()).error, /already live/);
 });

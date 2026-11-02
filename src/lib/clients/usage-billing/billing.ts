@@ -1,8 +1,10 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { osTable } from "@/lib/clients/os-db";
 
-import { billableLeads, type LeadSourceFn } from "./leads.ts";
+import { billableLeads, LeadSourceUnavailable, type LeadSourceFn } from "./leads.ts";
 import {
   amountCents,
   BILLED_STATUSES,
@@ -11,6 +13,7 @@ import {
   DEFAULT_LEAD_SOURCE,
   duePeriods,
   easternDay,
+  INTERESTED_ON_RECORD_FROM,
   invoiceDescription,
   LEAD_SOURCES_ALL,
   isPeriodStart,
@@ -38,7 +41,7 @@ import {
   type SettingsRow,
 } from "./model.ts";
 import { usageBillingStripeKey } from "./stripe-key.ts";
-import { usageStripe, type CustomerCards, type InvoiceSummary, type UsageStripe } from "./stripe.ts";
+import { usageStripe, UsageStripeError, type CustomerCards, type InvoiceSummary, type UsageStripe } from "./stripe.ts";
 
 /*
  * Pay per lead — the database side and the order of things (26 Oct 2026; live
@@ -154,10 +157,18 @@ export async function saveSettings(osClientId: string, input: SettingsInput, by:
     updated_at: now.toISOString(),
   };
   const existing = await loadSettings(osClientId);
+  // Interested replies are on record from 14 Oct 2026 only: a per-lead schedule set to start earlier would miss leads.
+  const scheduleSet = !existing || existing.anchor_date !== input.anchorDate || existing.lead_source !== input.leadSource;
+  if (scheduleSet && input.leadSource === "handoffs" && input.anchorDate < INTERESTED_ON_RECORD_FROM) {
+    throw new UsageBillingError("Interested replies are on record from Oct 14, 2026 — the first period can't start before then.", 400);
+  }
   // A live client's periods are fixed by its schedule: moving the first day, the cadence or what counts would move
   // periods already billed. The price and the switch can change.
+  // …until a live period has been billed: before that, a schedule set wrongly can still be put right.
   if (existing && modeOf(existing) === "live" && (existing.every_days !== input.everyDays || existing.anchor_date !== input.anchorDate || existing.lead_source !== input.leadSource)) {
-    throw new UsageBillingError("This client is live: its billing schedule and what counts as a lead can't be changed (it would move periods already billed). The price can.", 409);
+    const { data: billedLive, error } = await osTable("os_usage_billing_periods").select("id").eq("os_client_id", osClientId).eq("test_mode", false).in("status", [...BILLED_STATUSES]).limit(1);
+    if (error) throw dbError("os_usage_billing_periods", error.message);
+    if ((billedLive ?? []).length) throw new UsageBillingError("This client is live and has been billed: its billing schedule and what counts as a lead can't be changed (it would move periods already billed). The price can.", 409);
   }
   if (existing) {
     const { error } = await osTable("os_usage_billing_settings").update(fields).eq("os_client_id", osClientId);
@@ -328,11 +339,18 @@ export async function previewPeriod(osClientId: string, s: SettingsRow, o: Previ
     if ("error" in parsed) throw new UsageBillingError(parsed.error, 400);
     raw = parsed;
   } else {
-    raw = await (o.source ? o.source(osClientId, period.start, period.end) : billableLeads(osClientId, period.start, period.end, source));
+    try {
+      raw = await (o.source ? o.source(osClientId, period.start, period.end, { startDate: s.anchor_date }) : billableLeads(osClientId, period.start, period.end, source, { startDate: s.anchor_date }));
+    } catch (e) {
+      if (e instanceof LeadSourceUnavailable) throw new UsageBillingError(e.message, 503);
+      throw e;
+    }
   }
   const d = dedupeLeads(raw, await keysBilledElsewhere(osClientId, period.start, !live));
   if (d.billable.length > MAX_LEADS_PER_PERIOD) throw new UsageBillingError(`${d.billable.length} leads in one period is more than the ${MAX_LEADS_PER_PERIOD} allowed — check the lead source before billing.`, 409);
   const price = s.price_cents;
+  // Stripe's own limit for one charge ($999,999.99): never an invoice it would move onto the customer's balance instead.
+  if (amountCents(d.billable.length, price) > 99_999_999) throw new UsageBillingError("This period's amount is over Stripe's limit for one charge — check the leads before billing.", 409);
   return {
     period,
     periodKey: periodKey(osClientId, period.start),
@@ -388,10 +406,28 @@ export interface Approved {
   leadsHash?: string;
 }
 
-async function updateRow(id: string, from: PeriodStatus, patch: Row): Promise<PeriodRow | null> {
-  const { data, error } = await osTable("os_usage_billing_periods").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id).eq("status", from).select("*");
+async function updateRow(id: string, from: PeriodStatus, patch: Row, claimedAt?: string | null): Promise<PeriodRow | null> {
+  let q = osTable("os_usage_billing_periods").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id).eq("status", from);
+  // Only while this process still holds the claim: a claim taken over (a resume) is no longer ours to move on.
+  if (claimedAt !== undefined) q = claimedAt ? q.eq("claimed_at", claimedAt) : q.is("claimed_at", null);
+  const { data, error } = await q.select("*");
   if (error) throw dbError("os_usage_billing_periods", error.message);
   return ((data ?? []) as PeriodRow[])[0] ?? null;
+}
+
+/** A Stripe "no such invoice" (it was a draft, deleted — in Stripe's dashboard, or by a retry whose answer was lost). */
+const missingInvoice = (e: unknown) => e instanceof UsageStripeError && e.status === 404;
+
+/**
+ * Opens a period again (31 Oct review): its invoice never took money — a draft that never matched its leads or
+ * was deleted, an invoice voided in Stripe — so the period goes back to 'preview', to be previewed and charged
+ * again. Its leads are free again (only billed periods hold an agent). Conditional on the row as it was read.
+ */
+async function reopen(row: PeriodRow, by: string, why: string, claimedAt?: string | null): Promise<PeriodRow | null> {
+  return updateRow(row.id, row.status, {
+    status: "preview", stripe_invoice_id: null, stripe_invoice_number: null, hosted_invoice_url: null, leads: [], lead_count: 0, amount_cents: 0,
+    claimed_by: null, claimed_at: null, charged_at: null, error: null, note: `${why} — opened again by ${by}; preview and charge it again.`,
+  }, claimedAt);
 }
 
 /** The period's row, created as a 'preview' if it is not there (never overwriting one that is). */
@@ -487,6 +523,13 @@ export async function chargePeriod(osClientId: string, o: ChargeOptions): Promis
     return { outcome: now2?.status === "draft" ? "in_progress" : "already", period, row: now2, invoice: null, message: now2 ? alreadyMessage(now2) : "Taken by another run." };
   }
   if (!p.count) return { outcome: "nothing", period, row, invoice: null, message: "No billable leads in this period — nothing charged." };
+  // Two periods charged at the same moment could each have counted the same agent (each saw the other unbilled):
+  // re-checked now that this one is claimed — on an overlap it lets go, nothing is sent, and a person tries again.
+  const elsewhere = await keysBilledElsewhere(osClientId, period.start, !live);
+  if (p.leads.some((l) => elsewhere.has(l.key))) {
+    await updateRow(row.id, "draft", { status: "preview", claimed_by: null, claimed_at: null, leads: [], lead_count: 0, amount_cents: 0 }, row.claimed_at);
+    throw new UsageBillingError("An agent in this period was just billed in another period — preview again before charging. Nothing was charged.", 409);
+  }
   return bill(row, s, o.stripe, false);
 }
 
@@ -507,10 +550,13 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
   const key = periodKey(row.os_client_id, row.period_start);
   const leads = (Array.isArray(row.leads) ? row.leads : []) as BillableLead[];
   const customerId = s.stripe_customer_id!;
+  const claim = row.claimed_at;
   const fail = async (message: string, from: PeriodStatus = "draft"): Promise<ChargeResult> => {
-    const r = await updateRow(row.id, from, { status: "failed", error: message.slice(0, 1000) });
+    const r = await updateRow(row.id, from, { status: "failed", error: message.slice(0, 1000) }, from === "draft" ? claim : undefined);
     return { outcome: "failed", period, row: r ?? row, invoice: null, message };
   };
+  // Another try took this claim over (a resume after it went stale): this one stops — never a second invoice or charge.
+  const takenOver = (): ChargeResult => ({ outcome: "in_progress", period, row, invoice: null, message: "Another try took over this charge — nothing more was done here." });
 
   try {
     // 1. The invoice: the one on the row, else (a resume) the one Stripe already has for this period, else a new draft.
@@ -525,10 +571,18 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
         attempt: shortHash(row.claimed_at ?? row.id),
       })).invoiceId;
     }
-    if (invoiceId !== row.stripe_invoice_id) await updateRow(row.id, "draft", { stripe_invoice_id: invoiceId });
+    if (invoiceId !== row.stripe_invoice_id && !(await updateRow(row.id, "draft", { stripe_invoice_id: invoiceId }, claim))) return takenOver();
 
     // 2. One line per lead — only the ones not on it yet.
-    let inv = await stripe.getInvoice(invoiceId);
+    let inv: InvoiceSummary;
+    try {
+      inv = await stripe.getInvoice(invoiceId);
+    } catch (e) {
+      // The period's draft is gone (deleted in Stripe): it never took money — the period opens again.
+      if (!missingInvoice(e)) throw e;
+      await updateRow(row.id, "draft", { status: "preview", stripe_invoice_id: null, claimed_by: null, claimed_at: null, leads: [], lead_count: 0, amount_cents: 0, note: "Its unfinished invoice is gone from Stripe (never charged) — preview and charge it again." }, claim);
+      return { outcome: "nothing", period, row, invoice: null, message: "This period's unfinished invoice no longer exists in Stripe — it was never charged. Preview the period again and charge it." };
+    }
     // A resume after the client's Stripe customer changed: that invoice is the earlier customer's — never charged here.
     if (inv.customerId && inv.customerId !== customerId) {
       return fail(`This period's invoice ${invoiceId} is on the client's earlier Stripe customer — not charged. ${inv.status === "open" ? "The client can pay it by its link." : "Retry removes it (it was never charged) so the period can be charged again."}`);
@@ -549,12 +603,26 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
       return fail(`The invoice in Stripe (${lines.length} lines, ${inv.total} cents) does not match the ${leads.length} leads (${row.amount_cents} cents) previewed — not charged. Invoice ${invoiceId} is left as it is.`);
     }
 
-    // 4. Finalize, then charge the saved card.
-    if (inv.status === "draft") inv = await stripe.finalizeInvoice(invoiceId, `${key}:finalize:${invoiceId}`);
+    // 4. Finalize — never with a balance on the customer: Stripe adds it to the next finalized invoice, so the card
+    //    would be charged more (owed) or less (credit) than the amount approved (31 Oct review).
+    if (inv.status === "draft") {
+      const balance = await stripe.customerBalance(customerId);
+      if (balance !== 0) {
+        return fail(`The client's Stripe customer has a balance of ${(Math.abs(balance) / 100).toLocaleString("en-US", { style: "currency", currency: "USD" })} ${balance > 0 ? "owed" : "in credit"} — Stripe would add it to this charge, so nothing was charged. Clear the balance in Stripe, then Retry (the unfinished invoice is removed and the period opened again).`);
+      }
+      inv = await stripe.finalizeInvoice(invoiceId, `${key}:finalize:${invoiceId}`);
+    }
+    // The move to 'charged' is this process's to make — or it pays nothing.
     const charged = await updateRow(row.id, "draft", {
       status: "charged", charged_at: new Date().toISOString(), stripe_invoice_number: inv.number, hosted_invoice_url: inv.hostedUrl,
-    });
-    const from: PeriodStatus = charged ? "charged" : "draft";
+    }, claim);
+    if (!charged) return takenOver();
+    const from: PeriodStatus = "charged";
+    // 5. The card is charged what Stripe says is due: exactly the amount approved, or nothing.
+    if (inv.status === "open" && inv.amountRemaining !== row.amount_cents) {
+      const r = await updateRow(row.id, from, { status: "failed", hosted_invoice_url: inv.hostedUrl, error: `Stripe would charge ${(inv.amountRemaining / 100).toFixed(2)}, not the ${(row.amount_cents / 100).toFixed(2)} approved — nothing was charged. Void invoice ${inv.number ?? invoiceId} in Stripe, press Refresh, and charge the period again.`.slice(0, 1000) });
+      return { outcome: "failed", period, row: r ?? row, invoice: inv, message: `Stripe would charge ${(inv.amountRemaining / 100).toFixed(2)} instead of the ${(row.amount_cents / 100).toFixed(2)} approved, so nothing was charged.` };
+    }
     if (inv.status === "open") {
       let paid: Awaited<ReturnType<UsageStripe["payInvoice"]>>;
       try {
@@ -583,7 +651,7 @@ async function bill(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, resumin
     // Left as 'draft' (or 'charged'): the same keys make a later resume safe. Recorded for the screen.
     const message = e instanceof Error ? e.message : String(e);
     await osTable("os_usage_billing_periods").update({ error: message.slice(0, 1000), updated_at: new Date().toISOString() }).eq("id", row.id);
-    throw new UsageBillingError(`Stripe did not finish (${message}). Nothing is charged twice: try again after ${Math.round(CLAIM_STALE_MS / 60_000)} minutes and it resumes where it stopped.`, 502);
+    throw new UsageBillingError(`Stripe did not finish (${message}). Nothing is charged twice: try again after ${Math.round(CLAIM_STALE_MS / 60_000)} minutes and it resumes where it stopped. If Stripe keeps refusing it the same way, remove the unfinished charge (nothing was taken), fix the cause, and charge the period again.`, 502);
   }
 }
 
@@ -597,10 +665,19 @@ export async function refreshPeriod(osClientId: string, periodStart: string, str
   sameMode(s, stripe);
   const row = await periodRow(osClientId, periodStart, testModeOf(s));
   if (!row || !row.stripe_invoice_id || !["charged", "failed", "paid"].includes(row.status)) return row;
-  const inv = await stripe.getInvoice(row.stripe_invoice_id);
+  let inv: InvoiceSummary;
+  try {
+    inv = await stripe.getInvoice(row.stripe_invoice_id);
+  } catch (e) {
+    // Gone from Stripe: only a draft can be deleted, and a draft never took money — a refused period opens again.
+    if (missingInvoice(e) && row.status === "failed") return (await reopen(row, "Refresh", "Its unfinished invoice is gone from Stripe (never charged)")) ?? row;
+    throw e;
+  }
   const patch: Row = { stripe_invoice_number: inv.number, hosted_invoice_url: inv.hostedUrl };
   if (inv.status === "paid" && row.status !== "paid") Object.assign(patch, { status: "paid", paid_at: new Date().toISOString(), error: null });
   else if (inv.status === "void" && row.status !== "paid") Object.assign(patch, { status: "void", note: "Voided in Stripe." });
+  // Marked uncollectible in Stripe: nothing collected — it can still be retried (Stripe takes payment on it), or voided.
+  else if (inv.status === "uncollectible" && row.status === "charged") Object.assign(patch, { status: "failed", error: "Marked uncollectible in Stripe — retry the charge, or void it in Stripe." });
   // Charged, but Stripe still has it unpaid a while later: a refused payment in all but name — so it can be retried.
   // (Not within the first two minutes: that is a charge still going through.)
   else if (inv.status === "open" && row.status === "charged" && Date.now() - Date.parse(row.charged_at ?? "") > 2 * 60_000) {
@@ -616,46 +693,70 @@ export async function refreshPeriod(osClientId: string, periodStart: string, str
  * update, so two clicks or two people charge once. Paid in the meantime (the
  * client paid by the link)? Recorded, nothing charged.
  */
-export async function retryPeriod(osClientId: string, periodStart: string, stripe: UsageStripe, by: string, approved?: Pick<Approved, "amountCents" | "mode" | "paymentMethodId"> | null): Promise<ChargeResult> {
+/** What a person approved for a retry: the period's amount and leads as they saw them, the client's mode and card. */
+export type RetryApproval = Pick<Approved, "amountCents" | "mode" | "paymentMethodId"> & { count?: number; leadsHash?: string };
+
+export async function retryPeriod(osClientId: string, periodStart: string, stripe: UsageStripe, by: string, approved?: RetryApproval | null, now = new Date()): Promise<ChargeResult> {
   const s = await billableClient(osClientId);
   sameMode(s, stripe);
   if (!s.stripe_customer_id || !s.default_payment_method_id) throw new UsageBillingError("No card is connected for this client.", 409);
-  // As a charge: a live retry goes with what the person saw — the amount, the mode, the card — and a page left open from
-  // before a change is refused, never charged.
-  if (modeOf(s) === "live" && (!approved || !approved.mode || !approved.paymentMethodId)) throw new UsageBillingError("A live retry needs the amount and card a person approved.", 400);
+  // As a charge: a live retry goes with what the person saw — the amount, the leads, the mode, the card — and a page left
+  // open from before a change is refused, never charged.
+  if (modeOf(s) === "live" && (!approved || !approved.mode || !approved.paymentMethodId || !approved.leadsHash)) throw new UsageBillingError("A live retry needs the amount, card and leads a person approved.", 400);
   if (approved && ((approved.mode !== undefined && approved.mode !== modeOf(s)) || (approved.paymentMethodId !== undefined && approved.paymentMethodId !== s.default_payment_method_id))) {
     throw new UsageBillingError("This client changed since you looked (it went live, or its card changed) — reload the page and try again. Nothing was charged.", 409);
   }
   const row = await periodRow(osClientId, periodStart, testModeOf(s));
-  if (!row || row.status !== "failed" || !row.stripe_invoice_id) throw new UsageBillingError("Only a charge the card refused can be retried.", 409);
-  if (approved && approved.amountCents !== row.amount_cents) throw new UsageBillingError("The amount has changed since you looked — reload the page. Nothing was charged.", 409);
+  const seenChanged = (r: PeriodRow) => !!approved && (approved.amountCents !== r.amount_cents || (approved.count !== undefined && approved.count !== r.lead_count) || (approved.leadsHash !== undefined && approved.leadsHash !== leadsHash(Array.isArray(r.leads) ? r.leads : [])));
+  if (row?.status === "draft") {
+    if (seenChanged(row)) throw new UsageBillingError("This period changed since you looked — reload the page. Nothing was charged.", 409);
+    return removeUnfinished(row, s, stripe, by, now);
+  }
+  // A refused charge — or a period whose invoice was voided in Stripe (nothing was taken), to charge again.
+  const voided = row?.status === "void" && !!row.stripe_invoice_id && row.lead_count > 0;
+  if (!row || !row.stripe_invoice_id || (row.status !== "failed" && !voided)) throw new UsageBillingError("Only a charge the card refused (or an invoice voided in Stripe) can be tried again.", 409);
+  if (seenChanged(row)) throw new UsageBillingError("This period changed since you looked (its amount or its leads) — reload the page. Nothing was charged.", 409);
   const period: Period = { start: row.period_start, end: row.period_end };
   const invoiceId = row.stripe_invoice_id;
-  const before = await stripe.getInvoice(invoiceId);
-  // Never finalized (it didn't match its leads): never charged. Removed, and the period opened again to preview and charge.
+  let before: InvoiceSummary;
+  try {
+    before = await stripe.getInvoice(invoiceId);
+  } catch (e) {
+    // Gone from Stripe — only a draft can be deleted, and a draft never took money: the period opens again.
+    if (!missingInvoice(e)) throw e;
+    const r = await reopen(row, by, "Its unfinished invoice is gone from Stripe (never charged)");
+    return { outcome: "nothing", period, row: r ?? row, invoice: null, message: "That invoice no longer exists in Stripe (it was never charged). Preview the period again and charge it." };
+  }
+  // Never finalized (it didn't match its leads, or the customer had a balance): never charged. Removed — Stripe
+  // deletes its lines with it (checked in test mode, 2 Nov) — and the period opened again.
   if (before.status === "draft") {
     await stripe.deleteDraftInvoice(invoiceId);
-    const r = await updateRow(row.id, "failed", {
-      status: "preview", stripe_invoice_id: null, stripe_invoice_number: null, hosted_invoice_url: null, leads: [], lead_count: 0, amount_cents: 0,
-      claimed_by: null, claimed_at: null, error: null, note: `An unfinished invoice was removed by ${by} (never charged) — preview the period and charge it again.`,
-    });
+    const r = await reopen(row, by, "An unfinished invoice was removed (never charged)");
     return { outcome: "nothing", period, row: r ?? row, invoice: null, message: "That invoice was never finished, so it was removed (nothing was ever charged). Preview the period again and charge it." };
   }
+  // Voided in Stripe: nothing was collected on it — the period opens again.
+  if (before.status === "void") {
+    const r = await reopen(row, by, "Its invoice was voided in Stripe (nothing collected)");
+    return { outcome: "nothing", period, row: r ?? row, invoice: null, message: "That invoice was voided in Stripe (nothing was collected). Preview the period again and charge it." };
+  }
+  if (voided) throw new UsageBillingError(`The invoice is ${before.status} in Stripe, not voided — press Refresh.`, 409);
   if (before.status === "paid") {
     const r = await updateRow(row.id, "failed", { status: "paid", paid_at: new Date().toISOString(), stripe_invoice_number: before.number, hosted_invoice_url: before.hostedUrl, error: null });
     return { outcome: "paid", period, row: r ?? row, invoice: before, message: "Already paid in Stripe (by its link) — recorded; nothing charged." };
   }
-  if (before.status !== "open") throw new UsageBillingError(`The invoice is ${before.status} in Stripe — it cannot be charged.`, 409);
+  // Open — or marked uncollectible in Stripe, which Stripe still takes payment on.
+  if (before.status !== "open" && before.status !== "uncollectible") throw new UsageBillingError(`The invoice is ${before.status} in Stripe — it cannot be charged.`, 409);
   // Billed to the client's earlier Stripe customer: a card of the customer connected now can't pay it (Stripe refuses).
   if (before.customerId && before.customerId !== s.stripe_customer_id) {
     throw new UsageBillingError("This period was billed to the client's earlier Stripe customer, so the card connected now can't pay it. The client can pay it by its pay link.", 409);
   }
-  // The invoice is what the person sees on the screen — or nothing is charged.
-  if (before.total !== row.amount_cents) throw new UsageBillingError(`The invoice in Stripe is ${(before.total / 100).toFixed(2)}, not the ${(row.amount_cents / 100).toFixed(2)} on this period — not charged.`, 409);
+  // What paying it now takes from the card is what the person sees on the screen — or nothing is charged.
+  if (before.amountRemaining !== row.amount_cents) throw new UsageBillingError(`Stripe would charge ${(before.amountRemaining / 100).toFixed(2)}, not the ${(row.amount_cents / 100).toFixed(2)} on this period — nothing was charged. Void the invoice in Stripe, press Refresh, and charge the period again.`, 409);
   const claimed = await updateRow(row.id, "failed", { status: "charged", charged_at: new Date().toISOString(), note: `Retried by ${by}`, error: null });
   if (!claimed) throw new UsageBillingError("Someone is retrying this charge right now — refresh in a moment.", 409);
-  // A new key for each attempt: the row's last change, which every attempt moves on.
-  const key = `${periodKey(osClientId, periodStart)}:retry:${invoiceId}:${Date.parse(row.updated_at ?? "") || 0}`;
+  // A key of its own for each attempt — the claim above makes it this attempt's alone (a key from the row's last change
+  // repeated when two changes fell in the same millisecond, and Stripe refused the second card under it).
+  const key = `${periodKey(osClientId, periodStart)}:retry:${invoiceId}:${randomUUID()}`;
   let paid: Awaited<ReturnType<UsageStripe["payInvoice"]>>;
   try {
     paid = await stripe.payInvoice(invoiceId, key, s.default_payment_method_id);
@@ -675,6 +776,40 @@ export async function retryPeriod(osClientId: string, periodStart: string, strip
     return { outcome: "paid", period, row: r ?? row, invoice: inv, message: "Charged and paid." };
   }
   return { outcome: "charged", period, row: claimed, invoice: inv, message: `Charged; Stripe says the invoice is ${inv.status}.` };
+}
+
+/**
+ * A charge that never finished ('draft' — its claim stale), removed and its period opened again (2 Nov review): Stripe
+ * refusing the same way every time (a deleted customer, a currency mismatch) would otherwise hold the period, and its
+ * agents, for good. Only while nothing can have been taken: its invoice must still be a draft (deleted here), voided
+ * or gone. A finalized one is resumed with "Try the charge again" instead. Charges nothing.
+ */
+async function removeUnfinished(row: PeriodRow, s: SettingsRow, stripe: UsageStripe, by: string, now: Date): Promise<ChargeResult> {
+  const period: Period = { start: row.period_start, end: row.period_end };
+  if (row.claimed_at && now.getTime() - Date.parse(row.claimed_at) <= CLAIM_STALE_MS) {
+    throw new UsageBillingError("This period is being billed right now — try again in a few minutes.", 409);
+  }
+  const id = row.stripe_invoice_id ?? (await stripe.findPeriodInvoice(s.stripe_customer_id!, periodKey(row.os_client_id, row.period_start)))?.id ?? null;
+  let inv: InvoiceSummary | null = null;
+  if (id) {
+    try {
+      inv = await stripe.getInvoice(id);
+    } catch (e) {
+      if (!missingInvoice(e)) throw e;
+    }
+  }
+  if (inv && inv.status !== "draft" && inv.status !== "void") {
+    throw new UsageBillingError(`This period's invoice is already ${inv.status} in Stripe — press "Try the charge again": it picks up where it stopped. Nothing was charged now.`, 409);
+  }
+  // One person at a time: the stale claim is taken first (conditional on it), as a resume takes it.
+  const take = osTable("os_usage_billing_periods").update({ claimed_by: by, claimed_at: now.toISOString(), updated_at: now.toISOString() }).eq("id", row.id).eq("status", "draft");
+  const { data, error } = await (row.claimed_at ? take.eq("claimed_at", row.claimed_at) : take.is("claimed_at", null)).select("*");
+  if (error) throw dbError("os_usage_billing_periods", error.message);
+  const mine = ((data ?? []) as PeriodRow[])[0];
+  if (!mine) throw new UsageBillingError("Someone is trying this charge right now — reload in a moment.", 409);
+  if (inv?.status === "draft") await stripe.deleteDraftInvoice(inv.id);
+  const r = await reopen(mine, by, "An unfinished charge was removed (never charged)", mine.claimed_at);
+  return { outcome: "nothing", period, row: r ?? mine, invoice: null, message: "That charge never finished and nothing was taken — it was removed and the period opened again. Fix what Stripe refused (if anything), then preview and charge it." };
 }
 
 /* ------------------------------------------------------ cards on file --- */

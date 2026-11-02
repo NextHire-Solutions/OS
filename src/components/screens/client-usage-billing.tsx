@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { addDays, LEAD_SOURCE_UNIT, leadsHash, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type BillableLead, type LeadSource } from "@/lib/clients/usage-billing/model";
+import { addDays, CLAIM_STALE_MS, LEAD_SOURCE_UNIT, leadsHash, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type BillableLead, type LeadSource } from "@/lib/clients/usage-billing/model";
 
 /*
  * PAY PER LEAD on a client's Billing tab (26 Oct 2026; live clients 31 Oct).
@@ -31,6 +31,7 @@ type Settings = {
 type PeriodRow = {
   id: string; period_start: string; period_end: string; status: string; lead_count: number; amount_cents: number; lead_source: string;
   leads?: BillableLead[]; stripe_invoice_id: string | null; stripe_invoice_number: string | null; hosted_invoice_url: string | null; note: string | null; error: string | null;
+  claimed_at?: string | null;
 };
 type Invoice = { id: string; number: string | null; status: string; total: number; created: number; payUrl: string | null; hostedUrl: string | null; pdf: string | null };
 type Mode = "test" | "live";
@@ -68,11 +69,11 @@ const productOf = (price: string, source: string) => {
 const TONE: Record<string, string> = { paid: "good", failed: "bad", charged: "warn", draft: "warn", preview: "mute", void: "mute", open: "warn", uncollectible: "bad" };
 /** A period's status in a word (the list), and in a sentence (the charge box). Voided in Stripe ≠ nothing to charge. */
 const statusWord = (r: Pick<PeriodRow, "status" | "lead_count">) =>
-  ({ paid: "paid", failed: "card refused", charged: "charged", draft: "unfinished", preview: "not charged" } as Record<string, string>)[r.status] ?? (r.status === "void" ? (r.lead_count > 0 ? "voided" : "nothing to charge") : r.status);
+  ({ paid: "paid", failed: "unpaid", charged: "charged", draft: "unfinished", preview: "not charged" } as Record<string, string>)[r.status] ?? (r.status === "void" ? (r.lead_count > 0 ? "voided" : "nothing to charge") : r.status);
 const periodSentence = (r: Pick<PeriodRow, "status" | "lead_count">) =>
   ({
     paid: "This period is paid",
-    failed: "This period was charged, but the card was refused",
+    failed: "This period's charge didn't go through",
     charged: "This period was charged — Stripe hasn't confirmed it yet",
     draft: "This period's charge didn't finish",
   } as Record<string, string>)[r.status] ?? (r.status === "void" ? (r.lead_count > 0 ? "This period's invoice was voided in Stripe" : "This period is closed with nothing to charge") : `This period is ${r.status}`);
@@ -86,13 +87,18 @@ const labelExpired = (label: string | null | undefined, today: string) => {
   const [ty, tm] = [Number(today.slice(0, 4)), Number(today.slice(5, 7))];
   return y < ty || (y === ty && mo < tm);
 };
+type Form = { price: string; everyDays: string; anchorDate: string; leadSource: string; enabled: boolean };
+/** Whether the settings form differs from the saved settings (edits not saved yet). */
+const formDiffers = (f: Form, s: Settings) =>
+  Math.round(Number(String(f.price).replace(/[$,\s]/g, "")) * 100) !== s.price_cents || Number(f.everyDays) !== s.every_days || f.anchorDate !== s.anchor_date || f.leadSource !== s.lead_source || f.enabled !== s.enabled;
+
 /** Which action shows its message where. */
 const SPOT: Record<string, Spot> = { find_cards: "finder", connect_card: "finder", preview: "charge", charge: "charge", retry: "periods", refresh: "periods" };
 
 export type UsageBillingView = View;
 
-/** `initial`: a first answer to show before the route's (a render check uses it). */
-export function UsageBillingPanel({ clientId, initial = null }: { clientId: string; initial?: View | null }) {
+/** `initial`: a first answer to show before the route's (a render check uses it). `clientName`: named in the confirmations. */
+export function UsageBillingPanel({ clientId, clientName = null, initial = null }: { clientId: string; clientName?: string | null; initial?: View | null }) {
   const [view, setView] = useState<View | null>(initial);
   // Open by itself for a client that has pay per lead (or on the way back from Checkout); a click away otherwise.
   const [open, setOpen] = useState(initial !== null);
@@ -100,7 +106,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
   const [expired, setExpired] = useState(false);
   const [msg, setMsg] = useState<Msg | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [form, setForm] = useState({ price: String(PAY_PER_LEAD_PRODUCTS[0].priceCents / 100), everyDays: "7", anchorDate: "", leadSource: PAY_PER_LEAD_PRODUCTS[0].leadSource as string, enabled: false });
+  const [form, setForm] = useState<Form>({ price: String(PAY_PER_LEAD_PRODUCTS[0].priceCents / 100), everyDays: "7", anchorDate: "", leadSource: PAY_PER_LEAD_PRODUCTS[0].leadSource as string, enabled: false });
   // "Custom price…" picked: the price and what is counted are typed, even if they happen to match a product.
   const [custom, setCustom] = useState(false);
   const product = custom ? "custom" : productOf(form.price, form.leadSource);
@@ -111,7 +117,15 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
   const [finder, setFinder] = useState<Finder | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [priceOpen, setPriceOpen] = useState(false);
+  // Which Stripe "Find" is looking (its button alone says so).
+  const [finding, setFinding] = useState<Mode | null>(null);
+  // Which period's Refresh is asking Stripe.
+  const [refreshing, setRefreshing] = useState<string | null>(null);
   const confirmedReturn = useRef(false);
+  // The settings as last loaded, and the form now: a reload keeps edits not saved yet.
+  const loaded = useRef<Settings | null>(null);
+  const formNow = useRef(form);
+  formNow.current = form;
   // A preview answer is used only if nothing it depends on changed while it was on its way.
   const previewSeq = useRef(0);
   const confirmBox = useRef<HTMLDivElement | null>(null);
@@ -124,20 +138,30 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       if (res.status === 401) { if (view) setExpired(true); else setHidden(true); return; }
       if (res.status === 404) { setHidden(true); return; }
       const body = await res.json().catch(() => null);
-      if (!res.ok || !body) { say(body?.error ?? `HTTP ${res.status}`, "top", true); return; }
+      // A reload that fails never wipes the message of what was just done.
+      if (!res.ok || !body) { setMsg((m) => m ?? { text: body?.error ?? `HTTP ${res.status}`, at: "top", bad: true }); return; }
       const v = body as View;
       setView(v);
       if (v.settings) setOpen(true);
       const s = v.settings;
-      setForm((f) => s
-        ? { price: String(s.price_cents / 100), everyDays: String(s.every_days), anchorDate: s.anchor_date, leadSource: s.lead_source, enabled: s.enabled }
-        : { ...f, anchorDate: f.anchorDate || addDays(v.today, -7), leadSource: v.defaultLeadSource });
+      const prev = loaded.current;
+      loaded.current = s;
+      if (!s) setForm((f) => ({ ...f, anchorDate: f.anchorDate || addDays(v.today, -7), leadSource: v.defaultLeadSource }));
+      // The saved settings into the form — unless it holds edits not saved yet (they stay).
+      else if (!prev || !formDiffers(formNow.current, prev)) {
+        const price = String(s.price_cents / 100);
+        setForm({ price, everyDays: String(s.every_days), anchorDate: s.anchor_date, leadSource: s.lead_source, enabled: s.enabled });
+        setCustom(productOf(price, s.lead_source) === "custom");
+      }
     } catch (e) {
-      say(e instanceof Error ? e.message : "Could not load", "top", true);
+      const text = e instanceof Error ? e.message : "Could not load";
+      setMsg((m) => m ?? { text, at: "top", bad: true });
     }
   };
 
-  const act = async (action: string, extra: Record<string, unknown> = {}) => {
+  /** One request; its refusal shows `at` — by the button pressed (else where the action belongs). */
+  const act = async (action: string, extra: Record<string, unknown> = {}, at?: Spot) => {
+    const spot = at ?? SPOT[action] ?? "top";
     setBusy(action);
     setMsg(null);
     try {
@@ -146,10 +170,17 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       });
       if (res.status === 401) { setExpired(true); return null; }
       const body = await res.json().catch(() => null);
-      if (!res.ok) { say(body?.error ?? body?.message ?? `HTTP ${res.status}`, SPOT[action] ?? "top", true); return null; }
+      if (!res.ok) {
+        // No answer that can be read (a gateway timeout): a charge may still have gone through.
+        const unknown = !body && (action === "charge" || action === "retry");
+        say(unknown ? "No answer from the server — the charge may still have gone through. Reload the page and check this period before trying again." : body?.error ?? body?.message ?? `HTTP ${res.status}`, spot, true);
+        return null;
+      }
       return body;
     } catch (e) {
-      say(e instanceof Error ? e.message : "Request failed", SPOT[action] ?? "top", true);
+      say(action === "charge" || action === "retry"
+        ? "No answer from the server — the charge may still have gone through. Reload the page and check this period before trying again."
+        : e instanceof Error ? e.message : "Request failed", spot, true);
       return null;
     } finally {
       setBusy(null);
@@ -164,12 +195,15 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
 
   // Back from the Checkout page (test clients): read the card once.
   useEffect(() => {
-    if (confirmedReturn.current || !view?.settings || view.mode !== "test" || view.keyState !== "test") return;
+    if (confirmedReturn.current || !view) return;
     const u = new URL(window.location.href);
-    if (u.searchParams.get("usage_setup") !== "done") return;
+    const back = u.searchParams.get("usage_setup");
+    if (back === null) return;
     confirmedReturn.current = true;
+    // Taken off the address whatever it says (and whatever the client), or every record opened after it would open on this panel.
     u.searchParams.delete("usage_setup");
     window.history.replaceState(null, "", u);
+    if (back !== "done" || !view.settings || view.mode !== "test" || view.keyState !== "test") return;
     void (async () => {
       const r = await act("confirm_setup");
       if (r) { say(r.saved ? `Card saved: ${r.cardLabel ?? "card"}.` : "The Checkout is not complete yet."); await load(); }
@@ -205,10 +239,19 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
   const choices = (view.schedule?.choices ?? []).filter((p) => !live || !p.running);
   const shownStart = choices.some((p) => p.start === periodStart) ? periodStart : (view.schedule?.lastCompleted?.start ?? (live ? "" : view.schedule?.current?.start ?? ""));
   const shownRow = shownStart ? rowOf(shownStart) : null;
-  const billed = !!shownRow && shownRow.status !== "preview";
   const previewFits = !!preview && preview.period.start === shownStart;
+  // Billed — as this page knows it, or as a preview just found it (another page charged it meanwhile).
+  const shownBilled = shownRow && shownRow.status !== "preview" ? shownRow : previewFits && preview!.existing && preview!.existing.status !== "preview" ? preview!.existing : null;
+  const billed = !!shownBilled;
+  const expiredCard = labelExpired(s?.card_label, view.today);
+  const cardWarning = expiredCard ? " The card on file has expired — the charge will likely be refused; change the card first." : "";
+  const whose = clientName ? `${clientName}'s ` : "";
+  /** When a charge that stopped half way can be tried again: once its claim is 15 minutes old (route: "being billed right now"). */
+  const resumableAt = (r: PeriodRow) => (r.claimed_at ? Date.parse(r.claimed_at) + CLAIM_STALE_MS : 0);
+  // A live period billed already: the schedule is fixed from then on (route: save refuses it).
+  const liveBilled = live && view.periods.some((p) => ["draft", "charged", "paid", "failed"].includes(p.status));
   // Unsaved changes in the settings form (a test client): Go live uses what is SAVED, so it waits for them.
-  const dirty = !!s && !live && (Math.round(Number(String(form.price).replace(/[$,\s]/g, "")) * 100) !== s.price_cents || Number(form.everyDays) !== s.every_days || form.anchorDate !== s.anchor_date || form.leadSource !== s.lead_source || form.enabled !== s.enabled);
+  const dirty = !!s && !live && formDiffers(form, s);
   const sample = () => {
     const p = choices.find((c) => c.start === shownStart) ?? view.schedule?.current;
     if (!p) return;
@@ -220,7 +263,12 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
   const box = (at: Spot) => (msg && msg.at === at ? (
     msg.bad ? <div className="ds-field-err ub-msg" role="alert">{msg.text}</div> : <p className="rx-hint ub-note" role="status">{msg.text}</p>
   ) : null);
-  const keyDown = (e: React.KeyboardEvent) => { if (e.key === "Escape" && !busy) setConfirm(null); };
+  // Keys pressed in a confirmation stay there: Escape cancels it — never closes the client's record — and the record's
+  // arrow keys never move to another client under it.
+  const keyDown = (e: React.KeyboardEvent) => {
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); if (!busy) setConfirm(null); }
+  };
   /** What the person approves: what they see, and the client as it was when they saw it. */
   const approvedOf = (p: { periodStart: string; count: number; amountCents: number; leadsHash: string }) => ({ ...p, mode: view.mode, paymentMethodId: s?.default_payment_method_id ?? null });
 
@@ -247,14 +295,16 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
     await load();
   };
   const doResume = async (row: PeriodRow, at: Spot) => {
-    const r = await act("charge", { periodStart: row.period_start, approved: approvedOf({ periodStart: row.period_start, count: row.lead_count, amountCents: row.amount_cents, leadsHash: leadsHash(row.leads ?? []) }) });
+    const r = await act("charge", { periodStart: row.period_start, approved: approvedOf({ periodStart: row.period_start, count: row.lead_count, amountCents: row.amount_cents, leadsHash: leadsHash(row.leads ?? []) }) }, at);
     setConfirm(null);
     if (r) outcome(r, at);
     await load();
   };
   const findCards = async (mode: Mode, paste = "") => {
     setConfirm(null);
+    setFinding(mode);
     const r = await act("find_cards", { mode, ...(paste.trim() ? { customerId: paste.trim() } : {}) });
+    setFinding(null);
     if (!r) return;
     const customers = (r.customers ?? []) as Customer[];
     const usable = (c: Customer) => !c.claimedBy?.length;
@@ -274,7 +324,11 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
   const goingLive = finder?.mode === "live" && !live;
   const doConnect = async () => {
     if (!finder?.pick) return;
-    const r = await act("connect_card", { mode: finder.mode, customerId: finder.pick.customerId, paymentMethodId: finder.pick.cardId, ...(goingLive ? { goLive: true } : {}) });
+    const r = await act("connect_card", {
+      mode: finder.mode, customerId: finder.pick.customerId, paymentMethodId: finder.pick.cardId,
+      // Going live: said so, for the price and schedule this page shows.
+      ...(goingLive && s ? { goLive: true, expect: { priceCents: s.price_cents, everyDays: s.every_days, anchorDate: s.anchor_date } } : {}),
+    });
     setConfirm(null);
     if (r) {
       // The card (and, going live, the mode) as saved, at once: a confirmation opened next must name THIS card.
@@ -283,12 +337,15 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       previewSeq.current += 1;
       setPreview(null);
       setPeriodStart("");
-      say(goingLive ? `This client is now LIVE: ${productLabel((s?.lead_source ?? "handoffs") as LeadSource, s?.price_cents ?? 0)}, charged to ${cardName(r.settings?.card_label)} when someone here approves each period.` : `Card connected: ${cardName(r.settings?.card_label)}.`);
+      say(goingLive
+        ? `This client is now LIVE: ${productLabel((s?.lead_source ?? "handoffs") as LeadSource, s?.price_cents ?? 0)}, charged to ${cardName(r.settings?.card_label)} when someone here approves each period.${r.linked === "linked" ? " Its Stripe customer now counts for this client on the Billing tab." : r.linked === "failed" ? " (Its Stripe customer could not be linked on the Billing tab — link it there.)" : ""}`
+        : `Card connected: ${cardName(r.settings?.card_label)}.`);
       await load();
     }
   };
   const doRetry = async (row: PeriodRow, at: Spot) => {
-    const r = await act("retry", { periodStart: row.period_start, approved: { amountCents: row.amount_cents, mode: view.mode, paymentMethodId: s?.default_payment_method_id ?? null } });
+    // What the person saw: the amount and the leads (count and fingerprint), the client's mode and card.
+    const r = await act("retry", { periodStart: row.period_start, approved: { amountCents: row.amount_cents, count: row.lead_count, leadsHash: leadsHash(row.leads ?? []), mode: view.mode, paymentMethodId: s?.default_payment_method_id ?? null } }, at);
     setConfirm(null);
     if (r) outcome(r, at);
     await load();
@@ -300,16 +357,22 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
     const row = confirm.row;
     const resume = confirm.kind === "resume";
     const what = periodLabel({ start: row.period_start, end: row.period_end });
+    // Only these take money: trying an unfinished charge again, and retrying a refused one.
+    const charges = resume || row.status === "failed";
     return (
       <div className={`ub-confirm${live ? " live" : ""}`} role="alertdialog" aria-label={resume ? "Confirm trying again" : "Confirm the retry"} aria-describedby={`ub-row-${clientId}`} tabIndex={-1} ref={confirmBox} onKeyDown={keyDown}>
         {resume ? (
-          <p id={`ub-row-${clientId}`}><b>Try the charge of {money(row.amount_cents)} for {what} again</b> on {cardName(s.card_label)}? It picks up where it stopped, with the same {plural(row.lead_count, unit)} — never charging twice.{live ? " A real charge." : " Stripe test mode."}</p>
+          <p id={`ub-row-${clientId}`}><b>Try the charge of {money(row.amount_cents)} for {what} again</b> on {whose}{cardName(s.card_label)}? It picks up where it stopped, with the same {plural(row.lead_count, unit)} — never charging twice.{live ? " A real charge." : " Stripe test mode."}{cardWarning}</p>
+        ) : row.status === "void" ? (
+          <p id={`ub-row-${clientId}`}><b>Open {what} again to charge it?</b> Its invoice was voided in Stripe (nothing was collected). Nothing is charged now — you preview it and charge it as usual.</p>
+        ) : row.status === "draft" ? (
+          <p id={`ub-row-${clientId}`}><b>Remove the unfinished charge for {what} and open it again?</b> Nothing was taken from the card — its unfinished invoice is deleted in Stripe. Then preview and charge it again.{row.error ? ` Stripe's answer last time: ${row.error}` : ""}</p>
         ) : (
-          <p id={`ub-row-${clientId}`}><b>Retry {money(row.amount_cents)} for {what}</b> on {cardName(s.card_label)}?{live ? " A real charge." : " Stripe test mode."} If the client has a new card, change the card first.</p>
+          <p id={`ub-row-${clientId}`}><b>Retry {money(row.amount_cents)} for {what}</b> on {whose}{cardName(s.card_label)}?{live ? " A real charge." : " Stripe test mode."} If the client has a new card, change the card first.{row.error ? ` Last time: ${row.error}` : ""} (If that invoice was never finished, it is removed instead — nothing charged — and the period opens to charge again.){cardWarning}</p>
         )}
         <div className="rb-tools ub-tight">
-          <button type="button" className={`rx-btn solid${live ? " rb-danger" : ""}`} disabled={!!busy} onClick={() => void (resume ? doResume(row, from) : doRetry(row, from))}>
-            {busy === "charge" || busy === "retry" ? "Charging…" : resume ? "Yes, try again" : `Yes, retry ${money(row.amount_cents)}`}
+          <button type="button" className={`rx-btn solid${live && charges ? " rb-danger" : ""}`} disabled={!!busy} onClick={() => void (resume ? doResume(row, from) : doRetry(row, from))}>
+            {busy === "charge" || busy === "retry" ? (charges ? "Charging…" : row.status === "draft" ? "Removing…" : "Opening…") : resume ? "Yes, try again" : row.status === "void" ? "Yes, open it again" : row.status === "draft" ? "Yes, remove it" : `Yes, retry ${money(row.amount_cents)}`}
           </button>
           <button type="button" className="rx-btn" disabled={!!busy} onClick={() => setConfirm(null)}>Cancel</button>
         </div>
@@ -368,7 +431,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
       {confirm?.kind === "connect" && pickedCard && pickedCustomer ? (
         <div className={`ub-confirm${goingLive ? " live" : ""}`} role="alertdialog" aria-label="Confirm the card" aria-describedby={`ub-connect-${clientId}`} tabIndex={-1} ref={confirmBox} onKeyDown={keyDown}>
           {goingLive ? (
-            <p id={`ub-connect-${clientId}`}><b>Make this client live?</b> From now on its pay per lead is real: {productLabel((s?.lead_source ?? "handoffs") as LeadSource, s?.price_cents ?? 0)}, every {s?.every_days} days from {day(s?.anchor_date)}, charged to {pickedCard.label} of Stripe customer {pickedCustomer.name ?? pickedCustomer.id}{pickedCustomer.email ? ` (${pickedCustomer.email})` : ""} — only when someone here approves each period&apos;s amount. The schedule can&apos;t change after this, and every period since {day(s?.anchor_date)} that has ended can be charged. Nothing is charged now.</p>
+            <p id={`ub-connect-${clientId}`}><b>Make this client live?</b> From now on its pay per lead is real: {productLabel((s?.lead_source ?? "handoffs") as LeadSource, s?.price_cents ?? 0)}, every {s?.every_days} days from {day(s?.anchor_date)}, charged to {pickedCard.label} of Stripe customer {pickedCustomer.name ?? pickedCustomer.id}{pickedCustomer.email ? ` (${pickedCustomer.email})` : ""} — only when someone here approves each period&apos;s amount. Every period since {day(s?.anchor_date)} that has ended can be charged. The price can change any time; the schedule can be corrected until the first live charge, then it&apos;s fixed. Nothing is charged now.</p>
           ) : (
             <p id={`ub-connect-${clientId}`}><b>Use {pickedCard.label}{pickedCard.expires ? ` (exp ${pickedCard.expires})` : ""}</b> of {pickedCustomer.name ?? pickedCustomer.id} for this client&apos;s pay per lead from now on?</p>
           )}
@@ -456,7 +519,8 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
             <span className="sp" />
             <button type="button" className="rx-btn solid" disabled={!!busy || (!!s && !dirty)} onClick={async () => {
               const r = await act("save", { price: form.price, everyDays: Number(form.everyDays), anchorDate: form.anchorDate, leadSource: form.leadSource, enabled: form.enabled });
-              if (r) { say(s ? "Saved." : "Saved — this client is set up for pay per lead in test mode."); setPeriodStart(""); reset(); await load(); }
+              // Said once the page shows what was saved (never "Saved." beside the old schedule).
+              if (r) { setPeriodStart(""); reset(); await load(); say(s ? "Saved." : "Saved — this client is set up for pay per lead in test mode."); }
             }}>{busy === "save" ? "Saving…" : s ? "Save" : "Save (test mode)"}</button>
           </div>
         </>
@@ -488,7 +552,7 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
               <p className="rx-hint ub-tight">Connect the card the client already has on file in Stripe. From then on each period is charged to it when someone here approves the amount. Going live charges nothing.</p>
               {!liveKeyOk ? <p className="ds-field-err ub-tight">{view.liveKeyState === "refused" ? "The OS's Stripe key is not a live key" : "The OS has no Stripe key"} — going live is off until it&apos;s fixed.</p> : null}
               <div className="rb-tools ub-tight">
-                <button type="button" className="rx-btn" disabled={!!busy || !liveKeyOk} onClick={() => void findCards("live")}>{busy === "find_cards" ? "Looking in Stripe…" : "Find their card on file"}</button>
+                <button type="button" className="rx-btn" disabled={!!busy || !liveKeyOk} onClick={() => void findCards("live")}>{busy === "find_cards" && finding === "live" ? "Looking in Stripe…" : "Find their card on file"}</button>
               </div>
               {finder === null ? box("finder") : null}
             </div>
@@ -500,11 +564,11 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
             <div className="rb-tools">
               <button type="button" className="rx-btn" disabled={!!busy || !stripeOk} onClick={async () => {
                 const r = await act("setup_link");
-                if (r?.url) setSetupUrl(r.url);
+                if (r?.url) { setSetupUrl(r.url); await load(); }
               }}>{busy === "setup_link" ? "Making link…" : s.card_label ? "New test card-setup link" : "Get test card-setup link"}</button>
               <button type="button" className="rx-btn" disabled={!!busy || !stripeOk || !s.setup_session_id} title={!s.setup_session_id ? "Make a card-setup link first" : undefined} onClick={async () => {
                 const r = await act("confirm_setup");
-                if (r) { say(r.saved ? `Card saved: ${r.cardLabel ?? "card"}.` : `The Checkout is ${r.status ?? "not complete"} — finish it, then check again.`); await load(); }
+                if (r) { await load(); say(r.saved ? `Card saved: ${r.cardLabel ?? "card"}.` : `The Checkout is ${r.status ?? "not complete"} — finish it, then check again.`); }
               }}>{busy === "confirm_setup" ? "Checking…" : "Check test card"}</button>
               <button type="button" className="rx-btn" disabled={!!busy || !stripeOk} onClick={() => void findCards("test")}>Use a test card on file</button>
               {setupUrl ? (
@@ -515,28 +579,48 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
               ) : null}
             </div>
           ) : !finder ? (
-            <div className="rb-tools">
-              <button type="button" className="rx-btn" disabled={!!busy || !stripeOk} onClick={() => void findCards("live")}>Change card</button>
-              <button type="button" className="rx-btn" onClick={() => setPriceOpen((o) => !o)} aria-expanded={priceOpen}>Change price</button>
-            </div>
+            <>
+              <div className="rb-tools">
+                <button type="button" className="rx-btn" disabled={!!busy || !stripeOk} onClick={() => void findCards("live")}>{busy === "find_cards" && finding === "live" ? "Looking in Stripe…" : "Change card"}</button>
+                <button type="button" className="rx-btn" onClick={() => setPriceOpen((o) => !o)} aria-expanded={priceOpen}>{liveBilled ? "Change price" : "Change price or schedule"}</button>
+              </div>
+              {box("finder")}
+            </>
           ) : null}
           {live && priceOpen ? (
             <div className="rb-tools ub-settings">
               <label className="rb-field ub-price"><span>Price per {unit} ($)</span>
                 <input className="ds-input" inputMode="decimal" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
               </label>
-              <span className="rx-hint ub-tight ub-self-end">Every {s.every_days} days from {day(s.anchor_date)} — a live client&apos;s schedule stays as it is. Periods not charged yet use the new price.</span>
+              {liveBilled ? (
+                <span className="rx-hint ub-tight ub-self-end">Every {s.every_days} days from {day(s.anchor_date)} — fixed once a period has been billed. Periods not charged yet use the new price.</span>
+              ) : (
+                <>
+                  <label className="rb-field ub-every"><span>Bill every</span>
+                    <select className="ds-input" value={form.everyDays} onChange={(e) => setForm({ ...form, everyDays: e.target.value })}>
+                      <option value="7">7 days</option>
+                      <option value="14">14 days</option>
+                    </select>
+                  </label>
+                  <label className="rb-field ub-date"><span>First period starts</span>
+                    <input className="ds-input" type="date" value={form.anchorDate} onChange={(e) => setForm({ ...form, anchorDate: e.target.value })} />
+                  </label>
+                </>
+              )}
               <span className="sp" />
               <button type="button" className="rx-btn solid ub-self-end" disabled={!!busy} onClick={async () => {
-                const r = await act("save", { price: form.price, everyDays: s.every_days, anchorDate: s.anchor_date, leadSource: s.lead_source, enabled: s.enabled });
-                if (r) { say("Price saved — periods not charged yet use it."); setPriceOpen(false); reset(); await load(); }
-              }}>{busy === "save" ? "Saving…" : "Save price"}</button>
+                const r = await act("save", { price: form.price, everyDays: liveBilled ? s.every_days : Number(form.everyDays), anchorDate: liveBilled ? s.anchor_date : form.anchorDate, leadSource: s.lead_source, enabled: s.enabled });
+                if (r) { setPriceOpen(false); setPeriodStart(""); reset(); await load(); say(liveBilled ? "Price saved — periods not charged yet use it." : "Saved — periods not charged yet use it."); }
+              }}>{busy === "save" ? "Saving…" : "Save"}</button>
             </div>
           ) : null}
 
           {/* ------------------------------------------------------- charge a period */}
           <div className="ub-box" data-testid="usage-charge">
             <div className="ub-box-h"><b>{live ? "Charge a period" : "Preview and test charge"}</b></div>
+            {s.lead_source === "handoffs" ? (
+              <p className="rx-hint ub-tight">A lead is an agent whose conversation was marked Interested on or after {day(s.anchor_date)} — once per agent, ever. Not counted: a label later corrected to Not Interested, Not Qualified, Do Not Contact, Unsubscribe or Broker/Owner; a conversation in Trash; an agent already Interested or introduced for this client before {day(s.anchor_date)}.</p>
+            ) : null}
             {choices.length === 0 ? (
               <p className="rx-hint ub-tight">
                 {firstPeriod ? `The first period runs ${periodLabel(firstPeriod)} — it can be charged from ${day(firstPeriod.end)}.` : ""}
@@ -560,17 +644,26 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
                     </div>
                   ) : null}
                 </div>
-                {billed && shownRow ? (
+                {shownBilled ? (
                   <>
-                    <p className="rx-hint ub-tight">{periodSentence(shownRow)}: {plural(shownRow.lead_count, unit)}, {money(shownRow.amount_cents)}.</p>
-                    {shownRow.status === "draft" ? (
+                    <p className="rx-hint ub-tight">{periodSentence(shownBilled)}: {plural(shownBilled.lead_count, unit)}, {money(shownBilled.amount_cents)}.{shownBilled.error ? ` Stripe's answer: ${shownBilled.error}` : ""}</p>
+                    {shownBilled.status === "draft" ? (
+                      Date.now() < resumableAt(shownBilled) ? (
+                        <p className="rx-hint ub-tight">It may still be finishing — it can be tried again from {new Date(resumableAt(shownBilled)).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}. Reload then.</p>
+                      ) : (
+                        <div className="rb-tools ub-tight">
+                          <button type="button" className={`rx-btn solid${live ? " rb-danger" : ""}`} disabled={!!busy || !stripeOk || !s.default_payment_method_id} onClick={() => setConfirm({ kind: "resume", row: shownBilled, from: "charge" })}>Try the charge again</button>
+                          <button type="button" className="rx-btn" disabled={!!busy || !stripeOk} onClick={() => setConfirm({ kind: "retry", row: shownBilled, from: "charge" })}>Remove it and open the period again</button>
+                        </div>
+                      )
+                    ) : shownBilled.status === "failed" ? (
                       <div className="rb-tools ub-tight">
-                        <button type="button" className={`rx-btn solid${live ? " rb-danger" : ""}`} disabled={!!busy || !stripeOk || !s.default_payment_method_id} onClick={() => setConfirm({ kind: "resume", row: shownRow, from: "charge" })}>Try the charge again</button>
+                        <button type="button" className={`rx-btn solid ub-wrap${live ? " rb-danger" : ""}`} disabled={!!busy || !stripeOk || !s.default_payment_method_id} onClick={() => setConfirm({ kind: "retry", row: shownBilled, from: "charge" })}>{`Retry ${money(shownBilled.amount_cents)} on ${cardName(s.card_label)}`}</button>
+                        {shownBilled.hosted_invoice_url ? <a className="rx-btn" href={shownBilled.hosted_invoice_url} target="_blank" rel="noreferrer">Pay link ↗</a> : null}
                       </div>
-                    ) : shownRow.status === "failed" ? (
+                    ) : shownBilled.status === "void" && shownBilled.lead_count > 0 && shownBilled.stripe_invoice_id ? (
                       <div className="rb-tools ub-tight">
-                        <button type="button" className={`rx-btn solid ub-wrap${live ? " rb-danger" : ""}`} disabled={!!busy || !stripeOk || !s.default_payment_method_id} onClick={() => setConfirm({ kind: "retry", row: shownRow, from: "charge" })}>{`Retry ${money(shownRow.amount_cents)} on ${cardName(s.card_label)}`}</button>
-                        {shownRow.hosted_invoice_url ? <a className="rx-btn" href={shownRow.hosted_invoice_url} target="_blank" rel="noreferrer">Pay link ↗</a> : null}
+                        <button type="button" className="rx-btn" disabled={!!busy || !stripeOk} onClick={() => setConfirm({ kind: "retry", row: shownBilled, from: "charge" })}>Open it again to charge</button>
                       </div>
                     ) : null}
                     {rowConfirm("charge")}
@@ -593,8 +686,8 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
                 {!billed && confirm?.kind === "charge" && previewFits ? (
                   <div className={`ub-confirm${live && preview!.count > 0 ? " live" : ""}`} role="alertdialog" aria-label="Confirm the charge" aria-describedby={`ub-charge-${clientId}`} tabIndex={-1} ref={confirmBox} onKeyDown={keyDown}>
                     {preview!.count > 0 ? (
-                      <p id={`ub-charge-${clientId}`}><b>Charge {money(preview!.amountCents)} to {cardName(s.card_label)}?</b> {plural(preview!.count, unit)} × {money(preview!.priceCents)}, {preview!.label}.{" "}
-                        {live ? "This is a real charge to the client's card. A refund, if ever needed, is on this Billing tab." : "Stripe test mode — no real money moves."}</p>
+                      <p id={`ub-charge-${clientId}`}><b>Charge {money(preview!.amountCents)} to {whose}{cardName(s.card_label)}?</b> {plural(preview!.count, unit)} × {money(preview!.priceCents)}, {preview!.label}.{" "}
+                        {live ? "This is a real charge to the client's card. A refund, if ever needed, is on this Billing tab." : "Stripe test mode — no real money moves."}{cardWarning}</p>
                     ) : (
                       <p id={`ub-charge-${clientId}`}><b>Close {preview!.label} with nothing to charge?</b> No {unit} counted in it; nothing is sent to Stripe. It is closed for good — a {unit} marked later for these dates won&apos;t be billed.</p>
                     )}
@@ -645,10 +738,26 @@ export function UsageBillingPanel({ clientId, initial = null }: { clientId: stri
                             <button type="button" className="rb-chip ub-gap" disabled={!!busy || !s.default_payment_method_id} onClick={() => setConfirm({ kind: "retry", row: p, from: "periods" })}>Retry charge</button>
                           ) : null}
                           {p.status === "draft" && stripeOk ? (
-                            <button type="button" className="rb-chip ub-gap" disabled={!!busy || !s.default_payment_method_id} onClick={() => setConfirm({ kind: "resume", row: p, from: "periods" })}>Try again</button>
+                            <>
+                              <button type="button" className="rb-chip ub-gap" disabled={!!busy || !s.default_payment_method_id || Date.now() < resumableAt(p)} title={Date.now() < resumableAt(p) ? `It may still be finishing — it can be tried again from ${new Date(resumableAt(p)).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : undefined} onClick={() => setConfirm({ kind: "resume", row: p, from: "periods" })}>Try again</button>
+                              <button type="button" className="rb-chip ub-gap" disabled={!!busy || Date.now() < resumableAt(p)} onClick={() => setConfirm({ kind: "retry", row: p, from: "periods" })}>Remove</button>
+                            </>
                           ) : null}
-                          {(p.status === "charged" || p.status === "failed") && stripeOk ? (
-                            <button type="button" className="rb-chip ub-gap" disabled={!!busy} onClick={async () => { setConfirm(null); if (await act("refresh", { periodStart: p.period_start })) await load(); }}>Refresh</button>
+                          {p.status === "void" && p.lead_count > 0 && p.stripe_invoice_id && stripeOk ? (
+                            <button type="button" className="rb-chip ub-gap" disabled={!!busy} onClick={() => setConfirm({ kind: "retry", row: p, from: "periods" })}>Open again</button>
+                          ) : null}
+                          {(p.status === "charged" || p.status === "failed" || p.status === "paid") && p.stripe_invoice_id && stripeOk ? (
+                            <button type="button" className="rb-chip ub-gap" disabled={!!busy} onClick={async () => {
+                              setConfirm(null);
+                              setRefreshing(p.period_start);
+                              const r = await act("refresh", { periodStart: p.period_start });
+                              setRefreshing(null);
+                              if (!r) return;
+                              // The periods as Stripe left them, at once — never the message beside the old status while the reload runs.
+                              if (Array.isArray(r.periods)) setView((v) => (v ? { ...v, periods: r.periods as PeriodRow[] } : v));
+                              say(`Checked with Stripe: ${periodLabel({ start: p.period_start, end: p.period_end })} is ${statusWord(r.row ?? p)}.`, "periods");
+                              await load();
+                            }}>{busy === "refresh" && refreshing === p.period_start ? "Checking…" : "Refresh"}</button>
                           ) : null}
                         </td>
                       </tr>

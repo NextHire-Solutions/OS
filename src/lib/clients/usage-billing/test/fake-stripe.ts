@@ -52,6 +52,8 @@ export class FakeStripe {
   readonly declineCards = new Set<string>();
   /** Cards whose bank wants the client to confirm each payment (3-D Secure): /pay answers 402 invoice_payment_intent_requires_action. */
   readonly actionCards = new Set<string>();
+  /** Added to amount_due at finalize — as a customer's balance is, by Stripe, whatever the invoice's total. */
+  finalizeExtraDue = 0;
   readonly live: boolean;
 
   constructor(o: { live?: boolean } = {}) {
@@ -76,6 +78,7 @@ export class FakeStripe {
     this.declineNextPay = false;
     this.declineCards.clear();
     this.actionCards.clear();
+    this.finalizeExtraDue = 0;
     this.failWhen = null;
   }
 
@@ -86,7 +89,7 @@ export class FakeStripe {
    */
   addCustomerWithCard(o: { name: string; email?: string | null; metadata?: Record<string, string>; brand?: string; last4?: string; expMonth?: number; expYear?: number; asDefault?: "invoice" | "source" | "none"; percentOff?: number } ): { customerId: string; paymentMethodId: string } {
     // `percentOff`: a coupon on the customer, which Stripe copies onto a new invoice unless `discounts` is passed empty.
-    const c: Json = { id: this.id("cus"), object: "customer", livemode: this.live, name: o.name, email: o.email ?? null, metadata: o.metadata ?? {}, invoice_settings: { default_payment_method: null }, default_source: null, percent_off: o.percentOff ?? 0 };
+    const c: Json = { id: this.id("cus"), object: "customer", livemode: this.live, name: o.name, email: o.email ?? null, metadata: o.metadata ?? {}, invoice_settings: { default_payment_method: null }, default_source: null, percent_off: o.percentOff ?? 0, balance: 0 };
     this.customers.set(String(c.id), c);
     const pm = this.addCard(String(c.id), o);
     const as = o.asDefault ?? "invoice";
@@ -118,6 +121,13 @@ export class FakeStripe {
     const pm = { id: this.id("pm"), object: "payment_method", livemode: this.live, customer: s.customer, card: { brand: "visa", last4: "4242" } };
     this.paymentMethods.set(pm.id, pm);
     Object.assign(s, { status: "complete", setup_intent: { id: this.id("seti"), object: "setup_intent", payment_method: pm } });
+  }
+
+  /** Someone marks an open invoice uncollectible in Stripe's dashboard (Stripe still takes payment on it). */
+  markUncollectible(invoiceId: string) {
+    const inv = this.invoices.get(invoiceId);
+    if (!inv) throw new Error(`no invoice ${invoiceId}`);
+    inv.status = "uncollectible";
   }
 
   /** The client pays an open invoice through its link. */
@@ -255,13 +265,13 @@ export class FakeStripe {
       const inv = this.invoices.get(m[1]);
       if (!inv) return notFound;
       if (inv.status !== "draft") return [400, { error: { message: "fake-stripe: already finalized" } }];
-      Object.assign(inv, { status: "open", number: `TEST-${inv.id.slice(-4)}`, hosted_invoice_url: `https://invoice.stripe.com/i/${inv.id}`, invoice_pdf: `https://pay.stripe.com/invoice/${inv.id}/pdf`, amount_due: inv.total });
+      Object.assign(inv, { status: "open", number: `TEST-${inv.id.slice(-4)}`, hosted_invoice_url: `https://invoice.stripe.com/i/${inv.id}`, invoice_pdf: `https://pay.stripe.com/invoice/${inv.id}/pdf`, amount_due: inv.total + this.finalizeExtraDue });
       return [200, this.view(inv)];
     }
     if ((m = path.match(/^\/invoices\/([^/]+)\/pay$/)) && method === "POST") {
       const inv = this.invoices.get(m[1]);
       if (!inv) return notFound;
-      if (inv.status !== "open") return [400, { error: { message: `fake-stripe: invoice is ${inv.status}` } }];
+      if (inv.status !== "open" && inv.status !== "uncollectible") return [400, { error: { message: `fake-stripe: invoice is ${inv.status}` } }];
       if (p.payment_method || p.source) inv.default_payment_method = p.payment_method ?? p.source;
       if (this.actionCards.has(String(inv.default_payment_method))) return [402, { error: { type: "invalid_request_error", code: "invoice_payment_intent_requires_action", message: "This payment requires additional user action before it can be completed successfully." } }];
       if (this.declineCards.has(String(inv.default_payment_method))) return [402, { error: { type: "card_error", code: "card_declined", message: "Your card was declined." } }];
