@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { agentMarkets, chunks, fence, latestPerAgent, parseByMls, prospectsSlackText, setupCampaignName, setupCampaignSlackText, severalMarkets, SLACK_NAMES, syncMode, tzLabel } from "./rules.ts";
+import { agentMarkets, campaignPerMls, chunks, fence, latestPerAgent, parseByMls, prospectsSlackText, setupCampaignName, setupCampaignSlackText, severalMarkets, SLACK_NAMES, syncMode, tzLabel } from "./rules.ts";
 
 const P = "54322dcf-7392-4022-918c-990ebc8469b8";
 const Q = "11111111-1111-4111-8111-111111111111";
@@ -22,6 +22,7 @@ test("a new client's first campaign: '<Client> + <Market> + Prospects (<TZ>)' �
   assert.equal(setupCampaignName("Homebase", { areas: ["Greater Denver"], mls: ["REcolorado"] }, "America/Denver"), "Homebase + Greater Denver + Prospects (MST)");
   assert.equal(setupCampaignName("Premier Home Team", { areas: [], mls: ["CRMLS", "SANDICOR"] }, "America/Los_Angeles"), "Premier Home Team + CRMLS, SANDICOR + Prospects (PST)");
   assert.equal(setupCampaignName("BrokerStaffer", { areas: [], mls: [] }, null), "BrokerStaffer + Prospects");
+  assert.equal(setupCampaignName("BrokerStaffer", { areas: [], mls: ["BRIGHT", "ABOR", "ARMLS", "FMLS"] }, "America/New_York"), "BrokerStaffer + Prospects (EST)", "a long MLS list is not a market name");
   assert.equal(setupCampaignName(" Keyes ", { areas: [" ", "South Florida"] }, "America/New_York"), "Keyes + South Florida + Prospects (EST)");
   assert.equal(tzLabel("America/Chicago"), "CST");
   assert.equal(tzLabel("America/Indiana/Knox"), "CST", "two of Indiana's zones are Central");
@@ -65,4 +66,11 @@ test("several MLSs: a campaign per MLS — the stored picks read safely; an agen
   for (const v of [null, undefined, "x", 3, ["a"]]) assert.deepEqual(parseByMls(v), {});
   assert.deepEqual(agentMarkets(["NEREN", "SOCAL", "MLSPIN"], ["MLSPIN", "SOCAL"]), ["MLSPIN", "SOCAL"], "the client's order decides");
   assert.deepEqual(agentMarkets(["NEREN"], ["MLSPIN", "SOCAL"]), []);
+});
+
+test("a campaign per MLS for a client with several — never BrokerStaffer's own portal, whatever its MLSs (one campaign for all, 3 Nov)", () => {
+  assert.equal(campaignPerMls("2944199b-bfbc-4e97-aeed-c38ba28f40b0", ["MLSPIN", "SOCAL"]), true);
+  assert.equal(campaignPerMls("2944199b-bfbc-4e97-aeed-c38ba28f40b0", ["MLSPIN"]), false);
+  assert.equal(campaignPerMls(P, ["BRIGHT", "ABOR", "ARMLS"]), false, "BrokerStaffer");
+  assert.equal(campaignPerMls(null, ["A", "B"]), true);
 });

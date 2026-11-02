@@ -386,3 +386,11 @@ test("two saves at once on the Campaigns tab: the second is told someone else ch
   await assert.rejects(saveClientListSettings("c-keyes", { prospectsByMls: { MFRMLS: "700" }, ifUpdatedAt: first.updatedAt }, "eddy@brokerstaffer.com", deps()), /changed by someone else just now/);
   assert.deepEqual(Object.keys(db.rows("os_campaign_list_clients")[0].prospects_by_mls as object).sort(), ["MFRMLS", "SEFMLS"], "the other person's pick kept");
 });
+
+test("BrokerStaffer's own record: one Prospects campaign whatever its MLSs — the one-campaign picker, never one per MLS", async () => {
+  reset({ enabled: false, practice_mode: true, cursor_at: at(-60) });
+  const BS = { id: "c-bs", name: "BrokerStaffer", aliases: [], miClientId: "54322dcf-7392-4022-918c-990ebc8469b8" };
+  const v = await clientListView("c-bs", { ...deps(), clients: async () => [KEYES, JEFF, BS], markets: async () => [{ code: "BRIGHT", name: "Bright MLS" }, { code: "ABOR", name: "Austin" }, { code: "ARMLS", name: "Arizona" }] });
+  if (!v.available) throw new Error("unavailable");
+  assert.equal(v.byMls.several, false);
+});

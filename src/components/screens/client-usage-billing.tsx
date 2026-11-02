@@ -61,6 +61,8 @@ const unitOf = (source: string | null | undefined) => LEAD_SOURCE_UNIT[source as
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
 /** "2026-10-19" → "Oct 19, 2026". */
 const day = (d: string | null | undefined) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—");
+/** What a client with no pay per lead yet starts from: $150 per lead (the list's first is $100 since 3 Nov). */
+const STARTING_PRODUCT = PAY_PER_LEAD_PRODUCTS.find((p) => p.id === "lead-150") ?? PAY_PER_LEAD_PRODUCTS[0];
 /** The product a price and a lead source make — or "custom". */
 const productOf = (price: string, source: string) => {
   const cents = Math.round(Number(String(price).replace(/[$,\s]/g, "")) * 100);
@@ -106,7 +108,7 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
   const [expired, setExpired] = useState(false);
   const [msg, setMsg] = useState<Msg | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [form, setForm] = useState<Form>({ price: String(PAY_PER_LEAD_PRODUCTS[0].priceCents / 100), everyDays: "7", anchorDate: "", leadSource: PAY_PER_LEAD_PRODUCTS[0].leadSource as string, enabled: false });
+  const [form, setForm] = useState<Form>({ price: String(STARTING_PRODUCT.priceCents / 100), everyDays: "7", anchorDate: "", leadSource: STARTING_PRODUCT.leadSource as string, enabled: false });
   // "Custom price…" picked: the price and what is counted are typed, even if they happen to match a product.
   const [custom, setCustom] = useState(false);
   const product = custom ? "custom" : productOf(form.price, form.leadSource);

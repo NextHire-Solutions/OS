@@ -16,7 +16,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadLeadAgents, type SyncAgent } from "./agents.ts";
 import { byPriority, databaseEmail, mapAgentToBisonLead, PRIORITY_ORDERS, type BisonLeadPayload, type LeadAgent } from "./lead-map.ts";
 import { postToPortalChannel, type ShownCampaign } from "./queue.ts";
-import { agentMarkets, chunks, parseByMls, setupCampaignSlackText, severalMarkets, syncMode, SWITCH_ENV, type CampaignPick, type Env } from "./rules.ts";
+import { agentMarkets, campaignPerMls, chunks, parseByMls, setupCampaignSlackText, syncMode, SWITCH_ENV, type CampaignPick, type Env } from "./rules.ts";
 import { ensureSetupCampaign, type SetupClient, type SetupOutcome } from "./setup-campaign.ts";
 
 /*
@@ -488,14 +488,15 @@ async function runPortal(x: Deps, portalId: string, claimed: QueueRow[], b: Batc
   // A first campaign only for a client with none (any platform, any mapping, none the onboarding app built) — those made
   // at setup for its markets as they are now aside, so a client with several MLSs gets one for each. One made for an
   // earlier layout (its MLSs changed since) counts as a campaign: never a second draft beside it (3 Nov audit).
-  const layout = new Set(severalMarkets(ctx.mlsCodes) ? ctx.mlsCodes : [""]);
+  const perMls = campaignPerMls(portalId, ctx.mlsCodes);
+  const layout = new Set(perMls ? ctx.mlsCodes : [""]);
   const madeForLayout = new Set([...setups].filter(([key]) => layout.has(key)).map(([, c]) => c.id));
   const anyCampaign = all.some((c) => !madeForLayout.has(c.id)) || [...setups.keys()].some((key) => !layout.has(key)) || !!orch || multiPortal;
 
   if (toRemove.length) await runRemoves(x, ctx, client, [...own.values()], fits, toRemove, b);
   if (toAdd.length) {
     const where: Where = { single, markets, own: [...own.values()], anyCampaign };
-    if (severalMarkets(ctx.mlsCodes)) await runMarketAdds(x, ctx, record, client, where, toAdd, b, test);
+    if (perMls) await runMarketAdds(x, ctx, record, client, where, toAdd, b, test);
     else await runAdds(x, ctx, record, client, where, toAdd, b, test);
   }
   return client;

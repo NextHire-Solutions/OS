@@ -1,5 +1,7 @@
 import "server-only";
 
+import { BROKERSTAFFER_PORTAL_ID } from "@/lib/crm-preview/market-model";
+
 import { osTable } from "./os-db";
 import { cleanCoverage, type Coverage } from "./coverage";
 
@@ -39,7 +41,13 @@ export async function listCoverage(): Promise<Map<string, Coverage> | null> {
 
 /** Change some of the three. Returns the saved coverage. */
 export async function setCoverage(clientId: string, input: { markets?: unknown; mls?: unknown; areas?: unknown }): Promise<Coverage> {
-  const { value, problems } = cleanCoverage(input);
+  // BrokerStaffer's own record (known by its portal, whatever it is called): its MLS list has no 40 limit (3 Nov).
+  let house = false;
+  if (input.mls !== undefined) {
+    const { data } = await osTable("os_clients").select("mi_client_id").eq("id", clientId).maybeSingle();
+    house = (data as { mi_client_id?: string | null } | null)?.mi_client_id === BROKERSTAFFER_PORTAL_ID;
+  }
+  const { value, problems } = cleanCoverage(input, { house });
   if (problems.length) throw new CoverageError(problems.join(" "));
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (value.markets !== undefined) patch.market_count = value.markets;

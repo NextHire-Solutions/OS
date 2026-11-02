@@ -20,6 +20,8 @@ export interface Coverage {
 export const EMPTY_COVERAGE: Coverage = { markets: null, mls: [], areas: [] };
 
 export const MAX_ITEMS = 40;
+/** BrokerStaffer's own record lists every MLS it recruits in (the user, 3 Nov) — a sanity ceiling only (the agent database has 55). */
+export const MAX_ITEMS_HOUSE = 500;
 export const MAX_ITEM_LENGTH = 120;
 
 /** A list from an array or from comma-separated text; trimmed, blanks and repeats (any case) dropped. */
@@ -33,8 +35,8 @@ export function cleanList(input: unknown): string[] {
   return out;
 }
 
-/** Check and tidy a change. Only the keys present are changed. */
-export function cleanCoverage(input: { markets?: unknown; mls?: unknown; areas?: unknown }):
+/** Check and tidy a change. Only the keys present are changed. `house`: BrokerStaffer's own record — no 40-MLS limit. */
+export function cleanCoverage(input: { markets?: unknown; mls?: unknown; areas?: unknown }, opts: { house?: boolean } = {}):
   { value: Partial<Coverage>; problems: string[] } {
   const value: Partial<Coverage> = {};
   const problems: string[] = [];
@@ -49,7 +51,8 @@ export function cleanCoverage(input: { markets?: unknown; mls?: unknown; areas?:
   for (const [key, label] of [["mls", "MLS"], ["areas", "Area"]] as const) {
     if (input[key] === undefined) continue;
     const list = cleanList(input[key]);
-    if (list.length > MAX_ITEMS) problems.push(`${label} can list at most ${MAX_ITEMS}.`);
+    const max = key === "mls" && opts.house ? MAX_ITEMS_HOUSE : MAX_ITEMS;
+    if (list.length > max) problems.push(`${label} can list at most ${max}.`);
     const long = list.find((v) => v.length > MAX_ITEM_LENGTH);
     if (long) problems.push(`${label} “${long.slice(0, 30)}…” is longer than ${MAX_ITEM_LENGTH} characters.`);
     value[key] = list;

@@ -5,7 +5,7 @@ import { listOsClients } from "@/lib/clients/os-clients";
 import { campaignsOfClient, type CampaignRow } from "@/lib/clients/pause-campaigns";
 import { DEMO_PORTAL_ID } from "@/lib/crm-preview/demo";
 import { clientMarkets } from "@/lib/clients/prospect-sync/markets";
-import { parseByMls, severalMarkets, syncMode, type CampaignPick } from "@/lib/clients/prospect-sync/rules";
+import { campaignPerMls, parseByMls, syncMode, type CampaignPick } from "@/lib/clients/prospect-sync/rules";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { removeLeads, type MembershipResult } from "@/lib/tools/analytics/campaigns/lead-membership";
 import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
@@ -783,7 +783,7 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
     campaigns: campaignChoiceOrder(campaigns),
     campaignsError: campaignsError as string | null,
     prospects: prospectsCampaign(saved, campaigns),
-    byMls: prospectsByMls(saved, campaigns, markets, setups),
+    byMls: prospectsByMls(saved, campaigns, markets, setups, client.miClientId),
     marketsError: marketsError as string | null,
     autoAdd: autoAddState(client.miClientId, x.env),
     recent,
@@ -794,10 +794,11 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
  * A client with several MLSs: each MLS's Prospects campaign — the one picked (if it is still one of the client's), else
  * the one made at setup, else none (its prospects wait, the bell asks). `several` false: the one campaign above applies.
  */
-export function prospectsByMls(saved: ClientListSettings, campaigns: readonly ClientCampaign[], markets: ReadonlyArray<{ code: string; name: string }>, setups: ReadonlyArray<{ mlsCode: string; id: string; name: string }>) {
+export function prospectsByMls(saved: ClientListSettings, campaigns: readonly ClientCampaign[], markets: ReadonlyArray<{ code: string; name: string }>, setups: ReadonlyArray<{ mlsCode: string; id: string; name: string }>, portalId: string | null = null) {
   const codes = markets.map((m) => m.code);
   return {
-    several: severalMarkets(codes),
+    // BrokerStaffer's own: one campaign whatever the MLS (campaignPerMls).
+    several: campaignPerMls(portalId, codes),
     markets: markets.map((m) => {
       const saved1 = saved.prospectsByMls[m.code] ?? null;
       const picked = saved1 ? campaigns.find((c) => c.id === saved1.id) ?? null : null;

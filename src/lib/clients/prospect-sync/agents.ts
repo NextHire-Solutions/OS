@@ -53,11 +53,14 @@ interface Scoped { sales_volume: number; buy_side_dollar: number; list_side_doll
 const SCOPED_COLUMNS = "agent_id, mls_id, sales_volume, buy_side_dollar, list_side_dollar, approx_gci, closed_transactions, closed_rentals, units, avg_sale_price";
 
 async function scopedStats(db: Db, ids: readonly string[], scope: readonly string[]): Promise<Map<string, Scoped>> {
+  // By agent only, the scope applied here: a long MLS list (BrokerStaffer's has no 40 limit) never lengthens the URL
+  // past the gateway's. An agent is in a handful of MLSs, so 100 agents stay inside a page.
+  const scoped = new Set(scope);
   const rows: Row[] = [];
-  for (let i = 0; i < ids.length; i += 150) {
-    const { data, error } = await db.from("agent_mls_stats").select(SCOPED_COLUMNS).in("agent_id", ids.slice(i, i + 150)).in("mls_id", [...scope]);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await db.from("agent_mls_stats").select(SCOPED_COLUMNS).in("agent_id", ids.slice(i, i + 100));
     if (error) throw new Error(`agent_mls_stats: ${error.message}`);
-    rows.push(...((data ?? []) as unknown as Row[]));
+    rows.push(...((data ?? []) as unknown as Row[]).filter((r) => scoped.has(String(r.mls_id))));
   }
   const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
   // sum() over no non-null value is null, as in SQL.

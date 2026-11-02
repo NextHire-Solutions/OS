@@ -10,6 +10,8 @@
  * no paid check; no limit on what a client selects at setup.
  */
 
+import { BROKERSTAFFER_PORTAL_ID } from "@/lib/crm-preview/market-model";
+
 export type Env = Record<string, string | undefined>;
 
 export const SWITCH_ENV = "OS_PROSPECT_SYNC";
@@ -56,6 +58,13 @@ export function tzLabel(zone: string | null | undefined): string | null {
  */
 export const severalMarkets = (clientCodes: readonly string[]): boolean => clientCodes.length > 1;
 
+/**
+ * A campaign per MLS — for a client with several MLSs. Not BrokerStaffer's own portal: it recruits across every MLS
+ * (no 40 limit), so its Prospects go into ONE campaign whatever the MLS (the user, 3 Nov).
+ */
+export const campaignPerMls = (portalId: string | null | undefined, clientCodes: readonly string[]): boolean =>
+  portalId !== BROKERSTAFFER_PORTAL_ID && severalMarkets(clientCodes);
+
 export interface CampaignPick { id: string; name: string }
 
 /** os_campaign_list_clients.prospects_by_mls as stored: { "<MLS code>": { id, name } } — anything else left out. */
@@ -84,7 +93,8 @@ export function agentMarkets(agentCodes: readonly string[], clientCodes: readonl
 export function setupCampaignName(client: string, market: { areas?: readonly string[] | null; mls?: readonly string[] | null }, zone: string | null | undefined): string {
   const area = (market.areas ?? []).map((a) => a.trim()).find(Boolean);
   const mls = (market.mls ?? []).map((m) => m.trim()).filter(Boolean);
-  const where = area ?? (mls.length ? mls.join(", ") : null);
+  // A few MLS codes read as a market; a long list (BrokerStaffer's) does not — left out.
+  const where = area ?? (mls.length && mls.length <= 3 ? mls.join(", ") : null);
   const tz = tzLabel(zone);
   return [client.trim(), ...(where ? [where] : []), `Prospects${tz ? ` (${tz})` : ""}`].join(" + ");
 }

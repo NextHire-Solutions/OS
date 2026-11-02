@@ -59,6 +59,8 @@ export const DEFAULT_LEAD_SOURCE: LeadSource = "handoffs";
  * DEFAULT_LEAD_SOURCE until the client says what a lead is.
  */
 export const PAY_PER_LEAD_PRODUCTS: ReadonlyArray<{ id: string; label: string; leadSource: LeadSource; priceCents: number; offered: boolean }> = [
+  // $100 added 3 Nov 2026 (a client asked).
+  { id: "lead-100", label: "$100 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 10_000, offered: true },
   { id: "lead-150", label: "$150 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 15_000, offered: true },
   { id: "lead-250", label: "$250 per lead", leadSource: DEFAULT_LEAD_SOURCE, priceCents: 25_000, offered: true },
   /*

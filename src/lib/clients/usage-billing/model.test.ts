@@ -170,6 +170,7 @@ test("test or live (31 Oct): only test_only = false is live; valid settings bill
 test("the onboarding products: a price and what is counted, and their own words", async () => {
   const { PAY_PER_LEAD_PRODUCTS, productLabel, parseSettingsInput } = await import("./model.ts");
   assert.deepEqual(PAY_PER_LEAD_PRODUCTS.map((p) => [p.label, p.leadSource, p.priceCents]), [
+    ["$100 per lead", "handoffs", 10_000],
     ["$150 per lead", "handoffs", 15_000],
     ["$250 per lead", "handoffs", 25_000],
     ["$500 per call", "calls", 50_000],
@@ -178,7 +179,7 @@ test("the onboarding products: a price and what is counted, and their own words"
   ]);
   for (const p of PAY_PER_LEAD_PRODUCTS) assert.equal(productLabel(p.leadSource, p.priceCents), p.label);
   const { OFFERED_PRODUCTS } = await import("./model.ts");
-  assert.deepEqual(OFFERED_PRODUCTS.map((p) => p.label), ["$150 per lead", "$250 per lead"], "per call and per introduction not offered for now (Eddy, 27 Oct)");
+  assert.deepEqual(OFFERED_PRODUCTS.map((p) => p.label), ["$100 per lead", "$150 per lead", "$250 per lead"], "per call and per introduction not offered for now (Eddy, 27 Oct); $100 added 3 Nov");
   assert.ok(OFFERED_PRODUCTS.every((p) => p.leadSource === "handoffs"), "a lead is each Interested reply handed over");
   assert.equal(productLabel("calls", 75_050), "$750.50 per call", "a custom price reads the same way");
   for (const p of PAY_PER_LEAD_PRODUCTS) {

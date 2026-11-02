@@ -767,3 +767,18 @@ test("a portal that can't be read just now: its changes are tried again — neve
   await runProspectSync(deps());
   assert.deepEqual(db.rows("os_prospect_sync").map((r) => [r.status, r.attempts]), [["pending", 1], ["pending", 1]]);
 });
+
+test("BrokerStaffer's own portal, with many MLSs: ONE campaign for all its prospects — one draft, never one per MLS (3 Nov)", async () => {
+  seed();
+  const BS = "54322dcf-7392-4022-918c-990ebc8469b8";
+  w.mlsCodes = ["BRIGHT", "ABOR", "ARMLS", "FMLS", "CANOPY"];
+  w.campaigns = [];
+  w.chosen = null;
+  w.agents = new Map([["t1", agent("t1", "t1@agent.test", { mls_all: ["BRIGHT"] })], ["t2", agent("t2", "t2@agent.test", { mls_all: ["ARMLS"] })], ["t3", agent("t3", "t3@agent.test", { mls_all: ["FMLS"] })]]);
+  queue(["t1", "t2", "t3"].map((a) => ({ agent: a, action: "add" as const, portal: BS })));
+  w.setupOutcome = async () => ({ kind: "ready", campaignId: "960", campaignName: "BrokerStaffer + Prospects (EST)", created: true, note: null });
+  await runProspectSync(deps({ env: { OS_PROSPECT_SYNC: "1", OS_PROSPECT_SYNC_ONLY: BS } }));
+  assert.equal(callsOf("setupCampaign").length, 1, "one draft");
+  assert.equal((callsOf("setupCampaign")[0].args[0] as { mlsCode: string | null }).mlsCode, null, "not for an MLS");
+  assert.deepEqual(callsOf("attach").map((c) => [c.args[0], (c.args[1] as number[]).length]), [[960, 3]], "every MLS's agents in it");
+});
