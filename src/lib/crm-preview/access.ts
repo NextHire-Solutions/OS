@@ -15,8 +15,12 @@
  * — only him, not every admin. Add a reviewer here, never by role or switch.
  * 20 Oct, the user: "can we make this new client portal available to amy?" —
  * Amy Anderes (amy@brokerstaffer.com), added by name.
+ * 3 Nov, the user ("yes add him"): Gabriel Castillo, account manager
+ * (gabo075823532@gmail.com) — every client's new portal, as Eddy and Amy. Not
+ * a client's Stripe billing page ("Manage billing"): that stays with the
+ * Billing tab's people (clients/billing-access.ts).
  */
-export const PREVIEW_REVIEWERS: readonly string[] = ["eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
+export const PREVIEW_REVIEWERS: readonly string[] = ["eddy@brokerstaffer.com", "amy@brokerstaffer.com", "gabo075823532@gmail.com"];
 
 export function canSeeCrmPreview(email: string | null | undefined, owners: readonly string[]): boolean {
   if (!email) return false;

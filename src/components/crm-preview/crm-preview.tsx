@@ -77,6 +77,7 @@ export function CrmPreview({
   initialStep,
   now,
   audience = "staff",
+  manageBilling = true,
 }: {
   client: PreviewClient;
   portals: Array<{ id: string; name: string }>;
@@ -104,6 +105,8 @@ export function CrmPreview({
   now: string;
   /** Staff see the preview bar; a client (27 Oct, signed in at /portal-signin) sees the portal as theirs. */
   audience?: "staff" | "client";
+  /** "Manage billing" (the client's Stripe page): the client, and of staff only the Billing tab's people (3 Nov). */
+  manageBilling?: boolean;
 }) {
   const [view, setView] = useState<PreviewView>(initialView);
   const [step, setStep] = useState(initialStep);
@@ -327,7 +330,7 @@ export function CrmPreview({
           ) : view === "team" ? (
             <TeamScreen team={team} />
           ) : view === "billing" ? (
-            <BillingScreen clientId={client.id} clientName={client.name} />
+            <BillingScreen clientId={client.id} clientName={client.name} manageBilling={manageBilling} />
           ) : (
             <IntegrationsScreen fubConnected={client.fubConnected} />
           )}

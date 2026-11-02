@@ -614,7 +614,7 @@ const STATUS_PILL = { paid: ["Paid", "pill p-live"], open: ["Due", "pill p-nu"],
  * instead, with Stripe one click away ("Manage billing" — the same link as
  * before: the client's own Stripe page, real changes). Read-only.
  */
-export function BillingScreen({ clientId, clientName }: { clientId: string; clientName: string }) {
+export function BillingScreen({ clientId, clientName, manageBilling = true }: { clientId: string; clientName: string; manageBilling?: boolean }) {
   const [state, setState] = useState<{ loading: boolean; page: BillingPageData | null; error: string | null }>({ loading: true, page: null, error: null });
   useEffect(() => {
     const ctrl = new AbortController();
@@ -634,11 +634,13 @@ export function BillingScreen({ clientId, clientName }: { clientId: string; clie
     <>
       <header className={k("top")}>
         <div className={k("ttl")}><h1>Billing</h1></div>
-        <div className={k("hr")}>
-          <a className={k("btn")} href={`/api/crm-preview/billing?client=${encodeURIComponent(clientId)}`} target="_blank" rel="noopener" title={`Opens ${clientName}'s Stripe billing page — real changes`}>
-            <Icon name="external" size={15} />Manage billing
-          </a>
-        </div>
+        {manageBilling ? (
+          <div className={k("hr")}>
+            <a className={k("btn")} href={`/api/crm-preview/billing?client=${encodeURIComponent(clientId)}`} target="_blank" rel="noopener" title={`Opens ${clientName}'s Stripe billing page — real changes`}>
+              <Icon name="external" size={15} />Manage billing
+            </a>
+          </div>
+        ) : null}
       </header>
       <div className={k("content")}>
         <p className={k("lede")}>Introductions BrokerStaffer made in each billing period. Agents you add yourself aren&apos;t&nbsp;counted.</p>

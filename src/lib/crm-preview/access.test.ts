@@ -19,7 +19,9 @@ test("an Owner sees it, whatever the address's case", () => {
 });
 
 test("Eddy and Amy, by name — the reviewers the user chose (16 and 20 Oct) — and no one else by being an admin", () => {
-  assert.deepEqual(PREVIEW_REVIEWERS, ["eddy@brokerstaffer.com", "amy@brokerstaffer.com"], "a reviewer is added here, deliberately (Amy 20 Oct)");
+  assert.deepEqual(PREVIEW_REVIEWERS, ["eddy@brokerstaffer.com", "amy@brokerstaffer.com", "gabo075823532@gmail.com"], "a reviewer is added here, deliberately (Amy 20 Oct; Gabriel 3 Nov)");
+  assert.equal(canSeeCrmPreview("gabo075823532@gmail.com", []), true, "Gabriel, by name");
+  assert.equal(canSeeCrmPreview("gabo075823532@gmail.co", []), false);
   assert.equal(canSeeCrmPreview("Amy@BrokerStaffer.com", OWNERS), true);
   assert.equal(canSeeCrmPreview("amy@brokerstaffer.com", []), true, "by name, whatever the Owners list");
   assert.equal(canSeeCrmPreview("eddy@brokerstaffer.com", OWNERS), true);
@@ -268,4 +270,20 @@ test("an account that holds access by name (Eddy, Amy, the Billing people) canno
   assert.match(src, /namedRefused\(email, session\.email\) \|\| namedRefused\(body\.newEmail as string, session\.email\)/);
   // Refused before anything else in the request is saved.
   assert.ok(src.indexOf("if (changingEmail) {") < src.indexOf("await setAdmin(email, body.admin)"), "the email check comes first");
+});
+
+test("a client's Stripe billing page from the portal: the client, and of staff only the Billing tab's people — refused before anything is read; the button hidden for other staff (3 Nov)", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync("src/app/api/crm-preview/billing/route.ts", "utf8");
+  const start = src.indexOf("export async function GET");
+  const gate = src.indexOf('if (viewer.kind === "staff" && !canSeeBillingTab(who)) return notice(403,', start);
+  assert.ok(gate > src.indexOf("if (!mayOpenPortal(viewer, ", start), "after the portal check");
+  for (const load of ["portalClient(", "getAccountBilling(", "billingPortalUrl(", "admit("]) {
+    const at = src.indexOf(load, start);
+    assert.ok(at === -1 || at > gate, `${load} only after the billing check`);
+  }
+  const page = fs.readFileSync("src/app/crm-preview/page.tsx", "utf8");
+  assert.match(page, /manageBilling=\{viewer\.kind === "client" \|\| canSeeBillingTab\(viewer\.email\)\}/);
+  const { canSeeBillingTab } = await import("../clients/billing-access.ts");
+  assert.equal(canSeeBillingTab("gabo075823532@gmail.com"), false, "Gabriel: the portals, not a client's Stripe page");
 });

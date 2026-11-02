@@ -1,5 +1,6 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
+import { canSeeBillingTab } from "@/lib/clients/billing-access";
 import { crmViewerOf } from "@/lib/crm-preview/viewer";
 import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
 import { closedToClient } from "@/lib/crm-preview/portal-open";
@@ -22,7 +23,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
  * Then only a real click on the link (data-guard fromOwnClick — not a
  * prefetch, a link scanner, a script or a typed address) and a per-person cap.
  * The customer is the client's own (billing-pick.ts): never a card another
- * client shares.
+ * client shares. Staff: only the client Billing tab's people (3 Nov — the
+ * portal's other staff, Gabriel, see the portal but not a client's Stripe page).
  */
 export const dynamic = "force-dynamic";
 
@@ -47,6 +49,7 @@ export async function GET(request: NextRequest) {
   if (!UUID.test(client)) return notice(400, "This link is not complete. Open Billing from the portal's sidebar.");
   // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
   if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
+  if (viewer.kind === "staff" && !canSeeBillingTab(who)) return notice(403, "A client's billing page is open to admin, Eddy and Amy only.");
   // A client's portal that is switched off or held serves them nothing, as their current portal (portal-open.ts).
   if (await closedToClient(viewer, client as string)) return new NextResponse(null, { status: 404 });
 
