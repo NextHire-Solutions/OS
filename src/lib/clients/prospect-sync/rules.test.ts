@@ -44,8 +44,14 @@ test("Slack, one clean look: a bold title, one line per group (ten names, then +
   assert.equal(setupCampaignSlackText({ client: "New Co", campaign: "New Co + Prospects", agents: 1200, test: true }), [
     "[TEST] *First campaign created · New Co*",
     "• New Co + Prospects: a draft, not launched",
-    "• 1,200 agents from their setup going in",
+    "• 1,200 agents from their Prospects going in",
     "_Next: write the emails from their offer, get them approved, then launch it._",
+  ].join("\n"));
+  assert.equal(setupCampaignSlackText({ client: "New Co", campaign: "New Co + Prospects", agents: 4657, test: false, blank: true }), [
+    "*First campaign created · New Co*",
+    "• New Co + Prospects: a blank draft, not launched",
+    "• 4,657 agents from their Prospects going in",
+    "_Next: add its emails, schedule and inboxes, get the emails approved, then launch it._",
   ].join("\n"));
 });
 

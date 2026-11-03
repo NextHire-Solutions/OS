@@ -516,11 +516,11 @@ export class EmailBisonClient {
    * `lead_ids` and `lead_list_id` are accepted and SILENTLY IGNORED here —
    * verified. Leads go on afterwards, via attachLeadsToCampaign.
    */
-  async createCampaign(name: string) {
+  async createCampaign(name: string, opts: { retry?: boolean } = {}) {
     return this.request<{ data?: EBCampaign }>("/api/campaigns", {
       method: "POST",
-      body: JSON.stringify({ name }),
-    });
+      body: JSON.stringify({ name, type: "outbound" }),
+    }, opts);
   }
 
   async deleteCampaign(id: number) {

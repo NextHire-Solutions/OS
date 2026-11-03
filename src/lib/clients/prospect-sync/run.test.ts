@@ -120,7 +120,7 @@ function seed() {
   w = {
     agents: new Map(), mlsCodes: ["REcolorado"], byMls: {}, setupByMls: new Map(), campaigns: [{ id: "100", name: "Homebase + Greater Denver + ZF NS1 (MST)", status: "active" }, { id: "200", name: "Homebase + Old (MST)", status: "completed" }],
     extraAll: [], routes: [], orch: null, chosen: { id: "100", name: "Homebase + Greater Denver + ZF NS1 (MST)" }, setup: null, setupFinished: true,
-    setupOutcome: async () => ({ kind: "waiting", reason: "No setup template is set." }), listed: null, leads: new Map(), afterAttach: null, attachSkips: 0,
+    setupOutcome: async () => ({ kind: "waiting", reason: "Its first campaign is being made." }), listed: null, leads: new Map(), afterAttach: null, attachSkips: 0,
     refuse: new Set(), upsertFails: false, removeFails: false, ctx: undefined,
   };
 }
@@ -406,14 +406,14 @@ test("a new client with no campaign at all: waits until setup is finished; then 
   assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 0], "waiting is not a failure");
   assert.match(String(rowOf("a1").detail), /hasn't finished setting up its portal/);
   assert.equal(callsOf("setupCampaign").length, 0);
-  // Setup finished, but no template: still waiting — and our team hears why.
+  // Setup finished, but another run is making it: still waiting — and our team hears why.
   w.setupFinished = true;
   clock = new Date(START.getTime() + WAIT_MS);
   r = await runProspectSync(deps());
   assert.equal(r.waiting, 2);
   assert.equal(callsOf("setupCampaign").length, 1);
-  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /No setup template is set/);
-  // A template: the campaign is made, Slack told (TEST while fenced), the prospects attached to it.
+  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /Its first campaign is being made/);
+  // The campaign is made, Slack told (TEST while fenced), the prospects attached to it.
   w.setupOutcome = async () => ({ kind: "ready", campaignId: "888", campaignName: "Homebase + Greater Denver + Prospects (MST)", created: true, note: null });
   calls.length = 0;
   clock = new Date(START.getTime() + 2 * WAIT_MS);
@@ -824,7 +824,7 @@ test("a client waiting for its first campaign: the bell counts every add waiting
   w.chosen = null;
   queue(Array.from({ length: 1200 }, (_, i) => ({ agent: `w${i}`, action: "add" as const })));
   await runProspectSync(deps());
-  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /1,200 prospects can't go into a campaign yet: No setup template is set/);
+  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /1,200 prospects can't go into a campaign yet: Its first campaign is being made/);
 });
 
 test("EmailBison failing a lookup: the rest of the batch isn't looked up (each would wait out its retries) — all of it tried again later", async () => {
@@ -872,4 +872,19 @@ test("EmailBison refusing for good (in another campaign's sequence, bounced or u
   queue([{ agent: "a1", action: "add" }]);
   await runProspectSync(refuse("EmailBison: 502 Bad Gateway"));
   assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1], "a passing trouble: tried again");
+});
+
+test("a blank first campaign (no template set): the prospects go in, Slack says it's blank and what's next, the bell says what it still needs — counted across the whole backlog", async () => {
+  seed();
+  w.campaigns = [];
+  w.chosen = null;
+  w.setupOutcome = async () => ({ kind: "ready", campaignId: "902", campaignName: "Premier Home Team + Prospects (EST)", created: true, note: "Created blank (no template is set): add its emails, schedule and sending inboxes before launching it.", blank: true });
+  w.agents = new Map(Array.from({ length: 600 }, (_, i) => [`p${i}`, agent(`p${i}`, `p${i}@agent.test`)]));
+  queue(Array.from({ length: 600 }, (_, i) => ({ agent: `p${i}`, action: "add" as const })));
+  await runProspectSync(deps());
+  assert.deepEqual(callsOf("attach").map((c) => [c.args[0], (c.args[1] as number[]).length]), [[902, 500]]);
+  const first = String(callsOf("slack")[0].args[0]);
+  assert.match(first, /First campaign created · Homebase\*\n• Premier Home Team \+ Prospects \(EST\): a blank draft, not launched\n• 600 agents from their Prospects going in\n_Next: add its emails, schedule and inboxes/);
+  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /First campaign needs a look[\s\S]*add its emails, schedule and sending inboxes/);
+  assert.equal((callsOf("bell")[0].args[0] as { severity: string }).severity, "warning");
 });

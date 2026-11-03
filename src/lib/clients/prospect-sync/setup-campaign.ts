@@ -21,13 +21,17 @@ import { setupCampaignName } from "./rules.ts";
  * and the bell says so; nothing is set as the client's Prospects campaign — the run uses it for that MLS until the team
  * picks one on the Campaigns tab.
  *
+ * No template chosen (4 Nov, the user: "can't we just create campaign with leads in it?"): a BLANK draft under the same
+ * name, so a client's prospects never wait on a template. Its emails, schedule and inboxes are the team's to add — the
+ * bell says so — and it is never started either.
+ *
  * Never touches the onboarding orchestrator's fields (bison_campaign_id, leads_inreview, bison_leads_exported):
  * those arm its auto-launch and its "your campaign is live" email to the client.
  */
 
 export interface Template { campaignId: string; campaignName: string | null; updatedBy: string | null; updatedAt: string | null }
 
-/** The setup template, or null when none is set (a new client's prospects then wait). */
+/** The setup template, or null when none is set (a new client's first campaign is then a blank draft). */
 export async function loadTemplate(): Promise<Template | null> {
   const { data, error } = await osTable("os_prospect_sync_settings").select("template_campaign_id, template_campaign_name, updated_by, updated_at").eq("id", "default").maybeSingle();
   if (error) throw new Error(`os_prospect_sync_settings: ${error.message}`);
@@ -61,11 +65,17 @@ export interface SetupClient {
 }
 
 export type SetupOutcome =
-  | { kind: "ready"; campaignId: string; campaignName: string; created: boolean; note: string | null }
+  | { kind: "ready"; campaignId: string; campaignName: string; created: boolean; note: string | null; blank?: true }
   | { kind: "waiting"; reason: string }
   | { kind: "failed"; reason: string };
 
-type Eb = { duplicateCampaign: (id: number, opts?: { retry?: boolean }) => Promise<{ data?: { id?: unknown } } | undefined> } & Pick<EmailBisonClient, "updateCampaign" | "getCampaignSenderEmails" | "attachSenderEmails" | "getCampaignSequenceSteps"> & Partial<EmailBisonClient>;
+type Eb = {
+  duplicateCampaign: (id: number, opts?: { retry?: boolean }) => Promise<{ data?: { id?: unknown } } | undefined>;
+  createCampaign: (name: string, opts?: { retry?: boolean }) => Promise<{ data?: { id?: unknown } } | undefined>;
+} & Pick<EmailBisonClient, "updateCampaign" | "getCampaignSenderEmails" | "attachSenderEmails" | "getCampaignSequenceSteps"> & Partial<EmailBisonClient>;
+
+/** Said to our team about a campaign made with no template. */
+const BLANK_NOTE = "Created blank (no template is set): add its emails, schedule and sending inboxes before launching it.";
 
 /** A claim older than this (a run that died mid-way) is reported, never retried: a retry could make a second campaign. */
 const STALE_CLAIM_MS = 15 * 60_000;
@@ -90,14 +100,14 @@ export async function ensureSetupCampaign(client: SetupClient, o: { by: string; 
       : { kind: "waiting", reason: `${what} is being made.` };
   }
 
+  // A read that fails stops here (it throws): "no template" only ever means none is set.
   const template = await loadTemplate();
-  if (!template) return { kind: "waiting", reason: "No setup template is set (Campaign Management → a campaign → Use for new clients…)." };
 
   const name = market
     ? setupCampaignName(client.name, { mls: [market] }, client.timeZone)
     : setupCampaignName(client.name, { areas: client.areas, mls: client.mls }, client.timeZone);
   const claim = await osTable("os_setup_campaigns").insert({
-    os_client_id: client.osClientId, mls_code: market, portal_id: client.portalId, status: "creating", template_campaign_id: template.campaignId,
+    os_client_id: client.osClientId, mls_code: market, portal_id: client.portalId, status: "creating", template_campaign_id: template?.campaignId ?? "",
     campaign_name: name, created_by: o.by, test: o.test, created_at: now.toISOString(), updated_at: now.toISOString(),
   });
   if (claim.error) {
@@ -110,31 +120,34 @@ export async function ensureSetupCampaign(client: SetupClient, o: { by: string; 
   let created: number | null = null;
   let asked = false;
   try {
-    // Sent ONCE (never retried): an answer lost after EmailBison made the copy would otherwise make a second.
+    // Sent ONCE (never retried): an answer lost after EmailBison made it would otherwise make a second.
     asked = true;
-    const dup = await eb.duplicateCampaign(Number(template.campaignId), { retry: false });
-    created = Number(dup?.data?.id);
+    const made = template ? await eb.duplicateCampaign(Number(template.campaignId), { retry: false }) : await eb.createCampaign(name, { retry: false });
+    created = Number(made?.data?.id);
     if (!Number.isInteger(created) || created <= 0) throw new Error("EmailBison did not return the new campaign's id");
     // Written down at once: whatever happens next, this campaign is known and is this client's.
     await mark({ campaign_id: String(created) });
-    await eb.updateCampaign(created, { name });
 
-    // The client's fields, from its own record (a client with no Analytics record has them too) — one MLS's campaign
-    // leaves its area to the team.
-    let note: string | null = null;
-    const values = clientFieldValues({ name: client.name, aliases: client.aliases, areas: market ? [] : client.areas });
-    try {
-      const filled = await fillCampaignSequence(eb as EmailBisonClient, created, name, values);
-      const problem = clientFieldsProblem(filled.missing, values);
-      if (problem) note = `Client fields not filled: ${problem.replace(", so the sequence cannot be saved with it", "")}`;
-    } catch (error) {
-      note = `Could not check the sequence for client fields: ${describeEmailBisonError(error)}. Open its sequence before starting it.`;
+    let note: string | null = template ? null : BLANK_NOTE;
+    if (template) {
+      await eb.updateCampaign(created, { name });
+
+      // The client's fields, from its own record (a client with no Analytics record has them too) — one MLS's campaign
+      // leaves its area to the team.
+      const values = clientFieldValues({ name: client.name, aliases: client.aliases, areas: market ? [] : client.areas });
+      try {
+        const filled = await fillCampaignSequence(eb as EmailBisonClient, created, name, values);
+        const problem = clientFieldsProblem(filled.missing, values);
+        if (problem) note = `Client fields not filled: ${problem.replace(", so the sequence cannot be saved with it", "")}`;
+      } catch (error) {
+        note = `Could not check the sequence for client fields: ${describeEmailBisonError(error)}. Open its sequence before starting it.`;
+      }
+
+      const senders = (await eb.getCampaignSenderEmails(Number(template.campaignId))).map((s) => s.id).filter(Boolean);
+      for (let i = 0; i < senders.length; i += 250) await eb.attachSenderEmails(created, senders.slice(i, i + 250));
     }
 
-    const senders = (await eb.getCampaignSenderEmails(Number(template.campaignId))).map((s) => s.id).filter(Boolean);
-    for (let i = 0; i < senders.length; i += 250) await eb.attachSenderEmails(created, senders.slice(i, i + 250));
-
-    if (client.analyticsClientId) await linkInAnalytics(created, name, client.analyticsClientId, Number(template.campaignId), o.by);
+    if (client.analyticsClientId) await linkInAnalytics(created, name, client.analyticsClientId, template ? Number(template.campaignId) : null, o.by);
     // It becomes the client's Prospects campaign (shown, and changeable, on the client's Campaigns tab) — unless the team
     // chose one already: that choice is never overwritten. One MLS's campaign: shown there for its MLS, nothing written.
     const had = market ? null : await osTable("os_campaign_list_clients").select("prospects_campaign_id").eq("os_client_id", client.osClientId).maybeSingle();
@@ -147,12 +160,14 @@ export async function ensureSetupCampaign(client: SetupClient, o: { by: string; 
     }
 
     await mark({ status: "ready", campaign_name: name, error: note });
-    return { kind: "ready", campaignId: String(created), campaignName: name, created: true, note };
+    return { kind: "ready", campaignId: String(created), campaignName: name, created: true, note, ...(template ? {} : { blank: true as const }) };
   } catch (error) {
     const reason = created
       ? `${what} could not be finished (EmailBison campaign ${created} was made — check it there): ${describeEmailBisonError(error)}`
       : asked
-        ? `EmailBison didn't answer when asked to copy the template (${describeEmailBisonError(error)}) — it may still have made the copy. Look in EmailBison for "Copy of ${template.campaignName ?? template.campaignId}" before making this client's first campaign by hand.`
+        ? template
+          ? `EmailBison didn't answer when asked to copy the template (${describeEmailBisonError(error)}) — it may still have made the copy. Look in EmailBison for "Copy of ${template.campaignName ?? template.campaignId}" before making this client's first campaign by hand.`
+          : `EmailBison didn't answer when asked to create the campaign (${describeEmailBisonError(error)}) — it may still have made it. Look in EmailBison for "${name}" before making this client's first campaign by hand.`
         : `${what} could not be made: ${describeEmailBisonError(error)}`;
     await mark({ status: "failed", error: reason.slice(0, 1000) });
     return { kind: "failed", reason };
@@ -160,7 +175,7 @@ export async function ensureSetupCampaign(client: SetupClient, o: { by: string; 
 }
 
 /** As a fan-out's copy: cached as a draft, pinned to the client (`manual`), audited — mapping checked, not assumed. */
-async function linkInAnalytics(campaignId: number, name: string, analyticsClientId: string, templateId: number, by: string): Promise<void> {
+async function linkInAnalytics(campaignId: number, name: string, analyticsClientId: string, templateId: number | null, by: string): Promise<void> {
   const sb = getAnalyticsSupabase();
   const teamId = analyticsTeamId();
   const cached = await sb.from("campaigns").upsert({ id: campaignId, team_id: teamId, name, status: "draft", synced_at: new Date().toISOString() }, { onConflict: "id" });

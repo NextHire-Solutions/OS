@@ -5,7 +5,8 @@
  * portals, what a client's first campaign is called, and what Slack is told. No I/O here.
  *
  * The user's decisions (2 Nov): an agent added goes into the client's Prospects campaign (a client with none gets a
- * DRAFT copy of the setup template when it finishes setup — never launched: the client approves its emails first);
+ * DRAFT when it finishes setup — a copy of the setup template, or blank with none set; never launched: the client
+ * approves its emails first);
  * an agent removed ALWAYS comes out of the client's own campaigns, never another client's; the database's own email,
  * no paid check; no limit on what a client selects at setup.
  */
@@ -173,12 +174,12 @@ export function campaignResultSlackText(o: { client: string; test: boolean; outc
 }
 
 /** When a client's first campaign was made at setup. */
-export function setupCampaignSlackText(o: { client: string; campaign: string; agents: number; test: boolean }): string {
+export function setupCampaignSlackText(o: { client: string; campaign: string; agents: number; test: boolean; blank?: boolean }): string {
   return [
     title(o.test, `First campaign created · ${o.client}`),
-    `• ${o.campaign}: a draft, not launched`,
-    `• ${agents(o.agents)} from their setup going in`,
-    `_Next: write the emails from their offer, get them approved, then launch it._`,
+    `• ${o.campaign}: a ${o.blank ? "blank " : ""}draft, not launched`,
+    `• ${agents(o.agents)} from their Prospects going in`,
+    o.blank ? `_Next: add its emails, schedule and inboxes, get the emails approved, then launch it._` : `_Next: write the emails from their offer, get them approved, then launch it._`,
   ].join("\n");
 }
 

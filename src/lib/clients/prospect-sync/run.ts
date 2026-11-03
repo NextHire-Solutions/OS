@@ -807,7 +807,7 @@ async function firstCampaign(x: Deps, ctx: Ctx, record: ClientRecord, client: st
   const campaign = { id: made.campaignId, name: made.campaignName };
   if (!where.own.some((c) => c.id === campaign.id)) where.own.push({ ...campaign, status: "draft" });
   if (made.created) {
-    await x.slack(setupCampaignSlackText({ client, campaign: made.campaignName, agents: n, test })).catch(() => {});
+    await x.slack(setupCampaignSlackText({ client, campaign: made.campaignName, agents: n, test, blank: made.blank })).catch(() => {});
     if (made.note) await x.bell({ kind: "prospect_sync", severity: "warning", title: `First campaign needs a look — ${client}`, body: `${made.campaignName}: ${made.note}`, ref: `prospect_sync:setup_note:${ctx.client!.id}${code ? `:${code}` : ""}` }).catch(() => {});
   }
   return { campaign };

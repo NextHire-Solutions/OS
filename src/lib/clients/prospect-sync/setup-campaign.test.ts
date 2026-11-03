@@ -28,6 +28,7 @@ function fakeEb(o: { failAt?: string } = {}) {
     eb: {
       getCampaign: call("getCampaign", { id: 42, name: "Prospects Template (EST)" }),
       duplicateCampaign: call("duplicate", { data: { id: 901 } }),
+      createCampaign: call("create", { data: { id: 902 } }),
       updateCampaign: call("rename", { data: { id: 901 } }),
       getCampaignSequenceSteps: call("steps", { data: { sequence_id: 55, sequence_steps: [{ id: 1, email_subject: "Hi", email_body: "Agents in {CLIENT_AREA}", order: 1, wait_in_days: 0, thread_reply: false, variant: false }] } }),
       updateSequenceSteps: call("fill", { data: {} }),
@@ -47,15 +48,54 @@ function seed(template = true) {
   db.seed("campaign_audit_log", []);
 }
 
-test("the template: none set → a new client waits; set from a campaign that exists in EmailBison", async () => {
+test("no template set: a BLANK draft under the client's name, sent once — no emails, inboxes or start; the team is told; made once", async () => {
   seed(false);
   assert.equal(await loadTemplate(), null);
   const { eb, calls } = fakeEb();
-  const out = await ensureSetupCampaign(client, { by: "portal prospects", test: true, now: NOW, eb: eb as never });
-  assert.equal(out.kind, "waiting");
-  assert.match(out.kind === "waiting" ? out.reason : "", /No setup template is set/);
-  assert.equal(calls.length, 0, "EmailBison not asked");
-  assert.equal(db.rows("os_setup_campaigns").length, 0);
+  const out = await ensureSetupCampaign(client, { by: "portal prospects", test: false, now: NOW, eb: eb as never });
+  assert.deepEqual(out, { kind: "ready", campaignId: "902", campaignName: "Homebase + Greater Denver + Prospects (MST)", created: true, note: "Created blank (no template is set): add its emails, schedule and sending inboxes before launching it.", blank: true });
+  assert.deepEqual(calls.map((c) => c.what), ["create"], "nothing copied, renamed, filled or attached — and never started");
+  assert.deepEqual(calls[0].args, ["Homebase + Greater Denver + Prospects (MST)", { retry: false }], "asked ONCE — a retried create could make two");
+  assert.deepEqual(db.rows("os_setup_campaigns").map((r) => [r.status, r.campaign_id, r.template_campaign_id, r.mls_code]), [["ready", "902", "", ""]]);
+  assert.deepEqual(db.rows("os_campaign_list_clients").map((r) => [r.os_client_id, r.prospects_campaign_id]), [["os-homebase", "902"]], "it is the client's Prospects campaign");
+  assert.deepEqual(db.rows("campaign_clients").map((r) => [r.campaign_id, r.client_id]), [[902, "an-homebase"]]);
+  assert.equal(db.rows("campaign_audit_log")[0].before_state && (db.rows("campaign_audit_log")[0].before_state as { source_campaign_id: unknown }).source_campaign_id, null);
+  const again = await ensureSetupCampaign(client, { by: "portal prospects", test: false, now: NOW, eb: eb as never });
+  assert.deepEqual(again, { kind: "ready", campaignId: "902", campaignName: "Homebase + Greater Denver + Prospects (MST)", created: false, note: null });
+  assert.equal(calls.filter((c) => c.what === "create").length, 1, "never a second");
+  // A client with several MLSs: one for each.
+  seed(false);
+  let next = 910;
+  const two = fakeEb();
+  two.eb.createCampaign = async (...args: unknown[]) => { two.calls.push({ what: "create", args }); return { data: { id: next++ } }; };
+  const a = await ensureSetupCampaign({ ...client, mlsCode: "MLSPIN" }, { by: "portal prospects", test: false, now: NOW, eb: two.eb as never });
+  const b = await ensureSetupCampaign({ ...client, mlsCode: "SOCAL" }, { by: "portal prospects", test: false, now: NOW, eb: two.eb as never });
+  assert.deepEqual([a.kind === "ready" && a.campaignName, b.kind === "ready" && b.campaignName], ["Homebase + MLSPIN + Prospects (MST)", "Homebase + SOCAL + Prospects (MST)"]);
+});
+
+test("the template can't be read: stopped and tried again — never taken as 'no template' (which would make a blank draft over a chosen template)", async () => {
+  seed();
+  const { eb, calls } = fakeEb();
+  db.failWhen = (c) => c.method === "GET" && c.table === "os_prospect_sync_settings";
+  await assert.rejects(ensureSetupCampaign(client, { by: "portal prospects", test: false, now: NOW, eb: eb as never }), /os_prospect_sync_settings/);
+  db.failWhen = null;
+  assert.equal(calls.length, 0);
+  assert.equal(db.rows("os_setup_campaigns").length, 0, "nothing claimed");
+});
+
+test("EmailBison doesn't answer the blank create: never asked again — failed, saying exactly what to look for", async () => {
+  seed(false);
+  const { eb, calls } = fakeEb({ failAt: "create" });
+  const out = await ensureSetupCampaign(client, { by: "portal prospects", test: false, now: NOW, eb: eb as never });
+  assert.equal(out.kind, "failed");
+  assert.match(out.kind === "failed" ? out.reason : "", /may still have made it\. Look in EmailBison for "Homebase \+ Greater Denver \+ Prospects \(MST\)"/);
+  assert.equal((await ensureSetupCampaign(client, { by: "portal prospects", test: false, now: NOW, eb: eb as never })).kind, "failed");
+  assert.equal(calls.filter((c) => c.what === "create").length, 1);
+});
+
+test("the template: set from a campaign that exists in EmailBison", async () => {
+  seed(false);
+  const { eb } = fakeEb();
   const t = await saveTemplate(42, "eddy@brokerstaffer.com", eb as never);
   assert.deepEqual([t.campaignId, t.campaignName], ["42", "Prospects Template (EST)"]);
   assert.equal((await loadTemplate())?.campaignId, "42");
