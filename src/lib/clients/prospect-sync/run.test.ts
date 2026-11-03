@@ -11,7 +11,7 @@ const db = new FakePostgrest();
 globalThis.fetch = db.fetch as typeof fetch;
 for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, m, () => {});
 
-const { runProspectSync, MAX_ATTEMPTS, BACKOFF_MIN, WAIT_MS, YOUNG_MS, SETTLE_MS } = await import("./run.ts");
+const { runProspectSync, MAX_ATTEMPTS, BACKOFF_MIN, WAIT_MS, YOUNG_MS, SETTLE_MS, SEQUENCE_WAIT_MS } = await import("./run.ts");
 type Deps = NonNullable<Parameters<typeof runProspectSync>[0]>;
 
 const PORTAL = "2944199b-bfbc-4e97-aeed-c38ba28f40b0";
@@ -24,7 +24,7 @@ const agent = (id: string, email: string | null, extra: Partial<SyncAgent> = {})
   id, full_name: `Agent ${id.toUpperCase()}`, preferred_email: email, sources: ["courted"], source_ids: {}, office_name: "KW", mls_code: "REcolorado", mls_all: ["REcolorado"],
   sales_volume: 1_000_000, units: 4, closed_transactions: 4, enriched_email: null, enriched_email_status: null, ...extra,
 } as SyncAgent);
-type Found = { id: number; email: string; campaigns: Array<{ campaignId: number; status: string | null }> };
+type Found = { id: number; email: string; status?: string | null; campaigns: Array<{ campaignId: number; status: string | null }> };
 
 interface World {
   agents: Map<string, SyncAgent>;
@@ -100,12 +100,16 @@ function deps(extra: Partial<Deps> = {}): Deps {
   };
 }
 
+const CAMPAIGN = "Homebase + Greater Denver + ZF NS1 (MST)";
+const inOther = (id: number, email: string, status = "in_sequence", own: string | null = "unverified"): Found[] => [{ id, email, status: own, campaigns: [{ campaignId: 999, status }] }];
+const refuseAll = () => ({ attach: async (_c: number, leadIds: number[]) => ({ ok: false, attempted: leadIds.length, applied: 0, skipped: 0, chunks: [{ size: leadIds.length, ok: false, error: "No leads were added because they are either in other sequences, have previously bounced, or unsubscribed" }], batchId: "b" }) });
+
 let nextId = 1;
-function queue(rows: Array<{ agent: string; action: "add" | "remove"; portal?: string; status?: string; claimed_at?: string; attempts?: number; source?: string; next_try_at?: string; created_at?: string; in_campaigns?: ShownCampaign[] }>) {
+function queue(rows: Array<{ detail?: string; email?: string; agent: string; action: "add" | "remove"; portal?: string; status?: string; claimed_at?: string; attempts?: number; source?: string; next_try_at?: string; created_at?: string; in_campaigns?: ShownCampaign[] }>) {
   db.seed("os_prospect_sync", [...db.rows("os_prospect_sync"), ...rows.map((r) => ({
     id: nextId++, portal_id: r.portal ?? PORTAL, os_client_id: "os-homebase", agent_id: r.agent, action: r.action, source: r.source ?? "prospects",
     status: r.status ?? "pending", attempts: r.attempts ?? 0, requested_by: "amy@brokerstaffer.com", test: true, claim_token: null, claimed_at: r.claimed_at ?? null,
-    next_try_at: r.next_try_at ?? null, campaign_id: null, campaign_name: null, eb_lead_id: null, email: null, detail: null,
+    next_try_at: r.next_try_at ?? null, campaign_id: null, campaign_name: null, eb_lead_id: null, email: r.email ?? null, detail: r.detail ?? null,
     created_at: r.created_at ?? START.toISOString(), updated_at: START.toISOString(), processed_at: null, in_campaigns: r.in_campaigns ?? null,
   }))]);
 }
@@ -147,8 +151,8 @@ test("adds: into the team's chosen Prospects campaign as the worker's leads (onl
   ]);
   w.leads = new Map([
     ["four@agent.test", [{ id: 44, email: "four@agent.test", campaigns: [{ campaignId: 200, status: "completed" }] }]],
-    // In ANOTHER client's campaign (999): not this client's — still added here, as it is (never rewritten).
-    ["eight@agent.test", [{ id: 88, email: "eight@agent.test", campaigns: [{ campaignId: 999, status: "in_sequence" }] }]],
+    // Finished in ANOTHER client's campaign (999): not this client's — still added here, as it is (never rewritten).
+    ["eight@agent.test", [{ id: 88, email: "eight@agent.test", campaigns: [{ campaignId: 999, status: "sequence_finished" }] }]],
   ]);
   w.refuse = new Set(["five@gmail.test"]);
   queue(["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"].map((a) => ({ agent: a, action: "add" as const })));
@@ -435,7 +439,7 @@ test("a new client with no campaign at all: waits until setup is finished; then 
   assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /First campaign not made — Homebase/);
 });
 
-test("EmailBison quietly leaving a lead out (bounced, unsubscribed, blocked): looked up — only the ones really in the campaign are 'added'", async () => {
+test("EmailBison quietly leaving a lead out: looked up — only the ones really in the campaign are 'added'; nothing to go on is tried again, never final", async () => {
   seed();
   w.agents = new Map([["a1", agent("a1", "one@agent.test")], ["a2", agent("a2", "two@agent.test")]]);
   w.attachSkips = 1;
@@ -443,18 +447,17 @@ test("EmailBison quietly leaving a lead out (bounced, unsubscribed, blocked): lo
   queue([{ agent: "a1", action: "add" }, { agent: "a2", action: "add" }]);
   await runProspectSync(deps());
   assert.deepEqual([rowOf("a1").status, rowOf("a1").detail], ["done", "Added to Homebase + Greater Denver + ZF NS1 (MST)."]);
-  assert.deepEqual([rowOf("a2").status, rowOf("a2").detail], ["skipped", "EmailBison didn't add it to Homebase + Greater Denver + ZF NS1 (MST) (the address has bounced, unsubscribed or is blocked)."]);
-  // A lookup that fails after the attach says nothing: never marked left out on no evidence.
+  assert.deepEqual([rowOf("a2").status, rowOf("a2").attempts, rowOf("a2").detail], ["pending", 1, "EmailBison didn't add it to Homebase + Greater Denver + ZF NS1 (MST) and gave no reason — trying again."]);
+  assert.equal(rowOf("a2").email, null, "not marked as held");
+  // It never comes right: given up on in about a day, and the team's bell rings — not quietly dropped.
   seed();
-  w.agents = new Map([["a1", agent("a1", "one@agent.test")]]);
+  w.agents = new Map([["a2", agent("a2", "two@agent.test")]]);
   w.attachSkips = 1;
-  queue([{ agent: "a1", action: "add" }]);
-  let attached = false;
-  await runProspectSync(deps({
-    attach: async (campaignId, leadIds) => { attached = true; return { ok: true, attempted: leadIds.length, applied: 0, skipped: 1, chunks: [{ size: 1, ok: true }], batchId: "b" }; },
-    findLeads: async () => { if (attached) throw new Error("EmailBison: 503"); return []; },
-  }));
-  assert.deepEqual([rowOf("a1").status, rowOf("a1").detail], ["done", "Added to Homebase + Greater Denver + ZF NS1 (MST)."]);
+  w.afterAttach = new Map();
+  queue([{ agent: "a2", action: "add", attempts: MAX_ATTEMPTS - 1 }]);
+  await runProspectSync(deps());
+  assert.equal(rowOf("a2").status, "failed");
+  assert.equal(callsOf("bell").length, 1);
 });
 
 test("the fence: a portal outside it steps aside; a portal not linked to a client fails plainly", async () => {
@@ -848,30 +851,46 @@ test("EmailBison failing a lookup: the rest of the batch isn't looked up (each w
   assert.equal(callsOf("remove").length, 0);
 });
 
-test("after an attach, EmailBison's search lagging (it doesn't show the new leads yet): never reads as 'left out' — counted as added", async () => {
+test("after an attach, EmailBison's search lagging (it doesn't show the new leads yet): none is called added or left out on no evidence — tried again, and then found there, nothing done twice", async () => {
   seed();
   w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
   w.attachSkips = 1; // EmailBison left one out…
   w.afterAttach = new Map(); // …but its search shows none of the three in the campaign yet
   queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
   await runProspectSync(deps());
-  assert.deepEqual(db.rows("os_prospect_sync").map((r) => r.status), ["done", "done", "done"], "which one was left out can't be told — none is marked so on no evidence");
+  assert.deepEqual(db.rows("os_prospect_sync").map((r) => [r.status, r.attempts]), [["pending", 1], ["pending", 1], ["pending", 1]]);
+  // A minute on the search has caught up: two went in. The third was really left out: EmailBison's lead shows why.
+  calls.length = 0;
+  clock = new Date(START.getTime() + BACKOFF_MIN[0] * 60_000);
+  w.afterAttach = null;
+  w.leads = new Map([
+    ["a1@agent.test", [{ id: 11, email: "a1@agent.test", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]],
+    ["a2@agent.test", [{ id: 12, email: "a2@agent.test", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]],
+    ["a3@agent.test", inOther(13, "a3@agent.test", "bounced", "bounced")],
+  ]);
+  await runProspectSync(deps());
+  assert.equal(callsOf("attach").length, 0, "nothing asked for twice");
+  assert.deepEqual(["a1", "a2", "a3"].map((a) => rowOf(a).status), ["done", "done", "skipped"]);
+  // On record as added, and said so: a later removal looks where it was put.
+  assert.deepEqual([rowOf("a1").detail, rowOf("a1").campaign_id, rowOf("a1").eb_lead_id], [`Added to ${CAMPAIGN}.`, "100", "11"]);
+  assert.match(String(callsOf("slack").at(-1)!.args[0]), /• 2 added to Homebase \+ Greater Denver \+ ZF NS1 \(MST\): Agent A1, Agent A2/);
 });
 
-test("EmailBison refusing for good (in another campaign's sequence, bounced or unsubscribed): not added, said why — never tried again for a day; anything else is tried again", async () => {
+test("EmailBison refusing every lead with nothing else to go on: tried again, bounded — never a day of blind retries once it can tell, never final on no evidence; any other refusal is a passing trouble", async () => {
   seed();
   w.agents = new Map([["a1", agent("a1", "one@agent.test")]]);
   queue([{ agent: "a1", action: "add" }]);
   const refuse = (error: string) => deps({ attach: async (_c, leadIds) => ({ ok: false, attempted: leadIds.length, applied: 0, skipped: 0, chunks: [{ size: leadIds.length, ok: false, error }], batchId: "b" }) });
   await runProspectSync(refuse("No leads were added because they are either in other sequences, have previously bounced, or unsubscribed"));
-  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["skipped", 0]);
-  assert.match(String(rowOf("a1").detail), /^EmailBison won't add it to Homebase/);
-  assert.match(String(callsOf("slack").at(-1)!.args[0]), /• 1 not added \(in another campaign's sequence, bounced or unsubscribed\): Agent A1/);
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1]);
+  assert.match(String(rowOf("a1").detail), /and gave no reason — trying again\.$/);
+  assert.equal(callsOf("slack").length, 0, "nothing decided: nothing to say");
   seed();
   w.agents = new Map([["a1", agent("a1", "one@agent.test")]]);
   queue([{ agent: "a1", action: "add" }]);
   await runProspectSync(refuse("EmailBison: 502 Bad Gateway"));
   assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1], "a passing trouble: tried again");
+  assert.match(String(rowOf("a1").detail), /^Not added to .* yet: EmailBison: 502/);
 });
 
 test("a blank first campaign (no template set): the prospects go in, Slack says it's blank and what's next, the bell says what it still needs — counted across the whole backlog", async () => {
@@ -887,4 +906,259 @@ test("a blank first campaign (no template set): the prospects go in, Slack says 
   assert.match(first, /First campaign created · Homebase\*\n• Premier Home Team \+ Prospects \(EST\): a blank draft, not launched\n• 600 agents from their Prospects going in\n_Next: add its emails, schedule and inboxes/);
   assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /First campaign needs a look[\s\S]*add its emails, schedule and sending inboxes/);
   assert.equal((callsOf("bell")[0].args[0] as { severity: string }).severity, "warning");
+});
+
+/* ---------------------------------- what EmailBison won't take: told apart, and the ones it holds looked at weekly --- */
+
+test("what EmailBison won't take is settled before asking: bounced and unsubscribed are final; another campaign's sequence comes back in a week; a paused campaign holds nothing; the post tells them apart", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3", "a4", "a5"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  w.leads = new Map([
+    ["a2@agent.test", inOther(22, "a2@agent.test", "bounced", "bounced")],
+    ["a3@agent.test", inOther(33, "a3@agent.test", "stopped", "unsubscribed")],
+    ["a4@agent.test", inOther(44, "a4@agent.test")],
+    ["a5@agent.test", inOther(55, "a5@agent.test", "sending_paused")],
+  ]);
+  queue(["a1", "a2", "a3", "a4", "a5"].map((a) => ({ agent: a, action: "add" as const })));
+  const r = await runProspectSync(deps());
+  assert.equal(callsOf("attach").length, 1);
+  assert.deepEqual(callsOf("attach")[0].args[1], [55, 5000], "asked only for the two it can take: the paused one as it is, the new one made");
+  assert.deepEqual(callsOf("upsert").flatMap((c) => (c.args[0] as BisonLeadPayload[]).map((l) => l.email)), ["a1@agent.test"], "no lead it won't take is touched");
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").detail], ["done", `Added to ${CAMPAIGN}.`]);
+  assert.deepEqual([rowOf("a5").status, rowOf("a5").eb_lead_id], ["done", "55"]);
+  assert.deepEqual([rowOf("a2").status, rowOf("a2").detail, rowOf("a2").next_try_at], ["skipped", `Not added to ${CAMPAIGN}: the address has bounced.`, null]);
+  assert.deepEqual([rowOf("a3").status, rowOf("a3").detail, rowOf("a3").next_try_at], ["skipped", `Not added to ${CAMPAIGN}: the address has unsubscribed.`, null]);
+  assert.equal(rowOf("a4").status, "pending");
+  assert.equal(rowOf("a4").detail, `In another campaign's sequence (campaign 999): EmailBison won't add it to ${CAMPAIGN} until that ends. Trying again every week.`);
+  assert.equal(rowOf("a4").next_try_at, new Date(START.getTime() + SEQUENCE_WAIT_MS).toISOString());
+  assert.deepEqual([rowOf("a4").attempts, rowOf("a4").claim_token, rowOf("a4").email, rowOf("a4").eb_lead_id], [0, null, "a4@agent.test", "44"]);
+  assert.deepEqual([r.done, r.skipped, r.waiting, r.failed], [2, 2, 1, 0]);
+  assert.equal(callsOf("slack").at(-1)!.args[0], [
+    "[TEST] *Campaign updated · Homebase*",
+    `• 2 added to ${CAMPAIGN}: Agent A5, Agent A1`,
+    "• 2 not added (bounced or unsubscribed): Agent A2, Agent A3",
+    "• 1 not added (in another campaign's sequence, trying again weekly): Agent A4",
+  ].join("\n"));
+});
+
+test("EmailBison leaving some out after all (a lead's state changed since the look): each judged on its own — a held lead is never 'added' because another's search lagged", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3", "a4"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  w.attachSkips = 1; // EmailBison's count says one was left out; the looks below don't add up to that
+  w.afterAttach = new Map([
+    ["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]],
+    ["a2@agent.test", inOther(22, "a2@agent.test", "bounced", "bounced")],
+    ["a3@agent.test", inOther(33, "a3@agent.test")],
+  ]);
+  queue(["a1", "a2", "a3", "a4"].map((a) => ({ agent: a, action: "add" as const })));
+  await runProspectSync(deps());
+  assert.equal(rowOf("a1").status, "done");
+  assert.deepEqual([rowOf("a2").status, rowOf("a2").detail], ["skipped", `Not added to ${CAMPAIGN}: the address has bounced.`]);
+  assert.match(String(rowOf("a3").detail), /^In another campaign's sequence/);
+  assert.equal(rowOf("a3").status, "pending");
+  assert.deepEqual([rowOf("a4").status, rowOf("a4").attempts], ["pending", 1], "its search hasn't caught up: not called added, not called left out");
+});
+
+test("a search failing after an attach decides nothing: what was already judged stands, the rest are tried again and not looked up, each waiting out a timeout — and none is called added", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3", "a4"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  queue(["a1", "a2", "a3", "a4"].map((a) => ({ agent: a, action: "add" as const })));
+  let attached = false;
+  let looks = 0;
+  await runProspectSync(deps({
+    attach: async (_c, ids) => { attached = true; return { ok: true, attempted: ids.length, applied: 1, skipped: ids.length - 1, chunks: [{ size: ids.length, ok: true }], batchId: "b" }; },
+    findLeads: async (email) => { if (!attached) return []; if (++looks === 2) throw new Error("EmailBison: 503"); return inOther(11, email); },
+  }));
+  assert.equal(looks, 2);
+  assert.equal(rowOf("a1").status, "pending");
+  assert.match(String(rowOf("a1").detail), /^In another campaign's sequence/);
+  for (const a of ["a2", "a3", "a4"]) {
+    assert.deepEqual([rowOf(a).status, rowOf(a).attempts], ["pending", 1]);
+    assert.match(String(rowOf(a).detail), /could not be searched just now/);
+  }
+  assert.equal(db.rows("os_prospect_sync").filter((r) => r.status === "done").length, 0);
+});
+
+test("EmailBison refusing every lead in a request (their state changed since the look): each judged — not all taken as one reason; a lead that turns out to be in the campaign is in it", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
+  let attached = false;
+  const refuse = refuseAll();
+  const after = new Map<string, Found[]>([
+    ["a1@agent.test", inOther(11, "a1@agent.test")],
+    ["a2@agent.test", inOther(22, "a2@agent.test", "bounced", "bounced")],
+    ["a3@agent.test", [{ id: 33, email: "a3@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]],
+  ]);
+  await runProspectSync(deps({
+    attach: async (c, ids) => { attached = true; return refuse.attach(c, ids); },
+    findLeads: async (email) => (attached ? after.get(email) ?? [] : []),
+  }));
+  assert.equal(rowOf("a1").status, "pending");
+  assert.match(String(rowOf("a1").detail), /^In another campaign's sequence/);
+  assert.deepEqual([rowOf("a2").status, rowOf("a2").detail], ["skipped", `Not added to ${CAMPAIGN}: the address has bounced.`]);
+  assert.deepEqual([rowOf("a3").status, rowOf("a3").detail, rowOf("a3").campaign_id], ["done", `Added to ${CAMPAIGN}.`, "100"]);
+});
+
+test("EmailBison refusing every lead, and its search down: nothing is decided on no evidence — tried again, an attempt counted, the rest not looked up", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
+  let attached = false;
+  let looks = 0;
+  const refuse = refuseAll();
+  await runProspectSync(deps({
+    attach: async (c, ids) => { attached = true; return refuse.attach(c, ids); },
+    findLeads: async () => { if (!attached) return []; looks++; throw new Error("EmailBison: 503"); },
+  }));
+  assert.equal(looks, 1, "one failed look stops the rest");
+  for (const a of ["a1", "a2", "a3"]) {
+    assert.deepEqual([rowOf(a).status, rowOf(a).attempts], ["pending", 1]);
+    assert.match(String(rowOf(a).detail), /could not be searched just now/);
+  }
+  assert.equal(callsOf("slack").length, 0);
+});
+
+test("the weekly look: untouched until it's due; still held — back in a week, not asked for, no post, no attempts piling up; free at last — added, and said", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", inOther(11, "a1@agent.test")]]);
+  queue([{ agent: "a1", action: "add" }]);
+  await runProspectSync(deps());
+  assert.equal(callsOf("attach").length, 0, "held: not asked for");
+  assert.equal(callsOf("slack").length, 1, "said the first time");
+  const firstWeek = rowOf("a1").next_try_at;
+
+  // A day later: not due, not touched.
+  calls.length = 0;
+  clock = new Date(START.getTime() + 24 * 3600_000);
+  const quiet = await runProspectSync(deps());
+  assert.equal(quiet.claimed, 0);
+  assert.equal(callsOf("find").length, 0);
+  assert.equal(rowOf("a1").next_try_at, firstWeek);
+
+  // A week on, still held: looked at again; nothing to say.
+  calls.length = 0;
+  clock = new Date(START.getTime() + SEQUENCE_WAIT_MS);
+  await runProspectSync(deps());
+  assert.equal(callsOf("find").length, 1, "looked at again");
+  assert.equal(callsOf("attach").length, 0);
+  assert.equal(callsOf("slack").length, 0, "nothing new: no post");
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 0]);
+  assert.equal(rowOf("a1").next_try_at, new Date(clock.getTime() + SEQUENCE_WAIT_MS).toISOString());
+
+  // Another week: the other sequence ended. EmailBison takes it, as it is.
+  calls.length = 0;
+  clock = new Date(clock.getTime() + SEQUENCE_WAIT_MS);
+  w.leads = new Map([["a1@agent.test", inOther(11, "a1@agent.test", "sequence_finished")]]);
+  await runProspectSync(deps());
+  assert.deepEqual(callsOf("attach")[0].args[1], [11]);
+  assert.deepEqual(callsOf("upsert"), [], "never rewritten");
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").campaign_id, rowOf("a1").next_try_at, rowOf("a1").detail], ["done", "100", null, `Added to ${CAMPAIGN}.`]);
+  assert.equal(callsOf("slack").at(-1)!.args[0], ["[TEST] *Campaign updated · Homebase*", `• 1 added to ${CAMPAIGN}: Agent A1`].join("\n"));
+});
+
+const held = `In another campaign's sequence (campaign 999): EmailBison won't add it to ${CAMPAIGN} until that ends. Trying again every week.`;
+
+test("a failed look on the weekly try, then held again: its attempts start afresh and it isn't said twice — the failure wrote over its detail, not what marks it", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", inOther(11, "a1@agent.test")]]);
+  queue([{ agent: "a1", action: "add", detail: held, email: "a1@agent.test" }]);
+  await runProspectSync(deps({ findLeads: async () => { throw new Error("EmailBison: 503"); } }));
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts, rowOf("a1").email], ["pending", 1, "a1@agent.test"]);
+  assert.match(String(rowOf("a1").detail), /could not be searched/);
+  clock = new Date(START.getTime() + BACKOFF_MIN[0] * 60_000);
+  await runProspectSync(deps());
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts, rowOf("a1").detail], ["pending", 0, held]);
+  assert.equal(callsOf("slack").length, 0, "said once, the first time");
+});
+
+test("waiting a week, then taken off Prospects: not added when it comes due — the list decides, nothing attached, no post; its removal was done meanwhile", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.listed = new Set();
+  const week = new Date(START.getTime() + SEQUENCE_WAIT_MS).toISOString();
+  queue([{ agent: "a1", action: "add", detail: held, email: "a1@agent.test", next_try_at: week, created_at: new Date(START.getTime() - SEQUENCE_WAIT_MS).toISOString() }, { agent: "a1", action: "remove" }]);
+  const [waiting, removal] = db.rows("os_prospect_sync");
+  await runProspectSync(deps());
+  const after = (id: unknown) => db.rows("os_prospect_sync").find((r) => r.id === id) as Row;
+  assert.equal(after(removal.id).status, "done", "the removal isn't held up by the older add");
+  assert.equal(after(waiting.id).status, "pending");
+  assert.equal(after(waiting.id).next_try_at, week, "not due");
+  calls.length = 0;
+  clock = new Date(week);
+  await runProspectSync(deps());
+  assert.deepEqual([after(waiting.id).status, after(waiting.id).detail], ["skipped", "Not on Prospects — not added."]);
+  assert.equal(callsOf("attach").length, 0);
+  assert.equal(callsOf("slack").length, 0);
+});
+
+test("waiting a week, and it bounced meanwhile: final, and said", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", inOther(11, "a1@agent.test", "bounced", "bounced")]]);
+  queue([{ agent: "a1", action: "add", detail: held, email: "a1@agent.test" }]);
+  await runProspectSync(deps());
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").next_try_at], ["skipped", null]);
+  assert.match(String(callsOf("slack").at(-1)!.args[0]), /• 1 not added \(bounced or unsubscribed\): Agent A1/);
+});
+
+test("a client that has churned: what was waiting on another campaign's sequence is not added, even if a failure wrote over its detail — nothing goes into its campaign months later; a paused client keeps waiting", async () => {
+  const record = (status: string) => ({ clientRecord: async () => ({ name: "Homebase", aliases: [], areas: [], mls: [], analyticsClientId: null, healthClientId: null, status }) });
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", inOther(11, "a1@agent.test", "sequence_finished")]]);
+  queue([{ agent: "a1", action: "add", detail: "EmailBison could not be searched just now (503) — trying again.", email: "a1@agent.test" }]);
+  await runProspectSync(deps(record("churned")));
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").detail], ["skipped", "Not added: Homebase is no longer a client."]);
+  assert.equal(callsOf("attach").length, 0);
+  assert.equal(callsOf("slack").length, 0);
+
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", inOther(11, "a1@agent.test")]]);
+  queue([{ agent: "a1", action: "add", detail: held, email: "a1@agent.test" }]);
+  await runProspectSync(deps(record("paused")));
+  assert.equal(rowOf("a1").status, "pending");
+});
+
+test("a new client's first-campaign count: an agent waiting on another campaign's sequence isn't waiting for a campaign, however near its next look", async () => {
+  seed();
+  w.campaigns = [];
+  w.chosen = null;
+  w.setupOutcome = async () => ({ kind: "waiting", reason: "Its first campaign is being made." });
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")], ["a2", agent("a2", "a2@agent.test")], ["a3", agent("a3", "a3@agent.test")]]);
+  const soon = new Date(START.getTime() + WAIT_MS).toISOString();
+  queue([{ agent: "a1", action: "add" }, { agent: "a2", action: "add", next_try_at: soon }, { agent: "a3", action: "add", detail: held, email: "a3@agent.test", next_try_at: soon }]);
+  await runProspectSync(deps());
+  const body = String((callsOf("bell").at(-1)!.args[0] as { body: string }).body);
+  assert.match(body, /^2 prospects can't go into a campaign yet/);
+});
+
+test("a market's pick that goes to another of the client's portals (so not one of its campaigns here): a lead already in it is in it — never held every week or called left out because of what else it's in", async () => {
+  seed();
+  w.mlsCodes = ["REcolorado", "IRES"];
+  w.byMls = { REcolorado: { id: "100", name: CAMPAIGN } };
+  w.routes = [{ campaignId: "100", portalId: OTHER_PORTAL }];
+  w.chosen = null;
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")], ["a2", agent("a2", "a2@agent.test")]]);
+  w.leads = new Map([
+    ["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }, { campaignId: 999, status: "in_sequence" }] }]],
+    ["a2@agent.test", [{ id: 22, email: "a2@agent.test", status: "bounced", campaigns: [{ campaignId: 100, status: "bounced" }] }]],
+  ]);
+  queue([{ agent: "a1", action: "add" }, { agent: "a2", action: "add" }]);
+  await runProspectSync(deps());
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").detail, rowOf("a1").next_try_at], ["done", `Already in ${CAMPAIGN}.`, null]);
+  assert.deepEqual([rowOf("a2").status, rowOf("a2").detail], ["done", `Already in ${CAMPAIGN}.`]);
+  assert.equal(callsOf("attach").length, 0);
+});
+
+test("a churned client: an agent's older change isn't let through when its held one is set aside", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  queue([{ agent: "a1", action: "add" }, { agent: "a1", action: "add", detail: held, email: "a1@agent.test" }]);
+  await runProspectSync(deps({ clientRecord: async () => ({ name: "Homebase", aliases: [], areas: [], mls: [], analyticsClientId: null, healthClientId: null, status: "churned" }) }));
+  assert.equal(callsOf("attach").length, 0);
+  assert.deepEqual(db.rows("os_prospect_sync").map((r) => [r.status, r.detail]), [["skipped", "Not added: Homebase is no longer a client."], ["skipped", "Not added: Homebase is no longer a client."]]);
 });

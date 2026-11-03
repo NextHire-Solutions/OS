@@ -2,6 +2,7 @@ import "server-only";
 
 import { deleteAnalyticsClient } from "./analytics-direct";
 import { osTable } from "./os-db";
+import { dropWaitingAdds } from "./prospect-sync/queue";
 import { isKnownNonClient } from "./roster";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { deleteClientRow } from "@/lib/tools/client-health/clientWrites";
@@ -603,6 +604,8 @@ export async function deleteClient(
         const { error } = await db.from("clients").delete().eq("id", row.mi_client_id);
         if (error) throw new Error(error.message);
         removed.push("Master Inbox and its portal");
+        const waiting = await dropWaitingAdds(String(row.mi_client_id));
+        if (waiting) failed.push({ what: "Clearing its waiting Prospects changes", error: waiting });
         /*
          * The client's "Intro Macro - <name>" reply template.
          *

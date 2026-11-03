@@ -16,7 +16,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadLeadAgents, type SyncAgent } from "./agents.ts";
 import { byPriority, databaseEmail, mapAgentToBisonLead, PRIORITY_ORDERS, type BisonLeadPayload, type LeadAgent } from "./lead-map.ts";
 import { postToPortalChannel, type ShownCampaign } from "./queue.ts";
-import { agentMarkets, campaignPerMls, campaignResultSlackText, chunks, parseByMls, setupCampaignSlackText, syncMode, SWITCH_ENV, type CampaignOutcome, type CampaignPick, type Env } from "./rules.ts";
+import { agentMarkets, campaignPerMls, campaignResultSlackText, chunks, IN_SEQUENCE, parseByMls, setupCampaignSlackText, syncMode, SWITCH_ENV, whyLeftOut, type CampaignOutcome, type CampaignPick, type Env } from "./rules.ts";
 import { ensureSetupCampaign, type SetupClient, type SetupOutcome } from "./setup-campaign.ts";
 
 /*
@@ -48,6 +48,11 @@ import { ensureSetupCampaign, type SetupClient, type SetupOutcome } from "./setu
  * Each row is claimed before anything is done (a conditional update), so two runs never do the same work; a run that
  * died gives its rows back after STALE_MS. A failure is tried again with growing waits (BACKOFF_MIN, about a day in
  * all), then left failed — and our team's bell rings.
+ *
+ * WHAT EMAILBISON WON'T TAKE (4 Nov, the user): a lead that has bounced or unsubscribed is final. One held by another
+ * campaign's sequence is not — it stays pending and is looked at again every SEQUENCE_WAIT_MS until it can go in, or the
+ * list says otherwise (off Prospects: not added), or it bounces, or the client churns. Said in the post once: a row held
+ * once keeps its email, and nothing else writes one on a row still pending.
  */
 
 export const ACTOR = "portal prospects";
@@ -63,6 +68,8 @@ export const SETTLE_MS = 2 * 60_000;
 export const BACKOFF_MIN = [1, 5, 15, 60, 180, 360, 720] as const;
 export const MAX_ATTEMPTS = BACKOFF_MIN.length + 1;
 export const LOOKUP_TIMEOUT_MS = 45_000;
+/** A lead another campaign's sequence holds is asked for again this long after (4 Nov, the user: weekly). */
+export const SEQUENCE_WAIT_MS = 7 * 24 * 60 * 60_000;
 
 function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -78,9 +85,9 @@ export interface Ctx {
   mlsCodes: string[];
   orchClientId: string | null;
 }
-export interface ClientRecord { name: string; aliases: string[]; areas: string[]; mls: string[]; analyticsClientId: string | null; healthClientId: string | null }
+export interface ClientRecord { name: string; aliases: string[]; areas: string[]; mls: string[]; analyticsClientId: string | null; healthClientId: string | null; status?: string | null }
 export interface Campaign { id: string; name: string; status: string }
-type FoundLead = { id: number; email: string; campaigns: Array<{ campaignId: number; status: string | null }> };
+type FoundLead = { id: number; email: string; status?: string | null; campaigns: Array<{ campaignId: number; status: string | null }> };
 export interface Choices { single: CampaignPick | null; byMls: Record<string, CampaignPick> }
 
 export interface RunDeps {
@@ -131,7 +138,7 @@ export interface RunResult {
 
 interface QueueRow {
   id: number; portal_id: string; os_client_id: string | null; agent_id: string; action: "add" | "remove"; source: "setup" | "prospects";
-  requested_by: string; attempts: number; test: boolean; created_at: string; in_campaigns: ShownCampaign[] | null;
+  requested_by: string; attempts: number; test: boolean; created_at: string; in_campaigns: ShownCampaign[] | null; email: string | null;
 }
 
 const s = (v: unknown) => (typeof v === "string" ? v.trim() : "");
@@ -155,12 +162,12 @@ function realDeps(d: RunDeps) {
       return c ? { portalId, portalName: c.portal.name, client: c.client, mlsIds: c.mls.ids, mlsCodes: c.mls.matched.map((m) => m.code), orchClientId: c.orchClientId } : null;
     }),
     clientRecord: d.clientRecord ?? (async (osClientId: string): Promise<ClientRecord | null> => {
-      const { data, error } = await osTable("os_clients").select("name, aliases, areas, mls_codes, an_client_id, ch_client_id").eq("id", osClientId).maybeSingle();
+      const { data, error } = await osTable("os_clients").select("name, status, aliases, areas, mls_codes, an_client_id, ch_client_id").eq("id", osClientId).maybeSingle();
       if (error) throw new Error(`os_clients: ${error.message}`);
       const r = data as Record<string, unknown> | null;
       if (!r) return null;
       const list = (v: unknown) => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
-      return { name: s(r.name), aliases: list(r.aliases), areas: list(r.areas), mls: list(r.mls_codes), analyticsClientId: s(r.an_client_id) || null, healthClientId: s(r.ch_client_id) || null };
+      return { name: s(r.name), aliases: list(r.aliases), areas: list(r.areas), mls: list(r.mls_codes), analyticsClientId: s(r.an_client_id) || null, healthClientId: s(r.ch_client_id) || null, status: s(r.status) || null };
     }),
     timeZone: d.timeZone ?? (async (healthClientId: string) => {
       const { data } = await getClientHealthSupabase().from("clients").select("time_zone").eq("id", healthClientId).maybeSingle();
@@ -310,6 +317,15 @@ class Batch {
     await setRows(rows.map((r) => r.id), this.token, { status: "pending", detail: detail.slice(0, 1000), claim_token: null, claimed_at: null, next_try_at: until && until > soon ? until : soon }, this.now);
     this.out.waiting += rows.length;
   }
+  /**
+   * Held by another campaign's sequence: back in a week, for as long as that takes (no attempt counted — a passing
+   * failure is counted afresh). Said in the post the first time only: a week with nothing new posts nothing.
+   */
+  async nextWeek(row: QueueRow, detail: string, extra: Record<string, unknown>, outcome: CampaignOutcome) {
+    if (!row.email) this.outcomes.push({ row, outcome });
+    await setRows([row.id], this.token, { status: "pending", detail: detail.slice(0, 1000), claim_token: null, claimed_at: null, attempts: 0, next_try_at: iso(this.now.getTime() + SEQUENCE_WAIT_MS), ...extra }, this.now);
+    this.out.waiting += 1;
+  }
   /** Failed this time: tried again after a growing wait — or, the last attempt, failed for good. */
   async retry(rows: readonly QueueRow[], detail: string) {
     const byAttempt = new Map<number, QueueRow[]>();
@@ -349,7 +365,7 @@ export async function runProspectSync(deps: RunDeps = {}): Promise<RunResult> {
       continue;
     }
     const { data, error } = await osTable("os_prospect_sync")
-      .select("id, portal_id, os_client_id, agent_id, action, source, requested_by, attempts, test, created_at, in_campaigns")
+      .select("id, portal_id, os_client_id, agent_id, action, source, requested_by, attempts, test, created_at, in_campaigns, email")
       .eq("portal_id", portalId).eq("status", "pending").or(due(now))
       // First due, first done (3 Nov audit): a change set aside re-joins at the back — a market's backlog waiting for a
       // pick can never keep the portal's newer changes (its removals among them) from their turn.
@@ -449,6 +465,15 @@ async function runPortal(x: Deps, portalId: string, claimed: QueueRow[], b: Batc
     return ctx.client.name;
   }
   const client = record.name || ctx.client.name;
+
+  // The client has left: a lead still waiting on another campaign's sequence is not added to its campaign months later.
+  if (record.status === "churned") {
+    const held = new Set(claimed.filter((r) => r.action === "add" && r.email).map((r) => r.agent_id));
+    const waited = claimed.filter((r) => r.action === "add" && held.has(r.agent_id));
+    await b.finish(waited, "skipped", `Not added: ${client} is no longer a client.`);
+    claimed = claimed.filter((r) => !waited.includes(r));
+    if (!claimed.length) return client;
+  }
 
   // The list decides, per agent: the newest change that matches the list now is done; the rest are set aside. An agent
   // whose newest change the list may not show yet — a later one still waiting, or its newest young and not on the list
@@ -734,13 +759,51 @@ async function runAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: string, 
   await addInto(x, target, agents, rows, where.own, new Set(), b);
 }
 
-/** EmailBison refusing leads it will never take — not a moment's trouble to try again. */
-const REFUSED_FOR_GOOD = /in other sequences|previously bounced|unsubscribed/i;
+/** EmailBison refusing the leads themselves — each looked at to see why (judge), not a moment's trouble to try again. */
+const REFUSED_LEADS = /in other sequences|previously bounced|unsubscribed/i;
 
-/** This portal's other adds waiting (claimed ones are "working"); 0 when it can't be counted. */
+/** This portal's other adds waiting for a campaign (claimed ones are "working"; one with an email waits on another campaign's sequence, not this); 0 when it can't be counted. */
 async function waitingAdds(portalId: string): Promise<number> {
-  const { count, error } = await osTable("os_prospect_sync").select("id", { count: "exact", head: true }).eq("portal_id", portalId).eq("status", "pending").eq("action", "add");
+  const { count, error } = await osTable("os_prospect_sync").select("id", { count: "exact", head: true }).eq("portal_id", portalId).eq("status", "pending").eq("action", "add").is("email", null);
   return error ? 0 : count ?? 0;
+}
+
+/** A lead that can't go in, from what it shows now: another campaign's sequence → next week; bounced or unsubscribed → final, said why; nothing to go on → tried again. */
+async function leftOut(into: CampaignPick, row: QueueRow, email: string, leadId: number, found: FoundLead[], b: Batch): Promise<void> {
+  const why = whyLeftOut(found, into.id);
+  const extra = { eb_lead_id: String(leadId), email };
+  if (why.kind === "unknown") {
+    await b.retry([row], `EmailBison didn't add it to ${into.name} and gave no reason — trying again.`);
+    return;
+  }
+  if (why.kind === "sequence") {
+    await b.nextWeek(row, `${IN_SEQUENCE} (campaign ${why.campaigns.join(", ")}): EmailBison won't add it to ${into.name} until that ends. Trying again every week.`, extra, { kind: "notAdded", reason: "in another campaign's sequence, trying again weekly" });
+    return;
+  }
+  await b.finish([row], "skipped", `Not added to ${into.name}: the address has ${why.kind}.`, extra, { kind: "notAdded", reason: "bounced or unsubscribed" });
+}
+
+/**
+ * EmailBison didn't take all of these: each judged on what its lead shows now, one by one (4 Nov review: a search that
+ * lags or fails must never decide the others). In the campaign: added. Held, bounced, unsubscribed: that. Anything else
+ * can't be told and is tried again — safe to repeat: a lead that did go in is then found there. A search that fails says
+ * nothing about the rest, and they aren't each left to wait out its timeout.
+ */
+async function judge(x: Deps, into: CampaignPick, part: ReadonlyArray<{ l: { row: QueueRow; email: string }; id: number }>, b: Batch): Promise<void> {
+  const unread: QueueRow[] = [];
+  let unreadWhy = "";
+  for (const { l, id } of part) {
+    if (unread.length) { unread.push(l.row); continue; }
+    try {
+      const now = (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email);
+      if (now.some((f) => f.campaigns.some((c) => String(c.campaignId) === String(into.id)))) await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
+      else await leftOut(into, l.row, l.email, id, now, b);
+    } catch (err) {
+      unread.push(l.row);
+      unreadWhy = describeEmailBisonError(err);
+    }
+  }
+  if (unread.length) await b.retry(unread, `EmailBison could not be searched just now (${unreadWhy}) — trying again.`);
 }
 
 /** A client with several MLSs: each agent into the campaign picked (or made at setup) for its MLS — never a guess. */
@@ -828,7 +891,9 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
     leads.push({ row: r, email: e.email, payload: mapAgentToBisonLead(a, e.email, a.mls_code) });
   }
 
-  // 2. Already in one of the client's own campaigns (asked of EmailBison now, as the worker asks): left there. A lead
+  // 2. Already in one of the client's own campaigns (asked of EmailBison now, as the worker asks): left there. One it
+  //    won't take — in another campaign's sequence, bounced, unsubscribed — isn't asked for (the rule held for all 5,844
+  //    agents synced by 4 Nov, whyLeftOut): half the calls, and no refused attach in the audit log every week. A lead
   //    EmailBison has in other campaigns: added as it is — its fields are what those campaigns' emails show, and may be
   //    another client's (3 Nov audit); one in no campaign, or new, is made or updated as the worker makes it.
   const ownIds = new Map(own.map((c) => [String(c.id), c]));
@@ -843,7 +908,14 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       const found = (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email);
       const there = found.flatMap((f) => f.campaigns).map((c) => ownIds.get(String(c.campaignId))).find(Boolean);
       const inOthers = found.find((f) => f.campaigns.length > 0);
-      if (there) await b.finish([l.row], "done", there.id === into.id ? `Already in ${into.name}.` : `Already in ${there.name} — not added twice.`, { email: l.email }, { kind: "already", campaign: there.name });
+      const inInto = found.find((f) => f.campaigns.some((c) => String(c.campaignId) === String(into.id)));
+      // Tried before, and in it now: this sync put it there and EmailBison's search lagged — on record as added, so a
+      // later removal looks where it was put.
+      if (inInto && l.row.attempts > 0) await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(inInto.id), email: l.email }, { kind: "added", campaign: into.name });
+      else if (there) await b.finish([l.row], "done", there.id === into.id ? `Already in ${into.name}.` : `Already in ${there.name} — not added twice.`, { email: l.email }, { kind: "already", campaign: there.name });
+      // In it already, whatever else holds it (a market's pick can go to another portal: not one of `own` here).
+      else if (inInto) await b.finish([l.row], "done", `Already in ${into.name}.`, { email: l.email }, { kind: "already", campaign: into.name });
+      else if (whyLeftOut(found, into.id).kind !== "unknown") await leftOut(into, l.row, l.email, found[0].id, found, b);
       else if (inOthers) asIs.push({ l, id: inOthers.id });
       else send.push(l);
     } catch (err) {
@@ -879,35 +951,17 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
     }
     if (!res.ok) {
       const why = res.chunks.find((c) => !c.ok)?.error ?? "EmailBison refused it.";
-      // EmailBison's answer for leads it will never take (in another campaign's sequence, bounced, unsubscribed):
-      // final — not added, said why; never tried again for a day (3 Nov, live: Homebase's one Boston agent).
-      if (REFUSED_FOR_GOOD.test(why)) {
-        await b.finish(part.map((t) => t.l.row), "skipped", `EmailBison won't add it to ${into.name}: ${why}`, {}, { kind: "notAdded", reason: "in another campaign's sequence, bounced or unsubscribed" });
-        continue;
-      }
-      await b.retry(part.map((t) => t.l.row), `Not added to ${into.name} yet: ${why}`);
+      // EmailBison refusing every one of them, in one sentence for several reasons (3 Nov, live: Homebase's one Boston
+      // agent): not a moment's trouble, and never all taken as one reason — each judged.
+      if (REFUSED_LEADS.test(why)) await judge(x, into, part, b);
+      else await b.retry(part.map((t) => t.l.row), `Not added to ${into.name} yet: ${why}`);
       continue;
     }
-    // EmailBison answers "added" and quietly leaves out a lead it won't take (bounced, unsubscribed, blocked): when the
-    // campaign grew by less than asked, each one is looked up — only those really in it are "added".
-    let inCampaign: Set<string> | null = null;
+    // EmailBison answers "added" and quietly leaves out a lead it won't take: the campaign grew by less than asked.
     if (res.skipped > 0) {
-      inCampaign = new Set();
-      for (const { l } of part) {
-        // A lookup that fails says nothing: counted as added (never marked left out on no evidence).
-        const leadsNow = await x.findLeads(l.email).catch(() => null);
-        if (leadsNow === null || leadsNow.some((f) => f.email.trim().toLowerCase() === l.email && f.campaigns.some((c) => String(c.campaignId) === String(into.id)))) inCampaign.add(l.email);
-      }
-      // Trusted only when it names exactly as many as EmailBison left out: its search can lag just after an attach,
-      // and then which ones were left out can't be told — every one is counted as added (3 Nov go-live audit).
-      if (part.length - inCampaign.size !== res.skipped) inCampaign = null;
+      await judge(x, into, part, b);
+      continue;
     }
-    for (const { l, id } of part) {
-      if (inCampaign && !inCampaign.has(l.email)) {
-        await b.finish([l.row], "skipped", `EmailBison didn't add it to ${into.name} (the address has bounced, unsubscribed or is blocked).`, { eb_lead_id: String(id), email: l.email }, { kind: "notAdded", reason: "bounced or unsubscribed" });
-        continue;
-      }
-      await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
-    }
+    for (const { l, id } of part) await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
   }
 }

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { osTable } from "./os-db";
+import { dropWaitingAdds } from "./prospect-sync/queue";
 import { countCascade, type CascadeCounts } from "./delete";
 import { needsAcknowledgement, portalHasContent } from "./delete-rule";
 import {
@@ -280,6 +281,9 @@ export async function deletePortal(
   const { error } = await db.from("clients").delete().eq("id", id);
   if (error) throw new PortalDeleteRefused(`The portal could not be deleted: ${error.message}`, 500);
   removed.push("the portal and everything inside it");
+
+  const waiting = await dropWaitingAdds(id);
+  if (waiting) failed.push({ what: "Clearing its waiting Prospects changes", error: waiting });
 
   // No foreign key reaches the template; the exact name, never a pattern.
   if (plan.hasTemplate) {

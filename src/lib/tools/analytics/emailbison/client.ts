@@ -697,13 +697,13 @@ export class EmailBisonClient {
   /**
    * The leads with exactly this address, each with every campaign it is on
    * (`lead_campaign_data`) — one call instead of a search per campaign
-   * (checked 26 Oct). The search is a search, so anything but an exact
-   * address match is dropped here.
+   * (checked 26 Oct), and its own status (bounced, unsubscribed, ...). The
+   * search is a search, so anything but an exact address match is dropped here.
    */
-  async findLeadsByEmail(email: string): Promise<Array<{ id: number; email: string; campaigns: Array<{ campaignId: number; status: string | null }> }>> {
+  async findLeadsByEmail(email: string): Promise<Array<{ id: number; email: string; status: string | null; campaigns: Array<{ campaignId: number; status: string | null }> }>> {
     const want = email.trim().toLowerCase();
     const PER_PAGE = 15;
-    const out: Array<{ id: number; email: string; campaigns: Array<{ campaignId: number; status: string | null }> }> = [];
+    const out: Array<{ id: number; email: string; status: string | null; campaigns: Array<{ campaignId: number; status: string | null }> }> = [];
     /*
      * Every page the search returns, up to five: other leads can contain the
      * address (bigjohn@… for john@…), so the exact one is not always on page
@@ -711,7 +711,7 @@ export class EmailBisonClient {
      */
     for (let page = 1; page <= 5; page++) {
       const response = await this.request<{
-        data?: Array<{ id: number; email?: string; lead_campaign_data?: Array<{ campaign_id?: number | string; status?: string | null }> }>;
+        data?: Array<{ id: number; email?: string; status?: string | null; lead_campaign_data?: Array<{ campaign_id?: number | string; status?: string | null }> }>;
         meta?: { last_page?: number };
       }>(`/api/leads?search=${encodeURIComponent(want)}&per_page=${PER_PAGE}&page=${page}`);
       const rows = response?.data ?? [];
@@ -720,6 +720,7 @@ export class EmailBisonClient {
         out.push({
           id: Number(r.id),
           email: want,
+          status: r.status ?? null,
           campaigns: (r.lead_campaign_data ?? [])
             .filter((c) => c.campaign_id != null && Number.isFinite(Number(c.campaign_id)))
             .map((c) => ({ campaignId: Number(c.campaign_id), status: c.status ?? null })),

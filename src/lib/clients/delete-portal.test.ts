@@ -310,7 +310,7 @@ test("deleting the portal the client record points at moves the record to the cl
   // Its template went, by exact name; the neighbours' did not.
   assert.deepEqual(db.rows("reply_templates").map((t) => t.name).sort(), ["Intro Macro - Acme Boston (old)", "Intro Macro - Acme Florida"]);
 
-  assert.deepEqual(writes(), ["DELETE clients", "DELETE reply_templates", "PATCH os_clients"]);
+  assert.deepEqual(writes(), ["DELETE clients", "PATCH os_prospect_sync", "DELETE reply_templates", "PATCH os_clients"]);
   const [gone] = db.writes("clients", "DELETE");
   assert.equal(gone.query.get("id"), `eq.${BOSTON}`, "one row, by id");
   assert.deepEqual([...gone.query.keys()], ["id"], "no other filter that could widen it");
@@ -322,7 +322,7 @@ test("deleting a client's second portal leaves the client record exactly as it w
   const r = await del(FLORIDA, { confirm: "Acme Florida", acceptDataLoss: true });
   assert.equal(r.status, 200);
   assert.deepEqual(client(ACME), before);
-  assert.deepEqual(writes(), ["DELETE clients", "DELETE reply_templates"]);
+  assert.deepEqual(writes(), ["DELETE clients", "PATCH os_prospect_sync", "DELETE reply_templates"]);
   assert.equal(db.rows("os_client_tool_exceptions").length, 0);
 });
 
@@ -338,7 +338,7 @@ test("deleting a client's only portal keeps the client, clears its link, and tel
   assert.equal(why.tool, "master_inbox", "the tool name Consistency reads");
   assert.equal(why.created_by, "admin@example.com");
   assert.match(String(why.reason), /^Its portal "Solo Realty" was deleted on \w{3} \d{1,2}, \d{4} by admin@example\.com \(Client Portals → Delete\)\. The client was kept\.$/);
-  assert.deepEqual(writes(), ["DELETE clients", "PATCH os_clients", "POST os_client_tool_exceptions"]);
+  assert.deepEqual(writes(), ["DELETE clients", "PATCH os_prospect_sync", "PATCH os_clients", "POST os_client_tool_exceptions"]);
 });
 
 test("a second delete for the same client replaces the note instead of failing on the unique key", { skip }, async () => {
@@ -354,7 +354,21 @@ test("a row no client owns is deleted and no client record is touched", { skip }
   seed();
   const r = await del(STRAY, { confirm: "zz QA row" });
   assert.equal(r.status, 200);
-  assert.deepEqual(writes(), ["DELETE clients"]);
+  assert.deepEqual(writes(), ["DELETE clients", "PATCH os_prospect_sync"]);
+});
+
+test("a deleted portal's Prospects changes: agents still waiting to go in are said to be not added — a removal stays, as do other portals' and what is finished", { skip }, async () => {
+  seed();
+  const row = (id: number, portal_id: string, action: string, status: string) => ({ id, portal_id, action, status, agent_id: `a${id}`, detail: "before", next_try_at: "2026-12-01T00:00:00.000Z", processed_at: null });
+  db.seed("os_prospect_sync", [row(1, STRAY, "add", "pending"), row(2, STRAY, "remove", "pending"), row(3, STRAY, "add", "done"), row(4, SOLO, "add", "pending")]);
+  const r = await del(STRAY, { confirm: "zz QA row" });
+  assert.equal(r.status, 200);
+  const after = Object.fromEntries(db.rows("os_prospect_sync").map((x) => [x.id, x]));
+  assert.deepEqual([after[1].status, after[1].detail, after[1].next_try_at], ["skipped", "The portal was deleted — not added.", null]);
+  assert.ok(after[1].processed_at);
+  assert.deepEqual([after[2].status, after[2].detail], ["pending", "before"], "that agent may still be emailed: the bell should say so");
+  assert.deepEqual([after[3].status, after[3].detail], ["done", "before"]);
+  assert.deepEqual([after[4].status, after[4].detail], ["pending", "before"], "another portal's");
 });
 
 test("NO delete, by any path, ever deletes or renames a client", { skip }, async () => {

@@ -76,6 +76,22 @@ export async function recordProspectChanges(input: RecordInput, o: { env?: Env; 
   return { mode, recorded: agents.length };
 }
 
+/**
+ * A portal is gone: an agent still waiting to go in (one another campaign's sequence holds can wait for months) has no
+ * portal to go in for — said so, not left to fail and ring the bell for it. A removal stays: that agent may still be
+ * emailed, and the bell should say so. What went wrong, if anything.
+ */
+export async function dropWaitingAdds(portalId: string): Promise<string | null> {
+  try {
+    const now = new Date().toISOString();
+    const { error } = await osTable("os_prospect_sync").update({ status: "skipped", detail: "The portal was deleted — not added.", next_try_at: null, processed_at: now, updated_at: now })
+      .eq("portal_id", portalId).eq("status", "pending").eq("action", "add");
+    return error?.message ?? null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
 /** #portal-update — the portal posts' own channel (never throws; nothing when Slack is not set up). */
 export async function postToPortalChannel(text: string): Promise<boolean> {
   return postSlackMessage({ channel: env.SLACK_CHANNEL_PORTAL, text });

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { agentMarkets, campaignPerMls, campaignResultSlackText, chunks, fence, latestPerAgent, parseByMls, prospectsSlackText, setupCampaignName, setupCampaignSlackText, severalMarkets, SLACK_NAMES, syncMode, tzLabel } from "./rules.ts";
+import { agentMarkets, campaignPerMls, campaignResultSlackText, chunks, fence, latestPerAgent, parseByMls, prospectsSlackText, setupCampaignName, setupCampaignSlackText, severalMarkets, SLACK_NAMES, syncMode, tzLabel, whyLeftOut } from "./rules.ts";
 
 const P = "54322dcf-7392-4022-918c-990ebc8469b8";
 const Q = "11111111-1111-4111-8111-111111111111";
@@ -106,4 +106,15 @@ test("the 'Campaign updated' post: by campaign and by reason, removals' campaign
   assert.equal(campaignResultSlackText({ client: "K", test: true, outcomes: [{ name: "R", outcome: { kind: "removed", campaigns: ["K + Boston", "K + Cape"] } }] }), "[TEST] *Campaign updated · K*\n• 1 removed from K + Boston and K + Cape: R");
   assert.equal(campaignResultSlackText({ client: "K", test: false, outcomes: [{ name: "Z", outcome: { kind: "none" } }] }), null);
   assert.equal(campaignResultSlackText({ client: "K", test: false, outcomes: [] }), null);
+});
+
+test("why EmailBison left a lead out: its own bounce or unsubscribe first; a sequence holding it anywhere but this campaign (a draft's too); otherwise it isn't known", () => {
+  const lead = (status: string | null, ...campaigns: Array<[number, string | null]>) => ({ status, campaigns: campaigns.map(([campaignId, s]) => ({ campaignId, status: s })) });
+  assert.deepEqual(whyLeftOut([lead("bounced", [9, "in_sequence"])], "1"), { kind: "bounced" }, "a bounced address never goes in, whatever holds it now");
+  assert.deepEqual(whyLeftOut([lead("Unsubscribed ")], "1"), { kind: "unsubscribed" });
+  assert.deepEqual(whyLeftOut([lead("unverified", [9, "in_sequence"], [8, "in_sequence"], [9, "in_sequence"], [7, "sequence_finished"])], "1"), { kind: "sequence", campaigns: ["9", "8"] });
+  assert.deepEqual(whyLeftOut([lead("unverified", [1, "in_sequence"])], "1"), { kind: "unknown" }, "this campaign itself holds nothing back");
+  assert.deepEqual(whyLeftOut([lead("unverified", [7, "stopped"], [6, "replied"], [5, "sequence_finished"])], "1"), { kind: "unknown" }, "finished elsewhere: nothing there holds it");
+  assert.deepEqual(whyLeftOut([], "1"), { kind: "unknown" }, "no lead found: no evidence");
+  assert.deepEqual(whyLeftOut([lead("unverified"), lead("bounced")], "1"), { kind: "bounced" }, "two leads for one address: either can tell");
 });

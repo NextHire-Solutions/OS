@@ -173,6 +173,27 @@ export function campaignResultSlackText(o: { client: string; test: boolean; outc
   return [title(o.test, `Campaign updated · ${o.client}`), ...lines].join("\n");
 }
 
+/** How a row waiting on another campaign's sequence starts its detail. */
+export const IN_SEQUENCE = "In another campaign's sequence";
+
+/**
+ * Why EmailBison left a lead out of a campaign, from the lead as it stands. Its own answer is one sentence for all of
+ * these ("either in other sequences, have previously bounced, or unsubscribed"), and they are not the same: of Premier's
+ * 1,115 left out (4 Nov), 638 had neither bounced nor unsubscribed — another campaign's sequence held them, and that one
+ * ends. "in_sequence" holds a lead in ANY campaign, an unlaunched draft too (checked live, 4 Nov: refused for a second
+ * draft while in the first, taken once out of it) — a paused campaign's "sending_paused" does not. Checked on all 5,844
+ * agents synced so far: every one in a sequence elsewhere, bounced or unsubscribed was refused, and none of those taken
+ * was any of these. "unknown" is no evidence of anything: never final.
+ */
+export type LeftOut = { kind: "bounced" | "unsubscribed" | "unknown" } | { kind: "sequence"; campaigns: string[] };
+export function whyLeftOut(leads: ReadonlyArray<{ status?: string | null; campaigns: ReadonlyArray<{ campaignId: number | string; status: string | null }> }>, into: string): LeftOut {
+  const own = leads.map((l) => String(l.status ?? "").trim().toLowerCase());
+  if (own.includes("bounced")) return { kind: "bounced" };
+  if (own.includes("unsubscribed")) return { kind: "unsubscribed" };
+  const holding = leads.flatMap((l) => l.campaigns).filter((c) => c.status === "in_sequence" && String(c.campaignId) !== String(into)).map((c) => String(c.campaignId));
+  return holding.length ? { kind: "sequence", campaigns: [...new Set(holding)] } : { kind: "unknown" };
+}
+
 /** When a client's first campaign was made at setup. */
 export function setupCampaignSlackText(o: { client: string; campaign: string; agents: number; test: boolean; blank?: boolean }): string {
   return [
