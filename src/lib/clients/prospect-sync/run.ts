@@ -734,6 +734,9 @@ async function runAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: string, 
   await addInto(x, target, agents, rows, where.own, new Set(), b);
 }
 
+/** EmailBison refusing leads it will never take — not a moment's trouble to try again. */
+const REFUSED_FOR_GOOD = /in other sequences|previously bounced|unsubscribed/i;
+
 /** This portal's other adds waiting (claimed ones are "working"); 0 when it can't be counted. */
 async function waitingAdds(portalId: string): Promise<number> {
   const { count, error } = await osTable("os_prospect_sync").select("id", { count: "exact", head: true }).eq("portal_id", portalId).eq("status", "pending").eq("action", "add");
@@ -875,7 +878,14 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       continue;
     }
     if (!res.ok) {
-      await b.retry(part.map((t) => t.l.row), `Not added to ${into.name} yet: ${res.chunks.find((c) => !c.ok)?.error ?? "EmailBison refused it."}`);
+      const why = res.chunks.find((c) => !c.ok)?.error ?? "EmailBison refused it.";
+      // EmailBison's answer for leads it will never take (in another campaign's sequence, bounced, unsubscribed):
+      // final — not added, said why; never tried again for a day (3 Nov, live: Homebase's one Boston agent).
+      if (REFUSED_FOR_GOOD.test(why)) {
+        await b.finish(part.map((t) => t.l.row), "skipped", `EmailBison won't add it to ${into.name}: ${why}`, {}, { kind: "notAdded", reason: "in another campaign's sequence, bounced or unsubscribed" });
+        continue;
+      }
+      await b.retry(part.map((t) => t.l.row), `Not added to ${into.name} yet: ${why}`);
       continue;
     }
     // EmailBison answers "added" and quietly leaves out a lead it won't take (bounced, unsubscribed, blocked): when the

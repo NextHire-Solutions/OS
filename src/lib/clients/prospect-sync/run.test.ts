@@ -857,3 +857,19 @@ test("after an attach, EmailBison's search lagging (it doesn't show the new lead
   await runProspectSync(deps());
   assert.deepEqual(db.rows("os_prospect_sync").map((r) => r.status), ["done", "done", "done"], "which one was left out can't be told — none is marked so on no evidence");
 });
+
+test("EmailBison refusing for good (in another campaign's sequence, bounced or unsubscribed): not added, said why — never tried again for a day; anything else is tried again", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "one@agent.test")]]);
+  queue([{ agent: "a1", action: "add" }]);
+  const refuse = (error: string) => deps({ attach: async (_c, leadIds) => ({ ok: false, attempted: leadIds.length, applied: 0, skipped: 0, chunks: [{ size: leadIds.length, ok: false, error }], batchId: "b" }) });
+  await runProspectSync(refuse("No leads were added because they are either in other sequences, have previously bounced, or unsubscribed"));
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["skipped", 0]);
+  assert.match(String(rowOf("a1").detail), /^EmailBison won't add it to Homebase/);
+  assert.match(String(callsOf("slack").at(-1)!.args[0]), /• 1 not added \(in another campaign's sequence, bounced or unsubscribed\): Agent A1/);
+  seed();
+  w.agents = new Map([["a1", agent("a1", "one@agent.test")]]);
+  queue([{ agent: "a1", action: "add" }]);
+  await runProspectSync(refuse("EmailBison: 502 Bad Gateway"));
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1], "a passing trouble: tried again");
+});
