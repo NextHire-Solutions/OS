@@ -94,7 +94,8 @@ function deps(extra: Partial<Deps> = {}): Deps {
     },
     forgetCampaignLeads: async (...args) => { calls.push({ what: "forget", args }); },
     slack: async (text) => { calls.push({ what: "slack", args: [text] }); },
-    bell: async (row) => { calls.push({ what: "bell", args: [row] }); },
+    // The bell's table takes only these (migration 0030's CHECK) — any other is refused by the database (3 Nov audit).
+    bell: async (row) => { assert.ok(["info", "warning", "critical"].includes(row.severity), `bell severity "${row.severity}" would be refused`); calls.push({ what: "bell", args: [row] }); },
     ...extra,
   };
 }
@@ -364,7 +365,7 @@ test("a failure is tried again with growing waits (about a day), then failed —
   assert.equal(rowOf("r1").status, "failed");
   assert.equal(callsOf("forget").length, 0, "not forgotten while it is still in the campaign");
   const bell = callsOf("bell")[0].args[0] as { severity: string; body: string; ref: string };
-  assert.equal(bell.severity, "error");
+  assert.equal(bell.severity, "critical");
   assert.match(bell.body, /could not be taken out of the campaign — they may still be emailed/);
   assert.match(bell.ref, /^prospect_sync:failed:remove:/, "its own notice — never hidden behind an add's");
 });
@@ -592,7 +593,7 @@ test("removes look where this sync put the agent too — found in a campaign no 
   await runProspectSync(deps());
   assert.deepEqual(callsOf("remove"), [], "an old add never makes a campaign removable — it may be another client's now");
   assert.deepEqual([rowOf("r1").status, rowOf("r1").detail], ["failed", "Was in none of Homebase's campaigns. Still in Homebase + Greater Denver + ZF NS1 (MST) — not one of Homebase's campaigns for this portal now, so not touched: check who it belongs to."]);
-  assert.equal((callsOf("bell")[0].args[0] as { severity: string }).severity, "error");
+  assert.equal((callsOf("bell")[0].args[0] as { severity: string }).severity, "critical");
 });
 
 test("a removal finds the lead in a campaign the portal showed it in that is NOT mapped to the client now: never touched, the row fails and the bell rings; Instantly and another portal's campaigns are said", async () => {
@@ -610,7 +611,7 @@ test("a removal finds the lead in a campaign the portal showed it in that is NOT
   assert.equal(rowOf("r1").status, "failed");
   assert.equal(rowOf("r1").detail, "Taken out of Homebase + Greater Denver + ZF NS1 (MST). Still in Homebase 2 + Old Mapping (MST) — not one of Homebase's campaigns for this portal now, so not touched: check who it belongs to. Also listed in Homebase + Nicole + Denver (Instantly — not reached from here).");
   const bell = callsOf("bell")[0].args[0] as { severity: string; ref: string };
-  assert.deepEqual([bell.severity, bell.ref.startsWith("prospect_sync:failed:remove:")], ["error", true]);
+  assert.deepEqual([bell.severity, bell.ref.startsWith("prospect_sync:failed:remove:")], ["critical", true]);
   // Another portal's campaign (a client with two portals): said, left there — not a failure.
   seed();
   w.routes = [{ campaignId: "100", portalId: PORTAL }, { campaignId: "101", portalId: OTHER_PORTAL }];
@@ -733,7 +734,7 @@ test("a removal shown in one of the client's campaigns: looked for under the add
   await runProspectSync(deps());
   assert.equal(rowOf("r1").status, "failed");
   assert.match(String(rowOf("r1").detail), /no lead of it was found there under any address we have — check it there/);
-  assert.equal((callsOf("bell")[0].args[0] as { severity: string }).severity, "error");
+  assert.equal((callsOf("bell")[0].args[0] as { severity: string }).severity, "critical");
 });
 
 test("a client whose MLSs changed: the campaign made for its old layout (or its one pick) counts — never a second draft beside it; the team is asked to pick per MLS", async () => {
@@ -815,4 +816,44 @@ test("after the run: one 'Campaign updated' post for the client — who went int
   queue([{ agent: "r2", action: "remove" }]);
   await runProspectSync(deps());
   assert.equal(callsOf("slack").length, 0);
+});
+
+test("a client waiting for its first campaign: the bell counts every add waiting — not only the run's share", async () => {
+  seed();
+  w.campaigns = [];
+  w.chosen = null;
+  queue(Array.from({ length: 1200 }, (_, i) => ({ agent: `w${i}`, action: "add" as const })));
+  await runProspectSync(deps());
+  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /1,200 prospects can't go into a campaign yet: No setup template is set/);
+});
+
+test("EmailBison failing a lookup: the rest of the batch isn't looked up (each would wait out its retries) — all of it tried again later", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
+  let looked = 0;
+  await runProspectSync(deps({ findLeads: async () => { looked++; throw new Error("EmailBison: 503"); } }));
+  assert.equal(looked, 1, "one failed lookup stops the batch's lookups");
+  assert.deepEqual(db.rows("os_prospect_sync").map((r) => [r.status, r.attempts]), [["pending", 1], ["pending", 1], ["pending", 1]]);
+  assert.equal(callsOf("upsert").length + callsOf("attach").length, 0);
+  // Removals the same.
+  seed();
+  w.agents = new Map(["r1", "r2"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  w.listed = new Set();
+  queue(["r1", "r2"].map((a) => ({ agent: a, action: "remove" as const })));
+  looked = 0;
+  await runProspectSync(deps({ findLeads: async () => { looked++; throw new Error("EmailBison: 503"); } }));
+  assert.equal(looked, 1);
+  assert.deepEqual(db.rows("os_prospect_sync").map((r) => r.status), ["pending", "pending"]);
+  assert.equal(callsOf("remove").length, 0);
+});
+
+test("after an attach, EmailBison's search lagging (it doesn't show the new leads yet): never reads as 'left out' — counted as added", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  w.attachSkips = 1; // EmailBison left one out…
+  w.afterAttach = new Map(); // …but its search shows none of the three in the campaign yet
+  queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
+  await runProspectSync(deps());
+  assert.deepEqual(db.rows("os_prospect_sync").map((r) => r.status), ["done", "done", "done"], "which one was left out can't be told — none is marked so on no evidence");
 });

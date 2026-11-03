@@ -85,12 +85,13 @@ export async function postToPortalChannel(text: string): Promise<boolean> {
 export async function unrecordedAlert(o: { portalId: string; action: "add" | "remove"; agents: number; who: string; error: string }): Promise<void> {
   try {
     const n = o.agents.toLocaleString("en-US");
-    await osTable("os_notifications").upsert({
-      kind: "prospect_sync", severity: "error",
+    const { error } = await osTable("os_notifications").upsert({
+      kind: "prospect_sync", severity: "critical",
       title: `Prospects change not recorded — campaign may be out of step`,
       body: `${o.who} ${o.action === "add" ? "added" : "removed"} ${n} prospect${o.agents === 1 ? "" : "s"} on portal ${o.portalId}, but it could not be recorded for the client's campaign (${o.error.slice(0, 300)}). Their Prospects list did change.`,
       ref: `prospect_sync:unrecorded:${new Date().toISOString()}:${o.portalId}`,
     }, { onConflict: "ref", ignoreDuplicates: true });
+    if (error) console.error("[prospect-sync] unrecorded alert not saved", error.message);
   } catch (err) {
     console.error("[prospect-sync] unrecorded alert", err instanceof Error ? err.message : err);
   }

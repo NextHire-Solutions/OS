@@ -62,6 +62,12 @@ export const SETTLE_MS = 2 * 60_000;
 /** The wait before each next try, in minutes; after the last, the change is failed. */
 export const BACKOFF_MIN = [1, 5, 15, 60, 180, 360, 720] as const;
 export const MAX_ATTEMPTS = BACKOFF_MIN.length + 1;
+export const LOOKUP_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([p, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })]).finally(() => clearTimeout(timer));
+}
 
 export interface Ctx {
   portalId: string;
@@ -212,7 +218,8 @@ function realDeps(d: RunDeps) {
       const r = await eb().upsertLeads(leads as unknown as Array<Record<string, unknown>>, "patch");
       return (r?.data ?? []).map((l) => ({ id: Number(l.id), email: s(l.email).toLowerCase() })).filter((l) => Number.isInteger(l.id) && l.id > 0 && l.email);
     }),
-    findLeads: d.findLeads ?? ((email: string) => eb().findLeadsByEmail(email)),
+    // A lookup that hangs never holds the run: given up after LOOKUP_TIMEOUT_MS (the rows are tried again later).
+    findLeads: d.findLeads ?? ((email: string) => withTimeout(eb().findLeadsByEmail(email), LOOKUP_TIMEOUT_MS, "EmailBison lead search timed out")),
     attach: d.attach ?? ((campaignId: number, leadIds: number[], actor: string) => attachLeads(campaignId, leadIds, actor, analyticsTeamId())),
     remove: d.remove ?? ((campaignId: number, leadIds: number[], actor: string) => removeLeads(campaignId, leadIds, actor, analyticsTeamId())),
     forgetCampaignLeads: d.forgetCampaignLeads ?? (async (orchClientId: string, agentIds: readonly string[], campaignIds: readonly string[]) => {
@@ -223,8 +230,10 @@ function realDeps(d: RunDeps) {
       }
     }),
     slack: d.slack ?? postToPortalChannel,
+    // The bell takes info, warning or critical (migration 0030's CHECK) — a refused one is logged, never lost silently.
     bell: d.bell ?? (async (row: { kind: string; severity: string; title: string; body: string; ref: string }) => {
-      await osTable("os_notifications").upsert(row, { onConflict: "ref", ignoreDuplicates: true });
+      const { error } = await osTable("os_notifications").upsert(row, { onConflict: "ref", ignoreDuplicates: true });
+      if (error) console.error(JSON.stringify({ tag: "[prospect-sync] bell not saved", ref: row.ref, title: row.title, error: error.message }));
     }),
   };
 }
@@ -361,7 +370,8 @@ export async function runProspectSync(deps: RunDeps = {}): Promise<RunResult> {
     if (!claimed.length) continue;
     out.portals++;
     out.claimed += claimed.length;
-    const batch = new Batch(token, now, out);
+    // This portal's own clock (a run can take minutes): its waits and retries count from now, not the run's start.
+    const batch = new Batch(token, x.now(), out);
     let client = portalId;
     try {
       client = await runPortal(x, portalId, claimed, batch);
@@ -389,7 +399,7 @@ export async function runProspectSync(deps: RunDeps = {}): Promise<RunResult> {
     const additions = batch.failedFor.filter((f) => f.row.action === "add");
     if (removals.length) {
       await x.bell({
-        kind: "prospect_sync", severity: "error", title: `Prospects removal not done — ${client}`,
+        kind: "prospect_sync", severity: "critical", title: `Prospects removal not done — ${client}`,
         body: `${removals.length} agent${removals.length === 1 ? "" : "s"} taken off Prospects could not be taken out of the campaign — they may still be emailed. Last reason: ${removals.at(-1)!.why}`,
         ref: `prospect_sync:failed:remove:${portalId}:${hour}`,
       }).catch(() => {});
@@ -575,6 +585,8 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
     const emails = [...new Set([...(a ? addressesOf(a) : []), ...ours.map((p) => p.email), ...shown.flatMap((c) => c.emails ?? []).map((e) => e.trim().toLowerCase()).filter((e) => EMAIL.test(e))])];
     const found: Array<{ campaignId: string; leadId: number }> = [];
     const strays = new Set<string>();
+    // EmailBison failed a lookup already this batch: the rest are tried again later, not each waiting out its retries.
+    if (lookupFailed.length) { lookupFailed.push(r); continue; }
     try {
       for (const email of emails) {
         for (const lead of await x.findLeads(email)) {
@@ -710,7 +722,8 @@ async function runAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: string, 
   // 1. Where they go: the team's choice, else the setup campaign, else the pre-selected one of its own.
   let target: CampaignPick | null = w.chosen ?? w.setup ?? suggestProspectsCampaign(w.strict);
   if (!target) {
-    const made = await firstCampaign(x, ctx, record, client, where, null, rows.length, b, test);
+    // The bell and the post count every add this portal has waiting — not only this run's share (500 of 4,657, 3 Nov).
+    const made = await firstCampaign(x, ctx, record, client, where, null, rows.length + (await waitingAdds(ctx.portalId)), b, test);
     if ("wait" in made) {
       await b.wait(rows, `Waiting: ${made.wait}`);
       return;
@@ -719,6 +732,12 @@ async function runAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: string, 
   }
   const agents = await x.loadAgents(rows.map((r) => r.agent_id), { mlsScope: ctx.mlsIds });
   await addInto(x, target, agents, rows, where.own, new Set(), b);
+}
+
+/** This portal's other adds waiting (claimed ones are "working"); 0 when it can't be counted. */
+async function waitingAdds(portalId: string): Promise<number> {
+  const { count, error } = await osTable("os_prospect_sync").select("id", { count: "exact", head: true }).eq("portal_id", portalId).eq("status", "pending").eq("action", "add");
+  return error ? 0 : count ?? 0;
 }
 
 /** A client with several MLSs: each agent into the campaign picked (or made at setup) for its MLS — never a guess. */
@@ -779,7 +798,7 @@ async function firstCampaign(x: Deps, ctx: Ctx, record: ClientRecord, client: st
   }
   if (made.kind === "failed") {
     // Until a person sorts it out (makes the campaign, or picks one on the Campaigns tab): waiting, not failed.
-    await x.bell({ kind: "prospect_sync", severity: "error", title: `First campaign not made — ${client}`, body: `${made.reason} Its prospects wait until a campaign is picked on its Campaigns tab.`, ref: `prospect_sync:setup_failed:${ctx.client!.id}${code ? `:${code}` : ""}:${day(b)}` }).catch(() => {});
+    await x.bell({ kind: "prospect_sync", severity: "critical", title: `First campaign not made — ${client}`, body: `${made.reason} Its prospects wait until a campaign is picked on its Campaigns tab.`, ref: `prospect_sync:setup_failed:${ctx.client!.id}${code ? `:${code}` : ""}:${day(b)}` }).catch(() => {});
     return { wait: made.reason };
   }
   const campaign = { id: made.campaignId, name: made.campaignName };
@@ -815,6 +834,8 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
   const lookupFailed: QueueRow[] = [];
   let lookupWhy = "";
   for (const l of leads) {
+    // EmailBison failed a lookup already this batch: the rest are tried again later, not each waiting out its retries.
+    if (lookupFailed.length) { lookupFailed.push(l.row); continue; }
     try {
       const found = (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email);
       const there = found.flatMap((f) => f.campaigns).map((c) => ownIds.get(String(c.campaignId))).find(Boolean);
@@ -867,6 +888,9 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
         const leadsNow = await x.findLeads(l.email).catch(() => null);
         if (leadsNow === null || leadsNow.some((f) => f.email.trim().toLowerCase() === l.email && f.campaigns.some((c) => String(c.campaignId) === String(into.id)))) inCampaign.add(l.email);
       }
+      // Trusted only when it names exactly as many as EmailBison left out: its search can lag just after an attach,
+      // and then which ones were left out can't be told — every one is counted as added (3 Nov go-live audit).
+      if (part.length - inCampaign.size !== res.skipped) inCampaign = null;
     }
     for (const { l, id } of part) {
       if (inCampaign && !inCampaign.has(l.email)) {
