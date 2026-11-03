@@ -280,7 +280,7 @@ export function DncScreen({ dnc }: { dnc: DncEntry[] }) {
       <Header title="DNC List" add={dnc.length ? "Add to DNC" : undefined} onAdd={() => setDialog("add")} onImport={() => setDialog("import")} onExport={live ? () => csv(dnc) : undefined} />
       <div className={k("content")}>
         {dnc.length === 0 ? (
-          <Empty icon="ban" red title="Your DNC List is empty" text={"Add agents or whole companies you never want contacted. They are excluded from all\u00a0outreach."} actions={["Add to DNC", "Import CSV"]} onActions={[() => setDialog("add"), () => setDialog("import")]} />
+          <Empty icon="ban" red title="Your DNC List is empty" text={"Add the agents you never want contacted, with their email. They are excluded from all\u00a0outreach."} actions={["Add to DNC", "Import CSV"]} onActions={[() => setDialog("add"), () => setDialog("import")]} />
         ) : (
           <>
             <p className={k("lede")}>Agents and companies we should never reach out&nbsp;to.</p>

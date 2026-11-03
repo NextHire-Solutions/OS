@@ -351,26 +351,30 @@ export function MyAgentAddDialog({ onClose, onSave, initial }: { onClose: () => 
 }
 
 /** DNC's Add (and Edit, with `initial` — the kind then stays). */
+/*
+ * The DNC List's Add (and Edit, with `entry`). Adding is an agent only, and their email is required (3 Nov, the user:
+ * "make the email field mandatory … remove the company section") — the email is what keeps them out of outreach. An
+ * existing company entry still opens here to be edited; companies are no longer added from this pop-up.
+ */
+const DNC_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function DncAddDialog({ initial = "agent", onClose, onSave, entry }: { initial?: "agent" | "company"; onClose: () => void; onSave?: OnSave; entry?: { name: string; email: string | null; phone: string | null; brokerage: string | null; domain: string | null; notes: string | null } }) {
-  const [kind, setKind] = useState<"agent" | "company">(initial);
+  const kind: "agent" | "company" = entry ? initial : "agent";
   const [name, setName] = useState(entry?.name ?? "");
+  const [email, setEmail] = useState(entry?.email ?? "");
+  // Adding: a name and a real email. Editing an older entry saved without one: its name is enough.
+  const emailOk = DNC_EMAIL.test(email.trim());
+  const ready = !!name.trim() && (kind !== "agent" || emailOk || (!!entry && !email.trim()));
   const { ref, busy, run } = useSaving(onSave ? (v) => onSave({ ...v, kind }) : undefined, onClose);
   // The Demo's DNC List stays on the Demo; a real portal's company is blocked at every provider (its current portal's save).
   const { demo } = useDemo();
   return (
-    <PageDialog title={entry ? "Edit DNC entry" : "Add to DNC list"} width={460} top={kind === "agent" ? 150 : 170} onClose={onClose} foot={<AddFoot onClose={onClose} ready={!!name.trim()} label={entry ? "Save" : "Add"} onSave={onSave} busy={busy} onAdd={() => void run()} />}>
+    <PageDialog title={entry ? "Edit DNC entry" : "Add to DNC list"} width={460} top={kind === "agent" ? 150 : 170} onClose={onClose} foot={<AddFoot onClose={onClose} ready={ready} label={entry ? "Save" : "Add"} onSave={onSave} busy={busy} onAdd={() => void run()} />}>
       <div ref={ref} style={{ display: "contents" }}>
-      {entry ? null : (
-        <nav className={k("seg2")} aria-label="Entry type">
-          <a href="#" className={kind === "agent" ? k("on") : undefined} aria-current={kind === "agent" ? "page" : undefined} onClick={(e) => { e.preventDefault(); setKind("agent"); }}>Agent</a>
-          <a href="#" className={kind === "company" ? k("on") : undefined} aria-current={kind === "company" ? "page" : undefined} onClick={(e) => { e.preventDefault(); setKind("company"); }}>Company</a>
-        </nav>
-      )}
       {kind === "agent" ? (
         <>
           <label className={k("fl")}>Agent name<input key="an" className={k("in")} name="name" type="text" placeholder="Jane Smith" value={name} onChange={(e) => setName(e.target.value)} /></label>
           <div className={k("ag2")}>
-            <label className={k("fl")}>Email<input className={k("in")} name="email" type="email" placeholder="optional" defaultValue={entry?.email ?? ""} /></label>
+            <label className={k("fl")}>Email<input className={k("in")} name="email" type="email" required={!entry} aria-required={!entry} placeholder="jane@brokerage.com" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
             <label className={k("fl")}>Phone<input className={k("in")} name="phone" type="tel" placeholder="optional" defaultValue={entry?.phone ?? ""} /></label>
           </div>
           <label className={k("fl")}>Brokerage<input className={k("in")} name="brokerage" type="text" placeholder="optional" defaultValue={entry?.brokerage ?? ""} /></label>
@@ -386,7 +390,8 @@ export function DncAddDialog({ initial = "agent", onClose, onSave, entry }: { in
       )}
       <label className={k("fl")}>Notes<textarea className={k("ta")} name="notes" rows={3} placeholder="optional" defaultValue={entry?.notes ?? ""} /></label>
       </div>
-      <p className={k("hint")}>When you add an agent or company, we will exclude them and their agents from&nbsp;outreach.</p>
+      {kind === "agent" && email.trim() && !emailOk ? <p className={k("hint")} role="alert" style={{ color: "#b42318" }}>Enter a full email address, like jane@brokerage.com.</p> : null}
+      <p className={k("hint")}>{kind === "agent" ? <>We&apos;ll keep this agent out of your outreach — their email is how we recognise&nbsp;them.</> : <>We exclude this company and its agents from&nbsp;outreach.</>}</p>
     </PageDialog>
   );
 }

@@ -749,7 +749,11 @@ test("Adds say what the current portal says", { skip }, async () => {
   seed();
   assert.equal(((await run({ type: "agent.add", name: "A", email: "a@x.test", phone: null, license: null })) as { message: string }).message, "Agent added");
   assert.equal(((await run({ type: "dnc.add", kind: "company", name: "C", email: null, phone: null, brokerage: null, domain: "c.test", notes: null })) as { message: string }).message, "Added · pushed to provider blocklists");
-  assert.equal(((await run({ type: "dnc.add", kind: "agent", name: "D", email: null, phone: "555", brokerage: null, domain: null, notes: null })) as { message: string }).message, "Added");
+  // An agent added to the DNC List needs an email (3 Nov) — refused without one, nothing saved.
+  const before = fake.rows("client_dnc_entries").length;
+  const noEmail = await run({ type: "dnc.add", kind: "agent", name: "D", email: null, phone: "555", brokerage: null, domain: null, notes: null });
+  assert.deepEqual([noEmail.ok, (noEmail as { error?: string }).error], [false, "Add the agent's email — it's how we keep them out of your outreach."]);
+  assert.equal(fake.rows("client_dnc_entries").length, before);
 });
 
 test("Market (28 Oct audit): agents already on the list are blocked too; a client's own same-name entry is never taken off; added before anything is taken off", { skip }, async () => {

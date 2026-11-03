@@ -16,7 +16,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadLeadAgents, type SyncAgent } from "./agents.ts";
 import { byPriority, databaseEmail, mapAgentToBisonLead, PRIORITY_ORDERS, type BisonLeadPayload, type LeadAgent } from "./lead-map.ts";
 import { postToPortalChannel, type ShownCampaign } from "./queue.ts";
-import { agentMarkets, campaignPerMls, chunks, parseByMls, setupCampaignSlackText, syncMode, SWITCH_ENV, type CampaignPick, type Env } from "./rules.ts";
+import { agentMarkets, campaignPerMls, campaignResultSlackText, chunks, parseByMls, setupCampaignSlackText, syncMode, SWITCH_ENV, type CampaignOutcome, type CampaignPick, type Env } from "./rules.ts";
 import { ensureSetupCampaign, type SetupClient, type SetupOutcome } from "./setup-campaign.ts";
 
 /*
@@ -246,6 +246,10 @@ async function setRows(ids: readonly number[], token: string | null, patch: Reco
 /** One portal's run: its rows, its claim, what became of them. */
 class Batch {
   failedFor: Array<{ row: QueueRow; why: string }> = [];
+  /** What became of each change in the campaign this run — the "Campaign updated" post (3 Nov). */
+  outcomes: Array<{ row: QueueRow; outcome: CampaignOutcome }> = [];
+  /** Agents' names, as they are loaded — for that post. */
+  names = new Map<string, string>();
   // Assigned in the constructor, not as parameter properties: Node's type stripping (the test runner) refuses those.
   readonly token: string;
   readonly now: Date;
@@ -256,8 +260,13 @@ class Batch {
     this.out = out;
   }
   /** Finished — done, skipped or failed for good — and released from the claim. */
-  async finish(rows: readonly QueueRow[], status: "done" | "skipped" | "failed", detail: string, extra: Record<string, unknown> = {}) {
+  async finish(rows: readonly QueueRow[], status: "done" | "skipped" | "failed", detail: string, extra: Record<string, unknown> = {}, outcome?: CampaignOutcome) {
     if (!rows.length) return;
+    // Said in the post: what the change did to the campaign (a failure always; the list's own reconciling never).
+    for (const r of rows) {
+      const o = outcome ?? (status === "failed" ? { kind: "failed" as const, action: r.action } : null);
+      if (o) this.outcomes.push({ row: r, outcome: o });
+    }
     await setRows(rows.map((r) => r.id), this.token, { status, detail: detail.slice(0, 1000), processed_at: this.now.toISOString(), claim_token: null, claimed_at: null, next_try_at: null, ...extra }, this.now);
     if (status === "done") this.out.done += rows.length;
     else if (status === "skipped") this.out.skipped += rows.length;
@@ -363,6 +372,15 @@ export async function runProspectSync(deps: RunDeps = {}): Promise<RunResult> {
       const left = new Set(((still ?? []) as Array<{ id: number }>).map((r) => Number(r.id)));
       await batch.retry(claimed.filter((c) => left.has(c.id)), why);
       out.notes.push(`${portalId}: ${why}`);
+    }
+    // The campaign changes this run made for this client: one post to #portal-update (3 Nov — after the "Prospects updated"
+    // one sent when the client edited). Never fails the run.
+    if (batch.outcomes.length) {
+      const text = campaignResultSlackText({
+        client, test: syncMode(portalId, false, x.env) === "test",
+        outcomes: batch.outcomes.map(({ row, outcome }) => ({ name: batch.names.get(row.agent_id) ?? "an agent", outcome })),
+      });
+      if (text) await x.slack(text).catch(() => {});
     }
     // Given up on: our team hears — removals and adds each their own notice, at most one of each an hour per portal
     // (a removal's never hidden behind an add's): a removal said plainly — that agent may still be emailed.
@@ -528,10 +546,11 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
   const shownOf = (r: QueueRow) => r.in_campaigns ?? [];
   const nothingToSearch = !own.length && !rows.some((r) => put.get(r.agent_id)?.some((p) => p.campaignId) || shownOf(r).length);
   if (nothingToSearch) {
-    await b.finish(rows, "done", `Was in none of ${client}'s campaigns.`);
+    await b.finish(rows, "done", `Was in none of ${client}'s campaigns.`, {}, { kind: "none" });
     return;
   }
   const agents = await x.loadAgents(rows.map((r) => r.agent_id), {});
+  for (const [id, a] of agents) if (a.full_name) b.names.set(id, a.full_name);
 
   // The client's own campaigns here — never changed below: each agent's own set is built from it afresh (3 Nov audit:
   // a campaign one agent may be taken out of must never become removable for the next).
@@ -627,7 +646,7 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
       ].filter(Boolean);
       await b.finish([r], "failed", [...head, ...why, ...tail].filter(Boolean).join(" "), result);
     } else {
-      await b.finish([r], "done", [...head, ...tail].filter(Boolean).join(" "), result);
+      await b.finish([r], "done", [...head, ...tail].filter(Boolean).join(" "), result, took.length ? { kind: "removed", campaign: took.join(", ") } : { kind: "none" });
     }
     const left = [...new Set([...p.found.map((f) => f.campaignId), ...p.stale])];
     if (left.length) forget.set(r.agent_id, left);
@@ -703,13 +722,14 @@ async function runAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: string, 
 /** A client with several MLSs: each agent into the campaign picked (or made at setup) for its MLS — never a guess. */
 async function runMarketAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: string, where: Where, rows: QueueRow[], b: Batch, test: boolean): Promise<void> {
   const agents = await x.loadAgents(rows.map((r) => r.agent_id), { mlsScope: ctx.mlsIds });
+  for (const [id, a] of agents) if (a.full_name) b.names.set(id, a.full_name);
   const into = new Map<string, { campaign: CampaignPick; rows: QueueRow[] }>();
   const needs = new Map<string, QueueRow[]>();
   for (const r of rows) {
     const a = agents.get(r.agent_id);
-    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database."); continue; }
+    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database.", {}, { kind: "notAdded", reason: "no longer in our agent database" }); continue; }
     const codes = agentMarkets(a.mls_all, ctx.mlsCodes);
-    if (!codes.length) { await b.finish([r], "skipped", `Not in any of ${client}'s MLSs (${ctx.mlsCodes.join(", ")}) — not added.`); continue; }
+    if (!codes.length) { await b.finish([r], "skipped", `Not in any of ${client}'s MLSs (${ctx.mlsCodes.join(", ")}) — not added.`, {}, { kind: "notAdded", reason: `not in any of ${client}'s MLSs` }); continue; }
     // Its first MLS with a campaign; none: its first MLS decides what it waits for.
     const hit = codes.map((code) => where.markets.get(code)).map((m) => m?.pick ?? m?.setup ?? null).find(Boolean) ?? null;
     if (hit) into.set(hit.id, { campaign: hit, rows: [...(into.get(hit.id)?.rows ?? []), r] });
@@ -775,10 +795,11 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
   const leads: Array<{ row: QueueRow; email: string; payload: BisonLeadPayload }> = [];
   for (const r of rows) {
     const a = agents.get(r.agent_id);
-    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database."); continue; }
+    if (a?.full_name) b.names.set(r.agent_id, a.full_name);
+    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database.", {}, { kind: "notAdded", reason: "no longer in our agent database" }); continue; }
     const e = databaseEmail(a);
-    if ("skip" in e) { await b.finish([r], "skipped", `Not added: ${e.skip}.`); continue; }
-    if (seen.has(e.email)) { await b.finish([r], "skipped", "Another prospect has the same email — added once."); continue; }
+    if ("skip" in e) { await b.finish([r], "skipped", `Not added: ${e.skip}.`, {}, { kind: "notAdded", reason: e.skip }); continue; }
+    if (seen.has(e.email)) { await b.finish([r], "skipped", "Another prospect has the same email — added once.", {}, { kind: "notAdded", reason: "same email as another prospect (added once)" }); continue; }
     seen.add(e.email);
     leads.push({ row: r, email: e.email, payload: mapAgentToBisonLead(a, e.email, a.mls_code) });
   }
@@ -796,7 +817,7 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       const found = (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email);
       const there = found.flatMap((f) => f.campaigns).map((c) => ownIds.get(String(c.campaignId))).find(Boolean);
       const inOthers = found.find((f) => f.campaigns.length > 0);
-      if (there) await b.finish([l.row], "done", there.id === into.id ? `Already in ${into.name}.` : `Already in ${there.name} — not added twice.`, { email: l.email });
+      if (there) await b.finish([l.row], "done", there.id === into.id ? `Already in ${into.name}.` : `Already in ${there.name} — not added twice.`, { email: l.email }, { kind: "already", campaign: there.name });
       else if (inOthers) asIs.push({ l, id: inOthers.id });
       else send.push(l);
     } catch (err) {
@@ -817,7 +838,7 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       continue;
     }
     const idOf = new Map(made.map((m) => [m.email.trim().toLowerCase(), m.id]));
-    await b.finish(part.filter((l) => !idOf.has(l.email)).map((l) => l.row), "skipped", "EmailBison did not take this address (it refuses some personal-email domains).");
+    await b.finish(part.filter((l) => !idOf.has(l.email)).map((l) => l.row), "skipped", "EmailBison did not take this address (it refuses some personal-email domains).", {}, { kind: "notAdded", reason: "EmailBison refused the address" });
     for (const l of part) if (idOf.has(l.email)) toAttach.push({ l, id: idOf.get(l.email)! });
   }
 
@@ -847,10 +868,10 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
     }
     for (const { l, id } of part) {
       if (inCampaign && !inCampaign.has(l.email)) {
-        await b.finish([l.row], "skipped", `EmailBison didn't add it to ${into.name} (the address has bounced, unsubscribed or is blocked).`, { eb_lead_id: String(id), email: l.email });
+        await b.finish([l.row], "skipped", `EmailBison didn't add it to ${into.name} (the address has bounced, unsubscribed or is blocked).`, { eb_lead_id: String(id), email: l.email }, { kind: "notAdded", reason: "the address has bounced, unsubscribed or is blocked" });
         continue;
       }
-      await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email });
+      await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
     }
   }
 }

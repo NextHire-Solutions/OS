@@ -573,7 +573,8 @@ test("a new client with several MLSs and no campaign: a draft for each MLS its a
   }));
   assert.deepEqual(made, ["MLSPIN", "SOCAL"]);
   assert.deepEqual(callsOf("attach").map((c) => [c.args[0], (c.args[1] as number[]).length]).sort(), [[901, 1], [902, 2]]);
-  assert.equal(callsOf("slack").length, 2, "one post per campaign made");
+  assert.equal(callsOf("slack").filter((c) => /First campaign created/.test(String(c.args[0]))).length, 2, "one post per campaign made");
+  assert.match(String(callsOf("slack").at(-1)!.args[0]), /Campaign updated — Homebase\*\n {3}➕ 1 agent added to Homebase \+ MLSPIN \+ Prospects \(EST\): Agent B1\n {3}➕ 2 agents added to Homebase \+ SOCAL \+ Prospects \(EST\): Agent S1, Agent S2/);
   assert.ok(callsOf("bell").some((c) => /First campaign needs a look/.test(JSON.stringify(c.args[0]))), "its area left for the team — said so");
 });
 
@@ -781,4 +782,37 @@ test("BrokerStaffer's own portal, with many MLSs: ONE campaign for all its prosp
   assert.equal(callsOf("setupCampaign").length, 1, "one draft");
   assert.equal((callsOf("setupCampaign")[0].args[0] as { mlsCode: string | null }).mlsCode, null, "not for an MLS");
   assert.deepEqual(callsOf("attach").map((c) => [c.args[0], (c.args[1] as number[]).length]), [[960, 3]], "every MLS's agents in it");
+});
+
+test("after the run: one 'Campaign updated' post for the client — who went into which campaign, who came out, who couldn't be added and why; a list reconciling never posts", async () => {
+  seed();
+  w.agents = new Map([
+    ["a1", agent("a1", "one@agent.test")],
+    ["a2", agent("a2", null)],
+    ["a3", agent("a3", "three@agent.test")],
+    ["r1", agent("r1", "pref@agent.test")],
+  ]);
+  w.leads = new Map([
+    ["three@agent.test", [{ id: 33, email: "three@agent.test", campaigns: [{ campaignId: 200, status: "completed" }] }]],
+    ["pref@agent.test", [{ id: 11, email: "pref@agent.test", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]],
+  ]);
+  w.listed = new Set(["a1", "a2", "a3"]);
+  queue([{ agent: "a1", action: "add" }, { agent: "a2", action: "add" }, { agent: "a3", action: "add" }, { agent: "r1", action: "remove" }]);
+  await runProspectSync(deps());
+  const posts = callsOf("slack").map((c) => String(c.args[0]));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0], [
+    "TEST — 📬  *Campaign updated — Homebase*",
+    "   ➕ 1 agent added to Homebase + Greater Denver + ZF NS1 (MST): Agent A1",
+    "   ➖ 1 agent taken out of Homebase + Greater Denver + ZF NS1 (MST): Agent R1",
+    "   · 1 agent already in Homebase + Old (MST) — not added twice: Agent A3",
+    "   ⚠️ 1 agent not added — no email in the agent database: Agent A2",
+  ].join("\n"));
+  // Nothing changed in a campaign (the list reconciled, or a removal of someone in none): no post.
+  seed();
+  w.agents = new Map([["r2", agent("r2", "nobody@agent.test")]]);
+  w.listed = new Set();
+  queue([{ agent: "r2", action: "remove" }]);
+  await runProspectSync(deps());
+  assert.equal(callsOf("slack").length, 0);
 });

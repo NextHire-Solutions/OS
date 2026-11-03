@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { agentMarkets, campaignPerMls, chunks, fence, latestPerAgent, parseByMls, prospectsSlackText, setupCampaignName, setupCampaignSlackText, severalMarkets, SLACK_NAMES, syncMode, tzLabel } from "./rules.ts";
+import { agentMarkets, campaignPerMls, campaignResultSlackText, chunks, fence, latestPerAgent, parseByMls, prospectsSlackText, setupCampaignName, setupCampaignSlackText, severalMarkets, SLACK_NAMES, syncMode, tzLabel } from "./rules.ts";
 
 const P = "54322dcf-7392-4022-918c-990ebc8469b8";
 const Q = "11111111-1111-4111-8111-111111111111";
@@ -73,4 +73,26 @@ test("a campaign per MLS for a client with several — never BrokerStaffer's own
   assert.equal(campaignPerMls("2944199b-bfbc-4e97-aeed-c38ba28f40b0", ["MLSPIN"]), false);
   assert.equal(campaignPerMls(P, ["BRIGHT", "ABOR", "ARMLS"]), false, "BrokerStaffer");
   assert.equal(campaignPerMls(null, ["A", "B"]), true);
+});
+
+test("the 'Campaign updated' post: grouped by campaign and by reason, at most ten names a line, TEST while fenced; nothing to say → no post", () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ name: `A${i + 1}`, outcome: { kind: "added" as const, campaign: "Keyes + West (EST)" } }));
+  const text = campaignResultSlackText({ client: "Keyes", test: false, outcomes: [
+    ...many,
+    { name: "R1", outcome: { kind: "removed", campaign: "Keyes 1 + West, Keyes 2 + West" } },
+    { name: "N1", outcome: { kind: "notAdded", reason: "no email in the agent database" } },
+    { name: "N2", outcome: { kind: "notAdded", reason: "no email in the agent database" } },
+    { name: "F1", outcome: { kind: "failed", action: "remove" } },
+    { name: "Z1", outcome: { kind: "none" } },
+  ] });
+  assert.equal(text, [
+    "📬  *Campaign updated — Keyes*",
+    "   ➕ 12 agents added to Keyes + West (EST): A1, A2, A3, A4, A5, A6, A7, A8, A9, A10 and 2 more",
+    "   ➖ 1 agent taken out of Keyes 1 + West, Keyes 2 + West: R1",
+    "   ⚠️ 2 agents not added — no email in the agent database: N1, N2",
+    "   ❗ 1 agent could not be taken out of the campaign — our team has been alerted: F1",
+  ].join("\n"));
+  assert.match(campaignResultSlackText({ client: "K", test: true, outcomes: [many[0]] }) ?? "", /^TEST — 📬/);
+  assert.equal(campaignResultSlackText({ client: "K", test: false, outcomes: [{ name: "Z", outcome: { kind: "none" } }] }), null);
+  assert.equal(campaignResultSlackText({ client: "K", test: false, outcomes: [] }), null);
 });

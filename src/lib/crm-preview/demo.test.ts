@@ -139,6 +139,9 @@ test("nothing is pushed anywhere: My Agents and DNC rows say not pushed; a new t
   const dr = row("client_dnc_entries", (d as { id: string }).id);
   assert.deepEqual([dr.domain, dr.kind, dr.added_by, dr.pushed_to_instantly, dr.pushed_to_emailbison, dr.brokerage], ["kw.com", "company", "client", false, false, null]);
   assert.deepEqual(await run({ type: "dnc.add", kind: "company", name: "Bad", domain: "not a domain" }), { ok: false, status: 400, error: "That doesn't look like a website domain (for example kw.com)." });
+  // An agent added to the DNC List needs an email (3 Nov): refused without one; with one, added.
+  assert.deepEqual(await run({ type: "dnc.add", kind: "agent", name: "No Email" }), { ok: false, status: 400, error: "Add the agent's email — it's how we keep them out of your outreach." });
+  assert.equal((await run({ type: "dnc.add", kind: "agent", name: "Has Email", email: "has.email@x.test" })).ok, true);
   const t = await run({ type: "team.add", name: "Sam Rivera", email: "sam@demo.test", phone: "555-0100" });
   const tr = row("client_team_members", (t as { id: string }).id);
   assert.deepEqual([tr.active, tr.receives_sms, tr.client_id], [true, false, DEMO_PORTAL_ID]);

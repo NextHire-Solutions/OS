@@ -134,6 +134,42 @@ export function prospectsSlackText(o: {
   return lines.join("\n");
 }
 
+/** What became of one agent's change in the campaign — for the post after it is done. */
+export type CampaignOutcome =
+  | { kind: "added"; campaign: string }
+  | { kind: "already"; campaign: string }
+  | { kind: "removed"; campaign: string }
+  | { kind: "none" }
+  | { kind: "notAdded"; reason: string }
+  | { kind: "failed"; action: "add" | "remove" };
+
+/**
+ * The second #portal-update post (3 Nov, the user: a notification "for when clients add, remove, or update leads in
+ * campaigns"): once a run has changed the client's campaign, what happened — by campaign, with names. TEST while fenced.
+ */
+export function campaignResultSlackText(o: { client: string; test: boolean; outcomes: ReadonlyArray<{ name: string; outcome: CampaignOutcome }> }): string | null {
+  const list = (names: readonly string[]) => {
+    const shown = names.slice(0, SLACK_NAMES).join(", ");
+    return names.length > SLACK_NAMES ? `${shown} and ${(names.length - SLACK_NAMES).toLocaleString("en-US")} more` : shown;
+  };
+  const by = <T extends string>(kind: CampaignOutcome["kind"], key: (x: CampaignOutcome) => T) => {
+    const m = new Map<T, string[]>();
+    for (const x of o.outcomes) if (x.outcome.kind === kind) m.set(key(x.outcome), [...(m.get(key(x.outcome)) ?? []), x.name]);
+    return m;
+  };
+  const lines: string[] = [];
+  for (const [campaign, names] of by("added", (x) => (x as { campaign: string }).campaign)) lines.push(`   ➕ ${agents(names.length)} added to ${campaign}: ${list(names)}`);
+  for (const [campaign, names] of by("removed", (x) => (x as { campaign: string }).campaign)) lines.push(`   ➖ ${agents(names.length)} taken out of ${campaign}: ${list(names)}`);
+  for (const [campaign, names] of by("already", (x) => (x as { campaign: string }).campaign)) lines.push(`   · ${agents(names.length)} already in ${campaign} — not added twice: ${list(names)}`);
+  // Taken off Prospects but in no campaign: nothing changed in a campaign — not said here (the "Prospects updated" post has it).
+  for (const [reason, names] of by("notAdded", (x) => (x as { reason: string }).reason)) lines.push(`   ⚠️ ${agents(names.length)} not added — ${reason}: ${list(names)}`);
+  for (const [action, names] of by("failed", (x) => (x as { action: "add" | "remove" }).action)) {
+    lines.push(`   ❗ ${agents(names.length)} could not be ${action === "remove" ? "taken out of the campaign" : "added to the campaign"} — our team has been alerted: ${list(names)}`);
+  }
+  if (!lines.length) return null;
+  return [`${o.test ? "TEST — " : ""}📬  *Campaign updated — ${o.client}*`, ...lines].join("\n");
+}
+
 /** The #portal-update post when a client's first campaign was made at setup. */
 export function setupCampaignSlackText(o: { client: string; campaign: string; agents: number; test: boolean }): string {
   return [

@@ -404,17 +404,17 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
   useEffect(() => setPage(1), [tab, q, brk]);
   const demo = useDemo();
   const { live, save } = demo;
-  const [dialog, setDialog] = useState<"agent" | "company" | "import" | null>(null);
+  // Agents only (3 Nov, the user: no company section — an agent's email is required).
+  const [dialog, setDialog] = useState<"agent" | "import" | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => setPicked(new Set()), [dnc]);
-  const opens = (d: "agent" | "company" | "import") => (live ? { onClick: () => setDialog(d) } : RO);
+  const opens = (d: "agent" | "import") => (live ? { onClick: () => setDialog(d) } : RO);
   const dialogs = dialog === "import" ? (
     <ImportDialog kind="dnc" onClose={() => setDialog(null)} onFile={(f) => importCsv(f, csvRowToDnc, "dnc.import", demo)} />
   ) : dialog ? (
     <DncAddDialog
-      initial={dialog}
       onClose={() => setDialog(null)}
-      onSave={(v) => save({ type: "dnc.add", kind: v.kind === "company" ? "company" : "agent", name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: v.domain, notes: v.notes })}
+      onSave={(v) => save({ type: "dnc.add", kind: "agent", name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: null, notes: v.notes })}
     />
   ) : null;
   // Only ticked entries on the tab and search shown (22 Oct audit: ticks on the other tab were deleted too).
@@ -425,14 +425,13 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
   if (dnc.length === 0) {
     return (
       <>
-        <Head step={3} title="Your DNC List" text={"Sister offices, referral partners, former agents. We never email anyone on this list. Adding a company blocks every agent at its email\u00a0domain."} />
+        <Head step={3} title="Your DNC List" text={"Sister offices, referral partners, former agents. We never email anyone on this\u00a0list."} />
         <div className={k("card emp")}>
           <span className={k("ei")}><Icon name="ban" size={22} /></span>
           <h2>Your DNC List is empty</h2>
-          <p>Add the agents and companies we should never email. Search your market, block a whole company by its email domain, or import a&nbsp;CSV.</p>
+          <p>Add the agents we should never email: search your market, add one with their email, or import a&nbsp;CSV.</p>
           <div className={k("ea")}>
             <button className={k("btn")} type="button" {...opens("agent")}><Icon name="plus" size={15} />Add agent</button>
-            <button className={k("btn")} type="button" {...opens("company")}><Icon name="ban" size={15} />Add company</button>
             <button className={k("btn")} type="button" {...opens("import")}><Icon name="upload" size={15} />Import CSV</button>
           </div>
         </div>
@@ -448,10 +447,9 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
       <Head
         step={3}
         title="Your DNC List"
-        text={"Sister offices, referral partners, former agents. We never email anyone on this list. Adding a company blocks every agent at its email\u00a0domain."}
+        text={"Sister offices, referral partners, former agents. We never email anyone on this\u00a0list."}
         actions={<>
           <button className={k("btn")} type="button" {...opens("agent")}><Icon name="plus" size={15} />Add agent</button>
-          <button className={k("btn")} type="button" {...opens("company")}><Icon name="ban" size={15} />Add company</button>
           <button className={k("btn")} type="button" {...opens("import")}><Icon name="upload" size={15} />Import CSV</button>
         </>}
       />

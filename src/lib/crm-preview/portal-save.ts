@@ -40,7 +40,7 @@ import * as teamBulkRoute from "@/lib/tools/master-inbox/portal-routes/team/bulk
 import * as teamCsvRoute from "@/lib/tools/master-inbox/portal-routes/team/csv/route";
 import * as fubRoute from "@/lib/tools/master-inbox/portal-routes/followup-boss/route";
 
-import { demoAction, imported, introAt, saveOffer, type Db, type DemoAction, type DemoResult } from "./demo";
+import { demoAction, DNC_EMAIL_NEEDED, imported, introAt, saveOffer, type Db, type DemoAction, type DemoResult } from "./demo";
 import { agentsByIds, demoProspectIds, emailsOf, lower, marketAction, type AgentRow, type MarketAction } from "./demo-market";
 import { campaignProspectsAmong, marketContext, matchingIds } from "./market";
 import { parseMarketQuery, personKey } from "./market-model";
@@ -396,6 +396,7 @@ async function save(portal: Portal, a: DemoAction, who: string): Promise<DemoRes
 
     // ------------------------------------------------------------ DNC List ---
     case "dnc.add": {
+      if (a.kind === "agent" && !a.email) return { ok: false, status: 400, error: DNC_EMAIL_NEEDED };
       const domain = a.kind === "company" && a.domain ? normalizeDomain(a.domain) : null;
       // A company's domain is what it blocks: one that can't be read is said so, not saved blocking nothing.
       if (a.kind === "company" && a.domain && !domain) return { ok: false, status: 400, error: "That doesn't look like a website domain (for example kw.com)." };

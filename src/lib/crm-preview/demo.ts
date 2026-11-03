@@ -76,6 +76,8 @@ const ids = z.array(id).min(1).max(5000);
 const text = (max: number) => z.string().trim().max(max);
 const optional = (max: number) => text(max).nullable().optional().transform((v) => (v ? v : null));
 const email = z.string().trim().email().max(200);
+/** An agent added to the DNC List needs an email — it's how they are kept out of outreach (3 Nov, the user). */
+export const DNC_EMAIL_NEEDED = "Add the agent's email — it's how we keep them out of your outreach.";
 const optionalEmail = z
   .union([email, z.literal(""), z.null()])
   .optional()
@@ -643,6 +645,7 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
       return (await eachChunk(a.ids, (part) => db.from("client_agents").delete().eq("client_id", C).in("id", part))) ?? { ok: true };
     }
     case "dnc.add": {
+      if (a.kind === "agent" && !a.email) return { ok: false, status: 400, error: DNC_EMAIL_NEEDED };
       const domain = a.kind === "company" ? companyDomain(a.domain) : null;
       if (a.kind === "company" && a.domain && !domain) return { ok: false, status: 400, error: "That doesn't look like a website domain (for example kw.com)." };
       const r: Res = await db
