@@ -419,7 +419,7 @@ test("a new client with no campaign at all: waits until setup is finished; then 
   r = await runProspectSync(deps());
   const made = callsOf("setupCampaign")[0].args;
   assert.deepEqual({ name: (made[0] as { name: string }).name, tz: (made[0] as { timeZone: string }).timeZone, an: (made[0] as { analyticsClientId: string }).analyticsClientId, test: (made[1] as { test: boolean }).test }, { name: "Homebase", tz: "America/Denver", an: "an-homebase", test: true });
-  assert.match(String(callsOf("slack")[0].args[0]), /^TEST — 🆕 {2}\*First campaign created — Homebase\*/);
+  assert.match(String(callsOf("slack")[0].args[0]), /^\[TEST\] \*First campaign created · Homebase\*/);
   assert.equal(callsOf("attach")[0].args[0], 888);
   assert.equal(r.done, 2);
   // Making it failed: the prospects fail with the reason, and our team hears.
@@ -574,7 +574,7 @@ test("a new client with several MLSs and no campaign: a draft for each MLS its a
   assert.deepEqual(made, ["MLSPIN", "SOCAL"]);
   assert.deepEqual(callsOf("attach").map((c) => [c.args[0], (c.args[1] as number[]).length]).sort(), [[901, 1], [902, 2]]);
   assert.equal(callsOf("slack").filter((c) => /First campaign created/.test(String(c.args[0]))).length, 2, "one post per campaign made");
-  assert.match(String(callsOf("slack").at(-1)!.args[0]), /Campaign updated — Homebase\*\n {3}➕ 1 agent added to Homebase \+ MLSPIN \+ Prospects \(EST\): Agent B1\n {3}➕ 2 agents added to Homebase \+ SOCAL \+ Prospects \(EST\): Agent S1, Agent S2/);
+  assert.match(String(callsOf("slack").at(-1)!.args[0]), /Campaign updated · Homebase\*\n• 1 added to Homebase \+ MLSPIN \+ Prospects \(EST\): Agent B1\n• 2 added to Homebase \+ SOCAL \+ Prospects \(EST\): Agent S1, Agent S2/);
   assert.ok(callsOf("bell").some((c) => /First campaign needs a look/.test(JSON.stringify(c.args[0]))), "its area left for the team — said so");
 });
 
@@ -802,11 +802,11 @@ test("after the run: one 'Campaign updated' post for the client — who went int
   const posts = callsOf("slack").map((c) => String(c.args[0]));
   assert.equal(posts.length, 1);
   assert.equal(posts[0], [
-    "TEST — 📬  *Campaign updated — Homebase*",
-    "   ➕ 1 agent added to Homebase + Greater Denver + ZF NS1 (MST): Agent A1",
-    "   ➖ 1 agent taken out of Homebase + Greater Denver + ZF NS1 (MST): Agent R1",
-    "   · 1 agent already in Homebase + Old (MST) — not added twice: Agent A3",
-    "   ⚠️ 1 agent not added — no email in the agent database: Agent A2",
+    "[TEST] *Campaign updated · Homebase*",
+    "• 1 added to Homebase + Greater Denver + ZF NS1 (MST): Agent A1",
+    "• 1 removed from Homebase + Greater Denver + ZF NS1 (MST): Agent R1",
+    "• 1 already in Homebase + Old (MST): Agent A3",
+    "• 1 not added (no email on file): Agent A2",
   ].join("\n"));
   // Nothing changed in a campaign (the list reconciled, or a removal of someone in none): no post.
   seed();

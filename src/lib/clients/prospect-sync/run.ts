@@ -646,7 +646,7 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
       ].filter(Boolean);
       await b.finish([r], "failed", [...head, ...why, ...tail].filter(Boolean).join(" "), result);
     } else {
-      await b.finish([r], "done", [...head, ...tail].filter(Boolean).join(" "), result, took.length ? { kind: "removed", campaign: took.join(", ") } : { kind: "none" });
+      await b.finish([r], "done", [...head, ...tail].filter(Boolean).join(" "), result, took.length ? { kind: "removed", campaigns: took } : { kind: "none" });
     }
     const left = [...new Set([...p.found.map((f) => f.campaignId), ...p.stale])];
     if (left.length) forget.set(r.agent_id, left);
@@ -692,6 +692,8 @@ interface Where {
 }
 
 const day = (b: Batch) => b.now.toISOString().slice(0, 10);
+/* The Slack post's few words for why an agent wasn't added (databaseEmail's reasons). */
+const SHORT_SKIP: Record<string, string> = { "no email in the agent database": "no email on file", "its email already failed a check": "email failed an earlier check" };
 const tab = (client: string) => `its Campaigns tab (Clients → ${client} → Campaigns)`;
 
 /** A client with one market: every add into its one Prospects campaign. */
@@ -727,9 +729,9 @@ async function runMarketAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: st
   const needs = new Map<string, QueueRow[]>();
   for (const r of rows) {
     const a = agents.get(r.agent_id);
-    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database.", {}, { kind: "notAdded", reason: "no longer in our agent database" }); continue; }
+    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database.", {}, { kind: "notAdded", reason: "no longer in our database" }); continue; }
     const codes = agentMarkets(a.mls_all, ctx.mlsCodes);
-    if (!codes.length) { await b.finish([r], "skipped", `Not in any of ${client}'s MLSs (${ctx.mlsCodes.join(", ")}) — not added.`, {}, { kind: "notAdded", reason: `not in any of ${client}'s MLSs` }); continue; }
+    if (!codes.length) { await b.finish([r], "skipped", `Not in any of ${client}'s MLSs (${ctx.mlsCodes.join(", ")}) — not added.`, {}, { kind: "notAdded", reason: "outside their MLSs" }); continue; }
     // Its first MLS with a campaign; none: its first MLS decides what it waits for.
     const hit = codes.map((code) => where.markets.get(code)).map((m) => m?.pick ?? m?.setup ?? null).find(Boolean) ?? null;
     if (hit) into.set(hit.id, { campaign: hit, rows: [...(into.get(hit.id)?.rows ?? []), r] });
@@ -796,10 +798,10 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
   for (const r of rows) {
     const a = agents.get(r.agent_id);
     if (a?.full_name) b.names.set(r.agent_id, a.full_name);
-    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database.", {}, { kind: "notAdded", reason: "no longer in our agent database" }); continue; }
+    if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database.", {}, { kind: "notAdded", reason: "no longer in our database" }); continue; }
     const e = databaseEmail(a);
-    if ("skip" in e) { await b.finish([r], "skipped", `Not added: ${e.skip}.`, {}, { kind: "notAdded", reason: e.skip }); continue; }
-    if (seen.has(e.email)) { await b.finish([r], "skipped", "Another prospect has the same email — added once.", {}, { kind: "notAdded", reason: "same email as another prospect (added once)" }); continue; }
+    if ("skip" in e) { await b.finish([r], "skipped", `Not added: ${e.skip}.`, {}, { kind: "notAdded", reason: SHORT_SKIP[e.skip] ?? e.skip }); continue; }
+    if (seen.has(e.email)) { await b.finish([r], "skipped", "Another prospect has the same email — added once.", {}, { kind: "notAdded", reason: "same email as another prospect" }); continue; }
     seen.add(e.email);
     leads.push({ row: r, email: e.email, payload: mapAgentToBisonLead(a, e.email, a.mls_code) });
   }
@@ -838,7 +840,7 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       continue;
     }
     const idOf = new Map(made.map((m) => [m.email.trim().toLowerCase(), m.id]));
-    await b.finish(part.filter((l) => !idOf.has(l.email)).map((l) => l.row), "skipped", "EmailBison did not take this address (it refuses some personal-email domains).", {}, { kind: "notAdded", reason: "EmailBison refused the address" });
+    await b.finish(part.filter((l) => !idOf.has(l.email)).map((l) => l.row), "skipped", "EmailBison did not take this address (it refuses some personal-email domains).", {}, { kind: "notAdded", reason: "address refused by EmailBison" });
     for (const l of part) if (idOf.has(l.email)) toAttach.push({ l, id: idOf.get(l.email)! });
   }
 
@@ -868,7 +870,7 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
     }
     for (const { l, id } of part) {
       if (inCampaign && !inCampaign.has(l.email)) {
-        await b.finish([l.row], "skipped", `EmailBison didn't add it to ${into.name} (the address has bounced, unsubscribed or is blocked).`, { eb_lead_id: String(id), email: l.email }, { kind: "notAdded", reason: "the address has bounced, unsubscribed or is blocked" });
+        await b.finish([l.row], "skipped", `EmailBison didn't add it to ${into.name} (the address has bounced, unsubscribed or is blocked).`, { eb_lead_id: String(id), email: l.email }, { kind: "notAdded", reason: "bounced or unsubscribed" });
         continue;
       }
       await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });

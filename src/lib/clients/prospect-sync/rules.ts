@@ -105,10 +105,18 @@ const agents = (n: number) => `${n.toLocaleString("en-US")} agent${n === 1 ? "" 
 /** At most this many names in a Slack post; the rest are counted. */
 export const SLACK_NAMES = 10;
 
-/**
- * The #portal-update post for a change to a client's Prospects (Eddy, 2 Nov: "setup a slack notification when that
- * happens under the portal-update channel"), in the portal posts' own style. TEST while fenced.
+/*
+ * The #portal-update posts, one clean look (3 Nov, the user: "make this slack post clean"): a bold title naming what
+ * happened and the client, then one short line per group — a count, what, and the names (ten at most, then "+N more").
+ * "[TEST]" leads while the run is fenced to test portals.
  */
+const names = (list: readonly string[]) => {
+  const shown = list.slice(0, SLACK_NAMES).join(", ");
+  return list.length > SLACK_NAMES ? `${shown} +${(list.length - SLACK_NAMES).toLocaleString("en-US")} more` : shown;
+};
+const title = (test: boolean, text: string) => `${test ? "[TEST] " : ""}*${text}*`;
+
+/** When a client changes their Prospects (Eddy, 2 Nov: a notification "under the portal-update channel"). */
 export function prospectsSlackText(o: {
   client: string;
   who: string;
@@ -118,19 +126,10 @@ export function prospectsSlackText(o: {
   campaign: string | null;
   test: boolean;
 }): string {
-  const lines = [`${o.test ? "TEST — " : ""}🎯  *Prospects ${o.setup ? "chosen in setup" : "updated"} — ${o.client}*`];
-  const list = (names: readonly string[]) => {
-    const shown = names.slice(0, SLACK_NAMES).join(", ");
-    return names.length > SLACK_NAMES ? `${shown} and ${(names.length - SLACK_NAMES).toLocaleString("en-US")} more` : shown;
-  };
-  if (o.added.length) lines.push(`   ➕ ${agents(o.added.length)} added: ${list(o.added)}`);
-  if (o.removed.length) lines.push(`   ➖ ${agents(o.removed.length)} removed: ${list(o.removed)}`);
-  lines.push(
-    o.added.length && o.removed.length ? `   Campaign: added to ${o.campaign ?? "their Prospects campaign"}; the removed ones are taken out of ${o.client}'s campaigns.`
-    : o.added.length ? `   Campaign: ${o.campaign ? `added to ${o.campaign}` : `they go into ${o.client}'s Prospects campaign${o.setup ? " (a client with none gets its first one, a draft, when it finishes setup)" : ""}`}.`
-    : `   Campaign: taken out of ${o.client}'s campaigns.`,
-  );
-  lines.push(`   By ${o.who}`);
+  const lines = [title(o.test, `Prospects ${o.setup ? "chosen in setup" : "updated"} · ${o.client}`)];
+  if (o.added.length) lines.push(`• ${o.added.length.toLocaleString("en-US")} added: ${names(o.added)}`);
+  if (o.removed.length) lines.push(`• ${o.removed.length.toLocaleString("en-US")} removed: ${names(o.removed)}`);
+  lines.push(`_by ${o.who}_`);
   return lines.join("\n");
 }
 
@@ -138,44 +137,48 @@ export function prospectsSlackText(o: {
 export type CampaignOutcome =
   | { kind: "added"; campaign: string }
   | { kind: "already"; campaign: string }
-  | { kind: "removed"; campaign: string }
+  | { kind: "removed"; campaigns: readonly string[] }
   | { kind: "none" }
   | { kind: "notAdded"; reason: string }
   | { kind: "failed"; action: "add" | "remove" };
 
 /**
- * The second #portal-update post (3 Nov, the user: a notification "for when clients add, remove, or update leads in
- * campaigns"): once a run has changed the client's campaign, what happened — by campaign, with names. TEST while fenced.
+ * After a run has changed the client's campaign (3 Nov, the user: a notification "for when clients add, remove, or
+ * update leads in campaigns"). Removals name their campaigns when there are one or two; more read as a count (a Keyes
+ * agent can be in a dozen). Nothing changed in a campaign → no post.
  */
 export function campaignResultSlackText(o: { client: string; test: boolean; outcomes: ReadonlyArray<{ name: string; outcome: CampaignOutcome }> }): string | null {
-  const list = (names: readonly string[]) => {
-    const shown = names.slice(0, SLACK_NAMES).join(", ");
-    return names.length > SLACK_NAMES ? `${shown} and ${(names.length - SLACK_NAMES).toLocaleString("en-US")} more` : shown;
-  };
-  const by = <T extends string>(kind: CampaignOutcome["kind"], key: (x: CampaignOutcome) => T) => {
-    const m = new Map<T, string[]>();
+  const group = <K extends string>(kind: CampaignOutcome["kind"], key: (x: CampaignOutcome) => K) => {
+    const m = new Map<K, string[]>();
     for (const x of o.outcomes) if (x.outcome.kind === kind) m.set(key(x.outcome), [...(m.get(key(x.outcome)) ?? []), x.name]);
     return m;
   };
+  const n = (list: { length: number }) => list.length.toLocaleString("en-US");
   const lines: string[] = [];
-  for (const [campaign, names] of by("added", (x) => (x as { campaign: string }).campaign)) lines.push(`   ➕ ${agents(names.length)} added to ${campaign}: ${list(names)}`);
-  for (const [campaign, names] of by("removed", (x) => (x as { campaign: string }).campaign)) lines.push(`   ➖ ${agents(names.length)} taken out of ${campaign}: ${list(names)}`);
-  for (const [campaign, names] of by("already", (x) => (x as { campaign: string }).campaign)) lines.push(`   · ${agents(names.length)} already in ${campaign} — not added twice: ${list(names)}`);
-  // Taken off Prospects but in no campaign: nothing changed in a campaign — not said here (the "Prospects updated" post has it).
-  for (const [reason, names] of by("notAdded", (x) => (x as { reason: string }).reason)) lines.push(`   ⚠️ ${agents(names.length)} not added — ${reason}: ${list(names)}`);
-  for (const [action, names] of by("failed", (x) => (x as { action: "add" | "remove" }).action)) {
-    lines.push(`   ❗ ${agents(names.length)} could not be ${action === "remove" ? "taken out of the campaign" : "added to the campaign"} — our team has been alerted: ${list(names)}`);
+  for (const [campaign, who] of group("added", (x) => (x as { campaign: string }).campaign)) lines.push(`• ${n(who)} added to ${campaign}: ${names(who)}`);
+  const removed = o.outcomes.filter((x) => x.outcome.kind === "removed");
+  if (removed.length) {
+    const from = [...new Set(removed.flatMap((x) => (x.outcome as { campaigns: readonly string[] }).campaigns))];
+    const where = from.length <= 2 ? from.join(" and ") : `${from.length} of their campaigns`;
+    lines.push(`• ${n(removed)} removed from ${where}: ${names(removed.map((x) => x.name))}`);
   }
+  for (const [campaign, who] of group("already", (x) => (x as { campaign: string }).campaign)) lines.push(`• ${n(who)} already in ${campaign}: ${names(who)}`);
+  for (const [reason, who] of group("notAdded", (x) => (x as { reason: string }).reason)) lines.push(`• ${n(who)} not added (${reason}): ${names(who)}`);
+  for (const [action, who] of group("failed", (x) => (x as { action: "add" | "remove" }).action)) {
+    lines.push(`• ${n(who)} couldn't be ${action === "remove" ? "removed" : "added"}, team alerted: ${names(who)}`);
+  }
+  // Taken off Prospects but in no campaign: nothing changed in a campaign — not said here.
   if (!lines.length) return null;
-  return [`${o.test ? "TEST — " : ""}📬  *Campaign updated — ${o.client}*`, ...lines].join("\n");
+  return [title(o.test, `Campaign updated · ${o.client}`), ...lines].join("\n");
 }
 
-/** The #portal-update post when a client's first campaign was made at setup. */
+/** When a client's first campaign was made at setup. */
 export function setupCampaignSlackText(o: { client: string; campaign: string; agents: number; test: boolean }): string {
   return [
-    `${o.test ? "TEST — " : ""}🆕  *First campaign created — ${o.client}*`,
-    `   ${o.campaign} (draft — not launched)`,
-    `   ${agents(o.agents)} from their setup going in. Write the emails from their offer, get them approved, then launch it.`,
+    title(o.test, `First campaign created · ${o.client}`),
+    `• ${o.campaign}: a draft, not launched`,
+    `• ${agents(o.agents)} from their setup going in`,
+    `_Next: write the emails from their offer, get them approved, then launch it._`,
   ].join("\n");
 }
 

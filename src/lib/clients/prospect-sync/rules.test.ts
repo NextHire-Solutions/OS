@@ -32,19 +32,21 @@ test("a new client's first campaign: '<Client> + <Market> + Prospects (<TZ>)' �
   assert.equal(tzLabel("Europe/London"), null);
 });
 
-test("Slack: who did it, who was added or removed (ten named, the rest counted), where they went — TEST while fenced", () => {
+test("Slack, one clean look: a bold title, one line per group (ten names, then +N more), who did it; [TEST] while fenced", () => {
   const added = Array.from({ length: 12 }, (_, i) => `Agent ${i + 1}`);
-  const t = prospectsSlackText({ client: "Homebase", who: "amy@brokerstaffer.com", added, removed: [], setup: false, campaign: "Homebase + Denver + Prospects (MST)", test: false });
-  assert.match(t, /^🎯 {2}\*Prospects updated — Homebase\*/);
-  assert.match(t, new RegExp(`➕ 12 agents added: Agent 1, .*Agent ${SLACK_NAMES} and 2 more`));
-  assert.match(t, /Campaign: added to Homebase \+ Denver \+ Prospects \(MST\)\./);
-  assert.match(t, /By amy@brokerstaffer\.com$/);
-  const r = prospectsSlackText({ client: "Homebase", who: "x@y.test", added: [], removed: ["Sam Lee"], setup: false, campaign: null, test: true });
-  assert.match(r, /^TEST — 🎯 {2}\*Prospects updated — Homebase\*/);
-  assert.match(r, /➖ 1 agent removed: Sam Lee/);
-  assert.match(r, /Campaign: taken out of Homebase's campaigns\./);
-  assert.match(prospectsSlackText({ client: "New Co", who: "c@new.test", added: ["A"], removed: [], setup: true, campaign: null, test: false }), /chosen in setup — New Co[\s\S]*they go into New Co's Prospects campaign \(a client with none gets its first one, a draft, when it finishes setup\)\./);
-  assert.match(setupCampaignSlackText({ client: "New Co", campaign: "New Co + Prospects", agents: 1200, test: true }), /^TEST — 🆕 {2}\*First campaign created — New Co\*\n {3}New Co \+ Prospects \(draft — not launched\)\n {3}1,200 agents/);
+  assert.equal(prospectsSlackText({ client: "Homebase", who: "amy@brokerstaffer.com", added, removed: ["Sam Lee"], setup: false, campaign: null, test: false }), [
+    "*Prospects updated · Homebase*",
+    "• 12 added: Agent 1, Agent 2, Agent 3, Agent 4, Agent 5, Agent 6, Agent 7, Agent 8, Agent 9, Agent 10 +2 more",
+    "• 1 removed: Sam Lee",
+    "_by amy@brokerstaffer.com_",
+  ].join("\n"));
+  assert.match(prospectsSlackText({ client: "New Co", who: "c@new.test", added: ["A"], removed: [], setup: true, campaign: null, test: true }), /^\[TEST\] \*Prospects chosen in setup · New Co\*\n• 1 added: A\n_by c@new\.test_$/);
+  assert.equal(setupCampaignSlackText({ client: "New Co", campaign: "New Co + Prospects", agents: 1200, test: true }), [
+    "[TEST] *First campaign created · New Co*",
+    "• New Co + Prospects: a draft, not launched",
+    "• 1,200 agents from their setup going in",
+    "_Next: write the emails from their offer, get them approved, then launch it._",
+  ].join("\n"));
 });
 
 test("the latest wish per agent wins; the rest are set aside", () => {
@@ -75,24 +77,27 @@ test("a campaign per MLS for a client with several — never BrokerStaffer's own
   assert.equal(campaignPerMls(null, ["A", "B"]), true);
 });
 
-test("the 'Campaign updated' post: grouped by campaign and by reason, at most ten names a line, TEST while fenced; nothing to say → no post", () => {
+test("the 'Campaign updated' post: by campaign and by reason, removals' campaigns named (or counted past two), [TEST] while fenced; nothing to say → no post", () => {
   const many = Array.from({ length: 12 }, (_, i) => ({ name: `A${i + 1}`, outcome: { kind: "added" as const, campaign: "Keyes + West (EST)" } }));
   const text = campaignResultSlackText({ client: "Keyes", test: false, outcomes: [
     ...many,
-    { name: "R1", outcome: { kind: "removed", campaign: "Keyes 1 + West, Keyes 2 + West" } },
-    { name: "N1", outcome: { kind: "notAdded", reason: "no email in the agent database" } },
-    { name: "N2", outcome: { kind: "notAdded", reason: "no email in the agent database" } },
+    { name: "R1", outcome: { kind: "removed", campaigns: ["Keyes 1 + West", "Keyes 2 + West", "Keyes 3 + West"] } },
+    { name: "R2", outcome: { kind: "removed", campaigns: ["Keyes 1 + West"] } },
+    { name: "K1", outcome: { kind: "already", campaign: "Keyes + Beaches" } },
+    { name: "N1", outcome: { kind: "notAdded", reason: "no email on file" } },
+    { name: "N2", outcome: { kind: "notAdded", reason: "no email on file" } },
     { name: "F1", outcome: { kind: "failed", action: "remove" } },
     { name: "Z1", outcome: { kind: "none" } },
   ] });
   assert.equal(text, [
-    "📬  *Campaign updated — Keyes*",
-    "   ➕ 12 agents added to Keyes + West (EST): A1, A2, A3, A4, A5, A6, A7, A8, A9, A10 and 2 more",
-    "   ➖ 1 agent taken out of Keyes 1 + West, Keyes 2 + West: R1",
-    "   ⚠️ 2 agents not added — no email in the agent database: N1, N2",
-    "   ❗ 1 agent could not be taken out of the campaign — our team has been alerted: F1",
+    "*Campaign updated · Keyes*",
+    "• 12 added to Keyes + West (EST): A1, A2, A3, A4, A5, A6, A7, A8, A9, A10 +2 more",
+    "• 2 removed from 3 of their campaigns: R1, R2",
+    "• 1 already in Keyes + Beaches: K1",
+    "• 2 not added (no email on file): N1, N2",
+    "• 1 couldn't be removed, team alerted: F1",
   ].join("\n"));
-  assert.match(campaignResultSlackText({ client: "K", test: true, outcomes: [many[0]] }) ?? "", /^TEST — 📬/);
+  assert.equal(campaignResultSlackText({ client: "K", test: true, outcomes: [{ name: "R", outcome: { kind: "removed", campaigns: ["K + Boston", "K + Cape"] } }] }), "[TEST] *Campaign updated · K*\n• 1 removed from K + Boston and K + Cape: R");
   assert.equal(campaignResultSlackText({ client: "K", test: false, outcomes: [{ name: "Z", outcome: { kind: "none" } }] }), null);
   assert.equal(campaignResultSlackText({ client: "K", test: false, outcomes: [] }), null);
 });

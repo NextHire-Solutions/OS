@@ -46,7 +46,7 @@ test("one row per agent, marked test while fenced; Slack told once, naming them"
     ["a2", "add", "pending", "prospects", true, "amy@brokerstaffer.com", "os-homebase"],
   ]);
   assert.equal(posts.length, 1);
-  assert.match(posts[0], /^TEST — 🎯 {2}\*Prospects updated — Homebase\*\n {3}➕ 2 agents added: Agent a1, Agent a2/);
+  assert.match(posts[0], /^\[TEST\] \*Prospects updated · Homebase\*\n• 2 added: Agent a1, Agent a2/);
   // Live (no fence): not a test.
   seed();
   await recordProspectChanges(input("add", ["a3"]), { env: { OS_PROSPECT_SYNC: "1" }, slack });
@@ -72,7 +72,7 @@ test("every change its own row — nothing waiting is set aside or reused (the r
   assert.ok(fresh.every((x) => x.next_try_at === new Date(now.getTime() + 90_000).toISOString()), "not looked at for 90 seconds");
   assert.deepEqual(fresh.find((x) => x.agent_id === "a1")?.in_campaigns, shown);
   assert.equal(fresh.find((x) => x.agent_id === "a2")?.in_campaigns, null);
-  assert.match(posts[0], /➖ 3 agents removed/);
+  assert.match(posts[0], /• 3 removed: /);
   // An add never carries campaigns.
   seed();
   await recordProspectChanges({ ...input("add", ["a1"]), agents: [{ id: "a1", name: "Agent a1", inCampaigns: shown }] }, { env: ON, slack, now });
