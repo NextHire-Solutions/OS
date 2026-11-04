@@ -92,7 +92,7 @@ function seed(settings: Row = {}, jeffRelay: Row = {}) {
     { workspace_id: WS, enabled: true, practice_mode: true, mode: "automatic", forward_later_replies: false, counts_as_introduction: false, hourly_cap: 5, enabled_since: GO_LIVE, ...settings },
   ]);
   for (const t of ["os_brokerage_relays", "os_brokerage_relay_agents", "os_relay_campaigns", "os_campaign_portals", "os_portal_blocks", "os_notifications",
-    "leads", "threads", "messages", "label_assignments", "client_dnc_entries", "client_agents", "client_pipeline_entries"]) db.seed(t, []);
+    "leads", "threads", "messages", "label_assignments", "client_dnc_entries", "client_agents", "client_pipeline_entries", "client_pipeline_stages"]) db.seed(t, []);
 }
 
 interface Conv {
@@ -1269,6 +1269,44 @@ const entries = () => db.rows("client_pipeline_entries");
 const fubCalls: Array<[string, string]> = [];
 const liveDeps = (extra: Partial<Parameters<typeof relay.sweepBrokerageRelay>[1]> = {}) => ({ ...deps(LIVE), pushFub: async (p: string, e: string) => { fubCalls.push([p, e]); }, ...extra });
 const later = (min: number) => new Date(NOW.getTime() + min * 60_000);
+
+test("a client with an Interested column (pay per lead): the hand-off's agent shows there; hidden or none, under Introduction", async () => {
+  for (const [column, expected] of [
+    [{ hidden: false }, "custom_interested"],
+    [{ hidden: true }, undefined],
+    [null, undefined],
+  ] as Array<[Row | null, string | undefined]>) {
+    seed({ practice_mode: false }, { enabled: true });
+    onNewModel();
+    if (column) add("client_pipeline_stages", [{ client_id: P.jeff, key: "custom_interested", label: "Interested", kind: "custom", sort_order: 0, ...column }]);
+    add("client_pipeline_stages", [{ client_id: P.wag, key: "custom_interested", label: "Interested", kind: "custom", sort_order: 0, hidden: false }]);
+    const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+    label(L.interested, thread.id);
+    const r = await relay.sweepBrokerageRelay(NOW, liveDeps());
+    assert.deepEqual(r.outcomes, { sent: 1 }, JSON.stringify(r));
+    assert.equal(entries().length, 1);
+    assert.equal(entries()[0].custom_stage_key, expected, JSON.stringify(column));
+    assert.equal(entries()[0].stage, "introduction");
+  }
+});
+
+test("the Interested column can't be read: the email has gone, the entry waits for the next sweep, and then lands right", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  add("client_pipeline_stages", [{ client_id: P.jeff, key: "custom_interested", label: "Interested", kind: "custom", sort_order: 0, hidden: false }]);
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  db.failWhen = (c) => c.table === "client_pipeline_stages" && c.method === "GET";
+  const r = await relay.sweepBrokerageRelay(NOW, liveDeps());
+  db.failWhen = null;
+  assert.deepEqual(r.outcomes, { sent: 1 }, JSON.stringify(r));
+  assert.equal(handed.length, 1);
+  assert.equal(entries().length, 0);
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.equal(handed.length, 1, "never a second email");
+  assert.equal(entries().length, 1);
+  assert.equal(entries()[0].custom_stage_key, "custom_interested");
+});
 
 test("new model, live: the email goes, and the agent is in the client's Pipeline once, with the fields the label's trigger writes — no label applied, no announcement", async () => {
   seed({ practice_mode: false }, { enabled: true });

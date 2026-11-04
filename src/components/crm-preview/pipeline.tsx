@@ -33,7 +33,7 @@ import {
 } from "@/lib/crm-preview/model";
 import { csvRowToPipeline } from "@/lib/tools/master-inbox/portals/csv";
 import { PHONE_KEYS, pickFirstString } from "@/components/master-inbox/portals-ui/custom-field-helpers";
-import { GLOBAL_CUSTOM_STAGE_KEYS, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
+import { GLOBAL_CUSTOM_STAGE_KEYS, INTERESTED_STAGE_KEY, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
 
 import { Icon } from "./icons";
 import { k, RO, withIds } from "./k";
@@ -136,7 +136,7 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
       ["Name", "Email", "Phone", "Company", "Agent profile", "Location", "Stage", "Assigned", "Introduced", ...extra.values()],
       pickedShown.map((x) => {
         const own = fieldsOf(x);
-        return [x.lead_name, x.lead_email, x.lead_phone, x.current_brokerage, x.agent_profile_url, x.lead_location, stageName(x.stage), x.assigned_team_member?.name, (x.introduced_at ?? "").slice(0, 10), ...[...extra.keys()].map((key) => own.get(key))];
+        return [x.lead_name, x.lead_email, x.lead_phone, x.current_brokerage, x.agent_profile_url, x.lead_location, x.custom_stage_key === INTERESTED_STAGE_KEY ? (stages.find((s) => s.key === INTERESTED_STAGE_KEY)?.label ?? stageName(x.stage)) : stageName(x.stage), x.assigned_team_member?.name, (x.introduced_at ?? "").slice(0, 10), ...[...extra.keys()].map((key) => own.get(key))];
       }),
     );
   };
@@ -564,7 +564,7 @@ function placeCounts(placement: Map<string, Placement>): Map<string, number> {
 }
 
 const NAME_INPUT = { flex: 1, border: 0, outline: 0, background: "transparent", fontSize: 13, color: "#1f2124", fontWeight: 500 } as const;
-const ALWAYS = new Set<string>(ALWAYS_SHOWN);
+const ALWAYS = new Set<string>([...ALWAYS_SHOWN, INTERESTED_STAGE_KEY]);
 const agentsText = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "agent" : "agents"}`;
 
 /*

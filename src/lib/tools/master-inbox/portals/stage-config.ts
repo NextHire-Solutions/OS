@@ -121,6 +121,37 @@ export function seedRowsForClient(
   }));
 }
 
+// The Interested column (4 Nov, the user: "we need interested and introduction columns both ... interested column only for
+// pay per lead plan clients"). An ordinary custom stage, so both portals draw it from the client's rows and it never touches
+// the enum, the funnel or reporting: a hand-off's agent is at `introduction`, with custom_stage_key saying where it shows.
+export const INTERESTED_STAGE_KEY = "custom_interested";
+export const INTERESTED_STAGE_LABEL = "Interested";
+export const INTERESTED_STAGE_COLOR = "#0891b2";
+
+// The rows a portal needs for its Interested column: none when it has one (renamed or moved, it stays as it is). A portal with
+// no rows gets its canonical stages too, exactly as they render now, because any row at all replaces the defaults (resolveStageDefs).
+export function interestedStageRows(
+  client: StageClient,
+  existing: readonly ClientStageRow[] | null | undefined,
+): ClientStageRow[] {
+  const rows = existing ?? [];
+  if (rows.some((r) => r.key === INTERESTED_STAGE_KEY)) return [];
+  const interested = (sort_order: number): ClientStageRow => ({
+    key: INTERESTED_STAGE_KEY,
+    label: INTERESTED_STAGE_LABEL,
+    color: INTERESTED_STAGE_COLOR,
+    sort_order,
+    kind: "custom",
+    canonical_stage: null,
+    hidden: false,
+  });
+  if (rows.length === 0) {
+    return [interested(0), ...seedRowsForClient(client).map((r) => ({ ...r, sort_order: r.sort_order + 1 }))];
+  }
+  const introduction = rows.find((r) => r.key === "introduction");
+  return [interested((introduction?.sort_order ?? Math.min(...rows.map((r) => r.sort_order))) - 1)];
+}
+
 // Two "no show" workflow stages every client gets IN ADDITION to their own
 // stages. They are display-only board buckets (placed via custom_stage_key, an
 // overlay), so they never touch the pipeline_stage enum, the funnel, or

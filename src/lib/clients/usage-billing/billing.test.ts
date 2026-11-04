@@ -53,10 +53,11 @@ function seed(o: { acmeSettings?: Row | null; betaSettings?: Row | null; periods
     { id: BETA, name: "Beta Homes", aliases: [], status: "active", mi_client_id: LIVE },
   ]);
   db.seed("clients", [
-    { id: BOSTON, name: "Acme Boston", slug: "acme-boston", aliases: [] },
-    { id: FLORIDA, name: "Acme Florida", slug: "acme-florida", aliases: [] },
-    { id: LIVE, name: "Beta Homes", slug: "beta-homes", aliases: [] },
+    { id: BOSTON, name: "Acme Boston", slug: "acme-boston", aliases: [], feature_flags: { manage_stages: true }, stage_label_overrides: {} },
+    { id: FLORIDA, name: "Acme Florida", slug: "acme-florida", aliases: [], feature_flags: { manage_stages: true }, stage_label_overrides: {} },
+    { id: LIVE, name: "Beta Homes", slug: "beta-homes", aliases: [], feature_flags: { manage_stages: true }, stage_label_overrides: {} },
   ]);
+  db.seed("client_pipeline_stages", []);
   db.seed("os_campaign_portals", []);
   const base = { enabled: true, test_only: true, price_cents: 10_000, every_days: 7, anchor_date: ANCHOR, lead_source: "handoffs", stripe_customer_id: null, default_payment_method_id: null, card_label: null, setup_session_id: null };
   db.seed("os_usage_billing_settings", [
@@ -408,6 +409,103 @@ test("a period that has not started, or does not begin on the schedule, is refus
   await assert.rejects(billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW, periodStart: "2026-10-19" }), /not started/);
   await assert.rejects(billing.chargePeriod(ACME, { stripe, by: ADMIN, now: NOW, periodStart: "2026-10-06" }), /does not begin a billing period/);
   assert.deepEqual(fake.calls, []);
+});
+
+/* ------------------------------ on pay per lead: the Interested column (4 Nov) --- */
+
+const stageRows = (portal: string) => db.rows("client_pipeline_stages").filter((r) => r.client_id === portal);
+const FORM = { priceCents: 25_000, everyDays: 14 as const, anchorDate: "2026-10-28", leadSource: "handoffs" as const, enabled: false };
+
+test("turning pay per lead on: every portal of that client gets the Interested column, and no one else's changes", async () => {
+  seed({ acmeSettings: null });
+  await billing.saveSettings(ACME, FORM, ADMIN);
+  for (const portal of [BOSTON, FLORIDA]) {
+    const rows = stageRows(portal).sort((a, b) => Number(a.sort_order) - Number(b.sort_order));
+    assert.equal(rows[0].key, "custom_interested");
+    assert.equal(rows[0].label, "Interested");
+    assert.equal(rows[0].hidden, false);
+    assert.equal(rows[1].key, "introduction");
+    assert.equal(rows.filter((r) => r.kind === "canonical").length, 9, "its other stages come with it: any row replaces the defaults");
+  }
+  assert.deepEqual(stageRows(LIVE), [], "Beta isn't on pay per lead");
+});
+
+test("saving again adds nothing, and a column the client renamed or moved stays as it is", async () => {
+  seed({ acmeSettings: null });
+  await billing.saveSettings(ACME, FORM, ADMIN);
+  const column = stageRows(BOSTON).find((r) => r.key === "custom_interested") as Row;
+  column.label = "Hot Leads";
+  const count = db.rows("client_pipeline_stages").length;
+  db.calls.length = 0;
+  await billing.saveSettings(ACME, { ...FORM, priceCents: 30_000 }, ADMIN);
+  assert.equal(db.rows("client_pipeline_stages").length, count);
+  assert.equal(column.label, "Hot Leads");
+  assert.equal(db.writes("client_pipeline_stages", "POST").length, 0);
+});
+
+test("the column failing doesn't undo the save; the hourly run puts it right, for a test client not in the run too", async () => {
+  seed({ acmeSettings: null });
+  db.failWhen = (c) => c.table === "client_pipeline_stages";
+  const saved = await billing.saveSettings(ACME, FORM, ADMIN);
+  db.failWhen = null;
+  assert.equal(saved.price_cents, 25_000);
+  assert.deepEqual(stageRows(BOSTON), []);
+  const r = await billing.runUsageBilling({ env: { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1" }, now: NOW, stripe });
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.clients, 0, "not in the scheduled run");
+  assert.ok(stageRows(BOSTON).some((r2) => r2.key === "custom_interested"));
+  assert.ok(stageRows(FLORIDA).some((r2) => r2.key === "custom_interested"));
+  assert.deepEqual(stageRows(LIVE), []);
+});
+
+test("a market added later gets the column on the next run; the portals that have it aren't written to", async () => {
+  seed({ acmeSettings: null });
+  await billing.saveSettings(ACME, FORM, ADMIN);
+  db.seed("client_pipeline_stages", db.rows("client_pipeline_stages").filter((r) => r.client_id !== FLORIDA));
+  db.calls.length = 0;
+  await billing.runUsageBilling({ env: { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1" }, now: NOW, stripe });
+  assert.ok(stageRows(FLORIDA).some((r) => r.key === "custom_interested"));
+  const writes = db.writes("client_pipeline_stages", "POST");
+  assert.equal(writes.length, 1, "Florida only");
+});
+
+test("hidden or removed from the old portal: the next run brings it back, and a rename stays", async () => {
+  seed({ acmeSettings: null });
+  await billing.saveSettings(ACME, FORM, ADMIN);
+  const column = stageRows(BOSTON).find((r) => r.key === "custom_interested") as Row;
+  Object.assign(column, { hidden: true, label: "Hot Leads" });
+  db.seed("client_pipeline_stages", db.rows("client_pipeline_stages").filter((r) => !(r.client_id === FLORIDA && r.key === "custom_interested")));
+  const r = await billing.runUsageBilling({ env: { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1" }, now: NOW, stripe });
+  assert.deepEqual(r.errors, []);
+  const back = stageRows(BOSTON).find((x) => x.key === "custom_interested")!;
+  assert.deepEqual([back.hidden, back.label], [false, "Hot Leads"]);
+  assert.equal(stageRows(FLORIDA).find((x) => x.key === "custom_interested")?.hidden, false);
+});
+
+test("one portal failing doesn't starve the client's other portals, and the bell says so once a day", async () => {
+  seed({ acmeSettings: null });
+  db.seed("os_notifications", []);
+  db.seed("os_usage_billing_settings", [{ os_client_id: ACME, enabled: false, test_only: true, price_cents: 10_000, every_days: 7, anchor_date: ANCHOR, lead_source: "handoffs" }]);
+  (db.rows("clients").find((c) => c.id === BOSTON) as Row).feature_flags = {};
+  const env = { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1" };
+  const r = await billing.runUsageBilling({ env, now: NOW, stripe });
+  await billing.runUsageBilling({ env, now: NOW, stripe });
+  assert.match(r.errors.join(" "), /manage_stages off/);
+  assert.deepEqual(stageRows(BOSTON), []);
+  assert.ok(stageRows(FLORIDA).some((x) => x.key === "custom_interested"), "Acme's other portal still got it");
+  assert.equal(db.rows("os_notifications").filter((n) => n.kind === "usage_column_error").length, 1);
+});
+
+test("the run off: no column written; a portal without manage_stages is told, not half-done, and the other clients still run", async () => {
+  seed({ acmeSettings: null });
+  db.seed("os_usage_billing_settings", [{ os_client_id: ACME, enabled: false, test_only: true, price_cents: 10_000, every_days: 7, anchor_date: ANCHOR, lead_source: "handoffs" }, { os_client_id: BETA, enabled: false, test_only: true, price_cents: 10_000, every_days: 7, anchor_date: ANCHOR, lead_source: "handoffs" }]);
+  await billing.runUsageBilling({ env: {}, now: NOW, stripe });
+  assert.deepEqual(db.rows("client_pipeline_stages"), []);
+  (db.rows("clients").find((c) => c.id === BOSTON) as Row).feature_flags = {};
+  const r = await billing.runUsageBilling({ env: { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1" }, now: NOW, stripe });
+  assert.match(r.errors.join(" "), /manage_stages off/);
+  assert.deepEqual(stageRows(BOSTON), []);
+  assert.ok(stageRows(LIVE).some((x) => x.key === "custom_interested"), "Beta, the next client, still got its column");
 });
 
 /* ---------------------------------------------------------- scheduled run --- */

@@ -4,7 +4,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { resolvePortalClient } from "@/lib/tools/master-inbox/portals/token";
 import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
 import { STAGE_ORDER, STAGE_LABEL_MAX_LEN } from "@/lib/tools/master-inbox/portals/portal-data";
-import { MANAGE_STAGES_FLAG, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
+import { INTERESTED_STAGE_KEY, MANAGE_STAGES_FLAG, STAGE_COLOR_PALETTE } from "@/lib/tools/master-inbox/portals/stage-config";
 
 // PATCH /api/portal/[token]/stages
 //
@@ -92,6 +92,19 @@ export async function PATCH(
   const admin = createAdminSupabase();
   const now = new Date().toISOString();
 
+  // A pay-per-lead client's Interested column stays (the user, 4 Nov): renamed or moved, but always there and always shown.
+  const { data: interested, error: interestedErr } = await admin
+    .from("client_pipeline_stages")
+    .select("label")
+    .eq("client_id", client.id)
+    .eq("key", INTERESTED_STAGE_KEY)
+    .maybeSingle();
+  // Unread is not "not there": the removal below would take it, and its agents with it.
+  if (interestedErr) return NextResponse.json({ error: "Your stages couldn't be checked, so nothing was saved. Please try again." }, { status: 503 });
+  if (interested && !stages.some((s) => s.key === INTERESTED_STAGE_KEY)) {
+    return NextResponse.json({ error: `"${interested.label}" is your pay-per-lead stage: it can be renamed or moved, but always shows.` }, { status: 400 });
+  }
+
   // ---- Reassign entries off any custom stage being REMOVED, then delete it ----
   // (Canonical stages are never removed.) This clears the display pointer so those
   // entries fall back to their canonical stage; no enum/funnel change.
@@ -129,7 +142,8 @@ export async function PATCH(
     sort_order: i,
     kind: s.kind,
     canonical_stage: s.kind === "canonical" ? s.canonical_stage : null,
-    hidden: s.hidden ?? false,
+    // Shown whatever the page sent: hidden from the old portal, refusing here would block every other stage save.
+    hidden: s.key === INTERESTED_STAGE_KEY ? false : s.hidden ?? false,
     updated_at: now,
   }));
   const { error } = await admin

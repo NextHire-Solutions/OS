@@ -9,7 +9,7 @@ import { portalBillingHold } from "@/lib/tools/master-inbox/portals/billing-hold
 import { enforceBlocklist, normalizeDomain, type BlocklistResult } from "@/lib/tools/master-inbox/portals/enforce-blocklist";
 import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
 import { loadClientStageRows } from "@/lib/tools/master-inbox/portals/load-stages";
-import { canonicalStageDefs, MANAGE_STAGES_FLAG, resolveStageDefs } from "@/lib/tools/master-inbox/portals/stage-config";
+import { canonicalStageDefs, INTERESTED_STAGE_KEY, MANAGE_STAGES_FLAG, resolveStageDefs } from "@/lib/tools/master-inbox/portals/stage-config";
 import { STAGE_ORDER, type PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { stopEntries } from "@/lib/tools/master-inbox/portals/stop-person";
 import { resolvePortalClient, type PortalClient } from "@/lib/tools/master-inbox/portals/token";
@@ -506,6 +506,8 @@ async function stageReader(client: PortalClient): Promise<(raw: string) => Pipel
   const defs = clientHasFeature(client, MANAGE_STAGES_FLAG) ? resolveStageDefs(stageClient, await loadClientStageRows(client.id)) : canonicalStageDefs(stageClient);
   const own = new Map<string, PipelineStage>();
   for (const d of defs) if (d.kind === "canonical" && d.canonicalStage) own.set(stageWord(d.label), d.canonicalStage);
+  // A file exported from a portal with an Interested column may say so: an agent added by hand is under Introduction.
+  for (const d of defs) if (d.key === INTERESTED_STAGE_KEY) own.set(stageWord(d.label), "introduction");
   return (raw) => {
     const word = stageWord(raw);
     if ((STAGE_ORDER as string[]).includes(word)) return word as PipelineStage;

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type { PipelineEntry, PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
-import { canonicalStageDefs, resolveStageDefs, type ClientStageRow } from "@/lib/tools/master-inbox/portals/stage-config";
+import { canonicalStageDefs, INTERESTED_STAGE_KEY, interestedStageRows, resolveStageDefs, type ClientStageRow } from "@/lib/tools/master-inbox/portals/stage-config";
 import {
   abbrevUsd,
   formatPhone,
@@ -296,3 +296,78 @@ test("Manage stages (Demo): a tag added there is a tag; hidden stages are still 
   ]);
   assert.equal(all.find((s) => s.key === "keep_warm")?.dot, shown.find((s) => s.key === "keep_warm")?.dot, "drawn in the design's colours, as on the board");
 });
+
+/* ------------------------------------- the Interested column (pay per lead, 4 Nov) --- */
+
+const client = { feature_flags: { interview_scheduled_stage: true }, stage_label_overrides: { phone_screen: "First Call" } };
+const withColumn = () => resolveStageDefs(client, interestedStageRows(client, []));
+
+test("a portal with no rows: Interested first, then every stage exactly as it renders today", () => {
+  const before = previewStages(resolveStageDefs(client, []));
+  const after = previewStages(withColumn());
+  assert.equal(after[0].key, INTERESTED_STAGE_KEY);
+  assert.equal(after[0].label, "Interested");
+  assert.equal(after[0].role, "stage", "a column, not a tag");
+  assert.deepEqual(after.slice(1), before, "names, order, tags, what is hidden: all unchanged");
+  assert.deepEqual(after.filter((s) => s.role === "stage").map((s) => s.label), ["Interested", "Introduction", "Phone Screen Scheduled", "First Call", "Interview Scheduled", "Interview", "Hired"]);
+});
+
+test("seeding changes nothing else, whichever stages and names the client has", () => {
+  for (const c of [{}, { feature_flags: {}, stage_label_overrides: {} }, { feature_flags: { interview_scheduled_stage: true } }, { feature_flags: {}, stage_label_overrides: { introduction: "New", hired: "Joined" } }, { feature_flags: null, stage_label_overrides: null }]) {
+    const before = resolveStageDefs(c, []);
+    const after = resolveStageDefs(c, interestedStageRows(c, []));
+    assert.equal(after[0].key, INTERESTED_STAGE_KEY);
+    assert.deepEqual(after.slice(1), before, JSON.stringify(c));
+  }
+});
+
+test("a portal not on pay per lead has no Interested column", () => {
+  assert.ok(!previewStages(resolveStageDefs(client, [])).some((s) => s.key === INTERESTED_STAGE_KEY));
+  assert.ok(!previewStages(canonicalStageDefs(client)).some((s) => s.key === INTERESTED_STAGE_KEY));
+});
+
+test("a portal with its own stages keeps them: Interested goes just before Introduction, one row added", () => {
+  const own: ClientStageRow[] = [
+    { key: "custom_first", label: "Sourced", color: null, sort_order: 0, kind: "custom", canonical_stage: null, hidden: false },
+    { key: "introduction", label: "Intro", color: null, sort_order: 4, kind: "canonical", canonical_stage: "introduction", hidden: false },
+    { key: "hired", label: "Hired", color: null, sort_order: 7, kind: "canonical", canonical_stage: "hired", hidden: false },
+  ];
+  const added = interestedStageRows(client, own);
+  assert.equal(added.length, 1);
+  const labels = previewStages(resolveStageDefs(client, [...own, ...added])).filter((s) => s.role === "stage").map((s) => s.label);
+  assert.deepEqual(labels, ["Sourced", "Interested", "Intro", "Hired"]);
+  const first: ClientStageRow[] = [{ ...own[1], sort_order: 0 }];
+  assert.equal(interestedStageRows(client, first)[0].sort_order, -1, "already first: still before it");
+});
+
+test("a portal that has the column is left alone, renamed or hidden", () => {
+  const rows = interestedStageRows(client, []);
+  assert.deepEqual(interestedStageRows(client, rows), []);
+  const renamed = rows.map((r) => (r.key === INTERESTED_STAGE_KEY ? { ...r, label: "Hot Leads", hidden: true } : r));
+  assert.deepEqual(interestedStageRows(client, renamed), []);
+});
+
+test("an agent in Interested is in that column; moved out, they're at their real stage", () => {
+  const stages = previewStages(withColumn());
+  assert.equal(placeEntry({ ...entry("introduction"), custom_stage_key: INTERESTED_STAGE_KEY }, stages, {})?.stage.key, INTERESTED_STAGE_KEY);
+  assert.equal(placeEntry(entry("introduction"), stages, {})?.stage.key, "introduction");
+  assert.equal(placeEntry(entry("phone_screen"), stages, {})?.stage.key, "phone_screen");
+});
+
+test("the Interested column hidden or gone: its agents are under their real stage, never off the board", () => {
+  const hidden = previewStages(resolveStageDefs(client, interestedStageRows(client, []).map((r) => (r.key === INTERESTED_STAGE_KEY ? { ...r, hidden: true } : r))));
+  const gone = previewStages(canonicalStageDefs(client));
+  for (const stages of [hidden, gone]) {
+    assert.ok(!stages.some((s) => s.key === INTERESTED_STAGE_KEY));
+    assert.equal(placeEntry({ ...entry("introduction"), custom_stage_key: INTERESTED_STAGE_KEY }, stages, {})?.stage.key, "introduction");
+  }
+  assert.equal(placeEntry({ ...entry("introduction"), custom_stage_key: "custom_some_other" }, gone, {}), null, "any other custom stage: as on the live board");
+});
+
+test("a tagged agent with no history sits at Introduction, as for every client, not in Interested", () => {
+  const stages = previewStages(withColumn());
+  const p = placeEntry(entry("no_show"), stages, {});
+  assert.equal(p?.stage.key, "introduction");
+  assert.equal(p?.tag?.key, "no_show");
+});
+

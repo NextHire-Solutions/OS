@@ -28,7 +28,7 @@ import { NotConfiguredError } from "@/lib/env";
  * the filter, it is a reason the filter is cheap.
  *
  * ---------------------------------------------------------------------------
- * READ-ONLY, DELIBERATELY (one exception: relay/portal-entry.ts, a real hand-off's Pipeline entry)
+ * READ-ONLY, DELIBERATELY (two exceptions: relay/portal-entry.ts, a real hand-off's Pipeline entry; usage-billing/interested-column.ts, a pay-per-lead client's Interested column)
  *
  * Nothing in the workspace writes through this client, and that is a rule with
  * a specific reason rather than caution for its own sake. From the audit:

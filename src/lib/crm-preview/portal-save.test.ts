@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { createClient } from "@supabase/supabase-js";
 
 import { FakePostgrest } from "../tools/master-inbox/test/fake-postgrest.ts";
+import { STAGE_ORDER } from "../tools/master-inbox/portals/stages-shared.ts";
 import type { DemoResult } from "./demo.ts";
 import type { AgentRow } from "./demo-market.ts";
 
@@ -717,6 +718,94 @@ test("A bulk move takes this portal's agents out of a custom stage (Manage stage
   assert.equal(rowOf("client_pipeline_entries", s.mineEntry.id)!.stage, "interview");
   assert.equal(rowOf("client_pipeline_entries", s.theirsEntry.id)!.custom_stage_key, "custom_theirs01", "another client's is untouched");
   assert.equal(rowOf("client_pipeline_entries", s.theirsEntry.id)!.stage, "phone_screen");
+});
+
+test("The Interested column: an agent moves into it and out of it, nothing else about them changes, and no announcement goes", { skip }, async () => {
+  const s = seed({ flags: { manage_stages: true } });
+  fake.seed("client_pipeline_stages", [{ client_id: PORTAL, key: "custom_interested", label: "Interested", kind: "custom", sort_order: 0, hidden: false, color: "#0891b2", canonical_stage: null }]);
+  okResult(await run({ type: "entry.customStage", ids: [s.intro.id], key: "custom_interested" }));
+  assert.equal(rowOf("client_pipeline_entries", s.intro.id)!.custom_stage_key, "custom_interested");
+  assert.equal(rowOf("client_pipeline_entries", s.intro.id)!.stage, "introduction", "the real stage is untouched");
+  await settle();
+  const sentBefore = sent.length;
+  // Into Introduction: the same real stage, so only the column changes.
+  okResult(await run({ type: "entry.stage", ids: [s.intro.id], stage: "introduction" }));
+  assert.equal(rowOf("client_pipeline_entries", s.intro.id)!.custom_stage_key, null);
+  assert.equal(rowOf("client_pipeline_entries", s.intro.id)!.stage, "introduction");
+  await settle();
+  assert.equal(sent.length, sentBefore, "no Introduction announced: the agent was already at that stage");
+  // On to a real next stage.
+  okResult(await run({ type: "entry.customStage", ids: [s.intro.id], key: "custom_interested" }));
+  okResult(await run({ type: "entry.stage", ids: [s.intro.id], stage: "phone_screen" }));
+  assert.equal(rowOf("client_pipeline_entries", s.intro.id)!.custom_stage_key, null);
+  assert.equal(rowOf("client_pipeline_entries", s.intro.id)!.stage, "phone_screen");
+  // Another client's agent is out of reach; an unknown column is refused.
+  await run({ type: "entry.customStage", ids: [s.theirsEntry.id], key: "custom_interested" });
+  assert.equal(rowOf("client_pipeline_entries", s.theirsEntry.id)!.custom_stage_key ?? null, null);
+  assert.equal((await run({ type: "entry.customStage", ids: [s.mineEntry.id], key: "custom_not_here" })).ok, false);
+});
+
+test("The Interested column can be renamed and moved, but never removed or hidden, on a portal that has it; other portals' stages save as ever", { skip }, async () => {
+  const s2 = seed({ flags: { manage_stages: true } });
+  const canonical = STAGE_ORDER.map((c) => ({ key: c, label: c, kind: "canonical", canonical_stage: c, hidden: false, color: null }));
+  // No such column: saves as ever.
+  okResult(await run({ type: "stages.save", stages: canonical }));
+  const column = { key: "custom_interested", label: "Interested", kind: "custom", canonical_stage: null, hidden: false, color: "#0891b2" };
+  okResult(await run({ type: "stages.save", stages: [column, ...canonical] }));
+  const shown = () => fake.rows("client_pipeline_stages").find((r) => r.key === "custom_interested")!;
+  rowOf("client_pipeline_entries", s2.intro.id)!.custom_stage_key = "custom_interested";
+  // Removing it is refused, in words that reach the person, and its agent stays in it.
+  const removed = await run({ type: "stages.save", stages: canonical });
+  assert.equal(removed.ok, false);
+  assert.match(String((removed as { error?: string }).error), /Interested.*always shows/);
+  assert.ok(shown());
+  assert.equal(rowOf("client_pipeline_entries", s2.intro.id)!.custom_stage_key, "custom_interested");
+  // Sent hidden: saved shown, and the rest of the save goes through.
+  okResult(await run({ type: "stages.save", stages: [{ ...column, hidden: true }, ...canonical.map((c) => (c.key === "hired" ? { ...c, label: "Joined" } : c))] }));
+  assert.equal(shown().hidden, false);
+  assert.equal(fake.rows("client_pipeline_stages").find((r) => r.key === "hired")!.label, "Joined");
+  // Hidden from the old portal, which can't refuse it: this portal's saves still work, and put it back.
+  shown().hidden = true;
+  okResult(await run({ type: "stages.save", stages: [{ ...column, hidden: true }, ...canonical] }));
+  assert.equal(shown().hidden, false);
+  // Renamed and moved.
+  okResult(await run({ type: "stages.save", stages: [...canonical.slice(0, 1), { ...column, label: "Hot Leads" }, ...canonical.slice(1)] }));
+  assert.equal(shown().label, "Hot Leads");
+  // Its row can't be read: nothing is saved, nothing removed.
+  fake.failWhen = (c) => c.table === "client_pipeline_stages" && c.method === "GET";
+  const unread = await run({ type: "stages.save", stages: canonical });
+  fake.failWhen = null;
+  assert.equal(unread.ok, false);
+  assert.ok(shown());
+  assert.equal(rowOf("client_pipeline_entries", s2.intro.id)!.custom_stage_key, "custom_interested");
+});
+
+test("A bulk move takes agents out of Interested by itself: the stage route's own write, on this portal only", { skip }, async () => {
+  const s2 = seed({ flags: { manage_stages: true } });
+  rowOf("client_pipeline_entries", s2.intro.id)!.custom_stage_key = "custom_interested";
+  rowOf("client_pipeline_entries", s2.theirsEntry.id)!.custom_stage_key = "custom_interested";
+  const pipelineRoute = await import("../../app/api/tools/master-inbox/portal/[token]/pipeline/route.ts");
+  const res = await pipelineRoute.PATCH(
+    new Request("https://os.test/x", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stage", ids: [s2.intro.id, s2.theirsEntry.id], stage: "phone_screen" }) }),
+    { params: Promise.resolve({ token: TOKEN }) },
+  );
+  assert.equal(res.status, 200);
+  assert.equal(rowOf("client_pipeline_entries", s2.intro.id)!.custom_stage_key, null);
+  assert.equal(rowOf("client_pipeline_entries", s2.intro.id)!.stage, "phone_screen");
+  assert.equal(rowOf("client_pipeline_entries", s2.theirsEntry.id)!.custom_stage_key, "custom_interested", "another client's is untouched");
+});
+
+test("A file exported from a portal with an Interested column imports: under Introduction, whatever the column is called", { skip }, async () => {
+  seed({ flags: { manage_stages: true, pipeline_csv_upload: true } });
+  fake.seed("client_pipeline_stages", [
+    { client_id: PORTAL, key: "custom_interested", label: "Hot Leads", kind: "custom", sort_order: 0, hidden: false, color: null, canonical_stage: null },
+    ...STAGE_ORDER.map((c, i) => ({ client_id: PORTAL, key: c, label: c, kind: "canonical", canonical_stage: c, sort_order: i + 1, hidden: false, color: null })),
+  ]);
+  const r = await run({ type: "entry.import", rows: [{ lead_name: "From A File", lead_email: "file@x.test", stage: "Hot Leads" }] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const made = fake.rows("client_pipeline_entries").find((e) => e.lead_name === "From A File")!;
+  assert.equal(made.stage, "introduction");
+  assert.equal(made.custom_stage_key ?? null, null);
 });
 
 test("Notes: edited and deleted through the current portal's own route — on this portal's agents only", { skip }, async () => {

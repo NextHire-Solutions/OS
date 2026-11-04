@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { osTable } from "@/lib/clients/os-db";
 
+import { ensureInterestedColumn, ensureInterestedColumns } from "./interested-column.ts";
 import { billableLeads, LeadSourceUnavailable, type LeadSourceFn } from "./leads.ts";
 import {
   amountCents,
@@ -190,6 +191,8 @@ export async function saveSettings(osClientId: string, input: SettingsInput, by:
   }
   const saved = await loadSettings(osClientId);
   if (!saved) throw new UsageBillingError("The settings could not be read back.", 502);
+  // On pay per lead: its Interested column, now. A failure here doesn't undo the save; the hourly run looks again.
+  await ensureInterestedColumn(osClientId).catch((e) => console.error(`[usage-billing] Interested column for ${osClientId}:`, e instanceof Error ? e.message : e));
   return saved;
 }
 
@@ -1050,6 +1053,17 @@ export async function runUsageBilling(o: { env?: Record<string, string | undefin
   }
   const now = o.now ?? new Date();
   const today = easternDay(now);
+  // Every client on pay per lead has its Interested column: a market added since, or one that couldn't be done when it was saved.
+  for (const p of await ensureInterestedColumns()) {
+    out.errors.push(`Interested column${p.osClientId ? ` ${p.osClientId}` : ""}: ${p.message}`);
+    if (p.osClientId) {
+      await tellBell({
+        kind: "usage_column_error", severity: "warning", osClientId: p.osClientId, ref: `usage_column_error:${p.osClientId}:${today}`,
+        title: "A pay-per-lead client's Interested column couldn't be set up",
+        body: `${p.message.slice(0, 300)} Until it is, their new leads show under Introduction. The run looks again next hour.`,
+      });
+    }
+  }
   const { data, error } = await osTable("os_usage_billing_settings").select(SETTINGS_COLUMNS).eq("enabled", true);
   if (error) throw dbError("os_usage_billing_settings", error.message);
   for (const s of (data ?? []) as SettingsRow[]) {

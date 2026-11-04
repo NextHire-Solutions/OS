@@ -1,3 +1,4 @@
+import { INTERESTED_STAGE_KEY } from "@/lib/tools/master-inbox/portals/stage-config";
 import type { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 
 /*
@@ -7,8 +8,8 @@ import type { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
  *
  * It is the row the Introduction label's trigger makes (Master Inbox migrations 0023, 0072, 0073: client_pipeline_on_intro_label),
  * WITHOUT the label: that label wipes "Interested" off the conversation and announces an introduction to the client (Slack,
- * the notifier), and the email has just told them. The first stage is the same enum value; what a portal CALLS it is that
- * portal's (Interested, on the new model).
+ * the notifier), and the email has just told them. The first stage is the same enum value; a client on pay per lead has an
+ * Interested column (stage-config.ts), and the agent shows there. Without one, under Introduction.
  *
  * One addition to the trigger's fields: EmailBison's leads keep their number under "phone number" and their brokerage on the
  * lead itself, neither of which the trigger reads, and the Pipeline shows a phone only from the entry's own column (of the
@@ -36,7 +37,7 @@ export interface EntryLead {
 }
 
 /** The trigger's values, in its order of preference, then the alert's. The hand-off's own name and address only when there's no lead to read. */
-export function pipelineEntryRow(o: { portalId: string; threadId: string; leadId: string | null; lead: EntryLead | null; agentName: string | null; agentEmail: string | null; at: string }) {
+export function pipelineEntryRow(o: { portalId: string; threadId: string; leadId: string | null; lead: EntryLead | null; customStageKey?: string | null; agentName: string | null; agentEmail: string | null; at: string }) {
   const f = o.lead?.custom_fields;
   return {
     client_id: o.portalId,
@@ -50,6 +51,7 @@ export function pipelineEntryRow(o: { portalId: string; threadId: string; leadId
     current_brokerage: (text(f, "companyName") ?? text(f, "company")) || o.lead?.company || null,
     agent_profile_url: text(f, "Agent Profile") ?? text(f, "agentProfile") ?? text(f, "website"),
     introduced_at: o.at,
+    ...(o.customStageKey ? { custom_stage_key: o.customStageKey } : {}),
   };
 }
 
@@ -64,7 +66,11 @@ export async function enterPipeline(mi: Mi, o: { portalId: string; threadId: str
     if (error) throw new Error(`leads: ${error.message}`);
     lead = (data as EntryLead | null) ?? null;
   }
-  const row = pipelineEntryRow({ ...o, leadId, lead });
+  // Shown there only while the portal shows that column: an agent placed in a hidden one wouldn't be on the board.
+  const { data: column, error: cErr } = await mi.from("client_pipeline_stages").select("hidden").eq("client_id", o.portalId).eq("key", INTERESTED_STAGE_KEY).maybeSingle();
+  if (cErr) throw new Error(`client_pipeline_stages: ${cErr.message}`);
+  const customStageKey = column && !(column as { hidden?: boolean }).hidden ? INTERESTED_STAGE_KEY : null;
+  const row = pipelineEntryRow({ ...o, leadId, lead, customStageKey });
   const { data, error } = await mi.from("client_pipeline_entries").upsert(row, { onConflict: "client_id,thread_id", ignoreDuplicates: true }).select("id");
   if (error) throw new Error(`client_pipeline_entries: ${error.message}`);
   const made = (data ?? []) as Array<{ id: string }>;

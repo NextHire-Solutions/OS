@@ -78,7 +78,7 @@ const s = (v: unknown) => (typeof v === "string" ? v : "");
  * that, an alias equal to another client's portal name would bill this
  * client for the other's calls and introductions (audit, 26 Oct).
  */
-async function portalsOf(osClientId: string): Promise<string[]> {
+export async function portalsOf(osClientId: string): Promise<string[]> {
   const { data: rows, error } = await osTable("os_clients").select("id, name, aliases, mi_client_id");
   if (error) throw new Error(`os_clients: ${error.message}`);
   const clients = ((rows ?? []) as Row[]).map((c) => ({ id: s(c.id), name: s(c.name), aliases: Array.isArray(c.aliases) ? (c.aliases as string[]) : [], miClientId: s(c.mi_client_id) || null }));

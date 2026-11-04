@@ -182,7 +182,8 @@ export async function PATCH(
     // update silently).
     const { data: updated, error } = await admin
       .from("client_pipeline_entries")
-      .update({ stage: newStage, updated_at: new Date().toISOString() })
+      // A move takes the agent out of any custom stage, as the single move does.
+      .update({ stage: newStage, custom_stage_key: null, updated_at: new Date().toISOString() })
       .eq("client_id", client.id)
       .in("id", parsed.data.ids)
       .select("id");

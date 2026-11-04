@@ -60,3 +60,10 @@ test("no lead to read: the hand-off's own name and address, so the entry is neve
   const r = row(null);
   assert.deepEqual([r.lead_name, r.lead_email, r.lead_phone], ["Hand-off Name", "handoff@x.test", null]);
 });
+
+test("the Interested column: named on the entry only when the portal shows one", () => {
+  assert.equal(pipelineEntryRow({ ...base, lead: null, customStageKey: "custom_interested" }).custom_stage_key, "custom_interested");
+  assert.equal(pipelineEntryRow({ ...base, lead: null, customStageKey: "custom_interested" }).stage, "introduction", "the real stage stays: an overlay, never the funnel");
+  assert.ok(!("custom_stage_key" in pipelineEntryRow({ ...base, lead: null, customStageKey: null })));
+});
+

@@ -23,7 +23,7 @@
  */
 
 import type { PipelineEntry, PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
-import { GLOBAL_CUSTOM_STAGE_KEYS, type StageDef } from "@/lib/tools/master-inbox/portals/stage-config";
+import { GLOBAL_CUSTOM_STAGE_KEYS, INTERESTED_STAGE_KEY, type StageDef } from "@/lib/tools/master-inbox/portals/stage-config";
 import { CLIENT_ENTRY_SOURCE } from "@/lib/tools/master-inbox/portals/intro-counts";
 import { formatPortalFieldValue } from "@/components/master-inbox/portals-ui/custom-field-helpers";
 
@@ -182,7 +182,8 @@ export interface Placement {
  * else the first stage.
  */
 export function placeEntry(e: Pick<PipelineEntry, "id" | "custom_stage_key" | "stage">, stages: readonly PreviewStage[], furthest: Readonly<Record<string, string>>): Placement | null {
-  const own = stages.find((s) => s.key === stageKeyOf(e));
+  // The Interested column hidden or gone (the old portal can still do that): its agents are under their real stage, never off the board.
+  const own = stages.find((s) => s.key === stageKeyOf(e)) ?? (e.custom_stage_key === INTERESTED_STAGE_KEY ? stages.find((s) => s.key === e.stage) : undefined);
   if (!own) return null;
   if (own.role === "stage") return { stage: own, tag: null, fromHistory: false };
   const forward = stages.filter((s) => s.role === "stage");
@@ -193,7 +194,8 @@ export function placeEntry(e: Pick<PipelineEntry, "id" | "custom_stage_key" | "s
     const hit = forward.find((s) => s.key === FORWARD[r]);
     if (hit) return { stage: hit, tag: own, fromHistory: true };
   }
-  return { stage: forward[0], tag: own, fromHistory: false };
+  // The first stage: Introduction, as for every client, even where Interested is drawn before it.
+  return { stage: forward.find((s) => s.key !== INTERESTED_STAGE_KEY) ?? forward[0], tag: own, fromHistory: false };
 }
 
 // ----------------------------------------------------------------- dates ---
