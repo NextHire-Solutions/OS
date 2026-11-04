@@ -304,6 +304,7 @@ export const interestedLeads: LeadSourceFn = async (osClientId, periodStart, per
         name: s(lead?.full_name).trim() || email || "Agent",
         at: new Date(firstAt.get(s(t.id)) ?? w.from).toISOString(),
         source: "interested",
+        thread: s(t.id),
       };
     })
     .filter((l) => !known.has(l.key))

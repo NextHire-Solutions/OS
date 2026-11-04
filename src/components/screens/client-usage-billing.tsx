@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { addDays, CLAIM_STALE_MS, LEAD_SOURCE_UNIT, leadsHash, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type BillableLead, type LeadSource } from "@/lib/clients/usage-billing/model";
+import { addDays, AUTO_CHARGE_WINDOW_DAYS, CLAIM_STALE_MS, LEAD_SOURCE_UNIT, leadsHash, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type BillableLead, type LeadSource } from "@/lib/clients/usage-billing/model";
 
 /*
  * PAY PER LEAD on a client's Billing tab (26 Oct 2026; live clients 31 Oct).
@@ -37,7 +37,8 @@ type Invoice = { id: string; number: string | null; status: string; total: numbe
 type Mode = "test" | "live";
 type View = {
   settings: Settings | null; mode: Mode; periods: PeriodRow[]; invoices: Invoice[] | null; invoicesError: string | null; today: string;
-  keyState: "test" | "missing" | "refused"; liveKeyState: "live" | "missing" | "refused" | null; refusal: string | null; flags: { scheduler: boolean; charge: boolean };
+  autoProblem?: string | null;
+  keyState: "test" | "missing" | "refused"; liveKeyState: "live" | "missing" | "refused" | null; refusal: string | null; flags: { scheduler: boolean; charge: boolean; liveAuto?: boolean };
   schedule: { current: Period | null; lastCompleted: Period | null; firstStarts: string | null; choices: Period[] } | null;
   leadSources: Record<string, string>; defaultLeadSource: string;
 };
@@ -119,6 +120,7 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
   const [finder, setFinder] = useState<Finder | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [priceOpen, setPriceOpen] = useState(false);
+  const [autoAsk, setAutoAsk] = useState(false);
   // Which Stripe "Find" is looking (its button alone says so).
   const [finding, setFinding] = useState<Mode | null>(null);
   // Which period's Refresh is asking Stripe.
@@ -220,6 +222,9 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
   if (hidden) return null;
   const s = view?.settings ?? null;
   const live = view?.mode === "live";
+  // Automatic charging exists (both switches on Railway), and this client is in it.
+  const autoReady = live && !!view?.flags.scheduler && !!view?.flags.liveAuto;
+  const autoOn = autoReady && !!view?.settings?.enabled;
 
   if (!open || !view) {
     return (
@@ -451,7 +456,7 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
   return (
     <section className="rx-sec cat-billing" data-testid="usage-billing" data-mode={live ? "live" : "test"}>
       <div className="rb-head">
-        <h3><i aria-hidden="true" />Pay per lead<span>{!s ? "not set up for this client" : live ? "live — charged to the client's card when approved here" : "test mode — no real card is charged"}</span></h3>
+        <h3><i aria-hidden="true" />Pay per lead<span>{!s ? "not set up for this client" : autoOn ? (view.autoProblem ? "live — automatic charging on hold" : "live — charged to the client's card automatically") : live ? "live — charged to the client's card when approved here" : "test mode — no real card is charged"}</span></h3>
         {s ? <span className={`rb-pill ${live ? "ub-live" : "warn"}`}>{live ? "LIVE" : "STRIPE TEST MODE"}</span> : null}
       </div>
       {expired ? <div className="ds-field-err ub-msg" role="alert">Your session has expired — reload the page and sign in again. Nothing more was sent.</div> : null}
@@ -541,7 +546,9 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
             </div>
             <div><small>Current period</small><b>{view.schedule?.current?.label ?? (firstPeriod ? periodLabel(firstPeriod) : "—")}</b><span>{view.schedule?.firstStarts ? `starts ${day(view.schedule.firstStarts)}` : view.schedule?.current ? `ready to charge from ${day(view.schedule.current.end)}` : ""}</span></div>
             {live ? (
-              <div><small>Charges</small><b>Approved here</b><span>each period, once it ends — never automatically</span></div>
+              autoOn
+                ? <div><small>Charges</small><b>{view.autoProblem ? "Automatic, on hold" : "Automatic"}</b><span className={view.autoProblem ? "ub-bad" : undefined}>{view.autoProblem ?? "each period, the morning after it ends"}</span></div>
+                : <div><small>Charges</small><b>Approved here</b><span>{autoReady ? "each period, once it ends" : "each period, once it ends — never automatically"}</span></div>
             ) : (
               <div><small>Scheduled run</small><b>{view.flags.scheduler ? (view.flags.charge ? "Charging test clients" : "Previews only") : "Off"}</b><span>{s.enabled ? "this client is in it" : "this client is not in it"}</span></div>
             )}
@@ -585,7 +592,27 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
               <div className="rb-tools">
                 <button type="button" className="rx-btn" disabled={!!busy || !stripeOk} onClick={() => void findCards("live")}>{busy === "find_cards" && finding === "live" ? "Looking in Stripe…" : "Change card"}</button>
                 <button type="button" className="rx-btn" onClick={() => setPriceOpen((o) => !o)} aria-expanded={priceOpen}>{liveBilled ? "Change price" : "Change price or schedule"}</button>
+                {autoReady ? <button type="button" className="rx-btn" disabled={!!busy} onClick={() => setAutoAsk((a) => !a)} aria-expanded={autoAsk}>{autoOn ? "Stop charging automatically" : "Charge automatically"}</button> : null}
               </div>
+              {autoReady && autoAsk ? (
+                <div className="ub-confirm live" role="alertdialog" aria-label="Confirm automatic charging">
+                  <p>
+                    {autoOn
+                      ? <><b>Stop charging this client automatically?</b> Each period then waits for someone to charge it here.</>
+                      : <><b>Charge this client automatically?</b> {productLabel(s.lead_source as LeadSource, s.price_cents)}: each period goes on {s.card_label ? cardName(s.card_label) : "the card"} the morning after it ends, with nobody pressing anything. A period that ended in the last {AUTO_CHARGE_WINDOW_DAYS} days and isn&apos;t charged yet goes too; older ones wait for a person. If a lead has no delivery to their inbox on record, it waits for a person and the bell says so. A refused card isn&apos;t tried again by itself.{view.autoProblem ? ` Until it's fixed, every period is held: ${view.autoProblem}.` : ""}</>}
+                  </p>
+                  <div className="rb-tools ub-tight">
+                    <button type="button" className="rx-btn solid" disabled={!!busy} onClick={async () => {
+                      const r = await act("set_auto", { on: !s.enabled });
+                      // Refused because someone else changed it: the page shows what is true now.
+                      setAutoAsk(false);
+                      await load();
+                      if (r) say(s.enabled ? "Stopped — each period now waits for someone to charge it." : view.autoProblem ? `On, but on hold: ${view.autoProblem}.` : "On — each period is charged the morning after it ends.");
+                    }}>{busy === "set_auto" ? "Saving…" : autoOn ? "Yes, stop" : "Yes, charge automatically"}</button>
+                    <button type="button" className="rx-btn" disabled={!!busy} onClick={() => setAutoAsk(false)}>Cancel</button>
+                  </div>
+                </div>
+              ) : null}
               {box("finder")}
             </>
           ) : null}
@@ -611,7 +638,7 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
               )}
               <span className="sp" />
               <button type="button" className="rx-btn solid ub-self-end" disabled={!!busy} onClick={async () => {
-                const r = await act("save", { price: form.price, everyDays: liveBilled ? s.every_days : Number(form.everyDays), anchorDate: liveBilled ? s.anchor_date : form.anchorDate, leadSource: s.lead_source, enabled: s.enabled });
+                const r = await act("save", { price: form.price, everyDays: liveBilled ? s.every_days : Number(form.everyDays), anchorDate: liveBilled ? s.anchor_date : form.anchorDate, leadSource: s.lead_source, enabled: s.enabled, expect: { priceCents: s.price_cents, everyDays: s.every_days, anchorDate: s.anchor_date } });
                 if (r) { setPriceOpen(false); setPeriodStart(""); reset(); await load(); say(liveBilled ? "Price saved — periods not charged yet use it." : "Saved — periods not charged yet use it."); }
               }}>{busy === "save" ? "Saving…" : "Save"}</button>
             </div>
@@ -625,7 +652,7 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
             ) : null}
             {choices.length === 0 ? (
               <p className="rx-hint ub-tight">
-                {firstPeriod ? `The first period runs ${periodLabel(firstPeriod)} — it can be charged from ${day(firstPeriod.end)}.` : ""}
+                {firstPeriod ? `The first period runs ${periodLabel(firstPeriod)} — ${autoOn && !view.autoProblem ? `it is charged automatically on the morning of ${day(firstPeriod.end)}` : `it can be charged from ${day(firstPeriod.end)}`}.` : ""}
               </p>
             ) : (
               <>

@@ -13,7 +13,7 @@
  *     ones only, and checked before it is charged;
  *   - a client is billed in its own mode only (test or live); the scheduled
  *     run is off without its switch, only previews without the second, and
- *     never charges a live client;
+ *     charges a live client only with a third, when every lead was delivered;
  *   - a retry is claimed once, even by two people at the same moment.
  */
 import { test, mock } from "node:test";
@@ -29,7 +29,7 @@ for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, 
 
 const billing = await import("./billing.ts");
 const { usageStripe } = await import("./stripe.ts");
-const { periodKey, leadsHash } = await import("./model.ts");
+const { isReopened, periodKey, leadsHash } = await import("./model.ts");
 
 const fake = new FakeStripe();
 const stripe = usageStripe("sk_test_51FakeFakeFakeFake", fake.fetch as typeof fetch);
@@ -458,6 +458,541 @@ test("with OS_USAGE_BILLING_CHARGE=1: a TEST client is charged once; a LIVE clie
   assert.equal(again.charged, 0);
   assert.equal(fake.creates(/^\/invoices$/).length, 1, "the next run bills nothing twice");
   assert.ok(fake.calls.length >= calls);
+});
+
+/* ------------------------------- a LIVE client, charged by the run (4 Nov) --- */
+
+const liveFake = new FakeStripe({ live: true });
+const liveStripe = usageStripe("sk_live_51FakeFakeFakeFake", liveFake.fetch as typeof fetch, "live");
+const LIVE_ENV = { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1", OS_USAGE_BILLING_LIVE_AUTO: "1" };
+const liveRun = (o: { env?: Record<string, string>; now?: Date } = {}) => billing.runUsageBilling({ env: o.env ?? LIVE_ENV, now: o.now ?? NOW, stripe, liveStripe: () => liveStripe });
+
+/** Beta is live, in the scheduled run, with its real card; one lead (ti-beta) in the ended week. Acme, the test client, is out of it. */
+function seedLive(o: { settings?: Row; delivered?: Row | null } = {}) {
+  liveFake.reset();
+  const card = liveFake.addCustomerWithCard({ name: "Beta Homes" });
+  seed({ acmeSettings: { enabled: false }, betaSettings: { stripe_customer_id: card.customerId, default_payment_method_id: card.paymentMethodId, card_label: "Visa •••• 4242", ...o.settings } });
+  db.seed("os_notifications", []);
+  if (o.delivered !== null) db.rows("os_brokerage_relays").push({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: BETA, thread_id: "ti-beta", agent_email: "Beta@X.test", agent_name: "Beta's", ...o.delivered });
+  fake.calls.length = 0;
+  db.calls.length = 0;
+  return card;
+}
+const betaRow = () => rowsOf().find((x) => x.os_client_id === BETA);
+const bell = (kind?: string) => db.rows("os_notifications").filter((n) => !kind || n.kind === kind);
+const livePays = () => liveFake.creates(/\/pay$/).length;
+
+test("a live client whose lead reached its inbox is charged by the run, once, on its own card and in live Stripe", async () => {
+  seedLive();
+  const r = await liveRun();
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.charged, 1);
+  const row = betaRow()!;
+  assert.equal(row.status, "paid");
+  assert.equal(row.test_mode, false);
+  assert.equal(row.lead_count, 1);
+  assert.equal(row.amount_cents, 10_000);
+  assert.equal(row.claimed_by, "automatic run");
+  assert.equal(livePays(), 1);
+  assert.deepEqual(fake.calls, [], "test Stripe is never touched");
+  assert.equal(bell("usage_charged").length, 1);
+  assert.match(String(bell("usage_charged")[0].title), /Beta Homes paid \$100/);
+  const again = await liveRun();
+  assert.equal(again.charged, 0);
+  assert.equal(livePays(), 1, "the next hour charges nothing");
+  assert.equal(liveFake.creates(/^\/invoices$/).length, 1);
+  assert.equal(bell().length, 1, "and says nothing new");
+});
+
+test("two runs at the same moment charge once", async () => {
+  seedLive();
+  await Promise.all([liveRun(), liveRun()]);
+  assert.equal(betaRow()!.status, "paid");
+  assert.equal(livePays(), 1);
+  assert.equal(liveFake.creates(/^\/invoices$/).length, 1);
+  assert.equal(bell("usage_charged").length, 1);
+});
+
+test("without OS_USAGE_BILLING_LIVE_AUTO=1 a live client is only previewed, whoever hands the run live Stripe", async () => {
+  seedLive();
+  for (const env of [{ ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1" }, { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1", OS_USAGE_BILLING_CHARGE: "1" }]) {
+    const r = await liveRun({ env });
+    assert.equal(r.charged, 0);
+  }
+  assert.equal(betaRow()!.status, "preview");
+  assert.deepEqual(liveFake.calls, []);
+  assert.deepEqual(bell(), []);
+});
+
+test("a live client not in the scheduled run is left alone; the off switch stops it the next hour", async () => {
+  seedLive({ settings: { enabled: false } });
+  const r = await liveRun();
+  assert.equal(r.clients, 0);
+  assert.deepEqual(liveFake.calls, []);
+  assert.equal(betaRow(), undefined);
+});
+
+test("not before 9am Eastern: at 8:30 nothing is written or charged, at 9:00 it goes", async () => {
+  seedLive();
+  const early = await liveRun({ now: new Date("2026-10-14T12:30:00.000Z") });
+  assert.equal(early.charged, 0);
+  assert.equal(betaRow(), undefined);
+  assert.deepEqual(liveFake.calls, []);
+  const nine = await liveRun({ now: new Date("2026-10-14T13:00:00.000Z") });
+  assert.equal(nine.charged, 1);
+  assert.equal(betaRow()!.status, "paid");
+});
+
+for (const [name, delivered] of [
+  ["no hand-off at all", null],
+  ["a hand-off that bounced", { status: "bounced" }],
+  ["a practice hand-off", { practice: true }],
+  ["one still waiting for a press", { status: "ready" }],
+  ["a hand-off skipped by the rules", { status: "skipped" }],
+  ["another client's hand-off", { os_client_id: ACME }],
+] as Array<[string, Row | null]>) {
+  test(`held, never charged, when the lead has ${name}: the bell says so once, and a person can still charge it`, async () => {
+    seedLive({ delivered });
+    const r = await liveRun();
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.held, 1);
+    assert.equal(r.charged, 0);
+    const row = betaRow()!;
+    assert.equal(row.status, "preview");
+    assert.match(String(row.note), /Not charged automatically.*no delivery to the client's inbox/);
+    assert.deepEqual(liveFake.creates(/./), [], "nothing was created in Stripe");
+    assert.equal(bell("usage_charge_held").length, 1);
+    await liveRun();
+    assert.equal(bell("usage_charge_held").length, 1, "once, not every hour");
+    assert.deepEqual(liveFake.creates(/./), []);
+    const p = await billing.previewPeriod(BETA, (await billing.loadSettings(BETA))!, { periodStart: WEEK.start, now: NOW });
+    const byHand = await billing.chargePeriod(BETA, { stripe: liveStripe, by: ADMIN, periodStart: WEEK.start, now: NOW, approved: { periodStart: WEEK.start, count: p.count, amountCents: p.amountCents, mode: "live", paymentMethodId: (await billing.loadSettings(BETA))!.default_payment_method_id ?? undefined, leadsHash: p.leadsHash } });
+    assert.equal(byHand.outcome, "paid");
+    assert.equal(livePays(), 1);
+  });
+}
+
+test("a delivery by the agent's address (another conversation of theirs) counts; once a held lead is delivered the next hour charges it", async () => {
+  seedLive({ delivered: { thread_id: "another-conversation" } });
+  assert.equal((await liveRun()).charged, 1, "same agent, other conversation");
+  seedLive({ delivered: null });
+  assert.equal((await liveRun()).held, 1);
+  db.rows("os_brokerage_relays").push({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: BETA, thread_id: "ti-beta", agent_email: "someone-else@x.test" });
+  assert.equal((await liveRun()).charged, 1, "same conversation, reply from another address");
+  assert.equal(livePays(), 1);
+});
+
+test("no limit on the leads or the amount of an automatic charge (the user, 4 Nov): 30 delivered leads at $250 go, $7,500 at once", async () => {
+  seedLive({ settings: { price_cents: 25_000 } });
+  for (let i = 1; i <= 29; i++) {
+    addInterested({ thread: `many-${i}`, lead: `l-many-${i}`, email: `many${i}@x.test`, name: `Agent ${i}`, at: "2026-10-07T12:00:00.000Z", portal: LIVE });
+    db.rows("os_brokerage_relays").push({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: BETA, thread_id: `many-${i}`, agent_email: `many${i}@x.test` });
+  }
+  const r = await liveRun();
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.held, 0);
+  assert.equal(r.charged, 1);
+  assert.equal(betaRow()!.status, "paid");
+  assert.equal(betaRow()!.lead_count, 30);
+  assert.equal(betaRow()!.amount_cents, 750_000);
+  assert.equal(livePays(), 1);
+});
+
+test("Stripe's own ceiling, 250 lines on an invoice: nothing is half-built, and the bell says why", async () => {
+  seedLive({ settings: { price_cents: 25_000 } });
+  for (let i = 1; i <= 250; i++) {
+    addInterested({ thread: `many-${i}`, lead: `l-many-${i}`, email: `many${i}@x.test`, name: `Agent ${i}`, at: "2026-10-07T12:00:00.000Z", portal: LIVE });
+    db.rows("os_brokerage_relays").push({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: BETA, thread_id: `many-${i}`, agent_email: `many${i}@x.test` });
+  }
+  const r = await liveRun();
+  assert.equal(r.charged, 0);
+  assert.deepEqual(liveFake.creates(/./), []);
+  assert.equal(bell("usage_charge_error").length, 1);
+  assert.match(String(bell("usage_charge_error")[0].body), /more than the 250 allowed/);
+});
+
+test("held when the client isn't active, or isn't billed on Interested replies", async () => {
+  seedLive();
+  (db.rows("os_clients").find((c) => c.id === BETA) as Row).status = "churned";
+  assert.equal((await liveRun()).held, 1);
+  assert.match(String(bell("usage_charge_held")[0].body), /the client is churned/);
+  assert.deepEqual(liveFake.creates(/./), []);
+  seedLive({ settings: { lead_source: "calls" } });
+  assert.equal((await liveRun()).held, 1);
+  assert.match(String(betaRow()!.note), /only Interested replies/);
+  assert.deepEqual(liveFake.creates(/./), []);
+});
+
+test("a refused card: one try, the invoice stays open, a critical bell once, and no second charge by itself", async () => {
+  seedLive();
+  liveFake.declineNextPay = true;
+  const r = await liveRun();
+  assert.equal(r.refused, 1);
+  assert.equal(r.charged, 0);
+  assert.equal(betaRow()!.status, "failed");
+  assert.equal(bell("usage_charge_failed").length, 1);
+  assert.equal(bell("usage_charge_failed")[0].severity, "critical");
+  assert.match(String(bell("usage_charge_failed")[0].body), /press Retry/);
+  const pays = livePays();
+  const again = await liveRun();
+  assert.equal(again.charged, 0);
+  assert.equal(livePays(), pays, "never tried again by itself");
+  assert.equal(bell("usage_charge_failed").length, 1);
+});
+
+test("a period with no leads is left open, not closed for good: nothing to Stripe, nothing on the bell, and a lead put right charges next hour", async () => {
+  seedLive();
+  const history = db.rows("label_history").filter((h) => h.thread_id === "ti-beta");
+  const labelled = db.rows("label_assignments").filter((a) => a.target_id === "ti-beta");
+  db.seed("label_history", db.rows("label_history").filter((h) => h.thread_id !== "ti-beta"));
+  db.seed("label_assignments", db.rows("label_assignments").filter((a) => a.target_id !== "ti-beta"));
+  const r = await liveRun();
+  assert.deepEqual(r.errors, []);
+  assert.equal(betaRow()!.status, "preview");
+  assert.match(String(betaRow()!.note), /No leads/);
+  assert.deepEqual(liveFake.creates(/./), []);
+  assert.deepEqual(bell(), []);
+  db.rows("label_history").push(...history);
+  db.rows("label_assignments").push(...labelled);
+  assert.equal((await liveRun()).charged, 1);
+  assert.equal(betaRow()!.status, "paid");
+});
+
+test("no usable live key: nothing is charged, the period is previewed, and the bell says so once a day", async () => {
+  for (const make of [() => { throw new Error("That is not a live Stripe key"); }, () => stripe]) {
+    seedLive();
+    const r = await billing.runUsageBilling({ env: LIVE_ENV, now: NOW, stripe, liveStripe: make as () => typeof liveStripe });
+    await billing.runUsageBilling({ env: LIVE_ENV, now: NOW, stripe, liveStripe: make as () => typeof liveStripe });
+    assert.match(r.errors.join(" "), /live charging off/);
+    assert.equal(r.charged, 0);
+    assert.equal(betaRow()!.status, "preview");
+    assert.deepEqual(liveFake.calls, []);
+    assert.deepEqual(fake.calls, []);
+    assert.equal(bell("usage_auto_off").length, 1);
+  }
+});
+
+test("a test client is never charged with live Stripe, and stays a preview without the test switch", async () => {
+  liveFake.reset();
+  seed();
+  await withCard();
+  db.seed("os_notifications", []);
+  const r = await liveRun();
+  assert.equal(r.charged, 0);
+  assert.equal(rowsOf().find((x) => x.os_client_id === ACME)!.status, "preview");
+  assert.deepEqual(liveFake.calls, []);
+  assert.deepEqual(fake.calls, []);
+});
+
+test("a charge that died half way is never finished unattended: a person is told, and nothing reaches Stripe", async () => {
+  const card = seedLive();
+  db.rows("os_usage_billing_periods").push({ id: "d1", os_client_id: BETA, period_start: WEEK.start, period_end: WEEK.end, test_mode: false, status: "draft", claimed_by: "automatic run", claimed_at: "2026-10-14T01:00:00.000Z", leads: [], lead_count: 1, amount_cents: 10_000, price_cents: 10_000, lead_source: "handoffs" });
+  const r = await liveRun();
+  assert.equal(r.charged, 0);
+  assert.equal(r.skipped, 1);
+  assert.equal(bell("usage_charge_stuck").length, 1);
+  assert.deepEqual(liveFake.creates(/./), []);
+  assert.ok(card.customerId);
+});
+
+test("the Billing tab's switch writes only the switch: on, off, and a page left open from before is told", async () => {
+  seedLive({ settings: { enabled: false } });
+  const before = (await billing.loadSettings(BETA))!;
+  assert.equal((await billing.setAutoCharge(BETA, true, ADMIN)).enabled, true);
+  assert.equal((await liveRun()).charged, 1);
+  const off = await billing.setAutoCharge(BETA, false, ADMIN);
+  assert.equal(off.enabled, false);
+  assert.equal(off.test_only, false, "still live");
+  for (const k of ["price_cents", "every_days", "anchor_date", "lead_source", "stripe_customer_id", "default_payment_method_id"] as const) assert.equal(off[k], before[k], k);
+  await assert.rejects(billing.setAutoCharge(BETA, false, ADMIN), /changed since you looked/);
+  assert.equal((await billing.loadSettings(BETA))!.enabled, false);
+  const calls = liveFake.creates(/./).length;
+  assert.equal((await liveRun()).clients, 0);
+  assert.equal(liveFake.creates(/./).length, calls);
+  await assert.rejects(billing.setAutoCharge(ACME, true, ADMIN), /for live clients/);
+});
+
+test("a price saved from an older page can't turn automatic back on, or off", async () => {
+  seedLive({ settings: { enabled: false } });
+  const s = (await billing.loadSettings(BETA))!;
+  const form = { priceCents: 15_000, everyDays: s.every_days as 7 | 14, anchorDate: s.anchor_date, leadSource: s.lead_source as "handoffs" };
+  const saved = await billing.saveSettings(BETA, { ...form, enabled: true }, ADMIN);
+  assert.equal(saved.enabled, false, "Stop stays stopped");
+  assert.equal(saved.price_cents, 15_000);
+  await billing.setAutoCharge(BETA, true, ADMIN);
+  assert.equal((await billing.saveSettings(BETA, { ...form, enabled: false }, ADMIN)).enabled, true, "On stays on");
+  // A test client's box still saves.
+  assert.equal((await billing.saveSettings(ACME, { ...form, anchorDate: ANCHOR, enabled: false }, ADMIN)).enabled, false);
+});
+
+test("going live never carries 'In the scheduled run' into automatic charging", async () => {
+  liveFake.reset();
+  const card = liveFake.addCustomerWithCard({ name: "Acme Realty" });
+  seed();
+  db.seed("os_notifications", []);
+  assert.equal((await billing.loadSettings(ACME))!.enabled, true);
+  const live = await billing.connectCard(ACME, { customerId: card.customerId, paymentMethodId: card.paymentMethodId }, liveStripe, ADMIN);
+  assert.equal(live.test_only, false);
+  assert.equal(live.enabled, false);
+  assert.equal((await liveRun()).clients, 0);
+  assert.deepEqual(liveFake.creates(/./), [], "the first run charges nothing");
+  // Changing the card later leaves the switch alone.
+  await billing.setAutoCharge(ACME, true, ADMIN);
+  assert.equal((await billing.connectCard(ACME, { customerId: card.customerId, paymentMethodId: card.paymentMethodId }, liveStripe, ADMIN)).enabled, true);
+});
+
+test("turning automatic on never sweeps up old periods: the one in the last two days goes, older ones ring once and wait", async () => {
+  seedLive();
+  // Oct 28: the week of the lead (Oct 5-12) ended 16 days ago.
+  const later = new Date("2026-10-28T15:00:00.000Z");
+  const r = await liveRun({ now: later });
+  await liveRun({ now: later });
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.charged, 0);
+  assert.deepEqual(liveFake.creates(/./), []);
+  assert.equal(bell("usage_charge_missed").length, 1);
+  assert.match(String(bell("usage_charge_missed")[0].title), /\$100\.00 from Oct 5/);
+  assert.equal(rowsOf().find((x) => x.os_client_id === BETA && x.period_start === WEEK.start), undefined, "no row written for it");
+  // Two days after it ended it still goes; three days after it doesn't.
+  seedLive();
+  assert.equal((await liveRun({ now: new Date("2026-10-15T15:00:00.000Z") })).charged, 0, "Oct 15: 3 days after");
+  assert.equal(bell("usage_charge_missed").length, 1);
+  seedLive();
+  assert.equal((await liveRun({ now: new Date("2026-10-14T15:00:00.000Z") })).charged, 1, "Oct 14: 2 days after");
+});
+
+test("a held period that leaves the window rings again, so it can't go quiet", async () => {
+  seedLive({ delivered: null });
+  assert.equal((await liveRun()).held, 1);
+  await liveRun({ now: new Date("2026-10-20T15:00:00.000Z") });
+  assert.equal(bell("usage_charge_held").length, 1);
+  assert.equal(bell("usage_charge_missed").length, 1);
+});
+
+test("a period opened again is a person's: the run doesn't charge it, and a second refusal rings again", async () => {
+  seedLive();
+  liveFake.declineNextPay = true;
+  await liveRun();
+  const first = { ...betaRow()! };
+  assert.equal(first.status, "failed");
+  // The invoice is voided in Stripe; Retry says "opened again ... preview and charge it again".
+  const inv = liveFake.invoices.get(String(first.stripe_invoice_id))!;
+  Object.assign(inv, { status: "void" });
+  const settings = (await billing.loadSettings(BETA))!;
+  const reopened = await billing.retryPeriod(BETA, WEEK.start, liveStripe, ADMIN, { amountCents: first.amount_cents as number, mode: "live", paymentMethodId: settings.default_payment_method_id ?? undefined, count: first.lead_count as number, leadsHash: leadsHash(first.leads as Array<{ key: string }>) }, NOW);
+  assert.equal(reopened.row?.status, "preview");
+  const pays = livePays();
+  assert.equal((await liveRun()).charged, 0);
+  assert.equal(livePays(), pays, "the run waits for the person");
+  assert.equal(liveFake.creates(/^\/invoices$/).length, 1, "no new invoice");
+  // The person charges it; refused again: news again.
+  const p = await billing.previewPeriod(BETA, settings, { periodStart: WEEK.start, now: NOW });
+  liveFake.declineNextPay = true;
+  // A minute later: a new claim, so a new invoice (the voided one is never reused).
+  await billing.chargePeriod(BETA, { stripe: liveStripe, by: ADMIN, periodStart: WEEK.start, now: new Date(NOW.getTime() + 60_000), approved: { periodStart: WEEK.start, count: p.count, amountCents: p.amountCents, mode: "live", paymentMethodId: settings.default_payment_method_id ?? undefined, leadsHash: p.leadsHash } });
+  assert.equal(betaRow()!.status, "failed");
+  assert.notEqual(betaRow()!.stripe_invoice_id, first.stripe_invoice_id);
+  await liveRun();
+  assert.equal(bell("usage_charge_failed").length, 2);
+});
+
+test("a recorded preview keeps 'opened again', so turning automatic off and on can't lose it", async () => {
+  seedLive();
+  db.rows("os_usage_billing_periods").push({ id: "r1", os_client_id: BETA, period_start: WEEK.start, period_end: WEEK.end, test_mode: false, status: "preview", leads: [], lead_count: 0, amount_cents: 0, price_cents: 10_000, lead_source: "handoffs", note: "Its invoice was voided in Stripe (nothing collected) — opened again by admin; preview and charge it again." });
+  await liveRun({ env: { ...RAILWAY, OS_USAGE_BILLING_ENABLED: "1" } });
+  assert.match(String(betaRow()!.note), /opened again by/);
+  assert.equal((await liveRun()).charged, 0);
+  assert.deepEqual(liveFake.creates(/./), []);
+});
+
+test("the next period waits for a person while an earlier refused charge is unpaid; paid, it goes", async () => {
+  seedLive();
+  liveFake.declineNextPay = true;
+  await liveRun();
+  addInterested({ thread: "ti-beta2", lead: "l-beta2", email: "second@x.test", name: "Second Agent", at: "2026-10-14T15:00:00.000Z", portal: LIVE });
+  db.rows("os_brokerage_relays").push({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: BETA, thread_id: "ti-beta2", agent_email: "second@x.test" });
+  const nextWeek = new Date("2026-10-20T15:00:00.000Z");
+  const pays = livePays();
+  const r = await liveRun({ now: nextWeek });
+  assert.equal(r.held, 1);
+  assert.equal(r.charged, 0);
+  assert.equal(livePays(), pays);
+  assert.match(String(bell("usage_charge_held")[0].body), /earlier charge was refused/);
+  liveFake.payByLink(String(rowsOf().find((x) => x.os_client_id === BETA && x.period_start === WEEK.start)!.stripe_invoice_id));
+  assert.equal((await liveRun({ now: nextWeek })).charged, 1);
+});
+
+test("the refused-card hold: stays when Stripe can't be asked, and doesn't lift after eight newer rows", async () => {
+  seedLive();
+  liveFake.declineNextPay = true;
+  await liveRun();
+  const refusedInvoice = String(betaRow()!.stripe_invoice_id);
+  addInterested({ thread: "ti-beta2", lead: "l-beta2", email: "second@x.test", name: "Second Agent", at: "2026-10-14T15:00:00.000Z", portal: LIVE });
+  db.rows("os_brokerage_relays").push({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: BETA, thread_id: "ti-beta2", agent_email: "second@x.test" });
+  const pays = livePays();
+  liveFake.failWhen = (c) => c.method === "GET" && c.path === `/invoices/${refusedInvoice}`;
+  const r = await liveRun({ now: new Date("2026-10-20T15:00:00.000Z") });
+  liveFake.failWhen = null;
+  assert.equal(r.charged, 0);
+  assert.equal(r.held, 1);
+  assert.equal(livePays(), pays);
+  // Nine newer preview rows don't push the refused one out of sight.
+  for (let i = 1; i <= 9; i++) db.rows("os_usage_billing_periods").push({ id: `n${i}`, os_client_id: BETA, period_start: `2027-01-0${i}`, period_end: `2027-01-1${i}`, test_mode: false, status: "preview", leads: [], lead_count: 0, amount_cents: 0, price_cents: 10_000, lead_source: "handoffs" });
+  assert.equal((await liveRun({ now: new Date("2026-10-20T15:00:00.000Z") })).held, 1);
+  assert.equal(livePays(), pays);
+});
+
+test("an invoice deleted in Stripe opens the period again, and the run stays off it", async () => {
+  seedLive();
+  const settings = (await billing.loadSettings(BETA))!;
+  const p = await billing.previewPeriod(BETA, settings, { periodStart: WEEK.start, now: NOW });
+  const approved = { periodStart: WEEK.start, count: p.count, amountCents: p.amountCents, mode: "live" as const, paymentMethodId: settings.default_payment_method_id ?? undefined, leadsHash: p.leadsHash };
+  // A person's charge dies half way, leaving its draft; the draft is then deleted in Stripe, and their next press finds it gone.
+  liveFake.failWhen = (c) => c.method === "POST" && /\/finalize$/.test(c.path);
+  await billing.chargePeriod(BETA, { stripe: liveStripe, by: ADMIN, periodStart: WEEK.start, now: NOW, approved }).catch(() => null);
+  liveFake.failWhen = null;
+  assert.equal(betaRow()!.status, "draft");
+  liveFake.invoices.delete(String(betaRow()!.stripe_invoice_id));
+  await billing.chargePeriod(BETA, { stripe: liveStripe, by: ADMIN, periodStart: WEEK.start, now: new Date(NOW.getTime() + 60 * 60_000), approved });
+  assert.equal(betaRow()!.status, "preview");
+  assert.equal(isReopened(betaRow()!.note as string), true);
+  const r = await liveRun({ now: new Date(NOW.getTime() + 2 * 60 * 60_000) });
+  assert.equal(r.charged, 0);
+  assert.equal(livePays(), 0);
+});
+
+test("an agent billed in another period at the same moment: the claim lets go, nothing reaches Stripe, and the run stays off it", async () => {
+  seedLive();
+  db.failWhen = (c) => {
+    if (c.table === "os_usage_billing_periods" && c.method === "PATCH") {
+      db.failWhen = null;
+      db.rows("os_usage_billing_periods").push({ id: "o1", os_client_id: BETA, period_start: "2026-09-28", period_end: "2026-10-05", test_mode: false, status: "paid", leads: [{ key: "beta@x.test", name: "Beta's", at: "2026-09-29T00:00:00.000Z", source: "interested" }], lead_count: 1, amount_cents: 10_000, price_cents: 10_000, lead_source: "handoffs" });
+    }
+    return false;
+  };
+  const r = await liveRun();
+  assert.equal(r.charged, 0);
+  assert.match(r.errors.join(" "), /just billed in another period/);
+  assert.equal(bell("usage_charge_error").length, 1);
+  const row = rowsOf().find((x) => x.os_client_id === BETA && x.period_start === WEEK.start)!;
+  assert.equal(row.status, "preview");
+  assert.equal(isReopened(row.note as string), true);
+  assert.deepEqual(liveFake.creates(/./), []);
+});
+
+test("a period billed only in test mode, before going live, doesn't ring 'hasn't been charged'", async () => {
+  seedLive();
+  db.rows("os_usage_billing_periods").push({ id: "t1", os_client_id: BETA, period_start: WEEK.start, period_end: WEEK.end, test_mode: true, status: "paid", leads: [], lead_count: 1, amount_cents: 10_000, price_cents: 10_000, lead_source: "handoffs" });
+  const r = await liveRun({ now: new Date("2026-10-28T15:00:00.000Z") });
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(bell("usage_charge_missed"), []);
+});
+
+test("a read failing on an old period is logged, and doesn't ring as a charge that couldn't run", async () => {
+  seedLive();
+  const r = await billing.runUsageBilling({ env: LIVE_ENV, now: new Date("2026-10-28T15:00:00.000Z"), stripe, liveStripe: () => liveStripe, source: async (_id, from) => { if (from === WEEK.start) throw new Error("no portal"); return []; } });
+  assert.match(r.errors.join(" "), /older: no portal/);
+  assert.deepEqual(bell(), []);
+});
+
+test("a test client's form saved while someone takes it live: told, and the new live client stays off", async () => {
+  seedLive();
+  const acme = () => db.rows("os_usage_billing_settings").find((x) => x.os_client_id === ACME) as Row;
+  // Goes live after the save read the row, just before its write lands.
+  db.failWhen = (c) => {
+    if (c.table === "os_usage_billing_settings" && c.method === "PATCH") { acme().test_only = false; db.failWhen = null; }
+    return false;
+  };
+  await assert.rejects(billing.saveSettings(ACME, { priceCents: 10_000, everyDays: 7, anchorDate: ANCHOR, leadSource: "handoffs", enabled: true }, ADMIN), /changed while you were saving/);
+  assert.equal(acme().enabled, false);
+});
+
+test("Stop pressed while the run is counting: the switch as it is now decides", async () => {
+  seedLive();
+  const counted = await billing.runUsageBilling({
+    env: LIVE_ENV, now: NOW, stripe, liveStripe: () => liveStripe,
+    source: async (_id, _from, _to) => {
+      (db.rows("os_usage_billing_settings").find((x) => x.os_client_id === BETA) as Row).enabled = false;
+      return [{ key: "beta@x.test", name: "Beta's", at: "2026-10-06T17:00:00.000Z", source: "interested", thread: "ti-beta" }];
+    },
+  });
+  assert.equal(counted.charged, 0);
+  assert.deepEqual(liveFake.creates(/./), []);
+});
+
+test("the client's status can't be read: nothing is charged, the run and the bell say why, and it goes next hour", async () => {
+  seedLive();
+  db.failWhen = (c) => c.table === "os_clients" && c.method === "GET";
+  const r = await liveRun();
+  db.failWhen = null;
+  assert.equal(r.charged, 0);
+  assert.equal(r.held, 0, "not 'the client isn't active': it wasn't read");
+  assert.match(r.errors.join(" "), /os_clients/);
+  assert.deepEqual(liveFake.creates(/./), []);
+  assert.equal(bell("usage_charge_error").length, 1);
+  assert.equal((await liveRun()).charged, 1);
+});
+
+test("the count can't be read: nothing is charged, the bell tells the truth about what happens next", async () => {
+  seedLive();
+  await billing.runUsageBilling({ env: LIVE_ENV, now: NOW, stripe, liveStripe: () => liveStripe, source: async () => { throw new Error("the label history can't be read"); } });
+  assert.deepEqual(liveFake.creates(/./), []);
+  assert.equal(bell("usage_charge_error").length, 1);
+  assert.match(String(bell("usage_charge_error")[0].body), /label history can't be read.*looks again next hour/);
+});
+
+test("with the test switch on too, a live client still goes through live Stripe and a test client through test Stripe", async () => {
+  const card = liveFake.addCustomerWithCard({ name: "unused" });
+  assert.ok(card);
+  seedLive({ settings: {} });
+  await withCard();
+  (db.rows("os_usage_billing_settings").find((x) => x.os_client_id === ACME) as Row).enabled = true;
+  const r = await liveRun({ env: { ...LIVE_ENV, OS_USAGE_BILLING_CHARGE: "1" } });
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.charged, 2);
+  assert.equal(rowsOf().find((x) => x.os_client_id === ACME)!.test_mode, true);
+  assert.equal(betaRow()!.test_mode, false);
+  assert.equal(livePays(), 1);
+  assert.equal(fake.creates(/\/pay$/).length, 1);
+  assert.ok(liveFake.calls.every((c) => !JSON.stringify(c.params).includes("cus_test")));
+});
+
+test("Homebase's shape: every 14 days from Oct 28, two delivered leads. Nothing at 8:59am on Nov 11, $500 once at 9:00", async () => {
+  seedLive({ settings: { anchor_date: "2026-10-28", every_days: 14, price_cents: 25_000 } });
+  db.rows("os_brokerage_relays").length = 0;
+  for (const [thread, lead, email, name, at] of [["th-john", "l-john", "john@x.test", "John Kaye", "2026-11-04T00:29:42.000Z"], ["th-ram", "l-ram", "ram@x.test", "Ram Ethirajan", "2026-11-04T04:07:21.000Z"]] as const) {
+    addInterested({ thread, lead, email, name, at, portal: LIVE, now: "lab-int" });
+    db.rows("os_brokerage_relays").push({ workspace_id: "w", kind: "handoff", status: "sent", practice: false, os_client_id: BETA, thread_id: thread, agent_email: email });
+  }
+  const start = "2026-10-28";
+  const row = () => rowsOf().find((x) => x.os_client_id === BETA && x.period_start === start);
+  await liveRun({ now: new Date("2026-11-11T04:30:00.000Z") });
+  await liveRun({ now: new Date("2026-11-11T13:59:00.000Z") });
+  assert.equal(row(), undefined);
+  assert.deepEqual(liveFake.creates(/./), []);
+  const r = await liveRun({ now: new Date("2026-11-11T14:00:00.000Z") });
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.charged, 1);
+  assert.equal(row()!.status, "paid");
+  assert.equal(row()!.lead_count, 2);
+  assert.equal(row()!.amount_cents, 50_000);
+  assert.equal(livePays(), 1);
+  assert.match(String(bell("usage_charged")[0].title), /\$500/);
+  assert.equal((await liveRun({ now: new Date("2026-11-11T15:00:00.000Z") })).charged, 0);
+  assert.equal(livePays(), 1);
+});
+
+test("an open invoice the client paid by its link settles on the next run, and the bell says it was paid", async () => {
+  seedLive();
+  liveFake.declineNextPay = true;
+  await liveRun();
+  assert.equal(betaRow()!.status, "failed");
+  liveFake.payByLink(String(betaRow()!.stripe_invoice_id));
+  await liveRun();
+  assert.equal(betaRow()!.status, "paid");
+  assert.equal(bell("usage_charged").length, 1);
+  assert.match(String(bell("usage_charged")[0].title), /Beta Homes paid \$100/);
+  assert.equal(livePays(), 1, "the run itself paid nothing more");
 });
 
 test("the scheduled run without a usable TEST key charges nothing (and says why)", async () => {

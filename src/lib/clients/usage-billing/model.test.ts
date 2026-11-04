@@ -9,6 +9,7 @@ import {
   addDays, amountCents, dedupeLeads, DEFAULT_LEAD_SOURCE, duePeriods, easternDay, easternMidnight, invoiceDescription, isDay, isPeriodStart,
   keysAlreadyBilled, lastCompletedPeriod, lineDescription, parseFakeLeads, parseSettingsInput, periodKey, periodLabel, periodOf, periodWindow,
   modeOf, scheduledChargeAllowed, schedulerAllowed, settingsRefusal, shortHash, testBillingRefusal, type BillableLead,
+  autoChargeHold, autoChargeInWindow, autoChargeProblem, easternHour, isReopened, liveAutoChargeAllowed,
 } from "./model.ts";
 
 const lead = (key: string, at: string, name = key): BillableLead => ({ key, name, at, source: "handoff" });
@@ -187,4 +188,56 @@ test("the onboarding products: a price and what is counted, and their own words"
     assert.ok(!("error" in r), `${p.label} saves`);
   }
   assert.ok("error" in parseSettingsInput({ priceCents: 15_000, leadSource: "meetings", everyDays: 7, anchorDate: "2026-10-26" }));
+});
+
+test("easternHour: the Eastern wall clock, through the clock change", () => {
+  assert.equal(easternHour("2026-10-14T13:00:00.000Z"), 9, "summer: UTC-4");
+  assert.equal(easternHour("2026-11-11T14:00:00.000Z"), 9, "winter: UTC-5");
+  assert.equal(easternHour("2026-11-11T13:59:00.000Z"), 8);
+  assert.equal(easternHour("2026-11-11T05:00:00.000Z"), 0, "midnight is 0, not 24");
+  assert.equal(easternHour("2026-11-01T04:59:00.000Z"), 0, "Nov 1, before the change");
+  assert.equal(easternHour("2026-11-01T05:30:00.000Z"), 1, "1:30am EDT");
+  assert.equal(easternHour("2026-11-01T06:30:00.000Z"), 1, "1:30am EST, the hour again");
+  assert.equal(easternHour("2026-11-01T14:00:00.000Z"), 9, "Nov 1, after it");
+});
+
+test("autoChargeHold: every lead delivered and the rest in order, or the reason in words", () => {
+  const lead = (key: string, thread?: string) => ({ key, name: key, at: "2026-11-04T00:00:00.000Z", source: "interested", thread });
+  const ok = { clientStatus: "active", leadSource: "handoffs", leads: [lead("a@x.test", "t1"), lead("b@x.test", "t2")], delivered: { threads: new Set(["t1", "t2"]), keys: new Set<string>() } };
+  assert.equal(autoChargeHold(ok), null);
+  assert.equal(autoChargeHold({ ...ok, delivered: { threads: new Set(["t1"]), keys: new Set(["b@x.test"]) } }), null, "by the agent's address");
+  assert.match(autoChargeHold({ ...ok, delivered: { threads: new Set(["t1"]), keys: new Set<string>() } })!, /^b@x\.test has no delivery/);
+  assert.match(autoChargeHold({ ...ok, delivered: { threads: new Set<string>(), keys: new Set<string>() } })!, /a@x\.test, b@x\.test have no delivery/);
+  assert.match(autoChargeHold({ ...ok, clientStatus: "paused" })!, /client is paused/);
+  assert.match(autoChargeHold({ ...ok, clientStatus: null })!, /client is not active/);
+  assert.match(autoChargeHold({ ...ok, leadSource: "calls" })!, /only Interested/);
+  assert.match(autoChargeHold({ ...ok, earlierRefused: true })!, /earlier charge was refused/);
+});
+
+test("liveAutoChargeAllowed: exactly its own switch", () => {
+  assert.equal(liveAutoChargeAllowed({ OS_USAGE_BILLING_LIVE_AUTO: "1" }), true);
+  for (const env of [{}, { OS_USAGE_BILLING_LIVE_AUTO: "true" }, { OS_USAGE_BILLING_ENABLED: "1", OS_USAGE_BILLING_CHARGE: "1" }]) assert.equal(liveAutoChargeAllowed(env), false);
+});
+
+test("autoChargeInWindow: the day a period ends through two days after, never before or later", () => {
+  const p = { start: "2026-10-28", end: "2026-11-11" };
+  assert.equal(autoChargeInWindow(p, "2026-11-10"), false);
+  assert.equal(autoChargeInWindow(p, "2026-11-11"), true);
+  assert.equal(autoChargeInWindow(p, "2026-11-13"), true);
+  assert.equal(autoChargeInWindow(p, "2026-11-14"), false);
+});
+
+test("isReopened: the note every way of opening a period again writes", () => {
+  assert.equal(isReopened("Its invoice was voided in Stripe (nothing collected) — opened again by admin@outreachify.io; preview and charge it again."), true);
+  assert.equal(isReopened("Preview 2026-11-11T14:00Z — not charged"), false);
+  assert.equal(isReopened(null), false);
+});
+
+test("autoChargeProblem: what the Billing tab says instead of a plain Automatic", () => {
+  const ok = { clientStatus: "active", leadSource: "handoffs", hasCard: true, liveKey: "live" };
+  assert.equal(autoChargeProblem(ok), null);
+  assert.match(autoChargeProblem({ ...ok, liveKey: "missing" })!, /live Stripe key/);
+  assert.match(autoChargeProblem({ ...ok, hasCard: false })!, /no card/);
+  assert.match(autoChargeProblem({ ...ok, clientStatus: "paused" })!, /client is paused/);
+  assert.match(autoChargeProblem({ ...ok, leadSource: "calls" })!, /only Interested/);
 });

@@ -141,7 +141,7 @@ test("saving makes the client a TEST client (test_only = true) and touches no St
   assert.equal(g.settings.test_only, true);
   assert.equal(g.keyState, "missing");
   assert.equal(g.refusal, null);
-  assert.deepEqual(g.flags, { scheduler: false, charge: false });
+  assert.deepEqual(g.flags, { scheduler: false, charge: false, liveAuto: false });
   assert.deepEqual(stripe.calls, []);
 });
 
@@ -709,3 +709,53 @@ test("LIVE go-live: refused when the price or schedule changed since the page wa
   assert.equal(again.status, 409);
   assert.match((await again.json()).error, /already live/);
 });
+
+/* ---------------------------------- a live client: its switch and its saves (4 Nov) --- */
+
+const LIVE_ROW = { os_client_id: BETA, enabled: false, test_only: false, price_cents: 25_000, every_days: 14, anchor_date: "2026-10-28", lead_source: "handoffs", stripe_customer_id: "cus_live", default_payment_method_id: "pm_live", card_label: "Visa •••• 4242" };
+const betaSettings = () => db.rows("os_usage_billing_settings").find((r) => r.os_client_id === BETA) as Record<string, unknown>;
+
+test("set_auto: the billing people only, from their own page, live clients only; it writes the switch and charges nothing", async () => {
+  seed([{ ...LIVE_ROW }, { ...LIVE_ROW, os_client_id: ACME, test_only: true }]);
+  const on = { clientId: BETA, action: "set_auto", on: true };
+  assert.equal((await post(null, on)).status, 404);
+  assert.equal((await post("someone@brokerstaffer.com", on)).status, 404);
+  assert.equal((await post(ADMIN, on, { "sec-fetch-site": "cross-site" })).status, 403);
+  assert.equal((await post(ADMIN, { ...on, on: "yes" })).status, 400);
+  assert.equal((await post(ADMIN, { ...on, clientId: ACME })).status, 409, "a test client");
+  assert.equal(betaSettings().enabled, false);
+  const r = await post(ADMIN, on);
+  assert.equal(r.status, 200);
+  assert.equal(betaSettings().enabled, true);
+  for (const [k, v] of Object.entries(LIVE_ROW)) if (k !== "enabled") assert.equal(betaSettings()[k], v, k);
+  assert.equal((await post(ADMIN, on)).status, 409, "a page from before: told, nothing changed");
+  assert.deepEqual(liveStripe.calls, []);
+  assert.deepEqual(stripe.calls, []);
+  assert.equal((await post(ADMIN, { ...on, on: false })).status, 200);
+  assert.equal(betaSettings().enabled, false);
+});
+
+test("a live client's save: only over the price and schedule the person saw, and it never touches the switch", async () => {
+  seed([{ ...LIVE_ROW, enabled: true }]);
+  const form = { clientId: BETA, action: "save", price: "300", everyDays: 14, anchorDate: "2026-10-28", leadSource: "handoffs", enabled: false };
+  assert.equal((await post(ADMIN, form)).status, 409, "no expect");
+  assert.equal((await post(ADMIN, { ...form, expect: { priceCents: 25_000, everyDays: 14, anchorDate: "2026-10-21" } })).status, 409, "a schedule corrected since");
+  assert.equal((await post(ADMIN, { ...form, expect: { priceCents: 20_000, everyDays: 14, anchorDate: "2026-10-28" } })).status, 409, "a price changed since");
+  assert.equal(betaSettings().price_cents, 25_000);
+  const ok = await post(ADMIN, { ...form, expect: { priceCents: 25_000, everyDays: 14, anchorDate: "2026-10-28" } });
+  assert.equal(ok.status, 200);
+  assert.equal(betaSettings().price_cents, 30_000);
+  assert.equal(betaSettings().enabled, true, "the switch stays as it was");
+});
+
+test("the Billing tab reads what automatic charging would really do", async () => {
+  seed([{ ...LIVE_ROW, enabled: true }]);
+  process.env.ONBOARDING_STRIPE_SECRET_KEY = "sk_live_51FakeFakeFakeFake";
+  const read = async () => (await GET(new Request(`https://os.test/api/workspace/clients/billing/usage?clientId=${BETA}`, { headers: { cookie: await cookie(ADMIN) } }))).json();
+  assert.equal((await read()).autoProblem, null);
+  (db.rows("os_clients").find((c) => c.id === BETA) as Record<string, unknown>).status = "paused";
+  assert.match((await read()).autoProblem, /client is paused/);
+  delete process.env.ONBOARDING_STRIPE_SECRET_KEY;
+  assert.match((await read()).autoProblem, /live Stripe key/);
+});
+

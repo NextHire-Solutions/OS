@@ -276,13 +276,16 @@ export async function register() {
   setInterval(warmMarketsSafely, 120_000).unref?.();
 
   /*
-   * Pay per lead (26 Oct; lib/clients/usage-billing/) — TEST MODE ONLY. Does
-   * not exist unless OS_USAGE_BILLING_ENABLED=1 is set AND it runs on Railway
-   * (neither is set today). Even then it only records previews of each enabled
-   * client's ended periods, unless OS_USAGE_BILLING_CHARGE=1 is set as well;
-   * and it charges only clients marked test_only, with a Stripe TEST key
-   * (OS_USAGE_BILLING_STRIPE_KEY — a live key is refused). Hourly; a period is
-   * billed once however many replicas run it (the period row's claim).
+   * Pay per lead (26 Oct; lib/clients/usage-billing/). Does not exist unless
+   * OS_USAGE_BILLING_ENABLED=1 is set AND it runs on Railway. Then, for each
+   * enabled client's ended periods, it records previews, unless:
+   *   - OS_USAGE_BILLING_CHARGE=1 and a Stripe TEST key: a test client is charged
+   *     in test mode (OS_USAGE_BILLING_STRIPE_KEY — a live key is refused);
+   *   - OS_USAGE_BILLING_LIVE_AUTO=1 and the live key: a LIVE client is charged
+   *     (4 Nov, the client's decision), if every lead reached its inbox;
+   *     otherwise held for a person (billing.ts).
+   * Hourly; a period is billed once however many replicas run it (the period
+   * row's claim).
    */
   const { schedulerAllowed } = await import("./lib/clients/usage-billing/model");
   if (schedulerAllowed(process.env)) {
@@ -292,10 +295,11 @@ export async function register() {
       usageRunning = true;
       try {
         const { runUsageBilling } = await import("./lib/clients/usage-billing/billing");
-        const r = await runUsageBilling();
-        if (r.previews || r.charged || r.errors.length) {
-          console.log(`[usage-billing] TEST MODE · ${r.clients} client(s) · ${r.previews} preview(s) · ${r.charged} charged${r.errors.length ? ` · ${r.errors.join(" | ")}` : ""}`);
-        }
+        const { usageBillingLiveKey } = await import("./lib/clients/usage-billing/live-key");
+        const { usageStripe } = await import("./lib/clients/usage-billing/stripe");
+        const r = await runUsageBilling({ liveStripe: () => usageStripe(usageBillingLiveKey(), fetch, "live") });
+        // Every run, even a quiet one: the log is how anyone can tell the hourly run is alive.
+        console.log(`[usage-billing] ${r.clients} client(s) · ${r.previews} preview(s) · ${r.charged} charged · ${r.held} held · ${r.refused} refused${r.errors.length ? ` · ${r.errors.join(" | ")}` : ""}`);
       } finally {
         usageRunning = false;
       }

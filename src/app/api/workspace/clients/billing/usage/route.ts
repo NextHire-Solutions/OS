@@ -1,17 +1,19 @@
-import { NextResponse } from "next/server";
+import {
+ NextResponse } from "next/server";
 
 import { clientsChanged } from "@/lib/clients/after-change";
 import { getAccountBilling } from "@/lib/clients/billing-account";
 import { billingTabUser } from "@/lib/clients/billing-user";
 import { osTable } from "@/lib/clients/os-db";
 import {
-  cardOptions, chargePeriod, confirmSetup, connectCard, createSetupLink, listPeriods, loadSettings, previewPeriod, refreshPeriod, retryPeriod, saveSettings,
+  cardOptions, chargePeriod, confirmSetup, connectCard, createSetupLink, listPeriods, loadSettings, previewPeriod, refreshPeriod, retryPeriod, saveSettings, setAutoCharge,
   UsageBillingError, type Approved,
 } from "@/lib/clients/usage-billing/billing";
 import { usageBillingLiveKey } from "@/lib/clients/usage-billing/live-key";
 import {
   DEFAULT_LEAD_SOURCE, duePeriods, easternDay, LEAD_SOURCE_NAMES, lastCompletedPeriod, modeOf, parseSettingsInput, periodLabel, periodOf,
   settingsRefusal, testBillingRefusal, type EveryDays, type SettingsRow,
+  autoChargeProblem, liveAutoChargeAllowed, schedulerAllowed,
 } from "@/lib/clients/usage-billing/model";
 import { usageBillingKeyState, usageBillingStripeKey, UsageBillingKeyError, type UsageMode } from "@/lib/clients/usage-billing/stripe-key";
 import { usageStripe, UsageStripeError, type UsageStripe } from "@/lib/clients/usage-billing/stripe";
@@ -28,13 +30,16 @@ import { publicOrigin } from "@/lib/mcp/oauth";
  *     each refused before a request is built (stripe-key.ts).
  *   - A client becomes live only by "connect_card" with mode "live" and
  *     goLive: true — a person picking the client's card on file in live Stripe.
- *   - A live client is charged only with `approved` — the period, leads and
- *     amount the person saw — and only for a period that has ended. The test
- *     tools (card-setup page, fake leads) are refused for a live client.
+ *   - A live client is charged only for a period that has ended: here, with
+ *     `approved` — the period, leads and amount the person saw; or by the
+ *     scheduled run, once someone turned automatic charging on ("set_auto";
+ *     billing.ts chargeLiveByRun). The test tools (card-setup page, fake leads)
+ *     are refused for a live client.
  *   - POSTs only from the OS's own page (as the refund route).
  *
  *   GET  ?clientId=…                                   settings, mode, periods, the schedule, the invoices
- *   POST { clientId, action: "save", price | priceCents, everyDays, anchorDate, leadSource?, enabled? }
+ *   POST { clientId, action: "save", price | priceCents, everyDays, anchorDate, leadSource?, enabled?, expect? }   a live client: `expect` required
+ *   POST { clientId, action: "set_auto", on }          LIVE: automatic charging on or off, nothing else; charges nothing itself
  *   POST { clientId, action: "setup_link" }            TEST: a Checkout page (mode=setup) to save a card (4242…)
  *   POST { clientId, action: "confirm_setup" }         TEST: reads it back; its card becomes the default
  *   POST { clientId, action: "find_cards", mode, customerId? }   the client's customers and their cards on file
@@ -49,7 +54,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store, private, max-age=0" };
 const say = (status: number, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ACTIONS = new Set(["save", "setup_link", "confirm_setup", "find_cards", "connect_card", "preview", "charge", "retry", "refresh"]);
+const ACTIONS = new Set(["save", "set_auto", "setup_link", "confirm_setup", "find_cards", "connect_card", "preview", "charge", "retry", "refresh"]);
 
 /* The staff cookie travels with requests from other brokerstaffer.com sites too: a write comes only from this page. */
 function fromOwnPage(request: Request): boolean {
@@ -59,9 +64,9 @@ function fromOwnPage(request: Request): boolean {
   return request.headers.get("origin") === publicOrigin();
 }
 
-async function clientRecord(clientId: string): Promise<{ id: string; stripe_customer_id: string | null } | null> {
-  const { data } = await osTable("os_clients").select("id, stripe_customer_id").eq("id", clientId).maybeSingle();
-  return (data as { id: string; stripe_customer_id: string | null } | null) ?? null;
+async function clientRecord(clientId: string): Promise<{ id: string; stripe_customer_id: string | null; status: string | null } | null> {
+  const { data } = await osTable("os_clients").select("id, stripe_customer_id, status").eq("id", clientId).maybeSingle();
+  return (data as { id: string; stripe_customer_id: string | null; status: string | null } | null) ?? null;
 }
 
 /** The Stripe a mode bills with — its key checked before the client is built. */
@@ -151,7 +156,8 @@ export async function GET(request: Request) {
   const who = await billingTabUser(request);
   if (who instanceof NextResponse) return who;
   const clientId = new URL(request.url).searchParams.get("clientId") ?? "";
-  if (!UUID.test(clientId) || !(await clientRecord(clientId))) return say(404, "No such client.");
+  const clientRow = UUID.test(clientId) ? await clientRecord(clientId) : null;
+  if (!clientRow) return say(404, "No such client.");
   try {
     const keyState = usageBillingKeyState();
     const settings = await loadSettings(clientId);
@@ -187,7 +193,10 @@ export async function GET(request: Request) {
       settings, mode, periods, schedule, invoices, invoicesError, today,
       keyState, liveKeyState: liveKey,
       refusal: settings ? settingsRefusal(settings) : null,
-      flags: { scheduler: process.env.OS_USAGE_BILLING_ENABLED === "1", charge: process.env.OS_USAGE_BILLING_CHARGE === "1" },
+      flags: { scheduler: process.env.OS_USAGE_BILLING_ENABLED === "1", charge: process.env.OS_USAGE_BILLING_CHARGE === "1", liveAuto: schedulerAllowed(process.env) && liveAutoChargeAllowed(process.env) },
+      autoProblem: settings && mode === "live"
+        ? autoChargeProblem({ clientStatus: clientRow.status, leadSource: settings.lead_source, hasCard: !!settings.stripe_customer_id && !!settings.default_payment_method_id, liveKey: liveKey })
+        : null,
       leadSources: LEAD_SOURCE_NAMES,
       defaultLeadSource: DEFAULT_LEAD_SOURCE,
     }, { headers: NO_STORE });
@@ -211,8 +220,17 @@ export async function POST(request: Request) {
     if (action === "save") {
       const input = parseSettingsInput(body);
       if ("error" in input) return say(400, input.error);
+      // A live client: only over the price and schedule the person saw (as going live). One Save carries both, so a page
+      // left open from before someone corrected them would otherwise put the old ones back, and a real charge follows them.
+      const current = await loadSettings(clientId);
+      if (current && modeOf(current) === "live") {
+        const seen = body?.expect as { priceCents?: unknown; everyDays?: unknown; anchorDate?: unknown } | undefined;
+        if (!seen || seen.priceCents !== current.price_cents || seen.everyDays !== current.every_days || seen.anchorDate !== current.anchor_date) {
+          return say(409, "This client's price or schedule changed since you looked — reload the page and check them. Nothing was changed.");
+        }
+      }
       const settings = await saveSettings(clientId, input, who.email);
-      console.log(`[usage-billing] ${who.email} saved pay-per-lead settings (${modeOf(settings).toUpperCase()}) for ${clientId}: ${input.priceCents}c every ${input.everyDays}d from ${input.anchorDate}, ${input.leadSource}, ${input.enabled ? "on" : "off"}`);
+      console.log(`[usage-billing] ${who.email} saved pay-per-lead settings (${modeOf(settings).toUpperCase()}) for ${clientId}: ${input.priceCents}c every ${input.everyDays}d from ${input.anchorDate}, ${input.leadSource}, ${settings.enabled ? "on" : "off"}`);
       return NextResponse.json({ ok: true, settings }, { headers: NO_STORE });
     }
 
@@ -222,6 +240,12 @@ export async function POST(request: Request) {
     const s = settings as SettingsRow;
     const mode = modeOf(s);
     const periodStart = typeof body?.periodStart === "string" && body.periodStart ? body.periodStart : null;
+
+    if (action === "set_auto") {
+      if (typeof body?.on !== "boolean") return say(400, "on must be true or false.");
+      const saved = await setAutoCharge(clientId, body.on, who.email);
+      return NextResponse.json({ ok: true, settings: saved }, { headers: NO_STORE });
+    }
 
     // The test tools: a test client only — before any key or Stripe is touched.
     if (action === "setup_link" || action === "confirm_setup") {

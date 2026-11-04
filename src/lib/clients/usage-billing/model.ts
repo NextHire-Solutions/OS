@@ -94,6 +94,8 @@ export interface BillableLead {
   /** ISO 8601 instant. */
   at: string;
   source: string;
+  /** The conversation it came from, when the source knows it (Interested replies): how a delivery is matched to it. */
+  thread?: string;
 }
 
 export interface Period {
@@ -205,7 +207,7 @@ export function periodLabel(p: Period): string {
 
 export const MIN_PRICE_CENTS = 100;
 export const MAX_PRICE_CENTS = 1_000_000;
-/** More leads than this in one period is not a real week — refused rather than invoiced. */
+/** Stripe's own limit: an invoice takes at most 250 items, and each lead is one line. Refused here rather than half-built there. */
 export const MAX_LEADS_PER_PERIOD = 250;
 
 export function amountCents(leads: number, priceCents: number): number {
@@ -385,6 +387,68 @@ export function schedulerAllowed(env: Env): boolean {
 /** The scheduled run charges only with OS_USAGE_BILLING_CHARGE=1 as well; without it, it records previews. */
 export function scheduledChargeAllowed(env: Env): boolean {
   return env.OS_USAGE_BILLING_CHARGE === "1";
+}
+
+/*
+ * A LIVE client charged by the run, with nobody pressing anything (4 Nov, the client's decision). It takes
+ * OS_USAGE_BILLING_LIVE_AUTO=1 on top of the run's own switch, and the client "In the scheduled run". The checks below
+ * replace the person who used to look at the amount: whatever fails one is held for a person, never charged.
+ */
+export function liveAutoChargeAllowed(env: Env): boolean {
+  return env.OS_USAGE_BILLING_LIVE_AUTO === "1";
+}
+
+/** Not before 9am Eastern the day after a period ends: the team is there if a card is refused, and can correct a late label first. */
+export const AUTO_CHARGE_FROM_HOUR_ET = 9;
+
+/**
+ * Only a period that ended in the last two days is charged unattended. An older one left uncharged may be on purpose
+ * (automatic was off), and turning automatic on must not sweep it up: the bell says so once and it waits for a person.
+ */
+export const AUTO_CHARGE_WINDOW_DAYS = 2;
+
+/** How far back the run looks for those: the Billing tab's own list of periods. */
+export const AUTO_CHARGE_LOOK_BACK = 6;
+
+export function autoChargeInWindow(period: Period, today: string): boolean {
+  const late = daysBetween(period.end, today);
+  return late >= 0 && late <= AUTO_CHARGE_WINDOW_DAYS;
+}
+
+/** A period a person (or a refresh) opened again: its next charge is a person's, as the Billing tab tells them. */
+export function isReopened(note: string | null | undefined): boolean {
+  return /— opened again by /.test(note ?? "");
+}
+
+export function easternHour(at: Date | string | number): number {
+  return Number(new Intl.DateTimeFormat("en-US", { timeZone: ET, hour: "numeric", hourCycle: "h23" }).format(new Date(at)));
+}
+
+/** Why a live period may not be charged without a person, in words for the bell and the Billing tab; null when it may. */
+export function autoChargeHold(p: {
+  clientStatus: string | null;
+  leadSource: string;
+  leads: readonly BillableLead[];
+  delivered: { threads: ReadonlySet<string>; keys: ReadonlySet<string> };
+  /** An earlier period's card was refused and is still unpaid: trying the same card again is a person's decision. */
+  earlierRefused?: boolean;
+}): string | null {
+  if (p.clientStatus !== "active") return `the client is ${p.clientStatus ?? "not active"}, so a person decides`;
+  if (p.leadSource !== "handoffs") return "only Interested replies are charged automatically";
+  if (p.earlierRefused) return "an earlier charge was refused and is still unpaid";
+  // Eddy, 4 Nov: "billed for the leads they receive directly onto their inbox". Sent, and not bounced since.
+  const missing = p.leads.filter((l) => !(l.thread && p.delivered.threads.has(l.thread)) && !p.delivered.keys.has(leadKey(l.key)));
+  if (missing.length) return `${missing.map((l) => l.name).join(", ")} ${missing.length === 1 ? "has" : "have"} no delivery to the client's inbox on record`;
+  return null;
+}
+
+/** For the Billing tab: why a client with automatic on would be held every time, so it never just says "Automatic". */
+export function autoChargeProblem(p: { clientStatus: string | null; leadSource: string; hasCard: boolean; liveKey: string | null }): string | null {
+  if (p.liveKey !== "live") return "the live Stripe key isn't usable";
+  if (!p.hasCard) return "no card is connected";
+  if (p.clientStatus !== "active") return `the client is ${p.clientStatus ?? "not active"}`;
+  if (p.leadSource !== "handoffs") return "only Interested replies are charged automatically";
+  return null;
 }
 
 export interface SettingsRow {
