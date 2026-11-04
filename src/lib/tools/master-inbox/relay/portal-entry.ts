@@ -45,8 +45,9 @@ export function pipelineEntryRow(o: { portalId: string; threadId: string; leadId
     stage: "introduction",
     lead_name: o.lead?.full_name ?? o.agentName,
     lead_email: text(f, "preferred_email") ?? o.lead?.email ?? o.agentEmail,
-    lead_phone: text(f, "preferred_phone") ?? text(f, "phone") ?? text(f, "Phone") ?? text(f, "phone number") ?? text(f, "phone_number") ?? text(f, "mobile"),
-    current_brokerage: text(f, "companyName") ?? text(f, "company") ?? o.lead?.company ?? null,
+    // An empty value isn't an answer here: it would hide the number the lead really has.
+    lead_phone: (text(f, "preferred_phone") ?? text(f, "phone") ?? text(f, "Phone")) || text(f, "phone number") || text(f, "phone_number") || text(f, "mobile") || null,
+    current_brokerage: (text(f, "companyName") ?? text(f, "company")) || o.lead?.company || null,
     agent_profile_url: text(f, "Agent Profile") ?? text(f, "agentProfile") ?? text(f, "website"),
     introduced_at: o.at,
   };

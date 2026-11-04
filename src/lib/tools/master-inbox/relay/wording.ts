@@ -60,7 +60,7 @@ export const REASON_TEXT: Record<string, string> = {
   read_error: "Something could not be read, so it was held rather than guessed.",
   no_portal: "No client portal is linked to this brokerage, so its DNC and agent lists couldn't be checked — held rather than sent.",
   empty_reply: "The agent's reply has no text of its own.",
-  stale_reply: "The agent's reply is more than two weeks older than the label — an old conversation labelled again, not handed off by itself. Introduce by hand if it should go.",
+  stale_reply: "The agent's reply is more than two weeks older than the label — an old conversation labelled again, not handed off by itself. Handle it by hand if it should go.",
   send_failed: "Postmark refused it — nothing was sent.",
   send_unknown: "Postmark's answer did not come back, so it may have been sent — check Postmark's activity before sending again.",
   send_partial: "Postmark refused an address as inactive (an earlier bounce or spam report), so the others on it may have received it — check Postmark's activity before sending again.",

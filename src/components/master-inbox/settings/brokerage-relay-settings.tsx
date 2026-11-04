@@ -123,7 +123,7 @@ function Panel({ data }: { data: RelayOverview }) {
         <ToggleRow title="Relay the agent's later replies" hint="If the agent writes to us again instead of to the brokerage, pass that on too (once each, to the same people).">
           <Switch checked={later} aria-label="Relay later replies" onCheckedChange={setLater} />
         </ToggleRow>
-        <ToggleRow title="Counts as an introduction" hint="Recorded on each hand-off for review only — it does not add the agent to the portal, Follow Up Boss or the numbers.">
+        <ToggleRow title="Counts as an introduction" hint="Recorded on each hand-off for review only — it does not change the numbers.">
           <Switch checked={countsIntro} aria-label="Counts as an introduction" onCheckedChange={setCountsIntro} />
         </ToggleRow>
         <div className="mis-g mis-g2" style={{ marginTop: 16 }}>
@@ -477,10 +477,10 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
           value={entry}
           onChange={(e) => setEntry(e.target.value as PipelineEntry)}
           aria-label="Pipeline entry"
-          title="Recorded on each hand-off only. Entering the portal at Interested is not built yet: nothing in the portal changes either way."
+          title="Interested is the new model: while this brokerage's own switch is on, a hand-off that has really gone adds the agent to its Pipeline, and the Introduce button is off. Introduction: agents enter the Pipeline when they're introduced."
         >
           <option value="introduction">Introduction</option>
-          <option value="interested">Interested (not built yet)</option>
+          <option value="interested">Interested</option>
         </select>
       </td>
       <td>

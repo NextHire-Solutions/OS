@@ -1351,9 +1351,7 @@ test("the entry can't be written: the email stands and is never sent twice, the 
   fubCalls.length = 0;
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
   label(L.interested, thread.id);
-  db.missingTables.add("client_pipeline_entries");
-  // The hand-off's own check reads the table too: let the send past it by making only the write fail.
-  db.missingTables.clear();
+  // The hand-off's own check reads the table too: only the write fails.
   const realFetch = globalThis.fetch;
   let broken = true;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1459,5 +1457,61 @@ test("replies prepared in practice, once this client goes live (John Kaye and Ra
   await assert.rejects(relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", liveDeps(), later(4)), /already sent/);
   assert.equal(handed.length, 1);
   assert.equal(entries().length, 1);
+});
+
+test("a bounce doesn't strand it, and after a week the sweep stops trying: the bell has said", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  const rec = recordFor(thread.id) as Row;
+  db.seed("client_pipeline_entries", []);
+  rec.detail = relay.PIPELINE_PENDING;
+  rec.status = "bounced";
+  rec.sent_at = NOW.toISOString();
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.equal(entries().length, 1, "bounced, still finished");
+  assert.equal(rec.detail, null);
+  db.seed("client_pipeline_entries", []);
+  rec.detail = relay.PIPELINE_PENDING;
+  rec.sent_at = new Date(NOW.getTime() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  await relay.sweepBrokerageRelay(later(2), liveDeps());
+  assert.equal(entries().length, 0, "too old: left alone");
+});
+
+test("Follow Up Boss hears before the mark is cleared: a failure clearing it never loses the push, or repeats it", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  fubCalls.length = 0;
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const realFetch = globalThis.fetch;
+  let breakClear = true;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (breakClear && String(input).includes("os_brokerage_relays") && init?.method === "PATCH" && Object.keys(JSON.parse(String(init.body))).sort().join() === "detail,updated_at") return new Response(JSON.stringify({ message: "boom", code: "XX000" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return realFetch(input, init);
+  }) as typeof fetch;
+  try {
+    await relay.sweepBrokerageRelay(NOW, liveDeps());
+    assert.equal(fubCalls.length, 1);
+    assert.equal(recordFor(thread.id).detail, relay.PIPELINE_PENDING);
+    breakClear = false;
+    await relay.sweepBrokerageRelay(later(1), liveDeps());
+    assert.equal(recordFor(thread.id).detail, null);
+    assert.equal(fubCalls.length, 1, "not pushed twice");
+    assert.equal(entries().length, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("Introduce is off only with both: the new model AND the client's own switch on — a setting alone never leaves a lead reaching nobody", async () => {
+  const { directHandoffReason } = await import("./settings.ts");
+  assert.match(String(directHandoffReason({ pipeline_entry: "interested", relay_settings: { enabled: true } }, "Homebase")), /^Homebase gets interested replies directly by email/);
+  assert.equal(directHandoffReason({ pipeline_entry: "interested", relay_settings: { enabled: false } }, "X"), null);
+  assert.equal(directHandoffReason({ pipeline_entry: "interested", relay_settings: {} }, "X"), null);
+  assert.equal(directHandoffReason({ pipeline_entry: "introduction", relay_settings: { enabled: true } }, "X"), null);
+  assert.equal(directHandoffReason({}, "X"), null);
 });
 

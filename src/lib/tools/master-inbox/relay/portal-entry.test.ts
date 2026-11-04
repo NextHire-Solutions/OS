@@ -38,6 +38,8 @@ test("what EmailBison's leads really hold: the number under 'phone number', the 
   assert.equal(row({ custom_fields: { phone: "1", "phone number": "2" } }).lead_phone, "1", "the trigger's own field still wins");
   assert.equal(row({ company: "On the lead", custom_fields: { company: "In the fields" } }).current_brokerage, "In the fields");
   assert.equal(row({ custom_fields: {} }).current_brokerage, null);
+  assert.equal(row({ custom_fields: { phone: "", "phone number": "2" } }).lead_phone, "2", "an empty field doesn't hide the real number");
+  assert.equal(row({ company: "On the lead", custom_fields: { company: "" } }).current_brokerage, "On the lead");
 });
 
 test("brokerage: companyName, then company; profile: Agent Profile, agentProfile, website", () => {

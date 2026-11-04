@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/auth/workspace";
 import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { introSenderFor } from "@/lib/tools/master-inbox/inbox/intro-sender";
+import { directHandoffReason } from "@/lib/tools/master-inbox/relay/settings";
 import {
   INTRO_ROW_COLUMNS,
   introBrokerage,
@@ -117,7 +118,7 @@ export async function GET(
     const found = await rosterRowForPortal(
       clientId,
       (miClient?.name as string | undefined) ?? null,
-      `${INTRO_ROW_COLUMNS}, pipeline_entry`,
+      `${INTRO_ROW_COLUMNS}, pipeline_entry, relay_settings`,
     );
     if (found.error) throw new Error(found.error);
     row = found.row;
@@ -137,18 +138,9 @@ export async function GET(
     });
   }
 
-  /*
-   * On the new model (os_clients.pipeline_entry = 'interested') an interested reply goes straight to the client by the
-   * Postmark hand-off, and into their Pipeline. No introduction email goes out (4 Nov, the user: "we do not want to send
-   * this email"), so the button that writes one is off, and says what to use.
-   */
-  if (row.pipeline_entry === "interested") {
-    return NextResponse.json<Unavailable>({
-      available: false,
-      clientName,
-      reason: `${clientName} gets interested replies directly by email, with no introduction. Use Send to brokerage above the conversation.`,
-    });
-  }
+  // The new model: no introduction email goes out, so the button that writes one is off, and says why.
+  const direct = directHandoffReason(row, clientName);
+  if (direct) return NextResponse.json<Unavailable>({ available: false, clientName, reason: direct });
 
   // Only the people for this lead's territory, when the client has territories.
   const { client, route } = routeIntro(

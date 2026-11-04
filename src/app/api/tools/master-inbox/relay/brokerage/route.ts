@@ -8,8 +8,8 @@ import { RelayActionError, saveBrokerageSettings } from "@/lib/tools/master-inbo
  * One brokerage's hand-off settings (admins): its own on/off switch (the
  * pilot), who receives (the introduction contacts by territory, or one
  * address), an hourly-cap and mode override, and where its agents enter the
- * portal pipeline (os_clients.pipeline_entry, 0036 — recorded on each
- * hand-off; nothing writes the portal).
+ * portal pipeline (os_clients.pipeline_entry, 0036: on 'interested', a hand-off
+ * that has really gone adds the agent to it — relay/portal-entry.ts).
  *
  * PUT { osClientId, enabled?, recipients?, address?, hourlyCap?, mode?, pipelineEntry? }
  */

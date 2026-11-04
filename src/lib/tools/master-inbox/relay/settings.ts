@@ -218,6 +218,15 @@ export function globalToRow(
 }
 
 /** A PUT of one brokerage's settings, validated against what it had. */
+/**
+ * Why there's no introduction to send for this client, if there isn't: on the new model, with its own switch on, an interested
+ * reply goes straight to it by the hand-off (4 Nov, the user: "we do not want to send this email"). Null: Introduce as ever.
+ */
+export function directHandoffReason(row: { pipeline_entry?: unknown; relay_settings?: unknown }, clientName: string): string | null {
+  if (row.pipeline_entry !== "interested" || !brokerageFromJson(row.relay_settings).enabled) return null;
+  return `${clientName} gets interested replies directly by email, so there's no introduction to send. If this one hasn't gone, use Send to brokerage above the conversation.`;
+}
+
 export function parseBrokeragePatch(body: unknown, current: BrokerageRelaySettings): { settings: BrokerageRelaySettings; pipelineEntry: PipelineEntry | null } {
   if (!body || typeof body !== "object") throw new RelaySettingsError("Send the settings as an object.");
   const b = body as Record<string, unknown>;

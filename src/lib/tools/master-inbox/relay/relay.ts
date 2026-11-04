@@ -862,8 +862,8 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
   // The transport checks the env switch again before it builds a request.
   const res = await ctx.transport.send(email);
   if (res.ok) {
-    // On the new model the agent goes into the client's Pipeline too. Marked first, so a run that dies here is finished by the next sweep.
-    const entering = rec.kind === "handoff" && client.pipelineEntry === "interested" && !!portalId;
+    // On the new model the agent goes into the client's Pipeline too. Marked with the send, so a run that dies after this line is finished by the next sweep.
+    const entering = rec.kind === "handoff" && client.pipelineEntry === "interested";
     try {
       await afterSend(ctx, rec.id, { status: "sent", sent_at: new Date().toISOString(), provider_message_id: res.messageId, ...(entering ? { detail: PIPELINE_PENDING } : {}) });
     } catch (e) {
@@ -893,10 +893,10 @@ async function settlePipelineEntry(ctx: Ctx, rec: { id: string; mi_client_id: st
   try {
     if (!rec.mi_client_id || !rec.thread_id) throw new Error("the hand-off names no portal or conversation");
     const entryId = await enterPipeline(ctx.mi, { portalId: rec.mi_client_id, threadId: rec.thread_id, agentName: rec.agent_name, agentEmail: rec.agent_email, at: ctx.now.toISOString() });
+    // The add route's own rule: pushed when the entry is made. Before the mark is cleared: a new entry is the only chance. Its failure is written on the entry, and the portal has a Push button.
+    if (entryId) await ctx.pushFub(rec.mi_client_id, entryId).catch((e) => console.error(`[brokerage-relay] Follow Up Boss push for ${entryId}: ${e instanceof Error ? e.message : String(e)}`));
     const { error } = await ctx.os("os_brokerage_relays").update({ detail: null, updated_at: ctx.now.toISOString() }).eq("id", rec.id).eq("detail", PIPELINE_PENDING);
     if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
-    // The add route's own rule: pushed when the entry is made. Its failure is written on the entry, and the portal has a Push button.
-    if (entryId) await ctx.pushFub(rec.mi_client_id, entryId).catch((e) => console.error(`[brokerage-relay] Follow Up Boss push for ${entryId}: ${e instanceof Error ? e.message : String(e)}`));
     return true;
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
@@ -916,9 +916,10 @@ async function settlePipelineEntry(ctx: Ctx, rec: { id: string; mi_client_id: st
   }
 }
 
-/** Finishes any hand-off still marked: a run that died after the send, or a write that failed. */
+/** Finishes any hand-off still marked: a run that died after the send, or a write that failed. A bounce doesn't stop it; after a week it's left to the bell, not tried every minute for ever. */
 async function sweepPipelineEntries(ctx: Ctx): Promise<void> {
-  const { data, error } = await ctx.os("os_brokerage_relays").select("id, mi_client_id, thread_id, os_client_id, brokerage_name, agent_name, agent_email").eq("workspace_id", ctx.ws).eq("status", "sent").eq("detail", PIPELINE_PENDING).limit(50);
+  const since = new Date(ctx.now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await ctx.os("os_brokerage_relays").select("id, mi_client_id, thread_id, os_client_id, brokerage_name, agent_name, agent_email").eq("workspace_id", ctx.ws).in("status", ["sent", "bounced"]).eq("detail", PIPELINE_PENDING).gte("sent_at", since).order("sent_at", { ascending: true }).limit(50);
   if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
   for (const r of (data ?? []) as Row[]) {
     await settlePipelineEntry(ctx, { id: String(r.id), mi_client_id: str(r.mi_client_id), thread_id: str(r.thread_id), os_client_id: str(r.os_client_id), brokerage_name: str(r.brokerage_name), agent_name: str(r.agent_name), agent_email: str(r.agent_email) });
