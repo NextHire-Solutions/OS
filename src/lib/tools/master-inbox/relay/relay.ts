@@ -3,6 +3,7 @@ import "server-only";
 import { osTable, type OsTable } from "@/lib/clients/os-db";
 
 import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
+import { enterPipeline } from "./portal-entry.ts";
 import { escapeLike, sameName } from "../portals/stop-person-plan.ts";
 import { getMasterInboxSupabase, workspaceId } from "../supabase";
 
@@ -74,10 +75,12 @@ import { recordView, type RelayRecordView, type RelayStatus } from "./wording.ts
  * hand-off considered, with the message), os_brokerage_relay_agents (the
  * once-per-agent claims), os_relay_campaigns (the team's answers) and
  * os_notifications (a bounce). Master Inbox's tables — threads, labels,
- * client_pipeline_entries, the portals — are only READ: no label is applied,
- * no portal entry is created, nothing reaches Follow Up Boss. Whether a
- * hand-off should count as an introduction, and the client's pipeline-entry
- * setting, are RECORDED on each hand-off for the team to review.
+ * client_pipeline_entries, the portals — are only READ: no label is applied.
+ * One exception, on the new model only (os_clients.pipeline_entry =
+ * 'interested', 4 Nov, Eddy): once a hand-off has really gone, its agent gets
+ * a portal entry and, if the client connected it, a Follow Up Boss push
+ * (portal-entry.ts). For everyone else, as ever: nothing. Whether a hand-off
+ * should count as an introduction is RECORDED on it for the team to review.
  *
  * ---------------------------------------------------------------------------
  * ONCE, ENFORCED BY THE DATABASE
@@ -157,6 +160,8 @@ export interface RelayDeps {
   bounces?: (since: Date) => Promise<{ ok: true; bounces: PostmarkBounce[] } | { ok: false; error: string }>;
   /** For tests of the test send (sendRelayTest): Postmark's fetch. */
   testFetch?: typeof fetch;
+  /** Follow Up Boss, for a new portal entry. It does nothing for a client that hasn't connected it. */
+  pushFub?: (portalId: string, entryId: string) => Promise<unknown>;
 }
 
 interface ClientRecord extends OsClientRef {
@@ -177,6 +182,7 @@ interface Ctx {
   world: World;
   records: Map<string, ClientRecord>;
   now: Date;
+  pushFub: (portalId: string, entryId: string) => Promise<unknown>;
 }
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -856,13 +862,16 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
   // The transport checks the env switch again before it builds a request.
   const res = await ctx.transport.send(email);
   if (res.ok) {
+    // On the new model the agent goes into the client's Pipeline too. Marked first, so a run that dies here is finished by the next sweep.
+    const entering = rec.kind === "handoff" && client.pipelineEntry === "interested" && !!portalId;
     try {
-      await afterSend(ctx, rec.id, { status: "sent", sent_at: new Date().toISOString(), provider_message_id: res.messageId });
+      await afterSend(ctx, rec.id, { status: "sent", sent_at: new Date().toISOString(), provider_message_id: res.messageId, ...(entering ? { detail: PIPELINE_PENDING } : {}) });
     } catch (e) {
       // It WENT. The record stays "sending", which is never retried; this line is how to repair it.
       console.error(`[brokerage-relay] SENT hand-off ${rec.id} (Postmark MessageID ${res.messageId}) but could not record it: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     }
+    if (entering) await settlePipelineEntry(ctx, { id: rec.id, mi_client_id: portalId, thread_id: rec.threadId, os_client_id: osClientId, brokerage_name: client.name, agent_name: agentName, agent_email: agentEmail });
     return "sent";
   }
   if (res.definite && rec.kind === "handoff") {
@@ -871,6 +880,49 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
   }
   await afterSend(ctx, rec.id, { status: "failed", reason: res.definite ? "send_failed" : res.partial ? "send_partial" : "send_unknown", error: res.error.slice(0, 500) });
   return "failed";
+}
+
+/** On a sent hand-off until its agent is in the client's Pipeline: what the sweep finishes. Cleared after, so an entry the client later removes is never put back. */
+export const PIPELINE_PENDING = "Sent. Not in the client's Pipeline yet: tried again at the next sweep.";
+
+/**
+ * The email has gone: the agent into the client's Pipeline, and to Follow Up Boss if connected. Never throws: nothing here can
+ * undo or repeat the send. A failure stays marked for the next sweep, and our team's bell rings once.
+ */
+async function settlePipelineEntry(ctx: Ctx, rec: { id: string; mi_client_id: string | null; thread_id: string | null; os_client_id: string | null; brokerage_name: string | null; agent_name: string | null; agent_email: string | null }): Promise<boolean> {
+  try {
+    if (!rec.mi_client_id || !rec.thread_id) throw new Error("the hand-off names no portal or conversation");
+    const entryId = await enterPipeline(ctx.mi, { portalId: rec.mi_client_id, threadId: rec.thread_id, agentName: rec.agent_name, agentEmail: rec.agent_email, at: ctx.now.toISOString() });
+    const { error } = await ctx.os("os_brokerage_relays").update({ detail: null, updated_at: ctx.now.toISOString() }).eq("id", rec.id).eq("detail", PIPELINE_PENDING);
+    if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
+    // The add route's own rule: pushed when the entry is made. Its failure is written on the entry, and the portal has a Push button.
+    if (entryId) await ctx.pushFub(rec.mi_client_id, entryId).catch((e) => console.error(`[brokerage-relay] Follow Up Boss push for ${entryId}: ${e instanceof Error ? e.message : String(e)}`));
+    return true;
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(`[brokerage-relay] hand-off ${rec.id} sent, but not in the Pipeline: ${why}`);
+    await ctx.os("os_notifications").upsert(
+      {
+        kind: "relay_pipeline",
+        severity: "critical",
+        title: `A hand-off to ${rec.brokerage_name ?? "a brokerage"} isn't in their Pipeline yet`,
+        body: `${rec.agent_name ?? "An agent"}'s reply was emailed to the brokerage, but couldn't be added to their Pipeline (${why.slice(0, 300)}). It's tried again every minute.`,
+        os_client_id: rec.os_client_id,
+        ref: `relay_pipeline:${rec.id}`,
+      },
+      { onConflict: "ref", ignoreDuplicates: true },
+    ).then(undefined, () => undefined);
+    return false;
+  }
+}
+
+/** Finishes any hand-off still marked: a run that died after the send, or a write that failed. */
+async function sweepPipelineEntries(ctx: Ctx): Promise<void> {
+  const { data, error } = await ctx.os("os_brokerage_relays").select("id, mi_client_id, thread_id, os_client_id, brokerage_name, agent_name, agent_email").eq("workspace_id", ctx.ws).eq("status", "sent").eq("detail", PIPELINE_PENDING).limit(50);
+  if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
+  for (const r of (data ?? []) as Row[]) {
+    await settlePipelineEntry(ctx, { id: String(r.id), mi_client_id: str(r.mi_client_id), thread_id: str(r.thread_id), os_client_id: str(r.os_client_id), brokerage_name: str(r.brokerage_name), agent_name: str(r.agent_name), agent_email: str(r.agent_email) });
+  }
 }
 
 /** The outcome of a send — only onto the record this process moved to "sending" (no other process can be holding it). */
@@ -892,7 +944,11 @@ async function makeCtx(now: Date, deps: RelayDeps): Promise<{ ctx: Ctx | null; o
   if (!settings.enabled) return { ctx: null, off: "switched off in Settings" };
   const { world, records } = await loadWorld(mi, os);
   return {
-    ctx: { mi, os, ws, env, now, global: settings, world, records, transport: deps.transport ?? createPostmarkTransport({ env }) },
+    ctx: {
+      mi, os, ws, env, now, global: settings, world, records, transport: deps.transport ?? createPostmarkTransport({ env }),
+      // Loaded only when there's an entry to push: nothing about the hand-off depends on it.
+      pushFub: deps.pushFub ?? (async (portalId, entryId) => (await import("@/lib/tools/master-inbox/integrations/push-pipeline-entry")).pushPipelineEntryToFub(portalId, entryId)),
+    },
     off: null,
   };
 }
@@ -1055,6 +1111,13 @@ export async function sweepBrokerageRelay(now: Date = new Date(), deps: RelayDep
       result.bounced = await pollBounces(ctx, deps, result.errors);
     } catch (e) {
       failed("bounces")(e);
+    }
+
+    try {
+      // 5. Agents still to go into a client's Pipeline, after a send that couldn't finish it.
+      await sweepPipelineEntries(ctx);
+    } catch (e) {
+      failed("pipeline entries")(e);
     }
   } catch (e) {
     result.errors.push(e instanceof Error ? e.message : String(e));

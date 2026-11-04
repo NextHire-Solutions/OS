@@ -1261,3 +1261,203 @@ test("test address with nothing saved: admin@outreachify.io, as before", async (
   db.rows("os_relay_settings")[0].test_recipients = [];
   assert.deepEqual((await relay.relayOverview({ ws: WS, env: {} }, NOW)).tests.recipients, ["admin@outreachify.io"]);
 });
+
+/* ============================================================ the new model: into the client's Pipeline too (4 Nov, Eddy) */
+
+const onNewModel = () => { (db.rows("os_clients").find((c) => c.id === C.jeff) as Row).pipeline_entry = "interested"; };
+const entries = () => db.rows("client_pipeline_entries");
+const fubCalls: Array<[string, string]> = [];
+const liveDeps = (extra: Partial<Parameters<typeof relay.sweepBrokerageRelay>[1]> = {}) => ({ ...deps(LIVE), pushFub: async (p: string, e: string) => { fubCalls.push([p, e]); }, ...extra });
+const later = (min: number) => new Date(NOW.getTime() + min * 60_000);
+
+test("new model, live: the email goes, and the agent is in the client's Pipeline once, with the fields the label's trigger writes — no label applied, no announcement", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  fubCalls.length = 0;
+  const { thread, lead } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  (lead as Row).custom_fields = { preferred_email: "chosen@coastal.test", phone: "555-000-1111", preferred_phone: "555-222-3333", companyName: "Coastal Realty", company: "Old Name", "Agent Profile": "https://profile.test/jordan", website: "https://ignored.test" };
+  label(L.interested, thread.id);
+  const labelsBefore = db.rows("label_assignments").length;
+  const r = await relay.sweepBrokerageRelay(NOW, liveDeps());
+  assert.deepEqual(r.outcomes, { sent: 1 }, JSON.stringify(r));
+  assert.equal(handed.length, 1);
+  assert.equal(entries().length, 1);
+  const e = entries()[0];
+  assert.deepEqual(
+    [e.client_id, e.thread_id, e.lead_id, e.stage, e.lead_name, e.lead_email, e.lead_phone, e.current_brokerage, e.agent_profile_url],
+    [P.jeff, thread.id, lead.id, "introduction", "Jordan Ellis", "chosen@coastal.test", "555-222-3333", "Coastal Realty", "https://profile.test/jordan"],
+  );
+  assert.equal(e.introduced_at, NOW.toISOString());
+  assert.equal(db.rows("label_assignments").length, labelsBefore, "no label: the Introduction label would announce it, and wipe Interested");
+  assert.deepEqual(fubCalls, [[P.jeff, e.id]], "Follow Up Boss hears once, for the new entry");
+  const rec = recordFor(thread.id);
+  assert.deepEqual([rec.status, rec.detail, rec.pipeline_action], ["sent", null, "enter_at_interested"]);
+  const miWrites = db.calls.filter((c) => !["GET", "HEAD"].includes(c.method) && !c.table.startsWith("os_")).map((c) => `${c.method} ${c.table}`);
+  assert.deepEqual(miWrites, ["POST client_pipeline_entries"], "that one row is all that's written outside the OS's own tables");
+  // The next minutes: nothing more.
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.equal(handed.length, 1);
+  assert.equal(entries().length, 1);
+  assert.equal(fubCalls.length, 1);
+  assert.deepEqual(db.blocked, [], "nothing reached any other service");
+});
+
+test("not on the new model: a live hand-off writes nothing outside the OS's own tables, as ever", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  fubCalls.length = 0;
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  assert.equal(handed.length, 1);
+  assert.equal(entries().length, 0);
+  assert.equal(fubCalls.length, 0);
+  assert.equal(recordFor(thread.id).detail, null);
+  assert.equal(recordFor(thread.id).pipeline_action, "none");
+});
+
+test("new model, but nothing really sent: no Pipeline entry — practice, the fence, or Postmark refusing", async () => {
+  // Practice.
+  seed({}, { enabled: true });
+  onNewModel();
+  let c = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, c.thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  assert.equal(handed.length, 0);
+  assert.equal(entries().length, 0);
+  // The fence: this client's domain isn't allowed yet.
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  c = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, c.thread.id);
+  await relay.sweepBrokerageRelay(NOW, { ...liveDeps(), env: { ...LIVE, OS_BROKERAGE_RELAY_LIVE_ONLY: "brokerstaffer.com" } });
+  assert.equal(handed.length, 0);
+  assert.equal(recordFor(c.thread.id).practice, true);
+  assert.equal(entries().length, 0);
+  // Postmark refuses.
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  c = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, c.thread.id);
+  answer = { ok: false, definite: true, partial: false, error: "422 refused" } as unknown as SendResult;
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  answer = { ok: true, messageId: "pm-1", submittedAt: null };
+  assert.equal(recordFor(c.thread.id).status, "failed");
+  assert.equal(entries().length, 0);
+});
+
+test("the entry can't be written: the email stands and is never sent twice, the team's bell rings once, and the next sweep finishes it", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  fubCalls.length = 0;
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  db.missingTables.add("client_pipeline_entries");
+  // The hand-off's own check reads the table too: let the send past it by making only the write fail.
+  db.missingTables.clear();
+  const realFetch = globalThis.fetch;
+  let broken = true;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (broken && String(input).includes("client_pipeline_entries") && init?.method === "POST") return new Response(JSON.stringify({ message: "boom", code: "XX000" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return realFetch(input, init);
+  }) as typeof fetch;
+  try {
+    const r = await relay.sweepBrokerageRelay(NOW, liveDeps());
+    assert.deepEqual(r.outcomes, { sent: 1 }, "the email went: still sent");
+    assert.equal(handed.length, 1);
+    assert.equal(entries().length, 0);
+    assert.equal(recordFor(thread.id).detail, relay.PIPELINE_PENDING);
+    assert.equal(db.rows("os_notifications").filter((n) => n.kind === "relay_pipeline").length, 1);
+    // Still failing a minute on: one bell, no second email.
+    await relay.sweepBrokerageRelay(later(1), liveDeps());
+    assert.equal(db.rows("os_notifications").filter((n) => n.kind === "relay_pipeline").length, 1);
+    assert.equal(handed.length, 1);
+    // Fixed: finished by the sweep.
+    broken = false;
+    await relay.sweepBrokerageRelay(later(2), liveDeps());
+    assert.equal(entries().length, 1);
+    assert.equal(recordFor(thread.id).detail, null);
+    assert.equal(handed.length, 1, "never a second email");
+    assert.equal(fubCalls.length, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("an entry the client has since removed is never put back; one already there isn't doubled or pushed again; Follow Up Boss failing changes nothing", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  fubCalls.length = 0;
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const r = await relay.sweepBrokerageRelay(NOW, liveDeps({ pushFub: async () => { throw new Error("FUB down"); } }));
+  assert.deepEqual(r.outcomes, { sent: 1 });
+  assert.equal(recordFor(thread.id).detail, null, "Follow Up Boss's trouble isn't the Pipeline's");
+  assert.equal(entries().length, 1);
+  db.seed("client_pipeline_entries", []);
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.equal(entries().length, 0, "removed by the client: stays removed");
+  // A sweep finishing a marked hand-off whose entry already exists (the run died after writing it).
+  const rec = recordFor(thread.id) as Row;
+  rec.detail = relay.PIPELINE_PENDING;
+  add("client_pipeline_entries", [{ client_id: P.jeff, thread_id: thread.id, lead_email: "jordan@coastal.test", stage: "introduction" }]);
+  fubCalls.length = 0;
+  await relay.sweepBrokerageRelay(later(2), liveDeps());
+  assert.equal(entries().length, 1);
+  assert.equal(rec.detail, null);
+  assert.equal(fubCalls.length, 0, "not a new entry: not pushed again");
+});
+
+test("the agent's next conversation with this client: already in their Pipeline, so no second email and no second entry", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  onNewModel();
+  const first = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, first.thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  const second = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, second.thread.id);
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.equal(handed.length, 1);
+  assert.equal(entries().length, 1);
+  assert.deepEqual([recordFor(second.thread.id).status, recordFor(second.thread.id).reason], ["skipped", "already_introduced"]);
+});
+
+test("a later reply on a sent hand-off still goes to the brokerage: its own Pipeline entry doesn't stop it, and adds no second one", async () => {
+  seed({ practice_mode: false, forward_later_replies: true }, { enabled: true });
+  onNewModel();
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  assert.equal(handed.length, 1);
+  add("messages", [{ thread_id: thread.id, direction: "inbound", sender: "jordan@coastal.test", sender_name: "Jordan Ellis", subject: "Re: Quick question, Jordan", body_text: "Also, Thursday works for me.", sent_at: at(5) }]);
+  await relay.sweepBrokerageRelay(later(10), liveDeps());
+  assert.equal(handed.length, 2, "the later reply was forwarded");
+  assert.equal(entries().length, 1);
+});
+
+test("replies prepared in practice, once this client goes live (John Kaye and Ram Ethirajan): the first press prepares it for real and sends nothing, the second sends it and adds it to the Pipeline, a third does nothing", async () => {
+  seed({ practice_mode: false, mode: "one_click" }, {});
+  onNewModel();
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  const rec = recordFor(thread.id);
+  assert.deepEqual([rec.status, rec.practice, handed.length, entries().length], ["ready", true, 0, 0], "practice: prepared, nothing out");
+  // The client goes live, in automatic mode.
+  (db.rows("os_clients").find((c) => c.id === C.jeff) as Row).relay_settings = { enabled: true, mode: "automatic", recipients: "intro_contacts" };
+  // The sweep alone never sends what was prepared in practice.
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.equal(handed.length, 0);
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).practice], ["ready", true]);
+  const one = await relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", liveDeps(), later(2));
+  assert.match(String(one.notice), /nothing was sent. Press Send to brokerage again/);
+  assert.equal(handed.length, 0);
+  assert.equal(entries().length, 0);
+  const two = await relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", liveDeps(), later(3));
+  assert.equal(two.status, "sent");
+  assert.equal(handed.length, 1);
+  assert.equal(entries().length, 1);
+  await assert.rejects(relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", liveDeps(), later(4)), /already sent/);
+  assert.equal(handed.length, 1);
+  assert.equal(entries().length, 1);
+});
+

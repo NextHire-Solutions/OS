@@ -117,7 +117,7 @@ export async function GET(
     const found = await rosterRowForPortal(
       clientId,
       (miClient?.name as string | undefined) ?? null,
-      INTRO_ROW_COLUMNS,
+      `${INTRO_ROW_COLUMNS}, pipeline_entry`,
     );
     if (found.error) throw new Error(found.error);
     row = found.row;
@@ -134,6 +134,19 @@ export async function GET(
       available: false,
       clientName,
       reason: `${clientName} is not on the workspace roster, so it has no introduction details.`,
+    });
+  }
+
+  /*
+   * On the new model (os_clients.pipeline_entry = 'interested') an interested reply goes straight to the client by the
+   * Postmark hand-off, and into their Pipeline. No introduction email goes out (4 Nov, the user: "we do not want to send
+   * this email"), so the button that writes one is off, and says what to use.
+   */
+  if (row.pipeline_entry === "interested") {
+    return NextResponse.json<Unavailable>({
+      available: false,
+      clientName,
+      reason: `${clientName} gets interested replies directly by email, with no introduction. Use Send to brokerage above the conversation.`,
     });
   }
 

@@ -539,7 +539,7 @@ function Recent({ data }: { data: RelayOverview }) {
                         <div><span>Subject</span> {r.subject}</div>
                       </div>
                     ) : null}
-                    {r.pipelineAction === "enter_at_interested" ? <div className="mut">Pipeline: would enter at Interested (not written)</div> : null}
+                    {r.pipelineAction === "enter_at_interested" ? <div className="mut">{r.practice ? "Pipeline: would enter at Interested" : "Pipeline: enters at Interested"}</div> : null}
                   </td>
                   <td>
                     {r.subject && r.recipients.length ? (
