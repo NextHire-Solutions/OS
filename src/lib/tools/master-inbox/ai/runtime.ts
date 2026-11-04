@@ -1,4 +1,4 @@
-import { INTRO_ROW_COLUMNS, introClientFromRow, routeIntro } from "@/lib/tools/master-inbox/inbox/intro-macro";
+import { INTRO_ROW_COLUMNS, INTRO_SUBJECT_COLUMN, introClientFromRow, routeIntro } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { introSenderFor, introSignOffName } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-portal";
 import { createDraftForAgent, loadAgentWithKey, loadAgents, type ReplyAgent } from "./agent.ts";
@@ -861,7 +861,7 @@ export async function resolveIntroduction(
     const found = await rosterRowForPortal(
       clientId,
       (miClient?.name as string | undefined) ?? null,
-      INTRO_ROW_COLUMNS,
+      `${INTRO_ROW_COLUMNS}, ${INTRO_SUBJECT_COLUMN}`,
     );
     if (found.error) throw new Error(found.error);
     row = found.row;

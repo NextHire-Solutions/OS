@@ -4,14 +4,19 @@ import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { syncIntroTemplate, type IntroTemplateOutcome } from "@/lib/clients/intro-template-sync";
 import {
+  cleanIntroSubject,
   customIntro,
+  INTRO_SUBJECT_MAX,
+  introBrokerage,
   introContacts,
   introReady,
+  introSubjectProblems,
   introVariantsFrom,
   MAX_INTRO_VARIANT_TEXT,
   MAX_INTRO_VARIANTS,
   moreContactsFrom,
   missingIntroFields,
+  introSubject,
   renderIntroMacroTemplate,
   routeIntro,
   slotTerritories,
@@ -71,6 +76,16 @@ async function readVariants(clientId: string): Promise<{ variants: IntroVariant[
   return { variants: introVariantsFrom((data as { intro_variants?: unknown } | null)?.intro_variants), ready: true };
 }
 
+/** The client's own subject (0048); none, and not saveable, before the migration. */
+async function readSubject(clientId: string): Promise<{ custom: string | null; ready: boolean }> {
+  const { data, error } = await osTable("os_clients").select("intro_subject").eq("id", clientId).maybeSingle();
+  if (error) {
+    if (/intro_subject/.test(error.message)) return { custom: null, ready: false };
+    throw new Error(error.message);
+  }
+  return { custom: cleanIntroSubject((data as { intro_subject?: string | null } | null)?.intro_subject) || null, ready: true };
+}
+
 async function macroClient(clientId: string): Promise<IntroMacroClient> {
   const { data, error } = await osTable("os_clients").select(CLIENT_COLS).eq("id", clientId).maybeSingle();
   if (error) throw new Error(error.message);
@@ -121,6 +136,8 @@ export interface IntroView {
   canSaveVariants: boolean;
   /** The client's people by name — what a variant can be for. */
   people: string[];
+  /** The subject, with `{{lead.*}}` still to resolve. `canSave` is false until 0048 has run. */
+  subject: { custom: string | null; standard: string; canSave: boolean };
 }
 
 export interface IntroRouteRow {
@@ -182,6 +199,7 @@ export async function introView(clientId: string): Promise<IntroView> {
   const missing = missingIntroFields(client);
   const probe = await osTable("os_clients").select("intro_override").limit(1);
   const { ready: canSaveVariants } = await readVariants(clientId);
+  const subject = await readSubject(clientId);
   /*
    * The per-campaign table (6 Oct): shown whenever a lead's campaign changes
    * something — territories, wording variants, or more than one portal (P&E).
@@ -204,7 +222,38 @@ export async function introView(clientId: string): Promise<IntroView> {
     variants: client.introVariants ?? [],
     canSaveVariants,
     people: introContacts(client).map((p) => (p.name ?? "").trim()).filter(Boolean),
+    subject: { custom: subject.custom, standard: standardSubject(client), canSave: subject.ready },
   };
+}
+
+/** The standard subject as a template: what is sent today, and where editing starts. */
+function standardSubject(client: IntroMacroClient): string {
+  return cleanIntroSubject(introSubject(introBrokerage(client), "{{lead.first_name}}"));
+}
+
+/**
+ * Save (or clear, with null / blank) the client's own subject. The standard
+ * wording typed back is not a custom subject: it would stop following the
+ * brokerage name. A field that does not exist is refused here, because the
+ * reply agent has nobody to notice it.
+ */
+export async function saveIntroSubject(clientId: string, text: string | null): Promise<IntroView> {
+  const client = await macroClient(clientId);
+  const clean = cleanIntroSubject(text);
+  if (clean.length > INTRO_SUBJECT_MAX) {
+    throw new IntroOverrideError(`The subject is too long (${clean.length} characters; the limit is ${INTRO_SUBJECT_MAX}).`);
+  }
+  const problems = introSubjectProblems(clean);
+  if (problems.length) throw new IntroOverrideError(`This can't go in the subject: ${problems.join(", ")}. Use the field buttons for names and other details.`);
+  const value = !clean || clean === standardSubject(client) ? null : clean;
+  const { error } = await osTable("os_clients")
+    .update({ intro_subject: value, updated_at: new Date().toISOString() })
+    .eq("id", clientId);
+  if (error) {
+    if (/intro_subject/.test(error.message)) throw new IntroOverrideError("Editing the subject needs database migration 0048 first.");
+    throw new Error(error.message);
+  }
+  return introView(clientId);
 }
 
 /**

@@ -31,7 +31,7 @@ import {
   type SubstitutionContext,
 } from "@/lib/tools/master-inbox/inbox/template-variables";
 import { mergeAlwaysCcString } from "@/lib/tools/master-inbox/inbox/auto-cc";
-import { fitIntroToLead, introSubject, introWasSent } from "@/lib/tools/master-inbox/inbox/intro-macro";
+import { fitIntroToLead, introSubjectFor, introWasSent } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import { withOpener } from "@/lib/tools/master-inbox/inbox/intro-opener";
 import { introSignOffName } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import dynamic from "next/dynamic";
@@ -632,13 +632,14 @@ export function Composer({
       // substitution emptied the gaps (a missing phone has been written out).
       setIntroGaps(missingVariables(template, vars));
       /*
-       * The subject (6 Oct): "Intro: {lead first name} & {brokerage}". On
+       * The subject (6 Oct): "Intro: {lead first name} & {brokerage}", or the
+       * client's own (5 Nov). On
        * EmailBison a changed subject goes out as a new email (the reply
        * endpoint drops subjects); Instantly keeps the thread. Replies still
        * reach this conversation's client.
        */
       if (introMacro.brokerage) {
-        setComposerSubject(introSubject(introMacro.brokerage, substituteVariables("{{lead.first_name}}", vars)));
+        setComposerSubject(introSubjectFor(introMacro.subject, introMacro.brokerage, vars));
       }
       const introCc = introMacro.cc;
       if (introCc) {
@@ -1472,6 +1473,8 @@ type IntroMacroState =
       body: string;
       /** The brokerage the "Intro: …" subject names. Absent from an older server. */
       brokerage?: string;
+      /** The client's own subject, or null for the standard one. Absent from an older server. */
+      subject?: string | null;
       cc: string | null;
       introductionLabelId: string | null;
       /** The mailbox introductions go out from (Nicole), or why there is none here. */

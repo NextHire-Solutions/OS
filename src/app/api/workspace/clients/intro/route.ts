@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { IntroOverrideError, introView, saveIntroOverride, saveIntroVariants } from "@/lib/clients/intro-override";
+import { IntroOverrideError, introView, saveIntroOverride, saveIntroSubject, saveIntroVariants } from "@/lib/clients/intro-override";
 import { clientsChanged } from "@/lib/clients/after-change";
 
 /*
@@ -12,6 +12,8 @@ import { clientsChanged } from "@/lib/clients/after-change";
  * PUT { clientId, custom }  → save the client's own introduction; null or
  *                              blank goes back to the standard wording.
  * PUT { clientId, variants } → save the wording by market or person (0030).
+ * PUT { clientId, subject }  → save the client's own subject (0048); null or
+ *                              blank goes back to the standard subject.
  */
 export const dynamic = "force-dynamic";
 
@@ -40,6 +42,19 @@ export async function PUT(request: Request) {
       const view = await saveIntroVariants(clientId, body.variants);
       clientsChanged();
       console.log(`[clients/intro] ${session.email} saved ${view.variants.length} intro variant(s) for ${clientId}`);
+      return NextResponse.json({ ok: true, view });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+  if (clientId && body && "subject" in body) {
+    if (body.subject !== null && typeof body.subject !== "string") {
+      return NextResponse.json({ error: "subject must be text or null." }, { status: 400 });
+    }
+    try {
+      const view = await saveIntroSubject(clientId, body.subject);
+      clientsChanged();
+      console.log(`[clients/intro] ${session.email} ${view.subject.custom ? "set a custom" : "restored the standard"} intro subject for ${clientId}`);
       return NextResponse.json({ ok: true, view });
     } catch (e) {
       return fail(e);

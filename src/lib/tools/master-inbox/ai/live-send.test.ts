@@ -282,6 +282,16 @@ test("the transport is wired and the mocked gate is open in this process only", 
   assert.equal(process.env.MASTER_INBOX_REPLY_AGENT_LIVE_SEND, undefined);
 });
 
+test("the agent's handover reads the client's own subject through the real resolveIntroduction (5 Nov)", { skip }, async () => {
+  const { client } = seed("emailbison");
+  const [agent] = await engine!.loadAgents(WORKSPACE);
+  assert.match((await planIntroduction(id(client), agent)).subject, /^Intro: Jane & /);
+  db.rows("os_clients")[0].intro_subject = "Connecting you with #TEAMFAST | {{lead.name}}";
+  assert.equal((await planIntroduction(id(client), agent)).subject, "Connecting you with #TEAMFAST | Jane Doe");
+  // This fake returns whole rows, so also pin that the real read asks for the column.
+  assert.ok(db.calls.some((c) => c.table === "os_clients" && (c.query.get("select") ?? "").includes("intro_subject")));
+});
+
 test("byte-compare: the agent converts an introduction macro exactly as the composer does", { skip }, async () => {
   const { client, agentRow } = seed("emailbison");
   const [agent] = await engine!.loadAgents(WORKSPACE);

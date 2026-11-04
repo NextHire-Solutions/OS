@@ -8,6 +8,7 @@ import { introSenderFor } from "@/lib/tools/master-inbox/inbox/intro-sender";
 import { directHandoffReason } from "@/lib/tools/master-inbox/relay/settings";
 import {
   INTRO_ROW_COLUMNS,
+  INTRO_SUBJECT_COLUMN,
   introBrokerage,
   introClientFromRow,
   introReady,
@@ -43,6 +44,8 @@ type Available = {
   body: string;
   /** The brokerage the subject names: "Intro: {lead first name} & {brokerage}" (6 Oct). */
   brokerage: string;
+  /** The client's own subject, `{{lead.*}}` still to resolve. Null is the standard one. */
+  subject: string | null;
   /**
    * Every named contact's address, comma-separated, to merge into Cc. Null
    * when none of them has one.
@@ -118,7 +121,7 @@ export async function GET(
     const found = await rosterRowForPortal(
       clientId,
       (miClient?.name as string | undefined) ?? null,
-      `${INTRO_ROW_COLUMNS}, pipeline_entry, relay_settings`,
+      `${INTRO_ROW_COLUMNS}, ${INTRO_SUBJECT_COLUMN}, pipeline_entry, relay_settings`,
     );
     if (found.error) throw new Error(found.error);
     row = found.row;
@@ -169,6 +172,7 @@ export async function GET(
     clientName: client.name,
     body: introText(client),
     brokerage: introBrokerage(client),
+    subject: client.introSubjectOverride ?? null,
     cc: introContactEmails(client).join(", ") || null,
     introductionLabelId: (introLabel?.id as string | undefined) ?? null,
     sender: await introSenderFor(admin, session.activeWorkspace.id, (thread.source_provider as string | null) ?? "emailbison"),

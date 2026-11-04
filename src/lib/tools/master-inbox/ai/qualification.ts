@@ -32,7 +32,7 @@ import {
   hasIntroDetails,
   introBrokerage,
   introContactEmails,
-  introSubject,
+  introSubjectFor,
   renderIntroMacroTemplate,
   introReady,
   introText,
@@ -304,7 +304,7 @@ export function planHandover(handover: AgentHandover, ctx: HandoverContext): Han
     kind: "introduce",
     // A lead with no phone gets the sentence rewritten, not a blank (6 Oct).
     body: substituteVariables(fitIntroToLead(template, ctx.variables.lead), ctx.variables),
-    subject: introSubject(introBrokerage(ctx.client), substituteVariables("{{lead.first_name}}", ctx.variables)),
+    subject: introSubjectFor(ctx.client.introSubjectOverride, introBrokerage(ctx.client), ctx.variables),
     cc: mergeCc(introContactEmails(ctx.client), handover.ccEmails),
     source: override.length > 0 ? "override" : "macro",
   };

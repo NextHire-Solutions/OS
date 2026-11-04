@@ -603,6 +603,20 @@ test("a lead with no phone or company gets the sentence rewritten, not blanks â€
   assert.equal(plan.subject, `Intro: Gisele & ${introBrokerage(ONE)}`);
 });
 
+test("planHandover: the client's own subject, and the standard one for a lead missing its field (5 Nov)", () => {
+  const plan = (lead: { name: string; email: string }) => {
+    const p = planHandover(noExtras, {
+      client: { ...ONE, introSubjectOverride: "Meet the team, {{lead.first_name}}" },
+      unavailableReason: null,
+      variables: { ...variables, lead },
+    });
+    assert.equal(p.kind, "introduce");
+    return p.kind === "introduce" ? p.subject : "";
+  };
+  assert.equal(plan({ name: "Gisele Trautman", email: "g@example.com" }), "Meet the team, Gisele");
+  assert.equal(plan({ name: "", email: "g@example.com" }), `Intro: ${introBrokerage(ONE)}`);
+});
+
 test("mergeCc keeps the first spelling, drops blanks, and never repeats a mailbox", () => {
   assert.deepEqual(
     mergeCc(["A@x.com", " ", "b@x.com"], ["a@X.com", "c@x.com", "B@x.com", "c@x.com"]),

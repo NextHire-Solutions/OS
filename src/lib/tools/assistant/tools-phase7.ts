@@ -347,12 +347,16 @@ export async function clientIntroductionTool(query: string) {
       ...c.contact.extra.filter((p) => p.name).map((p) => ({ person: p.name, covers: p.territories ?? [] })),
     ].filter((p) => p.person),
     byCampaign: v.routes?.map((x) => ({ campaign: x.campaign, portal: x.portal, introducedTo: x.fallback ? "everyone (the campaign names no territory)" : x.people, wording: x.variant ? `the "${x.variant}" variant` : "the usual introduction" })) ?? null,
-    subject: introSubject(introBrokerage({ brokerage: c.contact.brokerage, name: c.name }), "{lead first name}"),
+    subject: v.subject.custom ?? introSubject(introBrokerage({ brokerage: c.contact.brokerage, name: c.name }), "{lead first name}"),
+    subjectIs: v.subject.custom ? "the client's own subject; a lead missing a field it uses gets the standard one" : "the standard subject",
+    howToSetSubject: v.subject.canSave
+      ? `The subject is set on Clients → ${c.name} → Introduce to → Subject. One email's subject can also be changed in the reply box.`
+      : "A client's own subject becomes available once database migration 0048 is run. One email's subject can be changed in the reply box.",
     wordingByMarketOrPerson: v.variants.map((x) => ({ name: x.label, forCampaignsNaming: x.places, forLeadsRoutedTo: x.people, text: x.text })),
     howToSetWording: v.canSaveVariants
       ? `Different wording for a market or a person is set on Clients → ${c.name} → Introduce to → "Different wording by market or person".${v.variants.length ? "" : " None is set yet."}`
       : "Different wording by market or person becomes available once database migration 0030 is run.",
-    note: "This is the introduction email the Introduce button and the reply agent send — NOT the campaign's cold email (that is campaign_copy). {{lead.*}} and {{sender.*}} are filled in per lead when it is sent. Its subject is \"Intro: {lead first name} & {brokerage}\" (on EmailBison it goes out as a new email). A lead with no phone or brokerage gets the sentence rewritten, never a blank. wordingByMarketOrPerson replaces the text for leads whose campaign names that place (or who are routed to that person). After Introduce, the operator can add an opening line drawn from the lead's own reply (\"Line from their reply\")." +
+    note: "This is the introduction email the Introduce button and the reply agent send — NOT the campaign's cold email (that is campaign_copy). {{lead.*}} and {{sender.*}} are filled in per lead when it is sent. Its subject is in the subject field above, and on EmailBison it goes out as a new email. A lead with no phone or brokerage gets the sentence rewritten, never a blank. wordingByMarketOrPerson replaces the text for leads whose campaign names that place (or who are routed to that person). After Introduce, the operator can add an opening line drawn from the lead's own reply (\"Line from their reply\")." +
       (byTerritory ? " This client introduces BY TERRITORY: the text shown names everyone, but each lead's introduction names and copies in only the people whose territory appears in the lead's campaign name (plus anyone with no territory); a campaign naming no territory goes to everyone." : ""),
   };
 }

@@ -1337,12 +1337,12 @@ const INTRO_FIELDS: { token: string; label: string }[] = [
 const FIELD_LABEL = new Map(INTRO_FIELDS.map((f) => [f.token.replace(/\s/g, ""), f.label]));
 
 /* The text as it will read, with each field shown as a labelled chip. */
-function IntroText({ text, onEdit }: { text: string; onEdit?: () => void }) {
+function IntroText({ text, onEdit, what = "introduction" }: { text: string; onEdit?: () => void; what?: string }) {
   const parts = text.split(/(\{\{\s*[\w.]+\s*\}\})/g);
   return (
     <div className={`rx-intro-text${onEdit ? " editable" : ""}`}
       {...(onEdit ? {
-        role: "button", tabIndex: 0, title: "Click to edit the introduction", "aria-label": "Edit the introduction",
+        role: "button", tabIndex: 0, title: `Click to edit the ${what}`, "aria-label": `Edit the ${what}`,
         onClick: onEdit, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); onEdit(); } },
       } : {})}
       style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, padding: "12px 14px", border: "1px solid var(--ds-line, #e4e4e7)", borderRadius: 8, background: "var(--ds-subtle, #fafafa)", fontSize: 13.5 }}>
@@ -1355,6 +1355,119 @@ function IntroText({ text, onEdit }: { text: string; onEdit?: () => void }) {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+const introBadge = (on: boolean, text: string) => (
+  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".02em", padding: "2px 8px", borderRadius: 999, background: on ? "#EDE7FB" : "#EAF5EE", color: on ? "#5B33B5" : "#1E7A45" }}>{text}</span>
+);
+
+/*
+ * The subject of this client's introductions (5 Nov). One per client, whichever
+ * wording a lead gets. Editing starts from what is sent today; the standard
+ * wording typed back is the standard subject again.
+ */
+function IntroSubject({ clientId, view, onSaved }: { clientId: string; view: IntroView; onSaved: (v: IntroView) => void }) {
+  const { custom, standard, canSave } = view.subject;
+  const [draft, setDraft] = useState<string | null>(null);
+  // What editing started from: a brokerage changed meanwhile must not turn an untouched draft into a custom subject.
+  const [started, setStarted] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [box, setBox] = useState<HTMLInputElement | null>(null);
+  const current = custom ?? standard;
+
+  async function put(subject: string | null, done: string) {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch("/api/workspace/clients/intro", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, subject }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      onSaved(body.view as IntroView);
+      setDraft(null); setConfirmReset(false);
+      setMsg({ text: done });
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : String(e), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const start = () => { setDraft(current); setStarted(current); setMsg(null); setConfirmReset(false); };
+  const save = () => {
+    const t = (draft ?? "").replace(/\s+/g, " ").trim();
+    if (t === started) { setDraft(null); setMsg({ text: "No changes." }); return; }
+    void put(t, t === standard ? "Back to the standard subject." : "Saved. The Introduce button now uses this subject.");
+  };
+  function insert(token: string) {
+    const d = draft ?? "";
+    if (!box) { setDraft(d + token); return; }
+    const a = box.selectionStart ?? d.length;
+    const b = box.selectionEnd ?? d.length;
+    setDraft(d.slice(0, a) + token + d.slice(b));
+    requestAnimationFrame(() => { box.focus(); box.setSelectionRange(a + token.length, a + token.length); });
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 8 }} id="rx-t-subject">
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>Subject</span>
+        {introBadge(!!custom, custom ? "Custom subject" : "Standard subject")}
+        <span style={{ flex: 1 }} />
+        {draft === null ? (
+          <button type="button" className="rx-btn" disabled={!canSave || busy}
+            title={canSave ? undefined : "Editing the subject needs database migration 0048 first."}
+            onClick={start}>Edit subject</button>
+        ) : null}
+        {custom && draft === null && !confirmReset ? (
+          <button type="button" className="rx-btn" disabled={busy} onClick={() => setConfirmReset(true)}>Back to standard</button>
+        ) : null}
+      </div>
+      {confirmReset ? (
+        <div className="rx-confirm" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span>Remove the custom subject and use the standard one again?</span>
+          <button type="button" className="rx-btn solid" disabled={busy} onClick={() => void put(null, "Back to the standard subject.")}>{busy ? "Saving…" : "Use standard"}</button>
+          <button type="button" className="rx-btn" disabled={busy} onClick={() => setConfirmReset(false)}>Cancel</button>
+        </div>
+      ) : null}
+      {draft !== null ? (
+        <div style={{ display: "grid", gap: 8 }}>
+          <input ref={setBox} className="ds-input" aria-label="Subject" value={draft} maxLength={200}
+            placeholder="Intro: {{lead.first_name}} & your brokerage"
+            style={{ width: "100%", minWidth: 0, fontFamily: "inherit", fontSize: 13.5 }}
+            onChange={(e) => setDraft(e.target.value)} disabled={busy} autoFocus />
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+            <span style={{ color: "var(--ds-muted)" }}>Insert a field:</span>
+            {INTRO_FIELDS.filter((f) => !/phone|email/.test(f.token)).map((f) => (
+              <button key={f.token} type="button" className="rx-btn" style={{ padding: "1px 7px", fontSize: 12 }}
+                title={f.token} disabled={busy} onClick={() => insert(f.token)}>{f.label}</button>
+            ))}
+          </div>
+          {draft.trim() ? (
+            <>
+              <span style={{ fontSize: 12, color: "var(--ds-muted)" }}>How it will read</span>
+              <IntroText text={draft.trim()} what="subject" />
+            </>
+          ) : null}
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" className="ds-btn primary sm" disabled={busy || !draft.trim()} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+            <button type="button" className="ds-btn ghost sm" disabled={busy} onClick={() => { setDraft(null); setMsg(null); }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <IntroText text={current} what="subject" onEdit={canSave ? start : undefined} />
+      )}
+      {draft === null ? (
+        <div className="rx-hint" style={{ marginTop: 0 }}>
+          {custom
+            ? "If a lead is missing a field used here, that lead gets the standard subject. One email's subject can still be changed in the reply box."
+            : "Used for every lead. One email's subject can still be changed in the reply box."}
+        </div>
+      ) : null}
+      {msg ? <div role="status" style={{ fontSize: 13, color: msg.bad ? "var(--x-bad, #b42318)" : undefined }}>{msg.text}</div> : null}
     </div>
   );
 }
@@ -1438,14 +1551,12 @@ function IntroPreview({ clientId, refreshKey, onChanged }: { clientId: string; r
     }
     void save(draft);
   };
-  const badge = (on: boolean, text: string) => (
-    <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".02em", padding: "2px 8px", borderRadius: 999, background: on ? "#EDE7FB" : "#EAF5EE", color: on ? "#5B33B5" : "#1E7A45" }}>{text}</span>
-  );
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
+      <IntroSubject clientId={clientId} view={view} onSaved={(v) => { setView(v); onChanged(); }} />
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        {view.custom ? badge(true, "Custom introduction") : view.standard ? badge(false, "Standard introduction") : null}
+        {view.custom ? introBadge(true, "Custom introduction") : view.standard ? introBadge(false, "Standard introduction") : null}
         <span style={{ flex: 1 }} />
         {current && !editing ? (
           <button type="button" className="rx-btn" onClick={() => void copy(current)}>{copied ? "Copied" : "Copy"}</button>

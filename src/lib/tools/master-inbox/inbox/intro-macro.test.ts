@@ -273,3 +273,94 @@ test("a lead's company ending in a full stop does not get a second one", () => {
   assert.equal(fitIntroToLead(t, { phone: "1", company: "InterCoast Properties, Inc." }), t.replace("{{lead.company}}.", "{{lead.company}}"));
   assert.equal(fitIntroToLead(t, { phone: "1", company: "Compass" }), t);
 });
+
+/* ---- 5 Nov: a client's own subject ---- */
+import {
+  cleanIntroSubject,
+  INTRO_ROW_COLUMNS,
+  INTRO_SUBJECT_COLUMN,
+  INTRO_SUBJECT_MAX,
+  introClientFromRow,
+  introSubjectFor,
+  introSubjectProblems,
+} from "./intro-macro.ts";
+import { unknownVariables } from "./template-variables.ts";
+
+const SUBJECT_LEAD = { thread: { subject: "Re: hello" }, lead: { name: "Gisele Bundchen", email: "g@x.com", phone: "", company: "Compass", title: "" }, sender: { name: "Nicole Collins", email: "n@x.com" } };
+const NO_NAME_LEAD = { ...SUBJECT_LEAD, lead: { ...SUBJECT_LEAD.lead, name: "" } };
+
+test("own subject: blank means exactly today's standard subject", () => {
+  for (const blank of [null, undefined, "", "   \n "]) {
+    assert.equal(introSubjectFor(blank, "FAST Real Estate", SUBJECT_LEAD), "Intro: Gisele & FAST Real Estate");
+    assert.equal(introSubjectFor(blank, "FAST Real Estate", NO_NAME_LEAD), "Intro: FAST Real Estate");
+  }
+});
+
+test("own subject: its fields are filled in for the lead", () => {
+  assert.equal(introSubjectFor("Meet #TEAMFAST, {{lead.first_name}}", "FAST Real Estate", SUBJECT_LEAD), "Meet #TEAMFAST, Gisele");
+  assert.equal(introSubjectFor("{{lead.first_name}} at {{lead.company}} / {{sender.first_name}}", "FAST", SUBJECT_LEAD), "Gisele at Compass / Nicole");
+});
+
+test("own subject: a lead missing a field it uses gets the standard subject, never a hole", () => {
+  assert.equal(introSubjectFor("Intro: {{lead.first_name}} & FAST", "FAST Real Estate", NO_NAME_LEAD), "Intro: FAST Real Estate");
+  assert.equal(introSubjectFor("{{lead.first_name}}, your {{lead.title}} role", "FAST Real Estate", SUBJECT_LEAD), "Intro: Gisele & FAST Real Estate");
+});
+
+test("own subject: a field that does not exist never goes out with its braces", () => {
+  assert.equal(introSubjectFor("Hi {{lead.frist_name}}", "FAST", SUBJECT_LEAD), "Intro: Gisele & FAST");
+  assert.deepEqual(unknownVariables("Hi {{lead.frist_name}} {{lead.first_name}} {{ x }}"), ["{{lead.frist_name}}", "{{ x }}"]);
+  assert.deepEqual(unknownVariables("Intro: {{lead.first_name}} & {{ lead.company }}"), []);
+});
+
+test("own subject: stray braces never reach a lead, however they were typed", () => {
+  for (const broken of ["Hi {{lead.first_name}", "Hi {{{lead.first_name}}}", "{{lead.first_name}}}", "Intro: {lead first name} & FAST", "Hi {{lead.first_na", "Hi }}", "{{}}"]) {
+    assert.ok(unknownVariables(broken).length > 0, broken);
+    assert.equal(introSubjectFor(broken, "FAST", SUBJECT_LEAD), "Intro: Gisele & FAST", broken);
+  }
+  assert.deepEqual(unknownVariables("Connecting you with #TEAMFAST | {{lead.name}}"), []);
+  assert.deepEqual(unknownVariables("Plain words, 100% & more | #TEAMFAST"), []);
+});
+
+test("own subject: the thread's own subject is refused, the Subject box would feed itself", () => {
+  assert.deepEqual(introSubjectProblems("Fwd {{ thread.subject }}"), ["{{ thread.subject }}"]);
+  assert.equal(introSubjectFor("Fwd {{thread.subject}}", "FAST", SUBJECT_LEAD), "Intro: Gisele & FAST");
+});
+
+test("own subject: FAST's, as asked for", () => {
+  assert.equal(introSubjectFor("Connecting you with #TEAMFAST | {{lead.name}}", "FAST Real Estate", SUBJECT_LEAD), "Connecting you with #TEAMFAST | Gisele Bundchen");
+});
+
+test("own subject: always one line, even when a lead's details hold a line break", () => {
+  const nasty = { ...SUBJECT_LEAD, lead: { ...SUBJECT_LEAD.lead, company: "Compass\r\nBcc: x@evil.com" } };
+  const out = introSubjectFor("Hello\n{{lead.company}}", "FAST", nasty);
+  assert.equal(/[\r\n]/.test(out), false);
+  assert.equal(out, "Hello Compass Bcc: x@evil.com");
+  assert.equal(cleanIntroSubject("  a \n\t b  "), "a b");
+});
+
+test("own subject: a very long result is cut at a word, within the limit", () => {
+  const out = introSubjectFor(`Hello ${"word ".repeat(100)}{{lead.first_name}}`, "FAST", SUBJECT_LEAD);
+  assert.ok(out.length <= INTRO_SUBJECT_MAX);
+  assert.equal(out.endsWith(" "), false);
+  assert.ok(out.endsWith("word"));
+});
+
+test("own subject: read from the row, and kept through territories and wording variants", () => {
+  const row = {
+    name: "FAST Real Estate", contact_name: "Elias Astuto", contact_role: "Director", contact_email: "e@x.com",
+    contact2_name: "Judith Castro", contact2_role: "Partner", contact2_email: "j@x.com",
+    brokerage: "FAST Real Estate", intro_subject: "Meet #TEAMFAST",
+    contact_territories: { 1: ["Charleston"] },
+    intro_variants: [{ id: "v1", label: "Charleston", places: ["Charleston"], people: [], text: "Hi" }],
+  };
+  const client = introClientFromRow(row, "FAST");
+  assert.equal(client.introSubjectOverride, "Meet #TEAMFAST");
+  for (const campaign of ["FAST + Charleston", "FAST + Columbia", null]) {
+    assert.equal(routeIntro(client, campaign).client.introSubjectOverride, "Meet #TEAMFAST", String(campaign));
+  }
+  assert.equal(introClientFromRow({ name: "No column yet" }, "x").introSubjectOverride, null);
+});
+
+test("the relay's shared read list stays free of the subject: it hard-stops on a failed read", () => {
+  assert.equal(INTRO_ROW_COLUMNS.includes(INTRO_SUBJECT_COLUMN), false);
+});

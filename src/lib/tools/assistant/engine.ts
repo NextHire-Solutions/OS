@@ -459,7 +459,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "client_introduction",
       description:
-        "The INTRODUCTION email for a client \u2014 the message the Introduce button and the reply agent send when handing a lead to the client: its text (custom or standard), its subject ('Intro: {lead first name} & {brokerage}'), who is copied in, the address it is sent from, wording that differs by market or person, and \u2014 per campaign \u2014 its portal, which person its leads go to and which wording they get. Not the campaign's cold email (that is campaign_copy).",
+        "The INTRODUCTION email for a client \u2014 the message the Introduce button and the reply agent send when handing a lead to the client: its text (custom or standard), its subject (the client's own, else 'Intro: {lead first name} & {brokerage}'), who is copied in, the address it is sent from, wording that differs by market or person, and \u2014 per campaign \u2014 its portal, which person its leads go to and which wording they get. Not the campaign's cold email (that is campaign_copy).",
       parameters: {"type": "object", "properties": {"client": {"type": "string"}}, "required": ["client"]},
     },
   },

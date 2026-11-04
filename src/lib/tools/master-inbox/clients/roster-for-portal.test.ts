@@ -15,14 +15,19 @@ const TABLES: Record<string, Record<string, unknown>[]> = {
   ],
   os_campaign_portals: [] as Record<string, unknown>[],
 };
+const MISSING_COLUMNS: string[] = [];
 function from(table: string) {
   const eqs: [string, unknown][] = [];
   const rows = () => (TABLES[table] ?? []).filter((r) => eqs.every(([k, v]) => r[k] === v));
+  let asked = "";
   const b = {
-    select: () => b,
+    select: (c?: string) => { asked = c ?? ""; return b; },
     eq: (k: string, v: unknown) => { eqs.push([k, v]); return b; },
     limit: () => b,
-    maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
+    maybeSingle: async () => {
+      const gone = MISSING_COLUMNS.find((c) => asked.includes(c));
+      return gone ? { data: null, error: { message: `column os_clients.${gone} does not exist` } } : { data: rows()[0] ?? null, error: null };
+    },
     then: (res: (v: unknown) => unknown) => Promise.resolve({ data: rows(), error: null }).then(res),
   };
   return b;
@@ -51,4 +56,15 @@ test("a second portal is found through a campaign → portal choice", { skip }, 
 test("a name shared by two records finds nobody rather than guessing", { skip }, async () => {
   assert.equal((await find("x", "Shared Name", "id")).row, null);
   assert.equal((await find("x", "No Such Client", "id")).row, null);
+});
+
+test("the subject column not existing yet does not stop the Introduce button or the agent", { skip }, async () => {
+  MISSING_COLUMNS.push("intro_subject");
+  try {
+    const found = await find("keyes-mi", "The Keyes Company", "name, contact_name, intro_subject");
+    assert.equal(found.error, undefined);
+    assert.equal(found.row?.id, "keyes");
+  } finally {
+    MISSING_COLUMNS.length = 0;
+  }
 });

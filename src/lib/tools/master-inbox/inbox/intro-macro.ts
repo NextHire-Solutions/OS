@@ -1,3 +1,5 @@
+import { missingVariables, substituteVariables, unknownVariables, type SubstitutionContext } from "./template-variables.ts";
+
 /*
  * The introduction macro — one wording, rendered two ways.
  *
@@ -73,6 +75,11 @@ export interface IntroMacroClient {
   contactTerritories?: string[] | null;
   /** Wording by market or person (os_clients.intro_variants, 0030). See `pickIntroVariant`. */
   introVariants?: IntroVariant[] | null;
+  /**
+   * The client's own subject (os_clients.intro_subject, OS migration 0048),
+   * with the same {{lead.*}} / {{sender.*}} fields. Blank is the standard one.
+   */
+  introSubjectOverride?: string | null;
 }
 
 /** One of the people an agent is introduced to. */
@@ -461,6 +468,15 @@ export const INTRO_ROW_COLUMNS =
   "contact3_name, contact3_role, contact3_email, brokerage, intro_override, more_contacts, contact_territories, intro_variants";
 
 /**
+ * The client's own subject, read beside INTRO_ROW_COLUMNS and deliberately not
+ * in it: the relay's sweep reads that list too, needs no subject, and treats a
+ * failed read as a hard stop, so a column it asks for before its migration has
+ * run would stop live hand-offs. The readers that do want this one go through
+ * rosterRowForPortal, which drops a column that does not exist yet.
+ */
+export const INTRO_SUBJECT_COLUMN = "intro_subject";
+
+/**
  * An os_clients row as the macro needs it: person 1, people 2-3 from their
  * columns, 4+ from more_contacts (0028), each with their territories (0029),
  * and the custom intro (0026). A column a migration has not added yet reads
@@ -486,6 +502,7 @@ export function introClientFromRow(row: Record<string, unknown>, fallbackName: s
     brokerage: str("brokerage"),
     introOverride: str("intro_override"),
     introVariants: introVariantsFrom(row.intro_variants),
+    introSubjectOverride: str(INTRO_SUBJECT_COLUMN),
   };
 }
 
@@ -572,6 +589,45 @@ export function introSubject(brokerage: string, leadFirstName: string | null | u
   const first = (leadFirstName ?? "").trim();
   const b = brokerage.trim();
   return first ? `Intro: ${first} & ${b}` : `Intro: ${b}`;
+}
+
+/*
+ * A CLIENT'S OWN SUBJECT (5 Nov; os_clients.intro_subject, OS migration 0048).
+ * One per client, whichever wording the lead gets.
+ *
+ * Never a hole: a lead missing a field the subject uses gets the standard
+ * subject, which handles a missing first name, rather than "Intro:  & Oz Group"
+ * or a sentence with a word gone. A subject is a mail header, so it is always
+ * one line, whatever a lead's details contain.
+ */
+export const INTRO_SUBJECT_MAX = 200;
+
+export function cleanIntroSubject(text: string | null | undefined): string {
+  return (text ?? "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * What cannot be in a client's subject: anything that would go out as braces,
+ * and the thread's own subject, which the composer fills from the Subject box
+ * itself (pressing Introduce twice would compound it) and the agent does not.
+ */
+export function introSubjectProblems(text: string): string[] {
+  const own = /\{\{\s*thread\.subject\s*\}\}/i.exec(text);
+  return own ? [...unknownVariables(text), own[0]] : unknownVariables(text);
+}
+
+/** The subject this lead's introduction goes out with. */
+export function introSubjectFor(
+  override: string | null | undefined,
+  brokerage: string,
+  variables: SubstitutionContext,
+): string {
+  const standard = introSubject(brokerage, substituteVariables("{{lead.first_name}}", variables));
+  const template = cleanIntroSubject(override);
+  if (!template || introSubjectProblems(template).length || missingVariables(template, variables).length) return standard;
+  const filled = cleanIntroSubject(substituteVariables(template, variables));
+  if (!filled) return standard;
+  return filled.length > INTRO_SUBJECT_MAX ? filled.slice(0, INTRO_SUBJECT_MAX).replace(/\s+\S*$/, "") : filled;
 }
 
 /* ------------------------------------------------------------------------ */

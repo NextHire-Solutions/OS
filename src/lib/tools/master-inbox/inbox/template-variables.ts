@@ -166,6 +166,21 @@ export function substituteVariables(
 }
 
 /**
+ * What in this text would go out as literal braces: a {{field}} that does not
+ * exist, or a brace that is not part of a field at all, like "{{lead.first_name}"
+ * or "{lead first name}". Substitution leaves all of those exactly as typed.
+ */
+export function unknownVariables(text: string): string[] {
+  const out = new Set<string>();
+  const rest = text.replace(/\{\{[^{}]*\}\}/g, (field) => {
+    if (!KNOWN_KEYS.has(field.slice(2, -2).trim().toLowerCase())) out.add(field);
+    return " ";
+  });
+  for (const stray of rest.match(/\S*[{}]\S*/g) ?? []) out.add(stray);
+  return [...out];
+}
+
+/**
  * Which of the values this text asks for are not available, in plain words.
  *
  * Substitution turns an unknown value into nothing, which is right — a
