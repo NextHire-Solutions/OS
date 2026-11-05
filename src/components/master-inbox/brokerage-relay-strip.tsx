@@ -21,6 +21,8 @@ type Rec = RelayRecordView & { line: { tone: LineTone; text: string } };
 
 function actionFor(r: Rec): string | null {
   if (r.status === "ready") return r.practice ? "Send to brokerage (practice)" : "Send to brokerage";
+  // Held over the client's cap: the button is a person choosing to send it. It is refused while the cap is still reached.
+  if (r.status === "held" && r.reason === "over_cap") return "Send to client";
   if (r.status === "held") return "Check again";
   if (r.status === "failed" && r.reason === "send_failed") return "Try again";
   return null;

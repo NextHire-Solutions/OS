@@ -52,6 +52,8 @@ test("the allowlist contains exactly the OS tables", () => {
     // Added 2026-10-26: pay per lead, test mode only (0043).
     "os_usage_billing_settings",
     "os_usage_billing_periods",
+    // Added 2026-11-05: lead and spend caps (0049).
+    "os_cap_windows", "os_cap_held_leads",
     // Added 2026-11-02: Prospects ↔ campaign, first campaign at setup (0046).
     "os_prospect_sync",
     "os_setup_campaigns",

@@ -179,7 +179,6 @@ async function liveStatus(c: Omit<PlannedCampaign, 'status'>): Promise<string> {
 /** The preview: live statuses, what would change and what would be skipped. Sends nothing. */
 export async function planToggle(clientId: string, action: ToggleAction): Promise<TogglePlan> {
   const client = await loadClient(clientId);
-  const sb = getSupabase();
 
   const held = client.toggle_paused_campaigns ?? [];
   if (action === 'resume' && held.length) {
@@ -197,41 +196,44 @@ export async function planToggle(clientId: string, action: ToggleAction): Promis
      */
   }
 
-  let candidates: Omit<PlannedCampaign, 'status'>[];
-  {
-    /*
-     * Pause: every linked campaign. Resume with nothing held here: every
-     * linked campaign too — campaigns paused ELSEWHERE (in EmailBison, or by a
-     * status change) left ▶ unusable (Eddy, 30 Sep: "on 54 Realty I cannot
-     * press play"). `classify` still resumes only the ones live-paused right
-     * now, and the dialog previews exactly which before anything is sent.
-     */
-    const instIds = client.instantly_campaign_ids ?? [];
-    const bisonIds = client.bison_campaign_ids ?? [];
-    const [inst, bison] = await Promise.all([
-      instIds.length
-        ? sb.from('instantly_campaigns').select('id, name').in('id', instIds)
-        : Promise.resolve({ data: [], error: null }),
-      bisonIds.length
-        ? sb.from('bison_campaigns').select('id, int_id, name').in('id', bisonIds)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-    if (inst.error) throw new Error(inst.error.message);
-    if (bison.error) throw new Error(bison.error.message);
-    candidates = [
-      ...((inst.data ?? []) as { id: string; name: string }[]).map((c) => ({
-        platform: 'instantly' as const, id: c.id, int_id: null, name: c.name,
-      })),
-      ...((bison.data ?? []) as { id: string; int_id: number | null; name: string }[]).map((c) => ({
-        platform: 'bison' as const, id: c.id, int_id: c.int_id, name: c.name,
-      })),
-    ];
-  }
+  return { clientId, clientName: client.name, action, ...classify(action, await linkedWithStatus(client)) };
+}
 
-  const withStatus: PlannedCampaign[] = await Promise.all(
-    candidates.map(async (c) => ({ ...c, status: await liveStatus(c) })),
-  );
-  return { clientId, clientName: client.name, action, ...classify(action, withStatus) };
+/*
+ * Pause: every linked campaign. Resume with nothing held here: every
+ * linked campaign too — campaigns paused ELSEWHERE (in EmailBison, or by a
+ * status change) left ▶ unusable (Eddy, 30 Sep: "on 54 Realty I cannot
+ * press play"). `classify` still resumes only the ones live-paused right
+ * now, and the dialog previews exactly which before anything is sent.
+ */
+async function linkedWithStatus(client: ClientRow): Promise<PlannedCampaign[]> {
+  const sb = getSupabase();
+  const instIds = client.instantly_campaign_ids ?? [];
+  const bisonIds = client.bison_campaign_ids ?? [];
+  const [inst, bison] = await Promise.all([
+    instIds.length
+      ? sb.from('instantly_campaigns').select('id, name').in('id', instIds)
+      : Promise.resolve({ data: [], error: null }),
+    bisonIds.length
+      ? sb.from('bison_campaigns').select('id, int_id, name').in('id', bisonIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (inst.error) throw new Error(inst.error.message);
+  if (bison.error) throw new Error(bison.error.message);
+  const candidates: Omit<PlannedCampaign, 'status'>[] = [
+    ...((inst.data ?? []) as { id: string; name: string }[]).map((c) => ({
+      platform: 'instantly' as const, id: c.id, int_id: null, name: c.name,
+    })),
+    ...((bison.data ?? []) as { id: string; int_id: number | null; name: string }[]).map((c) => ({
+      platform: 'bison' as const, id: c.id, int_id: c.int_id, name: c.name,
+    })),
+  ];
+  return Promise.all(candidates.map(async (c) => ({ ...c, status: await liveStatus(c) })));
+}
+
+/** Every campaign linked to a client, with its live status. Reads only. */
+export async function liveCampaigns(clientId: string): Promise<PlannedCampaign[]> {
+  return linkedWithStatus(await loadClient(clientId));
 }
 
 async function applyOne(action: ToggleAction, c: PlannedCampaign): Promise<ToggleOutcome> {
@@ -258,7 +260,55 @@ export async function applyToggle(
   action: ToggleAction,
   actor: string | null,
 ): Promise<ToggleResult> {
-  const plan = await planToggle(clientId, action);
+  return applyPlanned(await planToggle(clientId, action), actor);
+}
+
+type ListedCampaign = Pick<ToggledCampaign, 'platform' | 'id' | 'int_id' | 'name'>;
+
+/** Exactly these campaigns, as they are live right now, and only while they are still linked to this client. */
+async function applyListed(clientId: string, action: ToggleAction, list: ListedCampaign[], actor: string | null): Promise<ToggleResult> {
+  const client = await loadClient(clientId);
+  const key = (c: { platform: string; id: string }) => `${c.platform}:${c.id}`;
+  const linked = new Map((await linkedWithStatus(client)).map((c) => [key(c), c]));
+  const plan = classify(action, list.flatMap((c) => linked.get(key(c)) ?? []));
+  const gone = list.filter((c) => !linked.has(key(c))).map((c) => ({
+    campaign: { platform: c.platform, id: c.id, int_id: c.int_id ?? null, name: c.name, status: 'not linked' },
+    reason: 'no longer linked to this client',
+  }));
+  return applyPlanned({ clientId, clientName: client.name, action, willChange: plan.willChange, skipped: [...plan.skipped, ...gone] }, actor);
+}
+
+/**
+ * Resumes exactly these campaigns, the ones that are live-paused right now, and nothing else: unlike Play it never
+ * falls back to every linked campaign, so one a person paused by hand stays paused. The lead cap's restart.
+ */
+export async function resumeListed(clientId: string, list: ListedCampaign[], actor: string | null): Promise<ToggleResult> {
+  return applyListed(clientId, 'resume', list, actor);
+}
+
+/** Pauses exactly these campaigns, the ones that can send right now. The lead cap's pause, which leaves out shared ones. */
+export async function pauseListed(clientId: string, list: ListedCampaign[], actor: string | null): Promise<ToggleResult> {
+  return applyListed(clientId, 'pause', list, actor);
+}
+
+/**
+ * Which of these campaigns are linked to another client too, and which clients. Linking goes by name, so it does
+ * happen (Douglas Elliman Las Vegas and Los Angeles share 11 today): pausing one stops every client on it. Reads only.
+ */
+export async function sharedWithOthers(clientId: string, list: { platform: 'instantly' | 'bison'; id: string }[]): Promise<Map<string, string[]>> {
+  const { data, error } = await getSupabase().from('clients').select('id, name, instantly_campaign_ids, bison_campaign_ids').neq('id', clientId);
+  if (error) throw new Error(error.message);
+  const others = (data ?? []) as Pick<ClientRow, 'id' | 'name' | 'instantly_campaign_ids' | 'bison_campaign_ids'>[];
+  const out = new Map<string, string[]>();
+  for (const c of list) {
+    const also = others.filter((o) => (c.platform === 'bison' ? o.bison_campaign_ids : o.instantly_campaign_ids)?.includes(c.id)).map((o) => o.name);
+    if (also.length) out.set(`${c.platform}:${c.id}`, also);
+  }
+  return out;
+}
+
+async function applyPlanned(plan: TogglePlan, actor: string | null): Promise<ToggleResult> {
+  const { clientId, action } = plan;
   const outcomes = await Promise.all(plan.willChange.map((c) => applyOne(action, c)));
   const sb = getSupabase();
   const now = new Date().toISOString();

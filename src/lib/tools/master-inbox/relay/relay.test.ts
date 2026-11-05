@@ -1553,3 +1553,294 @@ test("Introduce is off only with both: the new model AND the client's own switch
   assert.equal(directHandoffReason({}, "X"), null);
 });
 
+
+/* ============================================================ lead and spend caps (5 Nov) */
+
+const over = { cap: 2, used: 3, window: { start: "2026-10-28", end: "2026-11-25" } };
+function capStub(o: { overCap?: () => Promise<typeof over | null>; hold?: () => Promise<void>; room?: string | null } = {}) {
+  const log: string[] = [];
+  return {
+    log,
+    hook: {
+      overCap: o.overCap ?? (async () => over),
+      hold: async (p: { threadId: string }) => { log.push(`hold ${p.threadId}`); await o.hold?.(); },
+      roomFor: async () => o.room ?? null,
+      backToInterested: async (p: { threadId: string }) => {
+        log.push(`interested ${p.threadId}`);
+        label(L.interested, p.threadId);
+      },
+      markReleased: async (p: { threadId: string; who: string }) => { log.push(`released ${p.threadId} by ${p.who}`); },
+    },
+  };
+}
+
+test("over the cap: held, nothing sent, the agent's once-only slot not taken", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub();
+  const r = await relay.sweepBrokerageRelay(NOW, { ws: WS, transport, env: LIVE, caps: caps.hook });
+  assert.deepEqual(r.outcomes, { held: 1 }, JSON.stringify(r));
+  assert.equal(handed.length, 0);
+  const rec = recordFor(thread.id);
+  assert.equal(rec.status, "held");
+  assert.equal(rec.reason, "over_cap");
+  assert.equal(rec.detail, "cap of 2 this window");
+  assert.deepEqual(caps.log, [`hold ${thread.id}`]);
+  assert.deepEqual(db.rows("os_brokerage_relay_agents"), []);
+});
+
+test("over the cap in one-click mode: held, not offered as a button to send", async () => {
+  seed({ mode: "one_click", practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: capStub().hook });
+  assert.equal(recordFor(thread.id).status, "held");
+  assert.equal(recordFor(thread.id).reason, "over_cap");
+});
+
+test("under the cap: goes exactly as without one", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub({ overCap: async () => null });
+  const r = await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: caps.hook });
+  assert.deepEqual(r.outcomes, { sent: 1 });
+  assert.equal(handed.length, 1);
+  assert.deepEqual(caps.log, []);
+});
+
+test("caps off (no switch): nothing about them is read, and the hand-off is as ever", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const r = await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  assert.deepEqual(r.outcomes, { sent: 1 });
+  assert.equal(db.calls.some((c) => c.table.startsWith("os_cap") || c.table === "os_usage_billing_settings"), false);
+});
+
+test("a cap that can't be read: held and checked again, never sent", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, { ws: WS, transport, env: LIVE, caps: capStub({ overCap: async () => { throw new Error("Client Health is down"); } }).hook });
+  assert.equal(handed.length, 0);
+  assert.equal(recordFor(thread.id).status, "held");
+  assert.equal(recordFor(thread.id).reason, "read_error");
+  assert.match(String(recordFor(thread.id).detail), /cap: Client Health is down/);
+});
+
+test("a hold that can't be finished: the record is what holds it, so it is never sent and the run finishes the rest", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, { ws: WS, transport, env: LIVE, caps: capStub({ hold: async () => { throw new Error("no table"); } }).hook });
+  assert.equal(handed.length, 0);
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["held", "over_cap"]);
+});
+
+test("nothing goes on to hold unless it won the record: a reply already on its way is never also put in Keep Warm", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub();
+  // Another process takes the record for sending between this one's read and its write.
+  db.failWhen = ({ method, table }) => {
+    if (method === "PATCH" && table === "os_brokerage_relays") recordFor(thread.id).status = "sending";
+    return false;
+  };
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: caps.hook });
+  db.failWhen = null;
+  assert.deepEqual(caps.log, [], "no hold, no label, no bell");
+  assert.equal(recordFor(thread.id).status, "sending");
+});
+
+test("a race the other way: a process past the cap check reaches the send lock after another held it. The lock refuses, nothing goes", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  // The last read before the lock is the switches; by then another process has held this reply over the cap.
+  db.failWhen = ({ method, table, query }) => {
+    if (method === "GET" && table === "os_clients" && query.get("select") === "relay_settings") recordFor(thread.id).reason = "over_cap";
+    return false;
+  };
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: capStub({ overCap: async () => null }).hook });
+  db.failWhen = null;
+  assert.equal(handed.length, 0);
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["held", "over_cap"]);
+});
+
+test("over the cap with something else wrong: held all the same. Billing counts it whatever becomes of the hand-off, and every check runs again if it is sent", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON, text: "Please remove me from your list" });
+  label(L.interested, thread.id);
+  const caps = capStub();
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: caps.hook });
+  assert.equal(recordFor(thread.id).reason, "over_cap");
+  assert.deepEqual(caps.log, [`hold ${thread.id}`]);
+});
+
+test("a stop label comes before the cap: a decline isn't a lead, so it is skipped, not held", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  label(L.notInterested, thread.id);
+  const caps = capStub();
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: caps.hook });
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["skipped", "stop_label"]);
+  assert.deepEqual(caps.log, []);
+});
+
+test("the cap is asked about a Meetings Booked reply too: what it answers goes by whether billing would charge it", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.meetings, thread.id);
+  const caps = capStub();
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: caps.hook });
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["held", "over_cap"]);
+  assert.equal(handed.length, 0);
+});
+
+test("the press tells the cap it is the press; a later re-check doesn't", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const asked: boolean[] = [];
+  let over = true;
+  const caps = capStub({ overCap: async () => (over ? { cap: 2, used: 3, window: { start: "2026-10-28", end: "2026-11-25" } } : null) });
+  const hook = { ...caps.hook, overCap: async (p: { pressed: boolean }) => { asked.push(p.pressed); return caps.hook.overCap(); } };
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: hook as never });
+  over = false;
+  await relay.sendToBrokerage(String(recordFor(thread.id).id), thread.id, "amy@brokerstaffer.com", { ...deps(LIVE), caps: hook as never }, NOW);
+  assert.deepEqual(asked, [false, true]);
+  assert.equal(handed.length, 1);
+});
+
+test("held over the cap: later sweeps leave it, even with its label moved to Keep Warm", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub();
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: caps.hook });
+  db.seed("label_assignments", []);
+  await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 10 * 60_000), { ...deps(LIVE), caps: caps.hook });
+  assert.equal(handed.length, 0);
+  assert.equal(recordFor(thread.id).status, "held");
+  assert.equal(recordFor(thread.id).reason, "over_cap");
+});
+
+test("pressing the button at the cap: refused in words, nothing changes, nothing sent", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub({ room: "Jeff Cook is at its cap (2 of 2) until Nov 25, so this wasn't sent." });
+  const d = { ws: WS, transport, env: LIVE, caps: caps.hook };
+  await relay.sweepBrokerageRelay(NOW, d);
+  db.seed("label_assignments", []);
+  const rec = recordFor(thread.id);
+  await assert.rejects(relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", d, NOW), /at its cap \(2 of 2\) until Nov 25/);
+  assert.equal(handed.length, 0);
+  assert.equal(recordFor(thread.id).reason, "over_cap");
+  assert.deepEqual(caps.log, [`hold ${thread.id}`]);
+});
+
+test("pressing the button with room, weeks later: back to Interested, released, and really sent", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  let room = false;
+  const caps = capStub();
+  const hook = { ...caps.hook, overCap: async () => (room ? null : over) };
+  const d = { ws: WS, transport, env: LIVE, caps: hook };
+  await relay.sweepBrokerageRelay(NOW, d);
+  db.seed("label_assignments", []);
+  room = true;
+  const later = new Date(NOW.getTime() + 21 * 24 * 60 * 60_000);
+  const rec = recordFor(thread.id);
+  const view = await relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", d, later);
+  assert.deepEqual(caps.log.slice(1), [`interested ${thread.id}`, `released ${thread.id} by amy@brokerstaffer.com`]);
+  assert.equal(view.status, "sent");
+  assert.equal(handed.length, 1, "really sent, past the seven-day limit on undecided hand-offs");
+  assert.equal(recordFor(thread.id).reason, null);
+});
+
+test("the label can't be moved back: nothing is released or sent", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub();
+  const hook = { ...caps.hook, backToInterested: async () => { throw new Error("label write failed"); } };
+  const d = { ws: WS, transport, env: LIVE, caps: hook };
+  await relay.sweepBrokerageRelay(NOW, d);
+  const rec = recordFor(thread.id);
+  await assert.rejects(relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", d, NOW), /couldn't be moved back to Interested/);
+  assert.equal(handed.length, 0);
+  assert.equal(recordFor(thread.id).reason, "over_cap");
+  assert.deepEqual(caps.log, [`hold ${thread.id}`]);
+});
+
+test("a race: a stale re-check reaching a reply just held over the cap leaves it held, and doesn't send it", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  add("os_brokerage_relays", [{
+    workspace_id: WS, dedupe_key: `handoff:${thread.id}`, kind: "handoff", thread_id: thread.id, status: "held", reason: "read_error", practice: false,
+    attempts: 0, recipients: [], os_client_id: C.jeff, created_at: at(-60), updated_at: at(-60),
+  }]);
+  const row = recordFor(thread.id);
+  // The sweep has listed it for a re-check; before it looks again, another process holds it over the cap.
+  db.failWhen = ({ method, table, query }) => {
+    if (method === "GET" && table === "os_brokerage_relays" && query.get("id")) row.reason = "over_cap";
+    return false;
+  };
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: capStub({ overCap: async () => null }).hook });
+  db.failWhen = null;
+  assert.equal(handed.length, 0);
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["held", "over_cap"]);
+});
+
+test("the button, when the cap can't be read or the release can't be recorded: says nothing was sent, and nothing is", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub();
+  const d = { ...deps(LIVE), caps: caps.hook };
+  await relay.sweepBrokerageRelay(NOW, d);
+  const id = String(recordFor(thread.id).id);
+  await assert.rejects(
+    relay.sendToBrokerage(id, thread.id, "amy@brokerstaffer.com", { ...d, caps: { ...caps.hook, roomFor: async () => { throw new Error("Client Health is down"); } } }, NOW),
+    (e: Error & { status?: number }) => e.status === 502 && /couldn't be read, so nothing was sent/.test(e.message),
+  );
+  await assert.rejects(
+    relay.sendToBrokerage(id, thread.id, "amy@brokerstaffer.com", { ...d, caps: { ...caps.hook, markReleased: async () => { throw new Error("no write"); } } }, NOW),
+    (e: Error & { status?: number }) => e.status === 502 && /couldn't be recorded, so nothing was sent/.test(e.message),
+  );
+  assert.equal(handed.length, 0);
+  assert.equal(recordFor(thread.id).reason, "over_cap");
+});
+
+test("the switch turned off with a reply still held: it can still be sent, nothing is stranded", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const caps = capStub();
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: caps.hook });
+  // deps.caps null is "off" for the sweep; a person's press still has to release it. Same hook by another route.
+  const view = await relay.sendToBrokerage(String(recordFor(thread.id).id), thread.id, "amy@brokerstaffer.com", { ...deps(LIVE), caps: { ...caps.hook, overCap: async () => null } }, NOW);
+  assert.equal(view.status, "sent");
+  assert.equal(handed.length, 1);
+});
+
+test("a race: a process deciding something else about a reply just held over the cap can't write over it", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON, text: "Please remove me from your list" });
+  label(L.interested, thread.id);
+  // Past the check at the top and the cap check; then another process holds it, and this one goes on to skip it.
+  db.failWhen = ({ method, table, query }) => {
+    if (method === "GET" && table === "messages" && query.get("select") === "raw_payload") recordFor(thread.id).reason = "over_cap";
+    return false;
+  };
+  await relay.sweepBrokerageRelay(NOW, { ...deps(LIVE), caps: capStub({ overCap: async () => null }).hook });
+  db.failWhen = null;
+  assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["held", "over_cap"]);
+});

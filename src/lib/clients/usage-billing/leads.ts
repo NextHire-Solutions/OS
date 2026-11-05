@@ -5,6 +5,7 @@ import { CLIENT_ENTRY_SOURCE } from "@/lib/tools/master-inbox/portals/intro-coun
 import { osClientForPortal, portalsOfClient, type World } from "@/lib/tools/master-inbox/relay/resolve";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 
+import { tableIsMissing } from "./caps-model.ts";
 import { DEFAULT_LEAD_SOURCE, easternMidnight, leadKey, periodWindow, type BillableLead, type LeadSource } from "./model.ts";
 
 /*
@@ -224,6 +225,34 @@ async function chunked<T>(ids: readonly string[], size: number, read: (part: str
   return out;
 }
 
+/*
+ * Replies held over a lead cap (caps.ts, 5 Nov). Held: not a lead at all, so not billed and using none of the cap.
+ * Released by a person: a lead from the moment its hand-off really went, in the period that holds that moment, not the
+ * one it was marked in, which may be closed. A press that ended anywhere else (the agent turned out to be the client's
+ * own, say) sent nothing and is not billed. Before migration 0049 there are none.
+ */
+export interface HeldLead {
+  thread_id: string;
+  relay_id: string | null;
+  agent_name: string | null;
+  agent_email: string | null;
+  window_start: string;
+  held_at: string;
+  labelled_at: string | null;
+  released_at: string | null;
+}
+
+export async function heldLeadsOf(osClientId: string): Promise<HeldLead[]> {
+  const { data, error } = await osTable("os_cap_held_leads")
+    .select("thread_id, relay_id, agent_name, agent_email, window_start, held_at, labelled_at, released_at")
+    .eq("os_client_id", osClientId);
+  if (error) {
+    if (tableIsMissing(error)) return [];
+    throw new Error(`os_cap_held_leads: ${error.message}`);
+  }
+  return (data ?? []) as HeldLead[];
+}
+
 export const interestedLeads: LeadSourceFn = async (osClientId, periodStart, periodEnd, ctx) => {
   const portals = new Set(await portalsOf(osClientId));
   // No portal: nothing could ever be counted — said, never a silent "no leads" a person might close the period on.
@@ -243,6 +272,13 @@ export const interestedLeads: LeadSourceFn = async (osClientId, periodStart, per
     throw e;
   }
   const candidates = [...new Set(marked.map((r) => s(r.thread_id)).filter(Boolean))];
+  const held = new Map((await heldLeadsOf(osClientId)).map((h) => [h.thread_id, h]));
+  const releasedHere = new Map<string, string>();
+  const released = [...held.values()].filter((h) => h.released_at).map((h) => h.thread_id);
+  for (const r of await chunked<Row>(released, 200, (part) => osTable("os_brokerage_relays").select("thread_id, sent_at").eq("kind", "handoff").eq("status", "sent").in("thread_id", part), "os_brokerage_relays")) {
+    const at = Date.parse(s(r.sent_at));
+    if (at >= Date.parse(w.from) && at < Date.parse(w.to)) releasedHere.set(s(r.thread_id), s(r.sent_at));
+  }
 
   // 1b. The history is being kept: every conversation that carries "Interested" NOW, given in the period, is in it
   //     (the label and its history row are written together; re-applying a label keeps its time). One missing means
@@ -259,7 +295,7 @@ export const interestedLeads: LeadSourceFn = async (osClientId, periodStart, per
     const missing = now.filter((a) => !recorded.has(s(a.target_id))).length;
     if (missing) throw new LeadSourceUnavailable(`The label history is missing ${missing} conversation${missing === 1 ? "" : "s"} marked Interested in this period — it isn't being recorded, so nothing is counted until it's fixed (Master Inbox migration 0080).`);
   }
-  if (!candidates.length) return [];
+  if (!candidates.length && !releasedHere.size) return [];
 
   // 2. Each one's FIRST time ever marked Interested — it counts only in the period that holds that moment.
   const firstAt = new Map<string, string>();
@@ -268,7 +304,10 @@ export const interestedLeads: LeadSourceFn = async (osClientId, periodStart, per
     if (t && at && (!firstAt.has(t) || Date.parse(at) < Date.parse(firstAt.get(t)!))) firstAt.set(t, at);
   }
   const fromMs = Date.parse(w.from), toMs = Date.parse(w.to);
-  const first = candidates.filter((t) => { const at = Date.parse(firstAt.get(t) ?? ""); return at >= fromMs && at < toMs; });
+  const first = [
+    ...candidates.filter((t) => { const at = Date.parse(firstAt.get(t) ?? ""); return !held.has(t) && at >= fromMs && at < toMs; }),
+    ...releasedHere.keys(),
+  ];
   if (!first.length) return [];
 
   // 3. The conversations now: on this client's portals, not in Trash; a deleted one is not billed.
@@ -302,7 +341,7 @@ export const interestedLeads: LeadSourceFn = async (osClientId, periodStart, per
       return {
         key: email || `thread:${s(t.id)}`,
         name: s(lead?.full_name).trim() || email || "Agent",
-        at: new Date(firstAt.get(s(t.id)) ?? w.from).toISOString(),
+        at: new Date(releasedHere.get(s(t.id)) ?? firstAt.get(s(t.id)) ?? w.from).toISOString(),
         source: "interested",
         thread: s(t.id),
       };

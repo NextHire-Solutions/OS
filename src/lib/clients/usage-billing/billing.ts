@@ -327,6 +327,13 @@ async function keysBilledElsewhere(osClientId: string, exceptStart: string, test
   return keysAlreadyBilled((data ?? []) as Array<{ period_start: string; status: string; leads: unknown }>, exceptStart);
 }
 
+/** The agents billed before this day, whichever period: they use none of a later window's cap. */
+export async function keysBilledBefore(osClientId: string, day: string, testMode: boolean): Promise<Set<string>> {
+  const { data, error } = await osTable("os_usage_billing_periods").select("period_start, status, leads").eq("os_client_id", osClientId).eq("test_mode", testMode).lt("period_start", day);
+  if (error) throw dbError("os_usage_billing_periods", error.message);
+  return keysAlreadyBilled((data ?? []) as Array<{ period_start: string; status: string; leads: unknown }>, "");
+}
+
 export interface Preview {
   period: Period;
   periodKey: string;
@@ -919,7 +926,7 @@ export interface RunResult {
 const usd = (cents: number) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 /** The OS bell (admins only: it is money). A ref is recorded once, so a run an hour later says nothing new. It never stops a charge. */
-async function tellBell(n: { kind: string; severity: "info" | "warning" | "critical"; title: string; body: string; osClientId: string; ref: string }): Promise<void> {
+export async function tellBell(n: { kind: string; severity: "info" | "warning" | "critical"; title: string; body: string; osClientId: string; ref: string }): Promise<void> {
   const { error } = await osTable("os_notifications").upsert(
     { kind: n.kind, severity: n.severity, title: n.title, body: n.body, os_client_id: n.osClientId, ref: n.ref },
     { onConflict: "ref", ignoreDuplicates: true },

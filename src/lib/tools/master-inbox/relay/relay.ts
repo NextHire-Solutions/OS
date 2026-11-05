@@ -1,6 +1,8 @@
 import "server-only";
 
 import { osTable, type OsTable } from "@/lib/clients/os-db";
+import { capsLive } from "@/lib/clients/usage-billing/caps-model";
+import type { OverCap, RelayCapHook } from "@/lib/clients/usage-billing/caps";
 
 import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
 import { enterPipeline } from "./portal-entry.ts";
@@ -75,7 +77,9 @@ import { recordView, type RelayRecordView, type RelayStatus } from "./wording.ts
  * hand-off considered, with the message), os_brokerage_relay_agents (the
  * once-per-agent claims), os_relay_campaigns (the team's answers) and
  * os_notifications (a bounce). Master Inbox's tables — threads, labels,
- * client_pipeline_entries, the portals — are only READ: no label is applied.
+ * client_pipeline_entries, the portals — are only READ: no label is applied,
+ * but for a reply held over a client's lead cap, which moves to Keep Warm
+ * (usage-billing/caps.ts), and back to Interested when a person sends it.
  * One exception, on the new model only (os_clients.pipeline_entry =
  * 'interested', 4 Nov, Eddy): once a hand-off has really gone, its agent gets
  * a portal entry and, if the client connected it, a Follow Up Boss push
@@ -162,6 +166,8 @@ export interface RelayDeps {
   testFetch?: typeof fetch;
   /** Follow Up Boss, for a new portal entry. It does nothing for a client that hasn't connected it. */
   pushFub?: (portalId: string, entryId: string) => Promise<unknown>;
+  /** Tests: the lead caps. Otherwise caps.ts, and only when OS_LEAD_CAPS=1. */
+  caps?: RelayCapHook | null;
 }
 
 interface ClientRecord extends OsClientRef {
@@ -183,6 +189,8 @@ interface Ctx {
   records: Map<string, ClientRecord>;
   now: Date;
   pushFub: (portalId: string, entryId: string) => Promise<unknown>;
+  /** Null unless lead caps are switched on (OS_LEAD_CAPS=1): then nothing here reads or holds anything for them. */
+  caps: RelayCapHook | null;
 }
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -492,7 +500,7 @@ function relayRowFrom(r: Row): RelayRow {
  *   click   a person pressed "Send to brokerage" / "Try again" — the only
  *           intent that sends in one-click mode
  */
-type Via = { by: "sweep" } | { by: "check"; who: string } | { by: "click"; who: string } | { by: "assign"; who: string };
+type Via = { by: "sweep" } | { by: "check"; who: string } | { by: "click"; who: string; release?: boolean } | { by: "assign"; who: string };
 
 /** The record as it is NOW — what every decision starts from. */
 async function currentRow(ctx: Ctx, id: string): Promise<RelayRow | null> {
@@ -511,16 +519,20 @@ async function currentRow(ctx: Ctx, id: string): Promise<RelayRow | null> {
  * (ctx.now), which the re-check schedule compares against.
  */
 async function decide(ctx: Ctx, rec: RelayRow, patch: Row): Promise<boolean> {
-  const { data, error } = await ctx
+  const update = ctx
     .os("os_brokerage_relays")
     .update({ ...patch, updated_at: ctx.now.toISOString() })
     .eq("id", rec.id)
     .eq("status", rec.status)
-    .eq("attempts", rec.attempts)
-    .select("id");
+    .eq("attempts", rec.attempts);
+  // Status and attempts don't move when a reply is held over the cap, so its reason is compared too. Only a person's release starts from it.
+  const { data, error } = await (rec.reason === "over_cap" ? update.eq("reason", "over_cap") : update.or(NOT_OVER_CAP)).select("id");
   if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
   return ((data ?? []) as Row[]).length > 0;
 }
+
+/** Anything but a reply held over the client's cap. NULL needs saying: `reason <> 'over_cap'` isn't true of it. */
+const NOT_OVER_CAP = "reason.is.null,reason.neq.over_cap";
 
 /** The only states a decision may start from: waiting (held), prepared (ready), or refused outright by Postmark (failed / send_failed). */
 function decidable(r: RelayRow): boolean {
@@ -547,6 +559,8 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
 
   // The kill switch, as this sweep or request read it (and read again right before any send, below).
   if (!ctx.global.enabled) return rec.status;
+  // Held over a client's cap: it moved to Keep Warm, so re-running the checks would throw it away. Only a person's release moves it.
+  if (rec.reason === "over_cap") return rec.status;
   // Later replies switched off: one already waiting is not sent either (21 Oct review).
   if (rec.kind === "follow_up" && !ctx.global.forwardLaterReplies) return stop("skipped", "later_replies_off");
 
@@ -605,6 +619,37 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
   const who = { ...base, os_client_id: osClientId, mi_client_id: portalId, brokerage_name: client?.name ?? portalName, resolved_by: resolvedBy };
   if (!client) return stop("held", "no_roster_record", who);
   if (isExcludedBrokerage(client.name, portalName)) return stop("skipped", "excluded", who);
+
+  /*
+   * Past the client's lead or spend cap (usage-billing/caps.ts). Before every check that follows, because billing counts
+   * an Interested reply whatever becomes of its hand-off: one stopped further down (an onboarding client, a practice
+   * send, an opt-out) would still be charged past the cap. Held, none of those can matter yet, and all of them run again
+   * if a person sends it. Unknown is never "under the cap": a read that fails holds it, and it is checked again.
+   *
+   * The record first, and only the process that wins it goes on to hold: the send lock refuses a record held over the
+   * cap, so a reply can't be both on its way to the client and in Keep Warm. A hold that doesn't finish here is
+   * finished by the run. It goes by place among the leads billing would charge, whatever the label says now: one
+   * never marked Interested (Meetings Booked straight off) isn't among them, so it goes, unbilled, as it does today.
+   */
+  if (rec.kind === "handoff" && ctx.caps) {
+    let over: OverCap | null;
+    try {
+      over = await ctx.caps.overCap({ osClientId, threadId: rec.threadId, at: rec.triggeredAt ?? ctx.now.toISOString(), now: ctx.now, pressed: via.by === "click" && via.release === true });
+    } catch (e) {
+      return stop("held", "read_error", { ...who, detail: `cap: ${e instanceof Error ? e.message.slice(0, 280) : String(e)}` });
+    }
+    if (over) {
+      const won = await decide(ctx, rec, { ...who, status: "held", reason: "over_cap", detail: `cap of ${over.cap} this window`, decided_by: decidedBy, decided_at: ctx.now.toISOString() });
+      if (!won) return (await currentRow(ctx, rec.id))?.status ?? rec.status;
+      try {
+        await ctx.caps.hold({ osClientId, clientName: client.name, relayId: rec.id, threadId: rec.threadId, agentName: facts.lead.fullName, agentEmail: agentEmailOf(facts.lead, null), over, workspaceId: ctx.ws });
+      } catch (e) {
+        console.error(`[brokerage-relay] ${rec.id} held over the cap, the run will finish it: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return "held";
+    }
+  }
+
   if (!isActiveStatus(client.status)) return stop("skipped", "brokerage_not_active", { ...who, detail: client.status ?? "no status" });
   if (client.blocked) return stop("skipped", "billing_block", who);
 
@@ -855,6 +900,7 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
     .eq("id", rec.id)
     .eq("status", rec.status)
     .eq("attempts", rec.attempts)
+    .or(NOT_OVER_CAP)
     .select("id");
   if (lockErr) throw new Error(`os_brokerage_relays: ${lockErr.message}`);
   if (!((locked ?? []) as Row[]).length) return "sending";
@@ -948,6 +994,7 @@ async function makeCtx(now: Date, deps: RelayDeps): Promise<{ ctx: Ctx | null; o
     ctx: {
       mi, os, ws, env, now, global: settings, world, records, transport: deps.transport ?? createPostmarkTransport({ env }),
       // Loaded only when there's an entry to push: nothing about the hand-off depends on it.
+      caps: deps.caps !== undefined ? deps.caps : capsLive(env) ? (await import("@/lib/clients/usage-billing/caps")).relayCapHook() : null,
       pushFub: deps.pushFub ?? (async (portalId, entryId) => (await import("@/lib/tools/master-inbox/integrations/push-pipeline-entry")).pushPipelineEntryToFub(portalId, entryId)),
     },
     off: null,
@@ -1347,6 +1394,7 @@ export async function sendToBrokerage(
   if (error) throw new RelayActionError(error.message, 502);
   if (!data) throw new RelayActionError("No such hand-off on this conversation.", 404);
   const rec = relayRowFrom(data as Row);
+  if (rec.status === "held" && rec.reason === "over_cap") return releaseOverCap(ctx, rec, data as Row, who, deps);
   const send = rec.status === "ready" || (rec.status === "failed" && rec.reason === "send_failed");
   if (!send && rec.status !== "held") {
     throw new RelayActionError(
@@ -1368,6 +1416,73 @@ export async function sendToBrokerage(
     notice = "Someone else is sending this hand-off right now.";
   }
   return { ...view, notice };
+}
+
+/** A held reply's label while it waits. Any other is someone's decision about the agent, and is never written over. */
+const RELEASABLE_LABELS = new Set(["keep warm", "interested", "meetings booked"]);
+
+/*
+ * A reply held over a client's cap, a person choosing to send it: refused while the cap is still reached, and refused
+ * if anything has changed that means it shouldn't go. It goes back to Interested, every other check runs again, and it
+ * becomes a lead from the moment it really goes.
+ *
+ * It starts a new record of its own age (created_at), since a reply can wait in Keep Warm for weeks and the seven-day
+ * limit is about hand-offs nobody decided on. The label's own time is kept, so it is still judged by when it was marked.
+ */
+async function releaseOverCap(ctx: Ctx, rec: RelayRow, row: Row, who: string, deps: RelayDeps): Promise<RelayRecordView & { notice: string | null }> {
+  const osClientId = str(row.os_client_id);
+  if (!osClientId) throw new RelayActionError("This hand-off has no client on it.", 409);
+  const caps = ctx.caps ?? (deps.caps !== undefined ? deps.caps : (await import("@/lib/clients/usage-billing/caps")).relayCapHook());
+  if (!caps) throw new RelayActionError("Lead caps are off, so this can't be released.", 409);
+  let facts: ThreadFacts | null;
+  try {
+    facts = await loadThread(ctx.mi, ctx.ws, rec.threadId);
+  } catch (e) {
+    throw new RelayActionError(`The conversation couldn't be read, so nothing was sent: ${e instanceof Error ? e.message : String(e)}`, 502);
+  }
+  if (!facts) throw new RelayActionError("This conversation is gone, so nothing was sent.", 409);
+  // Not "put it back": swapping the label would delete the client's Pipeline entry, and the next press would email them again.
+  if (hasIntroductionLabel(facts.labels)) throw new RelayActionError("This agent has already been introduced, so this wasn't sent.", 409);
+  const relabelled = facts.labels.find((l) => !RELEASABLE_LABELS.has(l.trim().toLowerCase()));
+  if (relabelled) throw new RelayActionError(`This conversation is now labelled ${relabelled}, so it wasn't sent. Put it back in Keep Warm first if it should go.`, 409);
+  const lead = facts.lead;
+  const heldSince = Date.parse(rec.triggeredAt ?? rec.createdAt ?? "");
+  if (facts.messages.some((m) => isFromAgent(m, lead) && m.sentAt && Date.parse(m.sentAt) > heldSince && looksLikeOptOut(replyText(m)))) {
+    throw new RelayActionError("The agent has asked to be removed since this was held, so it wasn't sent.", 409);
+  }
+  const client = ctx.records.get(osClientId);
+  if (!client || !isActiveStatus(client.status) || client.blocked) {
+    throw new RelayActionError(`${client?.name ?? "This client"} isn't receiving hand-offs right now, so this wasn't sent.`, 409);
+  }
+  const agentEmail = agentEmailOf(lead, null);
+  const recipients = planRecipients(client.relay, introClientFromRow(client.row, client.name), facts.campaignName, agentEmail ? [agentEmail] : []).recipients;
+  if (deliveryMode(ctx.global, client.relay, liveSendAllowed(ctx.env)) !== "live" || !withinLiveFence(recipients.map((r) => r.email), ctx.env)) {
+    throw new RelayActionError("Hand-offs to this client are in practice right now, so this can't be sent yet.", 409);
+  }
+  let refused: string | null;
+  try {
+    refused = await caps.roomFor({ osClientId, now: ctx.now });
+  } catch (e) {
+    throw new RelayActionError(`The cap couldn't be read, so nothing was sent: ${e instanceof Error ? e.message : String(e)}`, 502);
+  }
+  if (refused) throw new RelayActionError(refused, 409);
+  try {
+    // A meeting stays a meeting: it goes, and billing goes by its first being marked Interested, not by the label now.
+    if (!facts.labels.some((l) => l.trim().toLowerCase() === "meetings booked")) await caps.backToInterested({ threadId: rec.threadId, workspaceId: ctx.ws });
+  } catch (e) {
+    throw new RelayActionError(`It couldn't be moved back to Interested, so nothing was sent: ${e instanceof Error ? e.message : String(e)}`, 502);
+  }
+  try {
+    await caps.markReleased({ threadId: rec.threadId, who, now: ctx.now });
+  } catch (e) {
+    throw new RelayActionError(`The release couldn't be recorded, so nothing was sent: ${e instanceof Error ? e.message : String(e)}`, 502);
+  }
+  const stamped = { reason: "evaluating", practice: false, created_at: ctx.now.toISOString(), decided_by: who, decided_at: ctx.now.toISOString() };
+  if (!(await decide(ctx, rec, { ...stamped, status: "held" }))) throw new RelayActionError("Someone else changed this hand-off just now. Look again before sending.", 409);
+  await evaluate(ctx, { ...rec, reason: "evaluating", createdAt: stamped.created_at }, { by: "click", who, release: true });
+  const { data: after } = await ctx.os("os_brokerage_relays").select("*").eq("id", rec.id).maybeSingle();
+  const view = recordView((after ?? row) as Row);
+  return { ...view, notice: view.status === "ready" ? "Sending changed while this was being sent, so nothing went. It has been prepared again: press Send to brokerage." : null };
 }
 
 /**

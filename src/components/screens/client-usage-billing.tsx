@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import type { CapView } from "@/lib/clients/usage-billing/caps";
+
 import { addDays, AUTO_CHARGE_WINDOW_DAYS, CLAIM_STALE_MS, LEAD_SOURCE_UNIT, leadsHash, PAY_PER_LEAD_PRODUCTS, periodLabel, productLabel, type BillableLead, type LeadSource } from "@/lib/clients/usage-billing/model";
 
 /*
@@ -41,6 +43,7 @@ type View = {
   keyState: "test" | "missing" | "refused"; liveKeyState: "live" | "missing" | "refused" | null; refusal: string | null; flags: { scheduler: boolean; charge: boolean; liveAuto?: boolean };
   schedule: { current: Period | null; lastCompleted: Period | null; firstStarts: string | null; choices: Period[] } | null;
   leadSources: Record<string, string>; defaultLeadSource: string;
+  cap?: CapView | null; capError?: string | null;
 };
 type PreviewView = {
   label: string; period: Period; count: number; amountCents: number; priceCents: number; leadsHash: string; lines: Array<{ description: string; amountCents: number }>;
@@ -101,6 +104,109 @@ const SPOT: Record<string, Spot> = { find_cards: "finder", connect_card: "finder
 export type UsageBillingView = View;
 
 /** `initial`: a first answer to show before the route's (a render check uses it). `clientName`: named in the confirmations. */
+/*
+ * Lead and spend cap (5 Nov; usage-billing/caps.ts). The lead cap is the Monthly introduction target, set on the Record
+ * tab. The spend limit is set here. Whichever comes first applies: campaigns pause, and restart at the next window.
+ */
+function CapPanel({ clientId, cap, capError, priceCents, onCap }: { clientId: string; cap: CapView | null; capError: string | null; priceCents: number; onCap: (c: CapView) => void }) {
+  const [spend, setSpend] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [askRestart, setAskRestart] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
+  const post = async (action: string, extra: Record<string, unknown>, done: string | ((body: { restarted?: number | null } | null) => string)) => {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch("/api/workspace/clients/billing/usage", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, action, ...extra }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) { setMsg({ text: body?.error ?? `HTTP ${res.status}`, bad: true }); return false; }
+      if (body?.cap) onCap(body.cap as CapView);
+      setMsg({ text: typeof done === "function" ? done(body) : done, bad: false });
+      return true;
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : "Request failed", bad: true });
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (capError) return <div className="ub-box" data-testid="usage-caps"><div className="ub-box-h"><b>Lead and spend cap</b></div><div className="ds-field-err" role="alert">The cap could not be read: {capError}</div></div>;
+  if (!cap) return null;
+  const nextDay = cap.window ? day(cap.window.end) : "the next window";
+  const restartDay = cap.restartsToday ? "today, from 9am Eastern" : nextDay;
+  return (
+    <div className="ub-box" data-testid="usage-caps">
+      <div className="ub-box-h">
+        <b>Lead and spend cap</b>
+        <span className={cap.reached ? "ub-bad" : undefined}>{cap.notActing ? "Not acting" : cap.cap === null ? "No cap" : cap.reached ? "At its cap" : "Under its cap"}</span>
+      </div>
+      {!cap.live ? <div className="rx-hint" style={{ margin: 0 }}>Not switched on. This shows what it would do: nothing is paused or held while it is off.</div> : null}
+      {cap.notActing ? <div className="rx-hint" style={{ margin: 0 }}>{cap.notActing}</div> : null}
+      {cap.spendInvalid ? <div className="ds-field-err">The spend limit is less than one lead at this price, so it is being ignored. Change it below.</div> : null}
+      <div className="rb-grid ub-grid">
+        <div><small>Lead cap</small><b>{cap.leadCap ?? "None"}</b><span>Monthly introduction target, on the Record tab</span></div>
+        <div>
+          <small>Spend limit</small>
+          <b>{cap.spendCapCents ? money(cap.spendCapCents) : "None"}</b>
+          <span>{cap.spendLeads !== null ? `${plural(cap.spendLeads, "lead")} at ${money(priceCents)}` : "Optional"}</span>
+        </div>
+        <div><small>This window</small><b>{cap.cap === null ? (cap.used === null ? "—" : plural(cap.used, "lead")) : `${cap.used} of ${cap.cap}`}</b><span>{cap.window?.label ?? "Not started"}</span></div>
+        <div><small>Next window</small><b>{cap.window ? day(cap.window.end) : "—"}</b><span>Every 28 days. Paused campaigns restart then.</span></div>
+      </div>
+      {cap.leadCap !== null && cap.spendLeads !== null ? <div className="rx-hint" style={{ margin: 0 }}>Whichever comes first applies: {plural(cap.cap as number, "lead")}.</div> : null}
+      {!cap.linked ? <div className="ds-field-err">This client isn&apos;t linked to Client Health, so it has no lead cap and its campaigns can&apos;t be paused from here.</div> : null}
+      {spend === null ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="rx-btn" disabled={busy || !cap.canSaveSpend}
+            title={cap.canSaveSpend ? undefined : "The spend limit needs database migration 0049 first."}
+            onClick={() => { setSpend(cap.spendCapCents ? String(cap.spendCapCents / 100) : ""); setMsg(null); }}>{cap.spendCapCents ? "Change spend limit" : "Set a spend limit"}</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input className="ds-input" aria-label="Spend limit in dollars" inputMode="decimal" placeholder="1000" value={spend} disabled={busy}
+            style={{ width: 140, minWidth: 0 }} onChange={(e) => setSpend(e.target.value)} autoFocus />
+          <button type="button" className="rx-btn solid" disabled={busy} onClick={async () => { if (await post("set_spend_cap", { spendCap: spend }, spend.trim() ? "Spend limit saved." : "Spend limit removed.")) setSpend(null); }}>{busy ? "Saving…" : "Save"}</button>
+          <button type="button" className="rx-btn" disabled={busy} onClick={() => setSpend(null)}>Cancel</button>
+          <span className="rx-hint" style={{ margin: 0 }}>Per 28-day window. Leave blank for no limit.</span>
+        </div>
+      )}
+      {cap.waiting.length && !cap.restartsByItself ? (
+        <div className="rx-hint" style={{ margin: 0 }}>Nothing restarts by itself right now: {cap.waiting.map((c) => c.name).join(", ")}. Press Play on Client Health to restart them.</div>
+      ) : cap.waiting.map((c) => (
+        <div key={`${c.platform}:${c.id}`} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 13 }}>
+          <span style={{ flex: "1 1 240px", minWidth: 0, overflowWrap: "anywhere" }}><b style={{ fontWeight: 500 }}>{c.name}</b> restarts {cap.restartsToday ? restartDay : `on ${restartDay}`}.</span>
+          {cap.notActing ? null : <button type="button" className="rx-btn" disabled={busy} onClick={() => void post("cap_remove_restart", { platform: c.platform, id: c.id }, "It stays paused until someone restarts it.")}>Don&apos;t restart it</button>}
+        </div>
+      ))}
+      {!cap.waiting.length && cap.reached ? <div className="rx-hint" style={{ margin: 0 }}>No campaign is waiting to restart.</div> : null}
+      {cap.campaignsError ? <div className="ds-field-err">The campaigns could not be read: {cap.campaignsError}</div> : null}
+      {cap.pausedOtherwise.map((c) => (
+        <div key={`${c.platform}:${c.id}`} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 13 }}>
+          <span style={{ flex: "1 1 240px", minWidth: 0, overflowWrap: "anywhere" }}><b style={{ fontWeight: 500 }}>{c.name}</b> is paused and isn&apos;t on the restart list, so it stays paused.</span>
+          {cap.reached ? <button type="button" className="rx-btn" disabled={busy || !cap.live} title={cap.live ? undefined : "Available once caps are switched on."} onClick={() => void post("cap_add_restart", { platform: c.platform, id: c.id }, `It restarts on ${nextDay}.`)}>Restart it on {nextDay} too</button> : null}
+        </div>
+      ))}
+      {!cap.notActing && !cap.reached && cap.waiting.length ? (
+        askRestart ? (
+          <div className="rx-confirm" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span>This starts emailing their remaining leads now. Restart?</span>
+            <button type="button" className="rx-btn solid" disabled={busy} onClick={async () => { await post("cap_restart", {}, (b) => (b?.restarted ? `Restarted ${plural(b.restarted, "campaign")}.` : "Nothing was restarted: no campaign on the list is paused any more.")); setAskRestart(false); }}>{busy ? "Restarting…" : "Yes, restart now"}</button>
+            <button type="button" className="rx-btn" disabled={busy} onClick={() => setAskRestart(false)}>Cancel</button>
+          </div>
+        ) : <div><button type="button" className="rx-btn" disabled={busy || !cap.live} onClick={() => { setAskRestart(true); setMsg(null); }}>Restart now</button></div>
+      ) : null}
+      {cap.held.length ? (
+        <div style={{ display: "grid", gap: 4, fontSize: 13 }}>
+          <span>Held over the cap, in Keep Warm. Not sent or charged:</span>
+          {cap.held.map((h) => <a key={h.threadId} href={`/inbox/all-email/${h.threadId}`} style={{ overflowWrap: "anywhere" }}>{h.name}, {new Date(h.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</a>)}
+        </div>
+      ) : null}
+      {msg ? <div className={msg.bad ? "ds-field-err" : "rx-hint"} role="status" style={{ margin: 0 }}>{msg.text}</div> : null}
+    </div>
+  );
+}
+
 export function UsageBillingPanel({ clientId, clientName = null, initial = null }: { clientId: string; clientName?: string | null; initial?: View | null }) {
   const [view, setView] = useState<View | null>(initial);
   // Open by itself for a client that has pay per lead (or on the way back from Checkout); a click away otherwise.
@@ -553,6 +659,9 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
               <div><small>Scheduled run</small><b>{view.flags.scheduler ? (view.flags.charge ? "Charging test clients" : "Previews only") : "Off"}</b><span>{s.enabled ? "this client is in it" : "this client is not in it"}</span></div>
             )}
           </div>
+
+          <CapPanel clientId={clientId} cap={view.cap ?? null} capError={view.capError ?? null} priceCents={s.price_cents}
+            onCap={(next) => setView((v) => (v ? { ...v, cap: next } : v))} />
 
           {/* ------------------------------------------------------- go live (test) */}
           {!live && finder?.mode !== "live" ? (

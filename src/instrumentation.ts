@@ -305,6 +305,26 @@ export async function register() {
       }
     };
     const runUsageSafely = () => { runUsage().catch((e) => console.error("[usage-billing] failed:", e instanceof Error ? e.message : e)); };
+
+    /*
+     * Lead and spend caps (5 Nov; usage-billing/caps.ts). Every 15 minutes, so a client that hits its cap stops
+     * emailing soon after. Without OS_LEAD_CAPS=1 it only logs what it would do.
+     */
+    let capsRunning = false;
+    const runCaps = async () => {
+      if (capsRunning || !schedulerAllowed(process.env)) return;
+      capsRunning = true;
+      try {
+        const { runLeadCaps } = await import("./lib/clients/usage-billing/caps");
+        const r = await runLeadCaps();
+        console.log(`[lead-caps] ${r.live ? "live" : "dry run"} · ${r.clients} client(s) · ${r.reached} at cap · ${r.paused} paused · ${r.restarted} restarted${r.notes.length ? ` · ${r.notes.join(" | ").slice(0, 500)}` : ""}${r.errors.length ? ` · errors: ${r.errors.join(" | ").slice(0, 300)}` : ""}`);
+      } finally {
+        capsRunning = false;
+      }
+    };
+    const runCapsSafely = () => { runCaps().catch((e) => console.error("[lead-caps] failed:", e instanceof Error ? e.message : e)); };
+    setTimeout(runCapsSafely, 120_000).unref?.();
+    setInterval(runCapsSafely, 15 * 60_000).unref?.();
     setTimeout(runUsageSafely, 120_000).unref?.();
     setInterval(runUsageSafely, 60 * 60_000).unref?.();
   }

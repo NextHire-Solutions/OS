@@ -63,6 +63,10 @@ export const OS_TABLES = [
   // one record per billing period — see migrations/0043_usage_billing.sql.
   "os_usage_billing_settings",
   "os_usage_billing_periods",
+  // Added 2026-11-05: lead and spend caps (0049). Which window reached its cap and
+  // what waits to restart, and the replies held over a cap.
+  "os_cap_windows",
+  "os_cap_held_leads",
   // A portal's Prospects kept in step with the client's campaign: every change,
   // the first campaign made at setup, and the setup template — see
   // migrations/0046_prospect_campaigns.sql.

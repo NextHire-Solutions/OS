@@ -53,6 +53,7 @@ export const REASON_TEXT: Record<string, string> = {
   their_agent: "The agent is already on the brokerage's My Agents list.",
   their_staff: "One of the brokerage's own team — not handed to them.",
   no_recipients: "The brokerage has nobody with an email address to send to for this market — waiting for a contact.",
+  over_cap: "Over the client's lead cap, so it was not sent or charged. It waits in Keep Warm until someone sends it.",
   hourly_cap: "The brokerage reached its hourly limit — it goes in the next hour.",
   hourly_cap_click: "Sent to brokerage was pressed, but the brokerage reached its hourly limit — it goes in the next hour.",
   already_delivered: "Already handed to this brokerage before — one delivery per agent per brokerage.",
