@@ -18,6 +18,7 @@ function agent(p: Partial<MemAgent>): MemAgent {
     full_name: `Agent ${n}`, title: "Salesperson", brand: null, office_name: null,
     office_city: null, office_state: null, office_county: null, office_city_key: null,
     most_transacted_city: null, transacted_state: null, most_transacted_county: null, most_transacted_city_key: null,
+    office_zip: null, most_transacted_zip: null,
     sales_volume: null, units: null, est_time_in_industry_months: null, preferred_email: null, enriched_email: null,
     ...p,
   };
@@ -142,3 +143,22 @@ test("a market holding a name with Turkish İ or the Kelvin sign sends name sear
   assert.equal(searchMarket(risky, { ...base(), name: { include: ["smith"], exclude: [] } }, { by: "sales_volume", dir: "desc" }, 50, 0), null);
   assert.notEqual(searchMarket(risky, base(), { by: "sales_volume", dir: "desc" }, 50, 0), null, "everything else still from memory");
 });
+
+/* Zip codes (5 Nov): as fn_agent_where matches them — the stored value exactly, at the chosen locations; out keeps the unknown. */
+test("a zip code: the stored value exactly, at office and/or most transacted; left out keeps agents with none", () => {
+  const office = agent({ full_name: "Zip Office", office_zip: "37067", most_transacted_zip: "37215", sales_volume: 5, units: 1 });
+  const sold = agent({ full_name: "Zip Sold", office_zip: "37064", most_transacted_zip: "37067", sales_volume: 4, units: 1 });
+  const padded = agent({ full_name: "Zip Padded", office_zip: " 37067", sales_volume: 3, units: 1 });
+  const none = agent({ full_name: "Zip None", sales_volume: 2, units: 1 });
+  const m: MemMarket = { mlsIds: [...MLS].sort(), agents: [office, sold, padded, none] };
+  const loc = (values: unknown[], excludeValues: unknown[] = [], appliesTo = ["office", "transacted"]) => ({ ...base(), location: { field: "zip", appliesTo, values, excludeValues, excludeField: "zip" } });
+  const names = (r: ReturnType<typeof searchMarket>) => r!.rows.map((a) => a.full_name);
+  const vol = { by: "sales_volume", dir: "desc" as const };
+  assert.deepEqual(names(searchMarket(m, loc([{ f: "zip", v: "37067" }]), vol, 50, 0)), ["Zip Office", "Zip Sold"], "both locations; ' 37067' is not 37067, as in SQL");
+  assert.deepEqual(names(searchMarket(m, loc([{ f: "zip", v: "37067" }], [], ["office"]), vol, 50, 0)), ["Zip Office"]);
+  assert.deepEqual(names(searchMarket(m, loc([{ f: "zip", v: "37067" }], [], ["transacted"]), vol, 50, 0)), ["Zip Sold"]);
+  assert.deepEqual(names(searchMarket(m, loc([], [{ f: "zip", v: "37067" }]), vol, 50, 0)), ["Zip Padded", "Zip None"], "out: none at either; no zip is kept");
+  assert.deepEqual(names(searchMarket(m, loc([{ f: "zip", v: "37064" }, { f: "zip", v: "37215" }]), vol, 50, 0)), ["Zip Office", "Zip Sold"], "any of them");
+  assert.deepEqual(names(searchMarket(m, loc(["37064"]), vol, 50, 0)), ["Zip Sold"], "a plain value takes the side's field");
+});
+

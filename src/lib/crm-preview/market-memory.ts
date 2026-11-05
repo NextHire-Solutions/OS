@@ -4,6 +4,7 @@ import { readOnly } from "@/lib/tools/assistant/read-only";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 
 import { MARKET_TITLE_TOKEN, searchMarket, titleTokens, type MemAgent, type MemMarket, type MemResult } from "./market-engine";
+import { ZIP } from "./market-model";
 
 /*
  * The market held in memory (market-engine.ts says why and how it answers).
@@ -18,7 +19,7 @@ import { MARKET_TITLE_TOKEN, searchMarket, titleTokens, type MemAgent, type MemM
  *
  * PROVEN BEFORE USED. A loaded market answers nothing until it has matched
  * the database on a set of real queries — the whole market, its biggest
- * city, brokerage, county and state, each range, an exclude, the units
+ * city, brokerage, county, state and zip code, each range, an exclude, the units
  * order, page 2, the name search. One difference and that market stays on
  * the database (logged).
  *
@@ -38,7 +39,7 @@ type Row = Record<string, unknown>;
 type Db = ReturnType<typeof getCorofySupabase>;
 
 // The agent's own sales_volume / units are the market's numbers when it is NOT scoped per MLS (fn_agent_where's rule).
-const COLS = "id,full_name,title,brand,office_name,office_city,office_state,office_county,office_city_key,most_transacted_city,transacted_state,most_transacted_county,most_transacted_city_key,est_time_in_industry_months,sales_volume,units,preferred_email,enriched_email";
+const COLS = "id,full_name,title,brand,office_name,office_city,office_state,office_county,office_city_key,office_zip,most_transacted_city,transacted_state,most_transacted_county,most_transacted_city_key,most_transacted_zip,est_time_in_industry_months,sales_volume,units,preferred_email,enriched_email";
 /** Above this many salespeople a market stays on the database (memory budget: ~0.5 KB an agent). */
 const MAX_AGENTS = 250_000;
 const PAGE = 1000;
@@ -75,12 +76,13 @@ const SLICES = "0123456789abcdef".split("").map((c, i, all) => ({
  * Every row of a (agent_id, mls_id) table for these MLSs, one slice at a time,
  * keyset-paged on (agent_id, mls_id) — never OFFSET, which slows with depth.
  */
-async function readSlices(db: Db, table: "agent_mls" | "agent_mls_stats", select: string, mlsIds: string[]): Promise<Row[]> {
+async function readSlices(db: Db, table: "agent_mls" | "agent_mls_stats", select: string, mlsIds: string[], narrow?: string): Promise<Row[]> {
   const slices = await pooled(SLICES.map((sl) => async () => {
     const rows: Row[] = [];
     let after: { agent: string; mls: string } | null = null;
     for (let guard = 0; guard < 10_000; guard++) {
       let q = db.from(table).select(select).in("mls_id", mlsIds).gte("agent_id", sl.from);
+      if (narrow) q = q.or(narrow, { referencedTable: "agents" });
       if (sl.to) q = q.lt("agent_id", sl.to);
       if (after) q = q.or(`agent_id.gt.${after.agent},and(agent_id.eq.${after.agent},mls_id.gt.${after.mls})`);
       const { data, error } = await q.order("agent_id", { ascending: true }).order("mls_id", { ascending: true }).limit(PAGE);
@@ -184,6 +186,7 @@ export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(ge
       office_city: s(a.office_city), office_state: s(a.office_state), office_county: s(a.office_county), office_city_key: s(a.office_city_key),
       most_transacted_city: s(a.most_transacted_city), transacted_state: s(a.transacted_state),
       most_transacted_county: s(a.most_transacted_county), most_transacted_city_key: s(a.most_transacted_city_key),
+      office_zip: s(a.office_zip), most_transacted_zip: s(a.most_transacted_zip),
       sales_volume: v === null ? null : v / SCALE.volume,
       units: u === null ? null : u / SCALE.units,
       est_time_in_industry_months: nOrNull(a.est_time_in_industry_months),
@@ -192,6 +195,43 @@ export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(ge
   }
   if (agents.size > MAX_AGENTS) return { unused: `${agents.size} salespeople is above the memory budget` };
   return { market: { mlsIds: ids, agents: [...agents.values()], scoped }, stamp };
+}
+
+/*
+ * Every zip code of a market with its agents (5 Nov), counted from the market's own agents: no agent database function
+ * lists zips at the office and most transacted locations alone (fn_facet_options counts home zips too, and the Location
+ * view has no zip level). The market as fn_agent_where has it: in one of these MLSs, with one of these titles (fn_title_tokens
+ * overlap). market.ts checks the biggest against the database's own count before anyone sees it. Two columns an agent, read
+ * the way the market itself is.
+ */
+export async function loadMarketZips(
+  mlsIds: readonly string[],
+  titles: readonly string[],
+  db: Db = readOnly(getCorofySupabase()) as unknown as Db,
+): Promise<Array<{ office: string | null; transacted: string | null }>> {
+  const ids = [...new Set(mlsIds)].sort();
+  if (!ids.length) return [];
+  const want = new Set(titles.flatMap((t) => titleTokens(t)));
+  /*
+   * A market of other titles (BrokerStaffer's own: team leaders and managing brokers, in 55 MLSs) reads only agents whose title
+   * could be one: "Team Leader" as ILIKE %team%leader% holds every spelling the token match below accepts, and then some, so the
+   * token match still decides. A salesperson market reads them all: nearly every agent is one.
+   */
+  const words = (t: string) => t.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const narrow = titles.every((t) => titleTokens(t).includes(MARKET_TITLE_TOKEN))
+    ? undefined
+    : titles.map((t) => `title.ilike.*${words(t).join("*")}*`).join(",");
+  const rows = await readSlices(db, "agent_mls", `agent_id,mls_id,agents${narrow ? "!inner" : ""}(id,title,office_zip,most_transacted_zip)`, ids, narrow);
+  const seen = new Set<string>();
+  const out: Array<{ office: string | null; transacted: string | null }> = [];
+  for (const r of rows) {
+    const a = r.agents as Row | null;
+    if (!a || seen.has(String(a.id))) continue;
+    seen.add(String(a.id));
+    if (!titleTokens(s(a.title)).some((t) => want.has(t))) continue;
+    out.push({ office: s(a.office_zip), transacted: s(a.most_transacted_zip) });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------- the name order --- */
@@ -319,6 +359,14 @@ export function parityQueries(m: MemMarket, base: Record<string, unknown>): Arra
     out.push({ label: `city ${city} + volume ≥ $2M + 4+ units, by units`, filters: { ...base, ...loc([{ f: "city", v: city }]), salesVolume: { side: "all", buckets: [], min: "2000000", max: "" }, closedUnits: { side: "all", buckets: [], min: "4", max: "" } }, sort: { by: "units", dir: "desc" } });
   }
   if (county) out.push({ label: `county ${county}`, filters: { ...base, ...loc([{ f: "county", v: county }]) }, sort: vol });
+  // Zip codes (5 Nov): the biggest office zip, in and out, and with a city of another level beside it.
+  const zip = most(m.agents.map((a) => (a.office_zip !== null && ZIP.test(a.office_zip) ? a.office_zip : null)));
+  if (zip) {
+    out.push({ label: `zip ${zip}`, filters: { ...base, ...loc([{ f: "zip", v: zip }]) }, sort: vol });
+    out.push({ label: `not zip ${zip}`, filters: { ...base, ...loc([], [{ f: "zip", v: zip }]) }, sort: vol });
+    out.push({ label: `zip ${zip}, office only, by units`, filters: { ...base, location: { field: "zip", appliesTo: ["office"], values: [{ f: "zip", v: zip }], excludeValues: [], excludeField: "zip" } }, sort: { by: "units", dir: "desc" } });
+    if (city) out.push({ label: `zip ${zip} or city ${city}, not zip ${zip}`, filters: { ...base, ...loc([{ f: "zip", v: zip }, { f: "city", v: city }], [{ f: "zip", v: zip }]) }, sort: vol });
+  }
   if (state) out.push({ label: `state ${state}`, filters: { ...base, ...loc([{ f: "state", v: state }]) }, sort: vol });
   if (brand) {
     out.push({ label: `brokerage ${brand}`, filters: { ...base, ...org([brand], []) }, sort: vol });

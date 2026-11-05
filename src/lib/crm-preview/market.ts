@@ -8,11 +8,11 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
 import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
 import { searchMarket } from "@/lib/crm-preview/market-engine";
-import { marketFromMemory, requestNameOrder } from "@/lib/crm-preview/market-memory";
+import { loadMarketZips, marketFromMemory, requestNameOrder } from "@/lib/crm-preview/market-memory";
 import { agentsByIds, demoProspectIds, filterProspects, mergeProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
-  SORTS, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, marketTitles, ownListEmail, salespeopleOnly, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  SORTS, zipCounts, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, marketTitles, ownListEmail, salespeopleOnly, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type PlaceKind, type ReportGroup,
 } from "./market-model";
 
@@ -411,9 +411,9 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   return { total: page.total, salesVolume: page.salesVolume, page: q.page, pageSize: q.per, rows };
 }
 
-export type FacetKind = "brand" | "office" | "city" | "county" | "state" | "title";
+export type FacetKind = "brand" | "office" | "city" | "county" | "state" | "zip" | "title";
 type PlaceLevel = "city" | "county" | "state";
-const isPlace = (k: FacetKind): k is PlaceLevel => k !== "brand" && k !== "office" && k !== "title";
+const isPlace = (k: FacetKind): k is PlaceLevel => k === "city" || k === "county" || k === "state";
 
 /*
  * The Title filter's choices (29 Oct — BrokerStaffer's own portal only): each of the market's titles with its agents,
@@ -472,12 +472,36 @@ const orgList = ttlCache(async (base: Record<string, unknown>, kind: "brand" | "
     .slice(0, 50);
 }, { ttlMs: 30 * 60_000, staleMs: 6 * 60 * 60_000, key: (base, kind, text) => `orgs:${JSON.stringify(base)}:${kind}:${text.toLowerCase()}`, shared: "crm-preview-org-lists", inflightTimeoutMs: 120_000 });
 
-/** A place list searched by name: up to 100, with how many places match and the agents they cover. */
-function searchPlaces(all: ReadonlyArray<{ v: string; n: number }>, text: string) {
+/** A place list searched by name: up to 100, with how many places match and the agents they cover. A zip code by its start. */
+function searchPlaces(all: ReadonlyArray<{ v: string; n: number }>, text: string, fromStart = false) {
   const needle = text.trim().toLowerCase();
-  const hits = needle ? all.filter((o) => o.v.toLowerCase().includes(needle)) : all;
+  const hits = needle ? all.filter((o) => (fromStart ? o.v.toLowerCase().startsWith(needle) : o.v.toLowerCase().includes(needle))) : all;
   return { options: hits.slice(0, 100), total: hits.length, agents: hits.reduce((t, o) => t + o.n, 0) };
 }
+
+export class ZipListUnproven extends Error {}
+
+/*
+ * The market's zip codes (5 Nov, a client: "can we add zip code filtering"), each with its agents at office, at most transacted
+ * and at both — counted from the market's agents (market-memory loadMarketZips), since no agent database function lists them at
+ * just those two. CHECKED BEFORE SHOWN: the biggest zips' counts must be exactly what the zip filter then finds, at each set of
+ * locations; one difference and the list isn't shown (logged). Kept three hours (an agent's zip changes far less often than a
+ * list is asked for), and served stale for a day while it reloads behind.
+ */
+const zipLists = ttlCache(async (mlsIds: readonly string[], titles: readonly string[]): Promise<Record<string, Array<{ v: string; n: number }>>> => {
+  const agents = await loadMarketZips(mlsIds, titles);
+  const base = marketScope(mlsIds, titles);
+  const out: Record<string, Array<{ v: string; n: number }>> = {};
+  for (const kinds of [["office"], ["transacted"], ["office", "transacted"]] as PlaceKind[][]) {
+    const list = zipCounts(agents, kinds);
+    for (const o of list.slice(0, kinds.length > 1 ? 3 : 1)) {
+      const db = (await search({ ...base, location: { field: "zip", appliesTo: kinds, values: [{ f: "zip", v: o.v }], excludeValues: [], excludeField: "zip" } }, 1)).total;
+      if (db !== o.n) throw new ZipListUnproven(`zip ${o.v} at ${kinds.join("+")}: ${o.n} counted, the filter finds ${db}`);
+    }
+    out[kinds.join(",")] = list;
+  }
+  return out;
+}, { ttlMs: 3 * 60 * 60_000, staleMs: 24 * 60 * 60_000, key: (mlsIds, titles) => `zips:${[...titles].join("+")}:${[...mlsIds].sort().join(",")}`, shared: "crm-preview-zip-lists", inflightTimeoutMs: 300_000 });
 
 export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: FacetKind, text: string): Promise<FacetResult> {
   const why = unavailable(ctx, q.list);
@@ -488,6 +512,17 @@ export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: Face
     return { options: (await titleCounts(ctx.mls.ids, ctx.titles)).filter((o) => o.v.toLowerCase().includes(needle)) };
   }
   const needle = text.trim().toLowerCase();
+  // Zip codes are Market's alone: Prospects come from campaign lists the database can't count by zip.
+  if (kind === "zip") {
+    if (q.list !== "market") return { options: [] };
+    try {
+      const lists = await zipLists(ctx.mls.ids, ctx.titles);
+      return searchPlaces(lists[PLACE_KINDS.filter((k) => q.kinds.includes(k)).join(",")] ?? [], text.replace(/\D/g, ""), true);
+    } catch (e) {
+      console.error(JSON.stringify({ at: "[crm-preview] zip list", portal: ctx.portal.id, error: e instanceof Error ? e.message.slice(0, 200) : "unknown" }));
+      return { unavailable: "The zip codes couldn't be counted just now. Please try again in a few minutes." };
+    }
+  }
   // Prospects kept here (localProspects — a short list): the choices among all of them, as the market's are.
   const local = q.list === "prospects" ? await localProspects(ctx) : null;
   if (local && "unavailable" in local) return local;
@@ -505,7 +540,7 @@ export async function marketFacet(ctx: MarketContext, q: MarketQuery, kind: Face
 }
 
 /** A short list of agents' choices for a filter, counted here: largest first. A place is written as the agent database writes it ("Atlanta, GA"); an agent counts once a place. */
-function localChoices(rows: readonly AgentRow[], kind: Exclude<FacetKind, "title">, kinds: readonly PlaceKind[]): Array<{ v: string; n: number }> {
+function localChoices(rows: readonly AgentRow[], kind: Exclude<FacetKind, "title" | "zip">, kinds: readonly PlaceKind[]): Array<{ v: string; n: number }> {
   const counts = new Map<string, number>();
   const placeName = (p: ReturnType<typeof placeOf>) => {
     const st = (p.state ?? "").trim().toUpperCase();
@@ -680,6 +715,7 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
 async function readyMarket(ctx: MarketContext, base: Record<string, unknown>): Promise<void> {
   if (inMemory(ctx)) await marketFromMemory(ctx.mls.ids, base, search);
   for (const level of ["city", "county", "state"] as const) await placeList(base, level, PLACE_KINDS).catch(() => []);
+  await zipLists(ctx.mls.ids, ctx.titles).catch(() => null);
   await orgList(base, "brand", "").catch(() => []);
   await cachedReport(ctx).catch(() => null);
 }

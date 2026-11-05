@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
   bandOf, bandRows, clientForPortal, DEAL_BANDS, interestedReport, LIST_PILL, listFor, listSets, MARKET_TITLE, marketFilters, marketScope,
-  ownListEmail, parseMarketQuery, resolveMls, SALES_BANDS, type OsClientRow,
+  MAX_PLACES, ownListEmail, parseMarketQuery, resolveMls, SALES_BANDS, zipCounts, type OsClientRow,
 } from "./market-model.ts";
 
 const client = (over: Partial<OsClientRow>): OsClientRow => ({ id: "c", name: "X", aliases: [], mi_client_id: null, mls_codes: [], orch_client_id: null, ...over });
@@ -41,7 +41,7 @@ test("the query string: ranges, several brokerages and places, a known sort — 
     list: "prospects", page: 3, per: 50, q: "smith",
     volume: { min: 2_000_000, max: 8_000_000 }, units: { min: 4, max: 30 }, years: { min: 2, max: null },
     brokerages: ["Keller Williams", "Compass"], offices: [], cities: ["Atlanta"], counties: ["Cobb, GA"], states: [], kinds: ["office", "transacted"],
-    titles: ["Team Leader"], not: { brokerages: [], offices: [], cities: [], counties: [], states: [], titles: [] }, sort: "name", dir: "asc",
+    titles: ["Team Leader"], zips: [], not: { brokerages: [], offices: [], cities: [], counties: [], states: [], zips: [], titles: [] }, sort: "name", dir: "asc",
   });
   // The old single values (the Setup wizard still sends them) read the same way.
   const old = parseMarketQuery(new URLSearchParams("minVolume=1000000&brokerage=Compass&county=Fulton"));
@@ -69,7 +69,7 @@ test("include and exclude (23 Oct, the Database app's): x-prefixed picks are lef
   const q = parseMarketQuery(new URLSearchParams("list=prospects&title=Salesperson&xtitle=Team Leader&xtitle=CEO&xbrokerage=Compass&xoffice=KW Midtown&xcity=Decatur&xcounty=Cobb&office=Compass Buckhead"));
   assert.deepEqual(q.titles, ["Salesperson"]);
   assert.deepEqual(q.offices, ["Compass Buckhead"]);
-  assert.deepEqual(q.not, { brokerages: ["Compass"], offices: ["KW Midtown"], cities: ["Decatur"], counties: ["Cobb"], states: [], titles: ["Team Leader"] });
+  assert.deepEqual(q.not, { brokerages: ["Compass"], offices: ["KW Midtown"], cities: ["Decatur"], counties: ["Cobb"], states: [], zips: [], titles: ["Team Leader"] });
   assert.equal(parseMarketQuery(new URLSearchParams(Array.from({ length: 60 }, (_, i) => `xcity=c${i}`).join("&"))).not.cities.length, 50, "at most 50 places left out, too");
   const base = { mls: { include: ["m1"], exclude: [] } };
   assert.deepEqual(marketFilters(base, q), {
@@ -86,11 +86,11 @@ test("include and exclude (23 Oct, the Database app's): x-prefixed picks are lef
   assert.deepEqual((marketFilters(base, parseMarketQuery(new URLSearchParams("list=prospects&xtitle=Managing Broker"))) as { title: unknown }).title, { include: [], exclude: ["Managing Broker"] });
 });
 
-test("Location, the Database app's on the client's columns (24 Oct): city, county and state; office and/or most transacted — never home", () => {
+test("Location, the Database app's on the client's columns (24 Oct): city, county, state and zip code (5 Nov); office and/or most transacted — never home", () => {
   const q = parseMarketQuery(new URLSearchParams("state=ga&state=Georgia&xstate=SC&kind=office&kind=home&kind=hq&zip=30303"));
   assert.deepEqual([q.states, q.not.states], [["GA"], ["SC"]], "a state is two letters, upper case");
   assert.deepEqual(q.kinds, ["office"], "home and anything else are not locations here");
-  assert.equal("zips" in q, false, "no zip codes: the client's design shows none");
+  assert.deepEqual(q.zips, ["30303"], "zip codes since 5 Nov: a client asked");
   assert.deepEqual(parseMarketQuery(new URLSearchParams("kind=home")).kinds, ["office", "transacted"], "none known: both");
   const base = { mls: { include: ["m1"], exclude: [] } };
   const f = marketFilters(base, parseMarketQuery(new URLSearchParams("list=prospects&city=Atlanta, GA&state=GA&xcounty=Cobb, GA&kind=transacted"))) as { location: unknown };
@@ -281,3 +281,41 @@ test("BrokerStaffer's Title filter (29 Oct): picks narrow its two titles — nev
   assert.equal(marketTitles(BROKERSTAFFER_PORTAL_ID).length > 1, true);
   assert.equal(marketTitles("492b2783-280f-4c6d-8807-a3de56c59ab1").length > 1, false);
 });
+
+/* Zip codes (5 Nov, a client: "can we add zip code filtering here please"). */
+test("zip codes: five digits only, each side its own list, deduplicated, at most fifty", () => {
+  const q = parseMarketQuery(new URLSearchParams("zip=37067&zip=37067&zip= 37027 &zip=3706&zip=370671&zip=37067-1234&zip=abcde&zip=37o67&xzip=37215&xzip=x"));
+  assert.deepEqual(q.zips, ["37067", "37027"]);
+  assert.deepEqual(q.not.zips, ["37215"]);
+  const many = new URLSearchParams(Array.from({ length: 70 }, (_, i) => ["zip", String(10000 + i)]));
+  assert.equal(parseMarketQuery(many).zips.length, MAX_PLACES);
+});
+
+test("a zip code goes to the database's location filter with its own level, beside cities and the rest", () => {
+  const base = { mls: { include: ["m1"], exclude: [] } };
+  const f = marketFilters(base, parseMarketQuery(new URLSearchParams("zip=37067&city=Franklin, TN&xzip=37064&kind=office"))) as { location: unknown };
+  assert.deepEqual(f.location, {
+    field: "city", appliesTo: ["office"],
+    values: [{ f: "city", v: "Franklin, TN" }, { f: "zip", v: "37067" }],
+    excludeValues: [{ f: "zip", v: "37064" }], excludeField: "zip",
+  });
+  const only = marketFilters(base, parseMarketQuery(new URLSearchParams("zip=37067"))) as { location: { field: string; appliesTo: string[] } };
+  assert.equal(only.location.field, "zip");
+  assert.deepEqual(only.location.appliesTo, ["office", "transacted"]);
+});
+
+test("zip counts: an agent once a zip, at the chosen locations, five digits only, largest first", () => {
+  const agents = [
+    { office: "37067", transacted: "37067" }, // one agent, one zip, at both
+    { office: "37067", transacted: "37064" },
+    { office: "37064", transacted: null },
+    { office: " 37064", transacted: "3706" }, // as stored: not five digits, never matched by a pick
+    { office: null, transacted: "37215" },
+    { office: "37215-1234", transacted: "" },
+  ];
+  assert.deepEqual(zipCounts(agents, ["office", "transacted"]), [{ v: "37064", n: 2 }, { v: "37067", n: 2 }, { v: "37215", n: 1 }]);
+  assert.deepEqual(zipCounts(agents, ["office"]), [{ v: "37067", n: 2 }, { v: "37064", n: 1 }]);
+  assert.deepEqual(zipCounts(agents, ["transacted"]), [{ v: "37064", n: 1 }, { v: "37067", n: 1 }, { v: "37215", n: 1 }]);
+  assert.deepEqual(zipCounts([], ["office"]), []);
+});
+

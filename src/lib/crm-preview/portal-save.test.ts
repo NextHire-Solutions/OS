@@ -143,6 +143,7 @@ if (canMock) {
 const agent = (id: string, full_name: string, emails: [string | null, string | null], phone: string | null = null): AgentRow => ({
   id, full_name, preferred_email: emails[0], enriched_email: emails[1], preferred_phone: phone, brand: "KW", office_name: "KW Center City", title: "Salesperson",
   office_city: null, office_county: null, home_city: null, home_county: null, most_transacted_city: null, most_transacted_county: null,
+  office_zip: null, most_transacted_zip: null,
   office_state: null, home_state: null, transacted_state: null, sales_volume: null, units: null, est_time_in_industry_months: null,
 });
 

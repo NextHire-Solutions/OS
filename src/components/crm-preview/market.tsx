@@ -9,7 +9,7 @@
  * selecting work the Database app's way (21 Oct, Eddy's feedback).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
@@ -101,7 +101,7 @@ const MOVE_LISTS: readonly ListName[] = ["Not on a list", "Prospects", "My Agent
  * ticked on the other side (the Database app's rule — flipping the switch
  * never silently turns a filter around).
  */
-type Facet = "brand" | "office" | "city" | "county" | "state" | "title";
+type Facet = "brand" | "office" | "city" | "county" | "state" | "zip" | "title";
 type Pick = { f: Facet; v: string; ex: boolean };
 /*
  * The market's titles are set on the server — salespeople; BrokerStaffer's own portal: team leaders and managing
@@ -115,8 +115,11 @@ export const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RA
 const isSet = (r: Range) => r.min !== null || r.max !== null;
 /** Is any filter set? */
 export const anyPicks = (f: Picks) => isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0 || f.titles.length > 0;
-const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county", state: "state", title: "title" };
-const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", county: "counties", state: "states", title: "titles" };
+const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county", state: "state", zip: "zip", title: "title" };
+const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", county: "counties", state: "states", zip: "zip codes", title: "titles" };
+/* Location's levels. Zip codes on Market only (5 Nov): Prospects come from campaign lists the agent database can't count by zip. */
+const PLACE_LEVELS: ReadonlyArray<{ id: Facet; label: string }> = [{ id: "city", label: "City" }, { id: "county", label: "County" }, { id: "state", label: "State" }];
+const MARKET_PLACE_LEVELS: ReadonlyArray<{ id: Facet; label: string }> = [...PLACE_LEVELS, { id: "zip", label: "Zip" }];
 const KIND_LABEL: Record<PlaceKind, string> = { office: "Office location", transacted: "Most transacted location" };
 
 /** The picks as the route's query string (several of a kind repeat their key; a left-out one is x-prefixed). */
@@ -149,8 +152,17 @@ function rangeText(u: Unit, r: Range): string {
   return "";
 }
 
-/* A filter's button and its panel. */
+/* A filter's button and its panel. The panel opens under its button, moved left as far as it must go to stay on the screen (a tablet's Location ran off it). */
 function FilterButton({ id, label, value, count, open, onOpen, children }: { id: string; label: string; value: string | null; count?: number; open: boolean; onOpen: (id: string | null) => void; children: React.ReactNode }) {
+  const pop = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState(0);
+  useLayoutEffect(() => {
+    if (!open || !pop.current) { setShift(0); return; }
+    // Measured as it opens, where it sits under its button (shift is 0 while closed).
+    const r = pop.current.getBoundingClientRect();
+    const over = r.right - (document.documentElement.clientWidth - 16);
+    setShift(over > 0 ? -Math.min(over, Math.max(0, r.left - 16)) : 0);
+  }, [open]);
   return (
     <span style={{ position: "relative", display: "inline-flex" }} data-chip={id}>
       <button type="button" className={`${k("dd")} cpv-fbtn${value || (count ?? 0) > 1 ? " cpv-on" : ""}`} aria-haspopup="dialog" aria-expanded={open} aria-label={count && count > 1 ? `${label}: ${count} selected` : undefined} onClick={() => onOpen(open ? null : id)}>
@@ -158,7 +170,7 @@ function FilterButton({ id, label, value, count, open, onOpen, children }: { id:
         {count && count > 1 ? <span className="cpv-badge">{count}</span> : null}
         <Icon name="chevDown" size={14} />
       </button>
-      {open ? <div className="cpv-pop" role="dialog" aria-label={label}>{children}</div> : null}
+      {open ? <div ref={pop} className="cpv-pop" role="dialog" aria-label={label} style={shift ? { left: shift } : undefined}>{children}</div> : null}
     </span>
   );
 }
@@ -321,7 +333,7 @@ function ManyPanel({
           ) : null}
           <ModeSwitch out={out} onChange={setOut} />
         </div>
-        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${PLURAL[level]}`} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${PLURAL[level]}`} value={text} onChange={(e) => setText(level === "zip" ? e.target.value.replace(/\D/g, "").slice(0, 5) : e.target.value)} autoFocus {...(level === "zip" ? { inputMode: "numeric" as const } : {})} />
         <div className="cpv-status">
           <span>{status}</span>
           <span style={{ display: "flex", gap: 10 }}>
@@ -378,7 +390,7 @@ export function MarketFilters({ clientId, list, value: f, onChange }: { clientId
   // The Location, Brokerage (and Title) choices, asked for as the bar appears so they are ready when a panel is (the server keeps them 30 minutes).
   useEffect(() => {
     const ctrl = new AbortController();
-    for (const facet of ["city", "county", "state", "brand", ...(withTitle ? ["title"] : [])]) {
+    for (const facet of ["city", "county", "state", ...(list === "market" ? ["zip"] : []), "brand", ...(withTitle ? ["title"] : [])]) {
       const sp = new URLSearchParams({ client: clientId, list, facet });
       void fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal }).catch(() => {});
     }
@@ -423,7 +435,7 @@ export function MarketFilters({ clientId, list, value: f, onChange }: { clientId
       <FilterButton id="place" label="Location" value={pickText(f.places)} count={f.places.length} open={menu === "place"} onOpen={openMenu}>
         <ManyPanel
           clientId={clientId} list={list} noun="places"
-          levels={[{ id: "city", label: "City" }, { id: "county", label: "County" }, { id: "state", label: "State" }]}
+          levels={list === "market" ? MARKET_PLACE_LEVELS : PLACE_LEVELS}
           initial={f.places} kinds={f.kinds} onApply={(xs, kinds) => applyPlaces(xs, kinds ?? [...PLACE_KINDS])} register={register}
         />
       </FilterButton>

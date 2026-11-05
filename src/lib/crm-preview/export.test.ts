@@ -21,7 +21,7 @@ if (canMock) {
 
 const agent = (id: string, name: string, extra: Partial<AgentRow> = {}): AgentRow => ({
   id, full_name: name, preferred_email: `${id}@secret.test`, enriched_email: `${id}.work@secret.test`, preferred_phone: "555-0199", brand: "KW", office_name: "KW Center City", title: "Salesperson",
-  office_city: "Philadelphia", office_county: null, home_city: null, home_county: null, most_transacted_city: "Philadelphia", most_transacted_county: null,
+  office_city: "Philadelphia", office_county: null, home_city: null, home_county: null, most_transacted_city: "Philadelphia", most_transacted_county: null, office_zip: "19103", most_transacted_zip: "19103",
   office_state: "PA", home_state: null, transacted_state: "PA", sales_volume: 2_500_000, units: 9, est_time_in_industry_months: 131, ...extra,
 });
 

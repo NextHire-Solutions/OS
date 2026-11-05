@@ -6,12 +6,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { carryNames, loadNameOrder, nameQueries, parityQueries, rankNames } from "./market-memory.ts";
+import { carryNames, loadMarketZips, loadNameOrder, nameQueries, parityQueries, rankNames } from "./market-memory.ts";
 import type { MemAgent, MemMarket } from "./market-engine.ts";
 
 const agent = (id: string, full_name: string | null): MemAgent => ({
   id, full_name, title: "Salesperson", brand: null, office_name: null, office_city: null, office_state: null, office_county: null, office_city_key: null,
   most_transacted_city: null, transacted_state: null, most_transacted_county: null, most_transacted_city_key: null,
+  office_zip: null, most_transacted_zip: null,
   sales_volume: null, units: null, est_time_in_industry_months: null, preferred_email: null, enriched_email: null,
 });
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
@@ -123,3 +124,66 @@ test("the proofs include the search box and both name orders", () => {
   assert.ok(names.some((q) => (q.offset ?? 0) >= 950), "a deep page");
   assert.ok(names.some((q) => "name" in q.filters), "with the search box");
 });
+
+test("the proof covers zip codes: the biggest five-digit office zip, in and out, office only, and beside a city", () => {
+  const z = (id: string, office_zip: string | null, city: string | null = null): MemAgent => ({ ...agent(id, `Agent ${id}`), office_zip, office_city: city, office_city_key: city?.toLowerCase() ?? null, office_state: city ? "TN" : null });
+  const m: MemMarket = { mlsIds: ["m"], agents: [z("1", "37067", "Franklin"), z("2", "37067", "Franklin"), z("3", " 37064"), z("4", " 37064"), z("5", " 37064"), z("6", null)] };
+  const qs = parityQueries(m, { mls: { include: ["m"], exclude: [] } });
+  const zips = qs.filter((q) => /zip/.test(q.label)).map((q) => q.label);
+  assert.deepEqual(zips, ["zip 37067", "not zip 37067", "zip 37067, office only, by units", "zip 37067 or city franklin, TN, not zip 37067"], "' 37064' is more common, but it isn't a zip anyone can pick");
+  const none: MemMarket = { mlsIds: ["m"], agents: [z("1", null), z("2", "3706")] };
+  assert.equal(parityQueries(none, {}).some((q) => /zip/.test(q.label)), false, "no zip, no zip query");
+});
+
+/* The market's zip codes (5 Nov): read the way the market is, each agent once, its titles as fn_title_tokens matches them. */
+function zipDb(rows: Array<{ agent: string; mls: string; title: string | null; office: string | null; transacted: string | null }>) {
+  const asked: Array<{ select: string; narrow: string | null; table: string | null }> = [];
+  const db = {
+    from: () => {
+      let select = ""; let narrow: string | null = null; let table: string | null = null; let lo = ""; let hi: string | null = null;
+      const b = {
+        select: (x: string) => { select = x; return b; },
+        in: () => b, order: () => b,
+        gte: (_c: string, v: string) => { lo = v; return b; },
+        lt: (_c: string, v: string) => { hi = v; return b; },
+        or: (expr: string, opts?: { referencedTable?: string }) => { if (opts?.referencedTable) { narrow = expr; table = opts.referencedTable; } return b; },
+        limit: () => {
+          asked.push({ select, narrow, table });
+          const data = rows.filter((r) => r.agent >= lo && (hi === null || r.agent < hi))
+            .map((r) => ({ agent_id: r.agent, mls_id: r.mls, agents: { id: r.agent, title: r.title, office_zip: r.office, most_transacted_zip: r.transacted } }));
+          return Promise.resolve({ data, error: null });
+        },
+      };
+      return b;
+    },
+  };
+  return { db, asked };
+}
+
+test("a market's zip codes: each agent once across MLSs, with the market's titles only", async () => {
+  const { db, asked } = zipDb([
+    { agent: "10000000-0000-4000-8000-000000000001", mls: "m1", title: "Salesperson", office: "37067", transacted: "37064" },
+    { agent: "10000000-0000-4000-8000-000000000001", mls: "m2", title: "Salesperson", office: "37067", transacted: "37064" },
+    { agent: "a0000000-0000-4000-8000-000000000002", mls: "m1", title: "Salesperson, Team Leader", office: "37215", transacted: null },
+    { agent: "f0000000-0000-4000-8000-000000000003", mls: "m1", title: "Managing Broker", office: "37203", transacted: null },
+    { agent: "f0000000-0000-4000-8000-000000000004", mls: "m2", title: null, office: "37203", transacted: null },
+  ]);
+  const sp = await loadMarketZips(["m2", "m1"], ["Salesperson"], db as never);
+  assert.deepEqual(sp, [{ office: "37067", transacted: "37064" }, { office: "37215", transacted: null }]);
+  assert.ok(asked.every((a) => a.narrow === null && /agents\(id,title,office_zip,most_transacted_zip\)/.test(a.select)), "a salesperson market reads every agent");
+  assert.equal(asked.length, 16, "the 16 slices");
+});
+
+test("a market of other titles reads only agents whose title could be one, then the token match decides", async () => {
+  const { db, asked } = zipDb([
+    { agent: "a0000000-0000-4000-8000-000000000002", mls: "m1", title: "Salesperson, Team Leader", office: "37215", transacted: null },
+    { agent: "b0000000-0000-4000-8000-000000000005", mls: "m1", title: "Team Leader Assistant", office: "37211", transacted: null },
+    { agent: "f0000000-0000-4000-8000-000000000003", mls: "m1", title: "Managing  Broker", office: "37203", transacted: null },
+  ]);
+  const got = await loadMarketZips(["m1"], ["Team Leader", "Managing Broker"], db as never);
+  assert.deepEqual(got, [{ office: "37215", transacted: null }, { office: "37203", transacted: null }], "an assistant isn't a team leader");
+  assert.ok(asked.every((a) => a.narrow === "title.ilike.*team*leader*,title.ilike.*managing*broker*" && a.table === "agents"));
+  assert.ok(asked.every((a) => a.select.includes("agents!inner(")), "inner, so the narrowing drops rows");
+  assert.deepEqual(await loadMarketZips([], ["Salesperson"], db as never), []);
+});
+

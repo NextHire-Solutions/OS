@@ -37,6 +37,9 @@ export interface MemAgent {
   transacted_state: string | null;
   most_transacted_county: string | null;
   most_transacted_city_key: string | null;
+  /** As stored: the zip filter matches it exactly (fn_agent_where). */
+  office_zip: string | null;
+  most_transacted_zip: string | null;
   /** Scoped: the sum over the market's MLSs (agent_mls_stats), null when the agent has no stats there. */
   sales_volume: number | null;
   units: number | null;
@@ -155,8 +158,8 @@ function org(f: unknown, col: (a: MemAgent) => string | null): Pred[] | typeof U
 }
 
 const KIND_COLS = {
-  office: { key: (a: MemAgent) => a.office_city_key, city: (a: MemAgent) => a.office_city, state: (a: MemAgent) => a.office_state, county: (a: MemAgent) => a.office_county },
-  transacted: { key: (a: MemAgent) => a.most_transacted_city_key, city: (a: MemAgent) => a.most_transacted_city, state: (a: MemAgent) => a.transacted_state, county: (a: MemAgent) => a.most_transacted_county },
+  office: { key: (a: MemAgent) => a.office_city_key, city: (a: MemAgent) => a.office_city, state: (a: MemAgent) => a.office_state, county: (a: MemAgent) => a.office_county, zip: (a: MemAgent) => a.office_zip },
+  transacted: { key: (a: MemAgent) => a.most_transacted_city_key, city: (a: MemAgent) => a.most_transacted_city, state: (a: MemAgent) => a.transacted_state, county: (a: MemAgent) => a.most_transacted_county, zip: (a: MemAgent) => a.most_transacted_zip },
 } as const;
 
 /** One side of a location filter (values or excludeValues): does the agent match ANY of its conditions. */
@@ -182,9 +185,15 @@ function placeMatcher(values: unknown[], defaultField: string, kinds: Array<keyo
   }
   const conds: Array<(a: MemAgent) => boolean> = [];
   for (const [ef, vals] of groups) {
-    if (ef !== "city" && ef !== "county" && ef !== "state") return UNSUPPORTED;
+    if (ef !== "city" && ef !== "county" && ef !== "state" && ef !== "zip") return UNSUPPORTED;
     for (const kind of kinds) {
       const c = KIND_COLS[kind];
+      // The stored value, exactly: `office_zip = ANY(values)`, no trim, no case.
+      if (ef === "zip") {
+        const set = new Set(vals);
+        conds.push((a) => { const z = c.zip(a); return z !== null && set.has(z); });
+        continue;
+      }
       if (ef === "state") {
         const set = new Set(vals.map((v) => v.toUpperCase()));
         conds.push((a) => { const s = c.state(a); return s !== null && set.has(s.toUpperCase()); });
