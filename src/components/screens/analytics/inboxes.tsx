@@ -51,6 +51,7 @@ import {
   useColumnPrefs,
   useSort,
 } from "./shared";
+import { RemoveInboxesDialog } from "./remove-inboxes-dialog";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn } from "./toast";
 
@@ -68,8 +69,10 @@ import { Btn } from "./toast";
  * asking the server again for each combination would only make every click
  * slower.
  *
- * NOTHING HERE CHANGES ANYTHING. The tick boxes select rows and that is all —
- * there is deliberately no button that acts on a selection yet.
+ * THE ONE THING HERE THAT CHANGES ANYTHING is Remove from campaigns (5 Nov), for a
+ * selection of inboxes: a tag is the Tags filter and then Select all. It reads and
+ * shows what it would do first — remove-inboxes-dialog.tsx. It changes campaigns,
+ * so it needs Campaign Management as well as this page's own switch.
  *
  * What each filter matches, what an option counts and what a column sorts by
  * are in lib/tools/analytics/inboxes.ts, where they are tested.
@@ -102,7 +105,7 @@ const EXTRAS_POLL_LIMIT = 120;
  * Asked for once the page is up, then again every few seconds until the read
  * is finished — the table is usable throughout and fills in by itself.
  */
-function useInboxExtras(): ExtrasAnswer | null {
+function useInboxExtras(again: number): ExtrasAnswer | null {
   const [answer, setAnswer] = useState<ExtrasAnswer | null>(null);
   useEffect(() => {
     let live = true;
@@ -126,11 +129,11 @@ function useInboxExtras(): ExtrasAnswer | null {
       live = false;
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [again]);
   return answer;
 }
 
-export function InboxesScreen() {
+export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaigns?: boolean }) {
   const { data, error, loading } = useAnalyticsData<InboxesResponse>(INBOXES_URL);
   const [filters, setFilters] = useState<InboxFilters>(NO_FILTERS);
   // Lowest / highest on the number columns (inbox-ranges.ts).
@@ -147,8 +150,11 @@ export function InboxesScreen() {
    * not have ticked a different five.
    */
   const [selected, setSelected] = useState<Set<number | string>>(new Set());
+  const [removing, setRemoving] = useState(false);
+  // Asks EmailBison's figures again after inboxes have come off campaigns.
+  const [readAgain, setReadAgain] = useState(0);
 
-  const extras = useInboxExtras();
+  const extras = useInboxExtras(readAgain);
   // The database's rows with EmailBison's warmup scores and exact assignment
   // laid over them once those have been read.
   const all = useMemo(() => withExtras(data?.rows ?? NO_ROWS, extras?.extras ?? null), [data, extras]);
@@ -216,6 +222,20 @@ export function InboxesScreen() {
     });
 
   const emailSorted = sort?.key === "email";
+
+  // A selection survives filtering, so some of it may be out of view: said, because it is about to be acted on.
+  const selectedInView = matching.reduce((n, r) => n + (selected.has(r.id) ? 1 : 0), 0);
+  const selectedHidden = selected.size - selectedInView;
+  const canSelectAll = matching.length > selectedInView && (filtered || allOnPageSelected);
+  const selectAll = () =>
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const r of matching) next.add(r.id);
+      return next;
+    });
+  // EmailBison's ids are numbers; an Instantly inbox's id is its address.
+  const selectedEmailBison = [...selected].filter((id): id is number => typeof id === "number");
+  const selectedInstantly = selected.size - selectedEmailBison.length;
 
   return (
     <div className="an-screen">
@@ -321,13 +341,32 @@ export function InboxesScreen() {
                 Clear filters
               </button>
             ) : null}
+            {canSelectAll ? (
+              <button type="button" className="gh tnum" data-inbox-select-all onClick={selectAll}>
+                Select all {fullNumber(matching.length)}
+              </button>
+            ) : null}
             <span style={{ flex: 1 }} />
             {selected.size > 0 ? (
               <>
-                <span className="tnum mut">{fullNumber(selected.size)} selected</span>
+                <span className="tnum mut" data-inbox-selected>
+                  {fullNumber(selected.size)} selected{selectedHidden > 0 ? ` · ${fullNumber(selectedHidden)} not in this view` : ""}
+                </span>
                 <button type="button" className="gh" onClick={() => setSelected(new Set())}>
                   Clear selection
                 </button>
+                {canChangeCampaigns ? (
+                  <button
+                    type="button"
+                    className="gh an-rm-open"
+                    data-inbox-remove
+                    disabled={!selectedEmailBison.length}
+                    title={selectedEmailBison.length ? undefined : "This removes EmailBison inboxes. The ones selected are Instantly's."}
+                    onClick={() => setRemoving(true)}
+                  >
+                    Remove from campaigns
+                  </button>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -451,6 +490,18 @@ export function InboxesScreen() {
           </div>
         ) : null}
       </div>
+      {removing ? (
+        <RemoveInboxesDialog
+          inboxIds={selectedEmailBison}
+          leftOut={selectedInstantly}
+          onClose={(changed) => {
+            setRemoving(false);
+            if (!changed) return;
+            setSelected(new Set());
+            setReadAgain((n) => n + 1);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

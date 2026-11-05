@@ -39,6 +39,8 @@ interface State {
   progress: { step: string; done: number; total: number } | null;
   error: string | null;
   failedAt: number | null;
+  /** Inboxes came off campaigns since the last read: the next visit reads again. */
+  outOfDate?: boolean;
 }
 
 // One state for the whole process — Next builds this module more than once
@@ -117,14 +119,20 @@ export interface InboxExtrasSnapshot {
   error: string | null;
 }
 
+/** Inboxes have just come off campaigns: the next visit gets the old answer at once and starts a fresh read behind it. */
+export function markInboxExtrasStale(): void {
+  state().outOfDate = true;
+}
+
 /** What is known right now — and, if that is nothing or is stale, starts a read behind the answer. */
 export function inboxExtras(now = Date.now()): InboxExtrasSnapshot {
   const s = state();
-  const fresh = s.value !== null && now - Date.parse(s.value.asOf) < TTL_MS;
+  const fresh = s.value !== null && !s.outOfDate && now - Date.parse(s.value.asOf) < TTL_MS;
   const coolingOff = s.failedAt !== null && now - s.failedAt < RETRY_MS;
 
   if (!fresh && !s.reading && !coolingOff) {
     s.error = null;
+    s.outOfDate = false;
     s.reading = read(s)
       .then((value) => { s.value = value; s.failedAt = null; })
       .catch((e: unknown) => {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { invalidate, loadOnce } from "../lazy";
+import type { OpenCampaign, RemovalResult } from "@/lib/tools/analytics/campaigns/inbox-removal.ts";
 import { locationParams, type LocationSelection } from "@/lib/tools/analytics/campaigns/location-filter.ts";
 
 /*
@@ -53,6 +54,8 @@ export const INFRASTRUCTURE_URL = (qs: string) => `${BASE}/infrastructure?${qs}`
 export const INBOXES_URL = `${BASE}/inboxes`;
 /** Warmup scores and exact campaign assignment, read from EmailBison in the background. */
 export const INBOX_EXTRAS_URL = `${BASE}/inboxes/extras`;
+/** The inboxes on active campaigns, for the Campaigns page's capacity strip. */
+export const ACTIVE_CAPACITY_URL = `${BASE}/campaigns/active-capacity`;
 export const ATTRIBUTION_URL = (qs: string) => `${BASE}/attribution?${qs}`;
 export const ATTRIBUTION_EVENTS_URL = (qs: string) => `${BASE}/attribution/events?${qs}`;
 export const CAMPAIGNS_URL = (qs: string) => `${BASE}/campaigns?${qs}`;
@@ -107,6 +110,22 @@ export function describeSync(what: string, result: SyncOutcome): { text: string;
     .join(", ");
   return { text: `${what}: ${summary || `${result.rowsWritten ?? 0} rows`}` };
 }
+
+/* ------------------------- inboxes off campaigns ------------------------- */
+
+const REMOVAL_URL = `${BASE}/campaigns/inboxes/removal`;
+
+/** Every open campaign, as EmailBison has it now. */
+export const removalCampaigns = () => send(REMOVAL_URL, { method: "POST" }) as unknown as Promise<{ campaigns: OpenCampaign[] }>;
+/** Every campaign each of these few inboxes is on. A POST only for the ids; it changes nothing. */
+export const removalByInbox = (inboxIds: number[]) =>
+  send(`${REMOVAL_URL}/by-inbox`, json("POST", { inboxIds })) as unknown as Promise<{ campaigns: Record<string, number[]> }>;
+/** Which of these inboxes one campaign holds. A POST only for the ids; it changes nothing. */
+export const removalOverlap = (campaignId: number, count: number, inboxIds: number[]) =>
+  send(`${REMOVAL_URL}/overlap`, json("POST", { campaignId, count, inboxIds })) as unknown as Promise<{ on: number[]; total: number; leftConnected: number }>;
+/** Takes inboxes off one campaign. The person has seen and confirmed what this does. */
+export const removalRun = (input: { campaignId: number; inboxIds: number[]; pauseActive: boolean; batchId: string }) =>
+  send(`${REMOVAL_URL}/run`, json("POST", { ...input, confirm: true })) as unknown as Promise<RemovalResult & { name: string }>;
 
 /* -------------------------------- clients -------------------------------- */
 

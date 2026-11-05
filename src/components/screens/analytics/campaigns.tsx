@@ -13,7 +13,7 @@ import {
   type CampaignAction,
 } from "@/lib/tools/analytics/campaigns/status.ts";
 import { DASH, fullNumber, percent } from "@/lib/tools/analytics/format.ts";
-import { capacitySentence, gapLabel, type CapacityPicture } from "@/lib/tools/analytics/sending-capacity.ts";
+import type { CapacityPicture } from "@/lib/tools/analytics/sending-capacity.ts";
 import { shortStamp } from "@/lib/workspace/dates";
 import {
   CAMPAIGNS_URL,
@@ -24,6 +24,7 @@ import {
   type ActionResult,
 } from "./actions";
 import { AssignInboxesDialog } from "./assign-inboxes-dialog";
+import { CapacityStrip } from "./capacity-strip";
 import { ReCampaignDialog } from "./re-campaign-dialog";
 import { Bar, Box, EmptyRow, LoadError, Pager, Search, Seg, SortHeader, sortRows, useDebounced, useSort } from "./shared";
 import { StalenessStrip } from "./staleness-strip";
@@ -267,27 +268,10 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
       </div>
 
       {/*
-        The volume the active campaigns need (13 Oct). One line, above the list:
-        the campaigns' daily send limits added up, against what the connected
-        inboxes can send — sending-capacity.ts. Red when the campaigns ask for
-        more than there is, because that is the case someone has to act on.
+        What the inboxes can send against what the active campaigns need, above the list (13 Oct; 5 Nov). Active inboxes
+        are EmailBison's, so a filter to Instantly alone has none to show.
       */}
-      {data?.capacity ? (
-        <div
-          data-campaign-capacity={data.capacity.gap < 0 ? "short" : "ok"}
-          style={{
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14,
-            padding: "10px 14px", border: "1px solid var(--line)", borderRadius: "var(--r-md)",
-            background: "var(--surface, #fff)", fontSize: 13, lineHeight: 1.45,
-          }}
-        >
-          <span className={`badge ${data.capacity.gap < 0 ? "s-risk" : "s-done"}`} style={{ flex: "none" }}>
-            {gapLabel(data.capacity)}
-          </span>
-          <span style={{ flex: 1, minWidth: 240, color: "var(--ink-2)" }}>{capacitySentence(data.capacity)}</span>
-          <a className="mut" href="/analytics/volume" style={{ flex: "none", fontSize: 12.5 }}>How this is worked out →</a>
-        </div>
-      ) : null}
+      {data?.capacity ? <CapacityStrip capacity={data.capacity} showActive={platform !== "instantly"} /> : null}
 
       <div className="an-filter" style={{ borderRadius: "var(--r-md)", border: "1px solid var(--line)", marginBottom: 18 }}>
         <div className="qr" role="group" aria-label="Status">

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { capacityPicture, capacitySentence, gapLabel, neededShare, type ActiveCampaignLimit } from "./sending-capacity.ts";
+import { activeInboxCapacity, capacityPicture, gapLabel, neededShare, type ActiveCampaignLimit } from "./sending-capacity.ts";
 
 // The estate on 13 Oct 2026, as the database had it.
 const ROWS = [
@@ -90,11 +90,29 @@ test("numbers arriving as text (bigint sums) are read as numbers", () => {
   assert.equal(p.unavailable, 5);
 });
 
-test("the Campaigns list sentence", () => {
-  assert.equal(
-    capacitySentence(capacityPicture(ROWS, ACTIVE)),
-    "24 active campaigns are set to send 33,000 emails a day (16,500 new leads a day). Connected inboxes can send 32,600 a day — 400 a day short.",
-  );
-  assert.equal(capacitySentence(capacityPicture(ROWS, [eb(1000, null)])), "1 active campaign is set to send 1,000 emails a day. Connected inboxes can send 32,600 a day — 31,600 a day to spare.");
-  assert.equal(capacitySentence(capacityPicture(ROWS, [])), "No campaign is active, so nothing is asking for sending capacity.");
+test("active inboxes: each once however many campaigns share it, Connected only, and the daily limits added up", () => {
+  const pool = [
+    { id: 1, status: "Connected", dailyLimit: 10 },
+    { id: 2, status: "Connected", dailyLimit: 15 },
+    { id: 3, status: "Not connected", dailyLimit: 15 },
+    { id: 4, status: "Failed", dailyLimit: 15 },
+  ];
+  // Nine campaigns on one pool is one pool.
+  assert.deepEqual(activeInboxCapacity([pool, pool, pool]), { inboxes: 2, daily: 25, cannotConnect: 2, campaigns: 3 });
+  // A second campaign adds only what is new.
+  assert.deepEqual(activeInboxCapacity([pool, [{ id: 2, status: "Connected", dailyLimit: 15 }, { id: 9, status: "Connected", dailyLimit: 5 }]]), { inboxes: 3, daily: 30, cannotConnect: 2, campaigns: 2 });
+});
+
+test("active inboxes: nothing known is never a number made up", () => {
+  assert.deepEqual(activeInboxCapacity([]), { inboxes: 0, daily: 0, cannotConnect: 0, campaigns: 0 });
+  assert.deepEqual(activeInboxCapacity([[]]), { inboxes: 0, daily: 0, cannotConnect: 0, campaigns: 1 });
+  // No limit on record adds nothing, but it is still an inbox.
+  assert.deepEqual(activeInboxCapacity([[{ id: 1, status: "Connected", dailyLimit: null }]]), { inboxes: 1, daily: 0, cannotConnect: 0, campaigns: 1 });
+  // No status isn't Connected.
+  assert.deepEqual(activeInboxCapacity([[{ id: 1, status: null, dailyLimit: 10 }]]), { inboxes: 0, daily: 0, cannotConnect: 1, campaigns: 1 });
+});
+
+test("the two figures are measured the same way against what the campaigns need", () => {
+  assert.equal(gapLabel({ gap: 21_000 - 22_500, needed: 22_500 }), "1,500 a day short");
+  assert.equal(gapLabel({ gap: 32_675 - 22_500, needed: 22_500 }), "10,175 a day to spare");
 });

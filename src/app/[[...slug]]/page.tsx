@@ -510,7 +510,7 @@ export default async function WorkspacePage({
         })(),
         "analytics:schedule": <AnalyticsScheduleScreen />,
         // Inboxes (13 Oct): every sending inbox in one table. Loads itself.
-        "analytics:inboxes": <InboxesScreen />,
+        "analytics:inboxes": <InboxesScreen canChangeCampaigns={grants.includes("campaigns")} />,
         "analytics:clients": <AnalyticsClientsScreen />,
         "team-access": <TeamAccessScreen />,
         // Client-side only: it fetches its own four endpoints, so no loader

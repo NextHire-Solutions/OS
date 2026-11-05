@@ -191,7 +191,9 @@ export function VolumeView({ qs }: { qs: string }) {
           Capacity is the daily limit of every inbox that can send, added up — EmailBison inboxes that are Connected, and
           Instantly accounts that are not archived. Inboxes that cannot connect are listed separately and never added in.
           A platform with no active campaign is left out of the total. Needed is the daily send limit of every active
-          campaign, added up. Actually sending is the emails sent in the date range, divided by its days.
+          campaign, added up. Actually sending is the emails sent in the date range, divided by its days. Active inboxes,
+          on the Campaigns page, are the Connected EmailBison inboxes attached to at least one active campaign, each counted
+          once, and read from EmailBison.
         </div>
       </Box>
 

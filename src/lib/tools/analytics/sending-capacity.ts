@@ -37,8 +37,19 @@
  * and if NO platform has an active campaign everything is counted (there is
  * no "in use" to prefer).
  *
+ * ---------------------------------------------------------------------------
+ * ACTIVE INBOXES (5 Nov; client: "ADD a second metric showing the active inboxes
+ * (those connected to active campaigns) along with their daily sending volume").
+ *
+ * Capacity counts every Connected inbox in the workspace, on a campaign or not.
+ * This counts the ones an active campaign can actually send from: Connected, and
+ * attached to at least one active campaign. Each once, however many campaigns it
+ * is on: nine campaigns share one pool of 1,630, and that is 1,630 inboxes.
+ * An attached inbox that can't connect is counted beside it, never in it.
+ *
  * Pure. The numbers come from analytics_sending_capacity and the campaigns
- * table — sending-capacity-load.ts.
+ * table — sending-capacity-load.ts — and for active inboxes from EmailBison's
+ * campaign lists — campaign-inboxes-load.ts.
  */
 
 export type CapacityPlatform = "emailbison" | "instantly";
@@ -155,10 +166,38 @@ export function neededShare(p: Pick<CapacityPicture, "daily" | "needed">): numbe
   return p.daily > 0 ? p.needed / p.daily : null;
 }
 
-/** The one-line summary the Campaigns list shows above its table. */
-export function capacitySentence(p: CapacityPicture): string {
-  if (p.activeCampaigns === 0) return "No campaign is active, so nothing is asking for sending capacity.";
-  const campaigns = `${n(p.activeCampaigns)} active campaign${p.activeCampaigns === 1 ? " is" : "s are"} set to send ${n(p.needed)} emails a day`;
-  const leads = p.newLeads > 0 ? ` (${n(p.newLeads)} new leads a day)` : "";
-  return `${campaigns}${leads}. Connected inboxes can send ${n(p.daily)} a day — ${gapLabel(p)}.`;
+/** An inbox on a campaign, as EmailBison lists it. */
+export interface CampaignInbox {
+  id: number;
+  status: string | null;
+  dailyLimit: number | null;
+}
+
+export interface ActiveInboxCapacity {
+  /** Connected inboxes on at least one active campaign, each once. */
+  inboxes: number;
+  /** Their daily limits, added up. */
+  daily: number;
+  /** On an active campaign but not Connected: they can't send. */
+  cannotConnect: number;
+  /** The active campaigns these were read from. */
+  campaigns: number;
+}
+
+/** The inboxes on active campaigns, from each campaign's list. */
+export function activeInboxCapacity(lists: ReadonlyArray<readonly CampaignInbox[]>): ActiveInboxCapacity {
+  const once = new Map<number, CampaignInbox>();
+  for (const list of lists) for (const inbox of list) once.set(inbox.id, inbox);
+  let inboxes = 0;
+  let daily = 0;
+  let cannotConnect = 0;
+  for (const inbox of once.values()) {
+    if (inbox.status === "Connected") {
+      inboxes++;
+      daily += num(inbox.dailyLimit);
+    } else {
+      cannotConnect++;
+    }
+  }
+  return { inboxes, daily, cannotConnect, campaigns: lists.length };
 }

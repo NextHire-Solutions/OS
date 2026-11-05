@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.01** | [Inboxes off campaigns, and Active inboxes, 5 November](#001-inboxes-off-campaigns-and-active-inboxes-5-november) — remove selected inboxes from every open campaign at once; a second capacity figure on Campaigns |
 | **0.1** | [BrokerStaffer OS for Claude, 15 October](#01-brokerstaffer-os-for-claude-15-october) — a read-only connector: admins add the OS to Claude and ask it anything the Assistant can answer |
 | **0.2** | [Interested leads → Slack, 14 October](#02-interested-leads--slack-14-october) — one Slack post per conversation newly labelled Interested, to #client-interested-updates; needs Master Inbox migration 0033 |
 | **0.3** | [OS feedback batch, 13–14 October](#03-os-feedback-batch-1314-october) — ~45 items across the OS, LIVE 14 Oct (`28d910b`, standalone inbox `840094f`); what each became, what was not done, what was never exercised |
@@ -209,6 +210,32 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.01 Inboxes off campaigns, and Active inboxes, 5 November
+
+Two client requests.
+
+**Remove from campaigns** (Inboxes page). Tick inboxes, or use the Tags filter and Select all, then press Remove from
+campaigns. It reads which campaigns hold them, shows what would happen to each, and changes nothing until confirmed.
+Needs the Campaign Management switch as well as Inboxes (`campaigns/inboxes/removal/*`, family `campaigns`). The rules
+are in `lib/tools/analytics/campaigns/inbox-removal.ts`, and they come from what EmailBison does:
+
+- **Only draft or paused campaigns can lose inboxes.** "The campaign must be in a draft or paused state to remove sender
+  emails". Active ones are behind a tick, off by default: pause, remove, start again. Only what the run paused is started.
+- **Never empty.** EmailBison archives a paused campaign with no inboxes, and later deletes it. A campaign these inboxes
+  would empty is left alone, and said so, and it is checked again against a fresh count at the moment of the change.
+- **A paused campaign's removal lands 2 to 3 seconds later** ("sent for deletion. This may take a moment"), the same for
+  1 or 250 inboxes; a draft's is at once. Each call is waited for by the campaign's own count before the next, and before
+  an active campaign is started again.
+- **A list is 15 rows a read** and `per_page` is ignored: 1,630 inboxes is 109 reads, and all 66 open campaigns about
+  4,700. Up to 30 inboxes are asked about one by one instead (about 20 reads each); more, and the campaigns are read.
+- Each campaign is its own request, one after another, so a run can stop between two and has changed only what it
+  reported. `campaign_audit_log` holds the inbox ids, so they could be put back.
+
+**Active inboxes** (Campaigns page). Beside All connected inboxes: Connected inboxes on at least one active campaign, each
+once, with their daily limits added up. Read from EmailBison and kept an hour in the process
+(`lib/tools/analytics/campaign-inboxes-load.ts`), about 1,085 GETs a read; nothing in the database records which inboxes
+a campaign holds. A campaign paused since just stops counting, with no new read. Instantly isn't in it.
 
 ## 0.1 BrokerStaffer OS for Claude, 15 October
 
