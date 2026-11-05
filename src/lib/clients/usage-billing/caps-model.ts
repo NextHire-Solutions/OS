@@ -14,6 +14,8 @@ import { addDays, daysBetween, DEFAULT_LEAD_SOURCE, modeOf, type BillableLead, t
  * Oct 28, restarts Nov 25.
  */
 export const CAP_WINDOW_DAYS = 28;
+/** The bell's kinds for what caps.ts rings. Who else sees them: billing-access.ts. */
+export const LEAD_CAP_BELL_KINDS: readonly string[] = ["lead_cap_reached", "lead_cap_restarted", "lead_cap_problem", "lead_cap_held"];
 /** A restart queues real email, so it waits until the team is at work: 9am Eastern on the window's first day. */
 export const CAP_RESTART_FROM_HOUR_ET = 9;
 
@@ -32,9 +34,17 @@ export function capWindowOf(anchor: string, day: string): CapWindow | null {
   return { start, end: addDays(start, CAP_WINDOW_DAYS) };
 }
 
-/** Nothing pauses, restarts or is held unless this is exactly "1". Otherwise the run only says what it would do. */
+/** No campaign pauses or restarts unless this is exactly "1". Otherwise the run only says what it would do. */
 export function capsLive(env: Record<string, string | undefined>): boolean {
   return env.OS_LEAD_CAPS === "1";
+}
+
+/*
+ * Holding replies past the cap in Keep Warm is its own switch, and off (the user, 5 Nov: pause and resume only "as of
+ * now"). Off, the hand-off reads nothing about caps: a reply past the cap goes to the client and is billed, as ever.
+ */
+export function capsHoldLive(env: Record<string, string | undefined>): boolean {
+  return capsLive(env) && env.OS_LEAD_CAPS_HOLD === "1";
 }
 
 /**

@@ -1610,6 +1610,15 @@ test("under the cap: goes exactly as without one", async () => {
   assert.deepEqual(caps.log, []);
 });
 
+test("caps on, holding off: pause and resume only, so the hand-off doesn't read them either", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  const r = await relay.sweepBrokerageRelay(NOW, deps({ ...LIVE, OS_LEAD_CAPS: "1" }));
+  assert.deepEqual(r.outcomes, { sent: 1 });
+  assert.equal(db.calls.some((c) => c.table.startsWith("os_cap") || c.table === "os_usage_billing_settings"), false);
+});
+
 test("caps off (no switch): nothing about them is read, and the hand-off is as ever", async () => {
   seed({ practice_mode: false }, { enabled: true });
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });

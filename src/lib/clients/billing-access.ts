@@ -36,3 +36,14 @@ export function canCancelSubscriptions(email: string | null | undefined): boolea
   const key = (email ?? "").trim().toLowerCase();
   return key.length > 0 && CANCEL_SUBSCRIPTION_PEOPLE.includes(key);
 }
+
+/*
+ * Who gets the lead cap's alerts in the bell without being an admin (5 Nov). The user: "amy should get alerts too".
+ * Those alerts only: the rest of the bell stays admins only. By name; change only on the user's word.
+ */
+export const LEAD_CAP_ALERT_PEOPLE: readonly string[] = ["amy@brokerstaffer.com"];
+
+export function getsLeadCapAlerts(email: string | null | undefined): boolean {
+  const key = (email ?? "").trim().toLowerCase();
+  return key.length > 0 && LEAD_CAP_ALERT_PEOPLE.includes(key);
+}

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { campaignsFromJson, capActsOn, capAppliesTo, capsLive, capWindowOf, columnIsMissing, effectiveCap, isOverCap, mergeCampaigns, parseSpendCap, tableIsMissing } from "./caps-model.ts";
+import { LEAD_CAP_BELL_KINDS, campaignsFromJson, capActsOn, capAppliesTo, capsHoldLive, capsLive, capWindowOf, columnIsMissing, effectiveCap, isOverCap, mergeCampaigns, parseSpendCap, tableIsMissing } from "./caps-model.ts";
 import { OS_TABLES } from "../os-tables.ts";
 
 test("a window is 28 days from the billing anchor: Homebase restarts Nov 25, as agreed with Amy", () => {
@@ -82,6 +82,21 @@ test("off unless exactly 1", () => {
   assert.equal(capsLive({}), false);
   for (const v of ["0", "true", "yes", "", "11"]) assert.equal(capsLive({ OS_LEAD_CAPS: v }), false, v);
   assert.equal(capsLive({ OS_LEAD_CAPS: "1" }), true);
+});
+
+test("holding replies is its own switch, off, and does nothing without the main one", () => {
+  assert.equal(capsHoldLive({}), false);
+  assert.equal(capsHoldLive({ OS_LEAD_CAPS: "1" }), false, "pause and resume only");
+  assert.equal(capsHoldLive({ OS_LEAD_CAPS_HOLD: "1" }), false, "not without the main switch");
+  for (const v of ["0", "true", "", "11"]) assert.equal(capsHoldLive({ OS_LEAD_CAPS: "1", OS_LEAD_CAPS_HOLD: v }), false, v);
+  assert.equal(capsHoldLive({ OS_LEAD_CAPS: "1", OS_LEAD_CAPS_HOLD: "1" }), true);
+});
+
+test("every kind of alert the caps ring is one Amy gets: a new one left off the list would silently miss her", () => {
+  const src = fs.readFileSync(path.join(process.cwd(), "src", "lib", "clients", "usage-billing", "caps.ts"), "utf8");
+  const rung = [...new Set([...src.matchAll(/kind: "(lead_cap_[a-z_]+)"/g)].map((m) => m[1]))].sort();
+  assert.ok(rung.length >= 4);
+  assert.deepEqual(rung, [...LEAD_CAP_BELL_KINDS].sort());
 });
 
 test("only active and onboarding clients are acted on", () => {

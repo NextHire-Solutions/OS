@@ -141,7 +141,7 @@ function CapPanel({ clientId, cap, capError, priceCents, onCap }: { clientId: st
         <b>Lead and spend cap</b>
         <span className={cap.reached ? "ub-bad" : undefined}>{cap.notActing ? "Not acting" : cap.cap === null ? "No cap" : cap.reached ? "At its cap" : "Under its cap"}</span>
       </div>
-      {!cap.live ? <div className="rx-hint" style={{ margin: 0 }}>Not switched on. This shows what it would do: nothing is paused or held while it is off.</div> : null}
+      {!cap.live ? <div className="rx-hint" style={{ margin: 0 }}>Not switched on. This shows what it would do: no campaign is paused while it is off.</div> : null}
       {cap.notActing ? <div className="rx-hint" style={{ margin: 0 }}>{cap.notActing}</div> : null}
       {cap.spendInvalid ? <div className="ds-field-err">The spend limit is less than one lead at this price, so it is being ignored. Change it below.</div> : null}
       <div className="rb-grid ub-grid">
@@ -154,6 +154,7 @@ function CapPanel({ clientId, cap, capError, priceCents, onCap }: { clientId: st
         <div><small>This window</small><b>{cap.cap === null ? (cap.used === null ? "—" : plural(cap.used, "lead")) : `${cap.used} of ${cap.cap}`}</b><span>{cap.window?.label ?? "Not started"}</span></div>
         <div><small>Next window</small><b>{cap.window ? day(cap.window.end) : "—"}</b><span>Every 28 days. Paused campaigns restart then.</span></div>
       </div>
+      {!cap.holding && !cap.notActing && cap.cap !== null ? <div className="rx-hint" style={{ margin: 0 }}>This stops the emailing. Replies to emails already sent still go to the client and are billed, so a client can go past this.</div> : null}
       {cap.leadCap !== null && cap.spendLeads !== null ? <div className="rx-hint" style={{ margin: 0 }}>Whichever comes first applies: {plural(cap.cap as number, "lead")}.</div> : null}
       {!cap.linked ? <div className="ds-field-err">This client isn&apos;t linked to Client Health, so it has no lead cap and its campaigns can&apos;t be paused from here.</div> : null}
       {spend === null ? (

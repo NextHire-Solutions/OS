@@ -1083,6 +1083,22 @@ test("the view: at the cap, what restarts, what a person paused, and who is held
   assert.equal(v.restartsByItself, true);
 });
 
+test("the view: says whether replies are held. Pause and resume only, they aren't", async () => {
+  seed();
+  atCap();
+  assert.equal((await caps.capView(HB, await settings(), ON, IN_WINDOW)).holding, false);
+  assert.equal((await caps.capView(HB, await settings(), { ...ON, OS_LEAD_CAPS_HOLD: "1" }, IN_WINDOW)).holding, true);
+});
+
+test("pause and resume only, a client not linked to Client Health: the bell doesn't claim replies are held", async () => {
+  seed({ ch: null, settings: { spend_cap_cents: 50_000 } });
+  atCap();
+  await run();
+  const said = String(db.rows("os_notifications").find((n) => n.ref === `cap_no_link:${HB}:2026-10-28`)!.body);
+  assert.match(said, /still go to the client, and are billed/);
+  assert.doesNotMatch(said, /held/);
+});
+
 test("the view: a held reply a person has since declined is decided, and no longer listed as waiting", async () => {
   seed();
   atCap();

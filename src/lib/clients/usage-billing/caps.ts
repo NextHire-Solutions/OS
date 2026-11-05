@@ -8,7 +8,7 @@ import { applyLabelToThread } from "@/lib/tools/master-inbox/inbox/apply-label";
 
 import { keysBilledBefore, loadSettings, tellBell, UsageBillingError } from "./billing";
 import {
-  CAP_RESTART_FROM_HOUR_ET, campaignsFromJson, capActsOn, capAppliesTo, capsLive, capWindowOf, columnIsMissing, effectiveCap, isOverCap, mergeCampaigns, parseSpendCap, tableIsMissing,
+  CAP_RESTART_FROM_HOUR_ET, campaignsFromJson, capActsOn, capAppliesTo, capsHoldLive, capsLive, capWindowOf, columnIsMissing, effectiveCap, isOverCap, mergeCampaigns, parseSpendCap, tableIsMissing,
   type CapCampaign, type CapWindow, type EffectiveCap,
 } from "./caps-model.ts";
 import { billableLeads, heldLeadsOf, type LeadSourceFn } from "./leads";
@@ -28,10 +28,14 @@ import { DEFAULT_LEAD_SOURCE, dedupeLeads, easternDay, easternHour, LEAD_SOURCES
  *   campaign a person restarted drops off the list. One linked to another client
  *   too is left running, and the team is told.
  *
- *   A reply that still comes in, because of emails already sent, goes to Keep Warm:
- *   not sent to the client, no Pipeline entry, not charged, and the team is told.
- *   It waits for a person to send it, and uses the cap and is billed from the moment
- *   it really goes. Pressed but not gone yet, it is checked against the cap again.
+ *   A reply that still comes in, because of emails already sent, goes to the client
+ *   and is billed, as ever. So neither cap is a ceiling on what a client is charged:
+ *   they stop the emailing, not what it has already started.
+ *
+ *   Behind a second switch, off (OS_LEAD_CAPS_HOLD=1; caps-model.ts): such a reply
+ *   goes to Keep Warm instead, not sent, no Pipeline entry, not charged, and the team
+ *   is told. It waits for a person to send it, and uses the cap and is billed from the
+ *   moment it really goes. Pressed but not gone yet, it is checked against the cap again.
  *
  * Off by default: without OS_LEAD_CAPS=1 the run reads, and logs what it would do.
  * Nothing here charges anything. See caps-model.ts for the rules.
@@ -45,6 +49,7 @@ const WINDOW_COLUMNS = "os_client_id, window_start, window_end, reached_at, paus
 const say = (s: string) => s.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_m, _y, mo, d) => `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(mo) - 1]} ${Number(d)}`);
 const leadsWord = (n: number) => `${n} lead${n === 1 ? "" : "s"}`;
 const keyOf = (c: { platform: string; id: string }) => `${c.platform}:${c.id}`;
+const repliesWords = (holding: boolean) => (holding ? "Replies that still come in go to Keep Warm, not sent or charged." : "Replies to emails already sent still go to the client, and are billed.");
 
 /* -------------------------------------------------------------- reading --- */
 
@@ -335,6 +340,8 @@ export function relayCapHook(): RelayCapHook {
 
 export interface CapRunResult {
   live: boolean;
+  /** Replies past the cap are held too. */
+  holding: boolean;
   /** Clients the cap acts on, or that are still owed a restart. */
   clients: number;
   reached: number;
@@ -348,7 +355,7 @@ export interface CapRunResult {
 export async function runLeadCaps(o: { env?: Env; now?: Date; source?: LeadSourceFn } = {}): Promise<CapRunResult> {
   const env = o.env ?? process.env;
   const now = o.now ?? new Date();
-  const out: CapRunResult = { live: capsLive(env), clients: 0, reached: 0, paused: 0, restarted: 0, notes: [], errors: [] };
+  const out: CapRunResult = { live: capsLive(env), holding: capsHoldLive(env), clients: 0, reached: 0, paused: 0, restarted: 0, notes: [], errors: [] };
   let rows: SettingsRow[];
   try {
     rows = await allSettings();
@@ -583,7 +590,7 @@ async function pauseAtCap(id: string, name: string, chId: string | null, w: CapW
     await tellBell({
       kind: "lead_cap_problem", severity: "critical", osClientId: id, ref: `cap_no_link:${id}:${w.start}`,
       title: `${name} reached its cap, but its campaigns couldn't be paused`,
-      body: `It isn't linked to Client Health, so its campaigns aren't known here. Pause them by hand. Replies over the cap are still held.`,
+      body: `It isn't linked to Client Health, so its campaigns aren't known here. Pause them by hand. ${repliesWords(out.holding)}`,
     });
     return;
   }
@@ -641,7 +648,7 @@ async function pauseAtCap(id: string, name: string, chId: string | null, w: CapW
     await tellBell({
       kind: "lead_cap_reached", severity: "warning", osClientId: id, ref: `cap_reached:${id}:${w.start}`,
       title: `${name} reached its cap`,
-      body: `${used} of ${cap} leads for ${periodLabel(w)}. ${what} Campaigns it paused restart on ${say(w.end)}.${handWords} Replies that still come in go to Keep Warm, not sent or charged.`,
+      body: `${used} of ${cap} leads for ${periodLabel(w)}. ${what} Campaigns it paused restart on ${say(w.end)}.${handWords} ${repliesWords(out.holding)}`,
     });
   } else if (done.length) {
     await tellBell({
@@ -656,6 +663,8 @@ async function pauseAtCap(id: string, name: string, chId: string | null, w: CapW
 
 export interface CapView {
   live: boolean;
+  /** Replies past the cap are held too. Otherwise they go to the client and are billed. */
+  holding: boolean;
   /** Why this client's cap doesn't act, in words, or null when it does. */
   notActing: string | null;
   window: { start: string; end: string; label: string } | null;
@@ -726,6 +735,7 @@ export async function capView(osClientId: string, s: SettingsRow, env: Env = pro
   const held = waitingOnSomeone.flat().map((h) => ({ threadId: h.thread_id, name: h.agent_name ?? h.agent_email ?? "Agent", at: h.held_at }));
   return {
     live: capsLive(env),
+    holding: capsHoldLive(env),
     notActing,
     window: w ? { ...w, label: periodLabel(w) } : null,
     cap: eff.cap, leadCap: eff.leadCap, spendCapCents: eff.spendCapCents, spendLeads: eff.spendLeads, spendInvalid: eff.spendInvalid, by: eff.by,

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { osTable, type OsTable } from "@/lib/clients/os-db";
-import { capsLive } from "@/lib/clients/usage-billing/caps-model";
+import { capsHoldLive } from "@/lib/clients/usage-billing/caps-model";
 import type { OverCap, RelayCapHook } from "@/lib/clients/usage-billing/caps";
 
 import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
@@ -166,7 +166,7 @@ export interface RelayDeps {
   testFetch?: typeof fetch;
   /** Follow Up Boss, for a new portal entry. It does nothing for a client that hasn't connected it. */
   pushFub?: (portalId: string, entryId: string) => Promise<unknown>;
-  /** Tests: the lead caps. Otherwise caps.ts, and only when OS_LEAD_CAPS=1. */
+  /** Tests: holding replies past the lead caps. Otherwise caps.ts, and only when OS_LEAD_CAPS_HOLD=1. */
   caps?: RelayCapHook | null;
 }
 
@@ -189,7 +189,7 @@ interface Ctx {
   records: Map<string, ClientRecord>;
   now: Date;
   pushFub: (portalId: string, entryId: string) => Promise<unknown>;
-  /** Null unless lead caps are switched on (OS_LEAD_CAPS=1): then nothing here reads or holds anything for them. */
+  /** Null unless holding replies past the cap is switched on (OS_LEAD_CAPS_HOLD=1): then nothing here reads or holds anything for it. */
   caps: RelayCapHook | null;
 }
 
@@ -994,7 +994,7 @@ async function makeCtx(now: Date, deps: RelayDeps): Promise<{ ctx: Ctx | null; o
     ctx: {
       mi, os, ws, env, now, global: settings, world, records, transport: deps.transport ?? createPostmarkTransport({ env }),
       // Loaded only when there's an entry to push: nothing about the hand-off depends on it.
-      caps: deps.caps !== undefined ? deps.caps : capsLive(env) ? (await import("@/lib/clients/usage-billing/caps")).relayCapHook() : null,
+      caps: deps.caps !== undefined ? deps.caps : capsHoldLive(env) ? (await import("@/lib/clients/usage-billing/caps")).relayCapHook() : null,
       pushFub: deps.pushFub ?? (async (portalId, entryId) => (await import("@/lib/tools/master-inbox/integrations/push-pipeline-entry")).pushPipelineEntryToFub(portalId, entryId)),
     },
     off: null,

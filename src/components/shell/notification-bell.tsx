@@ -4,12 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 /*
  * The bell (client feedback, 6 Oct): failed payments and portal blocks.
- * Admins only — for anyone else the API answers 403 and the bell is not drawn.
+ * Admins, plus the people named for the lead cap's alerts, who see only those.
+ * For anyone else the API answers 403 and the bell is not drawn.
  */
 type Item = { id: string; kind: string; severity: string; title: string; body: string | null; createdAt: string; unread: boolean };
 
 export function NotificationBell() {
   const [items, setItems] = useState<Item[] | null>(null);
+  const [capsOnly, setCapsOnly] = useState(false);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -19,6 +21,7 @@ export function NotificationBell() {
       if (r.status === 401 || r.status === 403) { setItems(null); return; }
       const b = await r.json();
       setItems(Array.isArray(b?.items) ? (b.items as Item[]) : []);
+      setCapsOnly(b?.capsOnly === true);
     } catch { /* keep what we had */ }
   }, []);
   useEffect(() => {
@@ -67,7 +70,7 @@ export function NotificationBell() {
                 </li>
               ))}
             </ul>
-          ) : <p className="nb-empty">Nothing yet. Failed payments and portal blocks show here.</p>}
+          ) : <p className="nb-empty">{capsOnly ? "Nothing yet. Lead cap alerts show here." : "Nothing yet. Failed payments and portal blocks show here."}</p>}
         </div>
       ) : null}
     </div>

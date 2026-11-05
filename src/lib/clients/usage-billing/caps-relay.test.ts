@@ -73,8 +73,10 @@ let clock = NOW.getTime();
 
 const handed: RelayEmail[] = [];
 const transport: Transport = { async send(email: RelayEmail): Promise<SendResult> { handed.push(email); return { ok: true, messageId: `pm-${handed.length}`, submittedAt: null }; } };
-const CAPS_ON = { OS_BROKERAGE_RELAY_LIVE_SEND: "1", OS_LEAD_CAPS: "1" };
+const CAPS_ON = { OS_BROKERAGE_RELAY_LIVE_SEND: "1", OS_LEAD_CAPS: "1", OS_LEAD_CAPS_HOLD: "1" };
 const CAPS_OFF = { OS_BROKERAGE_RELAY_LIVE_SEND: "1" };
+/** What is on now: campaigns pause and resume, and replies are left alone. */
+const PAUSE_ONLY = { OS_BROKERAGE_RELAY_LIVE_SEND: "1", OS_LEAD_CAPS: "1" };
 const deps = (env: Record<string, string>) => ({ ws: WS, transport, env });
 const toClient = () => handed.filter((e) => JSON.stringify(e).includes("owner@homebase.test"));
 
@@ -186,6 +188,44 @@ test("the switch off: exactly as today. All three go, and nothing about caps is 
   const r = await relay.sweepBrokerageRelay(NOW, deps(CAPS_OFF));
   assert.deepEqual(r.outcomes, { sent: 3 });
   assert.equal(db.calls.some((c) => c.table.startsWith("os_cap") || c.table === "os_usage_billing_settings"), false);
+});
+
+test("pause and resume only: past the cap, a reply goes to the client and is billed. Nothing about caps is read, labelled or held", async () => {
+  seed();
+  const [, , cy] = [agent("Ann", 30), agent("Ben", 20), agent("Cy", 10)];
+  db.calls.length = 0;
+  const r = await relay.sweepBrokerageRelay(NOW, deps(PAUSE_ONLY));
+  assert.deepEqual(r.outcomes, { sent: 3 });
+  assert.equal(toClient().length, 3);
+  assert.equal(db.calls.some((c) => c.table.startsWith("os_cap") || c.table === "os_usage_billing_settings"), false);
+  assert.deepEqual(labelsOf(cy), ["lab-Interested"]);
+  assert.deepEqual(db.rows("os_cap_held_leads"), []);
+  assert.equal((await billed(INVOICE_DAY, "2026-10-28")).amountCents, 75_000, "billed, past the cap, as it is today");
+});
+
+test("pause and resume only: the run tells the team so, and holds nothing", async () => {
+  seed();
+  agent("Ann", 30); agent("Ben", 20); agent("Cy", 10);
+  await relay.sweepBrokerageRelay(NOW, deps(PAUSE_ONLY));
+  const r = await caps.runLeadCaps({ env: PAUSE_ONLY, now: new Date(NOW.getTime() + 15 * 60_000) });
+  assert.equal(r.holding, false);
+  assert.equal(r.reached, 1);
+  assert.deepEqual(db.rows("os_cap_held_leads"), []);
+  assert.equal(db.rows("os_brokerage_relays").some((x: Row) => x.reason === "over_cap"), false);
+  const said = String(db.rows("os_notifications").find((n: Row) => String(n.ref).startsWith("cap_reached"))!.body);
+  assert.match(said, /Replies to emails already sent still go to the client, and are billed/);
+  assert.doesNotMatch(said, /Keep Warm/);
+});
+
+test("with the second switch on, the same reply is held: this is what it would take", async () => {
+  seed();
+  agent("Ann", 30); agent("Ben", 20);
+  const cy = agent("Cy", 10);
+  await relay.sweepBrokerageRelay(NOW, deps(CAPS_ON));
+  assert.equal(rec(cy).reason, "over_cap");
+  const r = await caps.runLeadCaps({ env: CAPS_ON, now: new Date(NOW.getTime() + 15 * 60_000) });
+  assert.equal(r.holding, true);
+  assert.match(String(db.rows("os_notifications").find((n: Row) => String(n.ref).startsWith("cap_reached"))!.body), /go to Keep Warm/);
 });
 
 test("the switch on, another client with no pay per lead: never held, however many", async () => {

@@ -3,7 +3,7 @@
 import { NotificationBell } from "./notification-bell";
 
 /*
- * The top bar: sidebar toggle, breadcrumb, notifications (admins), command palette.
+ * The top bar: sidebar toggle, breadcrumb, notifications (admins, and the lead cap's alerts by name), command palette.
  *
  * The toggle lives HERE rather than inside the rail, which is the design's
  * choice and a good one — a control that travels when you press it is a
