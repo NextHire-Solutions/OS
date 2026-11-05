@@ -96,7 +96,7 @@ export function isTagStage(d: Pick<StageDef, "key" | "canonicalStage">): boolean
 /** The client's visible stages, in their order, each marked as a design stage or tag. */
 export function previewStages(defs: readonly StageDef[]): PreviewStage[] {
   return defs
-    .filter((d) => !d.hidden)
+    .filter((d) => !d.hidden && !isReplacedStage(d, defs))
     .map((d): PreviewStage => {
       if (d.canonicalStage) {
         const s = DESIGN[d.canonicalStage];
@@ -121,6 +121,8 @@ export interface ManagedStage {
   role: "stage" | "tag";
   /** Its colour as the design draws its dot. */
   dot: string;
+  /** Introduction, where Interested has replaced it: kept, never shown. */
+  replaced?: boolean;
 }
 
 export function managedStages(defs: readonly StageDef[]): ManagedStage[] {
@@ -134,12 +136,25 @@ export function managedStages(defs: readonly StageDef[]): ManagedStage[] {
     hidden: d.hidden,
     role: isTagStage(d) ? "tag" : "stage",
     dot: shown.get(d.key) ?? d.color,
+    // Not offered for editing, and still sent with every save: a built-in stage can never be removed (the stages route refuses).
+    ...(isReplacedStage(d, defs) ? { replaced: true } : {}),
   }));
 }
 
 /** Where an entry sits: its Demo-only custom stage if set, else its stage (as the live board reads it). */
 export function stageKeyOf(e: Pick<PipelineEntry, "custom_stage_key" | "stage">): string {
   return e.custom_stage_key ?? e.stage;
+}
+
+/*
+ * Pay-per-lead clients have Interested in place of Introduction (5 Nov; Amy: "Now they're called interested since the
+ * handoff from Nicole is no more"). Drawn away here, and nothing else moves: the row stays in the database, the enum stays
+ * `introduction` so billing, counts and the funnel don't move, and an agent at it is drawn in Interested (placeEntry).
+ * Having the Interested column is what says a client is on pay per lead (usage-billing/interested-column.ts).
+ */
+function isReplacedStage(d: { key: string }, defs: ReadonlyArray<{ key: string; hidden?: boolean }>): boolean {
+  // Only while Interested is showing: with it hidden (the old portal can), its agents need Introduction to be under.
+  return d.key === "introduction" && defs.some((x) => x.key === INTERESTED_STAGE_KEY && !x.hidden);
 }
 
 // ----------------------------------------------- tagged agents' stage ---
@@ -182,8 +197,13 @@ export interface Placement {
  * else the first stage.
  */
 export function placeEntry(e: Pick<PipelineEntry, "id" | "custom_stage_key" | "stage">, stages: readonly PreviewStage[], furthest: Readonly<Record<string, string>>): Placement | null {
+  const interested = stages.find((s) => s.key === INTERESTED_STAGE_KEY);
   // The Interested column hidden or gone (the old portal can still do that): its agents are under their real stage, never off the board.
-  const own = stages.find((s) => s.key === stageKeyOf(e)) ?? (e.custom_stage_key === INTERESTED_STAGE_KEY ? stages.find((s) => s.key === e.stage) : undefined);
+  const own =
+    stages.find((s) => s.key === stageKeyOf(e)) ??
+    (e.custom_stage_key === INTERESTED_STAGE_KEY ? stages.find((s) => s.key === e.stage) : undefined) ??
+    // Where Interested has replaced Introduction, an agent at Introduction is an Interested agent: added by hand, or un-tagged.
+    (stageKeyOf(e) === "introduction" ? interested : undefined);
   if (!own) return null;
   if (own.role === "stage") return { stage: own, tag: null, fromHistory: false };
   const forward = stages.filter((s) => s.role === "stage");
@@ -194,8 +214,8 @@ export function placeEntry(e: Pick<PipelineEntry, "id" | "custom_stage_key" | "s
     const hit = forward.find((s) => s.key === FORWARD[r]);
     if (hit) return { stage: hit, tag: own, fromHistory: true };
   }
-  // The first stage: Introduction, as for every client, even where Interested is drawn before it.
-  return { stage: forward.find((s) => s.key !== INTERESTED_STAGE_KEY) ?? forward[0], tag: own, fromHistory: false };
+  // The first stage: Introduction, or Interested where that has replaced it.
+  return { stage: forward.find((s) => s.key === "introduction") ?? interested ?? forward[0], tag: own, fromHistory: false };
 }
 
 // ----------------------------------------------------------------- dates ---

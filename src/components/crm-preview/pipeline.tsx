@@ -125,7 +125,8 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
   };
   // A phone as the current portal copies it: the entry's own, else the campaign's (its PHONE_KEYS).
   const phoneOf = (x: PipelineEntry) => x.lead_phone || pickFirstString((x.lead_detail as { custom_fields?: Record<string, unknown> } | null)?.custom_fields ?? {}, PHONE_KEYS);
-  const stageName = (s: PipelineStage) => stages.find((x) => x.key === s)?.label ?? allStages?.find((x) => x.key === s)?.label ?? DEFAULT_STAGE_LABELS[s] ?? s;
+  const interestedLabel = stages.find((x) => x.key === INTERESTED_STAGE_KEY)?.label;
+  const stageName = (s: PipelineStage) => stages.find((x) => x.key === s)?.label ?? (s === "introduction" ? interestedLabel : undefined) ?? allStages?.find((x) => x.key === s)?.label ?? DEFAULT_STAGE_LABELS[s] ?? s;
   const exportPicked = () => {
     const extra = new Map<string, string>();
     // Headed as the current portal heads them: the first letter capitalised ("Buy-side", "Sales volume").
@@ -666,7 +667,8 @@ function TagsHead() {
 type Part = "stages" | "tags";
 type Draft = ManagedStage & { fresh?: boolean };
 type Sections = Record<Part, Draft[]>;
-const sections = (all: ManagedStage[]): Sections => ({ stages: all.filter((s) => s.role === "stage"), tags: all.filter((s) => s.role === "tag") });
+// Introduction, where Interested has replaced it, isn't offered. It goes back in with every save (withReplaced).
+const sections = (all: ManagedStage[]): Sections => ({ stages: all.filter((s) => s.role === "stage" && !s.replaced), tags: all.filter((s) => s.role === "tag") });
 /* What a save sends — the live route's row shape. */
 const payload = (list: Draft[]) => list.map((s) => ({ key: s.key, label: s.label.trim(), color: s.color, kind: s.kind, canonical_stage: s.canonical, hidden: s.hidden }));
 const same = (a: Draft[], b: Draft[]) => JSON.stringify(payload(a)) === JSON.stringify(payload(b));
@@ -685,7 +687,7 @@ function newKey(prefix: string): string {
  * section as last saved. Names, order and show/hide are kept as typed until
  * saved; a new stage or tag can be dropped before it is saved. Built-in tags
  * (the pipeline's own, and the two no-show tags every portal has) can be
- * renamed, not deleted; Introduction and Hired are always shown.
+ * renamed, not deleted; Introduction and Hired are always shown, except that Interested replaces Introduction.
  */
 function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string, number> }) {
   const { save } = useDemo();
@@ -717,6 +719,13 @@ function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string
     document.querySelector<HTMLElement>(`[data-stage="${CSS.escape(key)}"] ${what === "name" ? "input" : "[data-handle]"}`)?.focus();
   });
 
+  // A built-in stage can never be removed (the stages route refuses a save without it), so it keeps its place beside Interested.
+  const withReplaced = (list: Draft[]) => {
+    const kept = all.filter((s) => s.replaced);
+    if (!kept.length) return list;
+    const at = list.findIndex((s) => s.key === INTERESTED_STAGE_KEY);
+    return [...list.slice(0, at + 1), ...kept, ...list.slice(at + 1)];
+  };
   const setPart = (part: Part, list: Draft[]) => setDraft((d) => ({ ...d, [part]: list }));
   const edit = (part: Part, key: string, patch: Partial<Draft>) => setPart(part, draft[part].map((s) => (s.key === key ? { ...s, ...patch } : s)));
   const move = (part: Part, from: number, to: number) => {
@@ -738,7 +747,9 @@ function StagesEditor({ all, counts }: { all: ManagedStage[]; counts: Map<string
     setBusy(part);
     const trimmed = draft[part].map((s) => ({ ...s, label: s.label.trim() }));
     setPart(part, trimmed);
-    const saved = await save({ type: "stages.save", stages: payload(part === "stages" ? [...trimmed, ...baseRef.current.tags] : [...baseRef.current.stages, ...trimmed]) });
+        const stagesNow = part === "stages" ? trimmed : baseRef.current.stages;
+    const tagsNow = part === "tags" ? trimmed : baseRef.current.tags;
+    const saved = await save({ type: "stages.save", stages: payload([...withReplaced(stagesNow), ...tagsNow]) });
     if (saved) {
       /*
        * Taken as saved at once (22 Oct audit): the page's reload lands a moment
