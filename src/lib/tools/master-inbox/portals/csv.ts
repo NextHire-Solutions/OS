@@ -179,8 +179,22 @@ export function csvRowToDnc(row: CsvRow): DncRow | null {
     kindRaw === "company" ||
     kindRaw === "brokerage" ||
     kindRaw === "firm" ||
+    kindRaw === "office" ||
     kindRaw === "org" ||
     kindRaw === "organization"
+  ) {
+    kind = "company";
+  }
+  /*
+   * A row with a domain and no email can only be a company: a file of "name, domain" used to save as an agent with
+   * nothing to block, and say "Imported" while the office went on being emailed (5 Nov). Only a column that says domain,
+   * never a website: an agent's own site isn't a company to block. A row that says it's an agent stays one.
+   */
+  if (
+    kind === "agent" &&
+    kindRaw !== "agent" &&
+    pickFuzzy(row, ["domain", "email_domain"], ["domain"]) &&
+    !pickFuzzy(row, ["email", "email_address"], ["email"])
   ) {
     kind = "company";
   }

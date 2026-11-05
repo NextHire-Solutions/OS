@@ -169,7 +169,7 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
         <div className={k("ssec")}>
           <div>
             <h2>Your team</h2>
-            <p>When an agent replies interested, we forward the email thread to everyone with &quot;Gets interested agents&quot;&nbsp;on.</p>
+            <p>Add the people who work interested agents, so you can assign agents to them in your pipeline. Who receives them by email is set with our&nbsp;team.</p>
           </div>
           <button className={k("btn")} type="button" {...addMember}><Icon name="plus" size={15} />Add member</button>
         </div>
@@ -190,7 +190,7 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
               <th>Title</th>
               <th>Email</th>
               <th>Phone</th>
-              <th>Gets interested agents</th>
+              <th>Active</th>
               <th className={k("r")}><span style={{ position: "absolute", left: -9999 }}>Actions</span></th>
             </tr>
           </thead>
@@ -214,7 +214,7 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
                       className={k(m.active ? "sw" : "sw off")}
                       role="switch"
                       aria-checked={m.active}
-                      aria-label={`${m.name} gets interested agents`}
+                      aria-label={`${m.name} is active`}
                       {...(live ? { tabIndex: 0, style: { cursor: "pointer" }, onClick: () => void save({ type: "team.active", id: m.id, active: !m.active }), onKeyDown: (e: React.KeyboardEvent) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); void save({ type: "team.active", id: m.id, active: !m.active }); } } } : RO)}
                     />
                   </td>
@@ -229,7 +229,7 @@ function TeamStep({ client, team }: { client: SetupClient; team: TeamMember[] })
         </table>
         {team.length <= 1 ? (
           <div className={k("addrow")}>
-            <span>Add the recruiters and managers who should get interested agents by&nbsp;email.</span>
+            <span>Add the recruiters and managers who work interested&nbsp;agents.</span>
             <button className={k("btn sm")} type="button" {...addMember}><Icon name="plus" size={14} />Add member</button>
           </div>
         ) : null}
@@ -305,7 +305,7 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
       <Head
         step={2}
         title="Find your agents"
-        text={"Everyone already on your team. Search your market by your office, tick your agents and add them. We never email anyone on this\u00a0list."}
+        text={"Everyone already on your team. Find your office under the Brokerage filter, tick your agents and add them. We never email anyone on this\u00a0list."}
         actions={<button className={k("btn")} type="button" {...(live ? { onClick: () => setImporting(true) } : RO)}><Icon name="upload" size={15} />Import CSV</button>}
       />
       {importing ? <ImportDialog kind="agents" onClose={() => setImporting(false)} onFile={(f) => importCsv(f, csvRowToAgent, "agent.import", demo)} /> : null}
@@ -429,7 +429,7 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
         <div className={k("card emp")}>
           <span className={k("ei")}><Icon name="ban" size={22} /></span>
           <h2>Your DNC List is empty</h2>
-          <p>Add the agents we should never email: search your market, add one with their email, or import a&nbsp;CSV.</p>
+          <p>Add the agents we should never email: add one with their email, or import a&nbsp;CSV.</p>
           <div className={k("ea")}>
             <button className={k("btn")} type="button" {...opens("agent")}><Icon name="plus" size={15} />Add agent</button>
             <button className={k("btn")} type="button" {...opens("import")}><Icon name="upload" size={15} />Import CSV</button>

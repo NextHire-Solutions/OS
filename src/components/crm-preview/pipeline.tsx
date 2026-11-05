@@ -412,23 +412,30 @@ export function PipelineScreen({ entries, stages, allStages, furthest, team, cli
                         const place = placeOf(e);
                         const src = sourceLabel(e);
                         return (
-                          <button
-                            key={e.id}
-                            type="button"
-                            className={k("kc")}
-                            {...board.cardProps(e.id, e.lead_name || "Unnamed agent", c.stage.key)}
-                            style={board.drag?.id === e.id ? { opacity: 0.4 } : live ? { cursor: "grab" } : undefined}
-                            title={live ? "Drag to another column to move — or click to open" : undefined}
-                            onClick={() => { if (!board.wasDrag()) openAgent(e); }}
-                          >
-                            <span className={k("t1")}>{e.lead_name || "Unnamed agent"}{sv ? <span>{abbrevUsd(sv)}</span> : null}</span>
-                            <span className={k("co")}>{e.current_brokerage || "—"}</span>
-                            <span className={k("t3")}>
-                              <span><Icon name="calendar" size={13} />{shortDate(e.introduced_at, now)}</span>
-                              <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>
-                            </span>
-                            {place.tag || e.needs_replacement || e.stage === "no_show" ? <span className="cpv-cardtag">{place.tag ? <TagChip stage={place.tag} /> : null}<ReplacementMark entry={e} /></span> : null}
-                          </button>
+                          /* The card is itself a button, and a button can't hold another: Conversation sits beside it, over the room the card keeps for it. */
+                          <div key={e.id} className="cpv-kcw" style={board.drag?.id === e.id ? { opacity: 0.4 } : undefined}>
+                            <button
+                              type="button"
+                              className={`${k("kc")}${e.thread_id ? " cpv-kc-cv" : ""}`}
+                              {...board.cardProps(e.id, e.lead_name || "Unnamed agent", c.stage.key)}
+                              style={live ? { cursor: "grab" } : undefined}
+                              title={live ? "Drag to another column to move — or click to open" : undefined}
+                              onClick={() => { if (!board.wasDrag()) openAgent(e); }}
+                            >
+                              <span className={k("t1")}>{e.lead_name || "Unnamed agent"}{sv ? <span>{abbrevUsd(sv)}</span> : null}</span>
+                              <span className={k("co")}>{e.current_brokerage || "—"}</span>
+                              <span className={k("t3")}>
+                                <span><Icon name="calendar" size={13} />{shortDate(e.introduced_at, now)}</span>
+                                <span className={k(src === "Client" ? "src cl" : "src")}>{src}</span>
+                              </span>
+                              {place.tag || e.needs_replacement || e.stage === "no_show" ? <span className="cpv-cardtag">{place.tag ? <TagChip stage={place.tag} /> : null}<ReplacementMark entry={e} /></span> : null}
+                            </button>
+                            {e.thread_id ? (
+                              <button type="button" className={`${k("cvb")} cpv-kc-open`} aria-label={`Conversation with ${e.lead_name || "this agent"}`} onClick={() => setOpen({ kind: "conversation", entry: e })}>
+                                <Icon name="chat" size={13} />Conversation
+                              </button>
+                            ) : null}
+                          </div>
                         );
                       })}
                     </section>

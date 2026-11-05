@@ -172,6 +172,26 @@
 .cpv-shell button.crx-kc .crx-co { display: block; }
 .cpv-shell button.crx-kc .cpv-cardtag { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .cpv-shell button.crx-kc:hover { border-color: #d9e1f2; }
+/*
+ * Conversation on a Board card (5 Nov, a client's request): the List's own chip, in a row the card keeps for it at the
+ * bottom. It sits beside the card, not in it, so pressing it never opens the profile or starts a drag.
+ */
+.cpv-shell .cpv-kcw { position: relative; margin-bottom: 8px; }
+.cpv-shell .cpv-kcw > button.crx-kc { margin-bottom: 0; }
+.cpv-shell button.crx-kc.cpv-kc-cv { padding-bottom: 44px; }
+/* content-box: a link in the List is 24px with its border, and a button would otherwise be 22px. */
+.cpv-shell button.cpv-kc-open { position: absolute; left: 13px; bottom: 11px; box-sizing: content-box; font-family: inherit; line-height: 1; cursor: pointer; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; transition: background-color 0.12s ease, border-color 0.12s ease; }
+.cpv-shell button.cpv-kc-open svg { color: #6b7280; }
+@media (hover: hover) {
+  .cpv-shell button.cpv-kc-open:hover { background: #f4f6fb; border-color: #c9d6f2; color: #2f55a8; }
+  .cpv-shell button.cpv-kc-open:hover svg { color: #2f55a8; }
+}
+.cpv-shell button.cpv-kc-open:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; }
+/* A finger gets more to press than the chip, with no change to how it looks. A mouse doesn't: 9px away is the card. */
+@media (pointer: coarse), (max-width: 760px) {
+  .cpv-shell button.cpv-kc-open::after { content: ""; position: absolute; inset: -9px -6px; }
+}
+@media (prefers-reduced-motion: reduce) { .cpv-shell button.cpv-kc-open { transition: none; } }
 .cpv-shell .crx-kc:focus-visible,
 .cpv-shell .crx-nmc a:focus-visible,
 .cpv-shell .crx-chip:focus-visible { outline: 2px solid var(--cpv-blue); outline-offset: 2px; }

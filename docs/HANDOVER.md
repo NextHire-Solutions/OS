@@ -480,7 +480,7 @@ Real Chrome: imports 24/24, Manage stages 31/31; the Demo's stage list was
 snapshotted and put back exactly, every test row removed.
 
 The Setup wizard on the Demo (22 Oct): its own lists save as the pages do —
-the team (Add member, edit, remove, the "Gets interested agents" switch), My
+the team (Add member, edit, remove, the Active switch), My
 Agents and DNC (Add agent / Add company, Import CSV, tick and Remove
 selected). Ticking agents from the MARKET is on the page only, never saved:
 they are real agents (the Demo's sample market), and a DNC address would also

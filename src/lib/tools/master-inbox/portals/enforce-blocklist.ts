@@ -83,6 +83,21 @@ export function normalizeDomain(raw: string): string | null {
   return v;
 }
 
+/*
+ * Domains anyone can have an address at. A domain block belongs to the whole sending workspace, not one client: one
+ * company row with jo@gmail.com on it would stop every Gmail agent for every client. So these are never blocked,
+ * however they arrive (5 Nov).
+ */
+const PUBLIC_EMAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "rocketmail.com", "hotmail.com", "outlook.com", "live.com", "msn.com",
+  "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "gmx.com", "mail.com", "zoho.com",
+  "comcast.net", "att.net", "sbcglobal.net", "bellsouth.net", "verizon.net", "cox.net", "charter.net", "earthlink.net",
+]);
+export function isPublicEmailDomain(domain: string): boolean {
+  return PUBLIC_EMAIL_DOMAINS.has(domain.trim().toLowerCase());
+}
+export const PUBLIC_DOMAIN_REFUSED = "That's a public email domain, so it can't be blocked: it would stop every agent who uses it. Use the company's own domain (for example kw.com).";
+
 // Domain-level counterpart for company DNC entries — pushes the whole
 // domain to Instantly's wildcard block + EmailBison's domain blacklist
 // in one go. Same best-effort / per-provider tally shape so the caller
@@ -91,6 +106,9 @@ export async function enforceDomainBlocklist(domain: string): Promise<BlocklistR
   const d = normalizeDomain(domain);
   if (!d) {
     return { pushedInstantly: false, pushedEmailBison: false, error: "missing domain" };
+  }
+  if (isPublicEmailDomain(d)) {
+    return { pushedInstantly: false, pushedEmailBison: false, error: `refused: ${d} is a public email domain` };
   }
 
   const errors: string[] = [];

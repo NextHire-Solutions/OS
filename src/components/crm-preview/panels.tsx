@@ -26,7 +26,12 @@ function useEscape(onClose: () => void) {
 /* Focus moves into the panel itself (not onto its close button, which would draw a ring the design does not have). */
 function usePanelFocus() {
   const ref = useRef<HTMLElement>(null);
-  useEffect(() => ref.current?.focus(), []);
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    // Closed: back on what opened it, so a keyboard carries on from there. Only if nothing else has taken focus: a panel can open Edit lead, with its own.
+    return () => { if (document.activeElement === document.body && opener?.isConnected) opener.focus({ preventScroll: true }); };
+  }, []);
   return ref;
 }
 

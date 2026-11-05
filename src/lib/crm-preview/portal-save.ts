@@ -6,7 +6,7 @@ import { z } from "zod";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { portalBillingHold } from "@/lib/tools/master-inbox/portals/billing-hold";
-import { enforceBlocklist, normalizeDomain, type BlocklistResult } from "@/lib/tools/master-inbox/portals/enforce-blocklist";
+import { enforceBlocklist, isPublicEmailDomain, normalizeDomain, PUBLIC_DOMAIN_REFUSED, type BlocklistResult } from "@/lib/tools/master-inbox/portals/enforce-blocklist";
 import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
 import { loadClientStageRows } from "@/lib/tools/master-inbox/portals/load-stages";
 import { canonicalStageDefs, INTERESTED_STAGE_KEY, MANAGE_STAGES_FLAG, resolveStageDefs } from "@/lib/tools/master-inbox/portals/stage-config";
@@ -400,6 +400,7 @@ async function save(portal: Portal, a: DemoAction, who: string): Promise<DemoRes
       const domain = a.kind === "company" && a.domain ? normalizeDomain(a.domain) : null;
       // A company's domain is what it blocks: one that can't be read is said so, not saved blocking nothing.
       if (a.kind === "company" && a.domain && !domain) return { ok: false, status: 400, error: "That doesn't look like a website domain (for example kw.com)." };
+      if (domain && isPublicEmailDomain(domain)) return { ok: false, status: 400, error: PUBLIC_DOMAIN_REFUSED };
       const r = await call(dncRoute.POST, "POST", T, {
         kind: a.kind,
         name: a.name,
@@ -418,6 +419,7 @@ async function save(portal: Portal, a: DemoAction, who: string): Promise<DemoRes
       const company = (cur.data as { kind: string }).kind !== "agent";
       const domain = company && a.domain ? normalizeDomain(a.domain) : null;
       if (company && a.domain && !domain) return { ok: false, status: 400, error: "That doesn't look like a website domain (for example kw.com)." };
+      if (domain && isPublicEmailDomain(domain)) return { ok: false, status: 400, error: PUBLIC_DOMAIN_REFUSED };
       // A company's form has name, domain and notes; an agent's has no domain. What a form doesn't show stays as it is.
       const stored = (cur.data as { email: string | null }).email;
       const email = stored && a.email && stored.toLowerCase() === a.email.toLowerCase() ? stored : a.email;
@@ -550,6 +552,7 @@ async function importRows({ client, token }: Portal, a: Extract<DemoAction, { ro
         const domainText = kind === "company" ? f.get("domain", 255, "the domain") : null;
         const domain = domainText ? normalizeDomain(domainText) : null;
         if (domainText && !domain) f.problems.push(`"${domainText.slice(0, 60)}" is not a website domain`);
+        if (domain && isPublicEmailDomain(domain)) f.problems.push(`${domain} is a public email domain, so it can't be blocked: use the company's own domain`);
         keep(i, f, {
           kind,
           name,

@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { readFileSync } from "node:fs";
 
+import { csvRowToDnc, parseCsv } from "../tools/master-inbox/portals/csv.ts";
 import { CHAT_TOOLS, domainOf, parseTurns, runTool, SUPPORT_EMAIL, systemPrompt, TOOL_NAMES, type MarketTotals, type PortalChatData } from "./chat-tools.ts";
 import type { PreviewStage } from "./model.ts";
 
@@ -46,6 +47,7 @@ function portal(name: string, prefix: string): PortalChatData {
       { id: `${prefix}-d2`, kind: "agent", name: `${name} Blocked Agent`, email: `blocked@${prefix}-other.com`, phone: null, brokerage: null, domain: null, notes: null, added_by: "x", pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null, created_at: "2026-09-02T00:00:00Z" },
     ],
     team: [{ id: `${prefix}-t`, name: `${name} Teammate`, email: `team@${prefix}.example`, title: "Broker", phone: null, receives: "intro", active: true, avatar_url: null } as unknown as PortalChatData["team"][number]],
+    contacts: { people: [{ name: `${name} Receiver`, email: `receiver@${prefix}.example`, markets: [] }] },
     now: NOW,
   };
 }
@@ -61,7 +63,7 @@ test("no tool lets the model name a client, a portal, a workspace or an id — t
     for (const p of props) assert.doesNotMatch(p, /client|portal|workspace|tenant|account|^id$|_id$/i, `${t.function.name}.${p}`);
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
   }
-  assert.deepEqual([...TOOL_NAMES].sort(), ["dnc_list", "find_pipeline_agents", "market_totals", "my_agents", "pipeline_agent", "pipeline_breakdown", "pipeline_overview", "portal_help", "team"]);
+  assert.deepEqual([...TOOL_NAMES].sort(), ["dnc_list", "find_pipeline_agents", "interested_contacts", "market_totals", "my_agents", "pipeline_agent", "pipeline_breakdown", "pipeline_overview", "portal_help", "team"]);
 });
 
 test("one client's data only: asking Alpha's assistant for Beta's agents, lists or team finds nothing of Beta's", async () => {
@@ -77,8 +79,10 @@ test("one client's data only: asking Alpha's assistant for Beta's agents, lists 
     await run("dnc_list", { search: "b-sister.com" }),
     await run("dnc_list", { search: "Beta" }),
     await run("team", {}),
+    await run("interested_contacts", {}),
     // An argument the schema does not have is ignored — it cannot switch the portal.
     await run("find_pipeline_agents", { client: "b-portal", portal: "Beta Homes", limit: 25 }),
+    await run("interested_contacts", { client: "b-portal", portal: "Beta Homes", email: "receiver@b.example" }),
   ]);
   assert.doesNotMatch(everything, /Beta|b-portal|b1@|b-sister|@b\.example/);
   assert.match(everything, /Alpha Realty Agent One/);
@@ -214,10 +218,165 @@ test("small arguments: a missing or zero limit is the default 10; an unreadable 
 
 test("how-to answers have a tool of their own; every answer starts with a tool, deterministic, bounded", async () => {
   const h = await run("portal_help", {}) as { guide: string[] };
-  assert.ok(h.guide.some((l) => /DNC List: add an Agent, or a Company/.test(l)));
+  assert.ok(h.guide.some((l) => /DNC List: Add to DNC adds one agent/.test(l)));
   const src = readFileSync("src/lib/crm-preview/chat.ts", "utf8");
   assert.match(src, /tool_choice: round === 0 \? "required" : "auto", temperature: 0/);
   assert.match(src, /const ANSWER_DEADLINE_MS = 60_000;/);
   assert.match(src, /throw new Error\(`OpenAI \$\{res\.status\}`\)/, "never OpenAI's body, which can echo the key");
   assert.match(src, /return \{ error: "That could not be read just now\." \}/, "a failed read never reaches the model as a database message");
+});
+
+/* 5 Nov: the assistant told clients to "Choose Company" after that option went (15d06b6), and called Billing a Stripe page. */
+const source = (f: string) => readFileSync(f, "utf8").replace(/\{?\/\*[\s\S]*?\*\/\}?/g, "").replace(/^\s*\/\/.*$/gm, "");
+const screens = () => ["pipeline", "pages", "dialogs", "panels"].map((f) => source(`src/components/crm-preview/${f}.tsx`)).join("\n");
+const rulesText = () => systemPrompt({ portal: { id: "p", name: "Acme" }, contactName: null, now: NOW, stages: STAGES } as unknown as PortalChatData);
+const fromCsv = (text: string) => parseCsv(text).map((row) => csvRowToDnc(row));
+
+test("how-to answers never send a client to something the portal doesn't have", () => {
+  const rules = rulesText();
+  for (const gone of ["Choose Company", "side panel", "add a lead"]) assert.ok(!rules.includes(gone), gone);
+  assert.match(source("src/components/crm-preview/dialogs.tsx"), /const kind: "agent" \| "company" = entry \? initial : "agent";/, "adding to the DNC List is an agent only; if a Company choice comes back, so can the old answer");
+});
+
+test("every button the how-to names is really on the portal's screens, not just in a comment", () => {
+  const rules = rulesText();
+  const on = screens();
+  for (const label of ["Add to DNC", "Import CSV", "Add agent", "Upload CSV", "Add note", "Conversation", "Manage billing", "Move to"]) {
+    assert.ok(rules.includes(label), `the assistant says ${label}`);
+    assert.ok(on.includes(label), `the portal has ${label}`);
+  }
+});
+
+test("blocking a company: the how-to's own steps", () => {
+  assert.match(rulesText(), /To block a sister office: 1\. Open DNC List 2\. Click Import CSV 3\. .*its name, its domain, and company in the kind column/);
+});
+
+test("Import CSV is there whether the DNC List is empty or not: the how-to is for anyone", () => {
+  const pages = source("src/components/crm-preview/pages.tsx");
+  const empty = pages.indexOf('title="Your DNC List is empty"');
+  assert.ok(empty > 0);
+  assert.match(pages.slice(empty, empty + 900), /onImport|Import CSV/);
+});
+
+test("the file the how-to describes really is a company, with its domain", () => {
+  const [row] = fromCsv("name,domain,kind\nAcme Realty,acme.com,company\n");
+  assert.deepEqual([row?.kind, row?.name, row?.domain], ["company", "Acme Realty", "acme.com"]);
+});
+
+test("a company file written the natural way is a company too: it used to say Imported and block nothing", () => {
+  for (const text of ["Company,Domain\nAcme Realty,acme.com\n", "name,domain\nAcme Realty,acme.com\n", "name,kind,domain\nAcme Realty,office,acme.com\n", "name,kind,domain\nAcme Realty,sister,acme.com\n"]) {
+    const [row] = fromCsv(text);
+    assert.deepEqual([row?.kind, row?.domain], ["company", "acme.com"], text);
+  }
+});
+
+test("a row that says it's an office is a company even with a contact email beside its domain", () => {
+  const [row] = fromCsv("name,kind,email,domain\nAcme Realty,office,hello@acme.com,acme.com\n");
+  assert.deepEqual([row?.kind, row?.domain], ["company", "acme.com"]);
+});
+
+test("an agent stays an agent: an email, a row that says so, or only a website to go on", () => {
+  for (const [text, why] of [
+    ["name,email\nJo Bloggs,jo@acme.com\n", "an email"],
+    ["name,email,domain\nJo Bloggs,jo@acme.com,acme.com\n", "an email, and a domain too"],
+    ["name,kind,domain\nJo Bloggs,agent,acme.com\n", "says it's an agent"],
+    ["name,website\nJo Bloggs,jobloggs.com\n", "an agent's own website is no company to block"],
+    ["name\nJo Bloggs\n", "only a name"],
+  ] as const) {
+    const [row] = fromCsv(text);
+    assert.equal(row?.kind, "agent", why);
+    assert.equal(row?.domain, null, why);
+  }
+});
+
+test("Billing is the portal's own page of introductions; Stripe is its Manage billing button, shown to every client", () => {
+  assert.match(rulesText(), /"Billing" in the sidebar shows the introductions made in each billing period\. The Manage billing button at the top of that page opens their Stripe billing page/);
+  assert.match(readFileSync("src/app/crm-preview/page.tsx", "utf8"), /manageBilling=\{viewer\.kind === "client" \|\|/);
+});
+
+test("the conversation is findable from both views, as the portal now has it", () => {
+  const rules = rulesText();
+  assert.match(rules, /On the Board, an agent with an email conversation has a Conversation button on their card: press it to read the conversation\. Clicking the rest of the card opens the agent's details/);
+  assert.match(rules, /In the List, each row has Conversation and Add note/);
+  assert.equal((source("src/components/crm-preview/pipeline.tsx").match(/Icon name="chat" size=\{13\} \/>Conversation/g) ?? []).length, 2, "the Board card and the List row");
+});
+
+test("the Board's Conversation is beside the card, never inside it: a button can't hold a button, and pressing it opens the conversation", () => {
+  const src = source("src/components/crm-preview/pipeline.tsx");
+  const wrap = src.indexOf('className="cpv-kcw"');
+  assert.ok(wrap > 0);
+  const card = src.indexOf("</button>", wrap);
+  const conv = src.indexOf("aria-label={`Conversation with", wrap);
+  assert.ok(conv > card, "after the card's closing tag");
+  const cond = src.lastIndexOf("e.thread_id ? (", conv);
+  assert.ok(cond > card, "only for an agent with a conversation");
+  const end = src.indexOf("</button>", conv);
+  assert.match(src.slice(conv, end), /onClick=\{\(\) => setOpen\(\{ kind: "conversation", entry: e \}\)\}/);
+  assert.match(src.slice(wrap - 10, wrap + 120), /board\.drag\?\.id === e\.id \? \{ opacity: 0\.4 \}/, "a card being dragged takes its button with it");
+});
+
+test("the button's place on the card is in the stylesheet: it sits in room the card keeps for it, the size of the List's", () => {
+  const css = readFileSync("src/app/crm-preview/preview.css", "utf8");
+  assert.match(css, /\.cpv-kcw \{ position: relative;/);
+  assert.match(css, /button\.crx-kc\.cpv-kc-cv \{ padding-bottom: 44px; \}/);
+  assert.match(css, /button\.cpv-kc-open \{ position: absolute; left: 13px; bottom: 11px; box-sizing: content-box;/);
+  assert.match(css, /@media \(pointer: coarse\), \(max-width: 760px\) \{\s*\.cpv-shell button\.cpv-kc-open::after/, "the bigger press area is for fingers only");
+});
+
+test("closing a panel puts focus back on what opened it, unless something else has taken it", () => {
+  const panels = readFileSync("src/components/crm-preview/panels.tsx", "utf8");
+  assert.match(panels, /const opener = document\.activeElement/);
+  assert.match(panels, /document\.activeElement === document\.body && opener\?\.isConnected/);
+});
+
+/* 5 Nov, the user: "it should tell the contacts name with emails like who will get the interested replies. but make sure client can see only their data only". */
+const contacts = (c: PortalChatData["contacts"]) => run("interested_contacts", {}, { ...A, contacts: c });
+
+test("who receives interested agents: this portal's contacts, by name and email, and no one else's", async () => {
+  assert.deepEqual(await run("interested_contacts", {}), { contacts: [{ name: "Alpha Realty Receiver", email: "receiver@a.example" }] });
+  assert.deepEqual(await run("interested_contacts", {}, B), { contacts: [{ name: "Beta Homes Receiver", email: "receiver@b.example" }] });
+});
+
+test("nobody on file is said as nobody, a failed read as a failed read, and markets are explained only when someone has one", async () => {
+  assert.deepEqual(await contacts({ people: [] }), { contacts: [] });
+  assert.deepEqual(await contacts({ unavailable: "The contacts could not be read just now." }), { unavailable: "The contacts could not be read just now." });
+  const table = { Charleston: ["Jo <jo@a.example>", "Sam <sam@a.example>"], "any other market, or a campaign that names none": ["Jo <jo@a.example>", "Sam <sam@a.example>"] };
+  const byMarket = await contacts({ people: [{ name: "Jo", email: "jo@a.example", markets: ["Charleston"] }, { name: "Sam", email: "sam@a.example", markets: [] }], whoGetsWhichMarket: table });
+  assert.deepEqual(byMarket.contacts, [{ name: "Jo", email: "jo@a.example", markets: ["Charleston"] }, { name: "Sam", email: "sam@a.example" }]);
+  assert.deepEqual(byMarket.who_gets_which_market, table);
+  assert.equal((await contacts({ people: [{ name: "Jo", email: "jo@a.example", markets: [] }] })).who_gets_which_market, undefined);
+});
+
+test("Team no longer reads as who receives agents: the old column is gone from the answer, and its tool points at the contacts", async () => {
+  const team = await run("team", {});
+  assert.deepEqual(team, { members: [{ name: "Alpha Realty Teammate", email: "team@a.example", title: "Broker", active: true }] });
+  const description = (n: string) => CHAT_TOOLS.find((t) => t.function.name === n)!.function.description;
+  assert.match(description("team"), /Not who receives interested agents: that is interested_contacts/);
+  assert.match(description("interested_contacts"), /name and email of each contact/);
+});
+
+test("the rules: who receives is answered from the contacts, never from Team, and only our team changes them", () => {
+  const text = rulesText();
+  assert.match(text, /^9\. Who receives interested agents, leads or replies, or where they go: call interested_contacts and give every contact's name and email .* never answer this from Team\./m);
+  assert.match(text, /If there are none, say no contact is on file yet and to email nicole\.c@brokerstaffer\.com/);
+  assert.match(text, /to add, remove or change a contact, tell them to email nicole\.c@brokerstaffer\.com/);
+  assert.match(text, /For a question about one market, use who_gets_which_market/);
+  assert.match(text, /call each one by name, never he or she/);
+  assert.match(text, /These are Acme's contacts only: if the question names any other brokerage, team or company .* say you can only see Acme's portal, and don't list these contacts as an answer to it/);
+  assert.match(text, /Team \(the people who work interested agents\)/);
+  assert.match(text, /emailed to the contacts on their account and appears in Pipeline\. To name those contacts, call interested_contacts\./);
+  assert.match(text, /The Active switch doesn't change who receives interested agents either: it only decides who gets text alerts/);
+  for (const gone of [/active Team members/, /Active members receive/, /turns a recipient on or off/, /Team \(who receives/]) assert.doesNotMatch(text, gone);
+});
+
+test("no screen still says Team or Active decides who gets interested agents, or offers a search that isn't there", () => {
+  const all = ["pipeline", "pages", "dialogs", "panels", "setup", "static-pages"].map((f) => readFileSync(`src/components/crm-preview/${f}.tsx`, "utf8")).join("\n");
+  for (const gone of [/Gets interested agents/, /gets interested agents/, /receives intro/, /should receive interested agents/, /should get interested agents/, /active team members/, /Active members receive/, /recipient on or off/, /with its domain\. We block/, /Search your market by your office/, /search your market, add one/]) assert.doesNotMatch(all, gone);
+});
+
+test("the Help page's three corrected answers say what really happens", () => {
+  const page = readFileSync("src/components/crm-preview/static-pages.tsx", "utf8");
+  assert.match(page, /emailed to the contacts on your account, and shows in your Pipeline too\. To see who those contacts are, ask the\u00a0assistant\./);
+  assert.match(page, /Import a CSV to your DNC List with a row for the office: its name, its domain, and company in the kind column\./);
+  assert.match(page, /Go to Team and click Add member\. To have them receive interested agents too, chat with\u00a0support\./);
 });

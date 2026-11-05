@@ -991,3 +991,32 @@ test("a portal's Prospects are read page by page in one fixed order — rows sav
   assert.ok(orders.length > 0);
   assert.ok(orders.every((o) => /^added_at\.desc,agent_id\.asc$/.test(o)), `ordered by a unique tie-break too: ${orders.join(" | ")}`);
 });
+
+/* A domain block is the whole sending workspace's, not one client's: gmail.com would stop every Gmail agent for every client (5 Nov). */
+test("a public email domain is never blocked: added, edited or imported, in words, and nothing reaches a provider", { skip }, async () => {
+  seed();
+  const added = await run({ type: "dnc.add", kind: "company", name: "Oops", email: null, phone: null, brokerage: null, domain: "gmail.com", notes: null });
+  assert.equal(added.ok, false);
+  assert.match(String((added as { error?: string }).error), /public email domain/);
+  await settle();
+  assert.deepEqual(sentOf("blockDomain"), []);
+
+  sent.length = 0;
+  const before = fake.rows("client_dnc_entries").length;
+  const imported = await run({ type: "dnc.import", rows: [{ kind: "company", name: "Sister Office", domain: "gmail.com" }, { kind: "company", name: "Real Co", domain: "realco.test" }] });
+  okResult(imported);
+  assert.match((imported as { message: string }).message, /1 row skipped/);
+  await settle();
+  assert.deepEqual(sentOf("blockDomain").map((x) => x.args[0]), ["realco.test"]);
+  assert.equal(fake.rows("client_dnc_entries").length, before + 1);
+  assert.equal(fake.rows("client_dnc_entries").some((r) => r.domain === "gmail.com"), false);
+
+  sent.length = 0;
+  const company = fake.rows("client_dnc_entries").find((r) => r.domain === "realco.test")!;
+  const edited = await run({ type: "dnc.edit", id: company.id, name: "Real Co", email: null, phone: null, brokerage: null, domain: "yahoo.com", notes: null } as never);
+  assert.equal(edited.ok, false);
+  assert.match(String((edited as { error?: string }).error), /public email domain/);
+  assert.equal(fake.rows("client_dnc_entries").find((r) => r.id === company.id)!.domain, "realco.test");
+  await settle();
+  assert.deepEqual(sentOf("blockDomain"), []);
+});

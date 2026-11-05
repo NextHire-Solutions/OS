@@ -10,7 +10,9 @@ import { loadClientStageRows } from "@/lib/tools/master-inbox/portals/load-stage
 import { canonicalStageDefs, MANAGE_STAGES_FLAG, resolveStageDefs } from "@/lib/tools/master-inbox/portals/stage-config";
 import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags";
 import { osTable } from "@/lib/clients/os-db";
+import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-portal";
 
+import { contactsOfPortal } from "./chat-contacts.ts";
 import { CHAT_TOOLS, runTool, systemPrompt, type ChatTurn, type MarketTotals, type PortalChatData } from "./chat-tools.ts";
 import { clientForPortal, type OsClientRow } from "./market-model.ts";
 import { furthestStages, previewStages } from "./model.ts";
@@ -44,7 +46,7 @@ export async function loadPortalChatData(portalId: string): Promise<PortalChatDa
     ? resolveStageDefs(stageClient, await loadClientStageRows(c.id))
     : canonicalStageDefs(stageClient);
 
-  const [entries, agents, dnc, team, history, records] = await Promise.all([
+  const [entries, agents, dnc, team, history, records, contacts] = await Promise.all([
     loadPipelineEntries(c.id),
     loadAgentEntries(c.id),
     loadDncEntries(c.id),
@@ -53,6 +55,7 @@ export async function loadPortalChatData(portalId: string): Promise<PortalChatDa
       admin.from("pipeline_outcome_events").select("entry_id, event_type").eq("client_id", c.id).eq("voided", false).order("id").range(from, to),
     ).catch(() => []),
     osTable("os_clients").select("id, name, aliases, mi_client_id, mls_codes, orch_client_id, contact_name").then((r) => (r.data ?? []) as unknown as Array<OsClientRow & { contact_name: string | null }>),
+    contactsOfPortal(rosterRowForPortal, c.id, c.name),
   ]);
   const stages = previewStages(defs);
   const tagKeys = new Set(stages.filter((s) => s.role === "tag").map((s) => s.key));
@@ -67,6 +70,7 @@ export async function loadPortalChatData(portalId: string): Promise<PortalChatDa
     agents,
     dnc,
     team,
+    contacts,
     now: new Date(),
   };
 }

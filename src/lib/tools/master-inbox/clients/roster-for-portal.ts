@@ -14,7 +14,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
  *   2. the record a campaign → portal choice points at this portal from
  *      (os_campaign_portals, OS migration 0025);
  *   3. the one record whose name or aliases equal the portal's name.
- * A read error on step 1 is returned as an error; steps 2 and 3 are best effort.
+ * A read error on step 1 is returned as an error; steps 2 and 3 are best effort, and readFailed says one of them failed,
+ * for a caller that must not read "nobody found" as "nobody there" (the portal assistant).
  */
 const OPTIONAL_COLUMNS = ["intro_override", "more_contacts", "contact_territories", "intro_variants", "intro_subject"];
 const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -23,7 +24,7 @@ export async function rosterRowForPortal(
   portalId: string,
   portalName: string | null,
   columns: string,
-): Promise<{ row: Record<string, unknown> | null; error?: string }> {
+): Promise<{ row: Record<string, unknown> | null; error?: string; readFailed?: boolean }> {
   const admin = createAdminSupabase();
 
   // Columns a migration may not have added yet — intro_override (0026),
@@ -40,25 +41,30 @@ export async function rosterRowForPortal(
   if (linked.error) return { row: null, error: linked.error.message };
   if (linked.data) return { row: linked.data as unknown as Record<string, unknown> };
 
+  let readFailed = false;
   try {
-    const { data: route } = await admin
+    const { data: route, error: routeError } = await admin
       .from("os_campaign_portals").select("os_client_id").eq("mi_client_id", portalId).limit(1).maybeSingle();
+    if (routeError) readFailed = true;
     const osId = (route as { os_client_id?: string } | null)?.os_client_id;
     if (osId) {
-      const { data } = await admin.from("os_clients").select(cols).eq("id", osId).maybeSingle();
+      const { data, error: recordError } = await admin.from("os_clients").select(cols).eq("id", osId).maybeSingle();
+      if (recordError) readFailed = true;
       if (data) return { row: data as unknown as Record<string, unknown> };
     }
   } catch {
     /* no 0025 yet — fall through */
+    readFailed = true;
   }
 
   const want = norm(portalName);
   if (want) {
-    const { data } = await admin.from("os_clients").select(`id, name, aliases, ${cols}`);
+    const { data, error: namesError } = await admin.from("os_clients").select(`id, name, aliases, ${cols}`);
+    if (namesError) readFailed = true;
     const hits = ((data ?? []) as unknown as Record<string, unknown>[]).filter((r) =>
       [r.name as string, ...(((r.aliases as string[] | null) ?? []))].some((n) => norm(n) === want),
     );
     if (hits.length === 1) return { row: hits[0] };
   }
-  return { row: null };
+  return readFailed ? { row: null, readFailed } : { row: null };
 }

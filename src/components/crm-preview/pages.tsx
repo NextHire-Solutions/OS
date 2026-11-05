@@ -432,7 +432,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
     <>
       <Header title="Team" add="Add member" onAdd={() => setDialog("add")} onImport={() => setDialog("import")} onExport={live ? () => csv(team) : undefined} />
       <div className={k("content")}>
-        <p className={k("lede")}>Who receives intro notifications and&nbsp;how.</p>
+        <p className={k("lede")}>The people at your brokerage who work interested&nbsp;agents.</p>
         {dialog === "add" ? <TeamAddForm onClose={close} onSave={live ? (v) => save({ type: "team.add", name: v.name, title: v.title, email: v.email, phone: v.phone }) : undefined} /> : null}
         {dialog && typeof dialog === "object" ? (
           <TeamAddForm
@@ -443,7 +443,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
           />
         ) : null}
         {team.length === 0 ? (
-          <Empty icon="user" title="No team members yet" text="Add the people who should receive interested agents by email." />
+          <Empty icon="user" title="No team members yet" text="Add the people who work interested agents." />
         ) : (
           <>
             <Search id="crx-team-search" label="Search team..." value={q} onChange={setQ} count={`${found.length} of ${team.length}`} />
@@ -490,7 +490,7 @@ export function TeamScreen({ team }: { team: TeamMember[] }) {
                           className={k(m.active ? "sw" : "sw off")}
                           role="switch"
                           aria-checked={m.active}
-                          aria-label={`${m.name} receives intro emails`}
+                          aria-label={`${m.name} is active`}
                           {...lock(live)}
                           {...(live ? { tabIndex: 0, style: { cursor: "pointer" }, onClick: () => void save({ type: "team.active", id: m.id, active: !m.active }), onKeyDown: (e: React.KeyboardEvent) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); void save({ type: "team.active", id: m.id, active: !m.active }); } } } : {})}
                         />

@@ -44,15 +44,15 @@ const TOPICS: Array<{ title: string; icon: IconName; links: string[] }> = [
   { title: "Getting started", icon: "spark", links: ["How BrokerStaffer works", "Your first week", "Setting up your team"] },
   { title: "Your pipeline", icon: "pipeline", links: ["Moving agents between stages", "Replying to an interested agent", "Board and list views"] },
   { title: "My Agents and DNC List", icon: "users", links: ["Adding your own agents", "Blocking a company or domain", "Importing a CSV"] },
-  { title: "Team and notifications", icon: "mail", links: ["Adding a teammate", "Who receives interested agents", "Turning a recipient on or off"] },
+  { title: "Team and notifications", icon: "mail", links: ["Adding a teammate", "Who receives interested agents", "Turning a teammate on or off"] },
 ];
 
 const FAQ: Array<{ q: string; a: string }> = [
-  { q: "How do interested agents reach my team?", a: "We forward every agent who replies interested by email to your active team members. You can see them in your Pipeline too." },
+  { q: "How do interested agents reach my team?", a: "Every agent who replies interested is emailed to the contacts on your account, and shows in your Pipeline too. To see who those contacts are, ask the assistant." },
   { q: "How do I make sure we never email my own agents?", a: "Add them to My Agents, one by one or with a CSV import. We never reach out to anyone on that list." },
-  { q: "How do I block a sister office?", a: "Add the company to your DNC List with its domain. We block every email at that domain across providers." },
+  { q: "How do I block a sister office?", a: "Import a CSV to your DNC List with a row for the office: its name, its domain, and company in the kind column. We block every email at that domain across providers." },
   { q: "Can I change my emails?", a: "Yes. Chat with support and our team will update your emails with you." },
-  { q: "How do I add a teammate?", a: "Go to Team and click Add member. Active members receive every agent who replies interested." },
+  { q: "How do I add a teammate?", a: "Go to Team and click Add member. To have them receive interested agents too, chat with support." },
 ];
 
 export function HelpScreen({ onChat }: { onChat: () => void }) {
