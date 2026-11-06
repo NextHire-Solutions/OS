@@ -1308,3 +1308,35 @@ test("the leads of two portals of one client count together, and another client'
 test("nothing here left the process", () => {
   assert.deepEqual(db.blocked, []);
 });
+
+/* ------------------------------------------- not billed (0050, 6 Nov) --- */
+
+test("a lead not billed uses none of the cap: John and Ram with Ram not billed is under the cap, and nothing pauses", async () => {
+  seed();
+  atCap();
+  db.seed("os_usage_billing_waivers", [{ os_client_id: HB, test_mode: false, lead_key: "ram@x.test", lead_name: "ram", reason: "sent over the cap", waived_by: "amy@brokerstaffer.com", waived_at: "2026-11-05T20:00:00.000Z" }]);
+  const r = await run();
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.reached, 0);
+  assert.deepEqual(calls, [], "no campaign paused");
+  assert.equal(camp("camp-a").status, "active");
+});
+
+test("Homebase's case: John, Ram and Daniel with Daniel not billed is still 2 of 2, so it stays at its cap", async () => {
+  seed();
+  atCap();
+  interested("daniel", "2026-11-05T19:19:19.000Z");
+  db.seed("os_usage_billing_waivers", [{ os_client_id: HB, test_mode: false, lead_key: "daniel@x.test", lead_name: "daniel", reason: "sent over the cap", waived_by: "amy@brokerstaffer.com", waived_at: "2026-11-05T20:00:00.000Z" }]);
+  const r = await run(IN_WINDOW, OFF);
+  assert.equal(r.reached, 1);
+  assert.match(r.notes.join(), /Homebase: 2 of 2/);
+});
+
+test("before 0050 runs the cap counts as before", async () => {
+  seed();
+  atCap();
+  db.missingTables.add("os_usage_billing_waivers");
+  const r = await run(IN_WINDOW, OFF);
+  assert.deepEqual(r.errors, []);
+  assert.match(r.notes.join(), /Homebase: 2 of 2/);
+});

@@ -572,6 +572,11 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .ub-box-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--x-ink); }
 .ub-box-h b { font-weight: 600; }
 .ub-box .rb-tools { margin: 0; }
+/* Leads this period (6 Nov): each lead with Don't bill; one not billed is struck through with its reason. */
+.ub-leads { display: grid; gap: 6px; min-width: 0; }
+.ub-leads-table td.num { width: 1%; }
+.ub-waived td { color: var(--x-mute); }
+.ub-waived td s { color: var(--x-mute); }
 .ub-self-end { align-self: flex-end; }
 .ub-customers { display: grid; gap: 8px; }
 .ub-customer { margin: 0; padding: 8px 10px 6px; border: 1px solid var(--x-line-2); border-radius: 8px; min-width: 0; display: grid; gap: 2px; }

@@ -759,3 +759,40 @@ test("the Billing tab reads what automatic charging would really do", async () =
   assert.match((await read()).autoProblem, /live Stripe key/);
 });
 
+
+/* ------------------------------------------------- Don't bill (0050, 6 Nov) --- */
+
+test("Don't bill: only the Billing tab's named people — a client's own people and other staff get a bare 404, and nothing is read", async () => {
+  seed([testRow()]);
+  process.env.OS_USAGE_BILLING_STRIPE_KEY = TEST_KEY;
+  // Homebase's own people, as they sign in: never on the list, so never this route.
+  for (const who of [null, "ron@myrehomebase.com", "joe@myrehomebase.com", "staff@brokerstaffer.com", "gabriel@brokerstaffer.com"]) {
+    for (const body of [{ action: "period_leads" }, { action: "waive", periodStart: ANCHOR, leadKey: "daniel@x.test", reason: "over the cap" }, { action: "unwaive", periodStart: ANCHOR, leadKey: "daniel@x.test" }]) {
+      const p = await post(who, { clientId: ACME, ...body });
+      assert.equal(p.status, 404, `${body.action} ${who}`);
+      assert.equal(await p.text(), "");
+    }
+  }
+  assert.deepEqual(db.calls, []);
+});
+
+test("Don't bill: never from another site, and it asks for the period and a reason", async () => {
+  seed([testRow()]);
+  process.env.OS_USAGE_BILLING_STRIPE_KEY = TEST_KEY;
+  assert.equal((await post(ADMIN, { clientId: ACME, action: "waive", periodStart: ANCHOR, leadKey: "a@x.test", reason: "x" }, { "sec-fetch-site": "cross-site" })).status, 403);
+  assert.equal((await post(ADMIN, { clientId: ACME, action: "waive", periodStart: ANCHOR, leadKey: "a@x.test", reason: "x" }, { "content-type": "text/plain" })).status, 403);
+  const noPeriod = await post(ADMIN, { clientId: ACME, action: "waive", leadKey: "a@x.test", reason: "x" });
+  assert.equal(noPeriod.status, 400);
+  const noReason = await post(ADMIN, { clientId: ACME, action: "waive", periodStart: ANCHOR, leadKey: "a@x.test", reason: "  " });
+  assert.equal(noReason.status, 400);
+  assert.match((await noReason.json()).error, /Say why/);
+  assert.deepEqual(db.calls.filter((c) => c.method !== "GET" && c.method !== "HEAD"), [], "nothing written");
+});
+
+test("Leads this period: a client with no portal says why rather than showing no leads", async () => {
+  seed([testRow()]);
+  process.env.OS_USAGE_BILLING_STRIPE_KEY = TEST_KEY;
+  const r = await post(ADMIN, { clientId: ACME, action: "period_leads" });
+  assert.equal(r.status, 503);
+  assert.match((await r.json()).error, /no Master Inbox portal linked/);
+});

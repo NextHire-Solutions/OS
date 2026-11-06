@@ -43,7 +43,9 @@ import {
   type SettingsRow,
   AUTO_CHARGE_FROM_HOUR_ET, autoChargeHold, easternHour, leadKey, liveAutoChargeAllowed,
   AUTO_CHARGE_LOOK_BACK, AUTO_CHARGE_WINDOW_DAYS, autoChargeInWindow, isReopened,
+  waiverReason, WAIVER_REASON_MAX,
 } from "./model.ts";
+import { tableIsMissing } from "./caps-model.ts";
 import { usageBillingStripeKey } from "./stripe-key.ts";
 import { usageStripe, UsageStripeError, type CustomerCards, type InvoiceSummary, type UsageStripe } from "./stripe.ts";
 
@@ -334,6 +336,197 @@ export async function keysBilledBefore(osClientId: string, day: string, testMode
   return keysAlreadyBilled((data ?? []) as Array<{ period_start: string; status: string; leads: unknown }>, "");
 }
 
+/* ---------------------------------------------------------- not billed --- */
+
+/*
+ * "Don't bill" (6 Nov, migrations/0050). A billing person on the OS Billing tab — never the client portal — keeps one
+ * lead off a client's bill while it isn't charged yet, with a reason; "Bill it" takes that back. A waived lead is
+ * billed in no period and uses none of the lead cap (model.ts dedupeLeads). Kept apart by mode, as the periods are.
+ * The first: Homebase was sent Daniel Passalacqua past its cap, and Amy said it isn't to pay for him.
+ *
+ * It fails closed: a waiver list that can't be read stops the preview, and so the charge, rather than billing a lead
+ * someone took off. Before 0050 runs there are none, and billing is exactly as before. A change made at the moment a
+ * charge claims its period is caught on both sides: the charge lets go (chargePeriod), or the change is taken back.
+ */
+export interface WaiverRow { os_client_id: string; test_mode: boolean; lead_key: string; lead_name: string | null; reason: string; waived_by: string; waived_at: string }
+const WAIVERS = "os_usage_billing_waivers";
+const NEEDS_0050 = "Not billing a lead needs migrations/0050_usage_billing_waivers.sql run first.";
+
+/** The leads this client isn't billed for, in this mode; none, and `ready: false`, before 0050. */
+export async function loadWaivers(osClientId: string, testMode: boolean): Promise<{ ready: boolean; rows: WaiverRow[] }> {
+  const { data, error } = await osTable(WAIVERS).select("os_client_id, test_mode, lead_key, lead_name, reason, waived_by, waived_at").eq("os_client_id", osClientId).eq("test_mode", testMode);
+  if (error) {
+    if (tableIsMissing(error)) return { ready: false, rows: [] };
+    throw new UsageBillingError(`${WAIVERS}: ${error.message}`, 502);
+  }
+  return { ready: true, rows: (data ?? []) as WaiverRow[] };
+}
+
+export async function waivedKeys(osClientId: string, testMode: boolean): Promise<Set<string>> {
+  return new Set((await loadWaivers(osClientId, testMode)).rows.map((r) => leadKey(r.lead_key)));
+}
+
+export interface WaivedLead extends BillableLead { reason: string; by: string; waivedAt: string }
+
+/** One period's leads as billing counts them, and the ones not billed: the Billing tab's list. Reads only. */
+export interface PeriodLeads {
+  period: Period;
+  label: string;
+  /** Still running: more leads can come. */
+  running: boolean;
+  /** Charged, being charged or closed: nothing in it can change. */
+  locked: boolean;
+  status: PeriodStatus | null;
+  leads: BillableLead[];
+  waived: WaivedLead[];
+  /** 0050 has run. */
+  ready: boolean;
+}
+
+export async function periodLeads(osClientId: string, s: SettingsRow, periodStart: string, o: { now?: Date; source?: LeadSourceFn } = {}): Promise<PeriodLeads> {
+  const today = easternDay(o.now ?? new Date());
+  const period = choosePeriod(s, today, periodStart, false);
+  const testMode = modeOf(s) !== "live";
+  const source = ((LEAD_SOURCES_ALL as readonly string[]).includes(s.lead_source) ? s.lead_source : DEFAULT_LEAD_SOURCE) as LeadSource;
+  let raw: BillableLead[];
+  try {
+    raw = await (o.source ? o.source(osClientId, period.start, period.end, { startDate: s.anchor_date }) : billableLeads(osClientId, period.start, period.end, source, { startDate: s.anchor_date }));
+  } catch (e) {
+    if (e instanceof LeadSourceUnavailable) throw new UsageBillingError(e.message, 503);
+    throw e;
+  }
+  const [elsewhere, w, row] = await Promise.all([keysBilledElsewhere(osClientId, period.start, testMode), loadWaivers(osClientId, testMode), periodRow(osClientId, period.start, testMode)]);
+  const byKey = new Map(w.rows.map((r) => [leadKey(r.lead_key), r]));
+  const d = dedupeLeads(raw, elsewhere, new Set(byKey.keys()));
+  const waived: WaivedLead[] = [];
+  for (const x of d.skipped) {
+    if (x.reason !== "waived") continue;
+    const k = leadKey(x.lead.key);
+    if (waived.some((l) => l.key === k)) continue;
+    const r = byKey.get(k)!;
+    waived.push({ ...x.lead, key: k, reason: r.reason, by: r.waived_by, waivedAt: r.waived_at });
+  }
+  return {
+    period, label: periodLabel(period), running: period.end > today, locked: !!row && row.status !== "preview", status: row?.status ?? null,
+    leads: d.billable, waived, ready: w.ready,
+  };
+}
+
+/**
+ * What the Billing tab lists: the last ended period and the running one, while they aren't charged. An ended period
+ * already charged is the periods table's, with its invoice.
+ */
+export async function reviewPeriods(osClientId: string, s: SettingsRow, o: { now?: Date; source?: LeadSourceFn } = {}): Promise<PeriodLeads[]> {
+  const today = easternDay(o.now ?? new Date());
+  const every = s.every_days as EveryDays;
+  const starts = [...new Set([lastCompletedPeriod(s.anchor_date, every, today), periodOf(s.anchor_date, every, today)].filter((p): p is Period => !!p).map((p) => p.start))];
+  const out: PeriodLeads[] = [];
+  for (const start of starts) {
+    const pl = await periodLeads(osClientId, s, start, o);
+    if (!pl.locked) out.push(pl);
+  }
+  return out;
+}
+
+function lockedMessage(status: PeriodStatus | null): string {
+  if (status === "draft") return "This period is being charged right now, so nothing in it can change.";
+  if (status === "void") return "This period is closed, so nothing in it can change.";
+  if (status === "failed") return "This period's charge was refused by the card and is still owed, so nothing in it can change. Retry or remove that charge on the Billing tab.";
+  return "This period has been charged already, so nothing in it can change. A refund is on the Billing tab.";
+}
+
+const keyOfInput = (v: unknown) => (typeof v === "string" ? leadKey(v) : "");
+
+/** A claimed or charged period of this client that holds this lead: there, it is too late to change. */
+async function claimedWith(osClientId: string, key: string, testMode: boolean): Promise<PeriodRow | null> {
+  // Billing or billed, as billing itself counts it (keysAlreadyBilled): a period voided in Stripe charged no one.
+  const { data, error } = await osTable("os_usage_billing_periods").select("*").eq("os_client_id", osClientId).eq("test_mode", testMode).in("status", [...BILLED_STATUSES]);
+  if (error) throw dbError("os_usage_billing_periods", error.message);
+  return ((data ?? []) as PeriodRow[]).find((r) => (Array.isArray(r.leads) ? (r.leads as BillableLead[]) : []).some((l) => leadKey(l.key ?? "") === key)) ?? null;
+}
+const tooLate = (r: PeriodRow) => {
+  const label = periodLabel({ start: r.period_start, end: r.period_end });
+  if (r.status === "draft") return `This lead is being charged right now, in ${label}, so nothing was changed. Once it's charged, a refund is on the Billing tab.`;
+  if (r.status === "failed") return `This lead is on the ${label} charge, which the card refused and is still owed, so nothing was changed. Retry or remove that charge on the Billing tab.`;
+  return `This lead was charged in ${label} already, so nothing was changed. A refund is on the Billing tab.`;
+};
+
+/** Keeps one lead off the client's bill. Only while its period isn't charged, and while no other period has charged it. */
+export async function waiveLead(osClientId: string, s: SettingsRow, input: { periodStart: string; leadKey: unknown; reason: unknown; by: string; now?: Date; source?: LeadSourceFn }): Promise<PeriodLeads> {
+  const reason = waiverReason(input.reason);
+  if (!reason) throw new UsageBillingError(`Say why this lead isn't billed, in up to ${WAIVER_REASON_MAX} characters.`, 400);
+  const key = keyOfInput(input.leadKey);
+  if (!key) throw new UsageBillingError("Which lead?", 400);
+  const testMode = modeOf(s) !== "live";
+  const before = await periodLeads(osClientId, s, input.periodStart, input);
+  if (!before.ready) throw new UsageBillingError(NEEDS_0050, 503);
+  if (before.locked) throw new UsageBillingError(lockedMessage(before.status), 409);
+  if (before.waived.some((l) => l.key === key)) return before;
+  const lead = before.leads.find((l) => l.key === key);
+  if (!lead) throw new UsageBillingError("That lead isn't billed in this period any more. Reload the page.", 409);
+  // The same agent can be in an earlier period too: a waiver covers every period, so none may have claimed them.
+  const charged = await claimedWith(osClientId, key, testMode);
+  if (charged) throw new UsageBillingError(tooLate(charged), 409);
+  const at = (input.now ?? new Date()).toISOString();
+  const { error } = await osTable(WAIVERS).upsert({ os_client_id: osClientId, test_mode: testMode, lead_key: key, lead_name: lead.name, reason, waived_by: input.by, waived_at: at }, { onConflict: "os_client_id,test_mode,lead_key" });
+  if (error) throw tableIsMissing(error) ? new UsageBillingError(NEEDS_0050, 503) : new UsageBillingError(`${WAIVERS}: ${error.message}`, 502);
+  // A charge that claimed a period holding this lead in the moment between: the waiver comes off again, and says so.
+  const claimed = await claimedWith(osClientId, key, testMode).catch(() => "unreadable" as const);
+  if (claimed) {
+    const { error: undo } = await osTable(WAIVERS).delete().eq("os_client_id", osClientId).eq("test_mode", testMode).eq("lead_key", key).eq("waived_at", at);
+    if (undo) {
+      console.error(`[usage-billing] taking back the waiver for ${lead.name} (${osClientId}) failed: ${undo.message}`);
+      throw new UsageBillingError(`This lead started being charged just now, and marking them not to bill couldn't be taken back (${undo.message}). Check this client's billing before the next charge.`, 502);
+    }
+    throw new UsageBillingError(claimed === "unreadable" ? "Whether this lead is being charged right now couldn't be read, so nothing was changed. Try again in a moment." : tooLate(claimed), claimed === "unreadable" ? 503 : 409);
+  }
+  console.log(`[usage-billing] ${input.by} chose not to bill ${lead.name} (${before.label}) for ${osClientId}: ${reason}`);
+  // It happened: a failure reading the list back mustn't say otherwise.
+  return periodLeads(osClientId, s, input.periodStart, input).catch(() => ({
+    ...before, leads: before.leads.filter((l) => l.key !== key), waived: [...before.waived, { ...lead, reason, by: input.by, waivedAt: at }],
+  }));
+}
+
+/** "Bill it": the lead is billed again, as any other. Only while its period isn't charged. */
+export async function unwaiveLead(osClientId: string, s: SettingsRow, input: { periodStart: string; leadKey: unknown; by: string; now?: Date; source?: LeadSourceFn }): Promise<PeriodLeads> {
+  const key = keyOfInput(input.leadKey);
+  if (!key) throw new UsageBillingError("Which lead?", 400);
+  const testMode = modeOf(s) !== "live";
+  const before = await periodLeads(osClientId, s, input.periodStart, input);
+  if (!before.ready) throw new UsageBillingError(NEEDS_0050, 503);
+  if (before.locked) throw new UsageBillingError(lockedMessage(before.status), 409);
+  const w = before.waived.find((l) => l.key === key);
+  if (!w) {
+    if (before.leads.some((l) => l.key === key)) return before;
+    throw new UsageBillingError("That lead isn't in this period any more. Reload the page.", 409);
+  }
+  const { data: gone, error } = await osTable(WAIVERS).delete().eq("os_client_id", osClientId).eq("test_mode", testMode).eq("lead_key", key).select("lead_key, lead_name, reason, waived_by, waived_at");
+  if (error) throw new UsageBillingError(`${WAIVERS}: ${error.message}`, 502);
+  // A charge that claimed this period without them in the moment between would leave them billed nowhere: put it back.
+  // And if that can't be read, nothing is changed either.
+  const row = await periodRow(osClientId, before.period.start, testMode).catch(() => "unreadable" as const);
+  const claimedWithout = row === "unreadable" || (!!row && row.status !== "preview" && !(Array.isArray(row.leads) ? (row.leads as BillableLead[]) : []).some((l) => leadKey(l.key ?? "") === key));
+  if (claimedWithout) {
+    const back = ((gone ?? []) as WaiverRow[])[0];
+    const { error: restore } = back
+      ? await osTable(WAIVERS).upsert({ os_client_id: osClientId, test_mode: testMode, lead_key: key, lead_name: back.lead_name, reason: back.reason, waived_by: back.waived_by, waived_at: back.waived_at }, { onConflict: "os_client_id,test_mode,lead_key" })
+      : { error: null };
+    if (restore) {
+      console.error(`[usage-billing] putting back the waiver for ${w.name} (${osClientId}) failed: ${restore.message}`);
+      throw new UsageBillingError(`This period started being charged as they were billed again, and marking them not to bill couldn't be put back (${restore.message}). Check this client's billing.`, 502);
+    }
+    throw new UsageBillingError(row === "unreadable"
+      ? "Whether this period is being charged right now couldn't be read, so they stay not billed. Try again in a moment."
+      : "This period started being charged without this lead just now, so they stay not billed.", row === "unreadable" ? 503 : 409);
+  }
+  console.log(`[usage-billing] ${input.by} billed ${w.name} (${before.label}) for ${osClientId} again`);
+  // It happened: a failure reading the list back mustn't say otherwise.
+  return periodLeads(osClientId, s, input.periodStart, input).catch(() => {
+    const { reason: _r, by: _b, waivedAt: _w, ...lead } = w;
+    return { ...before, leads: [...before.leads, lead], waived: before.waived.filter((l) => l.key !== key) };
+  });
+}
+
 export interface Preview {
   period: Period;
   periodKey: string;
@@ -382,7 +575,7 @@ export async function previewPeriod(osClientId: string, s: SettingsRow, o: Previ
       throw e;
     }
   }
-  const d = dedupeLeads(raw, await keysBilledElsewhere(osClientId, period.start, !live));
+  const d = dedupeLeads(raw, await keysBilledElsewhere(osClientId, period.start, !live), await waivedKeys(osClientId, !live));
   if (d.billable.length > MAX_LEADS_PER_PERIOD) throw new UsageBillingError(`${d.billable.length} leads in one period is more than the ${MAX_LEADS_PER_PERIOD} allowed — check the lead source before billing.`, 409);
   const price = s.price_cents;
   // Stripe's own limit for one charge ($999,999.99): never an invoice it would move onto the customer's balance instead.
@@ -528,6 +721,12 @@ export async function chargePeriod(osClientId: string, o: ChargeOptions): Promis
     }
     // A resume charges what was claimed: it must be what the person approved.
     if (approved && (approved.amountCents !== existing.amount_cents || approved.count !== existing.lead_count || (approved.leadsHash !== undefined && approved.leadsHash !== leadsHash(Array.isArray(existing.leads) ? existing.leads : [])))) throw changed();
+    // Never a lead someone has since marked not to bill — checked before the claim is taken over, so it stays stale and a
+    // person can Remove it, then charge the period again.
+    const waivedNow = await waivedKeys(osClientId, !live);
+    if ((Array.isArray(existing.leads) ? (existing.leads as BillableLead[]) : []).some((l) => waivedNow.has(leadKey(l.key ?? "")))) {
+      throw new UsageBillingError("A lead in this unfinished charge has since been marked not to bill — press Remove on it, then charge the period again. Nothing was charged.", 409);
+    }
     // Take over the dead claim — one process only (conditional on the claim we read).
     const take = osTable("os_usage_billing_periods")
       .update({ claimed_by: o.by, claimed_at: now.toISOString(), note: `Resumed by ${o.by}`, updated_at: now.toISOString() })
@@ -558,14 +757,53 @@ export async function chargePeriod(osClientId: string, o: ChargeOptions): Promis
     const now2 = await periodRow(osClientId, period.start, !live);
     return { outcome: now2?.status === "draft" ? "in_progress" : "already", period, row: now2, invoice: null, message: now2 ? alreadyMessage(now2) : "Taken by another run." };
   }
-  if (!p.count) return { outcome: "nothing", period, row, invoice: null, message: "No billable leads in this period — nothing charged." };
-  // Two periods charged at the same moment could each have counted the same agent (each saw the other unbilled):
-  // re-checked now that this one is claimed — on an overlap it lets go, nothing is sent, and a person tries again.
-  const elsewhere = await keysBilledElsewhere(osClientId, period.start, !live);
-  if (p.leads.some((l) => elsewhere.has(l.key))) {
-    await updateRow(row.id, "draft", { status: "preview", claimed_by: null, claimed_at: null, leads: [], lead_count: 0, amount_cents: 0, note: `An agent in it was just billed in another period — opened again by ${o.by}; preview and charge it again.` }, row.claimed_at);
-    throw new UsageBillingError("An agent in this period was just billed in another period — preview again before charging. Nothing was charged.", 409);
+  /*
+   * Re-checked now that this one is claimed, a period closed with nothing to charge too. Two periods charged at the same
+   * moment could each have counted the same agent (each saw the other unbilled), and a lead can be marked not to bill —
+   * or billed again — while the preview was read. Any of those, or a list that can't be read: it lets go, nothing is
+   * sent. One changed by "Don't bill" is charged afresh by the next run; one billed elsewhere waits for a person.
+   */
+  let why: "elsewhere" | "waivers" | null = null;
+  let unreadable: unknown = null;
+  try {
+    const [elsewhere, waivedNow] = await Promise.all([keysBilledElsewhere(osClientId, period.start, !live), waivedKeys(osClientId, !live)]);
+    if (p.leads.some((l) => waivedNow.has(l.key)) || p.skipped.some((x) => x.reason === "waived" && !waivedNow.has(leadKey(x.lead.key)))) why = "waivers";
+    else if (p.leads.some((l) => elsewhere.has(l.key))) why = "elsewhere";
+  } catch (e) {
+    unreadable = e;
   }
+  if (why || unreadable) {
+    const note = why === "elsewhere"
+      ? `An agent in it was just billed in another period — opened again by ${o.by}; preview and charge it again.`
+      : why === "waivers"
+        ? `A lead in it was just marked not to bill, or billed again, as it was being charged (${o.by}); nothing was charged, and it is charged afresh.`
+        : `What was billed elsewhere, or not to bill, couldn't be read as it was being charged (${o.by}); nothing was charged, and it is charged afresh.`;
+    let released = false, releaseError: unknown = null;
+    for (let attempt = 0; attempt < 3 && !released; attempt++) {
+      try {
+        await updateRow(row.id, p.count ? "draft" : "void", { status: "preview", claimed_by: null, claimed_at: null, leads: [], lead_count: 0, amount_cents: 0, note }, row.claimed_at);
+        released = true;
+      } catch (e) {
+        releaseError = e;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    if (!released) {
+      // Left claimed with what the preview read, which is no longer right: it mustn't be carried on, only removed.
+      const label = periodLabel(period);
+      await tellBell({
+        kind: "usage_charge_error", severity: "critical", osClientId, ref: `usage_letgo_failed:${osClientId}:${period.start}:${row.claimed_at ?? ""}`,
+        title: `Don't carry on the ${label} charge`,
+        body: `It was stopped before anything was charged, because a lead's billing changed as it started, but it couldn't be opened again (${releaseError instanceof Error ? releaseError.message : "no answer"}). On the Billing tab, press Remove on it once it's offered, then charge the period again. Nothing was sent to Stripe.`,
+      }).catch(() => {});
+      throw new UsageBillingError(`The charge was stopped before anything was charged, but it couldn't be opened again. Press Remove on it on the Billing tab once it's offered, then charge again.`, 502);
+    }
+    if (unreadable) throw unreadable;
+    throw new UsageBillingError(why === "elsewhere"
+      ? "An agent in this period was just billed in another period — preview again before charging. Nothing was charged."
+      : "A lead in this period was just marked not to bill, or billed again — preview again before charging. Nothing was charged.", 409);
+  }
+  if (!p.count) return { outcome: "nothing", period, row, invoice: null, message: "No billable leads in this period — nothing charged." };
   return bill(row, s, o.stripe, false);
 }
 

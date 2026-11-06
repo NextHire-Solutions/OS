@@ -67,6 +67,8 @@ export const OS_TABLES = [
   // what waits to restart, and the replies held over a cap.
   "os_cap_windows",
   "os_cap_held_leads",
+  // Added 2026-11-06: a lead a billing person chose not to bill (0050).
+  "os_usage_billing_waivers",
   // A portal's Prospects kept in step with the client's campaign: every change,
   // the first campaign made at setup, and the setup template — see
   // migrations/0046_prospect_campaigns.sql.

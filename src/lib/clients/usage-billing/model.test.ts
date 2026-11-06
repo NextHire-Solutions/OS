@@ -241,3 +241,27 @@ test("autoChargeProblem: what the Billing tab says instead of a plain Automatic"
   assert.match(autoChargeProblem({ ...ok, clientStatus: "paused" })!, /client is paused/);
   assert.match(autoChargeProblem({ ...ok, leadSource: "calls" })!, /only Interested/);
 });
+
+/* ------------------------------------------- not billed (0050, 6 Nov) --- */
+
+test("dedupeLeads: a key not billed is skipped as waived, however it's cased, and every time it appears", async () => {
+  const { dedupeLeads } = await import("./model.ts");
+  const l = (key: string, at: string, name = key) => ({ key, name, at, source: "interested" });
+  const d = dedupeLeads([l("John@x.test", "2026-11-04T00:00:00Z"), l("daniel@x.test", "2026-11-05T19:00:00Z"), l("Daniel@X.test", "2026-11-06T19:00:00Z")], new Set(), new Set(["daniel@x.test"]));
+  assert.deepEqual(d.billable.map((x) => x.key), ["john@x.test"]);
+  assert.deepEqual(d.skipped.map((x) => x.reason), ["waived", "waived"]);
+});
+
+test("dedupeLeads: billed before wins over waived (already charged, the waiver can't undo it), and no waivers is as before", async () => {
+  const { dedupeLeads } = await import("./model.ts");
+  const l = { key: "sam@x.test", name: "Sam", at: "2026-11-04T00:00:00Z", source: "interested" };
+  assert.equal(dedupeLeads([l], new Set(["sam@x.test"]), new Set(["sam@x.test"])).skipped[0].reason, "billed_before");
+  assert.deepEqual(dedupeLeads([l], new Set()).billable.map((x) => x.key), ["sam@x.test"]);
+});
+
+test("waiverReason: trimmed, spaces folded, 1 to 300 characters, text only", async () => {
+  const { waiverReason, WAIVER_REASON_MAX } = await import("./model.ts");
+  assert.equal(waiverReason("  sent   over\nthe cap "), "sent over the cap");
+  assert.equal(waiverReason("x".repeat(WAIVER_REASON_MAX)), "x".repeat(300));
+  for (const bad of [undefined, null, "", "   ", 42, {}, "x".repeat(301)]) assert.equal(waiverReason(bad), null, String(bad).slice(0, 8));
+});

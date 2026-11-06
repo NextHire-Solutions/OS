@@ -6,8 +6,8 @@ import { getAccountBilling } from "@/lib/clients/billing-account";
 import { billingTabUser } from "@/lib/clients/billing-user";
 import { osTable } from "@/lib/clients/os-db";
 import {
-  cardOptions, chargePeriod, confirmSetup, connectCard, createSetupLink, listPeriods, loadSettings, previewPeriod, refreshPeriod, retryPeriod, saveSettings, setAutoCharge,
-  UsageBillingError, type Approved,
+  cardOptions, chargePeriod, confirmSetup, connectCard, createSetupLink, listPeriods, loadSettings, previewPeriod, refreshPeriod, retryPeriod, reviewPeriods, saveSettings, setAutoCharge,
+  unwaiveLead, UsageBillingError, waiveLead, type Approved,
 } from "@/lib/clients/usage-billing/billing";
 import { addToRestart, capView, removeFromRestart, restartNow, setSpendCap } from "@/lib/clients/usage-billing/caps";
 import { usageBillingLiveKey } from "@/lib/clients/usage-billing/live-key";
@@ -46,6 +46,9 @@ import { publicOrigin } from "@/lib/mcp/oauth";
  *   POST { clientId, action: "find_cards", mode, customerId? }   the client's customers and their cards on file
  *   POST { clientId, action: "connect_card", mode, customerId, paymentMethodId, goLive? }
  *   POST { clientId, action: "preview", periodStart?, fakeLeads? }   the invoice it would make — writes nothing
+ *   POST { clientId, action: "period_leads" }          the running period's leads and the last ended one's not charged yet — writes nothing
+ *   POST { clientId, action: "waive", periodStart, leadKey, reason }   "Don't bill": keeps one lead off the bill (0050)
+ *   POST { clientId, action: "unwaive", periodStart, leadKey }         "Bill it": takes that back
  *   POST { clientId, action: "charge", periodStart?, fakeLeads?, approved? }   claims the period, builds and charges the invoice
  *   POST { clientId, action: "retry", periodStart }    a refused charge, to the card connected now
  *   POST { clientId, action: "refresh", periodStart }  re-reads a billed period's invoice
@@ -59,7 +62,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store, private, max-age=0" };
 const say = (status: number, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ACTIONS = new Set(["save", "set_auto", "setup_link", "confirm_setup", "find_cards", "connect_card", "preview", "charge", "retry", "refresh", "set_spend_cap", "cap_add_restart", "cap_remove_restart", "cap_restart"]);
+const ACTIONS = new Set(["period_leads", "waive", "unwaive", "save", "set_auto", "setup_link", "confirm_setup", "find_cards", "connect_card", "preview", "charge", "retry", "refresh", "set_spend_cap", "cap_add_restart", "cap_remove_restart", "cap_restart"]);
 
 /* The staff cookie travels with requests from other brokerstaffer.com sites too: a write comes only from this page. */
 function fromOwnPage(request: Request): boolean {
@@ -290,6 +293,25 @@ export async function POST(request: Request) {
     if (action === "preview") {
       const p = await previewPeriod(clientId, s, { periodStart, fakeLeads: body?.fakeLeads });
       return NextResponse.json({ ok: true, preview: { ...p, label: periodLabel(p.period) } }, { headers: NO_STORE });
+    }
+
+    /*
+     * "Don't bill" (6 Nov, migrations/0050): the leads of the running period and of the last ended one not charged yet,
+     * and keeping one off the bill or putting it back. Only here, behind the Billing tab's named people: the client
+     * portal has no way to reach it.
+     */
+    if (action === "period_leads") {
+      return NextResponse.json({ ok: true, periods: await reviewPeriods(clientId, s) }, { headers: NO_STORE });
+    }
+    if (action === "waive" || action === "unwaive") {
+      if (!periodStart) return say(400, "periodStart is required.");
+      const period = action === "waive"
+        ? await waiveLead(clientId, s, { periodStart, leadKey: body?.leadKey, reason: body?.reason, by: who.email })
+        : await unwaiveLead(clientId, s, { periodStart, leadKey: body?.leadKey, by: who.email });
+      // Every list again: the same agent can be in both, and a waiver covers both. It happened: a failure reading back mustn't say otherwise.
+      const periods = await reviewPeriods(clientId, s).catch(() => null);
+      const cap = await capView(clientId, s).catch(() => null);
+      return NextResponse.json({ ok: true, period, periods, cap }, { headers: NO_STORE });
     }
 
     if (action === "find_cards" || action === "connect_card") {

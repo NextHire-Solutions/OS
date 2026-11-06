@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.02** | [Don't bill a lead, and holding replies over the cap, 6 November](#002-dont-bill-a-lead-and-holding-replies-over-the-cap-6-november) — keep one lead off a pay-per-lead bill; over-cap replies now wait in Keep Warm |
 | **0.01** | [Inboxes off campaigns, and Active inboxes, 5 November](#001-inboxes-off-campaigns-and-active-inboxes-5-november) — remove selected inboxes from every open campaign at once; a second capacity figure on Campaigns |
 | **0.1** | [BrokerStaffer OS for Claude, 15 October](#01-brokerstaffer-os-for-claude-15-october) — a read-only connector: admins add the OS to Claude and ask it anything the Assistant can answer |
 | **0.2** | [Interested leads → Slack, 14 October](#02-interested-leads--slack-14-october) — one Slack post per conversation newly labelled Interested, to #client-interested-updates; needs Master Inbox migration 0033 |
@@ -210,6 +211,23 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.02 Don't bill a lead, and holding replies over the cap, 6 November
+
+Homebase was sent one interested reply past its cap of 2 (Daniel Passalacqua: the AI labelled it OOO, a person changed it
+to Interested on 5 Nov, and the automatic hand-off emailed it to Ron and Joe). Amy: Homebase must not be charged for it.
+
+**Holding replies over the cap is on** (`OS_LEAD_CAPS_HOLD=1`, the user's word, 6 Nov). A pay-per-lead client at its cap
+no longer gets a new interested reply: it goes to Keep Warm, isn't sent and isn't charged, the bell says so, and it waits
+for a person to press Send to client (billed from that moment). Before this, the cap only paused campaigns.
+
+**Don't bill.** On the client record's Billing tab, "Leads this period" lists the running period's leads and the last
+ended period's while it isn't charged. "Don't bill" keeps one lead off the bill for good, with a reason; "Bill it" puts
+it back while the period isn't charged. Only the people named in `billing-access.ts`, and only in the OS: the client
+portal has no such button and can't reach the route (`waivers-portal.test.ts` pins both). Needs migration
+**0050_usage_billing_waivers.sql**. A waived lead is out of the preview, every charge, the automatic charge and the lead
+cap (`model.ts dedupeLeads`, the one place every count goes through). It fails closed: a waiver list that can't be read
+stops the charge. A waiver made at the moment a charge claims its period: the charge lets go and nothing is charged.
 
 ## 0.01 Inboxes off campaigns, and Active inboxes, 5 November
 

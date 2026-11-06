@@ -6,7 +6,7 @@ import { isSending, liveCampaigns, pauseListed, planToggle, resumeListed, shared
 import { getSupabase as getClientHealthDb } from "@/lib/tools/client-health/supabase";
 import { applyLabelToThread } from "@/lib/tools/master-inbox/inbox/apply-label";
 
-import { keysBilledBefore, loadSettings, tellBell, UsageBillingError } from "./billing";
+import { keysBilledBefore, loadSettings, tellBell, UsageBillingError, waivedKeys } from "./billing";
 import {
   CAP_RESTART_FROM_HOUR_ET, campaignsFromJson, capActsOn, capAppliesTo, capsHoldLive, capsLive, capWindowOf, columnIsMissing, effectiveCap, isOverCap, mergeCampaigns, parseSpendCap, tableIsMissing,
   type CapCampaign, type CapWindow, type EffectiveCap,
@@ -107,13 +107,13 @@ async function capInputs(s: Pick<SettingsRow, "os_client_id" | "price_cents">): 
   };
 }
 
-/** The client's leads of a window, exactly as billing counts them: held replies are not among them. */
+/** The client's leads of a window, exactly as billing counts them: held replies are not among them, nor leads not billed (0050). */
 async function leadsInWindow(s: SettingsRow, w: CapWindow, source?: LeadSourceFn): Promise<BillableLead[]> {
   const leadSource = ((LEAD_SOURCES_ALL as readonly string[]).includes(s.lead_source) ? s.lead_source : DEFAULT_LEAD_SOURCE) as LeadSource;
   const raw = await (source
     ? source(s.os_client_id, w.start, w.end, { startDate: s.anchor_date })
     : billableLeads(s.os_client_id, w.start, w.end, leadSource, { startDate: s.anchor_date }));
-  return dedupeLeads(raw, await keysBilledBefore(s.os_client_id, w.start, modeOf(s) === "test")).billable;
+  return dedupeLeads(raw, await keysBilledBefore(s.os_client_id, w.start, modeOf(s) === "test"), await waivedKeys(s.os_client_id, modeOf(s) === "test")).billable;
 }
 
 interface WindowRow {

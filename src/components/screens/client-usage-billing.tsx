@@ -103,6 +103,132 @@ const SPOT: Record<string, Spot> = { find_cards: "finder", connect_card: "finder
 
 export type UsageBillingView = View;
 
+type WaivedView = BillableLead & { reason: string; by: string; waivedAt: string };
+type PeriodLeadsView = { period: Period; label: string; running: boolean; locked: boolean; status: string | null; leads: BillableLead[]; waived: WaivedView[]; ready: boolean };
+/** "Nov 5, 2:19 PM ET". */
+const whenEt = (iso: string) => `${new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })} ET`;
+
+/*
+ * The leads of the running period, and of the last ended one not charged yet (6 Nov, migrations/0050): each with
+ * "Don't bill", which keeps it off the client's bill for good with a reason, and "Bill it" to take that back while the
+ * period isn't charged. Here only, on the OS Billing tab: the client portal has no such button and can't reach the route.
+ */
+function LeadsBox({ clientId, clientName, priceCents, unit, refreshKey, onChanged }: {
+  clientId: string; clientName: string | null; priceCents: number; unit: string;
+  /** Changes when a period is charged on this tab: the lists are read again. */
+  refreshKey: string;
+  onChanged: (cap: CapView | null) => void;
+}) {
+  const [periods, setPeriods] = useState<PeriodLeadsView[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState<{ kind: "waive" | "unwaive"; periodStart: string; key: string; name: string } | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
+  const whose = clientName ? `${clientName}'s` : "the client's";
+  const post = async (body: Record<string, unknown>): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> => {
+    try {
+      const res = await fetch("/api/workspace/clients/billing/usage", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, ...body }) });
+      const j = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      return res.ok && j ? { ok: true, body: j } : { ok: false, error: String(j?.error ?? `HTTP ${res.status}`) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Request failed" };
+    }
+  };
+  useEffect(() => {
+    let live = true;
+    void post({ action: "period_leads" }).then((r) => {
+      if (!live) return;
+      if (r.ok) { setPeriods((r.body.periods as PeriodLeadsView[]) ?? []); setError(null); }
+      else setError(r.error);
+    });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, refreshKey]);
+  const ask = (kind: "waive" | "unwaive", periodStart: string, l: BillableLead) => { setAsking({ kind, periodStart, key: l.key, name: l.name }); setReason(""); setMsg(null); };
+  const change = async () => {
+    if (!asking) return;
+    setBusy(true); setMsg(null);
+    const r = await post({ action: asking.kind, periodStart: asking.periodStart, leadKey: asking.key, ...(asking.kind === "waive" ? { reason } : {}) });
+    setBusy(false);
+    if (!r.ok) { setMsg({ text: r.error, bad: true }); return; }
+    // Every list as it is now: the same agent can be in both, and a waiver covers both.
+    const all = r.body.periods as PeriodLeadsView[] | null;
+    const next = r.body.period as PeriodLeadsView;
+    setPeriods((ps) => all ?? ps?.map((p) => (p.period.start === next.period.start ? next : p)) ?? null);
+    setMsg({ text: asking.kind === "waive" ? `${asking.name} won't be billed.` : `${asking.name} is billed again.`, bad: false });
+    setAsking(null); setReason("");
+    onChanged((r.body.cap as CapView | null) ?? null);
+  };
+  const confirmRow = (p: PeriodLeadsView) => (asking && asking.periodStart === p.period.start ? (
+    <tr><td colSpan={3}>
+      <div className="ub-confirm" role="alertdialog" aria-label={asking.kind === "waive" ? `Don't bill ${asking.name}` : `Bill ${asking.name}`}>
+        {asking.kind === "waive" ? (
+          <>
+            <p><b>Don&apos;t bill {asking.name}?</b> They come off {whose} bill in every period and don&apos;t count toward its cap. &ldquo;Bill it&rdquo; puts them back while this period isn&apos;t charged.</p>
+            <input className="ds-input" id={`ub-waive-${clientId}`} aria-label="Why this lead isn't billed" placeholder="Why, for example: sent over the cap" maxLength={300}
+              value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} autoFocus
+              onKeyDown={(e) => { if (e.key === "Enter" && reason.trim()) void change(); if (e.key === "Escape") setAsking(null); }} />
+          </>
+        ) : (
+          <p><b>Bill {asking.name} again?</b> {whose[0].toUpperCase() + whose.slice(1)} card is charged {money(priceCents)} for them, with the first charge that includes them.</p>
+        )}
+        <div className="rb-tools ub-tight">
+          <button type="button" className="rx-btn solid" disabled={busy || (asking.kind === "waive" && !reason.trim())} onClick={() => void change()}>
+            {busy ? "Saving…" : asking.kind === "waive" ? "Don't bill" : "Bill it"}
+          </button>
+          <button type="button" className="rx-btn" disabled={busy} onClick={() => setAsking(null)}>Cancel</button>
+        </div>
+      </div>
+    </td></tr>
+  ) : null);
+  return (
+    <div className="ub-box" data-testid="usage-leads">
+      <div className="ub-box-h"><b>Leads this period</b><span>Not charged yet: a lead can be kept off the bill here</span></div>
+      {error ? <div className="ds-field-err" role="alert">The leads could not be read: {error}</div> : null}
+      {!periods && !error ? <div className="rx-hint ub-tight" role="status">Reading leads…</div> : null}
+      {periods && !periods.length ? <div className="rx-hint ub-tight">No period is running yet.</div> : null}
+      {(periods ?? []).map((p) => (
+        <div key={p.period.start} className="ub-leads" data-period={p.period.start}>
+          <p className="rx-hint ub-tight">
+            <b>{p.label}</b> · {p.running ? "running" : "ended, charged next"} · {plural(p.leads.length, unit)} × {money(priceCents)} = <b>{money(p.leads.length * priceCents)}</b>
+            {p.waived.length ? ` · ${p.waived.length} not billed` : ""}
+          </p>
+          {!p.ready ? <p className="ds-field-err ub-tight">Not billing a lead needs migrations/0050_usage_billing_waivers.sql run first.</p> : null}
+          {p.leads.length || p.waived.length ? (
+            <div className="rb-scroll">
+              <table className="rb-table ub-leads-table">
+                <thead><tr><th>{unit[0].toUpperCase() + unit.slice(1)}</th><th>Marked Interested</th><th /></tr></thead>
+                <tbody>
+                  {p.leads.map((l) => (
+                    <tr key={l.key} data-lead={l.key}>
+                      <td>{l.name}</td>
+                      <td className="day">{whenEt(l.at)}</td>
+                      <td className="num">
+                        <button type="button" className="rx-btn" disabled={busy || !p.ready || !!asking} title={p.ready ? undefined : "Needs migrations/0050_usage_billing_waivers.sql run first."}
+                          onClick={() => ask("waive", p.period.start, l)}>Don&apos;t bill</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {p.waived.map((w) => (
+                    <tr key={`w:${w.key}`} className="ub-waived" data-waived={w.key}>
+                      <td><s>{w.name}</s><small>Not billed: {w.reason} · {w.by}, {whenEt(w.waivedAt)}</small></td>
+                      <td className="day">{whenEt(w.at)}</td>
+                      <td className="num"><button type="button" className="rx-btn" disabled={busy || !!asking} onClick={() => ask("unwaive", p.period.start, w)}>Bill it</button></td>
+                    </tr>
+                  ))}
+                  {confirmRow(p)}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="rx-hint ub-tight">No {unit} in this period yet.</p>}
+        </div>
+      ))}
+      {msg ? <div className={msg.bad ? "ds-field-err" : "rx-hint ub-tight"} role="status">{msg.text}</div> : null}
+    </div>
+  );
+}
+
 /** `initial`: a first answer to show before the route's (a render check uses it). `clientName`: named in the confirmations. */
 /*
  * Lead and spend cap (5 Nov; usage-billing/caps.ts). The lead cap is the Monthly introduction target, set on the Record
@@ -354,6 +480,9 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
   const shownStart = choices.some((p) => p.start === periodStart) ? periodStart : (view.schedule?.lastCompleted?.start ?? (live ? "" : view.schedule?.current?.start ?? ""));
   const shownRow = shownStart ? rowOf(shownStart) : null;
   const previewFits = !!preview && preview.period.start === shownStart;
+  // What the preview left out, and why: a lead kept off the bill here is said apart from the rest.
+  const skippedWaived = previewFits ? (preview!.skipped as Array<{ reason?: string }>).filter((x) => x.reason === "waived").length : 0;
+  const skippedOther = previewFits ? preview!.skipped.length - skippedWaived : 0;
   // Billed — as this page knows it, or as a preview just found it (another page charged it meanwhile).
   const shownBilled = shownRow && shownRow.status !== "preview" ? shownRow : previewFits && preview!.existing && preview!.existing.status !== "preview" ? preview!.existing : null;
   const billed = !!shownBilled;
@@ -664,6 +793,10 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
           <CapPanel clientId={clientId} cap={view.cap ?? null} capError={view.capError ?? null} priceCents={s.price_cents}
             onCap={(next) => setView((v) => (v ? { ...v, cap: next } : v))} />
 
+          <LeadsBox clientId={clientId} clientName={clientName} priceCents={s.price_cents} unit={unitOf(s.lead_source)}
+            refreshKey={view.periods.map((p) => `${p.period_start}:${p.status}`).join(",")}
+            onChanged={(next) => { if (next) setView((v) => (v ? { ...v, cap: next } : v)); reset(); }} />
+
           {/* ------------------------------------------------------- go live (test) */}
           {!live && finder?.mode !== "live" ? (
             <div className="ub-box ub-golive">
@@ -758,7 +891,7 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
           <div className="ub-box" data-testid="usage-charge">
             <div className="ub-box-h"><b>{live ? "Charge a period" : "Preview and test charge"}</b></div>
             {s.lead_source === "handoffs" ? (
-              <p className="rx-hint ub-tight">A lead is an agent whose conversation was marked Interested on or after {day(s.anchor_date)} — once per agent, ever. Not counted: a label later corrected to Not Interested, Not Qualified, Do Not Contact, Unsubscribe or Broker/Owner; a conversation in Trash; an agent already Interested or introduced for this client before {day(s.anchor_date)}.</p>
+              <p className="rx-hint ub-tight">A lead is an agent whose conversation was marked Interested on or after {day(s.anchor_date)} — once per agent, ever. Not counted: a label later corrected to Not Interested, Not Qualified, Do Not Contact, Unsubscribe or Broker/Owner; a conversation in Trash; an agent already Interested or introduced for this client before {day(s.anchor_date)}; a lead someone here chose not to bill (Leads this period).</p>
             ) : null}
             {choices.length === 0 ? (
               <p className="rx-hint ub-tight">
@@ -844,7 +977,8 @@ export function UsageBillingPanel({ clientId, clientName = null, initial = null 
                     <p className="rx-hint ub-tight">
                       {preview!.label}: <b>{plural(preview!.count, unit)} × {money(preview!.priceCents)} = {money(preview!.amountCents)}</b>
                       {preview!.fake ? " · typed-in test leads" : ""}
-                      {preview!.skipped.length ? ` · ${preview!.skipped.length} not counted (already billed, or the same agent twice)` : ""}
+                      {skippedOther ? ` · ${skippedOther} not counted (already billed, or the same agent twice)` : ""}
+                      {skippedWaived ? ` · ${skippedWaived} kept off the bill (Leads this period)` : ""}
                     </p>
                     {preview!.lines.length ? (
                       <table className="rb-table">

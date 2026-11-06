@@ -238,23 +238,33 @@ export function invoiceDescription(p: Period, count: number, priceCents: number,
 
 export const leadKey = (k: string) => k.trim().toLowerCase();
 
+/** "Don't bill" needs a reason a person typed, kept short enough to read on the tab. */
+export const WAIVER_REASON_MAX = 300;
+export function waiverReason(v: unknown): string | null {
+  const r = typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "";
+  return r && r.length <= WAIVER_REASON_MAX ? r : null;
+}
+
 export interface Deduped {
   billable: BillableLead[];
-  skipped: Array<{ lead: BillableLead; reason: "duplicate" | "billed_before" | "no_key" }>;
+  skipped: Array<{ lead: BillableLead; reason: "duplicate" | "billed_before" | "no_key" | "waived" }>;
 }
 
 /**
  * Once per key, ever: the first appearance in the period (by time) is billed;
  * another appearance in the same period, or a key already billed for this
- * client in an earlier period, is not.
+ * client in an earlier period, is not. Nor is a key a billing person chose not
+ * to bill (`waived`, 6 Nov: migrations/0050) — in any period, and it uses none
+ * of the lead cap, since the cap counts through here too.
  */
-export function dedupeLeads(leads: readonly BillableLead[], billedBefore: ReadonlySet<string>): Deduped {
+export function dedupeLeads(leads: readonly BillableLead[], billedBefore: ReadonlySet<string>, waived: ReadonlySet<string> = new Set()): Deduped {
   const out: Deduped = { billable: [], skipped: [] };
   const seen = new Set<string>();
   for (const lead of [...leads].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))) {
     const k = leadKey(lead.key ?? "");
     if (!k) { out.skipped.push({ lead, reason: "no_key" }); continue; }
     if (billedBefore.has(k)) { out.skipped.push({ lead, reason: "billed_before" }); continue; }
+    if (waived.has(k)) { out.skipped.push({ lead, reason: "waived" }); continue; }
     if (seen.has(k)) { out.skipped.push({ lead, reason: "duplicate" }); continue; }
     seen.add(k);
     out.billable.push({ ...lead, key: k });
