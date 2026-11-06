@@ -554,6 +554,13 @@ function UnattributedPanel({
                   <td>
                     <div className="cname">{c.name ?? (c.customerId ? "Unnamed customer" : "No customer on the charge")}</div>
                     <div className="csince">{c.email ?? "no email"}</div>
+                    {c.customerId ? <div className="csince pf-cus-id" data-pf-customer-id>{c.customerId}</div> : null}
+                    {c.likely ? (
+                      <a className="pf-likely" data-pf-likely={c.likely.by} href={`/roster?client=${encodeURIComponent(c.likely.clientId)}&tab=billing`}
+                        title={c.likely.by === "email" ? `This payer's email is on ${c.likely.name}: confirm it on its Billing tab` : `${c.likely.name} has an address on this payer's company email domain`}>
+                        {c.likely.by === "email" ? `Found by email: ${c.likely.name}, confirm →` : `Likely: ${c.likely.name} →`}
+                      </a>
+                    ) : null}
                   </td>
                   <td className="tnum" style={{ textAlign: "right" }}>{usd2(c.amount)}</td>
                   <td className="tnum" style={{ textAlign: "right" }}>{c.charges}</td>
@@ -571,7 +578,9 @@ function UnattributedPanel({
       </div>
       <p className="pf-panel-note">
         A customer is tied to a client by the Stripe ids on the client&rsquo;s record, by a subscription it owns, or by its name matching
-        the client&rsquo;s. To tie one of these to a client, open the client in Clients → Billing and link the Stripe customer.
+        the client&rsquo;s. &ldquo;Found by email&rdquo;: the payer&rsquo;s email is on that client, and one click on its Billing tab ties
+        it. &ldquo;Likely&rdquo;: the one client with an address on the payer&rsquo;s company email domain, to check. Otherwise copy the
+        customer ID, open the client in Clients → Billing and link it there.
       </p>
     </Drawer>
   );

@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.03** | [Stripe: a new client's customer found, and new payments in the bell, 6 November](#003-stripe-a-new-clients-customer-found-and-new-payments-in-the-bell-6-november) — payments never make clients; after onboarding the OS finds the customer by email and asks to confirm it in one click; the bell says what it found |
 | **0.02** | [Don't bill a lead, and holding replies over the cap, 6 November](#002-dont-bill-a-lead-and-holding-replies-over-the-cap-6-november) — keep one lead off a pay-per-lead bill; over-cap replies now wait in Keep Warm |
 | **0.01a** | [Inboxes onto campaigns, 6 November](#001a-inboxes-onto-campaigns-6-november) — add selected inboxes to the campaigns you tick, beside Remove from campaigns |
 | **0.01** | [Inboxes off campaigns, and Active inboxes, 5 November](#001-inboxes-off-campaigns-and-active-inboxes-5-november) — remove selected inboxes from every open campaign at once; a second capacity figure on Campaigns |
@@ -210,6 +211,59 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.03 Stripe: a new client's customer found, and new payments in the bell, 6 November
+
+Eddy: how can we easily identify customers' IDs, new customers and subscriptions, and auto-assign a payment to a client?
+The user: **a payment never creates a client** (clients are only made with Onboard client); after onboarding the OS finds
+the client's Stripe customer "using email or anything"; check Stripe **every 5 minutes**; and, after three independent
+reviews kept finding money paths an automatic match leaked into, **what is found by email counts only after one click
+to confirm it**. Stripe's payment links are unchanged (not approved).
+
+**Who owns what is exactly as before** (billing-model.ts: links, the record, owned subscriptions, the automatic name
+match). Measured on the real data on 6 Nov: every one of 59 clients' billing, the subscriptions list, months paid, the
+totals and the not-tied list are identical to the code on main. So a pause, churn, delete, Cancel, Go live, a portal
+block and the client portal's Billing link act on nothing that wasn't already the client's.
+
+**Found by email** (`emailSuggestions`): a customer nobody has whose email is on exactly one client, from its record (three
+contacts, extra contacts, point of contact) or its portals' sign-in lists (`billing-emails.ts`; a portal is the client's
+by `ownerOf`, and an address on a portal that can't be placed matches no one). Never an address on two clients, never a
+non-client (BrokerStaffer, Demo Portal), never our own domains (`OWN_EMAIL_DOMAINS`), never a client someone said Not
+theirs for. None at all while the sign-in lists (every page) or the links can't be read. On the client's Billing tab:
+"Found in Stripe by email · not counted yet" with the customer's name, email, ID (one press copies it), what it paid and
+its subscriptions, and, for admins, **Yes, it's theirs** (a link: from then it is the client's like any link) and **Not
+theirs** (an exclusion: never suggested again). "Yes, it's theirs" is refused (409) if the customer changed since the
+page was opened (linked elsewhere or ruled out). **Not this client** on a linked customer now leaves an exclusion too
+(before it only unlinked, and a name match or this list could bring it straight back); on the record's own customer it
+is refused, with a word to change the record's Stripe fields instead. Others see
+"An admin can confirm it." The totals at the top of the tab are read again after any of these. On 6 Nov it finds three:
+Hetherington (Lorene, $500), Premier Home Team ($0 subscription) and Wagner ($1). Go live finds Lorene's card once she is
+confirmed (or pasted, as today).
+
+**The company email domain is only a hint** (compass.com, kw.com are shared by agents who aren't the client): in
+Performance → not tied to a client, "Found by email: X, confirm →" or "Likely: X →", and in the bell. On 6 Nov "Likely"
+names Cain Realty Group for Ricky Cain ($401) and FAST Real Estate for Moli Jordan ($1).
+
+**The bell** (`stripe-payment-alerts.ts` rules, `stripe-payment-watch.ts` every 5 minutes on Railway and a minute after an
+onboarding with Stripe and the sign-in lists read again; a payment for a customer the copy of Stripe hasn't seen reads it
+again, once per id; `OS_PAYMENT_WATCH_ENABLED=0` switches it off). Read-only on Stripe, writes only os_notifications,
+each said once (ref), nothing said while the links or sign-in lists can't be read:
+
+- `stripe_payment_unmatched`: a Checkout paid in the last two days no client has and no email finds. Who, what, answers,
+  the ids, and how to tie it: paste the sub_ into Onboard client's Stripe subscription box, or link it on the client's
+  Billing tab.
+- `stripe_found`: found by email for a client: confirm it. Each once, the first pass after deploy says the three above.
+- `stripe_counted`: a customer counted by an automatic name match, while the customer or the client is new (30 days).
+- `stripe_new_subscription`: a subscription started in the last two days and counted for a client, unless an alert
+  already in the bell named it.
+- `stripe_no_customer`: a client onboarded in the last week (after 15 minutes, and only on a Stripe read made after
+  that) that nothing counts or finds, while payments no client has are waiting: up to three, the likely one first.
+
+Eddy and admins see them; Amy sees them by name (`billing-access.ts`). An alert about a client has **Open Billing →**
+(`/roster?client=…&tab=billing`, the tab parameter is read once and removed). The Billing tab lists each counted customer
+with its email, its ID and how it counts in words.
 
 ---
 

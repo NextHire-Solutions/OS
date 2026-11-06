@@ -36,6 +36,7 @@ function seed() {
     { id: "n3", kind: "lead_cap_problem", severity: "critical", title: "A campaign didn't pause", body: "x", os_client_id: null, read_by: [], created_at: "2026-11-05T12:00:00.000Z", ref: "c" },
     { id: "n4", kind: "portal_block", severity: "warning", title: "Portal blocked", body: "y", os_client_id: null, read_by: [], created_at: "2026-11-05T13:00:00.000Z", ref: "d" },
     { id: "n5", kind: "lead_cap_restarted", severity: "info", title: "Campaigns restarted", body: "z", os_client_id: null, read_by: [], created_at: "2026-11-05T14:00:00.000Z", ref: "e" },
+    { id: "n6", kind: "stripe_payment_unmatched", severity: "warning", title: "New payment, no client yet: Jane Doe", body: "$750.00 every 14 days", os_client_id: null, read_by: [], created_at: "2026-11-05T15:00:00.000Z", ref: "f" },
   ]);
 }
 const cookie = async (email: string) => `bs_sso=${await mintSso(process.env.AUTH_SECRET!, { email, grants: ["clients", "inbox"], ver: 0 })}`;
@@ -55,19 +56,19 @@ test("nobody signed in: 401, and someone else on the team: 403, so no bell is dr
 test("an admin sees everything, as ever", async () => {
   seed();
   const b = await (await get(ADMIN)).json();
-  assert.deepEqual(b.items.map((i: { id: string }) => i.id), ["n5", "n4", "n3", "n2", "n1"]);
+  assert.deepEqual(b.items.map((i: { id: string }) => i.id), ["n6", "n5", "n4", "n3", "n2", "n1"]);
   assert.equal(b.capsOnly, false);
-  assert.equal(b.unread, 5);
+  assert.equal(b.unread, 6);
 });
 
-test("Amy sees the lead cap's alerts and nothing else in the bell", async () => {
+test("Amy sees the lead cap's alerts and the new payment alerts, and nothing else in the bell", async () => {
   seed();
   const r = await get(AMY);
   assert.equal(r.status, 200);
   const b = await r.json();
-  assert.deepEqual(b.items.map((i: { id: string }) => i.id), ["n5", "n3", "n2"]);
+  assert.deepEqual(b.items.map((i: { id: string }) => i.id), ["n6", "n5", "n3", "n2"]);
   assert.equal(b.capsOnly, true);
-  assert.equal(b.unread, 3);
+  assert.equal(b.unread, 4);
   const raw = JSON.stringify(b);
   assert.doesNotMatch(raw, /Payment failed|Secret client|Portal blocked/);
 });
@@ -89,10 +90,10 @@ test("Amy marking all read touches only what she can see, and only for her", asy
   seed();
   assert.equal((await post(AMY)).status, 200);
   const byId = new Map(db.rows("os_notifications").map((n) => [n.id, n.read_by]));
-  for (const id of ["n2", "n3", "n5"]) assert.deepEqual(byId.get(id), [AMY], id);
+  for (const id of ["n2", "n3", "n5", "n6"]) assert.deepEqual(byId.get(id), [AMY], id);
   for (const id of ["n1", "n4"]) assert.deepEqual(byId.get(id), [], id);
   assert.equal((await (await get(AMY)).json()).unread, 0);
-  assert.equal((await (await get(ADMIN)).json()).unread, 5, "an admin's unread is untouched");
+  assert.equal((await (await get(ADMIN)).json()).unread, 6, "an admin's unread is untouched");
 });
 
 test("Amy naming an alert she can't see: nothing happens to it", async () => {
@@ -117,5 +118,5 @@ test("an admin who is also on the list sees everything", async () => {
   const b = await (await get(AMY)).json();
   process.env.ADMIN_EMAILS = ADMIN;
   assert.equal(b.capsOnly, false);
-  assert.equal(b.items.length, 5);
+  assert.equal(b.items.length, 6);
 });

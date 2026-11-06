@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { runOnboarding } from "@/lib/clients/onboard-run";
+import { paymentWatchAllowed, runPaymentWatch } from "@/lib/clients/stripe-payment-watch";
 import { LEGS, type Leg, type OnboardInput } from "@/lib/clients/onboard-plan";
 
 /*
@@ -46,6 +47,16 @@ export async function POST(request: Request) {
 
   try {
     const result = await runOnboarding(osClientId, input, { stopBefore: stopBefore as Leg | undefined });
+    /*
+     * Look for the new client in Stripe a minute from now rather than at the next 5-minute pass (6 Nov), with Stripe read
+     * again: the bell says what was found. A minute, because the dialog saves the sign-in list and the Stripe subscription
+     * after this answers, and both are what it is found by.
+     */
+    if (result.ok && paymentWatchAllowed()) {
+      setTimeout(() => {
+        runPaymentWatch({ fresh: true }).catch((e) => console.error("[onboard] payment watch:", e instanceof Error ? e.message : e));
+      }, 60_000).unref?.();
+    }
     return NextResponse.json(result, { status: result.ok ? 200 : 502 });
   } catch (error) {
     console.error("[api/workspace/clients/onboard/execute]", error);

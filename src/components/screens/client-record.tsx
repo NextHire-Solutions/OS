@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Field, StatusPill, type FieldEditor } from "@/components/ds";
@@ -26,7 +26,7 @@ import { ClientBillingTab } from "./client-billing";
 import { ClientCampaignLists } from "./client-campaign-lists";
 import { UsageBillingPanel } from "./client-usage-billing";
 import type { ChangeKind, ClientPatch } from "./clients";
-import type { ClientBilling } from "@/lib/clients/billing-model";
+import type { ClaimSource, ClientBilling, FoundByEmail } from "@/lib/clients/billing-model";
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
 import { alignmentNote } from "@/lib/clients/billing-align.ts";
 import type { ClientView } from "@/lib/clients/saved-views-match";
@@ -179,10 +179,24 @@ export function ClientRecord({
   /** "12 / 50" — where this client sits in the list it was opened from. */
   position?: string;
 }) {
-  // Back from Stripe's card page (pay per lead, ?usage_setup=…): straight to the Billing tab, where the card is read.
-  const [tab, setTab] = useState<Tab>(() =>
-    billingTab && typeof window !== "undefined" && new URLSearchParams(window.location.search).has("usage_setup") ? "billing" : "record");
+  /*
+   * Back from Stripe's card page (pay per lead, ?usage_setup=…), or sent from the bell (?tab=billing, 6 Nov): straight to
+   * the Billing tab, where the card is read.
+   */
+  const [tab, setTab] = useState<Tab>(() => {
+    if (!billingTab || typeof window === "undefined") return "record";
+    const q = new URLSearchParams(window.location.search);
+    return q.has("usage_setup") || q.get("tab") === "billing" ? "billing" : "record";
+  });
+  // ?tab=billing is read once and taken off the address, or every record opened after it would open on Billing.
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    if (!u.searchParams.has("tab")) return;
+    u.searchParams.delete("tab");
+    window.history.replaceState(window.history.state, "", u);
+  }, []);
   const [team, setTeam] = useState<{ salespeople: string[]; accountManagers: string[] }>({ salespeople: [], accountManagers: [] });
+  const [billingRev, setBillingRev] = useState(0);
   // Account Manager = a Team access member (30 Sep): the dropdown offers exactly that list.
   const [members, setMembers] = useState<string[]>([]);
   // Salesperson = someone on Team access → Salespeople; null until that list is known to exist.
@@ -478,10 +492,11 @@ export function ClientRecord({
               ) : null}
               {tab === "billing" && billingTab ? (
                 <>
-                  <ClientBillingTab clientId={c.id} clientName={c.name} plan={c.plan ? planLabel(c.plan) : null} />
+                  {/* Read again, in place, when a customer is confirmed, linked or excluded below: its totals are by the same customers. */}
+                  <ClientBillingTab rev={billingRev} clientId={c.id} clientName={c.name} plan={c.plan ? planLabel(c.plan) : null} />
                   <section className="rx-sec cat-billing">
                     <h3><i aria-hidden="true" />Subscriptions and Stripe<span>pause, resume, link and the billing fields</span></h3>
-                    <BillingControl clientId={c.id} onChanged={() => onChanged("stripe")} />
+                    <BillingControl clientId={c.id} onChanged={() => { setBillingRev((n) => n + 1); onChanged("stripe"); }} />
                     {fieldsIn("billing").map((f) => row(f.key, f.label, f))}
                   </section>
                   {/* Pay per lead (26 Oct): Stripe TEST mode only — renders nothing for anyone the route refuses. */}
@@ -1018,6 +1033,8 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
     canManage?: boolean;
     /** Every subscription and card the client owns (billing-model.ts, 6 Oct). */
     account?: ClientBilling | null; linksReady?: boolean; accountError?: string | null;
+    /** Found in Stripe by email, not counted until confirmed (6 Nov). */
+    found?: FoundByEmail[];
     portalBlock?: { block: { mode: string; since: string; reason: string | null } | null; enabled: boolean; afterAttempts: number };
   } | null>(null);
   const [pending, setPending] = useState<"pause" | "resume" | null>(null);
@@ -1028,6 +1045,8 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
   const [copied, setCopied] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The last press's HTTP status: a refusal reloads what it shows; a signed-out one doesn't (that would hide the reason).
+  const lastStatus = useRef(0);
 
   const load = async () => {
     try {
@@ -1051,10 +1070,12 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
 
   async function post(body: Record<string, unknown>) {
     setSaving(true); setError(null);
+    lastStatus.current = 0;
     try {
       const res = await fetch("/api/workspace/clients/billing", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, ...body }),
       });
+      lastStatus.current = res.status;
       const out = await res.json().catch(() => null);
       if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
       return out;
@@ -1186,12 +1207,16 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
             </div>
           ) : null}
           {state.account ? (
-            <BillingAccount account={state.account} linksReady={state.linksReady === true} saving={saving} canManage={state.canManage === true}
+            <BillingAccount account={state.account} found={state.found ?? []} linksReady={state.linksReady === true} saving={saving} canManage={state.canManage === true}
               act={async (body) => {
                 const out = await post(body);
                 if (out) {
-                  if (out.account !== undefined) setState((s) => ({ ...s, account: out.account, linksReady: out.linksReady ?? s?.linksReady }));
+                  if (out.account !== undefined) setState((s) => ({ ...s, account: out.account, found: out.found ?? s?.found, linksReady: out.linksReady ?? s?.linksReady }));
                   else await load();
+                  onChanged?.();
+                } else if (lastStatus.current !== 401 && lastStatus.current !== 403) {
+                  // Refused (changed elsewhere, or can't be checked): show it as it is now, the figures above too; the reason stays on screen.
+                  await load();
                   onChanged?.();
                 }
                 return !!out;
@@ -1204,14 +1229,64 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
   );
 }
 
+/* How a customer or subscription came to count for the client, in words (6 Nov; billing-model.ts ClaimSource). */
+const CUSTOMER_HOW: Record<ClaimSource, string> = {
+  linked: "linked by hand",
+  record: "on the record",
+  subscription: "owns its subscription",
+  "name match": "found by name",
+  "created by the OS": "made by the OS",
+};
+const SUBSCRIPTION_HOW: Record<ClaimSource, string> = {
+  linked: "linked by hand",
+  record: "on the record",
+  subscription: "its customer is this client's",
+  "name match": "customer found by name",
+  "created by the OS": "made by the OS",
+};
+
+/*
+ * A Stripe id to paste elsewhere (another client's Billing tab, Stripe's search): one press copies it. Where the browser
+ * won't let a page copy, the press selects it instead, for ⌘C.
+ */
+function CopyId({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const code = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const select = () => {
+    if (!code.current) return;
+    const range = document.createRange();
+    range.selectNodeContents(code.current);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  };
+  return (
+    <button type="button" className={`rx-cu-id${copied ? " copied" : ""}`} aria-label={`Copy customer ID ${id}`} title="Copy"
+      onClick={() => {
+        if (!navigator.clipboard) { select(); return; }
+        navigator.clipboard.writeText(id).then(() => { window.getSelection()?.removeAllRanges(); setCopied(true); }, select);
+      }}>
+      <code ref={code}>{id}</code><span aria-live="polite">{copied ? "Copied" : ""}</span>
+    </button>
+  );
+}
+
 /*
  * Every subscription and card the client owns (client feedback, 6 Oct):
  * totals across them, the current one marked, failed payments, and which
- * Stripe customers count as this client's — with "Not this client" for an
- * automatic name match and a box to link another customer or subscription.
+ * Stripe customers count as this client's — with "Not this client" (an
+ * exclusion, so it is never matched or found for this client again) and a box
+ * to link another customer or subscription; and those found by email, to
+ * confirm (6 Nov).
  */
-function BillingAccount({ account: a, linksReady, saving, canManage, act }: {
+function BillingAccount({ account: a, found, linksReady, saving, canManage, act }: {
   account: ClientBilling;
+  /** Found in Stripe by email: shown to confirm, counted only once confirmed. */
+  found: FoundByEmail[];
   linksReady: boolean;
   saving: boolean;
   /** Admin: may link and unlink Stripe customers. Account managers pause and resume only. */
@@ -1254,7 +1329,7 @@ function BillingAccount({ account: a, linksReady, saving, canManage, act }: {
                 <td>
                   {money(s.amount)} {s.every}
                   {s.current && !ended ? <span className="rx-bill-tag">current</span> : null}
-                  <small title={s.id}>since {fmtDay(s.created)} · {s.source}</small>
+                  <small title={s.id}>since {fmtDay(s.created)} · {SUBSCRIPTION_HOW[s.source]}</small>
                 </td>
                 <td>{ended ? `Cancelled ${s.canceled ? fmtDay(s.canceled) : ""}` : s.collectionPaused ? "Paused" : s.status === "past_due" ? "Past due" : "Collecting"}</td>
                 <td>{s.nextCharge ? fmtDay(s.nextCharge) : "—"}</td>
@@ -1289,14 +1364,56 @@ function BillingAccount({ account: a, linksReady, saving, canManage, act }: {
         </div>
       ) : null}
 
+      {found.length ? (
+        <div className="rx-bill-cust rx-found" data-found>
+          <span className="rx-bill-h">Found in Stripe by email · not counted yet</span>
+          <small className="rx-hint" style={{ marginTop: 0 }}>
+            Their email is on this client&rsquo;s record or portal sign-in list. Nothing from this customer counts here, pauses or bills until someone confirms it.
+          </small>
+          {found.map((f) => (
+            <span key={f.id} className="rx-bill-row rx-cu" data-found-customer={f.id}>
+              <span className="rx-cu-who">
+                <span className="rx-cu-name">{f.name ?? "Unnamed customer"}</span>
+                <span className="rx-cu-meta">
+                  {f.email ? <span className="rx-cu-email">{f.email}</span> : null}
+                  <CopyId id={f.id} />
+                  <span className="rx-cu-how auto">found by email</span>
+                </span>
+                <span className="rx-cu-meta">
+                  {money(f.paid)} paid · {f.payments} payment{f.payments === 1 ? "" : "s"}
+                  {f.subscriptions.length ? ` · ${f.subscriptions.map((x) => `${money(x.amount)} ${x.every}, ${x.status}`).join("; ")}` : " · no subscription"}
+                  {f.since ? ` · in Stripe since ${fmtDay(f.since)}` : ""}
+                </span>
+              </span>
+              {canManage && linksReady ? (
+                <span className="rx-cu-acts">
+                  <button type="button" className="rx-btn solid" disabled={saving} onClick={() => void act({ action: "link", stripeId: f.id, confirmFound: true })}>Yes, it&rsquo;s theirs</button>
+                  <button type="button" className="rx-btn" disabled={saving} onClick={() => void act({ action: "exclude", customerId: f.id })}>Not theirs</button>
+                </span>
+              ) : (
+                <small className="rx-hint" style={{ marginTop: 0 }}>An admin can confirm it.</small>
+              )}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       <div className="rx-bill-cust">
         <span className="rx-bill-h">Stripe customers counted for this client</span>
+        {a.customers.length ? null : <small className="rx-hint" style={{ marginTop: 0 }}>None yet. A payment counts here once its customer is linked or confirmed, or its name matches this client.</small>}
         {a.customers.map((cu) => (
-          <span key={cu.id} className="rx-bill-row">
-            <span>{cu.name ?? cu.id}{cu.shared ? <em> · shared with another client</em> : null} <small>{cu.source}</small></span>
+          <span key={cu.id} className="rx-bill-row rx-cu" data-customer={cu.id}>
+            <span className="rx-cu-who">
+              <span className="rx-cu-name">{cu.name ?? "Unnamed customer"}{cu.shared ? <em> · shared with another client</em> : null}</span>
+              <span className="rx-cu-meta">
+                {cu.email ? <span className="rx-cu-email">{cu.email}</span> : null}
+                <CopyId id={cu.id} />
+                <span className={`rx-cu-how${cu.source === "name match" ? " auto" : ""}`} data-how={cu.source}>{CUSTOMER_HOW[cu.source]}</span>
+              </span>
+            </span>
             {cu.source !== "record" && linksReady && canManage ? (
               <button type="button" className="rx-btn" disabled={saving}
-                onClick={() => void act({ action: cu.source === "linked" ? "unlink" : "exclude", customerId: cu.id })}>
+                onClick={() => void act({ action: "exclude", customerId: cu.id })}>
                 Not this client
               </button>
             ) : null}

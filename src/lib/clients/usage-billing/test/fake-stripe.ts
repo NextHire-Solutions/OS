@@ -67,7 +67,11 @@ export class FakeStripe {
     return `${prefix}_${this.live ? "Live" : "test"}${String(this.n).padStart(6, "0")}`;
   }
 
+  /** Subscriptions the whole-account read lists (billing-account.ts), as Stripe returns them; none unless a test adds them. */
+  readonly listedSubscriptions: Json[] = [];
+
   reset() {
+    this.listedSubscriptions.length = 0;
     this.calls.length = 0;
     this.liveKeySeen.length = 0;
     this.customers.clear();
@@ -178,8 +182,9 @@ export class FakeStripe {
     const notFound: [number, unknown] = [404, { error: { type: "invalid_request_error", message: `No such resource: ${path}` } }];
     let m: RegExpMatchArray | null;
 
-    // The whole-account reads the Billing tab makes (billing-account.ts): nothing of these in the fake.
-    if (method === "GET" && ["/subscriptions", "/charges", "/invoice_payments", "/refunds", "/products", "/credit_notes"].includes(path)) {
+    // The whole-account reads the Billing tab makes (billing-account.ts): nothing of these in the fake, but the subscriptions a test lists.
+    if (method === "GET" && path === "/subscriptions") return [200, { object: "list", data: [...this.listedSubscriptions], has_more: false }];
+    if (method === "GET" && ["/charges", "/invoice_payments", "/refunds", "/products", "/credit_notes"].includes(path)) {
       return [200, { object: "list", data: [], has_more: false }];
     }
     if (method === "GET" && path === "/customers") {

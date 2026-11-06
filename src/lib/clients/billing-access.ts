@@ -39,7 +39,8 @@ export function canCancelSubscriptions(email: string | null | undefined): boolea
 
 /*
  * Who gets the lead cap's alerts in the bell without being an admin (5 Nov). The user: "amy should get alerts too".
- * Those alerts only: the rest of the bell stays admins only. By name; change only on the user's word.
+ * Those alerts and the new payment alerts (6 Nov, stripe-payment-alerts.ts: Eddy asked how Amy can spot new customers)
+ * only: the rest of the bell stays admins only. By name; change only on the user's word.
  */
 export const LEAD_CAP_ALERT_PEOPLE: readonly string[] = ["amy@brokerstaffer.com"];
 

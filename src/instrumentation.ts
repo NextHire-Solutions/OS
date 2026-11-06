@@ -161,6 +161,21 @@ export async function register() {
   setInterval(watchSafely, 15 * 60_000).unref?.();
 
   /*
+   * New payments → the bell (6 Nov): a payment no client has, a customer found by email for a client (to confirm), one
+   * counted by an automatic name match, a new subscription, a new client nothing in Stripe matches. Read-only on Stripe; writes only os_notifications. Every 5 minutes (the user's
+   * choice), Railway only; OS_PAYMENT_WATCH_ENABLED=0 switches it off. See lib/clients/stripe-payment-watch.ts.
+   */
+  const watchPayments = async () => {
+    const { paymentWatchAllowed, runPaymentWatch } = await import("./lib/clients/stripe-payment-watch");
+    if (!paymentWatchAllowed()) return;
+    const r = await runPaymentWatch();
+    if (r.notified) console.log(`[payment-watch] ${r.notified} notified · ${r.checkouts} recent payments`);
+  };
+  const paymentsSafely = () => { watchPayments().catch((e) => console.error("[payment-watch] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(paymentsSafely, 75_000).unref?.();
+  setInterval(paymentsSafely, 5 * 60_000).unref?.();
+
+  /*
    * "A lead is Interested" → Slack (14 Oct, #client-interested-updates). Every
    * minute, conversations newly labelled Interested — by the AI in the
    * standalone inbox or by a person in either app — are posted once each; see

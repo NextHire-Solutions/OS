@@ -15,6 +15,8 @@
  *   Customers: claimed by an explicit link, by the record, by owning one of
  *   its subscriptions, or by an automatic NAME match ("MattC Group Old") that
  *   nobody excluded. A customer claimed by one client is wholly that client's.
+ *   A customer whose EMAIL is on one client is only SUGGESTED (emailSuggestions,
+ *   6 Nov): it counts once a person confirms it, which makes it a link.
  *   A customer claimed by several (a shared card) keeps each subscription with
  *   its owner; anything not tied to an owned subscription — old cancelled
  *   subscriptions, one-off payments, the $1 sign-up charge — goes to the
@@ -137,7 +139,7 @@ export interface AccountSnapshot {
   refunds?: StripeRefund[];
   products?: { id: string; name: string }[];
   creditNotes?: StripeCreditNote[];
-  /** When Stripe was read (ms). */
+  /** When the read of Stripe began (ms): anything made after it may be missing. */
   readAt?: number;
 }
 export interface BillingClientRef {
@@ -148,6 +150,13 @@ export interface BillingClientRef {
   stripeSubscriptionId: string | null;
   /** The sign-up date entered on the record, if any. */
   signupDate?: string | null;
+  /** The record's contact and point-of-contact emails and its portals' sign-in emails, for emailSuggestions (6 Nov). */
+  emails?: string[];
+  /** A known non-client (Demo Portal, BrokerStaffer): never suggested a customer by email. */
+  internal?: boolean;
+  /** When the record was made (ms), and its status: for the payment alerts (stripe-payment-alerts.ts). */
+  createdAt?: number | null;
+  status?: string | null;
 }
 export interface StripeLinkRow {
   clientId: string;
@@ -182,7 +191,7 @@ export interface ClientBilling {
   transactions: number;
   signupDate: string | null;
   signupSource: "first $1 charge" | "entered" | "first charge" | null;
-  customers: { id: string; name: string | null; source: ClaimSource; shared: boolean }[];
+  customers: { id: string; name: string | null; email: string | null; source: ClaimSource; shared: boolean }[];
   /** Open invoices on the client's subscriptions/customers that Stripe failed to collect. */
   failedInvoices: StripeInvoice[];
 }
@@ -197,6 +206,51 @@ export function customerKey(name: string | null | undefined): string {
     .toLowerCase()
     .replace(/\((?:\d+(?:st|nd|rd|th)\s+)?card\)|\bold\b|\bllc\b|\binc\b/g, " ")
     .replace(/[^a-z0-9]+/g, "");
+}
+
+/** Email key for matching customers to clients: trimmed and lower-case; "" for anything that is not an address. */
+export function emailKey(email: string | null | undefined): string {
+  const e = (email ?? "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : "";
+}
+
+/*
+ * Our own addresses never tie a customer to a client (6 Nov): the team's are on test customers ("living new york" is
+ * eddy@) and can sit on a client's sign-in list or record as a stand-in.
+ */
+export const OWN_EMAIL_DOMAINS: readonly string[] = ["brokerstaffer.com", "outreachify.io", "opslabs.ai", "ascense.io"];
+
+/** The part after the @, or "". */
+export function emailDomain(email: string | null | undefined): string {
+  const e = emailKey(email);
+  return e ? e.slice(e.lastIndexOf("@") + 1) : "";
+}
+
+const isOwnDomain = (d: string) => OWN_EMAIL_DOMAINS.some((o) => d === o || d.endsWith(`.${o}`));
+
+/** An address that may tie a customer to a client: a real address, and not ours. "" otherwise. */
+export function matchEmailKey(email: string | null | undefined): string {
+  const e = emailKey(email);
+  return e && !isOwnDomain(emailDomain(e)) ? e : "";
+}
+
+/** Mail providers anyone can sign up to: a shared domain there says nothing about who someone works for. */
+export const FREE_EMAIL_DOMAINS: ReadonlySet<string> = new Set([
+  "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "rocketmail.com", "hotmail.com", "outlook.com", "live.com", "msn.com",
+  "icloud.com", "me.com", "mac.com", "aol.com", "protonmail.com", "proton.me", "comcast.net", "att.net", "sbcglobal.net",
+  "verizon.net", "cox.net", "charter.net", "bellsouth.net", "earthlink.net", "mail.com", "gmx.com", "zoho.com", "yandex.com",
+]);
+
+/*
+ * A HINT, never a match (6 Nov): the one client with an address on the same company domain as this email. Measured on the
+ * 50 customers tied by hand it agreed every time it answered, but a brokerage's domain (compass.com, kw.com) is shared by
+ * agents who aren't the client, so it only ever names a client for a person to check.
+ */
+export function domainHint(email: string | null | undefined, clients: ReadonlyArray<Pick<BillingClientRef, "id" | "emails" | "internal">>): string | null {
+  const d = emailDomain(matchEmailKey(email));
+  if (!d || FREE_EMAIL_DOMAINS.has(d)) return null;
+  const hits = clients.filter((c) => (c.emails ?? []).some((e) => emailDomain(matchEmailKey(e)) === d));
+  return hits.length === 1 && !hits[0].internal ? hits[0].id : null;
 }
 
 function every(it: StripeSubscription["items"][number]): string {
@@ -297,6 +351,82 @@ function resolveOwnership(
   return { subById, custById, subOwner, claims, primary, subClient, chargeClient };
 }
 
+/** "client|customer" for each Not this client / Not theirs on a whole customer: a hint never names that client for it. */
+export function excludedPairs(links: StripeLinkRow[]): Set<string> {
+  return new Set(links.filter((l) => l.excluded && !l.subscriptionId).map((l) => `${l.clientId}|${l.customerId}`));
+}
+
+/** A Stripe customer whose email is on one client: shown for a person to confirm, counted for no one until they do. */
+export interface EmailSuggestion {
+  clientId: string;
+  customerId: string;
+}
+
+/*
+ * FOUND BY EMAIL, NOT COUNTED (6 Nov). The user: after onboarding the OS finds the client's Stripe customer "using email
+ * or anything" — and, after three reviews kept finding money paths an automatic match leaked into (a pause or churn of
+ * the client, Cancel, Go live's card, a portal block, the portal's billing page), one click to confirm it. So this only
+ * suggests: a customer nobody has (no link, record, subscription or name match) whose email is on exactly one client —
+ * a contact or the point of contact on its record, or someone on its portals' sign-in lists (billing-emails.ts). Never an
+ * address on two clients, never a non-client, never our own addresses, never a client someone said Not this client for.
+ * "Yes, it's theirs" on the Billing tab links it, and from then it is that client's like any link. Measured on the 50
+ * customers tied by hand: each of the three sources picked the same client every time it picked one, a different one never.
+ */
+export function emailSuggestions(clients: BillingClientRef[], snap: AccountSnapshot, links: StripeLinkRow[]): EmailSuggestion[] {
+  const { claims, subOwner } = resolveOwnership(clients, snap, links);
+  const excluded = new Set(links.filter((l) => l.excluded && !l.subscriptionId).map((l) => `${l.clientId}|${l.customerId}`));
+  // A customer one of whose subscriptions a client owns (by a link, the record, or as the OS's own) is that client's business.
+  const ownedSubs = new Set(snap.subscriptions.filter((s) => subOwner.has(s.id)).map((s) => s.customer));
+  const owners = new Map<string, string[]>();
+  for (const c of clients) {
+    for (const e of new Set((c.emails ?? []).map(matchEmailKey).filter(Boolean))) owners.set(e, [...(owners.get(e) ?? []), c.id]);
+  }
+  const internal = new Set(clients.filter((c) => c.internal).map((c) => c.id));
+  const out: EmailSuggestion[] = [];
+  for (const cust of snap.customers) {
+    if (claims.has(cust.id) || ownedSubs.has(cust.id)) continue;
+    const key = matchEmailKey(cust.email);
+    const on = key ? owners.get(key) ?? [] : [];
+    if (on.length !== 1 || internal.has(on[0]) || excluded.has(`${on[0]}|${cust.id}`)) continue;
+    out.push({ clientId: on[0], customerId: cust.id });
+  }
+  return out;
+}
+
+/** A customer found by email, as the Billing tab shows it for a person to confirm (6 Nov). */
+export interface FoundByEmail {
+  id: string;
+  name: string | null;
+  email: string | null;
+  /** In Stripe since (Eastern day). */
+  since: string;
+  /** Collected from them, less refunds. */
+  paid: number;
+  payments: number;
+  subscriptions: Array<{ id: string; amount: number; every: string; status: "collecting" | "paused" | "past due" | "cancelled" | string }>;
+}
+
+export function foundByEmail(snap: AccountSnapshot, suggestions: EmailSuggestion[], clientId: string): FoundByEmail[] {
+  return suggestions.filter((x) => x.clientId === clientId).map((x) => {
+    const cu = snap.customers.find((c) => c.id === x.customerId);
+    const charges = snap.charges.filter((ch) => ch.customer === x.customerId && ch.status === "succeeded");
+    return {
+      id: x.customerId,
+      name: cu?.name ?? null,
+      email: cu?.email ?? null,
+      since: cu && Number.isFinite(cu.created) && cu.created > 0 ? etDay(cu.created) : "",
+      paid: cents(charges.reduce((t, ch) => t + ch.amount - ch.refunded, 0)),
+      payments: charges.length,
+      subscriptions: snap.subscriptions.filter((s) => s.customer === x.customerId).map((s) => ({
+        id: s.id,
+        amount: cents(s.items.reduce((t, it) => t + it.amount * it.quantity, 0)),
+        every: s.items[0] ? every(s.items[0]) : "",
+        status: ended(s) ? "cancelled" : s.pause ? "paused" : s.status === "past_due" ? "past due" : s.status === "active" ? "collecting" : s.status,
+      })),
+    };
+  });
+}
+
 /** Every client's billing, from one account snapshot. */
 export function buildBilling(
   clients: BillingClientRef[],
@@ -336,7 +466,7 @@ export function buildBilling(
       transactions: charges.length,
       signupDate: firstDollar ? etDay(firstDollar.created) : entered ?? (firstAny ? etDay(firstAny.created) : null),
       signupSource: firstDollar ? "first $1 charge" : entered ? "entered" : firstAny ? "first charge" : null,
-      customers: myCustomers.map(([id, m]) => ({ id, name: custById.get(id)?.name ?? null, source: m.get(c.id)!, shared: m.size > 1 })),
+      customers: myCustomers.map(([id, m]) => ({ id, name: custById.get(id)?.name ?? null, email: custById.get(id)?.email ?? null, source: m.get(c.id)!, shared: m.size > 1 })),
       failedInvoices: snap.invoices.filter((inv) =>
         inv.status === "open" && inv.attemptCount > 0 &&
         ((inv.subscription && subById.get(inv.subscription) && subClient(subById.get(inv.subscription)!) === c.id) ||
@@ -791,6 +921,12 @@ export interface UnattributedCustomer {
   charges: number;
   first: string;
   last: string;
+  /*
+   * The client this money is probably the client's (6 Nov), for a person to check, never counted: `email`, its email is on
+   * that client (emailSuggestions; "Yes, it's theirs" on its Billing tab counts it), or `domain`, the one client with an
+   * address on the payer's company email domain.
+   */
+  likely?: { clientId: string; name: string; by: "email" | "domain" };
 }
 
 /*
@@ -817,8 +953,16 @@ export function unattributedByCustomer(clients: BillingClientRef[], snap: Accoun
     if (ch.created > e.lastT) { e.lastT = ch.created; e.last = etDay(ch.created); }
     by.set(key, e);
   }
+  const suggested = new Map(emailSuggestions(clients, snap, links).map((x) => [x.customerId, x.clientId]));
+  const excluded = new Set(links.filter((l) => l.excluded && !l.subscriptionId).map((l) => `${l.clientId}|${l.customerId}`));
   return [...by.values()]
-    .map(({ firstT: _f, lastT: _l, ...rest }) => ({ ...rest, amount: cents(rest.amount) }))
+    .map(({ firstT: _f, lastT: _l, ...rest }) => {
+      const byEmail = rest.customerId ? suggested.get(rest.customerId) : undefined;
+      const byDomain = byEmail ? null : domainHint(rest.email, clients);
+      const id = byEmail ?? (byDomain && !excluded.has(`${byDomain}|${rest.customerId}`) ? byDomain : null);
+      const name = id ? clients.find((c) => c.id === id)?.name : undefined;
+      return { ...rest, amount: cents(rest.amount), ...(id && name ? { likely: { clientId: id, name, by: byEmail ? ("email" as const) : ("domain" as const) } } : {}) };
+    })
     .sort((a, b) => b.amount - a.amount || (a.name ?? "").localeCompare(b.name ?? ""));
 }
 

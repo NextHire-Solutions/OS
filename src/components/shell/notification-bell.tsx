@@ -4,10 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 /*
  * The bell (client feedback, 6 Oct): failed payments and portal blocks.
- * Admins, plus the people named for the lead cap's alerts, who see only those.
- * For anyone else the API answers 403 and the bell is not drawn.
+ * Admins, plus the people named for the lead cap's and new payments' alerts,
+ * who see only those. For anyone else the API answers 403 and the bell is not
+ * drawn. An alert about a client links to it; a payment alert to its Billing tab.
  */
-type Item = { id: string; kind: string; severity: string; title: string; body: string | null; createdAt: string; unread: boolean };
+type Item = { id: string; kind: string; severity: string; title: string; body: string | null; clientId?: string | null; createdAt: string; unread: boolean };
+
+const openLink = (i: Item) => {
+  if (!i.clientId) return null;
+  const billing = i.kind.startsWith("stripe_");
+  return { href: `/roster?client=${encodeURIComponent(i.clientId)}${billing ? "&tab=billing" : ""}`, label: billing ? "Open Billing" : "Open client" };
+};
 
 export function NotificationBell() {
   const [items, setItems] = useState<Item[] | null>(null);
@@ -59,18 +66,24 @@ export function NotificationBell() {
           </div>
           {items.length ? (
             <ul>
-              {items.map((i) => (
-                <li key={i.id} className={`nb-item sev-${i.severity}${i.unread ? " unread" : ""}`}>
-                  <span className="nb-dot" aria-hidden="true" />
-                  <span>
-                    <b>{i.title}</b>
-                    {i.body ? <span className="nb-body">{i.body}</span> : null}
-                    <small>{when(i.createdAt)}</small>
-                  </span>
-                </li>
-              ))}
+              {items.map((i) => {
+                const link = openLink(i);
+                return (
+                  <li key={i.id} className={`nb-item sev-${i.severity}${i.unread ? " unread" : ""}`} data-kind={i.kind}>
+                    <span className="nb-dot" aria-hidden="true" />
+                    <span className="nb-text">
+                      <b>{i.title}</b>
+                      {i.body ? <span className="nb-body">{i.body}</span> : null}
+                      <span className="nb-foot">
+                        <small>{when(i.createdAt)}</small>
+                        {link ? <a className="nb-open" href={link.href}>{link.label} →</a> : null}
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
-          ) : <p className="nb-empty">{capsOnly ? "Nothing yet. Lead cap alerts show here." : "Nothing yet. Failed payments and portal blocks show here."}</p>}
+          ) : <p className="nb-empty">{capsOnly ? "Nothing yet. Lead cap and new payment alerts show here." : "Nothing yet. Failed payments, new payments and portal blocks show here."}</p>}
         </div>
       ) : null}
     </div>

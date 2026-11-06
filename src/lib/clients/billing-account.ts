@@ -2,12 +2,18 @@ import "server-only";
 
 import { stripeGet } from "@/lib/commissions/stripe-payments";
 import { osTable } from "@/lib/clients/os-db";
+import { isKnownNonClient } from "@/lib/clients/roster";
 import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
+import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
+import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 
+import { clientMatchEmails } from "./billing-emails";
 import {
   billingTotals,
   buildBilling,
   clientBillingDetail,
+  emailSuggestions,
+  excludedPairs,
   monthsPaidByClient,
   revenueByDay,
   subscriptionRows,
@@ -15,6 +21,7 @@ import {
   upcomingCharges,
   type AccountSnapshot,
   type BillingClientRef,
+  type EmailSuggestion,
   type ClientBilling,
   type ClientBillingDetail,
   type StripeLinkRow,
@@ -113,6 +120,8 @@ function cardOf(c: RawCharge): string | null {
 }
 
 async function loadSnapshot(): Promise<AccountSnapshot> {
+  // When the read began: anything made in Stripe after this may be missing from it (the payment watch relies on it).
+  const startedAt = Date.now();
   const [customers, subs, charges, invoices, payments, refunds, products, creditNotes] = await Promise.all([
     all<{ id: string; name: string | null; email: string | null; created: number }>("customers"),
     all<RawSub>("subscriptions?status=all"),
@@ -180,7 +189,7 @@ async function loadSnapshot(): Promise<AccountSnapshot> {
           })),
         }
       : {}),
-    readAt: Date.now(),
+    readAt: startedAt,
   };
 }
 
@@ -199,16 +208,81 @@ export async function listStripeLinks(): Promise<{ links: StripeLinkRow[]; ready
   };
 }
 
-async function clientRefs(): Promise<BillingClientRef[]> {
-  let res = await osTable("os_clients").select("id, name, aliases, stripe_customer_id, stripe_subscription_id, signup_date");
+const MATCH_COLUMNS = "mi_client_id, created_at, status, contact_email, contact2_email, contact3_email, more_contacts, poc_email";
+
+/*
+ * Every portal's sign-in list (os_portal_logins, not removed) and the portals' names, for the email match (6 Nov). Read
+ * a minute at a time: the lists change when someone is onboarded or added, and billing reads this on every Billing tab.
+ * Every page of both, or a failure: part of the lists could make an address look like one client's when it is two.
+ */
+const loadSignIns = ttlCache(async (): Promise<{ portals: Array<{ id: string; name: string }>; signIns: Array<{ portalId: string; email: string }> }> => {
+  const mi = getMasterInboxSupabase();
+  const [portals, signIns] = await Promise.all([
+    fetchAllRows<Record<string, unknown>>(({ from, to }) => mi.from("clients").select("id, name").order("id", { ascending: true }).range(from, to)),
+    fetchAllRows<Record<string, unknown>>(({ from, to }) => mi.from("os_portal_logins").select("id, portal_id, email").is("removed_at", null).order("id", { ascending: true }).range(from, to)),
+  ]);
+  return {
+    portals: portals.map((r) => ({ id: String(r.id), name: String(r.name ?? "") })),
+    signIns: signIns.map((r) => ({ portalId: String(r.portal_id), email: String(r.email ?? "") })),
+  };
+}, { ttlMs: 60_000, key: () => "sign-ins", shared: "billing-sign-ins" });
+
+/** A new client's sign-ins are read now rather than within the minute (the payment watch after an onboarding). */
+export function forgetSignIns(): void {
+  loadSignIns.invalidate();
+}
+
+/** The clients as billing reads them, and whether every address the email match needs was read. */
+async function clientRefs(): Promise<{ refs: BillingClientRef[]; emailsComplete: boolean }> {
+  // The addresses feed the email match (6 Nov); a database without them simply matches by name, as before.
+  let res = await osTable("os_clients").select(`id, name, aliases, stripe_customer_id, stripe_subscription_id, signup_date, ${MATCH_COLUMNS}`);
+  const withColumns = !res.error;
+  if (res.error) res = await osTable("os_clients").select("id, name, aliases, stripe_customer_id, stripe_subscription_id, signup_date");
   if (res.error) res = await osTable("os_clients").select("id, name, aliases, stripe_customer_id, stripe_subscription_id");
   if (res.error) throw new Error(`os_clients: ${res.error.message}`);
-  return ((res.data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id), name: String(r.name ?? ""), aliases: Array.isArray(r.aliases) ? (r.aliases as string[]) : [],
-    stripeCustomerId: (r.stripe_customer_id as string | null) ?? null,
-    stripeSubscriptionId: (r.stripe_subscription_id as string | null) ?? null,
-    signupDate: (r.signup_date as string | null) ?? null,
-  }));
+  const rows = (res.data ?? []) as unknown as Array<Record<string, unknown>>;
+  const lists = withColumns
+    ? await loadSignIns().catch((e) => {
+        console.error("[billing] sign-in lists unreadable: no email matches until they are:", e instanceof Error ? e.message : e);
+        return null;
+      })
+    : null;
+  const emails = clientMatchEmails(
+    rows.map((r) => ({
+      id: String(r.id), name: String(r.name ?? ""), aliases: Array.isArray(r.aliases) ? (r.aliases as string[]) : [],
+      miClientId: typeof r.mi_client_id === "string" && r.mi_client_id ? r.mi_client_id : null,
+      contactEmail: r.contact_email, contact2Email: r.contact2_email, contact3Email: r.contact3_email, moreContacts: r.more_contacts, pocEmail: r.poc_email,
+    })),
+    lists?.portals ?? [],
+    lists?.signIns ?? [],
+  );
+  const emailsComplete = withColumns && lists !== null;
+  const refs = rows.map((r) => {
+    const created = Date.parse(String(r.created_at ?? ""));
+    return {
+      id: String(r.id), name: String(r.name ?? ""), aliases: Array.isArray(r.aliases) ? (r.aliases as string[]) : [],
+      stripeCustomerId: (r.stripe_customer_id as string | null) ?? null,
+      stripeSubscriptionId: (r.stripe_subscription_id as string | null) ?? null,
+      signupDate: (r.signup_date as string | null) ?? null,
+      // Only every address or none: see emailsComplete.
+      emails: emailsComplete ? emails.get(String(r.id)) ?? [] : [],
+      internal: isKnownNonClient(String(r.name ?? "")),
+      createdAt: Number.isFinite(created) ? created : null,
+      status: typeof r.status === "string" ? r.status : null,
+    };
+  });
+  return { refs, emailsComplete };
+}
+
+/*
+ * What ownership is decided from, and whether the email suggestions can be made (6 Nov). They need the links and
+ * exclusions (a Not this client must hold) and every address (part of the lists could make an address look like one
+ * client's when it is two); without them there are none, and no hint by email either. Ownership itself never uses them.
+ */
+async function ownershipInputs(): Promise<{ refs: BillingClientRef[]; links: StripeLinkRow[]; ready: boolean; suggestionsReady: boolean }> {
+  const [{ refs, emailsComplete }, { links, ready }] = await Promise.all([clientRefs(), listStripeLinks()]);
+  const suggestionsReady = ready && emailsComplete;
+  return { refs: suggestionsReady ? refs : refs.map((r) => ({ ...r, emails: [] })), links, ready, suggestionsReady };
 }
 
 export interface AccountBilling {
@@ -216,7 +290,15 @@ export interface AccountBilling {
   totals: ReturnType<typeof billingTotals>;
   upcoming: ReturnType<typeof upcomingCharges>;
   linksReady: boolean;
+  /** False when the email suggestions couldn't be made, for want of the links or every address (ownershipInputs). */
+  suggestionsReady: boolean;
+  /** Customers found by email, counted for no one until a person confirms them (billing-model.ts emailSuggestions). */
+  suggestions: EmailSuggestion[];
+  /** "client|customer" for every Not this client on a whole customer: no hint names that client for it. */
+  excluded: Set<string>;
   snapshot: AccountSnapshot;
+  /** The clients as billing read them, with the addresses the email match used. */
+  refs: BillingClientRef[];
   /** The Performance page (13 Oct) — all by the same ownership rules as `byClient`. */
   subscriptions: SubscriptionRow[];
   unattributed: UnattributedCustomer[];
@@ -226,10 +308,10 @@ export interface AccountBilling {
 
 /** Every client's billing, the business totals and the 30-day calendar. */
 export async function getAccountBilling(): Promise<AccountBilling> {
-  const [snapshot, refs, { links, ready }] = await Promise.all([getStripeSnapshot(), clientRefs(), listStripeLinks()]);
+  const [snapshot, { refs, links, ready, suggestionsReady }] = await Promise.all([getStripeSnapshot(), ownershipInputs()]);
   const byClient = buildBilling(refs, snapshot, links);
   return {
-    byClient, totals: billingTotals(snapshot, byClient), upcoming: upcomingCharges(snapshot, byClient, 30), linksReady: ready, snapshot,
+    byClient, totals: billingTotals(snapshot, byClient), upcoming: upcomingCharges(snapshot, byClient, 30), linksReady: ready, suggestionsReady, suggestions: suggestionsReady ? emailSuggestions(refs, snapshot, links) : [], excluded: excludedPairs(links), snapshot, refs,
     subscriptions: subscriptionRows(refs, snapshot, links),
     unattributed: unattributedByCustomer(refs, snapshot, links),
     monthsPaid: monthsPaidByClient(refs, snapshot, links),
@@ -247,7 +329,7 @@ export async function getClientBillingDetail(clientId: string, fresh = false): P
     const cached = await getStripeSnapshot();
     if (!cached.readAt || Date.now() - cached.readAt > 30_000) getStripeSnapshot.invalidate();
   }
-  const [snapshot, refs, { links }] = await Promise.all([getStripeSnapshot(), clientRefs(), listStripeLinks()]);
+  const [snapshot, { refs, links }] = await Promise.all([getStripeSnapshot(), ownershipInputs()]);
   return clientBillingDetail(refs, snapshot, links, clientId);
 }
 

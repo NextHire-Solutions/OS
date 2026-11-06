@@ -6,6 +6,7 @@ import { osTable } from "@/lib/clients/os-db";
 import { parseAmount, parseEvery } from "@/lib/clients/payment-link-plan";
 import { cancelLink, createLink, openLinks, PaymentLinkError, settle } from "@/lib/clients/payment-links";
 import { getAccountBilling, getStripeSnapshot } from "@/lib/clients/billing-account";
+import { foundByEmail, type FoundByEmail } from "@/lib/clients/billing-model";
 import { clientsChanged } from "@/lib/clients/after-change";
 import { blockingEnabled, blockThreshold, openPortalBlocks } from "@/lib/clients/billing-watch";
 
@@ -52,10 +53,14 @@ export async function GET(request: Request) {
   const links = await openLinks(clientId);
   // Every subscription and customer the client owns, across cards and shared customers (6 Oct).
   let account = null, linksReady = false, accountError: string | null = null;
+  // Found in Stripe by email, counted only once a person confirms it (6 Nov; billing-model.ts emailSuggestions).
+  let found: FoundByEmail[] = [];
   try {
     const a = await getAccountBilling();
     account = a.byClient.get(clientId) ?? null;
     linksReady = a.linksReady;
+    // A problem here hides only the found list, never the client's billing.
+    try { found = foundByEmail(a.snapshot, a.suggestions, clientId); } catch (e) { console.error("[billing] found by email:", e instanceof Error ? e.message : e); }
   } catch (e) {
     accountError = e instanceof Error ? e.message : "Stripe could not be read";
   }
@@ -63,11 +68,11 @@ export async function GET(request: Request) {
   const block = (await openPortalBlocks()).find((b) => b.clientId === clientId) ?? null;
   const portalBlock = { block, enabled: blockingEnabled(), afterAttempts: blockThreshold() };
   const canCreateLinks = canManage && links !== null;
-  if (!c.sub) return NextResponse.json({ linked: false, links, canCreateLinks, canManage, account, linksReady, accountError, portalBlock });
+  if (!c.sub) return NextResponse.json({ linked: false, links, canCreateLinks, canManage, account, found, linksReady, accountError, portalBlock });
   try {
-    return NextResponse.json({ linked: true, billing: await readBilling(c.sub), links, canCreateLinks, canManage, account, linksReady, accountError, portalBlock });
+    return NextResponse.json({ linked: true, billing: await readBilling(c.sub), links, canCreateLinks, canManage, account, found, linksReady, accountError, portalBlock });
   } catch (e) {
-    return NextResponse.json({ linked: true, links, canManage, account, linksReady, error: e instanceof Error ? e.message : "Stripe could not be read" }, { status: 502 });
+    return NextResponse.json({ linked: true, links, canManage, account, found, linksReady, error: e instanceof Error ? e.message : "Stripe could not be read" }, { status: 502 });
   }
 }
 
@@ -77,7 +82,7 @@ export async function POST(request: Request) {
   const me = who.email;
   const body = (await request.json().catch(() => null)) as {
     clientId?: unknown; action?: unknown; amount?: unknown; every?: unknown; linkId?: unknown;
-    subscriptionId?: unknown; customerId?: unknown; stripeId?: unknown;
+    subscriptionId?: unknown; customerId?: unknown; stripeId?: unknown; confirmFound?: unknown;
   } | null;
   const clientId = typeof body?.clientId === "string" ? body.clientId : "";
   const act = body?.action;
@@ -100,6 +105,19 @@ export async function POST(request: Request) {
         const sub = id.startsWith("sub_") ? snap.subscriptions.find((x) => x.id === id) : null;
         const cus = id.startsWith("cus_") ? snap.customers.find((x) => x.id === id) : null;
         if (!sub && !cus) return NextResponse.json({ error: `${id || "That id"} is not a customer (cus_…) or subscription (sub_…) in Stripe.` }, { status: 400 });
+        /*
+         * "Yes, it's theirs" on a customer found by email (6 Nov): only while it is still found for this client — nobody
+         * has linked it elsewhere or said Not theirs since the tab was opened.
+         */
+        if (body?.confirmFound === true) {
+          const now = await getAccountBilling();
+          if (!now.suggestionsReady) {
+            return NextResponse.json({ error: "Couldn't check this customer just now (the portal sign-in lists or Stripe links couldn't be read). Nothing was linked — try again in a minute." }, { status: 503 });
+          }
+          if (!cus || !now.suggestions.some((x) => x.clientId === clientId && x.customerId === cus.id)) {
+            return NextResponse.json({ error: "This customer has changed since the page was opened (linked or ruled out elsewhere). Nothing was linked." }, { status: 409 });
+          }
+        }
         const row = { os_client_id: clientId, stripe_customer_id: sub ? sub.customer : cus!.id, stripe_subscription_id: sub ? sub.id : null, created_by: me };
         // Re-linking something previously excluded replaces the exclusion.
         await osTable("os_client_stripe_links").delete().eq("os_client_id", clientId).eq("stripe_customer_id", row.stripe_customer_id).eq("excluded", true);
@@ -114,6 +132,18 @@ export async function POST(request: Request) {
         const customerId = str(body?.customerId);
         const subscriptionId = str(body?.subscriptionId) || null;
         if (!customerId) return NextResponse.json({ error: "customerId is required." }, { status: 400 });
+        /*
+         * The record's own customer (its Stripe Customer ID, or its subscription's customer) also linked: an exclusion
+         * would take the record's own subscription off the client too (6 Nov review). It is the record's to change.
+         */
+        if (act === "exclude" && !subscriptionId) {
+          const { data: rec } = await osTable("os_clients").select("stripe_customer_id, stripe_subscription_id").eq("id", clientId).maybeSingle();
+          const r = rec as { stripe_customer_id?: string | null; stripe_subscription_id?: string | null } | null;
+          const recordCustomers = [r?.stripe_customer_id, r?.stripe_subscription_id ? snap.subscriptions.find((x) => x.id === r.stripe_subscription_id)?.customer : null];
+          if (recordCustomers.includes(customerId)) {
+            return NextResponse.json({ error: `This customer is on ${c.name}'s record (its Stripe Customer ID or Subscription ID), so it stays theirs. To take it off, change those fields on the Record. Nothing was changed.` }, { status: 409 });
+          }
+        }
         let q = osTable("os_client_stripe_links").delete().eq("os_client_id", clientId).eq("stripe_customer_id", customerId);
         q = subscriptionId ? q.eq("stripe_subscription_id", subscriptionId) : q.is("stripe_subscription_id", null);
         const { error: delErr } = await q;
@@ -125,8 +155,16 @@ export async function POST(request: Request) {
         console.log(`[billing] ${me} ${act === "exclude" ? "excluded" : "unlinked"} ${subscriptionId ?? customerId} from ${c.name}`);
       }
       clientsChanged();
-      const a = await getAccountBilling();
-      return NextResponse.json({ ok: true, account: a.byClient.get(clientId) ?? null, linksReady: a.linksReady });
+      // It is saved: a problem reading it back must not read as a failure to save (the page then reloads it).
+      try {
+        const a = await getAccountBilling();
+        let found: FoundByEmail[] = [];
+        try { found = foundByEmail(a.snapshot, a.suggestions, clientId); } catch (e) { console.error("[billing] found by email:", e instanceof Error ? e.message : e); }
+        return NextResponse.json({ ok: true, account: a.byClient.get(clientId) ?? null, found, linksReady: a.linksReady });
+      } catch (e) {
+        console.error("[billing] saved, but reading it back failed:", e instanceof Error ? e.message : e);
+        return NextResponse.json({ ok: true });
+      }
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "Could not change the link" }, { status: 502 });
     }

@@ -74,7 +74,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 /* -------------------------------------------------------------- the tab --- */
 
-export function ClientBillingTab({ clientId, clientName, plan }: { clientId: string; clientName: string; plan: string | null }) {
+export function ClientBillingTab({ clientId, clientName, plan, rev = 0 }: {
+  clientId: string; clientName: string; plan: string | null;
+  /** Bumped when the Stripe customers counted for the client change below (6 Nov): read again, keeping these figures meanwhile. */
+  rev?: number;
+}) {
   const [state, setState] = useState<{ detail?: ClientBillingDetail; error?: string; hidden?: true; canCancel?: boolean } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [cancelling, setCancelling] = useState<null | "cancel" | "keep">(null);
@@ -93,7 +97,7 @@ export function ClientBillingTab({ clientId, clientName, plan }: { clientId: str
       setRefreshing(false);
     }
   };
-  useEffect(() => { void load(); }, [clientId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(); }, [clientId, rev]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (state?.hidden) {
     return <section className="rx-sec"><p className="rx-hint">Billing is shown to admins and people with the Clients page.</p></section>;

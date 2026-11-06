@@ -411,6 +411,23 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx-bill-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .rx-bill-row small { color: var(--x-faint); }
 .rx-bill-row em { font-style: normal; color: var(--x-mute); }
+/* A counted Stripe customer (6 Nov): who, their email, the id one press copies, and how it came to count. */
+.rx-cu { align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--x-line-2); }
+.rx-cu-who { display: grid; gap: 3px; min-width: 0; flex: 1 1 240px; }
+.rx-cu-name { color: var(--x-ink); font-weight: 500; overflow-wrap: anywhere; }
+.rx-cu-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--x-mute); font-size: 12px; }
+.rx-cu-email { overflow-wrap: anywhere; }
+.rx-cu-id { display: inline-flex; align-items: center; gap: 6px; padding: 1px 6px; border: 1px solid var(--x-line); border-radius: 6px; background: var(--x-hover); color: var(--x-ink-2); font: inherit; cursor: pointer; }
+.rx-cu-id code { font-family: var(--mono); font-size: 11.5px; user-select: all; }
+.rx-cu-id:hover { border-color: var(--x-mute); }
+.rx-cu-id:focus-visible { outline: 2px solid var(--x-accent); outline-offset: 1px; }
+.rx-cu-id span:empty { display: none; }
+.rx-cu-id.copied span { color: #15803D; font-family: var(--sans, inherit); font-size: 11px; font-weight: 600; }
+.rx-cu-how { padding: 0 7px; border-radius: 999px; background: var(--x-line-2); color: var(--x-mute); font-size: 11px; line-height: 18px; white-space: nowrap; }
+.rx-cu-how.auto { background: #FFF7E6; color: #8A5A00; }
+/* Found in Stripe by email, waiting for a person to confirm it (6 Nov): set apart from what counts. */
+.rx-found { padding: 10px 12px; border: 1px solid #F3E2B3; border-radius: 10px; background: #FFFCF4; }
+.rx-cu-acts { display: flex; flex-wrap: wrap; gap: 8px; }
 /* The Billing tab (Eddy, 17 Oct): current billing, totals, history, invoices. */
 .rb-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
 .rb-sync { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; color: var(--x-faint); }
