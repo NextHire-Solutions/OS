@@ -221,3 +221,30 @@ test("a campaign resumed a moment ago is queued: it stays in the Active inboxes 
   assert.deepEqual([...statusesAsked].sort(), ["active", "launching", "queued"]);
 });
 
+
+test("inboxes added: the kept list is dropped, so the next look reads the campaign again (6 Nov)", { skip }, async () => {
+  fresh();
+  lists.set(1, [inbox(10)]);
+  await load.campaignOverlap(1, 1, [10]);
+  lists.set(1, [inbox(10), inbox(11)]);
+  load.inboxesAdded(1);
+  // Same size asked as before would have used the kept list; after an add it can't be trusted.
+  assert.deepEqual(await load.campaignOverlap(1, 1, [11]), { on: [11], total: 2, leftConnected: 1 });
+  assert.deepEqual(reads, [1, 1]);
+});
+
+test("inboxes added while the list is being read: that read isn't kept, so it can't hide them", { skip }, async () => {
+  fresh();
+  lists.set(1, [inbox(10)]);
+  let open!: () => void;
+  gate = new Promise((r) => { open = r; });
+  const reading = load.campaignOverlap(1, 1, [10]);
+  await settle();
+  load.inboxesAdded(1);
+  lists.set(1, [inbox(10), inbox(11)]);
+  open();
+  await reading;
+  gate = null;
+  assert.deepEqual(await load.campaignOverlap(1, 1, [11]), { on: [11], total: 2, leftConnected: 1 });
+  assert.deepEqual(reads, [1, 1], "read again");
+});

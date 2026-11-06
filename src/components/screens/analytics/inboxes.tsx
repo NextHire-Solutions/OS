@@ -51,6 +51,7 @@ import {
   useColumnPrefs,
   useSort,
 } from "./shared";
+import { AddInboxesDialog } from "./add-inboxes-dialog";
 import { RemoveInboxesDialog } from "./remove-inboxes-dialog";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn } from "./toast";
@@ -151,6 +152,7 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
    */
   const [selected, setSelected] = useState<Set<number | string>>(new Set());
   const [removing, setRemoving] = useState(false);
+  const [adding, setAdding] = useState(false);
   // Asks EmailBison's figures again after inboxes have come off campaigns.
   const [readAgain, setReadAgain] = useState(0);
 
@@ -358,6 +360,18 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
                 {canChangeCampaigns ? (
                   <button
                     type="button"
+                    className="gh an-add-open"
+                    data-inbox-add
+                    disabled={!selectedEmailBison.length}
+                    title={selectedEmailBison.length ? undefined : "This adds EmailBison inboxes. The ones selected are Instantly's."}
+                    onClick={() => setAdding(true)}
+                  >
+                    Add to campaigns
+                  </button>
+                ) : null}
+                {canChangeCampaigns ? (
+                  <button
+                    type="button"
                     className="gh an-rm-open"
                     data-inbox-remove
                     disabled={!selectedEmailBison.length}
@@ -490,6 +504,17 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
           </div>
         ) : null}
       </div>
+      {adding ? (
+        <AddInboxesDialog
+          inboxes={all.filter((r) => selected.has(r.id)).map((r) => ({ id: r.id, status: r.status }))}
+          onClose={(changed) => {
+            setAdding(false);
+            if (!changed) return;
+            setSelected(new Set());
+            setReadAgain((n) => n + 1);
+          }}
+        />
+      ) : null}
       {removing ? (
         <RemoveInboxesDialog
           inboxIds={selectedEmailBison}

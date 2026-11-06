@@ -49,6 +49,8 @@ interface State {
   walks: Map<number, Promise<Entry>>;
   /** Inboxes taken off while a campaign's list was being read: that read may still hold them. */
   takenOff: Map<number, Set<number>>;
+  /** Campaigns given inboxes while their list was being read: that read may miss them, so it isn't kept (6 Nov). */
+  addedDuring?: Set<number>;
   active: ActiveJob;
 }
 
@@ -73,6 +75,7 @@ function readCampaign(campaignId: number): Promise<Entry> {
         inboxes: rows.map((r) => ({ id: Number(r.id), status: r.status ?? null, dailyLimit: r.daily_limit ?? null })).filter((i) => !gone?.has(i.id)),
         readAt: Date.now(),
       };
+      if (s.addedDuring?.delete(campaignId)) return entry;
       s.entries.set(campaignId, entry);
       return entry;
     })
@@ -116,6 +119,13 @@ export function inboxesTakenOff(campaignId: number, inboxIds: readonly number[])
   if (s.walks.has(campaignId)) s.takenOff.set(campaignId, new Set([...(s.takenOff.get(campaignId) ?? []), ...gone]));
   const entry = s.entries.get(campaignId);
   if (entry) entry.inboxes = entry.inboxes.filter((i) => !gone.has(i.id));
+}
+
+/** Inboxes were just added to this campaign (inbox-add.ts): its kept list is short of them, so the next look reads it again. */
+export function inboxesAdded(campaignId: number): void {
+  const s = state();
+  s.entries.delete(campaignId);
+  if (s.walks.has(campaignId)) (s.addedDuring ??= new Set()).add(campaignId);
 }
 
 export interface ActiveCapacitySnapshot {

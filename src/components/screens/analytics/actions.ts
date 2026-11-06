@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { invalidate, loadOnce } from "../lazy";
 import type { OpenCampaign, RemovalResult } from "@/lib/tools/analytics/campaigns/inbox-removal.ts";
+import type { AddResult } from "@/lib/tools/analytics/campaigns/inbox-add.ts";
 import { locationParams, type LocationSelection } from "@/lib/tools/analytics/campaigns/location-filter.ts";
 
 /*
@@ -126,6 +127,12 @@ export const removalOverlap = (campaignId: number, count: number, inboxIds: numb
 /** Takes inboxes off one campaign. The person has seen and confirmed what this does. */
 export const removalRun = (input: { campaignId: number; inboxIds: number[]; pauseActive: boolean; batchId: string }) =>
   send(`${REMOVAL_URL}/run`, json("POST", { ...input, confirm: true })) as unknown as Promise<RemovalResult & { name: string }>;
+
+/* ------------------------- inboxes onto campaigns ------------------------ */
+
+/** Adds inboxes to one campaign (6 Nov — inbox-add.ts). The person has picked the campaigns and confirmed. */
+export const addRun = (input: { campaignId: number; inboxIds: number[]; batchId: string }) =>
+  send(`${BASE}/campaigns/inboxes/add/run`, json("POST", { ...input, confirm: true })) as unknown as Promise<AddResult & { name: string }>;
 
 /* -------------------------------- clients -------------------------------- */
 
