@@ -289,6 +289,9 @@ function ManyPanel({
   const [draft, setDraft] = useState<Pick[]>(initial);
   const [where, setWhere] = useState<PlaceKind[] | undefined>(kinds);
   const cap = kinds ? MAX_PLACES : MAX_PICKS;
+  // Focused as it opens, without scrolling: it opens before FilterButton moves it onto the screen, and autoFocus scrolled a tablet's page sideways to reach it.
+  const find = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => { find.current?.focus({ preventScroll: true }); }, []);
   register(() => onApply(draft, where));
   const opts = useOptions(clientId, list, level, text, where);
   const same = (x: Pick, v: string) => x.f === level && x.v === v;
@@ -333,7 +336,7 @@ function ManyPanel({
           ) : null}
           <ModeSwitch out={out} onChange={setOut} />
         </div>
-        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${PLURAL[level]}`} value={text} onChange={(e) => setText(level === "zip" ? e.target.value.replace(/\D/g, "").slice(0, 5) : e.target.value)} autoFocus {...(level === "zip" ? { inputMode: "numeric" as const } : {})} />
+        <input className="cpv-find" type="search" aria-label={`Search ${noun}`} placeholder={`Search ${PLURAL[level]}`} value={text} onChange={(e) => setText(level === "zip" ? e.target.value.replace(/\D/g, "").slice(0, 5) : e.target.value)} ref={find} {...(level === "zip" ? { inputMode: "numeric" as const } : {})} />
         <div className="cpv-status">
           <span>{status}</span>
           <span style={{ display: "flex", gap: 10 }}>
