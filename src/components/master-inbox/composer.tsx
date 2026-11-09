@@ -109,6 +109,8 @@ interface ComposerDraftSeed {
   bcc_addresses: string | null;
   selected_channel_id: string | null;
   add_signature: boolean;
+  /** What the Introduce button put in (inbox/draft-intro.ts); absent before migration 0051. */
+  intro_inserted?: string | null;
   updated_at: string;
 }
 
@@ -124,6 +126,7 @@ interface DraftPayload {
   bcc_addresses: string | null;
   selected_channel_id: string | null;
   add_signature: boolean;
+  intro_inserted: string | null;
 }
 
 // Stable serialisation of a payload used to skip duplicate saves.
@@ -146,6 +149,7 @@ function composerDraftKey(d: ComposerDraftSeed): string {
     bcc_addresses: d.bcc_addresses,
     selected_channel_id: d.selected_channel_id,
     add_signature: d.add_signature,
+    intro_inserted: d.intro_inserted ?? null,
   });
 }
 
@@ -349,6 +353,16 @@ export function Composer({
   const [hasServerDraft, setHasServerDraft] = useState<boolean>(
     Boolean(composerDraft),
   );
+  /*
+   * The text the Introduce button last inserted, held so the send can check
+   * the introduction is still in the body before it labels the thread. A ref
+   * rather than state: nothing renders from it, and it must not re-run the
+   * editor's effects mid-draft.
+   */
+  // Kept with the saved draft (inbox/draft-intro.ts): an introduction left and reopened still tags the thread on send.
+  const introInsertedRef = useRef<string | null>(composerDraft?.intro_inserted ?? null);
+  // Each Introduce press: the draft saves what it put in even when the words come out exactly as they were.
+  const [introPresses, setIntroPresses] = useState(0);
   // Refs that need to survive renders without driving them:
   //   • latestPayloadRef: most recent in-memory snapshot, used by the
   //     unmount beacon so it ships whatever the user typed last
@@ -380,6 +394,9 @@ export function Composer({
       bcc_addresses: bcc.trim() ? bcc : null,
       selected_channel_id: selectedChannelId,
       add_signature: addSignature,
+      // Only while what Introduce put in is still there, as the send itself decides: a draft rewritten since (an AI
+      // reply, a template, retyped) is saved without it, so nobody who opens it later sends it as an introduction.
+      intro_inserted: introInsertedRef.current && introWasSent(introInsertedRef.current, bodyText) ? introInsertedRef.current : null,
     };
     latestPayloadRef.current = payload;
     const key = payloadKey(payload);
@@ -407,7 +424,7 @@ export function Composer({
     }, 1500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bodyHtml, bodyText, composerSubject, to, cc, bcc, selectedChannelId, addSignature, mode]);
+  }, [bodyHtml, bodyText, composerSubject, to, cc, bcc, selectedChannelId, addSignature, mode, introPresses]);
 
   async function saveDraft(payload: DraftPayload, key: string) {
     setSavingState("saving");
@@ -494,6 +511,7 @@ export function Composer({
     if (!hasServerDraft && !composerSubject && !bodyText.trim()) return;
     if (!confirm("Discard this draft? This can't be undone.")) return;
     await deleteDraft();
+    introInsertedRef.current = null;
     editorRef.current?.setContent("");
     setBodyHtml("");
     setBodyText("");
@@ -518,13 +536,6 @@ export function Composer({
   const [introducing, setIntroducing] = useState(false);
   // Set when Introduce switches From to Nicole, or cannot (see insertIntroduction).
   const [introSenderNote, setIntroSenderNote] = useState<{ text: string; warn: boolean } | null>(null);
-  /*
-   * The text the Introduce button last inserted, held so the send can check
-   * the introduction is still in the body before it labels the thread. A ref
-   * rather than state: nothing renders from it, and it must not re-run the
-   * editor's effects mid-draft.
-   */
-  const introInsertedRef = useRef<string | null>(null);
   // After Introduce: offer one opening line from the lead's own reply (6 Oct, opt-in).
   const [introDone, setIntroDone] = useState(false);
   const [openerBusy, setOpenerBusy] = useState(false);
@@ -539,18 +550,23 @@ export function Composer({
    */
   const [introGaps, setIntroGaps] = useState<string[]>([]);
 
+  // The same answer for a send that comes before it has (a reopened introduction sent at once): it waits for it.
+  const introMacroLoad = useRef<Promise<IntroMacroState> | null>(null);
   useEffect(() => {
     if (mode !== "reply") return;
     let cancelled = false;
-    void fetch(`/api/tools/master-inbox/threads/${threadId}/intro-macro`)
+    const load = fetch(`/api/tools/master-inbox/threads/${threadId}/intro-macro`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (!cancelled && j && typeof j.available === "boolean") setIntroMacro(j as IntroMacroState);
-      })
+      .then((j) => (j && typeof j.available === "boolean" ? (j as IntroMacroState) : null))
       .catch(() => {
         /* the button stays disabled with its "checking" title — no toast for
            something the user did not ask for */
+        return null;
       });
+    introMacroLoad.current = load;
+    void load.then((j) => {
+      if (!cancelled && j) setIntroMacro(j);
+    });
     return () => {
       cancelled = true;
     };
@@ -598,6 +614,7 @@ export function Composer({
       const hadDraft = bodyText.trim().length > 0;
       editorRef.current?.setContent(plainTextToHtml(resolved));
       introInsertedRef.current = resolved;
+      setIntroPresses((n) => n + 1);
       setIntroDone(true);
 
       /*
@@ -705,13 +722,19 @@ export function Composer({
     const inserted = introInsertedRef.current;
     introInsertedRef.current = null;
     if (!inserted) return false;
-    if (!introMacro?.available || !introMacro.introductionLabelId) return false;
     if (!introWasSent(inserted, sentBody)) return false;
+    // Sent before the composer heard back about the button (a reopened introduction sent at once): waited for, never long.
+    const macro = introMacro ?? (await Promise.race([introMacroLoad.current ?? Promise.resolve(null), new Promise<null>((done) => setTimeout(() => done(null), 5_000))]));
+    if (!macro) {
+      toast.error("Sent — but the Introduction label didn't stick. Add it from the inbox.");
+      return false;
+    }
+    if (!macro.available || !macro.introductionLabelId) return false;
     try {
       const res = await fetch(`/api/tools/master-inbox/threads/${threadId}/labels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label_id: introMacro.introductionLabelId }),
+        body: JSON.stringify({ label_id: macro.introductionLabelId }),
       });
       if (!res.ok) throw new Error(`labels ${res.status}`);
       return true;

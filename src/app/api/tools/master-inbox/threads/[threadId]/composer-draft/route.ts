@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth/workspace";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { DRAFT_INTRO_MAX, draftIntroColumnMissing } from "@/lib/tools/master-inbox/inbox/draft-intro";
 
 // Composer auto-save endpoint.
 //
@@ -41,6 +42,8 @@ const putSchema = z.object({
   bcc_addresses: z.string().max(8_000).nullable().optional(),
   selected_channel_id: z.string().uuid().nullable().optional(),
   add_signature: z.boolean().optional(),
+  // What the Introduce button put in (inbox/draft-intro.ts): a reopened introduction still tags the thread on send.
+  intro_inserted: z.string().max(DRAFT_INTRO_MAX).nullable().optional(),
 });
 
 export async function PUT(
@@ -73,11 +76,19 @@ export async function PUT(
     bcc_addresses: parsed.data.bcc_addresses ?? null,
     selected_channel_id: parsed.data.selected_channel_id ?? null,
     add_signature: parsed.data.add_signature ?? true,
+    intro_inserted: parsed.data.intro_inserted ?? null,
     updated_at: new Date().toISOString(),
   };
-  const { error } = await supabase
+  let { error } = await supabase
     .from("composer_drafts")
     .upsert(row, { onConflict: "workspace_id,thread_id" });
+  if (draftIntroColumnMissing(error)) {
+    // Before migration 0051: the draft saves as it always has, without the introduction's mark.
+    const { intro_inserted: _notYet, ...asBefore } = row;
+    ({ error } = await supabase
+      .from("composer_drafts")
+      .upsert(asBefore, { onConflict: "workspace_id,thread_id" }));
+  }
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

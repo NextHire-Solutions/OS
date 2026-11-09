@@ -1,4 +1,5 @@
 import { createServerSupabase } from "@/lib/supabase/server";
+import { DRAFT_INTRO_COLUMN, draftIntroColumnMissing } from "./draft-intro";
 
 export interface MessageRow {
   id: string;
@@ -36,7 +37,28 @@ export interface ComposerDraft {
   bcc_addresses: string | null;
   selected_channel_id: string | null;
   add_signature: boolean;
+  /** What the Introduce button put in, so a reopened introduction still tags the thread (draft-intro.ts). */
+  intro_inserted: string | null;
   updated_at: string;
+}
+
+const DRAFT_COLUMNS = "subject, body_html, body_text, to_addresses, cc_addresses, bcc_addresses, selected_channel_id, add_signature, updated_at";
+
+/**
+ * The saved draft, with what Introduce put in it — and without it, exactly as before, until migration 0051 adds the
+ * column: a missing column comes back as an error, not a throw, and must never cost the operator their draft.
+ */
+export async function readComposerDraft(supabase: Awaited<ReturnType<typeof createServerSupabase>>, workspaceId: string, threadId: string): Promise<{ data: Record<string, unknown> | null; error: { code?: string; message?: string } | null }> {
+  const ask = async (columns: string) => {
+    const r = await supabase.from("composer_drafts").select(columns).eq("workspace_id", workspaceId).eq("thread_id", threadId).maybeSingle();
+    return { data: (r.data as unknown as Record<string, unknown> | null) ?? null, error: r.error };
+  };
+  try {
+    const withIntro = await ask(`${DRAFT_COLUMNS}, ${DRAFT_INTRO_COLUMN}`);
+    return draftIntroColumnMissing(withIntro.error) ? await ask(DRAFT_COLUMNS) : withIntro;
+  } catch {
+    return { data: null, error: null };
+  }
 }
 
 export interface ThreadDetail {
@@ -133,18 +155,7 @@ export async function loadThreadDetail(
     // catches any error — if the column / table is somehow missing
     // (deploy lands before migration in a rebuild, etc.) we fall
     // back to null instead of breaking the entire thread view.
-    supabase
-      .from("composer_drafts")
-      .select(
-        "subject, body_html, body_text, to_addresses, cc_addresses, bcc_addresses, selected_channel_id, add_signature, updated_at",
-      )
-      .eq("workspace_id", workspaceId)
-      .eq("thread_id", threadId)
-      .maybeSingle()
-      .then(
-        (r) => r,
-        () => ({ data: null, error: null }) as const,
-      ),
+    readComposerDraft(supabase, workspaceId, threadId),
   ]);
   if (error || !thread) return null;
 
@@ -205,6 +216,7 @@ export async function loadThreadDetail(
             (composerDraftResult.data.selected_channel_id as string | null) ?? null,
           add_signature:
             (composerDraftResult.data.add_signature as boolean | null) ?? true,
+          intro_inserted: (composerDraftResult.data.intro_inserted as string | null | undefined) ?? null,
           updated_at: composerDraftResult.data.updated_at as string,
         }
       : null,
