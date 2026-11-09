@@ -378,5 +378,5 @@ test("the Help page's three corrected answers say what really happens", () => {
   const page = readFileSync("src/components/crm-preview/static-pages.tsx", "utf8");
   assert.match(page, /emailed to the contacts on your account, and shows in your Pipeline too\. To see who those contacts are, ask the\u00a0assistant\./);
   assert.match(page, /Import a CSV to your DNC List with a row for the office: its name, its domain, and company in the kind column\./);
-  assert.match(page, /Go to Team and click Add member\. To have them receive interested agents too, chat with\u00a0support\./);
+  assert.match(page, /Go to Team and click Add member\. To have them receive interested agents too, chat with support and ask for a\u00a0person\./);
 });

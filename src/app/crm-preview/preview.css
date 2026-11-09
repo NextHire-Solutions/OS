@@ -370,3 +370,69 @@ html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }
 @media (min-width: 761px) {
   .cpv-shell .crx-content { padding-bottom: 96px; }
 }
+
+/*
+ * Help articles (4 Nov; a reading page 5 Nov): the client's own words in one centred column, so the crumb, the article
+ * and what follows it share their edges, and a line stays short enough to read. The handoff stops at the links, so
+ * this is drawn from the page's own type and colours. Lists are spelled out: the design's reset takes their markers away.
+ */
+.cpv-art-page { display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 660px; margin-inline: auto; }
+.cpv-art-crumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #6b7280; }
+.cpv-art-crumb a { display: inline-flex; align-items: center; gap: 5px; color: #3e6bd1; }
+.cpv-art-crumb a:hover { text-decoration: underline; }
+.cpv-art-crumb span::before { content: "/"; margin-right: 8px; color: #c4c8d0; }
+.cpv-art { box-sizing: border-box; padding: 32px 36px 36px; font-size: 15px; line-height: 1.7; color: #1f2124; overflow-wrap: break-word; }
+.cpv-art > * { margin: 0 0 14px; }
+.cpv-art > *:last-child { margin-bottom: 0; }
+.cpv-art .cpv-art-title { font-size: 24px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 16px; text-wrap: balance; }
+.cpv-art .cpv-art-title:focus { outline: none; }
+.cpv-art h3 { font-size: 16px; line-height: 1.4; font-weight: 600; margin: 26px 0 8px; }
+.cpv-art b { font-weight: 600; }
+.cpv-art a { color: #3e6bd1; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: rgba(62, 107, 209, 0.35); }
+.cpv-art a:hover { text-decoration-color: currentColor; }
+.cpv-art ol, .cpv-art ul { padding-left: 24px; }
+.cpv-art ol { list-style: decimal outside; }
+.cpv-art ul { list-style: disc outside; }
+.cpv-art li { margin: 0 0 8px; padding-left: 4px; }
+.cpv-art li:last-child { margin-bottom: 0; }
+.cpv-art li::marker { color: #6b7280; }
+.cpv-art-table { overflow-x: auto; border: 1px solid #ebedf0; border-radius: 10px; margin: 18px 0; }
+.cpv-art-table table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.5; }
+.cpv-art-table th, .cpv-art-table td { padding: 10px 14px; text-align: left; vertical-align: top; border-top: 1px solid #ebedf0; }
+.cpv-art-table thead th { border-top: 0; background: #f7f8fa; font-weight: 600; white-space: nowrap; }
+.cpv-art-table tbody th { font-weight: 500; color: #555a64; white-space: nowrap; }
+.cpv-art-more { padding: 6px 2px 0; }
+.cpv-art-more h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: #1f2124; }
+.cpv-art-more ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cpv-art-more a { color: #3e6bd1; font-size: 14px; }
+.cpv-art-more a:hover { text-decoration: underline; }
+.cpv-art-ask { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 2px 0; border-top: 1px solid #ebedf0; font-size: 14px; color: #555a64; }
+.cpv-art-crumb a:focus-visible, .cpv-art a:focus-visible, .cpv-art-more a:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; border-radius: 3px; }
+
+/*
+ * The tour (4 Nov, tour.tsx). Above everything in the portal; the page behind can't be clicked. The hole's own shadow is
+ * the dimming, so what it points at stays bright.
+ */
+.cpv-tour { position: fixed; inset: 0; z-index: 60; font-family: var(--crx-font), "Inter Tight", system-ui, sans-serif; }
+.cpv-tour-back { position: absolute; inset: 0; }
+.cpv-tour-dim { background: rgba(17, 24, 39, 0.5); }
+.cpv-tour-hole { position: fixed; box-shadow: 0 0 0 9999px rgba(17, 24, 39, 0.5); pointer-events: none; transition: top 0.18s ease, left 0.18s ease, width 0.18s ease, height 0.18s ease; }
+.cpv-tour-card { position: fixed; box-sizing: border-box; max-width: calc(100vw - 32px); padding: 18px 20px 16px; border-radius: 14px; background: #fff; color: #1f2124; box-shadow: 0 12px 36px rgba(17, 24, 39, 0.24); transition: top 0.18s ease, left 0.18s ease; }
+@media (prefers-reduced-motion: reduce) { .cpv-tour-hole, .cpv-tour-card { transition: none; } }
+.cpv-tour-count { font-size: 12px; color: #6b7280; }
+.cpv-tour-card h2 { margin: 4px 0 6px; font-size: 16px; font-weight: 600; line-height: 1.3; }
+.cpv-tour-card p { margin: 0; font-size: 13px; line-height: 1.55; color: #3d4459; }
+.cpv-tour-acts { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.cpv-tour-move { display: flex; gap: 8px; }
+.cpv-tour-skip { border: 0; padding: 0; background: none; font: inherit; font-size: 13px; color: #6b7280; cursor: pointer; }
+.cpv-tour-btn { height: 34px; padding: 0 14px; border: 1px solid #e3e6eb; border-radius: 8px; background: #fff; color: #1f2124; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.cpv-tour-pri { border-color: #3e6bd1; background: #3e6bd1; color: #fff; }
+.cpv-tour-btn:focus-visible, .cpv-tour-skip:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; }
+/* A phone: nothing to point at (the sidebar is a closed menu); the card sits at the bottom, over the page it opened. */
+@media (max-width: 760px) {
+  .cpv-tour-card { left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .cpv-art { padding: 22px 18px 24px; }
+  .cpv-art .cpv-art-title { font-size: 21px; }
+  /* A page with nothing in the header's right-hand slot: on a phone that slot wraps to an empty row of its own. */
+  .cpv-shell .crx-hr:empty { display: none; }
+}

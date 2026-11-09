@@ -11,12 +11,13 @@ import { useRouter } from "next/navigation";
 
 import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { initials, type ManagedStage, type PortalOffer, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
+import { initials, PREVIEW_VIEWS, type ManagedStage, type PortalOffer, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
 import { ChatWindow } from "./chat";
 import { DemoContext, postDemo, type DemoAction } from "./demo-save";
+import { Tour } from "./tour";
 import { SetupWizard } from "./setup";
 import { PipelineScreen } from "./pipeline";
 import { BillingScreen, DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
@@ -75,6 +76,7 @@ export function CrmPreview({
   team,
   initialView,
   initialStep,
+  initialArticle = null,
   now,
   audience = "staff",
   manageBilling = true,
@@ -102,6 +104,8 @@ export function CrmPreview({
   team: TeamMember[];
   initialView: PreviewView;
   initialStep: number;
+  /** The Help article the address names. */
+  initialArticle?: string | null;
   now: string;
   /** Staff see the preview bar; a client (27 Oct, signed in at /portal-signin) sees the portal as theirs. */
   audience?: "staff" | "client";
@@ -109,6 +113,9 @@ export function CrmPreview({
   manageBilling?: boolean;
 }) {
   const [view, setView] = useState<PreviewView>(initialView);
+  // The Help article open (its slug; the address's ?article=), and the page the tour started from — set while it runs.
+  const [article, setArticle] = useState<string | null>(initialArticle);
+  const [tourFrom, setTourFrom] = useState<PreviewView | null>(null);
   const [step, setStep] = useState(initialStep);
   const [chat, setChat] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -169,9 +176,37 @@ export function CrmPreview({
   const go = (v: PreviewView) => {
     setDrawer(false);
     setView(v);
+    setArticle(null);
     setContext(null);
     window.history.replaceState(null, "", v === "setup" ? `${hrefFor(v)}&step=${step}` : hrefFor(v));
     window.scrollTo(0, 0);
+  };
+  /*
+   * A Help article is a page of its own: the browser's Back returns from it (the sidebar's pages replace the address,
+   * so they add no history of their own). Forward and Back go by what the address says.
+   */
+  const articleHref = (slug: string | null) => (slug ? `${hrefFor("help")}&article=${encodeURIComponent(slug)}` : hrefFor("help"));
+  const openArticle = (slug: string | null) => {
+    setArticle(slug);
+    window.history.pushState(null, "", articleHref(slug));
+    window.scrollTo(0, 0);
+  };
+  useEffect(() => {
+    const onBack = () => {
+      const p = new URLSearchParams(window.location.search);
+      const v = p.get("view");
+      if ((PREVIEW_VIEWS as readonly string[]).includes(v ?? "")) setView(v as PreviewView);
+      setArticle(p.get("article"));
+    };
+    window.addEventListener("popstate", onBack);
+    return () => window.removeEventListener("popstate", onBack);
+  }, []);
+  const startTour = () => { setChat(false); setTourFrom(view); };
+  const endTour = () => {
+    if (tourFrom) go(tourFrom);
+    setTourFrom(null);
+    // Back on the button that started it, for a keyboard.
+    setTimeout(() => document.querySelector<HTMLElement>("[data-tour-start]")?.focus(), 0);
   };
   const goStep = (n: number) => {
     setStep(n);
@@ -322,7 +357,7 @@ export function CrmPreview({
           ) : view === "campaigns" ? (
             <CampaignsScreen onChat={() => setChat(true)} />
           ) : view === "help" ? (
-            <HelpScreen onChat={() => setChat(true)} />
+            <HelpScreen onChat={() => setChat(true)} onTour={startTour} article={article} hrefOf={articleHref} onArticle={openArticle} />
           ) : view === "agents" ? (
             <MyAgentsScreen agents={agents} />
           ) : view === "dnc" ? (
@@ -356,6 +391,7 @@ export function CrmPreview({
         </a>
         {toastNote}
       </div>
+      {tourFrom ? <Tour go={go} onClose={endTour} /> : null}
       </div>
       )}
     </DemoContext.Provider>

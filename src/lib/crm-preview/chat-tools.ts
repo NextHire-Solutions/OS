@@ -113,6 +113,7 @@ export function helpText(d: Pick<PortalChatData, "stages">): string[] {
 - Market: the agents in their MLS; tick agents, then Move to Prospects / My Agents / DNC List. Prospects: the agents in their campaign lists, and any they moved there from Market.
 - Reports: All market (agents per group) or Interested only (their pipeline per group).
 - Integrations: connect Follow Up Boss with its API key.
+- Help: step-by-step articles, answers to common questions, and Take the tour, a short guided walk round the portal.
 - Changing their campaign emails: our team does it with them — email ${SUPPORT_EMAIL}.
 - Campaigns: coming soon.`.split("\n");
 }

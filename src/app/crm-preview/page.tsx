@@ -245,6 +245,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       team={team}
       initialView={view}
       initialStep={step}
+      initialArticle={one(params.article) || null}
       now={new Date().toISOString()}
     />,
   );
