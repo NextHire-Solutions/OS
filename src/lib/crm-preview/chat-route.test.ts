@@ -6,6 +6,8 @@ import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest, NextResponse } from "next/server";
 
+import { isAssistantsOwn, signAssistant } from "../portal-chat/assistant-sign.ts";
+
 const canMock = typeof mock.module === "function";
 const skip = canMock ? false : "needs node --experimental-test-module-mocks --import ./scripts/alias-hooks.mjs";
 
@@ -18,6 +20,7 @@ const closed = { current: false };
 let POST: (r: NextRequest) => Promise<Response>;
 test("setup", { skip }, async () => {
   process.env.OS_CLIENT_SIGNIN = "1";
+  process.env.AUTH_SECRET = "s".repeat(40);
   mock.module("next/server", { namedExports: { NextResponse, NextRequest, after: () => undefined } });
   mock.module("@/lib/crm-preview/viewer", { namedExports: { crmViewerOf: async () => viewer.current } });
   mock.module("@/lib/crm-preview/portal-open", { namedExports: { closedToClient: async () => closed.current } });
@@ -45,7 +48,10 @@ test("a client asking about their own portal gets that portal, and only that por
   asClient();
   const r = await ask(MINE);
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { reply: "Contacts of Mine" });
+  const body = await r.json();
+  assert.deepEqual(body, { reply: "Contacts of Mine", sig: signAssistant(MINE, "Contacts of Mine") }, "signed, so Ask for a person can hand it on as the assistant's");
+  assert.ok(isAssistantsOwn(MINE, body.reply, body.sig));
+  assert.ok(!isAssistantsOwn(THEIRS, body.reply, body.sig), "for that portal only");
   assert.deepEqual(loaded, [MINE]);
 });
 

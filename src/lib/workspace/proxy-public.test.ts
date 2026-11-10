@@ -105,11 +105,11 @@ test("a client's sign-in reaches the new portal's page and its eight routes — 
   // Each is a real page or route.
   const real = new Set(["src/app/crm-preview", "src/app/api/crm-preview"].flatMap(routesUnder));
   for (const p of CLIENT_PORTAL_PATHS) assert.ok(real.has(p), `${p} is a real page or route`);
-  // + export (2 Nov): a client's own Prospects as a file.
-  assert.equal(CLIENT_PORTAL_PATHS.size, 10);
+  // + export (2 Nov): a client's own Prospects as a file; + ask-person, person-chat (4 Nov): the chat with our team.
+  assert.equal(CLIENT_PORTAL_PATHS.size, 12);
   const client = { cookie: `${CLIENT_PORTAL_COOKIE}=anything` };
   // Through to their own checks (lib/crm-preview/viewer.ts), which read the session against the list.
-  for (const p of CLIENT_PORTAL_PATHS) assert.equal(await ask(p, { ...client, method: /chat|demo|save/.test(p) ? "POST" : "GET" }), "open", p);
+  for (const p of CLIENT_PORTAL_PATHS) assert.equal(await ask(p, { ...client, method: /chat|demo|save|ask-person/.test(p) ? "POST" : "GET" }), "open", p);
   // Without it, exactly as before: the staff sign-in.
   assert.equal(await ask("/crm-preview"), "to login");
   for (const p of CLIENT_PORTAL_PATHS) if (p.startsWith("/api/")) assert.equal(await ask(p), "401", p);

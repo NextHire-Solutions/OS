@@ -15,7 +15,7 @@ import { initials, PREVIEW_VIEWS, type ManagedStage, type PortalOffer, type Prev
 
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
-import { ChatWindow } from "./chat";
+import { ChatWindow, usePersonChat } from "./chat";
 import { DemoContext, postDemo, type DemoAction } from "./demo-save";
 import { Tour } from "./tour";
 import { SetupWizard } from "./setup";
@@ -77,6 +77,7 @@ export function CrmPreview({
   initialView,
   initialStep,
   initialArticle = null,
+  initialThread = null,
   now,
   audience = "staff",
   manageBilling = true,
@@ -106,6 +107,8 @@ export function CrmPreview({
   initialStep: number;
   /** The Help article the address names. */
   initialArticle?: string | null;
+  /** The conversation a Slack link names. */
+  initialThread?: string | null;
   now: string;
   /** Staff see the preview bar; a client (27 Oct, signed in at /portal-signin) sees the portal as theirs. */
   audience?: "staff" | "client";
@@ -117,7 +120,9 @@ export function CrmPreview({
   const [article, setArticle] = useState<string | null>(initialArticle);
   const [tourFrom, setTourFrom] = useState<PreviewView | null>(null);
   const [step, setStep] = useState(initialStep);
-  const [chat, setChat] = useState(false);
+  // Open from the start when a Slack link names a conversation; the count on its button is what's waiting.
+  const [chat, setChat] = useState(Boolean(initialThread));
+  const chatCount = usePersonChat(client.id, chat, initialThread);
   const [collapsed, setCollapsed] = useState(false);
   // On a phone the sidebar is a menu that slides in (mobile.css, 23 Oct); a choice, the backdrop or Escape closes it.
   const [drawer, setDrawer] = useState(false);
@@ -376,7 +381,7 @@ export function CrmPreview({
           className={k("aiask")}
           href="#"
           onClick={(e) => { e.preventDefault(); setChat((o) => !o); }}
-          aria-label={chat ? "Close support chat" : "Open support chat"}
+          aria-label={chat ? "Close support chat" : chatCount ? `Open support chat, ${chatCount} waiting` : "Open support chat"}
           title="Support"
           style={{ position: "fixed", right: 24, bottom: 24, zIndex: 13, width: 56, height: 56, borderRadius: 99, background: "#3e6bd1", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 24px rgba(62,107,209,0.35)", textDecoration: "none", color: "#fff" }}
         >
@@ -385,7 +390,11 @@ export function CrmPreview({
           ) : (
             <>
               <Icon name="chat" size={24} stroke={1.9} />
-              <span style={{ position: "absolute", top: 2, right: 2, width: 12, height: 12, borderRadius: 99, background: "#22c55e", border: "2px solid #fff" }} />
+              {chatCount ? (
+                <span data-chat-count style={{ position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, padding: "0 4px", boxSizing: "border-box", borderRadius: 99, background: "#d92d20", border: "2px solid #fff", color: "#fff", fontSize: 10, fontWeight: 700, lineHeight: "14px", textAlign: "center" }}>{chatCount}</span>
+              ) : (
+                <span style={{ position: "absolute", top: 2, right: 2, width: 12, height: 12, borderRadius: 99, background: "#22c55e", border: "2px solid #fff" }} />
+              )}
             </>
           )}
         </a>

@@ -60,6 +60,8 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_prospect_sync",
     "os_setup_campaigns",
     "os_prospect_sync_settings",
+    "os_portal_chat_threads",
+    "os_portal_chat_messages",
   ]);
 });
 

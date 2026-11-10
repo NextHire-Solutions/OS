@@ -75,6 +75,10 @@ export const OS_TABLES = [
   "os_prospect_sync",
   "os_setup_campaigns",
   "os_prospect_sync_settings",
+  // "Ask for a person" in a portal's chat: the conversation, and what was said —
+  // see migrations/0047_portal_chat.sql.
+  "os_portal_chat_threads",
+  "os_portal_chat_messages",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

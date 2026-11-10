@@ -58,13 +58,13 @@ const ROUTES = filesUnder("src/app/api/crm-preview").filter((r) => r !== FORWARD
 const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
 
 test("the preview's routes: the reviewers, or a signed-in client on their own open portal — checked first; anyone else a bare 404; GET, except the chat's POST", () => {
-  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "export/route.ts", "market/route.ts", "report/route.ts", "save/route.ts"]);
+  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["ask-person/route.ts", "billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "export/route.ts", "market/route.ts", "person-chat/route.ts", "report/route.ts", "save/route.ts"]);
   assert.match(read(FORWARDER), /^export \{ POST \} from "\.\.\/save\/route";$/m, "the old address only forwards to /save");
   assert.doesNotMatch(read(FORWARDER), /function|import /, "and has nothing of its own");
   for (const r of ROUTES) {
     const src = read(r);
     const methods = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
-    assert.deepEqual(methods, [r.includes("/chat/") || r.includes("/save/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
+    assert.deepEqual(methods, [r.includes("/chat/") || r.includes("/save/") || r.includes("/ask-person/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
     assert.doesNotMatch(src, /canSeeCrmPreview\(|verifySso\(/, `${r}: the one gate, not its own`);
     const gate = src.indexOf("crmViewerOf(request)");
     assert.ok(gate > 0, `${r} calls the gate`);
@@ -207,6 +207,9 @@ const BROWSER_REQUESTS = [
   /^\/api\/crm-preview\/market\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/report\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/chat$/,
+  // "Ask for a person" in the chat (4 Nov): the conversation with our team, and reading it back.
+  /^\/api\/crm-preview\/ask-person$/,
+  /^\/api\/crm-preview\/person-chat\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/save$/,
   // Export (2 Nov): the list on screen as a file — a client's own Prospects; staff, Market too.
   /^\/api\/crm-preview\/export\?\$\{[^}]+\}$/,
@@ -217,9 +220,9 @@ const SERVER_REQUESTS: Record<string, RegExp[]> = {
   "src/lib/crm-preview/chat.ts": [/^https:\/\/api\.openai\.com\/v1\/chat\/completions$/],
   "src/lib/crm-preview/billing-portal.ts": [/^\$\{STRIPE\}\/billing_portal\/configurations\?limit=100&active=true$/, /^\$\{STRIPE\}\/billing_portal\/sessions$/],
 };
-const POSTS: Record<string, number> = { "src/components/crm-preview/crm-preview.tsx": 1, "src/components/crm-preview/chat.tsx": 1, "src/components/crm-preview/demo-save.ts": 1, "src/lib/crm-preview/chat.ts": 1, "src/lib/crm-preview/billing-portal.ts": 1 };
+const POSTS: Record<string, number> = { "src/components/crm-preview/crm-preview.tsx": 1, "src/components/crm-preview/chat.tsx": 2, "src/components/crm-preview/demo-save.ts": 1, "src/lib/crm-preview/chat.ts": 1, "src/lib/crm-preview/billing-portal.ts": 1 };
 
-test("requests: the preview's reads, the chat's one POST, OpenAI from the server, and Stripe's billing page — nothing else", () => {
+test("requests: the preview's reads, the chat's two POSTs, OpenAI from the server, and Stripe's billing page — nothing else", () => {
   for (const f of PREVIEW_FILES) {
     const src = read(f);
     const allowed = SERVER_REQUESTS[f] ?? BROWSER_REQUESTS;
@@ -230,7 +233,8 @@ test("requests: the preview's reads, the chat's one POST, OpenAI from the server
     assert.doesNotMatch(src, /method\s*:\s*["'](PUT|PATCH|DELETE)["']/, f);
   }
   const chatUi = read("src/components/crm-preview/chat.tsx");
-  assert.match(chatUi, /fetch\(`\/api\/crm-preview\/chat`, \{\s*method: "POST"/, "the chat window POSTs only to the chat route");
+  assert.match(chatUi, /fetch\(`\/api\/crm-preview\/chat`, \{\s*method: "POST"/, "the chat window POSTs to the chat route");
+  assert.match(chatUi, /fetch\(`\/api\/crm-preview\/ask-person`, \{\s*method: "POST"/, "and to tell our team someone asked for a person — nothing else");
 });
 
 test("not a product: no menu item, no Team access switch, no grant — and the proxy opens it only to a client's sign-in, on its exact paths", () => {

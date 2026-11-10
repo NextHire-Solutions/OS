@@ -107,6 +107,9 @@ export const CLIENT_PORTAL_PATHS: ReadonlySet<string> = new Set([
   "/api/crm-preview/save",
   // A client's own Prospects as a file (2 Nov) — export/route.ts; Market only for staff.
   "/api/crm-preview/export",
+  // "Ask for a person" in the chat (4 Nov): the conversation with our team, and reading it back.
+  "/api/crm-preview/ask-person",
+  "/api/crm-preview/person-chat",
 ]);
 /** lib/portal-login/http.ts PORTAL_COOKIE — written out here: that module is server-only (node:crypto). A test keeps them equal. */
 export const CLIENT_PORTAL_COOKIE = "bs_portal";

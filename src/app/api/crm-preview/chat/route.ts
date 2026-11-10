@@ -9,10 +9,11 @@ import { marketContext, marketReport } from "@/lib/crm-preview/market";
 import { admit, NO_STORE_HEADERS, served } from "@/lib/crm-preview/data-guard";
 import { recordUse } from "@/lib/portal-usage/usage";
 import { createAdminSupabase } from "@/lib/supabase/admin";
+import { signAssistant } from "@/lib/portal-chat/assistant-sign";
 
 /*
  * The portal assistant (19 Oct). POST { client, messages: [{ role, text }] }
- * → { reply }.
+ * → { reply, sig }: sig signs the reply, so "Ask for a person" can hand it to our team as the assistant's own.
  *
  * The reviewers, or the portal's own signed-in client (27 Oct), as the
  * preview page: anyone else gets a bare 404.
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
     served(who, "chat", 0);
     after(() => recordUse(createAdminSupabase(), { who, role, portalId: client, kind: "chat", rows: 0, now: new Date() }));
     console.info(JSON.stringify({ at: "[crm-preview] chat", who, client, turns: turns.length, tools: out.tools, tokens: out.tokens }));
-    return NextResponse.json({ reply: out.reply }, { headers: NO_STORE_HEADERS });
+    return NextResponse.json({ reply: out.reply, sig: signAssistant(client, out.reply) }, { headers: NO_STORE_HEADERS });
   } catch (e) {
     console.error(JSON.stringify({ at: "[crm-preview] chat failed", who, client, error: e instanceof Error ? e.message.slice(0, 200) : "unknown" }));
     return NextResponse.json({ error: "The assistant couldn't answer just now. Please try again." }, { status: 502, headers: NO_STORE_HEADERS });

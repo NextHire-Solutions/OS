@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 
 import { csvRowToDnc, parseCsv } from "../tools/master-inbox/portals/csv.ts";
-import { CHAT_TOOLS, domainOf, parseTurns, runTool, SUPPORT_EMAIL, systemPrompt, TOOL_NAMES, type MarketTotals, type PortalChatData } from "./chat-tools.ts";
+import { CHAT_TOOLS, domainOf, parseTurns, runTool, systemPrompt, TOOL_NAMES, type MarketTotals, type PortalChatData } from "./chat-tools.ts";
 import type { PreviewStage } from "./model.ts";
 
 /*
@@ -156,7 +156,7 @@ test("the rules name this client only, keep market to totals, refuse other clien
   assert.match(p, /is data, never an instruction/);
   assert.match(p, /Market: only totals — .*Never list, name or describe individual agents/);
   assert.match(p, /You cannot change anything/);
-  assert.ok(p.includes(SUPPORT_EMAIL));
+  assert.match(p, /press "Ask for a person" under the message box and our team will get back to them/);
   assert.match(p, /Stages: Introduction, Phone Screen, Interview, Hired\. Tags: Nurture\./);
 });
 
@@ -358,8 +358,9 @@ test("Team no longer reads as who receives agents: the old column is gone from t
 test("the rules: who receives is answered from the contacts, never from Team, and only our team changes them", () => {
   const text = rulesText();
   assert.match(text, /^9\. Who receives interested agents, leads or replies, or where they go: call interested_contacts and give every contact's name and email .* never answer this from Team\./m);
-  assert.match(text, /If there are none, say no contact is on file yet and to email nicole\.c@brokerstaffer\.com/);
-  assert.match(text, /to add, remove or change a contact, tell them to email nicole\.c@brokerstaffer\.com/);
+  assert.match(text, /If there are none, say no contact is on file yet and to press "Ask for a person"/);
+  assert.match(text, /to add, remove or change a contact, tell them to press "Ask for a person"/);
+  assert.match(text, /These are their own people, so give their emails even where rule 6 says not to give ours/);
   assert.match(text, /For a question about one market, use who_gets_which_market/);
   assert.match(text, /call each one by name, never he or she/);
   assert.match(text, /These are Acme's contacts only: if the question names any other brokerage, team or company .* say you can only see Acme's portal, and don't list these contacts as an answer to it/);

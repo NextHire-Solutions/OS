@@ -33,7 +33,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { cookies } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { after } from "next/server";
 
 import { SSO_COOKIE } from "@/lib/bs-auth";
@@ -41,7 +41,7 @@ import { PORTAL_COOKIE } from "@/lib/portal-login/http";
 import { crmViewer } from "@/lib/crm-preview/viewer";
 import { mayOpenPortal, mayWritePortal, type CrmViewer } from "@/lib/crm-preview/viewer-rules";
 import type { TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
-import { personName, teamName } from "@/lib/crm-preview/signed-in";
+import { signedInPerson } from "@/lib/crm-preview/signed-in-person";
 import { furthestStages, managedStages, PREVIEW_VIEWS, previewStages, type PortalOffer, type PreviewView } from "@/lib/crm-preview/model";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -104,11 +104,26 @@ async function loadOffer(portalId: string): Promise<PortalOffer | null> {
   return { offers: r.offers ?? [], whyJoin: r.why_join, neverSay: r.never_say, updatedAt: r.updated_at };
 }
 
+/*
+ * A Slack link to a conversation is for our team. Someone whose staff sign-in has lapsed — signed out, or still holding
+ * a client's sign-in from testing — is sent to sign in as our team, not to a dead end or a client's view of the portal.
+ */
+async function toSignIn(searchParams: Search): Promise<void> {
+  const q = await searchParams;
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
+  const thread = one(q.thread);
+  if (!thread) return;
+  redirect(`/login?next=${encodeURIComponent(`/crm-preview?client=${encodeURIComponent(one(q.client))}&thread=${encodeURIComponent(thread)}`)}`);
+}
+
 export default async function CrmPreviewPage({ searchParams }: { searchParams: Search }) {
   const jar = await cookies();
   // Staff (the reviewers) first, else a client's sign-in, narrowed to the portals open to clients — anyone else: Not found.
   const viewer = await crmViewer({ sso: jar.get(SSO_COOKIE)?.value, portal: jar.get(PORTAL_COOKIE)?.value });
+  if (!viewer) await toSignIn(searchParams);
   if (!viewer) notFound();
+  // A Slack link opened holding only a client's sign-in (a tester's): it's for our team, so sign in as our team.
+  if (viewer.kind === "client") await toSignIn(searchParams);
   const audience = viewer.kind;
 
   const params = await searchParams;
@@ -140,6 +155,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
 
   if (!UUID.test(clientId)) return shell(<ClientPicker portals={portals} audience={audience} />);
   // Not one of theirs (a client) — Not found, as for an address that does not exist.
+  if (!mayOpenPortal(viewer, clientId)) await toSignIn(searchParams);
   if (!mayOpenPortal(viewer, clientId)) notFound();
   // A client's market starts loading now, after the page is sent, so the wizard's market steps answer at once (market.ts warmPortalMarket).
   if (audience === "client") after(() => warmPortalMarket(clientId).catch((e) => console.error("[crm-preview] warm", e instanceof Error ? e.message : e)));
@@ -246,23 +262,8 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       initialView={view}
       initialStep={step}
       initialArticle={one(params.article) || null}
+      initialThread={one(params.thread) || null}
       now={new Date().toISOString()}
     />,
   );
-}
-
-/*
- * Who is signed in, for the design's "you" (signed-in.ts — 29 Oct; it showed the client record's contact). Kept below
- * the page: it reads only after the page's gate has passed (access.test.ts checks the order in this file).
- */
-async function signedInPerson(viewer: CrmViewer, portalId: string, team: TeamMember[]): Promise<{ name: string; email: string }> {
-  const email = viewer.email.trim().toLowerCase();
-  const onTeam = teamName(email, team);
-  if (onTeam) return { name: onTeam, email };
-  if (viewer.kind === "client") {
-    const { data } = await createAdminSupabase().from("os_portal_logins").select("name").eq("portal_id", portalId).eq("email", email).is("removed_at", null).maybeSingle();
-    return { name: personName(email, { listed: (data as { name: string | null } | null)?.name }), email };
-  }
-  const { data } = await osTable("os_users").select("name").eq("email", email).maybeSingle();
-  return { name: personName(email, { account: (data as { name: string | null } | null)?.name }), email };
 }
