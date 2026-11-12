@@ -106,7 +106,7 @@ test("plans are counted per tier", () => {
     [row("a", { plan: "minimum" }), row("b", { plan: "partner" }), row("c", { plan: "partner" })],
     WEEK,
   );
-  assert.deepEqual(s.plans, { minimum: 1, production: 0, partner: 2 });
+  assert.deepEqual(s.plans, { minimum: 1, production: 0, partner: 2, perLead: 0 });
 });
 
 // -- the all-time counters ---------------------------------------------------

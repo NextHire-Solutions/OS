@@ -134,7 +134,8 @@ function rawOf(key: string, c: MasterClient): string | number | null {
 /** How an editable field reads when not being edited. */
 function displayFor(key: string, c: MasterClient): React.ReactNode {
   switch (key) {
-    case "plan": return planLabel(c.plan);
+    // Billed per lead: its plan on record is only what onboarding had to pick (per-lead.ts).
+    case "plan": return c.health.perLead ? "Pay per lead" : planLabel(c.plan);
     case "timezone": return tzLabel(c.timezone);
     case "startDate": case "billingAnchorDate": case "onboardingDate": case "churnDate": case "pauseDate": return fmtDay(c[key]);
     case "billingInterval": return intervalLabel(c.billingInterval, c.billingIntervalDays);
@@ -333,7 +334,7 @@ export function ClientRecord({
               <h2>{c.name}</h2>
               <div className="rx-tags">
                 <StatusPill status={c.status} size="sm" />
-                {c.plan ? <span className="rx-tag">{planLabel(c.plan)}</span> : null}
+                {c.health.perLead ? <span className="rx-tag">Pay per lead</span> : c.plan ? <span className="rx-tag">{planLabel(c.plan)}</span> : null}
                 {!tool ? (
                   <button type="button" className={`rx-comp ${comp.pct >= 90 ? "good" : comp.pct >= 70 ? "warn" : "bad"}`}
                     title={comp.missing.length ? `Missing: ${comp.missing.map((m) => m.label).join(", ")}` : "Every profile check is done"}
@@ -394,9 +395,10 @@ export function ClientRecord({
                 ) : null}
               </div>
               <div>
-                <small>28-day period</small>
+                {/* Billed per lead: its leads against its lead cap, the numbers its Billing tab and Client Health show. */}
+                <small>{c.health.perLead ? "Leads, 28 days" : "28-day period"}</small>
                 <b>{period ? <>{period.delivered}<i>/{period.target}</i></> : "—"}</b>
-                <span className={`pace-${c.health.pace ?? "none"}`}>{c.health.pace === "done" ? "target met" : c.health.pace === "ok" ? "on pace" : c.health.pace === "risk" ? "behind pace" : "no target"}</span>
+                <span className={`pace-${c.health.pace ?? "none"}`}>{c.health.pace === "done" ? (c.health.perLead ? "cap reached" : "target met") : c.health.pace === "ok" ? "on pace" : c.health.pace === "risk" ? "behind pace" : c.health.perLead ? "no cap" : "no target"}</span>
               </div>
               <div>
                 <small>Next billing</small>
@@ -496,7 +498,7 @@ export function ClientRecord({
               {tab === "billing" && billingTab ? (
                 <>
                   {/* Read again, in place, when a customer is confirmed, linked or excluded below: its totals are by the same customers. */}
-                  <ClientBillingTab rev={billingRev} clientId={c.id} clientName={c.name} plan={c.plan ? planLabel(c.plan) : null} />
+                  <ClientBillingTab rev={billingRev} clientId={c.id} clientName={c.name} plan={c.health.perLead ? "Pay per lead" : c.plan ? planLabel(c.plan) : null} />
                   <section className="rx-sec cat-billing">
                     <h3><i aria-hidden="true" />Subscriptions and Stripe<span>pause, resume, link and the billing fields</span></h3>
                     <BillingControl clientId={c.id} onChanged={() => { setBillingRev((n) => n + 1); onChanged("stripe"); }} />
@@ -926,7 +928,7 @@ function Tools({ c }: { c: MasterClient }) {
   const rows: { tool: string; present: boolean | null; note: string }[] = [
     { tool: "Master Inbox", present: c.portal.count > 0, note: c.portal.count ? `${c.portal.count} portal${c.portal.count === 1 ? "" : "s"} · ${fmtNum(c.introductions) ?? 0} introductions` : "no inbox client" },
     { tool: "Client Portal", present: c.portal.url ? true : c.portal.count ? false : null, note: c.portal.url ? "open" : c.portal.count ? "closed" : "none" },
-    { tool: "Client Health", present: c.health.present, note: c.health.present ? `${planLabel(c.plan) ?? "no plan"} · ${c.monthlyTarget ?? 0} / 28 days` : "not in Client Health" },
+    { tool: "Client Health", present: c.health.present, note: c.health.present ? (c.health.perLead ? `pay per lead · cap ${c.health.period?.target ?? "none"} / 28 days` : `${planLabel(c.plan) ?? "no plan"} · ${c.monthlyTarget ?? 0} / 28 days`) : "not in Client Health" },
     { tool: "Database", present: c.database.present, note: c.database.present ? `${fmtNum(c.assignedLeads) ?? 0} leads · ${fmtNum(c.replies) ?? 0} replies` : "not in the Database" },
     { tool: "Analytics", present: c.analytics.present, note: c.analytics.present ? `${fmtNum(c.analytics.campaigns) ?? 0} campaigns · ${fmtNum(c.analytics.sent) ?? 0} sent` : "not in Analytics" },
   ];

@@ -107,7 +107,7 @@ export function ClientModal({
           />
         </Field>
 
-        <Field label="Plan">
+        <Field label="Plan" help={form.perLead ? "Billed per lead, so Client Health tracks its leads, not this plan." : undefined}>
           <select
             className="inp"
             style={{ ...input, cursor: "pointer" }}
@@ -121,8 +121,10 @@ export function ClientModal({
         </Field>
 
         <Field
-          label="Monthly Intros Target"
-          help="Intros due per 28-day period. Split across billing cycles — e.g. 8 = 4 due every 14-day cycle. Drives At Risk / On Track, Intros / Billing and carry-forward. 0 = no target."
+          label={form.perLead ? "Lead Cap" : "Monthly Intros Target"}
+          help={form.perLead
+            ? "Leads per 28-day window, counted from its Billing tab's first day. Drives Monthly and At Risk / On Track; at the cap its campaigns pause. 0 = no cap."
+            : "Intros due per 28-day period. Split across billing cycles — e.g. 8 = 4 due every 14-day cycle. Drives At Risk / On Track, Intros / Billing and carry-forward. 0 = no target."}
         >
           <input
             className="inp tnum"
@@ -137,7 +139,12 @@ export function ClientModal({
         {/* No Start Date field (removed 6 Oct). The stored value is kept and saved back
             unchanged — Client Health still uses it when no billing anchor is set. */}
 
-        <Field label="Billing Anchor Date" help="A known billing date the cycle is counted from.">
+        <Field
+          label="Billing Anchor Date"
+          help={form.perLead
+            ? `Not used for this client: it is billed per lead, every ${form.perLead.everyDays} days from ${new Date(`${form.perLead.anchor}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}, as set on its Billing tab.`
+            : "A known billing date the cycle is counted from."}
+        >
           <input
             className="inp tnum"
             style={input}

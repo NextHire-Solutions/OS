@@ -10,6 +10,7 @@ import {
   unwaiveLead, UsageBillingError, waiveLead, type Approved,
 } from "@/lib/clients/usage-billing/billing";
 import { addToRestart, capView, removeFromRestart, restartNow, setSpendCap } from "@/lib/clients/usage-billing/caps";
+import { perLeadByHealthId } from "@/lib/tools/client-health/per-lead-load";
 import { usageBillingLiveKey } from "@/lib/clients/usage-billing/live-key";
 import {
   DEFAULT_LEAD_SOURCE, duePeriods, easternDay, LEAD_SOURCE_NAMES, lastCompletedPeriod, modeOf, parseSettingsInput, periodLabel, periodOf,
@@ -222,9 +223,26 @@ export async function GET(request: Request) {
   }
 }
 
+/*
+ * Pay per lead changed (its schedule, price, mode, spend limit, a lead waived or billed): Client Health and the master
+ * record measure the client by it (client-health/per-lead.ts), so their cached numbers start over at once instead of
+ * up to six minutes later. The reads (a preview, the leads, the cards found) change nothing and clear nothing.
+ */
+const CHANGES_LEADS = new Set(["save", "set_auto", "confirm_setup", "connect_card", "charge", "retry", "refresh", "waive", "unwaive", "set_spend_cap"]);
+
 export async function POST(request: Request) {
   const who = await billingTabUser(request);
   if (who instanceof NextResponse) return who;
+  const action = await request.clone().json().then((b: { action?: unknown } | null) => String(b?.action ?? "")).catch(() => "");
+  const res = await handlePost(request, who);
+  if (res.ok && CHANGES_LEADS.has(action)) {
+    perLeadByHealthId.invalidate();
+    clientsChanged();
+  }
+  return res;
+}
+
+async function handlePost(request: Request, who: Exclude<Awaited<ReturnType<typeof billingTabUser>>, NextResponse>) {
   if (!fromOwnPage(request)) return say(403, "Forbidden");
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const clientId = typeof body?.clientId === "string" ? body.clientId : "";

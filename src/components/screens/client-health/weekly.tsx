@@ -11,6 +11,7 @@ import {
 } from "@/lib/tools/client-health/clientForm";
 import { daysUntil, todayInET } from "@/lib/tools/client-health/derive";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
+import { perLeadPeriod, planName } from "@/lib/tools/client-health/per-lead";
 import {
   asOfForWeek, deriveRows, funnelRates, summarize, type WeeklyRow,
 } from "@/lib/tools/client-health/summarize";
@@ -20,7 +21,7 @@ import {
 } from "@/lib/tools/client-health/types";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
-import { IntrosBillingCell, MonthlyCell, asDate, fmtMDY, isBehind } from "./billing-cells";
+import { IntrosBillingCell, MonthlyCell, asDate, fmtMDY, isBehind, notCounted } from "./billing-cells";
 import { CampaignToggleDialog } from "./campaign-toggle-dialog";
 import { ClientCampaignsName } from "./campaigns-link";
 import { CampaignsPopup } from "./campaigns-popup";
@@ -68,6 +69,8 @@ const STATUS = {
 } as const;
 
 const PLAN_TONE = { minimum: "outline", production: "brand", partner: "violet" } as const;
+/** No introductions by design: the Converted and Int → Intro cells of a client billed per lead (per-lead.ts). */
+const NO_INTROS = "Billed per lead: its Interested replies go straight to it, so it gets no introductions";
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -141,6 +144,11 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
         <p className="ds-note">
           <b>Showing sample data.</b> Client Health&rsquo;s database is not reachable
           {data.error ? ` — ${data.error}` : ""}.
+        </p>
+      ) : null}
+      {data.perLeadError ? (
+        <p className="ds-note" data-per-lead-error="">
+          <b>Clients billed per lead are shown by introductions</b> because their leads couldn&rsquo;t be read: {data.perLeadError}
         </p>
       ) : null}
 
@@ -295,11 +303,16 @@ function Row({
    * `new Date()` here — that is the hydration bug this workspace has shipped
    * three times.
    */
-  const lastBilling = snap ? asDate(snap.cycle.start) : null;
-  const billing = snap ? asDate(snap.cycle.end) : null;
+  // Billed per lead with its leads not counted: its billing dates are still its Billing tab's (per-lead.ts).
+  const unknownPeriod = !snap && c.per_lead ? perLeadPeriod(c.per_lead, now) : null;
+  const lastBilling = snap ? asDate(snap.cycle.start) : unknownPeriod?.start ?? null;
+  const billing = snap ? asDate(snap.cycle.end) : unknownPeriod?.end ?? null;
   const billingDays = billing ? daysUntil(billing, now) : null;
 
-  const status = STATUS[snap?.status ?? "pending"];
+  // A client billed per lead whose leads couldn't be counted says so, rather than a status worked out from nothing.
+  const status = c.per_lead && !snap
+    ? { label: "Not counted", tone: "muted" as const, title: notCounted(c.per_lead) }
+    : { ...STATUS[snap?.status ?? "pending"], title: undefined };
   const active = activeCampaigns(c);
   const progress = campaignProgress(active, picked);
   const funnel = clientFunnel(c);
@@ -413,10 +426,12 @@ function Row({
         )}
       </td>
 
-      <td><MonthlyCell snap={snap} /></td>
+      <td><MonthlyCell snap={snap} perLead={c.per_lead} /></td>
 
       <td>
-        {d.daysSince === null ? (
+        {d.leadsUnknown && c.per_lead ? (
+          <span className="ds-none" title={notCounted(c.per_lead)}>—</span>
+        ) : d.daysSince === null ? (
           <span className="ds-none">No data</span>
         ) : d.daysSince <= 5 ? (
           <span className="tone-green" style={{ fontWeight: 650 }}>
@@ -444,14 +459,14 @@ function Row({
         )}
       </td>
 
-      <td><IntrosBillingCell snap={snap} onSetBilling={onEdit} /></td>
+      <td><IntrosBillingCell snap={snap} onSetBilling={onEdit} perLead={c.per_lead} /></td>
 
       <td className="num">{todayEmails > 0 ? n(todayEmails) : <span className="ds-none">—</span>}</td>
 
       <td className="num">{d.emails > 0 ? n(d.emails) : <span className="ds-none">—</span>}</td>
 
       {/* A plain count: there is no weekly target to colour it against. */}
-      <td className="num">{n(d.intros)}</td>
+      <td className="num">{d.leadsUnknown && c.per_lead ? <span className="ds-none" title={notCounted(c.per_lead)}>—</span> : n(d.intros)}</td>
 
       <td className="num">
         {d.convPct === null ? (
@@ -502,33 +517,45 @@ function Row({
         )}
       </td>
 
-      <td><Badge tone={status.tone} dot>{status.label}</Badge></td>
+      <td><Badge tone={status.tone} dot title={status.title}>{status.label}</Badge></td>
 
       <td className="num">{n(funnel.interested)}</td>
-      <td className="num">{n(funnel.converted)}</td>
+      <td className="num">{c.per_lead ? <span className="ds-none" title={NO_INTROS}>—</span> : n(funnel.converted)}</td>
       <td className="num">
-        {funnel.ratePct === null
+        {c.per_lead
+          ? <span className="ds-none" title={NO_INTROS}>—</span>
+          : funnel.ratePct === null
           ? <span className="ds-none" title="Nobody has entered the funnel yet">—</span>
           : pct(funnel.ratePct)}
       </td>
 
       <td>
-        <Badge tone={PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
-          {c.plan.charAt(0).toUpperCase() + c.plan.slice(1)}
+        <Badge tone={c.per_lead ? "green" : PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
+          {planName(c)}
         </Badge>
       </td>
 
       {/* §8: billing interval + anchor, and aliases — held on every row, shown nowhere before. */}
       <td>
-        {c.billing_interval === "custom" && c.billing_interval_days
-          ? `every ${c.billing_interval_days}d`
-          : (c.billing_interval ?? "—")}
-        {/* The cycle follows Stripe's charge date where the record's own dates were off it (13 Oct). */}
-        <span className="ds-sub">
-          {c.stripe_anchor
-            ? `following Stripe · ${formatDate(c.stripe_anchor)}`
-            : c.billing_anchor_date ? `anchor ${formatDate(c.billing_anchor_date)}` : "no anchor set"}
-        </span>
+        {/* Billed per lead: the Billing tab's schedule is the one it is charged on, and the one its numbers count. */}
+        {c.per_lead ? (
+          <>
+            {`every ${c.per_lead.everyDays}d`}
+            <span className="ds-sub">{`per lead · from ${formatDate(c.per_lead.anchor)}`}</span>
+          </>
+        ) : (
+          <>
+            {c.billing_interval === "custom" && c.billing_interval_days
+              ? `every ${c.billing_interval_days}d`
+              : (c.billing_interval ?? "—")}
+            {/* The cycle follows Stripe's charge date where the record's own dates were off it (13 Oct). */}
+            <span className="ds-sub">
+              {c.stripe_anchor
+                ? `following Stripe · ${formatDate(c.stripe_anchor)}`
+                : c.billing_anchor_date ? `anchor ${formatDate(c.billing_anchor_date)}` : "no anchor set"}
+            </span>
+          </>
+        )}
       </td>
       <td className="wrap" style={{ maxWidth: 220, minWidth: 120 }}>
         {(c.campaign_aliases ?? []).length

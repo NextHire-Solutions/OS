@@ -172,7 +172,9 @@ export const TOOL_SCHEMA = [
         "monthly target; 'gone_quiet' is days since any lead activity; 'stagnant_intros' is intros that have not moved. " +
         "These do not move together — a client can be ahead of target with every intro stale. Paused clients are excluded " +
         "from problem rankings because they are behind by arrangement. Set best:true for the strongest performers instead. " +
-        "`notCovered` lists clients Client Health does not track at all, so they are absent from the ranking entirely.",
+        "`notCovered` lists clients Client Health does not track at all, so they are absent from the ranking entirely. " +
+        "A client marked billedPerLead gets no introductions: its numbers are its leads (Interested replies) this 28-day " +
+        "window against its lead cap, as its Billing tab shows.",
       parameters: {
         type: "object",
         properties: {

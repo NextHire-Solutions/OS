@@ -54,6 +54,11 @@ export interface ClientFormState {
    * maps fields one by one, so this can never be written back from here.
    */
   aliases: string[];
+  /**
+   * Billed per lead (per-lead.ts), with its Billing tab's schedule: the Monthly target is then its lead cap, and the
+   * billing fields here count nothing for it. READ ONLY, for the form's words; never written back.
+   */
+  perLead?: { anchor: string; everyDays: number } | null;
 }
 
 /**
@@ -100,6 +105,7 @@ export function formForClient(c: DashboardClient): ClientFormState {
     billingInterval: c.billing_interval ?? "biweekly",
     billingIntervalDays: c.billing_interval_days != null ? String(c.billing_interval_days) : "",
     timeZone: c.time_zone ?? "",
+    perLead: c.per_lead ? { anchor: c.per_lead.anchor, everyDays: c.per_lead.everyDays } : null,
   };
 }
 

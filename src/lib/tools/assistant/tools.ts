@@ -5,6 +5,8 @@ import "server-only";
 
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
+import { leadSnapshot } from "@/lib/tools/client-health/per-lead";
+import { perLeadByHealthId } from "@/lib/tools/client-health/per-lead-load";
 import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-health/supabase";
 import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/supabase";
 
@@ -385,6 +387,11 @@ export interface RankedClient {
   stagnantIntros: number | null;
   paused: boolean | null;
   plan: string | null;
+  /**
+   * Billed per lead (client-health/per-lead.ts): introsThisMonth and monthlyTarget are then its LEADS in this 28-day
+   * window and its lead cap, as its Billing tab and Client Health show; null when they couldn't be counted.
+   */
+  billedPerLead?: true;
 }
 
 export interface RankingsResult {
@@ -435,8 +442,27 @@ export async function clientRankingsTool(options: {
     return { error: `Client Health could not be read: ${error instanceof Error ? error.message : error}` };
   }
 
+  // Clients billed per lead get no introductions: they are judged by their leads (per-lead.ts). Unreadable: as before.
+  const perLead = await perLeadByHealthId().catch(() => null);
   const now = Date.now();
   const clients: RankedClient[] = rows.map((r) => {
+    const p = perLead?.get(String(r.id));
+    if (p) {
+      const snap = leadSnapshot({ monthly_target: (r.monthly_target as number) ?? 0, per_lead: p }, new Date(now));
+      const target = snap && snap.period.target > 0 ? snap.period.target : null;
+      const last = r.last_lead_activity_at as string | null;
+      return {
+        name: String(r.name ?? ""),
+        introsThisMonth: snap ? snap.period.delivered : null,
+        monthlyTarget: target,
+        vsTarget: snap && target !== null ? snap.period.delivered - target : null,
+        daysSinceLeadActivity: last ? Math.floor((now - new Date(last).getTime()) / 86_400_000) : null,
+        stagnantIntros: (r.stagnant_intros_count as number) ?? null,
+        paused: (r.client_paused as boolean) ?? null,
+        plan: "pay per lead",
+        billedPerLead: true,
+      };
+    }
     const intros = (r.intros_this_month as number) ?? null;
     const target = (r.monthly_target as number) ?? null;
     const last = r.last_lead_activity_at as string | null;

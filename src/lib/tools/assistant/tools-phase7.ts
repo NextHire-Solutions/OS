@@ -87,7 +87,8 @@ export async function clientRecordTool(query: string) {
     aliases: c.aliases,
     status: c.status,
     statusSince: c.statusSince,
-    plan: c.plan,
+    // Billed per lead: its plan on record is only what onboarding had to pick (client-health/per-lead.ts).
+    plan: c.health.perLead ? "pay per lead" : c.plan,
     dates: {
       signUp: profile.signUp ?? "(none: no $1 sign-up charge in Stripe and none entered)",
       onboarding: c.onboardingDate,

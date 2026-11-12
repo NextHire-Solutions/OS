@@ -58,6 +58,8 @@ export const PLAN_OPTIONS: { id: string; label: string }[] = [
   { id: "minimum", label: "Minimum" },
   { id: "production", label: "Production" },
   { id: "partner", label: "Partner" },
+  // Clients billed per lead (per-lead.ts): under their own name, not the plan onboarding had to give them.
+  { id: "per-lead", label: "Pay per lead" },
 ];
 
 /** The time-zone select — "All", then the seven zones by short code. */
@@ -123,7 +125,8 @@ export function applyFilters(rows: WeeklyRow[], o: FilterState, now: Date = new 
   const q = o.search.trim().toLowerCase();
   if (q) list = list.filter(({ client: c }) => c.name.toLowerCase().includes(q));
 
-  if (o.plan !== "all") list = list.filter(({ client: c }) => c.plan === o.plan);
+  if (o.plan === "per-lead") list = list.filter(({ client: c }) => !!c.per_lead);
+  else if (o.plan !== "all") list = list.filter(({ client: c }) => c.plan === o.plan && !c.per_lead);
 
   if (o.tz && o.tz !== "all") list = list.filter(({ client: c }) => c.time_zone === o.tz);
 

@@ -207,6 +207,7 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .cx-plan::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: #A1A1AA; }
 .cx-plan.p-production::before { background: #2563EB; }
 .cx-plan.p-partner::before { background: #7C3AED; }
+.cx-plan.p-per-lead::before { background: #16A34A; }
 .cx-chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11.5px;
   font-weight: 500; border: 1px solid var(--x-line); color: var(--x-mute); background: var(--x-surface); white-space: nowrap; }
 .cx-chip.t-green { color: var(--st-active); border-color: #CDEBDD; }

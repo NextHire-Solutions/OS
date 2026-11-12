@@ -102,7 +102,8 @@ export function sortWeekly(rows: WeeklyRow[], sort: Sort | null, now: Date): Wee
     case "introsBilling":
       return sinking((r) => (r.snap && r.snap.cycle.target > 0 ? r.snap.cycle.remaining : null));
     case "emails": return num((r) => r.derived.emails);
-    case "intros": return num((r) => r.derived.intros);
+    // Leads that couldn't be counted sink rather than sort as 0 (per-lead.ts); with none unknown it is the plain sort.
+    case "intros": return sinking((r) => (r.derived.leadsUnknown ? null : r.derived.intros));
     case "progress": return num((r) => r.derived.campaignsAvgPct);
     case "interested": return num((r) => sumWeeks(r, "interested_corofy"));
     case "converted": return num((r) => sumWeeks(r, "intros_corofy"));
@@ -115,7 +116,7 @@ export function sortWeekly(rows: WeeklyRow[], sort: Sort | null, now: Date): Wee
     // Intros in the current 28-day period; no monthly target sinks.
     case "monthly":
       return sinking((r) =>
-        !r.client.monthly_target ? null : r.snap?.period.delivered ?? 0,
+        !r.client.monthly_target || (r.client.per_lead && !r.snap) ? null : r.snap?.period.delivered ?? 0,
       );
 
     /*

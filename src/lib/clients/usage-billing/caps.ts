@@ -8,11 +8,11 @@ import { applyLabelToThread } from "@/lib/tools/master-inbox/inbox/apply-label";
 
 import { keysBilledBefore, loadSettings, tellBell, UsageBillingError, waivedKeys } from "./billing";
 import {
-  CAP_RESTART_FROM_HOUR_ET, campaignsFromJson, capActsOn, capAppliesTo, capsHoldLive, capsLive, capWindowOf, columnIsMissing, effectiveCap, isOverCap, mergeCampaigns, parseSpendCap, tableIsMissing,
+  CAP_RESTART_FROM_HOUR_ET, CAP_WINDOW_DAYS, campaignsFromJson, capActsOn, capAppliesTo, capsHoldLive, capsLive, capWindowOf, columnIsMissing, effectiveCap, isOverCap, mergeCampaigns, parseSpendCap, tableIsMissing,
   type CapCampaign, type CapWindow, type EffectiveCap,
 } from "./caps-model.ts";
 import { billableLeads, heldLeadsOf, type LeadSourceFn } from "./leads";
-import { DEFAULT_LEAD_SOURCE, dedupeLeads, easternDay, easternHour, LEAD_SOURCES_ALL, modeOf, periodLabel, type BillableLead, type LeadSource, type SettingsRow } from "./model.ts";
+import { addDays, DEFAULT_LEAD_SOURCE, dedupeLeads, easternDay, easternHour, LEAD_SOURCES_ALL, modeOf, periodLabel, type BillableLead, type LeadSource, type SettingsRow } from "./model.ts";
 
 /*
  * LEAD AND SPEND CAPS (5 Nov 2026; plan approved by Eddy, Slack).
@@ -114,6 +114,57 @@ async function leadsInWindow(s: SettingsRow, w: CapWindow, source?: LeadSourceFn
     ? source(s.os_client_id, w.start, w.end, { startDate: s.anchor_date })
     : billableLeads(s.os_client_id, w.start, w.end, leadSource, { startDate: s.anchor_date }));
   return dedupeLeads(raw, await keysBilledBefore(s.os_client_id, w.start, modeOf(s) === "test"), await waivedKeys(s.os_client_id, modeOf(s) === "test")).billable;
+}
+
+/*
+ * Every client billed per lead, with its leads window by window (12 Nov): what Client Health measures these clients
+ * by, instead of introductions they never get (client-health/per-lead.ts). Read only.
+ *
+ * Each 28-day window is counted exactly as the cap panel counts it (leadsInWindow: once per agent in the window, none
+ * billed before it, none waived), so the two always show one number. The current window must be read or the client
+ * isn't counted at all, as on its Billing tab. An earlier window that can't be read leaves the leads complete only
+ * from the window after it (`countedFrom`), never a past week that reads 0.
+ */
+export interface PerLeadClient {
+  settings: SettingsRow;
+  chClientId: string | null;
+  spendCapCents: number | null;
+  leads: BillableLead[] | null;
+  /** The first day the leads are complete from (Eastern). Null when they couldn't be read at all. */
+  countedFrom: string | null;
+  error: string | null;
+}
+
+export async function perLeadClients(today = easternDay(new Date())): Promise<PerLeadClient[]> {
+  const rows = await allSettings();
+  if (!rows.length) return [];
+  const { data, error } = await osTable("os_clients").select("id, ch_client_id").in("id", rows.map((s) => s.os_client_id));
+  if (error) throw new Error(`os_clients: ${error.message}`);
+  const chOf = new Map(((data ?? []) as Row[]).map((r) => [String(r.id), typeof r.ch_client_id === "string" && r.ch_client_id ? r.ch_client_id : null]));
+  return Promise.all(rows.map(async (s): Promise<PerLeadClient> => {
+    const base = { settings: s, chClientId: chOf.get(s.os_client_id) ?? null };
+    try {
+      const spend = await readSpendCap(s.os_client_id);
+      // Nothing counts before the first day, so a schedule that hasn't started has none to read.
+      const current = capWindowOf(s.anchor_date, today);
+      if (!current) return { ...base, spendCapCents: spend.cents, leads: [], countedFrom: s.anchor_date, error: null };
+      const windows: CapWindow[] = [];
+      for (let start = current.start; start >= s.anchor_date; start = addDays(start, -CAP_WINDOW_DAYS)) windows.push({ start, end: addDays(start, CAP_WINDOW_DAYS) });
+      const read = await Promise.allSettled(windows.map((w) => leadsInWindow(s, w)));
+      if (read[0].status === "rejected") throw read[0].reason;
+      const leads: BillableLead[] = [];
+      let countedFrom = current.start;
+      for (let i = 0; i < read.length; i++) {
+        const r = read[i];
+        if (r.status === "rejected") break;
+        leads.push(...r.value);
+        countedFrom = windows[i].start;
+      }
+      return { ...base, spendCapCents: spend.cents, leads, countedFrom, error: null };
+    } catch (e) {
+      return { ...base, spendCapCents: null, leads: null, countedFrom: null, error: e instanceof Error ? e.message : String(e) };
+    }
+  }));
 }
 
 interface WindowRow {

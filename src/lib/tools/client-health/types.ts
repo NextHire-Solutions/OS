@@ -148,6 +148,8 @@ export interface DashboardClient extends Client {
   // Markets from the OS client record. Null when they could not be read —
   // distinct from [] (none entered yet).
   markets: ClientMarket | null;
+  /** Billed per lead (its Billing tab has pay per lead set): measured by its leads, not introductions — per-lead.ts. */
+  per_lead?: import("./per-lead.ts").PerLead | null;
 }
 
 export const HISTORICAL_WEEKS = 26;

@@ -1396,6 +1396,51 @@ refused and the row then showing Stripe's address, a phone
 width, Gabriel (Clients page, not the Billing tab) sees no button and gets a
 bare 404, admin@outreachify.io sees it.
 
+#### Pay-per-lead clients in Client Health (built 12–13 Nov)
+
+Amy, weekly call 11 Nov: every client tracks well "except our two new clients …
+Hetherington and Homebase"; their interested replies (1 and 3) didn't show, and
+she asked whether picking minimum / production / partner at onboarding caused
+it. It didn't. Client Health scores every client by **introductions** against
+its monthly target (`billing.ts`), and a pay-per-lead client never gets an
+introduction: its Interested replies go straight to it as leads. So both read 0,
+Homebase "At Risk" with a phantom "+1 carried", while the Billing tab had them
+right (Homebase 2 of its cap of 2, Hetherington 1 of 4). The plan only gave
+them a "Production" badge.
+
+A client with a row in `os_usage_billing_settings` (test or live, the same rule
+as its portal's Interested column) is now measured by its **leads**, with the
+Billing tab's own numbers. `usage-billing/caps.ts perLeadClients` reads each
+28-day window exactly as the cap panel does (`leadsInWindow`: once per agent,
+corrections, held and waived replies out, none billed before the window); an
+older window that can't be read sets `countedFrom` so earlier weeks show "—",
+never 0; the current window unreadable = "Not counted". Cached in
+`client-health/per-lead-load.ts` (`perLeadByHealthId`, shared, 1 min + 5 stale,
+warmed by the master list's 4-minute warm-up, cleared by every Billing-tab
+change in the usage route). Pure rules in `client-health/per-lead.ts`:
+
+| Where | A pay-per-lead client shows |
+|---|---|
+| Monthly / Status | leads this 28-day window (from the Billing tab's first day) / the lead cap (Monthly target, or the spend limit if it buys fewer). Done at the cap, On Track at an even pace, At Risk behind; nothing carried |
+| Intros / Billing, Delivery | leads in the current billing period ("1 lead"), charged from the period's end; no "due", nothing left or owed |
+| Last / Next billing | the Billing tab's periods (Hetherington Nov 5 → Nov 19, not Client Health's own Nov 6 anchor) |
+| Intros This Week, Last Intro, Conv. Rate | its leads that week, its last lead, leads per 1,000 emails |
+| Converted, Int → Intro | "—" (no introductions by design) |
+| Plan, filter, By Plan | "Pay per lead" (its own plan filter; not under Production) |
+| Summary cards | its status counts; its leads and cap are kept OUT of the introduction totals |
+| Edit dialog | Monthly target labelled Lead Cap; the anchor/interval say they aren't used for it |
+| Record header, Clients list, Performance, assistant | the same numbers and "Pay per lead"; `client_rankings` / `billing_cycles` mark `billedPerLead` |
+| Onboarding | picking a pay-per-lead product sets the Plan aside ("Plan: not needed…"); the default plan is stored because Client Health's table requires one |
+
+Every other client is unchanged: `healthSnapshot` hands them to `billing.ts`
+as before (billing.ts not touched). Proof: 3,457 tests; 36/36 deliberate breaks
+caught; an independent review (every finding fixed: per-window counting,
+unknown never 0, assistant ranking, caches, labels); a real-data dry run equal
+to the cap panel; and real Chrome A/B, today's main vs the fix, both local on
+real data with every write refused (54/54): only Homebase's and Hetherington's
+rows changed. The standalone Client Health app (clients.brokerstaffer.com) was
+not changed and still shows them by introductions.
+
 ### Inboxes: where each column comes from
 
 Daily limit, Sent, Replied (people who replied), Bounced, Status, Vendor, Tags,

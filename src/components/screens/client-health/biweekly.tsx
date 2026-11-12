@@ -7,6 +7,7 @@ import {
   blankForm, formForClient, todayLocalISO, type ClientFormState,
 } from "@/lib/tools/client-health/clientForm";
 import { applyFilters, visibleTotal } from "@/lib/tools/client-health/filters";
+import { planName } from "@/lib/tools/client-health/per-lead";
 import { asOfForWeek, deriveRows, funnelRates, summarize } from "@/lib/tools/client-health/summarize";
 import type { DashboardClient } from "@/lib/tools/client-health/types";
 import {
@@ -15,7 +16,7 @@ import {
 } from "@/lib/tools/client-health/views";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
 
-import { AheadBadge, CarryBadge, fmtMDY, isBehind } from "./billing-cells";
+import { AheadBadge, CarryBadge, fmtMDY, isBehind, notCounted } from "./billing-cells";
 import { alignmentNote } from "@/lib/clients/billing-align.ts";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
@@ -101,6 +102,11 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
           {data.error ? ` — ${data.error}` : ""}.
         </p>
       ) : null}
+      {data.perLeadError ? (
+        <p className="ds-note" data-per-lead-error="">
+          <b>Clients billed per lead are shown by introductions</b> because their leads couldn&rsquo;t be read: {data.perLeadError}
+        </p>
+      ) : null}
 
       <ClientHealthToolbar title="Delivery" description="who bills next, and what they are still owed" week={week} onAdd={openAdd} sync={data.sync} now={now} />
       {/*
@@ -183,7 +189,9 @@ function BiWeeklyView({ data }: { data: ClientHealthWeeklyData }) {
 
 function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
   const { client: c, billing, days, intros, required, leftCycle, snap, tzShort } = row;
-  const note = alignmentNote(c.billing_alignment);
+  // Billed per lead: its dates are its Billing tab's (per-lead.ts), so a note about the record's own dates doesn't apply.
+  const perLead = c.per_lead ?? null;
+  const note = perLead ? null : alignmentNote(c.billing_alignment);
 
   // The tool's three-way colouring: met, at least half, below half.
   const tone =
@@ -198,8 +206,8 @@ function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
       <td>
         <ClientCampaignsName client={c} className="ds-primary" />
         <span className="ds-sub">
-          <Badge tone={PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
-            {c.plan.charAt(0).toUpperCase() + c.plan.slice(1)}
+          <Badge tone={perLead ? "green" : PLAN_TONE[c.plan as keyof typeof PLAN_TONE] ?? "outline"}>
+            {planName(c)}
           </Badge>
         </span>
       </td>
@@ -236,7 +244,15 @@ function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
       </td>
 
       <td>
-        {required === null ? (
+        {perLead ? (
+          // The leads of this billing period, which it is charged for next. None is due, so there is no "/ due".
+          snap ? (
+            <span className="ds-ib" data-per-lead="">
+              <b className="num" title={`${intros} lead${intros === 1 ? "" : "s"} this billing period, charged from ${billing ? fmtMDY(billing) : "its billing date"}`}>{intros}</b>
+              <span className="ds-ib-due">{intros === 1 ? "lead" : "leads"}</span>
+            </span>
+          ) : <span className="ds-none" title={notCounted(perLead)}>—</span>
+        ) : required === null ? (
           <span className="ds-none" title={billing ? "No monthly target set" : "No billing schedule"}>—</span>
         ) : (
           <span className="ds-ib">
@@ -248,7 +264,7 @@ function Row({ row, onEdit }: { row: BiWeeklyRow; onEdit: () => void }) {
 
       <td>
         {leftCycle === null ? (
-          <span className="ds-none">—</span>
+          <span className="ds-none" title={perLead ? "Billed per lead: no lead is owed in a billing period" : undefined}>—</span>
         ) : leftCycle === 0 ? (
           <Badge tone="green" dot>Done</Badge>
         ) : (

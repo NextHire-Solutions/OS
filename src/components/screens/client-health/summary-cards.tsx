@@ -35,7 +35,7 @@ export function SummaryCards({
         <Stat label="On Track" value={s.ok} sub="on pace for 28-day target" tone="amber" />
         <Stat label="Done" value={s.done} sub="28-day target met" tone="green" />
         <Stat label="Paused" value={s.clientPaused} sub="clients on hold" />
-        <Stat label="By Plan" value={`${s.plans.minimum} · ${s.plans.production} · ${s.plans.partner}`} sub="min · prod · partner" />
+        <Stat label="By Plan" value={`${s.plans.minimum} · ${s.plans.production} · ${s.plans.partner} · ${s.plans.perLead ?? 0}`} sub="min · prod · partner · per lead" />
       </Band>
 
       <Band label={isCurrent ? "Performance" : `Performance — week of ${weekLabel(weekKey)}`}>

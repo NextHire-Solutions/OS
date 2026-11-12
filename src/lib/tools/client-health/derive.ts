@@ -1,5 +1,6 @@
 import type { BillingInterval, DashboardClient, WeeklyMetric } from './types';
 import { completedCycles } from './billing';
+import { completedLeadWindows, leadsOfWeek } from './per-lead';
 
 const EMPTY_METRIC: Omit<WeeklyMetric, 'client_id' | 'week_key'> = {
   emails_sent: 0,
@@ -193,7 +194,10 @@ const SCORE_WINDOW_CYCLES = 4;
 const SCORE_MIN_CYCLES = 2;
 const RATIO_CAP = 2.0;
 export function clientScore(c: DashboardClient, today: Date = new Date()): ClientScore {
-  const cycles = completedCycles(c, today, SCORE_WINDOW_CYCLES);
+  // A client billed per lead: its finished 28-day windows' leads against its cap (per-lead.ts).
+  const cycles = c.per_lead
+    ? completedLeadWindows(c, today, SCORE_WINDOW_CYCLES)
+    : completedCycles({ ...c, monthly_target: c.monthly_target ?? 0, intro_dates: c.intro_dates ?? [] }, today, SCORE_WINDOW_CYCLES);
   if (cycles.length < SCORE_MIN_CYCLES) {
     return { score: null, cyclesUsed: cycles.length, hitRate: 0, avgRatio: 0 };
   }
@@ -250,13 +254,19 @@ export interface DerivedRow {
   convClass: 'good' | 'mid' | 'low' | 'none';
   daysSince: number | null;
   campaignsAvgPct: number;
+  /** Billed per lead and its leads for this week couldn't be counted: `intros` is not a figure (per-lead.ts). */
+  leadsUnknown?: boolean;
 }
 
 export function derive(c: DashboardClient, weekKey: string): DerivedRow {
   const m = metricFor(c, weekKey);
   const hasEmails = m.emails_sent > 0;
-  const intros = m.intros_corofy;
-  const lastAt = m.last_corofy_intro_at;
+  // A client billed per lead gets leads, not introductions: its week counts those (per-lead.ts).
+  const week = c.per_lead ? leadsOfWeek(c.per_lead, weekKey) : null;
+  // Leads that couldn't be counted: no figure at all, so nothing reads as 0 (the cells say "—").
+  const leadsUnknown = week !== null && week.count === null;
+  const intros = week ? week.count ?? 0 : m.intros_corofy;
+  const lastAt = week ? week.lastAt : m.last_corofy_intro_at;
   const hasIntros = intros > 0 || lastAt !== null;
   const emails = m.emails_sent;
 
@@ -265,7 +275,7 @@ export function derive(c: DashboardClient, weekKey: string): DerivedRow {
 
   let convPct: number | null = null;
   let convClass: 'good' | 'mid' | 'low' | 'none' = 'none';
-  if (emails > 0) {
+  if (emails > 0 && !leadsUnknown) {
     convPct = (intros / emails) * 1000;
     convClass = convPct >= 50 ? 'good' : convPct >= 20 ? 'mid' : 'low';
   }
@@ -295,5 +305,6 @@ export function derive(c: DashboardClient, weekKey: string): DerivedRow {
     convClass,
     daysSince: daysSinceLastIntro(lastAt),
     campaignsAvgPct,
+    ...(leadsUnknown ? { leadsUnknown: true } : {}),
   };
 }

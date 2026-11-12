@@ -54,7 +54,7 @@ const MISSING = "#B9C0CB";
 
 const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 const usd2 = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const PLAN_LABEL: Record<string, string> = { production: "Production", minimum: "Minimum", partner: "Partner" };
+const PLAN_LABEL: Record<string, string> = { production: "Production", minimum: "Minimum", partner: "Partner", "per-lead": "Pay per lead" };
 const dayLabel = (d: string | null) =>
   d ? new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—";
 const listed = (names: string[]) => (names.length ? names.join(", ") : "none");

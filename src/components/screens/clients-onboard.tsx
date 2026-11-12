@@ -201,11 +201,12 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
           confirm: name,
           // Every leg, always — including the portal.
           name,
-          plan,
+          // Pay per lead: the default plan, which Client Health stores and doesn't use for it (the Plan field says so).
+          plan: product ? DEFAULTS.plan : plan,
           // The weekly target is gone from Client Health's screens (billing
           // cycles replaced it); the column is NOT NULL and other apps read
           // it, so a new client gets its plan's default — as the tool does.
-          weeklyTarget: PLAN_DEFAULT_TARGET[plan],
+          weeklyTarget: PLAN_DEFAULT_TARGET[product ? DEFAULTS.plan : plan],
           aliases: aliases.split("\n").map((a) => a.trim()).filter(Boolean),
           startDate: startDate || undefined,
           billingInterval,
@@ -397,10 +398,15 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
             <input className="inp" value={name} onChange={(e) => setName(e.target.value)}
               maxLength={80} placeholder="As the business writes it" />
           </label>
+          {/*
+            Pay per lead picked (below): the client isn't on these plans, and Client Health tracks it by its leads (12 Nov,
+            per-lead.ts), so there is nothing to choose. Client Health still stores a plan, so the default goes with it.
+          */}
           <label style={FIELD}>
-            <span style={LABEL}>Plan *</span>
-            <select className="inp" value={plan} onChange={(e) => setPlan(e.target.value as Plan)}>
-              {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+            <span style={LABEL}>Plan{product ? "" : " *"}</span>
+            <select className="inp" value={product ? DEFAULTS.plan : plan} onChange={(e) => setPlan(e.target.value as Plan)} disabled={!!product}
+              aria-describedby={product ? "ob-plan-per-lead" : undefined}>
+              {product ? <option value={DEFAULTS.plan}>Pay per lead</option> : PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </label>
           {/* No "Start date" field (removed 6 Oct): Client Health still gets the
@@ -420,6 +426,8 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
             </label>
           ) : null}
         </div>
+        {/* Under the row, not in the Plan field: inside it, it stretched the row and dropped the other boxes out of line. */}
+        {product ? <span id="ob-plan-per-lead" className="mut" style={{ fontSize: 12, marginTop: -6 }}>Plan: not needed. Client Health tracks a pay-per-lead client by its leads.</span> : null}
 
         {/* Their market (28 Oct): the boards first — they decide who the portal shows — with the count as they're picked; areas and how many, optional, under. */}
         <section className="mkp-section" data-onboard-markets="" aria-label="Market">
@@ -471,7 +479,7 @@ function OnboardForm({ onClose, billing }: { onClose: () => void; billing: boole
             </select>
             <span className="mut" style={{ fontSize: 12 }}>
               {product
-                ? `Saved on the client's Billing tab, every ${billingInterval === "biweekly" ? 14 : 7} days from today, in test mode: nothing is charged until someone presses Go live there with the client's card on file. The plan above is unchanged.`
+                ? `Saved on the client's Billing tab, every ${billingInterval === "biweekly" ? 14 : 7} days from today, in test mode: nothing is charged until someone presses Go live there with the client's card on file. Client Health tracks its leads against its lead cap (its Monthly target there).`
                 : "Optional — it can also be set up later, on the client's Billing tab."}
             </span>
           </label>

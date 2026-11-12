@@ -88,6 +88,8 @@ export interface ClientHealthWeeklyData {
   summary?: WeeklySummary;
   source: "supabase" | "seed";
   error?: string;
+  /** Why the clients billed per lead couldn't be read (they then show by introductions), or absent. per-lead.ts. */
+  perLeadError?: string;
   /*
    * When the sync last ran and whether it worked, from `sync_runs` — the
    * tool's own audit table. Null when it could not be read (seed data, or a
@@ -119,7 +121,7 @@ const named = (list: { id: string; name: string }[]): NamedCampaign[] =>
  * than serving last week's rows for this week.
  */
 async function loadWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData> {
-  const [{ clients, allInstantlyCampaigns, allBisonCampaigns, source, error }, sync] =
+  const [{ clients, allInstantlyCampaigns, allBisonCampaigns, source, error, perLeadError }, sync] =
     await Promise.all([
       loadDashboardClients(),
       // One small indexed read; a failure here must not take the dashboard down.
@@ -146,6 +148,7 @@ async function loadWeekly(weekOffset = 0): Promise<ClientHealthWeeklyData> {
     summary: summarize(rows, key),
     source,
     error,
+    ...(perLeadError ? { perLeadError } : {}),
     sync,
   };
 }

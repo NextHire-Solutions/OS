@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { BillingSnapshot, CycleState } from "@/lib/tools/client-health/billing";
+import type { PerLead } from "@/lib/tools/client-health/per-lead";
 
 /*
  * The billing-cycle cells, shared by Weekly and Bi-Weekly so the two cannot
@@ -22,6 +23,12 @@ export const fmtMDY = (d: Date | string) => {
   const x = asDate(d);
   return `${String(x.getUTCMonth() + 1).padStart(2, "0")}/${String(x.getUTCDate()).padStart(2, "0")}/${x.getUTCFullYear()}`;
 };
+
+/** The day before `d`: a per-lead period or window ends the day before its exclusive end (per-lead.ts). */
+const dayBefore = (d: Date | string) => new Date(asDate(d).getTime() - 86_400_000);
+
+/** Why a per-lead client's numbers are missing, for a title: they couldn't be counted, never "0". */
+export const notCounted = (p: PerLead) => `Its leads couldn't be counted, so this isn't shown: ${p.error ?? "unknown reason"}`;
 
 /** True when intros carried from an earlier cycle are still outstanding — the red row edge. */
 export const isBehind = (snap: BillingSnapshot | null) =>
@@ -105,7 +112,23 @@ function cycleTone(cy: CycleState): "green" | "amber" | "red" {
 }
 
 /** "2 / 6 due" — delivered since the last billing date vs required by the next. */
-export function IntrosBillingCell({ snap, onSetBilling }: { snap: BillingSnapshot | null; onSetBilling: () => void }) {
+export function IntrosBillingCell({ snap, onSetBilling, perLead }: { snap: BillingSnapshot | null; onSetBilling: () => void; perLead?: PerLead | null }) {
+  /*
+   * Billed per lead (per-lead.ts): the leads of this billing period, which are what it is charged next. No lead is
+   * due in a period, so there is no "due" and nothing carried. Its schedule is the Billing tab's.
+   */
+  if (perLead) {
+    if (!snap) return <span className="ds-none" title={notCounted(perLead)}>—</span>;
+    const cy = snap.cycle;
+    return (
+      <span className="ds-ib" data-per-lead="">
+        <b className="num" title={`${cy.delivered} lead${cy.delivered === 1 ? "" : "s"} in this billing period, ${fmtMDY(cy.start)} – ${fmtMDY(dayBefore(cy.end))}, charged from ${fmtMDY(cy.end)}`}>
+          {cy.delivered}
+        </b>
+        <span className="ds-ib-due">{cy.delivered === 1 ? "lead" : "leads"}</span>
+      </span>
+    );
+  }
   if (!snap) {
     return <button type="button" className="ds-link" onClick={onSetBilling}>Set billing date</button>;
   }
@@ -128,15 +151,19 @@ export function IntrosBillingCell({ snap, onSetBilling }: { snap: BillingSnapsho
  * monthly target, e.g. 6/8. Resets only when the full 28 days end. Colour
  * follows the status: green done, amber on pace, red behind.
  */
-export function MonthlyCell({ snap }: { snap: BillingSnapshot | null }) {
+export function MonthlyCell({ snap, perLead }: { snap: BillingSnapshot | null; perLead?: PerLead | null }) {
   const period = snap?.period ?? null;
+  if (perLead && !snap) return <span className="ds-none" title={notCounted(perLead)}>—</span>;
+  if (perLead && period && period.target <= 0) return <span className="ds-none" title="No lead cap: set its Monthly target, or a spend limit on its Billing tab">—</span>;
   if (!snap || !period || period.target <= 0) return <span className="ds-none">—</span>;
   const tone = snap.status === "done" ? "green" : snap.status === "ok" ? "amber" : "red";
   return (
     <span className="ds-ib">
       <b
         className={`tone-${tone}`}
-        title={`28-day period ${fmtMDY(period.start)} → ${fmtMDY(period.end)} · day ${period.elapsedDays} of ${period.totalDays} · ${period.expected} expected by now`}
+        title={perLead
+          ? `Leads ${fmtMDY(period.start)} – ${fmtMDY(dayBefore(period.end))} against the lead cap of ${period.target} · day ${period.elapsedDays} of ${period.totalDays} · ${period.expected} expected by now`
+          : `28-day period ${fmtMDY(period.start)} → ${fmtMDY(period.end)} · day ${period.elapsedDays} of ${period.totalDays} · ${period.expected} expected by now`}
       >
         {period.delivered}/{period.target}
       </b>

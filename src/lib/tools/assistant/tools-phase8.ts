@@ -101,11 +101,17 @@ export async function billingCyclesTool(o: { withinDays?: number }) {
     .sort((a, b) => (a.days ?? 999) - (b.days ?? 999));
   return {
     asOf: w.now,
-    clients: rows.slice(0, 40).map((r) => ({
-      client: r.client.name, nextBilling: r.billing ? r.billing.toISOString().slice(0, 10) : null, daysUntilBilling: r.days,
-      introsThisCycle: r.intros, requiredThisCycle: r.required, stillOwed: r.leftCycle, carriedIn: r.snap?.cycle.carryIn ?? 0,
-    })),
-    note: "Client Health's Delivery view (Client Health → Delivery): introductions in the current billing cycle against what is due, carry included. Null required = no target or no billing schedule.",
+    clients: rows.slice(0, 40).map((r) => (r.client.per_lead
+      // Billed per lead (client-health/per-lead.ts): its leads this billing period, which it is charged for next. None is due.
+      ? {
+          client: r.client.name, nextBilling: r.billing ? r.billing.toISOString().slice(0, 10) : null, daysUntilBilling: r.days,
+          billedPerLead: true, leadsThisPeriod: r.snap ? r.intros : null,
+        }
+      : {
+          client: r.client.name, nextBilling: r.billing ? r.billing.toISOString().slice(0, 10) : null, daysUntilBilling: r.days,
+          introsThisCycle: r.intros, requiredThisCycle: r.required, stillOwed: r.leftCycle, carriedIn: r.snap?.cycle.carryIn ?? 0,
+        })),
+    note: "Client Health's Delivery view (Client Health → Delivery): introductions in the current billing cycle against what is due, carry included. Null required = no target or no billing schedule. A client billed per lead (billedPerLead) gets no introductions: leadsThisPeriod is its leads in the billing period it is charged for next, null when they couldn't be counted, and nothing is owed.",
   };
 }
 

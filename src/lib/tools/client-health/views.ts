@@ -1,5 +1,6 @@
 import { clientScore, daysUntil } from "./derive.ts";
-import { billingSnapshot, type BillingSnapshot } from "./billing.ts";
+import type { BillingSnapshot } from "./billing.ts";
+import { healthSnapshot, perLeadPeriod } from "./per-lead.ts";
 import { TZ_SHORT_BY_VALUE, type DashboardClient } from "./types.ts";
 
 /*
@@ -58,8 +59,10 @@ export function cycleDays(c: DashboardClient): number {
 export function biweeklyRows(clients: DashboardClient[], now: Date): BiWeeklyRow[] {
   return clients.map((c) => {
     // §6.8: from the billing snapshot at now — no weekly target anywhere.
-    const snap = billingSnapshot({ ...c, monthly_target: c.monthly_target ?? 0, intro_dates: c.intro_dates ?? [] }, now);
-    const billing = snap?.cycle.end ?? null;
+    // By leads for a client billed per lead (per-lead.ts): no lead is due in a period, so nothing is required or left.
+    const snap = healthSnapshot(c, now);
+    // Billed per lead with its leads not counted: still its Billing tab's date, so it isn't "no billing date".
+    const billing = snap?.cycle.end ?? (c.per_lead ? perLeadPeriod(c.per_lead, now).end : null);
     const hasTarget = Boolean(snap && snap.cycle.target > 0);
     return {
       client: c,

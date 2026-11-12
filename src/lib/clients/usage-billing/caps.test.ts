@@ -1340,3 +1340,89 @@ test("before 0050 runs the cap counts as before", async () => {
   assert.deepEqual(r.errors, []);
   assert.match(r.notes.join(), /Homebase: 2 of 2/);
 });
+
+/* ------------------------------------------- Client Health's read of the same leads (12 Nov) --- */
+
+const perLeadLoad = await import("../../tools/client-health/per-lead-load.ts");
+const TODAY = "2026-11-12";
+
+test("Client Health reads exactly the leads the cap counts: Homebase's John and Ram, not Daniel, who wasn't billed", async () => {
+  seed();
+  atCap();
+  interested("daniel", "2026-11-05T19:19:19.000Z");
+  db.seed("os_usage_billing_waivers", [{ os_client_id: HB, test_mode: false, lead_key: "daniel@x.test", lead_name: "daniel", reason: "sent over the cap", waived_by: "amy@brokerstaffer.com", waived_at: "2026-11-05T20:00:00.000Z" }]);
+  const [r] = await caps.perLeadClients(TODAY);
+  assert.equal(r.chClientId, "ch-hb");
+  assert.equal(r.error, null);
+  assert.deepEqual(r.leads!.map((l) => l.key), ["john@x.test", "ram@x.test"]);
+  const v = await caps.capView(HB, await settings(), OFF, new Date(`${TODAY}T18:00:00.000Z`));
+  assert.equal(v.used, r.leads!.length, "the cap panel's count");
+});
+
+test("Client Health's leads carry Eastern days: John at 8:29pm Eastern on Nov 3 is a Nov 3 lead", async () => {
+  seed({ settings: { spend_cap_cents: 50_000 } });
+  atCap();
+  perLeadLoad.perLeadByHealthId.invalidate();
+  const p = (await perLeadLoad.perLeadByHealthId()).get("ch-hb")!;
+  assert.deepEqual(p.leads!.map((l) => l.day), ["2026-11-03", "2026-11-03"], "00:29 and 04:07 UTC on Nov 4 are Nov 3 in Eastern");
+  assert.equal(p.anchor, "2026-10-28");
+  assert.equal(p.everyDays, 14);
+  assert.equal(p.live, true);
+  assert.equal(p.spendCapCents, 50_000, "the spend limit comes with it, so the cap matches the panel's");
+  perLeadLoad.perLeadByHealthId.invalidate();
+});
+
+test("a schedule that hasn't started has no leads, and nothing is read for it", async () => {
+  seed({ settings: { anchor_date: "2026-11-20" } });
+  atCap();
+  db.calls.length = 0;
+  const [r] = await caps.perLeadClients(TODAY);
+  assert.deepEqual(r.leads, []);
+  assert.equal(db.calls.some((c) => c.table === "label_history"), false);
+});
+
+test("one client's leads that can't be read are that client's error, never none", async () => {
+  seed();
+  atCap();
+  db.failWhen = ({ table }) => (table === "label_history" ? { code: "XX000", message: "label history is down", status: 500 } : false);
+  const [r] = await caps.perLeadClients(TODAY);
+  db.failWhen = null;
+  assert.equal(r.leads, null);
+  assert.match(r.error ?? "", /label history is down/);
+});
+
+test("pay per lead itself unreadable: Client Health is told, not handed an empty list", async () => {
+  seed();
+  db.failWhen = ({ table }) => (table === "os_usage_billing_settings" ? { code: "XX000", message: "settings are down", status: 500 } : false);
+  await assert.rejects(() => caps.perLeadClients(TODAY), /settings are down/);
+  db.failWhen = null;
+});
+
+test("each window is counted as the cap panel counts it: an agent billed in an earlier window isn't a lead again", async () => {
+  seed();
+  atCap();
+  // John and Ram billed for Oct 28 – Nov 10; John's reply later corrected; John marked Interested again on Nov 30.
+  db.seed("os_usage_billing_periods", [{ os_client_id: HB, period_start: "2026-10-28", period_end: "2026-11-11", test_mode: false, status: "paid", leads: [{ key: "john@x.test", name: "john", at: "2026-11-04T00:29:00.000Z", source: "interested" }, { key: "ram@x.test", name: "ram", at: "2026-11-04T04:07:00.000Z", source: "interested" }] }]);
+  db.rows("label_assignments").find((a) => a.target_id === "t-john")!.label_id = "lab-no";
+  db.rows("threads").push({ id: "t-john2", client_id: PORTAL, lead_id: "l-john", status: "open" });
+  db.rows("label_assignments").push({ label_id: "lab-int", target_type: "thread", target_id: "t-john2", assigned_at: "2026-11-30T15:00:00.000Z" });
+  db.rows("label_history").push({ id: 99, thread_id: "t-john2", label_id: "lab-int", label_name: "Interested", assigned_at: "2026-11-30T15:00:00.000Z", client_id: PORTAL, lead_id: "l-john", source: "trigger" });
+  const [r] = await caps.perLeadClients("2026-12-01");
+  assert.equal(r.countedFrom, "2026-10-28");
+  assert.deepEqual(r.leads!.map((l) => l.key), ["ram@x.test"], "John's correction drops his first; his second was billed before its window");
+  const v = await caps.capView(HB, await settings(), OFF, new Date("2026-12-01T18:00:00.000Z"));
+  assert.equal(v.used, 0, "the cap panel's count for Nov 25 – Dec 22");
+  assert.equal(r.leads!.filter((l) => l.at >= "2026-11-25").length, v.used);
+});
+
+test("an earlier window that can't be read: the leads are complete from the current window only", async () => {
+  seed();
+  atCap();
+  interested("lee", "2026-11-28T15:00:00.000Z");
+  db.failWhen = ({ table, query }) => (table === "label_history" && query.getAll("assigned_at").some((v) => v.startsWith("gte.2026-10-28")) ? { code: "XX000", message: "old history is down", status: 500 } : false);
+  const [r] = await caps.perLeadClients("2026-12-01");
+  db.failWhen = null;
+  assert.equal(r.error, null);
+  assert.equal(r.countedFrom, "2026-11-25");
+  assert.deepEqual(r.leads!.map((l) => l.key), ["lee@x.test"]);
+});

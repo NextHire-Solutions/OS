@@ -30,7 +30,9 @@ export const fmtNum = (n: number | null | undefined) => (n === null || n === und
 export const compact = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 10_000 ? `${Math.round(n / 1000)}K` : n.toLocaleString("en-US");
 
-export const PLAN_LABEL: Record<string, string> = { minimum: "Minimum", production: "Production", partner: "Partner" };
+export const PLAN_LABEL: Record<string, string> = { minimum: "Minimum", production: "Production", partner: "Partner", "per-lead": "Pay per lead" };
+/** The plan a client is shown on: "per-lead" when billed per lead (its plan on record is only what onboarding had to pick). */
+export const shownPlan = (c: Pick<MasterClient, "plan" | "health">) => (c.health.perLead ? "per-lead" : c.plan);
 export const planLabel = (p: string | null) => (p ? PLAN_LABEL[p] ?? p.charAt(0).toUpperCase() + p.slice(1) : null);
 
 export const INTERVAL_LABEL: Record<string, string> = {
@@ -112,7 +114,7 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
     case "clientId": return <Id value={c.id} />;
     case "name": return <b className="cx-strong">{c.name}</b>;
     case "status": return <StatusPill status={c.status} size="sm" />;
-    case "plan": return <PlanTag plan={c.plan} />;
+    case "plan": return <PlanTag plan={shownPlan(c)} />;
     case "startDate": case "onboardingDate": case "dateAdded": case "firstBillingDate": case "billingAnchorDate":
     case "nextBillingDate": case "pauseDate": case "churnDate": case "reactivationDate": {
       const v = fmtDay(c[k]);
@@ -236,7 +238,7 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
       if (!p) return <None title="No monthly target set" />;
       const tone = c.health.pace === "done" ? "green" : c.health.pace === "ok" ? "amber" : "red";
       return (
-        <span className="cx-perf" title="Introductions this 28-day period / the monthly target">
+        <span className="cx-perf" title={c.health.perLead ? "Leads this 28-day window / the lead cap" : "Introductions this 28-day period / the monthly target"}>
           <span className="cx-num"><b>{p.delivered}</b>/{p.target}</span>
           <Meter value={p.delivered} max={p.target} tone={tone} />
         </span>
@@ -290,7 +292,7 @@ export function textOf(k: string, c: MasterClient): string {
   switch (k) {
     case "clientId": return c.id;
     case "status": return c.status.charAt(0).toUpperCase() + c.status.slice(1);
-    case "plan": return planLabel(c.plan) ?? "";
+    case "plan": return planLabel(shownPlan(c)) ?? "";
     case "market": return c.markets?.markets == null ? "" : String(c.markets.markets);
     case "mls": return (c.markets?.mls ?? []).join("; ");
     case "area": return (c.markets?.areas ?? []).join("; ");

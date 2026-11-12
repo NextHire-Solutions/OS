@@ -3,6 +3,8 @@ import "server-only";
 import { analyticsRead } from "@/lib/tools/analytics/in-process";
 import { billingSnapshot, dayNumber, dayToDate, scheduleFor } from "@/lib/tools/client-health/billing";
 import { nextBillingDate } from "@/lib/tools/client-health/derive";
+import { leadSnapshot, type PerLead } from "@/lib/tools/client-health/per-lead";
+import { perLeadByHealthId } from "@/lib/tools/client-health/per-lead-load";
 import { alignWithStripe, stripeAnchor, type BillingAlignment } from "./billing-align.ts";
 import { stripeFactsByClient } from "./billing-align-load";
 import { easternDay } from "@/lib/commissions/schedule";
@@ -150,6 +152,8 @@ export interface MasterClient {
     /** The billing cycle: delivered / required, and carry owed. */
     cycle: { delivered: number; required: number; carryIn: number } | null;
     pace: "risk" | "ok" | "done" | "pending" | null;
+    /** Billed per lead (12 Nov, per-lead.ts): period and pace are its leads against its lead cap, as Client Health shows. */
+    perLead?: boolean;
   };
   /** `url` is the first open portal; `links` is every portal the client has (a client can run several markets). */
   portal: { count: number; url: string | null; enabled: boolean | null; links: { name: string; url: string; enabled: boolean }[] };
@@ -328,6 +332,8 @@ async function load(): Promise<MasterClientList> {
     listClientProfiles(),
     // Each client's Stripe subscriptions, so billing dates follow the real charge (13 Oct).
     stripeFactsByClient(),
+    // The clients billed per lead, measured by their leads as Client Health measures them (12 Nov).
+    perLeadByHealthId(),
   ]);
   const unavailable: string[] = [];
   const get = <T,>(i: number): T | null => {
@@ -355,6 +361,9 @@ async function load(): Promise<MasterClientList> {
   const profiles = settled[13].status === "fulfilled" ? (settled[13].value as Map<string, ClientProfile> | null) : null;
   // Never reported as unavailable: without Stripe every client keeps the dates on its record.
   const stripeFacts = settled[14].status === "fulfilled" ? (settled[14].value as Awaited<ReturnType<typeof stripeFactsByClient>>) : null;
+  // Unreadable: those clients fall back to their introductions, and the record names what it couldn't read.
+  const perLeadById = settled[15].status === "fulfilled" ? (settled[15].value as Map<string, PerLead>) : null;
+  if (!perLeadById) unavailable.push("Pay per lead");
 
   const pickHealth = matcher(healthRows ?? [], (r) => str(r.id), (r) => str(r.name));
   const pickDb = matcher(db?.clients ?? [], (r) => r.id, (r) => r.name);
@@ -397,9 +406,14 @@ async function load(): Promise<MasterClientList> {
       ...onRecord, stripe_anchor: stripeAnchor(billingAlignment),
       monthly_target: num(h!.monthly_target) ?? 0, intro_dates: strs(h!.intro_dates),
     } : null;
-    const snap = billingIn ? billingSnapshot(billingIn, now) : null;
+    // Billed per lead: its leads against its lead cap, and its Billing tab's schedule, as Client Health shows (per-lead.ts).
+    const perLead = h ? perLeadById?.get(str(h.id) ?? "") ?? null : null;
+    const snap = perLead
+      ? leadSnapshot({ monthly_target: num(h!.monthly_target) ?? 0, per_lead: perLead }, now)
+      : billingIn ? billingSnapshot(billingIn, now) : null;
     const anchor = billingIn ? billingIn.stripe_anchor ?? billingIn.billing_anchor_date ?? billingIn.start_date : null;
-    const next = billingIn && anchor ? nextBillingDate(anchor, interval, now, billingIn.billing_interval_days) : null;
+    const next = perLead ? snap?.cycle.end ?? null
+      : billingIn && anchor ? nextBillingDate(anchor, interval, now, billingIn.billing_interval_days) : null;
 
     const campaignIds = h ? [...strs(h.instantly_campaign_ids).map((id) => ["Instantly", id] as const), ...strs(h.bison_campaign_ids).map((id) => ["EmailBison", id] as const)] : [];
     const campaigns: MasterCampaign[] | null = h
@@ -473,6 +487,7 @@ async function load(): Promise<MasterClientList> {
         period: snap && snap.period.target > 0 ? { delivered: snap.period.delivered, target: snap.period.target } : null,
         cycle: snap && snap.cycle.target > 0 ? { delivered: snap.cycle.delivered, required: snap.cycle.required, carryIn: snap.cycle.carryIn } : null,
         pace: snap && snap.period.target > 0 ? snap.status : null,
+        ...(perLead ? { perLead: true } : {}),
       },
       portal: {
         count: mine.length,

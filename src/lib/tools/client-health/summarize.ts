@@ -1,5 +1,6 @@
 import { addDays, derive, type DerivedRow } from "./derive.ts";
-import { billingDueInWeek, billingSnapshot, type BillingDueInWeek, type BillingSnapshot } from "./billing.ts";
+import type { BillingDueInWeek, BillingSnapshot } from "./billing.ts";
+import { healthDueInWeek, healthSnapshot } from "./per-lead.ts";
 import type { DashboardClient } from "./types.ts";
 
 /*
@@ -99,7 +100,8 @@ export interface WeeklySummary {
   intros: number;
   emails: number;
   clientPaused: number;
-  plans: { minimum: number; production: number; partner: number };
+  /** Clients billed per lead are counted as `perLead`, whatever plan onboarding had to give them. */
+  plans: { minimum: number; production: number; partner: number; perLead: number };
 
   /** R25–R29: intros due from the clients whose billing date falls in the week, carry included. */
   dueThisWeek: number;
@@ -133,14 +135,10 @@ export function deriveRows(clients: DashboardClient[], key: string, asOf: Date =
   return clients.map((client) => ({
     client,
     derived: derive(client, key),
-    snap: billingSnapshot(billingInput(client), asOf),
-    due: billingDueInWeek(billingInput(client), mon, asOf),
+    // By leads for a client billed per lead, otherwise the billing engine as before (per-lead.ts).
+    snap: healthSnapshot(client, asOf),
+    due: healthDueInWeek(client, mon, asOf),
   }));
-}
-
-/** The billing engine's input. monthly_target is nullable in the table; the engine wants 0. */
-function billingInput(c: DashboardClient) {
-  return { ...c, monthly_target: c.monthly_target ?? 0, intro_dates: c.intro_dates ?? [] };
 }
 
 /*
@@ -189,7 +187,7 @@ export function summarize(rows: WeeklyRow[], key: string): WeeklySummary {
   let dueThisWeek = 0, deliveredThisWeek = 0, billingThisWeek = 0;
   let convNum = 0, convDen = 0;
   let monthlyIntros = 0, monthlyTarget = 0;
-  const plans = { minimum: 0, production: 0, partner: 0 };
+  const plans = { minimum: 0, production: 0, partner: 0, perLead: 0 };
 
   const lifetime: FunnelTotals = { ...EMPTY_FUNNEL };
   const week: FunnelTotals = { ...EMPTY_FUNNEL };
@@ -201,7 +199,8 @@ export function summarize(rows: WeeklyRow[], key: string): WeeklySummary {
       continue;
     }
     total++;
-    if (client.plan in plans) plans[client.plan as keyof typeof plans]++;
+    if (client.per_lead) plans.perLead++;
+    else if (client.plan in plans) plans[client.plan as keyof typeof plans]++;
     // R20–R23: status from the 28-day target, not a weekly one.
     if (snap?.status === "risk") risk++;
     if (snap?.status === "ok") ok++;
@@ -211,9 +210,14 @@ export function summarize(rows: WeeklyRow[], key: string): WeeklySummary {
       dueThisWeek += due.due;
       deliveredThisWeek += Math.min(due.delivered, due.due);
     }
-    intros += derived.intros;
+    /*
+     * The introduction totals are introductions: a client billed per lead gets none, and its leads (its `derived`
+     * and `snap` count those) would be a different thing added in. Its status above counts like anyone's.
+     */
+    const byLeads = !!client.per_lead;
+    if (!byLeads) intros += derived.intros;
     emails += derived.emails;
-    if (derived.emails > 0) {
+    if (derived.emails > 0 && !byLeads) {
       convNum += derived.intros;
       convDen += derived.emails;
     }
@@ -242,7 +246,7 @@ export function summarize(rows: WeeklyRow[], key: string): WeeklySummary {
     }
 
     // R15–R18: the current 28-day block, from the snapshot.
-    if (snap && snap.period.target > 0) {
+    if (snap && snap.period.target > 0 && !byLeads) {
       monthlyIntros += snap.period.delivered;
       monthlyTarget += snap.period.target;
     }

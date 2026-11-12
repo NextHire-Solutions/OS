@@ -94,7 +94,7 @@ async function load(): Promise<Performance> {
         ...s,
         client: c?.name ?? s.customerName ?? "Unknown customer",
         market: c?.markets?.areas?.length ? c.markets.areas.join(", ") : null,
-        plan: c?.plan ?? null,
+        plan: c?.health.perLead ? "per-lead" : c?.plan ?? null,
       };
     });
     revenue = new Map();

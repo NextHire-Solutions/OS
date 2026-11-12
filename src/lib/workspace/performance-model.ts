@@ -75,6 +75,8 @@ export interface PerfClient {
   name?: string;
   status: string;
   plan: string | null;
+  /** Billed per lead (client-health/per-lead.ts): counted as "Pay per lead", not the plan onboarding had to pick. */
+  health?: { perLead?: boolean };
   weeklyTarget: number | null;
   onboardingDate: string | null;
   /** The fallback when no onboarding date is recorded (was Start date until 6 Oct). */
@@ -84,7 +86,7 @@ export interface PerfClient {
   pauseDates?: string[];
 }
 
-const PLAN_LABEL: Record<string, string> = { production: "Production", minimum: "Minimum", partner: "Partner" };
+const PLAN_LABEL: Record<string, string> = { production: "Production", minimum: "Minimum", partner: "Partner", "per-lead": "Pay per lead" };
 
 const monthLabel = (m: string) =>
   new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -116,7 +118,7 @@ export function performanceFrom(
 
   const planCounts = new Map<string, { count: number; target: number | null; min: number | null; max: number | null; mixed: boolean }>();
   for (const c of clients) {
-    const plan = c.plan ?? "unknown";
+    const plan = c.health?.perLead ? "per-lead" : c.plan ?? "unknown";
     const e = planCounts.get(plan) ?? { count: 0, target: c.weeklyTarget, min: null, max: null, mixed: false };
     e.count += 1;
     if (e.target !== c.weeklyTarget) e.mixed = true;

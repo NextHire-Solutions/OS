@@ -221,3 +221,14 @@ test("restart now: refused at the cap; with the cap raised, exactly what's liste
   assert.equal(ok.restarted, 1);
   assert.deepEqual(resumed, ["a"]);
 });
+
+test("a Billing tab change reaches Client Health at once: its cached pay-per-lead facts start over", async () => {
+  seed({ leads: 1 });
+  const { perLeadByHealthId } = await import("../../../../../../lib/tools/client-health/per-lead-load.ts");
+  perLeadByHealthId.invalidate();
+  assert.equal((await perLeadByHealthId()).get("ch1")?.spendCapCents, null);
+  const saved = await post(ADMIN, { action: "set_spend_cap", spendCap: "1000" });
+  assert.equal(saved.status, 200);
+  assert.equal((await perLeadByHealthId()).get("ch1")?.spendCapCents, 100_000, "not the minute-old copy");
+  perLeadByHealthId.invalidate();
+});

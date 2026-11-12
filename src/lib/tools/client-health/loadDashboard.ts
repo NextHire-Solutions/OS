@@ -7,6 +7,8 @@ import { alignWithStripe, stripeAnchor, type BillingAlignment } from '@/lib/clie
 import { stripeFactsByClient } from '@/lib/clients/billing-align-load';
 import { easternDay } from '@/lib/commissions/schedule';
 import { lifecycleOf } from "./publish";
+import { perLeadByHealthId } from './per-lead-load';
+import type { PerLead } from './per-lead.ts';
 import { generateSeed } from './seed';
 import {
   HISTORICAL_WEEKS,
@@ -59,6 +61,8 @@ export async function loadDashboardClients(): Promise<{
   allBisonCampaigns: BisonCampaign[];
   source: 'supabase' | 'seed';
   error?: string;
+  /** Why the clients billed per lead couldn't be read: they are then shown by introductions, and the screens say so. */
+  perLeadError?: string;
 }> {
   let sb;
   try {
@@ -101,7 +105,7 @@ export async function loadDashboardClients(): Promise<{
     return { data: all, error: null };
   }
 
-  const [clientsRes, metricsRes, campaignsRes, bisonRes, masters, stripeFacts] = await Promise.all([
+  const [clientsRes, metricsRes, campaignsRes, bisonRes, masters, stripeFacts, perLead] = await Promise.all([
     sb.from('clients').select('*').order('name'),
     fetchAllMetrics(),
     sb.from('instantly_campaigns').select('*'),
@@ -114,7 +118,14 @@ export async function loadDashboardClients(): Promise<{
      * read: every client then keeps the dates on its record, as before.
      */
     stripeFactsByClient().catch(() => null),
+    /*
+     * The clients billed per lead and their leads, as their Billing tab counts them (12 Nov — per-lead.ts): they are
+     * measured by those, not by introductions they never get. An Error when they can't be read, so the screens say so.
+     */
+    perLeadByHealthId().catch((e: unknown): Error => (e instanceof Error ? e : new Error(String(e)))),
   ]);
+  const perLeadById: Map<string, PerLead> = perLead instanceof Error ? new Map() : perLead;
+  const perLeadError = perLead instanceof Error ? perLead.message : undefined;
   const today = easternDay(new Date());
 
   if (clientsRes.error) {
@@ -131,7 +142,7 @@ export async function loadDashboardClients(): Promise<{
   const allBisonCampaigns = (bisonRes.data ?? []) as BisonCampaign[];
   const clients = (clientsRes.data ?? []) as ClientRow[];
   if (clients.length === 0) {
-    return { clients: [], allInstantlyCampaigns, allBisonCampaigns, source: 'supabase' };
+    return { clients: [], allInstantlyCampaigns, allBisonCampaigns, source: 'supabase', perLeadError };
   }
 
   const metricsByClient = new Map<string, Record<string, WeeklyMetric>>();
@@ -218,8 +229,9 @@ export async function loadDashboardClients(): Promise<{
       bisonCampaigns: linkedBison,
       metricsByWeek: metricsByClient.get(c.id) ?? {},
       portalActive: c.portal_active ?? false,
+      per_lead: perLeadById.get(c.id) ?? null,
     };
   });
 
-  return { clients: dashboardClients, allInstantlyCampaigns, allBisonCampaigns, source: 'supabase' };
+  return { clients: dashboardClients, allInstantlyCampaigns, allBisonCampaigns, source: 'supabase', perLeadError };
 }
