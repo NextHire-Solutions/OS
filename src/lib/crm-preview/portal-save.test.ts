@@ -56,6 +56,11 @@ const sentOf = (what: string) => sent.filter((s) => s.what === what);
 let afters: Array<() => unknown> = [];
 let hold: unknown = null;
 let agentDb: AgentRow[] = [];
+/* Agent-database lookups so far, and how many answer before the next one fails (the other records of an address, 11 Nov). */
+let lookups = 0;
+let lookupsBeforeFailing = Infinity;
+/* The portal's market context unreadable (the client record, its campaigns). */
+let contextFails = false;
 let matching: { ids: string[]; total: number } = { ids: [], total: 0 };
 let fubOutcome: unknown = { ok: true, mode: "created", personId: "p1" };
 /* Prospects ↔ campaign (2 Nov): the agents in the client's campaigns, and whether recording a change fails. */
@@ -112,7 +117,15 @@ if (canMock) {
   mock.module("../tools/master-inbox/portals/billing-hold", { namedExports: { portalBillingHold: async () => hold } });
   mock.module("../portal-usage/usage", { namedExports: { recordUse: record("usage"), alertMarketMove: record("moveAlert") } });
   const realMarket = await import("./demo-market.ts");
-  mock.module("./demo-market", { namedExports: { ...realMarket, agentsByIds: async (ids: readonly string[]) => agentDb.filter((a) => ids.includes(a.id)) } });
+  mock.module("./demo-market", {
+    namedExports: {
+      ...realMarket,
+      agentsByIds: async (ids: readonly string[]) => {
+        if (++lookups > lookupsBeforeFailing) throw new Error("agents: the agent database did not answer");
+        return agentDb.filter((a) => ids.includes(a.id));
+      },
+    },
+  });
   mock.module("../clients/prospect-sync/queue", {
     namedExports: {
       // As the real one: told the change, then Slack (which the save hands to after()).
@@ -132,7 +145,10 @@ if (canMock) {
   });
   mock.module("./market", {
     namedExports: {
-      marketContext: async () => ({ portal: { id: PORTAL, name: "BrokerStaffer" }, client: { id: "os-bs", name: "BrokerStaffer" }, orchClientId: "orch-bs", mls: { ids: [], matched: [], unmatched: [] }, titles: [] }),
+      marketContext: async () => {
+        if (contextFails) throw new Error("os_clients: the database did not answer");
+        return { portal: { id: PORTAL, name: "BrokerStaffer" }, client: { id: "os-bs", name: "BrokerStaffer" }, orchClientId: "orch-bs", mls: { ids: [], matched: [], unmatched: [] }, titles: [] };
+      },
       matchingIds: async (_ctx: unknown, _q: unknown, max: number) => ({ ids: matching.ids.slice(0, max), total: matching.total }),
       campaignProspectsAmong: async (_ctx: unknown, ids: string[]) => new Set(ids.filter((id) => campaignAgents.includes(id))),
     },
@@ -153,6 +169,9 @@ function seed(opts: { flags?: Record<string, unknown>; fubKey?: string | null; e
   afters = [];
   hold = null;
   agentDb = [];
+  lookups = 0;
+  lookupsBeforeFailing = Infinity;
+  contextFails = false;
   matching = { ids: [], total: 0 };
   campaignAgents = [];
   shownDb = new Map();
@@ -597,6 +616,119 @@ test("Prospects ↔ campaign: moved off Prospects (no list, My Agents, DNC) — 
   campaignAgents = ["a8"];
   okResult(await run({ type: "market.move", ids: ["a8"], to: "DNC List" }));
   assert.deepEqual(recorded().map((r) => ({ action: r.action, agents: r.agents.map((a) => a.id) })), [{ action: "remove", agents: ["a8"] }], "onto the DNC List: blocked AND out of the campaigns");
+});
+
+/* ------------------------------------- one agent, two records (11 Nov, Hetherington) --- */
+
+/*
+ * The agent database holds some agents twice: a Realtracs agent and its Georgia MLS copy, with no brokerage, city or
+ * sales — the same address and name. Hetherington moved the blank copies to the DNC List and the full records stayed on
+ * Prospects, reading "DNC List" (271 of them).
+ */
+const twins = () => {
+  const full = { ...agent("f1", "Jay Clark", ["jwclark30@gmail.com", null]), office_city: "Franklin", sales_volume: 2_674_500 };
+  const blank = { ...agent("g1", "Jay Clark", ["JWClark30@gmail.com", null]), brand: null, office_name: null };
+  agentDb = [
+    full, blank, agent("n1", "Jay Clark", ["jay@clarkteam.test", null]), agent("t1", "Pat Lee", ["jwclark30@gmail.com", null]),
+    agent("p2", "Other Prospect", ["other@x.test", null]), agent("q1", "No Address", [null, null]), agent("m1", "Market Only", ["market.only@x.test", null]),
+  ];
+  fake.seed("os_demo_prospects", [
+    ...["f1", "g1", "n1", "t1", "p2", "q1"].map((id) => ({ portal_id: PORTAL, agent_id: id, added_by: "amy@brokerstaffer.com" })),
+    { portal_id: OTHER, agent_id: "f1", added_by: "someone" },
+  ]);
+};
+const prospectIds = () => fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).map((x) => String(x.agent_id)).sort();
+
+test("Market → DNC List: the agent's other record comes off Prospects too — one entry, one block, both out of the campaign; a colleague at its inbox stays", { skip }, async () => {
+  seed();
+  syncOn();
+  twins();
+  const r = await run({ type: "market.move", ids: ["g1"], to: "DNC List" });
+  assert.deepEqual(r, { ok: true, message: "Jay Clark moved to DNC List." });
+  assert.deepEqual(prospectIds(), ["n1", "p2", "q1", "t1"], "both records of the agent off; the namesake at another address, the colleague at its inbox, everyone else stay");
+  assert.deepEqual(fake.rows("os_demo_prospects").filter((x) => x.portal_id === OTHER).map((x) => x.agent_id), ["f1"], "another portal's prospects untouched");
+  assert.deepEqual(fake.rows("client_dnc_entries").filter((x) => x.client_id === PORTAL && x.notes === "From Market").map((x) => [x.name, x.email]), [["Jay Clark", null]], "one entry, for the agent moved — by name");
+  assert.deepEqual(recorded().map((x) => ({ action: x.action, agents: x.agents.map((a) => a.id).sort() })), [{ action: "remove", agents: ["f1", "g1"] }], "both recorded to come out of the client's campaigns");
+  await settle();
+  assert.deepEqual(sentOf("blockEmail").map((x) => x.args[0]), ["jwclark30@gmail.com"], "the address blocked once");
+  assert.deepEqual(sentOf("slack.dncBulk").map((x) => (x.args[0] as { entries: unknown[] }).entries.length), [1], "one Slack line");
+  assert.deepEqual(sentOf("moveAlert").map((x) => (x.args[1] as { agents: number }).agents), [1], "our team hears of the one agent moved");
+});
+
+test("Market → Not on a list or My Agents: the other record goes too; an agent not on Prospects, or with no address, only itself — and its Prospects are not read", { skip }, async () => {
+  seed();
+  twins();
+  okResult(await run({ type: "market.move", ids: ["f1"], to: "Not on a list" }));
+  assert.deepEqual(prospectIds(), ["n1", "p2", "q1", "t1"], "the full record moved, the blank one with it");
+  seed();
+  twins();
+  okResult(await run({ type: "market.move", ids: ["g1"], to: "My Agents" }));
+  assert.deepEqual(prospectIds(), ["n1", "p2", "q1", "t1"]);
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL && x.name === "Jay Clark").length, 1, "one My Agents entry");
+  for (const id of ["q1", "m1"]) {
+    seed();
+    twins();
+    const before = lookups;
+    okResult(await run({ type: "market.move", ids: [id], to: "Not on a list" }));
+    assert.equal(lookups - before, 1, `${id}: the agent itself looked up, never the portal's other prospects`);
+    assert.deepEqual(prospectIds(), ["f1", "g1", "n1", "p2", "q1", "t1"].filter((x) => x !== id));
+  }
+  // To Prospects nothing changes: the page shows one record of an agent (shownProspects), whichever were added.
+  seed();
+  agentDb = [agent("f1", "Jay Clark", ["jwclark30@gmail.com", null]), agent("g1", "Jay Clark", ["jwclark30@gmail.com", null])];
+  fake.seed("os_demo_prospects", [{ portal_id: PORTAL, agent_id: "g1", added_by: "x" }]);
+  okResult(await run({ type: "market.move", ids: ["f1"], to: "Prospects" }));
+  assert.deepEqual(prospectIds(), ["f1", "g1"]);
+});
+
+test("Market, several agents at once: copies come off only with a picked agent that is a prospect — onto the DNC List, every picked agent's", { skip }, async () => {
+  const seedTwo = () => {
+    seed();
+    agentDb = [
+      agent("p1", "Prospect Agent", ["pa@x.test", null]), { ...agent("pc", "Prospect Agent", ["pa@x.test", null]), brand: null },
+      agent("x1", "Market Agent", ["ma@x.test", null]), { ...agent("xc", "Market Agent", ["ma@x.test", null]), brand: null },
+    ];
+    fake.seed("os_demo_prospects", ["p1", "pc", "xc"].map((id) => ({ portal_id: PORTAL, agent_id: id, added_by: "x" })));
+  };
+  seedTwo();
+  okResult(await run({ type: "market.move", ids: ["p1", "x1"], to: "Not on a list" }));
+  assert.deepEqual(prospectIds(), ["xc"], "the prospect and its copy off; the market agent's copy stays — as if each were moved alone");
+  seedTwo();
+  okResult(await run({ type: "market.move", ids: ["p1", "x1"], to: "DNC List" }));
+  assert.deepEqual(prospectIds(), [], "both on the DNC List now: both copies off");
+  assert.deepEqual(recorded().map((x) => x.agents.map((a) => a.id).sort()), [["p1", "pc", "xc"]], "every one that was a prospect recorded to come out of the campaigns");
+});
+
+test("Market → DNC List: the portal's campaigns unreadable — nothing at all changes (11 Nov review)", { skip }, async () => {
+  seed();
+  twins();
+  contextFails = true;
+  const r = await run({ type: "market.move", ids: ["g1"], to: "DNC List" });
+  assert.deepEqual(r, { ok: false, status: 400, error: "That could not be saved. Please try again." });
+  assert.equal(fake.rows("client_dnc_entries").filter((x) => x.client_id === PORTAL && x.name === "Jay Clark").length, 0);
+  assert.deepEqual(fake.rows("os_market_dnc_emails"), []);
+  assert.deepEqual(prospectIds(), ["f1", "g1", "n1", "p2", "q1", "t1"]);
+  await settle();
+  assert.deepEqual(sentOf("blockEmail"), []);
+});
+
+test("Market → DNC List: the other records unreadable — nothing at all changes, said plainly; trying again does it all", { skip }, async () => {
+  seed();
+  syncOn();
+  twins();
+  lookupsBeforeFailing = 1;
+  const r = await run({ type: "market.move", ids: ["g1"], to: "DNC List" });
+  assert.deepEqual(r, { ok: false, status: 400, error: "That could not be saved. Please try again." });
+  assert.deepEqual(prospectIds(), ["f1", "g1", "n1", "p2", "q1", "t1"], "nothing off Prospects");
+  assert.equal(fake.rows("client_dnc_entries").filter((x) => x.client_id === PORTAL && x.name === "Jay Clark").length, 0, "nothing on the DNC List");
+  assert.deepEqual(fake.rows("os_market_dnc_emails"), [], "no address kept — so the page hides nothing");
+  assert.deepEqual(recorded(), [], "nothing recorded for the campaigns");
+  await settle();
+  assert.deepEqual(sentOf("blockEmail"), [], "nothing blocked");
+  lookupsBeforeFailing = Infinity;
+  okResult(await run({ type: "market.move", ids: ["g1"], to: "DNC List" }));
+  assert.deepEqual(prospectIds(), ["n1", "p2", "q1", "t1"]);
+  assert.equal(fake.rows("client_dnc_entries").filter((x) => x.client_id === PORTAL && x.name === "Jay Clark").length, 1, "one entry");
 });
 
 test("Prospects ↔ campaign: recorded whether or not the sync is on yet (2 Nov audit: a pick made while off was lost) — the queue decides what is done", { skip }, async () => {

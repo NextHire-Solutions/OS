@@ -45,7 +45,7 @@
  */
 
 import { z } from "zod";
-import { agentsByIds, demoProspectIds, emailsOf, lower, missingTable, PROSPECTS_MIGRATION, type AgentRow, type MoveTarget } from "@/lib/crm-preview/demo-market";
+import { agentsByIds, copiesOf, demoProspectIds, emailsOf, lower, missingTable, PROSPECTS_MIGRATION, type AgentRow, type MoveTarget } from "@/lib/crm-preview/demo-market";
 import { personKey } from "@/lib/crm-preview/market-model";
 
 import { ALWAYS_SHOWN, SETUP_OFFERS } from "@/lib/crm-preview/model";
@@ -770,6 +770,19 @@ export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget,
   if (mine.error || dnc.error) return failed(mine.error ? mine : dnc)!;
   const myRows = ((mine.data ?? []) as Array<{ id: string; name: string | null; email: string | null }>).filter(theirs);
   const dncRows = ((dnc.data ?? []) as Array<{ id: string; name: string | null; email: string | null }>).filter(theirs);
+  // Off Prospects, an agent's other records there go with it (demo-market copiesOf, 11 Nov) — onto the DNC List every
+  // picked agent's, otherwise those of a picked agent that is itself a prospect; read before anything changes.
+  let copies: AgentRow[] = [];
+  if (to !== "Prospects") {
+    try {
+      const there = (await demoProspectIds(db, C)) ?? [];
+      const picked = new Set(agents.map((a) => a.id));
+      const owners = to === "DNC List" ? agents : agents.filter((a) => there.includes(a.id));
+      if (owners.length) copies = copiesOf(await agentsByIds(there.filter((id) => !picked.has(id))), owners);
+    } catch {
+      return { ok: false, status: 400, error: "That could not be saved. Please try again." };
+    }
+  }
 
   // Off the lists it is leaving.
   if (to !== "My Agents" && myRows.length) {
@@ -781,8 +794,11 @@ export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget,
     if (r) return r;
   }
   if (to !== "Prospects") {
-    const r: Res = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", agents.map((a) => a.id));
-    if (r.error && !missingTable(r)) return failed(r)!;
+    const off = [...agents, ...copies].map((a) => a.id);
+    for (let i = 0; i < off.length; i += 200) {
+      const r: Res = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", off.slice(i, i + 200));
+      if (r.error && !missingTable(r)) return failed(r)!;
+    }
   }
 
   // Onto the one it goes to — those not on it already. By name, brokerage and phone: never the agent database's email.

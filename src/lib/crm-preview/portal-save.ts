@@ -41,7 +41,7 @@ import * as teamCsvRoute from "@/lib/tools/master-inbox/portal-routes/team/csv/r
 import * as fubRoute from "@/lib/tools/master-inbox/portal-routes/followup-boss/route";
 
 import { demoAction, DNC_EMAIL_NEEDED, imported, introAt, saveOffer, type Db, type DemoAction, type DemoResult } from "./demo";
-import { agentsByIds, demoProspectIds, emailsOf, lower, marketAction, type AgentRow, type MarketAction } from "./demo-market";
+import { agentsByIds, copiesOf, demoProspectIds, emailsOf, lower, marketAction, type AgentRow, type MarketAction } from "./demo-market";
 import { campaignProspectsAmong, marketContext, matchingIds } from "./market";
 import { parseMarketQuery, personKey } from "./market-model";
 
@@ -106,6 +106,14 @@ async function syncProspects(C: string, action: "add" | "remove", setup: boolean
 const FROM_MARKET = "From Market";
 /* The address a Market move blocks, stops and keeps: the agent's preferred email only (the user, 28 Oct). */
 const preferredOf = (ag: AgentRow): string[] => (lower(ag.preferred_email) ? [lower(ag.preferred_email)] : []);
+/* Agents by id, four lookups at a time: a portal's Prospects can be thousands (Premier's setup: 4,657). */
+async function recordsOf(ids: readonly string[]): Promise<AgentRow[]> {
+  const parts: string[][] = [];
+  for (let i = 0; i < ids.length; i += 600) parts.push(ids.slice(i, i + 600));
+  const out: AgentRow[] = [];
+  for (let i = 0; i < parts.length; i += 4) for (const rows of await Promise.all(parts.slice(i, i + 4).map((p) => agentsByIds(p)))) out.push(...rows);
+  return out;
+}
 
 /* Whether a portal's setup is finished (its offer saved — "Finish setup"). Unreadable: taken as finished (the smaller limit). */
 async function setupFinished(C: string): Promise<boolean> {
@@ -748,6 +756,33 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     return { ok: true, message: `${moved1} moved to Prospects.${left ? ` ${left.toLocaleString("en-US")} on My Agents, your DNC List or your pipeline stayed there.` : ""}` };
   }
 
+  // What comes off Prospects, and out of the client's campaigns — all of it read before anything changes: unreadable,
+  // nothing is moved (11 Nov review: a read failing after the add hid the agent from Prospects with nothing recorded).
+  // Every one that WAS a prospect — moved there, or in the client's campaigns — is recorded to come out of the client's
+  // campaigns (prospect-sync; the user, 2 Nov: always); each one's campaigns, as the portal showed them, go with it: the
+  // run looks there too (3 Nov audit).
+  // With them, their other records on Prospects (11 Nov, Hetherington: moving a blank copy to the DNC List left the full
+  // record there, reading "DNC List"): onto the DNC List, every picked agent's — each is on it now; otherwise only those
+  // of a picked agent that is itself a prospect. Only the list is left for them: no entry, block or Slack post of their own.
+  let off: AgentRow[];
+  let leaving: AgentRow[];
+  let shown: Map<string, ShownCampaign[]>;
+  try {
+    const there = (await demoProspectIds(db as unknown as Db, C)) ?? [];
+    const onIt = new Set(there);
+    const picked = new Set(agents.map((ag) => ag.id));
+    const owners = a.to === "DNC List" ? agents : agents.filter((ag) => onIt.has(ag.id));
+    const copies = owners.some((ag) => preferredOf(ag).length) ? copiesOf(await recordsOf(there.filter((id) => !picked.has(id))), owners) : [];
+    off = [...agents, ...copies];
+    const leaveCtx = await marketContext(C);
+    const ids = off.map((ag) => ag.id);
+    const inCampaigns = leaveCtx ? await campaignProspectsAmong(leaveCtx, ids) : new Set<string>();
+    shown = leaveCtx?.orchClientId ? await shownCampaigns(leaveCtx.orchClientId, ids) : new Map();
+    leaving = off.filter((ag) => onIt.has(ag.id) || inCampaigns.has(ag.id) || shown.has(ag.id));
+  } catch {
+    return { ok: false, status: 400, error: TRY_AGAIN };
+  }
+
   // An agent is recognised on a list by its PREFERRED address (or, where an entry has none, by name): the enriched one is
   // a guess that may be someone else's, so it never takes a different person's entry off a list, nor counts as one
   // already there (28 Oct audit).
@@ -845,30 +880,14 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     const r = await inParts(offDnc.map((x) => x.id), (part) => call(dncBulkRoute.POST, "POST", { token }, { ids: part }));
     if (!r.ok) return onto ? unfinished : r;
   }
-  // And off Prospects — the agents moved there. The one delete of this file's own: the OS's own list, this portal's
-  // rows, with no current-portal equivalent or side effect. Every one that WAS a prospect — moved there, or in the
-  // client's campaigns — is recorded to come out of the client's campaigns (prospect-sync; the user, 2 Nov: always).
-  // Which of them are prospects — if that can't be read, nothing is taken off (a prospect taken off unrecorded would
-  // stay in the campaign): try again.
-  // Each one's campaigns, as the portal showed them, go with it: the run looks there too (3 Nov audit).
-  let leaving: AgentRow[];
-  let shown: Map<string, ShownCampaign[]>;
-  try {
-    const movedThere = new Set((await demoProspectIds(db as unknown as Db, C)) ?? []);
-    const leaveCtx = await marketContext(C);
-    const ids = agents.map((ag) => ag.id);
-    const inCampaigns = leaveCtx ? await campaignProspectsAmong(leaveCtx, ids) : new Set<string>();
-    shown = leaveCtx?.orchClientId ? await shownCampaigns(leaveCtx.orchClientId, ids) : new Map();
-    leaving = agents.filter((ag) => movedThere.has(ag.id) || inCampaigns.has(ag.id) || shown.has(ag.id));
-  } catch {
-    return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };
-  }
+  // And off Prospects — the agents moved there and their other records (read before anything changed, above). The one
+  // delete of this file's own: the OS's own list, this portal's rows, with no current-portal equivalent or side effect.
   await syncProspects(C, "remove", false, leaving, who, shown);
-  for (let i = 0; i < agents.length; i += 100) {
-    const { error } = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", agents.slice(i, i + 100).map((ag) => ag.id));
+  for (let i = 0; i < off.length; i += 100) {
+    const { error } = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", off.slice(i, i + 100).map((ag) => ag.id));
     if (error) return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };
   }
 
-  console.info(JSON.stringify({ tag: "[crm-preview] market move", who, client: C, to: a.to, agents: agents.length, added: adding.length, offMine: offMine.length, offDnc: offDnc.length }));
+  console.info(JSON.stringify({ tag: "[crm-preview] market move", who, client: C, to: a.to, agents: agents.length, copies: off.length - agents.length, added: adding.length, offMine: offMine.length, offDnc: offDnc.length }));
   return { ok: true, message: a.to === "Not on a list" ? `${who1} taken off every list.` : `${who1} moved to ${a.to}.` };
 }

@@ -220,3 +220,95 @@ test("Prospects pages never repeat or skip an agent, even where the database ord
   assert.equal(new Set(seen).size, 27, "no agent twice");
   assert.deepEqual(seen.filter((id) => id.startsWith("c")), db.map((r) => r.id), "the campaign agents in the database's own order");
 });
+
+/* ------------------------------------------- one agent, two records (11 Nov) --- */
+
+test("Prospects lists one record of each agent — the fuller — and leaves out only those nothing can reach; a name alone or another verified address still lists (11 Nov, Hetherington)", async () => {
+  const { onePerAgent, copiesOf, shownProspects, dncAddresses } = await import("./demo-market.ts");
+  type Row = Parameters<typeof onePerAgent>[0][number];
+  const row = (id: string, o: Record<string, unknown> = {}) => agent(id, o) as unknown as Row;
+  const ids = (rows: readonly Row[]) => rows.map((a) => a.id);
+  // The agent database's two records of one agent: Realtracs, full; the Georgia MLS copy, blank — one address (in another case), one name.
+  const full = row("f1", { full_name: "Lucy Bottorff", preferred_email: "bottorfl@comcast.net", brand: "Fridrich & Clark Realty", office_city: "Brentwood", sales_volume: 1_575_500 });
+  const blank = row("g1", { full_name: "Lucy  Bottorff", preferred_email: "Bottorfl@Comcast.net ", brand: null, office_name: null, office_city: null, most_transacted_city: null, sales_volume: 0, units: 0 });
+  const namesake = row("n1", { full_name: "Lucy Bottorff", preferred_email: "lucy@elsewhere.test" });
+  // A team inbox: another agent at the same address is another person.
+  const colleague = row("t1", { full_name: "Pat Lee", preferred_email: "bottorfl@comcast.net" });
+  const noMail = [row("x1", { preferred_email: null, full_name: "No Mail" }), row("x2", { preferred_email: null, full_name: "No Mail" })];
+  assert.deepEqual(ids(onePerAgent([blank, namesake, colleague, full, ...noMail])), ["n1", "t1", "f1", "x1", "x2"], "the full record, in its place; another address or another name is another person; no address, each its own");
+  assert.deepEqual(ids(onePerAgent([full, blank])), ["f1"], "whichever comes first");
+  // Equally full: the larger sales, then units, then the lower id — the same pick every time.
+  assert.deepEqual(ids(onePerAgent([row("b", { sales_volume: 1 }), row("a", { preferred_email: "b@kw.test", full_name: "Agent b", sales_volume: 2 })])), ["a"]);
+  assert.deepEqual(ids(onePerAgent([row("b", { units: 9 }), row("a", { preferred_email: "b@kw.test", full_name: "Agent b", units: 3 })])), ["b"]);
+  assert.deepEqual(ids(onePerAgent([row("b"), row("a", { preferred_email: "b@kw.test", full_name: "Agent b" })])), ["a"]);
+  assert.deepEqual(ids(onePerAgent([row("a", { preferred_email: "b@kw.test", full_name: "Agent b" }), row("b")])), ["a"]);
+
+  assert.deepEqual(ids(copiesOf([full, blank, namesake, colleague, ...noMail], [blank])), ["f1"], "its other record — never the colleague at its inbox, nor itself");
+  assert.deepEqual(copiesOf([full, blank], [noMail[0]]), [], "no address: no other record");
+
+  const none = dncAddresses([], []);
+  assert.deepEqual(ids(shownProspects([full, blank, namesake, colleague], none)), ["f1", "n1", "t1"]);
+  // Moved to the DNC List from Market (a name-only entry, the address kept): every record at that address goes — her
+  // record under another surname, or a colleague at that inbox, too: nothing reaches them there. The namesake stays.
+  const market = dncAddresses([{ kind: "agent", email: null, domain: null }], ["bottorfl@comcast.net"]);
+  assert.deepEqual(ids(shownProspects([full, blank, namesake, colleague], market)), ["n1"]);
+  const ownAddress = { ...colleague, enriched_email: "pat.lee@kw.test", enriched_email_status: "ok" } as Row;
+  assert.deepEqual(ids(shownProspects([ownAddress], market)), ["t1"], "a colleague the campaign reaches at its own verified address stays");
+  // …unless the campaign can reach it at a verified address of its own (the sync emails that one first).
+  const reachable = row("f2", { full_name: "Lucy Bottorff", preferred_email: "bottorfl@comcast.net", enriched_email: "lucy.b@fridrich.test", enriched_email_status: "verified" });
+  assert.deepEqual(ids(shownProspects([reachable], market)), ["f2"]);
+  assert.deepEqual(ids(shownProspects([{ ...reachable, enriched_email_status: "not_found" }, { ...reachable, id: "f3", enriched_email: "BOTTORFL@comcast.net", enriched_email_status: "ok" }], market)), [], "an address that failed its check, or the same address, reaches no one");
+  assert.deepEqual(ids(shownProspects([reachable], dncAddresses([{ kind: "agent", email: "lucy.b@fridrich.test", domain: null }], ["bottorfl@comcast.net"]))), [], "both its addresses blocked");
+  // A company on the DNC List: every address at its domain.
+  const company = dncAddresses([{ kind: "company", email: "keep@elsewhere.test", domain: "@Elsewhere.test" }], []);
+  assert.deepEqual(ids(shownProspects([full, namesake, row("k1", { preferred_email: "sam@ELSEWHERE.test" })], company)), ["f1"]);
+  assert.deepEqual(ids(shownProspects(noMail, dncAddresses([{ kind: "agent", email: null, domain: null }], [""]))), ["x1", "x2"], "no address is never left out");
+  // A source's own address the campaign sync may use (agent_provided first, as prospect-sync's order): open — it stays.
+  const ownSource = { ...full, id: "s1", source_email_agent_provided: "Lucy@Own.test", source_email_courted: "bottorfl@comcast.net" } as Row;
+  assert.deepEqual(ids(shownProspects([ownSource], market)), ["s1"]);
+  assert.deepEqual(ids(shownProspects([ownSource], dncAddresses([{ kind: "agent", email: "lucy@own.test", domain: null }], ["bottorfl@comcast.net"]))), [], "every address blocked");
+  // An enrichment whose check failed: the sync never emails it at all (databaseEmail) — nothing reaches it.
+  assert.deepEqual(ids(shownProspects([{ ...ownSource, id: "s2", enriched_email: "x@y.test", enriched_email_status: "not_found" } as Row], market)), []);
+  // Whatever a source holds, the page never fails on it: not an address, it is no address.
+  assert.deepEqual(ids(shownProspects([{ ...full, id: "s3", source_email_zillow: 42, source_email_realtor: { a: 1 } } as unknown as Row], market)), [], "nothing else to reach it at");
+});
+
+test("what a DNC List blocks by address: its people's own addresses and the ones Market kept, its companies' domains — any case, never a blank", async () => {
+  const { dncAddresses } = await import("./demo-market.ts");
+  const got = dncAddresses([
+    { kind: "agent", email: " Jane@KW.test ", domain: null },
+    { kind: "agent", email: null, domain: null },
+    { kind: "company", email: "keep@bigco.test", domain: "@BigCo.test" },
+    { kind: "company", email: null, domain: null },
+  ], ["BOTTORFL@comcast.net", ""]);
+  assert.deepEqual([...got.emails].sort(), ["bottorfl@comcast.net", "jane@kw.test"], "a company's contact address is not a person's block");
+  assert.deepEqual([...got.domains], ["bigco.test"]);
+});
+
+test("Demo: moving an agent off Prospects takes its other records along — not a colleague at its inbox, not another portal's (11 Nov)", async () => {
+  seed();
+  fake.seed("agents", [
+    agent("f1", { full_name: "Lucy Bottorff", preferred_email: "bottorfl@comcast.net" }),
+    agent("g1", { full_name: "Lucy Bottorff", preferred_email: "BOTTORFL@comcast.net", brand: null, office_name: null, office_city: null, sales_volume: 0 }),
+    agent("n1", { full_name: "Lucy Bottorff", preferred_email: "lucy@elsewhere.test" }),
+    agent("t1", { full_name: "Pat Lee", preferred_email: "bottorfl@comcast.net" }),
+    agent("a4", { preferred_email: null, full_name: "Nomail Person" }),
+    agent("m1", { full_name: "Market Only", preferred_email: "market.only@kw.test" }),
+    agent("m2", { full_name: "Market Only", preferred_email: "market.only@kw.test", brand: null }),
+  ]);
+  fake.seed("os_demo_prospects", [...["f1", "g1", "n1", "t1", "a4", "m2"].map((id) => ({ portal_id: D, agent_id: id, added_by: "x" })), { portal_id: OTHER, agent_id: "f1", added_by: "x" }]);
+  const r = await moveAgents(db, ["g1"], "DNC List", null);
+  assert.deepEqual(r, { ok: true, message: "Lucy Bottorff moved to DNC List." });
+  assert.deepEqual(mine("os_demo_prospects").map((x) => x.agent_id).sort(), ["a4", "m2", "n1", "t1"], "both records of the agent off; another address, a colleague, no address stay");
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === OTHER).length, 1, "another portal's prospects untouched");
+  assert.equal(mine("client_dnc_entries").filter((x) => x.name === "Lucy Bottorff").length, 1, "one entry, for the agent moved");
+  // An agent not on Prospects: its copy there stays (only a prospect's records are looked for).
+  await moveAgents(db, ["m1"], "My Agents", null);
+  assert.deepEqual(mine("os_demo_prospects").map((x) => x.agent_id).sort(), ["a4", "m2", "n1", "t1"]);
+  // An agent with no address: only itself.
+  await moveAgents(db, ["a4"], "Not on a list", null);
+  assert.deepEqual(mine("os_demo_prospects").map((x) => x.agent_id).sort(), ["m2", "n1", "t1"]);
+  // Onto the DNC List, an agent not on Prospects takes its copy there with it: the agent is on the DNC List now.
+  await moveAgents(db, ["m1"], "DNC List", null);
+  assert.deepEqual(mine("os_demo_prospects").map((x) => x.agent_id).sort(), ["n1", "t1"]);
+});

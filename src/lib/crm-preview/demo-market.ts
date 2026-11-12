@@ -6,7 +6,7 @@ import { readOnly } from "@/lib/tools/assistant/read-only";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 
 import type { Db, Res } from "./demo";
-import type { ListName, MarketQuery, PlaceKind } from "./market-model";
+import { personKey, type ListName, type MarketQuery, type PlaceKind } from "./market-model";
 
 /*
  * Market's "Move to" on the Demo Portal (23 Oct — the client: Market's buttons
@@ -71,8 +71,15 @@ export interface AgentRow {
   sales_volume: number | null;
   units: number | null;
   est_time_in_industry_months: number | null;
+  /** The enrichment's verdict on enriched_email ("ok", "verified", "not_found"…) — whether the campaign sync would use it. */
+  enriched_email_status?: string | null;
+  /* Each source's own address (source_ids->…->>email) — which the campaign sync may email instead of the preferred one. Only these four, never the whole record. */
+  source_email_agent_provided?: string | null;
+  source_email_courted?: string | null;
+  source_email_zillow?: string | null;
+  source_email_realtor?: string | null;
 }
-const AGENT_COLS = "id, full_name, preferred_email, enriched_email, preferred_phone, brand, office_name, title, office_city, office_county, home_city, home_county, most_transacted_city, most_transacted_county, office_zip, most_transacted_zip, office_state, home_state, transacted_state, sales_volume, units, est_time_in_industry_months";
+const AGENT_COLS = "id, full_name, preferred_email, enriched_email, enriched_email_status, source_email_agent_provided:source_ids->agent_provided->>email, source_email_courted:source_ids->courted->>email, source_email_zillow:source_ids->zillow->>email, source_email_realtor:source_ids->realtor->>email, preferred_phone, brand, office_name, title, office_city, office_county, home_city, home_county, most_transacted_city, most_transacted_county, office_zip, most_transacted_zip, office_state, home_state, transacted_state, sales_volume, units, est_time_in_industry_months";
 
 /** Agents by id, in chunks the gateway's URL limit allows. */
 export async function agentsByIds(ids: readonly string[]): Promise<AgentRow[]> {
@@ -101,8 +108,96 @@ export async function demoProspectIds(db: Db, portalId: string): Promise<string[
   }
 }
 
+/** The addresses Market kept for the agents it moved onto a portal's DNC List (os_market_dnc_emails, migration 0044) — never on the list itself. */
+export async function marketDncEmails(db: Db, portalId: string): Promise<string[]> {
+  const out: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const r: Res = await db.from("os_market_dnc_emails").select("email").eq("client_id", portalId).order("entry_id", { ascending: true }).order("email", { ascending: true }).range(from, from + 999);
+    if (r.error) throw new Error(`os_market_dnc_emails: ${r.error.message}`);
+    const rows = (r.data ?? []) as Array<{ email: string }>;
+    out.push(...rows.map((x) => x.email));
+    if (rows.length < 1000) return out;
+  }
+}
+
 export const lower = (e: string | null | undefined) => (e ?? "").trim().toLowerCase();
 export const emailsOf = (a: AgentRow) => [a.preferred_email, a.enriched_email].map(lower).filter(Boolean);
+
+/* ------------------------------------------------- one agent, two records --- */
+
+/*
+ * The agent database holds some agents twice (11 Nov, Hetherington: 19,396 Realtracs agents are also filed under the
+ * Georgia MLS, with no brokerage, city or sales — kept apart there because their phones differ). Two records are one
+ * agent here when they share BOTH the preferred address and the name: a team inbox shared by several agents is several
+ * people (11 Nov review), each its own lead in the campaign. On a portal's Prospects the page lists one record of an
+ * agent, and a move off Prospects takes its other records along.
+ */
+
+/** How much of the agent a record holds: a brokerage or office, then a city, then any sales. */
+const fullness = (a: AgentRow) => (a.brand || a.office_name ? 4 : 0) + (a.office_city || a.most_transacted_city ? 2 : 0) + ((a.sales_volume ?? 0) > 0 || (a.units ?? 0) > 0 ? 1 : 0);
+/* Above zero when `a` is the record to show: the fuller, then the larger sales and units, then the lower id. */
+const rank = (a: AgentRow, b: AgentRow) =>
+  fullness(a) - fullness(b) || (a.sales_volume ?? 0) - (b.sales_volume ?? 0) || (a.units ?? 0) - (b.units ?? 0) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+/* The agent a record is: its preferred address and its name (market-model personKey). None without an address. */
+const agentKey = (a: AgentRow) => (lower(a.preferred_email) ? `${lower(a.preferred_email)}|${personKey(a.full_name)}` : "");
+
+/** One record for each agent — the one to show (rank); a record with no address is its own. In the order given. */
+export function onePerAgent(rows: readonly AgentRow[]): AgentRow[] {
+  const best = new Map<string, AgentRow>();
+  for (const a of rows) {
+    const key = agentKey(a);
+    const cur = key ? best.get(key) : undefined;
+    if (key && (!cur || rank(a, cur) > 0)) best.set(key, a);
+  }
+  return rows.filter((a) => !agentKey(a) || best.get(agentKey(a)) === a);
+}
+
+/** The other records among `rows` of these agents — the same preferred address and name; never one of `agents` itself. */
+export function copiesOf(rows: readonly AgentRow[], agents: readonly AgentRow[]): AgentRow[] {
+  const ids = new Set(agents.map((a) => a.id));
+  const keys = new Set(agents.map(agentKey).filter(Boolean));
+  return keys.size ? rows.filter((a) => !ids.has(a.id) && keys.has(agentKey(a))) : [];
+}
+
+export interface DncBlocks { emails: ReadonlySet<string>; domains: ReadonlySet<string> }
+
+/** What a portal's DNC List blocks by address (shownProspects): its people's own addresses and the ones Market kept (marketDncEmails), its companies' domains. */
+export function dncAddresses(dnc: ReadonlyArray<{ kind: string; email: string | null; domain: string | null }>, kept: readonly string[]): DncBlocks {
+  return {
+    emails: new Set([...dnc.filter((d) => d.kind === "agent").map((d) => lower(d.email)), ...kept.map(lower)].filter(Boolean)),
+    domains: new Set(dnc.filter((d) => d.kind === "company").map((d) => lower(d.domain).replace(/^@/, "")).filter(Boolean)),
+  };
+}
+
+/* The enrichment verdicts that mean an address passed a check: the campaign sync emails such an address first (prospect-sync lead-map databaseEmail). */
+const VERIFIED = new Set(["ok", "verified"]);
+/* The sources an agent's address is taken from, in the campaign sync's order (prospect-sync lead-map PRIORITY_ORDERS.courted). */
+const SOURCE_ORDER = ["agent_provided", "courted", "zillow", "realtor"] as const;
+
+/**
+ * Every address the campaign sync could email this agent at (prospect-sync lead-map databaseEmail): a verified
+ * enrichment; unless the enrichment's check failed (then never emailed), each source's own address and the preferred one.
+ */
+function sendable(a: AgentRow): string[] {
+  const text = (v: unknown) => (typeof v === "string" ? lower(v) : "");
+  const out = VERIFIED.has(a.enriched_email_status ?? "") ? [text(a.enriched_email)] : [];
+  if (a.enriched_email_status !== "not_found") out.push(...SOURCE_ORDER.map((s) => text(a[`source_email_${s}`])), text(a.preferred_email));
+  return out.filter(Boolean);
+}
+
+/**
+ * The moved prospects a portal's Prospects page lists: one record of each agent (onePerAgent), and none the client put
+ * on its DNC List — 11 Nov, Hetherington: moving an agent's blank copy to the DNC List left its full record on
+ * Prospects, reading "DNC List". Left out only where nothing can reach the agent: its preferred address on the client's
+ * DNC List (an entry's address or the one Market kept — five of Hetherington's under another surname) or at a DNC'd
+ * company's domain, and EVERY address the campaign could use for it blocked the same way (11 Nov review). Anyone else
+ * stays and reads as listFor says: a name alone, an agent reachable elsewhere.
+ */
+export function shownProspects(rows: readonly AgentRow[], dnc: DncBlocks): AgentRow[] {
+  const blocked = (e: string) => dnc.emails.has(e) || dnc.domains.has(e.split("@")[1] ?? "");
+  const unreachable = (a: AgentRow) => !!lower(a.preferred_email) && blocked(lower(a.preferred_email)) && sendable(a).every(blocked);
+  return onePerAgent(rows.filter((a) => !unreachable(a)));
+}
 
 /* ------------------------------------------------- the Demo's Prospects page --- */
 

@@ -9,7 +9,7 @@ import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/too
 import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
 import { searchMarket } from "@/lib/crm-preview/market-engine";
 import { loadMarketZips, marketFromMemory, requestNameOrder } from "@/lib/crm-preview/market-memory";
-import { agentsByIds, demoProspectIds, filterProspects, mergeProspects, placeOf, PROSPECTS_MIGRATION, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
+import { agentsByIds, demoProspectIds, dncAddresses, filterProspects, marketDncEmails, mergeProspects, placeOf, PROSPECTS_MIGRATION, shownProspects, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
   SORTS, zipCounts, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, marketTitles, ownListEmail, salespeopleOnly, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
@@ -282,11 +282,14 @@ const agentsOf = ttlCache(async (ids: readonly string[]) => agentsByIds(ids), {
 async function localProspects(ctx: MarketContext): Promise<{ unavailable: string } | { rows: AgentRow[] } | null> {
   if (isDemoPortal(ctx.portal.id)) {
     const ids = await demoProspectIds(mi(), DEMO_PORTAL_ID);
-    return ids === null ? { unavailable: PROSPECTS_MIGRATION } : { rows: ids.length ? await agentsOf(ids) : [] };
+    if (ids === null) return { unavailable: PROSPECTS_MIGRATION };
+    const lists = await portalLists(ctx.portal.id);
+    return { rows: ids.length ? shownProspects(await agentsOf(ids), dncAddresses(lists.dnc, lists.dncEmails)) : [] };
   }
   if (ctx.orchClientId) return null;
-  const ids = (await portalLists(ctx.portal.id)).movedProspectsAll ?? [];
-  return { rows: ids.length ? await agentsOf(ids) : [] };
+  const lists = await portalLists(ctx.portal.id);
+  const ids = lists.movedProspectsAll ?? [];
+  return { rows: ids.length ? shownProspects(await agentsOf(ids), dncAddresses(lists.dnc, lists.dncEmails)) : [] };
 }
 
 /*
@@ -299,15 +302,17 @@ async function localProspects(ctx: MarketContext): Promise<{ unavailable: string
  * client's My Agents list (Keyes: 3,170, 1.7 s) never holds up a page.
  */
 const portalLists = ttlCache(async (portalId: string) => {
-  const [myAgents, dnc, pipeline, movedProspectsAll] = await Promise.all([
+  const [myAgents, dnc, pipeline, movedProspectsAll, dncEmails] = await Promise.all([
     loadAgentEntries(portalId),
     loadDncEntries(portalId),
     loadPipelineEntries(portalId),
     // The agents moved to Prospects from Market — the Demo's, and a real client's since 31 Oct (one table, 0041).
     // Unreadable, the page still opens: those agents just show without their Prospects tag.
     demoProspectIds(mi(), portalId).catch((err) => { console.error("[crm-preview] moved prospects", err instanceof Error ? err.message : err); return null; }),
+    // Unreadable, Prospects still opens: an agent on the DNC List by one of these just lists there again, reading "DNC List".
+    marketDncEmails(mi(), portalId).catch((err) => { console.error("[crm-preview] market dnc emails", err instanceof Error ? err.message : err); return [] as string[]; }),
   ]);
-  return { myAgents, dnc, pipeline, movedProspectsAll };
+  return { myAgents, dnc, pipeline, movedProspectsAll, dncEmails };
 }, { ttlMs: 20_000, staleMs: 10 * 60_000, key: (portalId) => portalId, shared: "crm-preview-portal-lists" });
 
 /*
@@ -317,9 +322,11 @@ const portalLists = ttlCache(async (portalId: string) => {
  * already in its campaigns (counted once). A short list, so filtered and sorted here, as the Demo's are.
  */
 async function movedProspects(ctx: MarketContext, q: MarketQuery | null): Promise<AgentRow[]> {
-  const ids = (await portalLists(ctx.portal.id)).movedProspectsAll ?? [];
+  const lists = await portalLists(ctx.portal.id);
+  const ids = lists.movedProspectsAll ?? [];
   if (!ids.length) return [];
-  const all = await agentsOf(ids);
+  // None the client put on its DNC List by address, one record per address (shownProspects, 11 Nov).
+  const all = shownProspects(await agentsOf(ids), dncAddresses(lists.dnc, lists.dncEmails));
   const rows = q ? filterProspects(all, q) : all;
   if (!rows.length || !ctx.orchClientId) return rows;
   const inCampaigns = await inClientLists(ctx.orchClientId, rows.map((a) => a.id));
