@@ -1,5 +1,6 @@
 import "server-only";
 
+import { boundedCache } from "@/lib/cache/bounded";
 import { ttlCache } from "@/lib/cache/ttl";
 import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -12,7 +13,7 @@ import { loadMarketZips, marketFromMemory, requestNameOrder } from "@/lib/crm-pr
 import { agentsByIds, demoProspectIds, dncAddresses, filterProspects, marketDncEmails, mergeProspects, placeOf, PROSPECTS_MIGRATION, shownProspects, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
-  SORTS, zipCounts, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, marketTitles, ownListEmail, salespeopleOnly, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
+  byListOrder, dbSortOf, zipCounts, bandRows, clientForPortal, DEAL_BANDS, LIST_PILL, listFor, listSets, marketFilters, marketScope, marketTitles, ownListEmail, salespeopleOnly, PLACE_KINDS, rangeFilter, SETUP_PAGE_SIZE, resolveMls, SALES_BANDS,
   type GroupRow, type MarketQuery, type MlsRow, type OsClientRow, type PlaceKind, type ReportGroup,
 } from "./market-model";
 
@@ -352,6 +353,85 @@ async function prospectsPage(ctx: MarketContext, q: MarketQuery, filters: Record
 /** After a save changed a portal's lists: the next page reads them fresh. */
 export function invalidatePortalLists(portalId: string): void {
   portalLists.invalidate(portalId);
+  // …and its List orders (listOrdered): an agent just moved sorts with its new list at once.
+  listOrders.forget(`${portalId}:`);
+}
+
+/*
+ * The List sort (Amy, 11 Nov: "if I could see all my DNC, … all my not on a list together … prospects first, the DNC,
+ * and then not on a list"). An agent's list isn't in the agent database — it is worked out from the client's own
+ * lists (listFor) — so every agent the filters match is read, by sales volume, and put in list order here
+ * (byListOrder: sales volume kept inside each list). Prospects is the client's own list, read whole. Market is the
+ * whole filtered market, so it is ordered only from a market held in memory (market-memory.ts), with the client's
+ * whole campaign set held (heldClientSet). Anything else is `pending`, in words: the page shows sales volume
+ * meanwhile and says so, never a list order that is only partly right.
+ */
+const LIST_SORT_MAX = 10_000;
+/* `retry`: it will be ready shortly (the market or the client's campaign set is still loading), so the page asks again. */
+type ListPending = { pending: string; retry: boolean };
+type ListOrdered = { rows: Array<Record<string, unknown>>; total: number; salesVolume: number } | ListPending;
+const GETTING_READY: ListPending = { pending: "Sorting by List is getting ready for this market — showing the largest sales volume first until it is (about a minute).", retry: true };
+
+/*
+ * Each List order is kept a minute (review, 13 Nov): reading a large Prospects list or a whole market for every page,
+ * every Next, every "select all" and every export would load the agent database and the server again each click. One
+ * per portal, filters and direction; the newest 24 kept (cache/bounded.ts — one per search would otherwise only grow).
+ * A change to the client's lists from the portal (invalidatePortalLists) starts that portal's orders over at once.
+ * "Not yet" and failures are never kept.
+ */
+const listOrders = boundedCache<ListOrdered>("crm-preview-list-order", { ttlMs: 60_000, max: 24, keep: (v) => !("pending" in v) });
+
+function listOrdered(ctx: MarketContext, q: MarketQuery): Promise<ListOrdered> {
+  const { page: _page, per: _per, ...asked } = q;
+  return listOrders.get(`${ctx.portal.id}:${JSON.stringify(asked)}`, () => readListOrdered(ctx, q));
+}
+
+async function readListOrdered(ctx: MarketContext, q: MarketQuery): Promise<ListOrdered> {
+  const volume = dbSortOf({ sort: "volume", dir: "desc" });
+  const lists = await portalLists(ctx.portal.id);
+  let rows: Array<Record<string, unknown>>;
+  let prospects: Set<string>;
+  const local = q.list === "prospects" ? await localProspects(ctx) : null;
+  if (local && "unavailable" in local) return { pending: local.unavailable, retry: false };
+  if (local) {
+    rows = sortProspects(filterProspects(local.rows, q), q) as unknown as Array<Record<string, unknown>>;
+    prospects = new Set(rows.map((r) => String(r.id)));
+  } else if (q.list === "prospects") {
+    const filters = marketFilters(prospectsBase(ctx), q);
+    const [first, moved] = await Promise.all([search(filters, 500, 0, volume), movedProspects(ctx, q)]);
+    if (first.total + moved.length > LIST_SORT_MAX) return { pending: `Sorting by List works on up to ${LIST_SORT_MAX.toLocaleString("en-US")} agents — narrow the filters to sort these by list.`, retry: false };
+    const campaign = [...first.rows];
+    for (let offset = campaign.length; offset < first.total; offset += 500) {
+      const more = await search(filters, 500, offset, volume);
+      if (!more.rows.length) break;
+      campaign.push(...more.rows);
+    }
+    const seen = new Set(campaign.map((r) => String(r.id)));
+    const extra = moved.filter((a) => !seen.has(a.id)) as unknown as Array<Record<string, unknown>>;
+    // One list by sales volume, largest first, unknown last: the campaign agents as the database read them, the moved slotted in.
+    const vol = (r: Record<string, unknown>) => num(r.sales_volume) ?? -Infinity;
+    rows = [...campaign, ...extra].map((r, i) => ({ r, i })).sort((a, b) => vol(b.r) - vol(a.r) || a.i - b.i).map((x) => x.r);
+    prospects = new Set(rows.map((r) => String(r.id)));
+  } else {
+    const base = marketBase(ctx);
+    // A market of several titles (BrokerStaffer's own) is never held in memory: no List order there, ever.
+    if (!inMemory(ctx)) return { pending: "Sorting by List isn't available for this market — showing the largest sales volume first.", retry: false };
+    const mem = inMemory(ctx) ? await marketFromMemory(ctx.mls.ids, base, search) : null;
+    if (!mem) return GETTING_READY;
+    const found = searchMarket(mem, marketFilters(base, q), volume, Number.MAX_SAFE_INTEGER, 0);
+    // A search the memory doesn't answer (some name searches and places): no List order for it, however long one waits.
+    if (!found) return { pending: "This search can't be sorted by List — showing the largest sales volume first. Change the search or the place filters to sort by list.", retry: false };
+    const campaign = isDemoPortal(ctx.portal.id) ? new Set<string>() : ctx.orchClientId ? heldClientSet(ctx.orchClientId) : new Set<string>();
+    if (!campaign) return GETTING_READY;
+    rows = found.rows as unknown as Array<Record<string, unknown>>;
+    prospects = new Set([...campaign, ...(lists.movedProspectsAll ?? [])]);
+  }
+  const sets = listSets(lists.myAgents, lists.dnc, lists.pipeline, prospects);
+  const emailsOf = (r: Record<string, unknown>) => [str(r.preferred_email), str(r.enriched_email)].filter((e): e is string => !!e);
+  const ordered = byListOrder(rows, (r) => listFor({ id: String(r.id), full_name: str(r.full_name), emails: emailsOf(r) }, sets), q.dir);
+  // In whole cents, as searchMarket sums them.
+  const cents = ordered.reduce((t, r) => t + Math.round((num(r.sales_volume) ?? 0) * 100), 0);
+  return { rows: ordered, total: ordered.length, salesVolume: cents / 100 };
 }
 
 export async function marketPage(ctx: MarketContext, q: MarketQuery) {
@@ -359,16 +439,23 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   if (why) return { unavailable: why };
   const demo = isDemoPortal(ctx.portal.id);
   let page: { rows: Array<Record<string, unknown>>; total: number; salesVolume: number };
-  const local = q.list === "prospects" ? await localProspects(ctx) : null;
+  // Sorting by List: ordered here when it can be; otherwise the largest sales volume first, and the page says why.
+  const ordered = q.sort === "list" ? await listOrdered(ctx, q) : null;
+  const pending = ordered && "pending" in ordered ? ordered : null;
+  if (pending) q = { ...q, sort: "volume", dir: "desc" };
+  const local = q.list === "prospects" && (!ordered || pending) ? await localProspects(ctx) : null;
   if (local && "unavailable" in local) return local;
-  if (local) {
+  if (ordered && !("pending" in ordered)) {
+    const from = (q.page - 1) * q.per;
+    page = { rows: ordered.rows.slice(from, from + q.per), total: ordered.total, salesVolume: ordered.salesVolume };
+  } else if (local) {
     const shown = sortProspects(filterProspects(local.rows, q), q);
     const from = (q.page - 1) * q.per;
     page = { rows: shown.slice(from, from + q.per) as unknown as Array<Record<string, unknown>>, total: shown.length, salesVolume: shown.reduce((t, a) => t + (a.sales_volume ?? 0), 0) };
   } else {
     const base = q.list === "prospects" ? prospectsBase(ctx) : marketBase(ctx);
     const filters = marketFilters(base, q);
-    const sort = { by: SORTS[q.sort], dir: q.dir };
+    const sort = dbSortOf(q);
     const offset = (q.page - 1) * q.per;
     /*
      * From memory when this market is loaded and proven (market-memory.ts) —
@@ -415,7 +502,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
       pill: LIST_PILL[list],
     };
   });
-  return { total: page.total, salesVolume: page.salesVolume, page: q.page, pageSize: q.per, rows };
+  return { total: page.total, salesVolume: page.salesVolume, page: q.page, pageSize: q.per, rows, ...(pending ? { sortPending: pending.pending, sortRetry: pending.retry } : {}) };
 }
 
 export type FacetKind = "brand" | "office" | "city" | "county" | "state" | "zip" | "title";
@@ -686,6 +773,12 @@ const cachedReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport> 
 export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: number): Promise<{ unavailable: string } | { ids: string[]; total: number }> {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
+  // Sorted by List: the same order as the page (listOrdered); when it can't be, by sales volume, as the page shows.
+  if (q.sort === "list") {
+    const ordered = await listOrdered(ctx, q);
+    if (!("pending" in ordered)) return ordered.total > cap ? { ids: [], total: ordered.total } : { ids: ordered.rows.map((r) => String(r.id)), total: ordered.total };
+    q = { ...q, sort: "volume", dir: "desc" };
+  }
   const local = q.list === "prospects" ? await localProspects(ctx) : null;
   if (local && "unavailable" in local) return local;
   if (local) {
@@ -699,15 +792,15 @@ export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: numbe
    * time). Anything the memory does not reproduce exactly (searchMarket → null), or a market not held yet, as before.
    */
   const mem = q.list === "market" && inMemory(ctx) ? await marketFromMemory(ctx.mls.ids, base, search) : null;
-  const fast = mem ? searchMarket(mem, marketFilters(base, q), { by: SORTS[q.sort], dir: q.dir }, cap, 0) : null;
+  const fast = mem ? searchMarket(mem, marketFilters(base, q), dbSortOf(q), cap, 0) : null;
   if (fast) return fast.total > cap ? { ids: [], total: fast.total } : { ids: fast.rows.map((r) => String(r.id)), total: fast.total };
   // A real client's Prospects: the moved ones that match too (movedProspects).
   const moved = q.list === "prospects" ? (await movedProspects(ctx, q)).map((a) => a.id) : [];
-  const first = await search(marketFilters(base, q), Math.min(cap, 500), 0, { by: SORTS[q.sort], dir: q.dir });
+  const first = await search(marketFilters(base, q), Math.min(cap, 500), 0, dbSortOf(q));
   if (first.total + moved.length > cap) return { ids: [], total: first.total + moved.length };
   const ids = first.rows.map((r) => String(r.id));
   for (let offset = ids.length; offset < first.total; offset += 500) {
-    const more = await search(marketFilters(base, q), 500, offset, { by: SORTS[q.sort], dir: q.dir });
+    const more = await search(marketFilters(base, q), 500, offset, dbSortOf(q));
     ids.push(...more.rows.map((r) => String(r.id)));
     if (!more.rows.length) break;
   }

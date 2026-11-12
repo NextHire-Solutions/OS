@@ -15,6 +15,7 @@ import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shar
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
 import { FIRST_DIR, interestedReport, LIST_PILL, marketTitles, marketWho, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
 
+import { useRangeSelect } from "@/components/screens/analytics/use-range-select";
 import { Icon } from "./icons";
 import { k, off, withIds } from "./k";
 import { lock, useDemo } from "./demo-save";
@@ -43,7 +44,7 @@ export type Row = {
   mostTransactedCity: string | null; salesVolume: number | null; units: number | null; list: string; pill: string;
   office?: string | null; years?: number | null; email?: string | null;
 };
-type Loaded = { total: number; salesVolume: number; page: number; rows: Row[]; client: string | null; mls: Mls | null };
+type Loaded = { total: number; salesVolume: number; page: number; rows: Row[]; client: string | null; mls: Mls | null; sortPending: string | null; sortRetry: boolean };
 
 /*
  * A filter chip and its menu. The menu's items carry the design's leading tick
@@ -462,12 +463,21 @@ export function MarketFilters({ clientId, list, value: f, onChange }: { clientId
   );
 }
 
+/* The List column's sort, in words (market-model.ts LIST_ORDER): which list comes first. */
+const LIST_SORT_TITLE = {
+  off: "Sort by list: Prospects first, then the DNC List, then agents on no list",
+  asc: "Prospects first, then the DNC List, My Agents, your pipeline, and agents on no list — click to reverse",
+  desc: "Agents on no list first, then your pipeline, My Agents, the DNC List and Prospects — click to reverse",
+};
+
 /* A sortable column heading: ↕ when another column sorts, ↑ / ↓ when this one does. */
 function SortHead({ label, by, sort, onSort, right }: { label: string; by: SortKey; sort: { key: SortKey; dir: "asc" | "desc" }; onSort: (by: SortKey) => void; right?: boolean }) {
   const on = sort.key === by;
+  const title = by === "list" ? LIST_SORT_TITLE[on ? sort.dir : "off"]
+    : on ? (sort.dir === "asc" ? "Sorted A→Z / smallest first — click to reverse" : "Sorted Z→A / largest first — click to reverse") : `Sort by ${label.toLowerCase()}`;
   return (
     <th scope="col" className={right ? k("r") : undefined} aria-sort={on ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
-      <button type="button" className="cpv-sort" data-on={on ? "" : undefined} onClick={() => onSort(by)} title={on ? (sort.dir === "asc" ? "Sorted A→Z / smallest first — click to reverse" : "Sorted Z→A / largest first — click to reverse") : `Sort by ${label.toLowerCase()}`}>
+      <button type="button" className="cpv-sort" data-on={on ? "" : undefined} onClick={() => onSort(by)} title={title}>
         {label}<i aria-hidden="true">{on ? (sort.dir === "asc" ? "↑" : "↓") : "↕"}</i>
       </button>
     </th>
@@ -543,7 +553,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
       .then(({ ok, j }) => {
         if (!ok) return setState((s) => ({ ...s, loading: false, error: j?.error ?? "The agent database could not be read." }));
         if (j.unavailable) return setState({ loading: false, error: null, unavailable: j.unavailable, data: null });
-        setState({ loading: false, error: null, unavailable: null, data: { total: j.total ?? 0, salesVolume: j.salesVolume ?? 0, page: j.page ?? 1, rows: j.rows ?? [], client: j.client ?? null, mls: j.mls ?? null } });
+        setState({ loading: false, error: null, unavailable: null, data: { total: j.total ?? 0, salesVolume: j.salesVolume ?? 0, page: j.page ?? 1, rows: j.rows ?? [], client: j.client ?? null, mls: j.mls ?? null, sortPending: j.sortPending ?? null, sortRetry: j.sortRetry === true } });
         onContext?.(definition(list, j.client ?? null, j.mls ?? null, j.titles ?? null));
       })
       .catch((err) => { if (err?.name !== "AbortError") setState((s) => ({ ...s, loading: false, error: "Couldn't reach the server." })); });
@@ -619,6 +629,38 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
     if (allPicked) { setAllPicked(false); setPicked((cur) => withIds(withIds(cur, rowIds, true), ids, on)); return; }
     setPicked((cur) => withIds(cur, ids, on));
   };
+  /*
+   * A run of agents at once (Amy, 11 Nov: "if I wanted all these people … allow those to all be selected together", the
+   * way it works on the leads table): tick one, then Shift-click another, and everyone between takes its state; or
+   * press on a tick box and drag over the rows. One tick box on its own still toggles. With "all that match" ticked,
+   * a run leaves this page's others ticked, as one tick does (pickRows).
+   */
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const shownPicked = useMemo(() => (allPicked ? new Set([...picked, ...rowIds]) : new Set(picked)), [allPicked, picked, rowIds.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const same = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((id) => b.has(id));
+  // The selection as a drag found it: Escape puts back exactly that, "all that match" included (the hook only knows ticks).
+  const beforeDrag = useRef<{ allPicked: boolean; picked: ReadonlySet<string>; shown: ReadonlySet<string> } | null>(null);
+  const range = useRangeSelect(rowIds, shownPicked, (next) => {
+    const before = beforeDrag.current;
+    if (before && same(next, before.shown)) { setAllPicked(before.allPicked); setPicked(before.picked); return; }
+    if (same(next, shownPicked)) return;
+    setAllPicked(false);
+    setPicked(next);
+  }, tableRef);
+  useEffect(() => {
+    beforeDrag.current = range.dragging ? { allPicked, picked, shown: shownPicked } : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.dragging]);
+  /*
+   * Sorting by List while the market is still loading: the page shows sales volume and asks again every 20 s until the
+   * List order comes (market.ts listOrdered), never mid-drag (the rows would change under it). A search that can't be
+   * sorted by List says so once and isn't asked again.
+   */
+  useEffect(() => {
+    if (sort.key !== "list" || !data?.sortPending || !data.sortRetry || range.dragging) return;
+    const t = setTimeout(() => setReload((r) => r + 1), 20_000);
+    return () => clearTimeout(t);
+  }, [sort.key, data, range.dragging]);
   const selected = allPicked ? total : picked.size;
   const clearAll = () => { setSearch(""); setQ(""); setF(NO_PICKS); setPage(1); };
 
@@ -736,11 +778,12 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                 <Icon name="info" size={14} />
                 {q
                   ? <>Only agents whose name contains &ldquo;{q}&rdquo;. Clear the search to see everyone.</>
-                  : <>Tick agents to move them to your prospects, My Agents or DNC List. To move one agent, click its list in the List&nbsp;column.</>}
+                  : <>Tick agents to move them to your prospects, My Agents or DNC List; Shift-click a second agent to tick everyone in between. To move one agent, click its list in the List&nbsp;column.</>}
               </div>
             )}
             <div style={{ overflow: "visible", ...(selected > 0 ? {} : { borderTop: "1px solid #ebedf0" }), opacity: state.loading && data ? 0.55 : 1 }}>
-              <table className={k("tb mkt")}>
+              {sort.key === "list" && data?.sortPending ? <div role="status" className="cpv-muted" style={{ padding: "8px 14px", fontSize: 12 }}>{data.sortPending}</div> : null}
+              <table ref={tableRef} className={k("tb mkt")}>
                 <thead>
                   <tr>
                     <th scope="col" style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label="Select all on this page" checked={pageAll} onChange={() => pickRows(rowIds, !pageAll)} /></th>
@@ -751,7 +794,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                     <SortHead label="Most transacted city" by="transactedCity" sort={sort} onSort={onSort} />
                     <SortHead label="Sales volume" by="volume" sort={sort} onSort={onSort} right />
                     <SortHead label="Units" by="units" sort={sort} onSort={onSort} right />
-                    <th scope="col">List</th>
+                    <SortHead label="List" by="list" sort={sort} onSort={onSort} />
                   </tr>
                 </thead>
                 <tbody>
@@ -762,9 +805,14 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                   ) : data.rows.length === 0 ? (
                     <tr><td /><td colSpan={8} className="cpv-muted" style={{ padding: "18px 0" }}>No agents match.</td></tr>
                   ) : (
-                    data.rows.map((r) => (
-                      <tr key={r.id} className={isPicked(String(r.id)) || rowMenu === String(r.id) ? k("sel") : undefined}>
-                        <td style={{ width: 16 }}><input type="checkbox" className={k("ck")} aria-label={`Select ${r.name}`} checked={isPicked(String(r.id))} onChange={() => pickRows([String(r.id)], !isPicked(String(r.id)))} /></td>
+                    data.rows.map((r, i) => (
+                      <tr key={r.id} data-range-index={i} className={isPicked(String(r.id)) || rowMenu === String(r.id) ? k("sel") : undefined}>
+                        <td style={{ width: 16 }}>
+                          {/* The press area for a drag is a little larger than the box itself. */}
+                          <span {...range.tickZone(i)} style={{ display: "inline-flex", padding: "2px 4px", margin: "-2px -4px", cursor: "pointer" }}>
+                            <input type="checkbox" className={k("ck")} aria-label={`Select ${r.name}`} checked={isPicked(String(r.id))} onChange={() => undefined} onClick={range.onTickClick(i)} />
+                          </span>
+                        </td>
                         <td><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className={k("av")}>{initials(r.name)}</span><span className={k("nm")}>{r.name}</span></div></td>
                         <td>{r.title ?? <span className={k("dash")}>&ndash;</span>}</td>
                         <td>{r.brokerage ?? <span className={k("dash")}>&ndash;</span>}</td>

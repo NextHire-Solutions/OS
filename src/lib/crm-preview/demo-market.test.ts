@@ -160,6 +160,8 @@ test("the Demo's Prospects page filters as Market does — ranges, brokerages, o
   assert.deepEqual(sorted("sort=volume&dir=desc&q=smith"), ["a3"], "only names containing it");
   assert.deepEqual(sorted("sort=volume&dir=desc&q=SMITH"), ["a3"], "any case");
   assert.deepEqual(sorted("q=nobody"), []);
+  assert.deepEqual(sorted("sort=list&dir=asc"), ["a2", "a1", "a3"], "a List sort reads them by sales volume, largest first (market.ts orders them by list)");
+  assert.deepEqual(sorted("sort=list&dir=desc"), ["a2", "a1", "a3"], "whichever way the List sort points");
 });
 
 test("the Edit form's custom fields: set, changed, cleared — on the Demo's own entry only", async () => {

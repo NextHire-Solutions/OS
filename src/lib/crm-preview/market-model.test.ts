@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import {
-  bandOf, bandRows, clientForPortal, DEAL_BANDS, interestedReport, LIST_PILL, listFor, listSets, MARKET_TITLE, marketFilters, marketScope,
+  bandOf, bandRows, byListOrder, clientForPortal, dbSortOf, DEAL_BANDS, FIRST_DIR, interestedReport, LIST_ORDER, LIST_PILL, listFor, listSets, MARKET_TITLE, marketFilters, marketScope,
   MAX_PLACES, ownListEmail, parseMarketQuery, resolveMls, SALES_BANDS, zipCounts, type OsClientRow,
 } from "./market-model.ts";
 
@@ -319,3 +319,48 @@ test("zip counts: an agent once a zip, at the chosen locations, five digits only
   assert.deepEqual(zipCounts([], ["office"]), []);
 });
 
+
+
+/* ------------------------------------------- the List sort (Amy, 11 Nov) --- */
+
+test("the List sort: Prospects, then the DNC List, then the other lists, agents on none last; reversed the other way", () => {
+  assert.deepEqual([...LIST_ORDER], ["Prospects", "DNC List", "My Agents", "In your pipeline", "Not on a list"]);
+  assert.equal(FIRST_DIR.list, "asc", "the first click is Amy's order");
+  const sets = listSets(
+    [{ name: "Mia Park", email: null }],
+    [{ kind: "agent", name: "Dan Ford", email: "dan@x.com", domain: null }, { kind: "company", name: "Sister", email: null, domain: "sister.com" }],
+    [{ lead_name: "Jo Park", lead_email: "jo@park.test" }],
+    new Set(["p1", "p2"]),
+  );
+  // In sales-volume order, largest first, as the server reads them.
+  const rows = [
+    { id: "n1", full_name: "Nobody One", emails: [] as string[] },
+    { id: "d1", full_name: "Dan Ford", emails: ["dan@x.com"] },
+    { id: "p1", full_name: "Pat Prospect", emails: [] },
+    { id: "m1", full_name: "Mia Park", emails: [] },
+    { id: "s1", full_name: "Sam Sister", emails: ["sam@sister.com"] },
+    { id: "j1", full_name: "Jo Park", emails: ["jo@park.test"] },
+    { id: "n2", full_name: "Nobody Two", emails: [] },
+    { id: "p2", full_name: "Pia Prospect", emails: [] },
+  ];
+  const ids = (dir: "asc" | "desc") => byListOrder(rows, (r) => listFor(r, sets), dir).map((r) => r.id);
+  assert.deepEqual(ids("asc"), ["p1", "p2", "d1", "s1", "m1", "j1", "n1", "n2"], "each list keeps the sales-volume order it was read in");
+  assert.deepEqual(ids("desc"), ["n1", "n2", "j1", "m1", "d1", "s1", "p1", "p2"], "reversed by list, still by sales volume inside each");
+});
+
+test("a prospect on the DNC List sorts with the DNC List, as its List column reads", () => {
+  const sets = listSets([], [{ kind: "agent", name: "Erin Domzalski", email: null, domain: null }], [], new Set(["e1", "p1"]));
+  const rows = [{ id: "e1", full_name: "Erin Domzalski", emails: [] as string[] }, { id: "p1", full_name: "Pat", emails: [] as string[] }];
+  assert.deepEqual(byListOrder(rows, (r) => listFor(r, sets), "asc").map((r) => r.id), ["p1", "e1"]);
+});
+
+test("sort=list is accepted from the page; the database reads such a page by sales volume", () => {
+  const q = parseMarketQuery(new URLSearchParams("sort=list&dir=desc"));
+  assert.equal(q.sort, "list");
+  assert.equal(q.dir, "desc");
+  assert.equal(parseMarketQuery(new URLSearchParams("sort=list")).dir, "asc");
+  assert.deepEqual(dbSortOf(q), { by: "sales_volume", dir: "desc" });
+  assert.deepEqual(dbSortOf(parseMarketQuery(new URLSearchParams("sort=name&dir=desc"))), { by: "full_name", dir: "desc" }, "every other sort as before");
+  assert.equal(parseMarketQuery(new URLSearchParams("sort=lists")).sort, "volume", "an unknown sort is still refused");
+  for (const odd of ["constructor", "toString", "__proto__", "hasOwnProperty"]) assert.equal(parseMarketQuery(new URLSearchParams(`sort=${odd}`)).sort, "volume", `${odd} is no sort`);
+});

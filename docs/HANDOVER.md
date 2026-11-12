@@ -1441,6 +1441,48 @@ real data with every write refused (54/54): only Homebase's and Hetherington's
 rows changed. The standalone Client Health app (clients.brokerstaffer.com) was
 not changed and still shows them by introductions.
 
+#### Prospects and Market: Shift-click, List sort; territories on the record (built 13 Nov)
+
+Amy, weekly call 11 Nov (three asks):
+
+- **Tick a run of agents** on the client portal's Market and Prospects tables
+  ("the way it already works on the database"): the leads table's own hook
+  (`analytics/use-range-select.ts`). Tick one, Shift-click another, and
+  everyone between takes its state; or press on a tick box and drag. With
+  "all that match" ticked, a run leaves this page's others ticked, as a single
+  tick does. Ticking moves nothing; the Move buttons are unchanged.
+- **Sort by List**, in Amy's order: Prospects, DNC List, then My Agents, the
+  pipeline, and Not on a list last (`market-model.ts LIST_ORDER`; the second
+  click reverses it). A list isn't an agent-database column, so
+  `market.ts listOrdered` reads every agent the filters match by sales volume
+  and orders them by `listFor` (sales volume kept inside each list). Prospects:
+  the client's whole list (up to 10,000). Market: only from the in-memory
+  market and the held campaign set; until both are ready the page shows sales
+  volume with a note and asks again every 20 s (never mid-drag). A market never
+  held in memory (BrokerStaffer's own, several titles) or a search the memory
+  can't answer says so once instead. Pages, "Select all that match" and the CSV
+  export all use the same order, kept a minute per search (`cache/bounded.ts`,
+  newest 24) and started over by any portal save. **Limit:** the anti-scraping
+  cap of 1,000 rows still applies, so on Market a client with 1,000+ prospects
+  in view sees its DNC List only after narrowing the filters (or on its own DNC
+  List page).
+- **Territories, Introduce to tab** ("how am I able to assign people their
+  specific territory?"): editing was already there (click a person: name, role,
+  email, territory) but its Edit showed only on hover. It now always shows, a
+  person with no territory reads "Territory: none, so every lead", and **Who
+  each campaign goes to** lists every campaign and the people its leads go to
+  by the Introduce button's own rule (`routeIntro`), updated as you edit. The
+  same people and territories steer a brokerage hand-off.
+
+Proof: 3,465 tests; 15/15 deliberate breaks (order rules, cache); an
+independent review, every finding fixed (cache, retry, "never ready" wording,
+Escape during a drag, the table's unreadable campaigns); a real-data dry
+run on Hetherington (Prospects 492 in list order, its 2 DNC namesakes last
+A→Z and first Z→A; Market 20,970, Prospects then DNC; pages never repeat;
+"select all" in the same order); real Chrome on a local build with every write
+refused 28/28 (the sorts, Shift-click and drag with real mouse input, the
+market "getting ready" note then the order, Jeff Cook's Introduce to tab).
+
 ### Inboxes: where each column comes from
 
 Daily limit, Sent, Replied (people who replied), Bounced, Status, Vendor, Tags,

@@ -264,15 +264,16 @@ export function filterProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
     && !titleTokens(a.title).some((t) => noTitles.has(t)));
 }
 
-const SORT_FIELD: Record<MarketQuery["sort"], (a: AgentRow) => string | number | null> = {
+const SORT_FIELD: Record<Exclude<MarketQuery["sort"], "list">, (a: AgentRow) => string | number | null> = {
   name: (a) => a.full_name, brokerage: (a) => a.brand, officeCity: (a) => a.office_city, transactedCity: (a) => a.most_transacted_city,
   title: (a) => a.title, volume: (a) => a.sales_volume, units: (a) => a.units,
 };
 
 /** The page's order for agents sorted here: by the sort's field, blanks last either way. */
 function prospectOrder(q: MarketQuery): (a: AgentRow, b: AgentRow) => number {
-  const get = SORT_FIELD[q.sort];
-  const dir = q.dir === "asc" ? 1 : -1;
+  // A List sort reads them by sales volume, largest first, and orders them by list after (market.ts listOrdered).
+  const get = SORT_FIELD[q.sort === "list" ? "volume" : q.sort];
+  const dir = q.sort === "list" ? -1 : q.dir === "asc" ? 1 : -1;
   return (a, b) => {
     const x = get(a), y = get(b);
     if (x === null || x === "") return y === null || y === "" ? 0 : 1;

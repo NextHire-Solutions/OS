@@ -147,8 +147,18 @@ export const SORTS = {
   volume: "sales_volume",
   units: "units",
 } as const;
-export type SortKey = keyof typeof SORTS;
-export const FIRST_DIR: Record<SortKey, "asc" | "desc"> = { name: "asc", brokerage: "asc", officeCity: "asc", transactedCity: "asc", title: "asc", volume: "desc", units: "desc" };
+/*
+ * …and the List column (Amy, 11 Nov: "sort by list … prospects first, the DNC, and then not on a list"). Not a column
+ * of the agent database: an agent's list is worked out from the client's own lists, so this order is put together
+ * here (market.ts listOrdered), with sales volume, largest first, inside each list.
+ */
+export type SortKey = keyof typeof SORTS | "list";
+export const FIRST_DIR: Record<SortKey, "asc" | "desc"> = { name: "asc", brokerage: "asc", officeCity: "asc", transactedCity: "asc", title: "asc", volume: "desc", units: "desc", list: "asc" };
+
+/** The database sort for a query: a List sort reads the agents by sales volume and orders them by list itself. */
+export function dbSortOf(q: Pick<MarketQuery, "sort" | "dir">): { by: string; dir: "asc" | "desc" } {
+  return q.sort === "list" ? { by: SORTS.volume, dir: "desc" } : { by: SORTS[q.sort], dir: q.dir };
+}
 
 export interface Range {
   min: number | null;
@@ -252,7 +262,8 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
   const titles = (k: string) => many(k).filter((t) => (TITLES as readonly string[]).includes(t));
   const per = p.get("per") === String(SETUP_PAGE_SIZE) ? SETUP_PAGE_SIZE : PAGE_SIZE;
   const sortRaw = p.get("sort") ?? "";
-  const sort: SortKey = sortRaw in SORTS ? (sortRaw as SortKey) : "volume";
+  // Own keys only: `in` also answered yes to "constructor" and "toString" (review, 13 Nov).
+  const sort: SortKey = Object.prototype.hasOwnProperty.call(SORTS, sortRaw) || sortRaw === "list" ? (sortRaw as SortKey) : "volume";
   const dirRaw = p.get("dir");
   return {
     list,
@@ -453,6 +464,18 @@ export const LIST_PILL: Record<ListName, string> = {
   Prospects: "p-iv",
   "Not on a list": "p-nu",
 };
+
+/**
+ * The List sort's order, A→Z way round: Amy's three (Prospects, the DNC List, then Not on a list), with the client's
+ * other two lists between the DNC List and the agents on none. Z→A is the same, reversed.
+ */
+export const LIST_ORDER: readonly ListName[] = ["Prospects", "DNC List", "My Agents", "In your pipeline", "Not on a list"];
+
+/** Agents in list order, the given order kept inside each list (stable). */
+export function byListOrder<T>(rows: readonly T[], listOf: (row: T) => ListName, dir: "asc" | "desc"): T[] {
+  const rank = (row: T) => { const i = LIST_ORDER.indexOf(listOf(row)); return dir === "asc" ? i : LIST_ORDER.length - 1 - i; };
+  return rows.map((row, i) => ({ row, i, r: rank(row) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.row);
+}
 
 export interface ListSets {
   prospects: ReadonlySet<string>;

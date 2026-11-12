@@ -301,6 +301,8 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx .ds-field-v .ds-value { border-radius: 7px; }
 .rx .ds-field-v .ds-value:hover { background: var(--x-hover); }
 .rx .ds-field-v .ds-value .pen { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+/* The Introduce to people: their Edit always shows (11 Nov — hover-only, nobody found it). */
+.rx .ds-field-v .ds-value .pen.rx-pen-on { opacity: 1; color: var(--x-accent, #2563eb); }
 .rx .ds-field-v .empty { color: #C4C4C8; }
 .rx .ds-input { border-radius: 8px; border-color: var(--x-line); }
 .rx .ds-btn.primary { background: var(--x-ink); border-color: var(--x-ink); }

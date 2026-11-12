@@ -30,6 +30,7 @@ import type { ChangeKind, ClientPatch } from "./clients";
 import type { ClaimSource, ClientBilling, FoundByEmail } from "@/lib/clients/billing-model";
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
 import { alignmentNote } from "@/lib/clients/billing-align.ts";
+import { routeIntro, type IntroMacroClient } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import type { ClientView } from "@/lib/clients/saved-views-match";
 
 /*
@@ -533,7 +534,7 @@ export function ClientRecord({
                   <IntroPreview clientId={c.id} refreshKey={JSON.stringify(c.contact)} onChanged={onChanged} />
                 </section>
                 <section className="rx-sec">
-                  <h3>Introduce to<span>used by the Introduce button in Master Inbox</span></h3>
+                  <h3>Introduce to<span>who leads go to: the Introduce button, and a hand-off sent to these people</span></h3>
                   <div className="rx-row">
                     <Field label="Brokerage" source="Master record" value={c.contact.brokerage}
                       editor={{ kind: "text" }} onSave={async (v) => { await save("brokerage")(v); onPatch?.({ contact: { brokerage: v || null } }); }} />
@@ -543,7 +544,7 @@ export function ClientRecord({
                     const p = i === 0 ? "contact" : `contact${i + 1}`;
                     return (
                       <div key={i} className="rx-row">
-                        <ContactEditor ordinal={i} value={v}
+                        <ContactEditor ordinal={i} value={v} byTerritory={byTerritoryOf(c.contact)}
                           onSave={async (d) => {
                             const patch: Record<string, unknown> = { [`${p}Name`]: d.name, [`${p}Role`]: d.role, [`${p}Email`]: d.email };
                             // Sent only when changed, so saving a name never touches territories.
@@ -560,6 +561,7 @@ export function ClientRecord({
                   })}
                   <MorePeople clientId={c.id} contact={c.contact} onChanged={onChanged} onPatch={onPatch} />
                 </section>
+                <TerritoryRouting c={c} />
                 </>
               ) : null}
               {tab === "tools" ? <Tools c={c} /> : null}
@@ -2035,7 +2037,7 @@ function patchFor(key: string, value: unknown): ClientPatch {
 const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
 
 function ContactEditor({
-  ordinal, value, onSave, startEditing = false, onCancel, onRemove,
+  ordinal, value, onSave, startEditing = false, onCancel, onRemove, byTerritory = false,
 }: {
   ordinal: number;
   value: Person;
@@ -2046,6 +2048,8 @@ function ContactEditor({
   onCancel?: () => void;
   /** People 4+: removable (asks first). */
   onRemove?: () => Promise<void>;
+  /** Someone on this client has a territory: say so when this person has none (they get every lead). */
+  byTerritory?: boolean;
 }) {
   const [editing, setEditing] = useState(startEditing);
   const [draft, setDraft] = useState({ name: "", role: "", email: "", territories: "" });
@@ -2107,11 +2111,14 @@ function ContactEditor({
                   {value.email ? <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>{value.email}</span> : null}
                   {value.territories?.length ? (
                     <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>Territory: {value.territories.join(", ")}</span>
+                  ) : byTerritory ? (
+                    <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>Territory: none, so every lead</span>
                   ) : null}
                 </>
               ) : <span className="empty">{ordinal === 0 ? "Not set" : "Add a person"}</span>}
             </span>
-            <span className="pen" aria-hidden="true">Edit</span>
+            {/* Always shown (11 Nov call: nobody found the edit — it appeared only on hover). Opens name, role, email and territory. */}
+            <span className="pen rx-pen-on" aria-hidden="true">Edit</span>
           </button>
         )}
         {onRemove && !editing ? (
@@ -2135,6 +2142,80 @@ function ContactEditor({
   );
 }
 
+/**
+ * Someone this client introduces to covers a territory (then the rest get every lead). Only a person with a name AND a
+ * role counts, as the Introduce button counts them (introContacts): a cleared slot's leftover territory routes nothing.
+ */
+function byTerritoryOf(contact: MasterClient["contact"]): boolean {
+  return [{ ...contact, territories: contact.territories ?? [] }, ...contact.extra]
+    .some((p) => !!p.name?.trim() && !!p.role?.trim() && (p.territories ?? []).length > 0);
+}
+
+/*
+ * Which campaign's leads go to whom (11 Nov call: Amy, for clients with several markets such as Jeff Cook Real
+ * Estate, "how am I able to assign people their specific territory?"). Shown once someone has a territory: each of the
+ * client's campaigns, and the people its leads go to, by the Introduce button's own rule (routeIntro: a territory named
+ * in the campaign's name; no territory = every lead; a campaign naming none goes to everyone). Worked out on screen
+ * from the people above, so a territory just edited shows here at once.
+ */
+function TerritoryRouting({ c }: { c: MasterClient }) {
+  if (!byTerritoryOf(c.contact)) return null;
+  const client: IntroMacroClient = {
+    name: c.name,
+    contactName: c.contact.name, contactRole: c.contact.role, contactEmail: c.contact.email,
+    brokerage: c.contact.brokerage, contactTerritories: c.contact.territories ?? [],
+    extraContacts: c.contact.extra.map((p) => ({ name: p.name, role: p.role, email: p.email, territories: p.territories ?? [] })),
+  };
+  const campaigns = c.campaigns ?? [];
+  // A campaign Client Health has no details for comes with its id as its name: its territory can't be told from that.
+  const rows = campaigns.map((cp) => ({ cp, unnamed: cp.name === cp.id, route: routeIntro(client, cp.name).route }));
+  const named = rows.filter((r) => !r.unnamed);
+  const toEveryone = named.filter((r) => r.route.fallback).length;
+  return (
+    <section className="rx-sec" data-territory-routing="">
+      <h3>Who each campaign goes to<span>by the territories above</span></h3>
+      {c.campaigns === null ? (
+        <p className="rx-hint">Campaigns could not be read just now, so this can't be shown. Try again in a minute.</p>
+      ) : !campaigns.length ? (
+        <p className="rx-hint">No campaigns are linked to this client yet.</p>
+      ) : (
+        <>
+          <p className="rx-hint" style={{ marginBottom: 8 }}>
+            {toEveryone === 0
+              ? `All ${named.length} campaigns name a territory.`
+              : `${named.length - toEveryone} of ${named.length} campaigns name a territory. ${toEveryone === 1 ? "The other names" : `The other ${toEveryone} name`} none, so ${toEveryone === 1 ? "its leads go" : "their leads go"} to everyone: add the place to someone's territory if they should go to one person.`}
+            {rows.length > named.length ? ` ${rows.length - named.length} more ${rows.length - named.length === 1 ? "campaign's name" : "campaigns' names"} couldn't be read.` : ""}
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table className="rx-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr><th style={{ textAlign: "left", padding: "4px 8px 4px 0" }}>Campaign</th><th style={{ textAlign: "left", padding: "4px 0" }}>Leads go to</th></tr>
+              </thead>
+              <tbody>
+                {rows.map(({ cp, unnamed, route }) => unnamed ? (
+                  <tr key={`${cp.platform}:${cp.id}`} style={{ borderTop: "1px solid var(--x-line, #ebedf0)" }}>
+                    <td style={{ padding: "5px 8px 5px 0", wordBreak: "break-word", color: "var(--ds-muted)" }}>Name not read ({cp.platform} {cp.id})</td>
+                    <td style={{ padding: "5px 0", color: "var(--ds-muted)" }}>Can&rsquo;t tell without its name</td>
+                  </tr>
+                ) : (
+                  <tr key={`${cp.platform}:${cp.id}`} style={{ borderTop: "1px solid var(--x-line, #ebedf0)" }}>
+                    <td style={{ padding: "5px 8px 5px 0", wordBreak: "break-word" }}>{cp.name}</td>
+                    <td style={{ padding: "5px 0" }}>
+                      {route.people.filter(Boolean).join(", ") || "Nobody named yet"}
+                      {route.fallback ? <span style={{ display: "block", fontSize: 11.5, color: "var(--x-warn, #b45309)" }}>No territory in its name: everyone</span>
+                        : route.matched.length ? <span style={{ display: "block", fontSize: 11.5, color: "var(--ds-muted)" }}>{route.matched.join(", ")}</span> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 /* ---------------------------------------------------------------- people 4+ --- */
 /*
  * More than three people to introduce to (client ask, 5 Oct). People 1-3 keep
@@ -2154,7 +2235,7 @@ function MorePeople({ clientId, contact, onChanged, onPatch }: {
   const [adding, setAdding] = useState(false);
   const firstThreeFilled = !!contact.name && !!contact.extra[0]?.name && !!contact.extra[1]?.name;
   const total = 3 + more.length;
-  const byTerritory = [contact.territories ?? [], ...contact.extra.map((p) => p.territories ?? [])].some((t) => t.length);
+  const byTerritory = byTerritoryOf(contact);
 
   // The edit route's own rules apply (name + role each, valid email, at most 10);
   // a leg that fails — e.g. migration 0028 not run — comes back as the error.
@@ -2169,7 +2250,7 @@ function MorePeople({ clientId, contact, onChanged, onPatch }: {
     <>
       {more.map((p, i) => (
         <div key={`${i}-${p.name}`} className="rx-row">
-          <ContactEditor ordinal={3 + i} value={p}
+          <ContactEditor ordinal={3 + i} value={p} byTerritory={byTerritory}
             onSave={(d) => saveList(more.map((x, j) => (j === i ? d : x)))}
             onRemove={() => saveList(more.filter((_, j) => j !== i))} />
         </div>
