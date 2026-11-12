@@ -23,6 +23,7 @@ import { ClientPeople } from "./clients-people";
 import { DeleteClient } from "./clients-delete";
 import { MarketsPanel } from "./markets-panel";
 import { ClientBillingTab } from "./client-billing";
+import { InvoiceEmailDialog } from "./client-billing-email";
 import { ClientCampaignLists } from "./client-campaign-lists";
 import { UsageBillingPanel } from "./client-usage-billing";
 import type { ChangeKind, ClientPatch } from "./clients";
@@ -225,6 +226,8 @@ export function ClientRecord({
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
       if (typing) return;
+      // A dialog open over the record (Refund, Cancel, Change invoice email) has the keys: ↓ must not swap the client under it.
+      if (document.querySelector("[data-modal-dialog]")) return;
       if (e.key === "Escape") onClose();
       if ((e.key === "ArrowUp" || e.key === "k") && onPrev) { e.preventDefault(); onPrev(); }
       if ((e.key === "ArrowDown" || e.key === "j") && onNext) { e.preventDefault(); onNext(); }
@@ -1031,6 +1034,8 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
     hidden?: true; linked?: boolean; billing?: BillingNow; links?: OpenLink[] | null; canCreateLinks?: boolean; error?: string;
     /** Admin: payment links and linking Stripe customers too. Account managers pause and resume only. */
     canManage?: boolean;
+    /** The Billing tab's people (12 Nov): may change where a customer's invoices go. */
+    canChangeEmail?: boolean;
     /** Every subscription and card the client owns (billing-model.ts, 6 Oct). */
     account?: ClientBilling | null; linksReady?: boolean; accountError?: string | null;
     /** Found in Stripe by email, not counted until confirmed (6 Nov). */
@@ -1208,6 +1213,8 @@ function BillingControl({ clientId, onChanged }: { clientId: string; onChanged?:
           ) : null}
           {state.account ? (
             <BillingAccount account={state.account} found={state.found ?? []} linksReady={state.linksReady === true} saving={saving} canManage={state.canManage === true}
+              clientId={clientId} canChangeEmail={state.canChangeEmail === true} reload={() => void load()}
+              setEmail={(id, email) => setState((s) => s?.account ? { ...s, account: { ...s.account, customers: s.account.customers.map((cu) => (cu.id === id ? { ...cu, email } : cu)) } } : s)}
               act={async (body) => {
                 const out = await post(body);
                 if (out) {
@@ -1283,7 +1290,7 @@ function CopyId({ id }: { id: string }) {
  * to link another customer or subscription; and those found by email, to
  * confirm (6 Nov).
  */
-function BillingAccount({ account: a, found, linksReady, saving, canManage, act }: {
+function BillingAccount({ account: a, found, linksReady, saving, canManage, clientId, canChangeEmail, reload, setEmail, act }: {
   account: ClientBilling;
   /** Found in Stripe by email: shown to confirm, counted only once confirmed. */
   found: FoundByEmail[];
@@ -1291,9 +1298,17 @@ function BillingAccount({ account: a, found, linksReady, saving, canManage, act 
   saving: boolean;
   /** Admin: may link and unlink Stripe customers. Account managers pause and resume only. */
   canManage: boolean;
+  clientId: string;
+  /** The Billing tab's people (12 Nov, the server says): change where a counted customer's invoices go. */
+  canChangeEmail: boolean;
+  /** Read Stripe again, keeping what is shown meanwhile. */
+  reload: () => void;
+  /** Show the address Stripe confirmed at once, before the read again lands. */
+  setEmail: (customerId: string, email: string | null) => void;
   act: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
   const [confirm, setConfirm] = useState<{ id: string; action: "pause" | "resume" } | null>(null);
+  const [mailFor, setMailFor] = useState<ClientBilling["customers"][number] | null>(null);
   const [linkId, setLinkId] = useState("");
   const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
   const live = a.subscriptions.filter((s) => !["canceled", "incomplete_expired"].includes(s.status));
@@ -1411,14 +1426,27 @@ function BillingAccount({ account: a, found, linksReady, saving, canManage, act 
                 <span className={`rx-cu-how${cu.source === "name match" ? " auto" : ""}`} data-how={cu.source}>{CUSTOMER_HOW[cu.source]}</span>
               </span>
             </span>
-            {cu.source !== "record" && linksReady && canManage ? (
-              <button type="button" className="rx-btn" disabled={saving}
-                onClick={() => void act({ action: "exclude", customerId: cu.id })}>
-                Not this client
-              </button>
+            {canChangeEmail || (cu.source !== "record" && linksReady && canManage) ? (
+              <span className="rx-cu-acts">
+                {canChangeEmail ? (
+                  <button type="button" className="rx-btn" disabled={saving} data-mail-open={cu.id} onClick={() => setMailFor(cu)}>
+                    {cu.email ? "Change invoice email" : "Add invoice email"}
+                  </button>
+                ) : null}
+                {cu.source !== "record" && linksReady && canManage ? (
+                  <button type="button" className="rx-btn" disabled={saving}
+                    onClick={() => void act({ action: "exclude", customerId: cu.id })}>
+                    Not this client
+                  </button>
+                ) : null}
+              </span>
             ) : null}
           </span>
         ))}
+        {mailFor ? (
+          <InvoiceEmailDialog clientId={clientId} customer={mailFor} onClose={() => setMailFor(null)}
+            onChanged={(email) => { if (email !== undefined) setEmail(mailFor.id, email); reload(); }} />
+        ) : null}
         {!canManage ? null : linksReady ? (
           <span className="rx-bill-row">
             <input className="ds-input" placeholder="Link another: cus_… or sub_…" aria-label="Stripe customer or subscription id"

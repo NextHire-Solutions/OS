@@ -209,6 +209,14 @@ export class FakeStripe {
       if (method === "POST") {
         const pm = p["invoice_settings[default_payment_method]"];
         if (pm) (c.invoice_settings as Json).default_payment_method = pm;
+        // The address, and metadata merged as Stripe does: a key set to "" is dropped (billing-email.ts, 12 Nov).
+        if (p.email !== undefined) c.email = p.email || null;
+        const meta = nested(p, "metadata");
+        if (Object.keys(meta).length) {
+          const kept = { ...((c.metadata as Record<string, string> | undefined) ?? {}) };
+          for (const [k, v] of Object.entries(meta)) { if (v === "") delete kept[k]; else kept[k] = v; }
+          c.metadata = kept;
+        }
         return [200, c];
       }
       return [200, c];

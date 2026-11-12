@@ -1339,6 +1339,63 @@ to match one client, nothing written to any database; deleted after),
 including the answer cut off after Stripe refunded → *try again* (double
 clicked) → the same one credit note.
 
+#### Change where invoices go (built 12 Nov)
+
+The client, for Jeff Cook Real Estate: "Could you add the ability to change to
+whom the invoices are delivered? I need alma.nowatzke@… to receive Jeff Cook
+Real Estate invoices once their billing resumes next week."
+
+Stripe sends a customer's invoices, receipts and payment reminders to the
+customer's **one** `email`. The API has no other recipients: extra CC
+addresses exist only in Stripe's dashboard (Customer → billing emails), and the
+API can neither read nor set them. So each row under *Stripe customers counted
+for this client* gets **Change invoice email** (or *Add invoice email* when it
+has none), which opens a dialog: the address Stripe uses now, a box for the new
+one, then a confirmation with *From now on* / *No longer* / *Already sent: not
+sent again*. Emails Stripe already sent are not re-sent. An invoice still in
+draft takes the new address; one already finalized keeps the address it went to
+(both proven in TEST mode: Stripe copies the address when it finalizes). A
+customer counted only because its name matches gets a warning to check it is
+really the client's. While any dialog is open over the record, ↑/↓ no longer
+move to another client underneath it (this applied to Refund and Cancel too).
+
+Who: the Billing tab's three people only (`billingTabUser`, bare 404 for
+anyone else). The record's Stripe control is also seen by people with the
+Clients page, so its GET answers `canChangeEmail` (`canSeeBillingTab`) and the
+button is drawn only then. Route: `POST /api/workspace/clients/billing/email
+{ clientId, customerId, from, to }`, `lib/clients/billing-email.ts`,
+`client-billing-email.tsx`. Checks, in order: own page (JSON + same-origin) →
+one real address (`cleanEmail`: trimmed, lower case, no lists or "Name
+<address>", no invisible characters, letters/digits/hyphens in the domain, 254
+characters at most) → the live-key guard (a live key changes a
+customer only on Railway AND asked from https://os.brokerstaffer.com) → the
+customer is counted for this client by the tab's ownership rules → Stripe's
+address NOW equals `from`, the one the page showed (else 409, nothing sent;
+Stripe already at `to` → answered as done). It sends `email` plus
+`metadata.os_email_by` / `os_email_before` and nothing else, says *saved* only
+when Stripe's answer has the new address, and says *may have gone through* when
+the answer is lost (pressing again is safe: it sets the same address). The
+shared Stripe snapshot is invalidated after a change, and whenever Stripe's
+address differs from the OS's copy, so a refused change does not keep showing
+the old address. Every change is logged (`[billing] … changed the invoice
+email …`).
+
+Ownership is untouched by an address change: counted customers are never
+suggested to another client by email (`emailSuggestions` skips claimed
+customers), and payment alerts match by email only for unclaimed payers.
+
+Tested in **Stripe TEST mode only**: `billing-email.test.ts` and
+`billing/email/route.test.ts` (the route run for real on the fake database and
+fake Stripe; 24 deliberate breaks, all caught; an independent review, every
+finding fixed); and real Chrome 57/57 against a
+local build reading real data with every write refused except Stripe TEST-key
+calls (a test customer named "Jeff Cook Real Estate", deleted after): Amy
+changes it, bad and duplicate addresses refused, Back/Escape, ↓ with the dialog
+open, a busy Stripe offering Try again, a change made in Stripe meanwhile
+refused and the row then showing Stripe's address, a phone
+width, Gabriel (Clients page, not the Billing tab) sees no button and gets a
+bare 404, admin@outreachify.io sees it.
+
 ### Inboxes: where each column comes from
 
 Daily limit, Sent, Replied (people who replied), Bounced, Status, Vendor, Tags,
