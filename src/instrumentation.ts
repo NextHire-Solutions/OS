@@ -75,6 +75,22 @@ export async function register() {
   }, 5_000).unref?.();
 
   /*
+   * The Inboxes page's replies and positive replies (14 Nov) read all of
+   * Master Inbox's conversations — seconds, not instant. Kept a day once read,
+   * so one read after boot means the first person after a deploy never waits.
+   * Once only: after that it is read again only while someone views the page.
+   */
+  setTimeout(async () => {
+    try {
+      if (!process.env.MASTER_INBOX_SUPABASE_URL) return;
+      const { loadReplies } = await import("./lib/tools/analytics/inbox-positives-load");
+      await loadReplies();
+    } catch {
+      /* warm-up is best effort */
+    }
+  }, 12_000).unref?.();
+
+  /*
    * The master client list (Clients page) spans six databases — ~15s cold.
    * Warm it after boot, then every four minutes so its stale-while-refresh
    * window never lapses; the first person to open Clients never waits.

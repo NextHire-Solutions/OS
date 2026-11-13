@@ -3,10 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
-import { DASH, fullNumber } from "@/lib/tools/analytics/format.ts";
+import { DASH, fullNumber, percent } from "@/lib/tools/analytics/format.ts";
+import {
+  DOMAIN_COLUMNS,
+  domainRows,
+  domainSortValue,
+  positiveRate,
+  type DomainRow,
+} from "@/lib/tools/analytics/inbox-domains.ts";
 import {
   FACET_LABEL,
   INBOX_COLUMNS,
+  INBOX_COLUMNS_ADDED,
   INBOX_COLUMN_GROUPS,
   INBOX_COLUMN_PREFS_KEY,
   INBOX_COLUMN_PREFS_VERSION,
@@ -50,6 +58,7 @@ import {
   sortRows,
   useColumnPrefs,
   useSort,
+  type SortState,
 } from "./shared";
 import { AddInboxesDialog } from "./add-inboxes-dialog";
 import { RemoveInboxesDialog } from "./remove-inboxes-dialog";
@@ -77,9 +86,27 @@ import { Btn } from "./toast";
  *
  * What each filter matches, what an option counts and what a column sorts by
  * are in lib/tools/analytics/inboxes.ts, where they are tested.
+ *
+ * POSITIVE REPLIES AND DOMAINS (14 Nov): "the domains and inboxes that get the
+ * most replies and positive replies", positive meaning what the team marked
+ * Interested in Master Inbox. Two columns on every inbox (inbox-positives.ts
+ * says what counts and for which inbox), and a Domains view that adds up the
+ * inboxes the filters leave, one row per sending domain, most positive replies
+ * first (inbox-domains.ts). A domain opens its inboxes.
  */
 
 const PAGE_SIZE = 50;
+
+type InboxView = "inboxes" | "domains";
+/** Marks the history entry this page adds when a domain is opened. */
+const DRILL_MARK = "inboxesDomainOpened";
+/** A domain opened from the Domains view, and the Domain filter it replaced. */
+interface OpenedDomain {
+  domain: string;
+  before: string[];
+}
+/** The Domains view answers "which domains get the most positive replies" before anything is clicked. */
+const DOMAIN_DEFAULT_SORT: SortState = { key: "positive", dir: "desc" };
 /**
  * Tags drawn in a cell before the rest fold into "+2". Two, on ONE line: three
  * chips in a narrow column stacked one per line and made every row 123px tall
@@ -140,11 +167,83 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
   // Lowest / highest on the number columns (inbox-ranges.ts).
   const [ranges, setRanges] = useState<InboxRanges>(NO_RANGES);
   const { sort, toggle } = useSort();
+  // The Domains view keeps its own sort and page, so each view is where it was left.
+  const domainSorting = useSort(DOMAIN_DEFAULT_SORT);
+  const [view, setView] = useState<InboxView>("inboxes");
   const [visible, setVisible] = useColumnPrefs(
     INBOX_COLUMN_PREFS_KEY,
     INBOX_COLUMN_PREFS_VERSION,
     INBOX_DEFAULT_VISIBLE,
+    INBOX_COLUMNS_ADDED,
   );
+  const section = useRef<HTMLElement | null>(null);
+
+  /*
+   * THE ADDRESS FOLLOWS THE VIEW, so what a person sees is what they share:
+   * `?view=domains` is the Domains view, `?domain=x.com` one domain's inboxes,
+   * nothing the Inboxes view. Switching views replaces the address; opening a
+   * domain adds one, so the browser's Back returns to the domains — with the
+   * Domain filter as it was before, not left on the one domain. Read after the
+   * first render: the server cannot see it.
+   */
+  // The ref holds what Back must restore; the state only what the screen draws.
+  const openedRef = useRef<OpenedDomain | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
+  const address = (change: (q: URLSearchParams) => void, push = false) => {
+    try {
+      const url = new URL(window.location.href);
+      change(url.searchParams);
+      // A step this page adds is marked, so "← All domains" knows Back leads to the domains, not off the page.
+      if (push) window.history.pushState({ ...window.history.state, [DRILL_MARK]: true }, "", url);
+      else window.history.replaceState(window.history.state, "", url);
+    } catch {
+      // The view still changes; only the address does not follow.
+    }
+  };
+  /** Leaves an opened domain: its Domain filter goes back to what it was, unless it has since been changed. */
+  const closeDomain = useCallback(() => {
+    const o = openedRef.current;
+    openedRef.current = null;
+    setOpened(null);
+    if (o) setFilters((f) => (f.domain.length === 1 && f.domain[0] === o.domain ? { ...f, domain: o.before } : f));
+  }, []);
+  /** Opens a domain the address names (a shared link, or Forward after Back), keeping the filter it replaces. */
+  const showDomain = useCallback((domain: string, before: string[]) => {
+    if (openedRef.current?.domain !== domain) openedRef.current = { domain, before };
+    setOpened(domain);
+    setFilters((f) => ({ ...f, domain: [domain] }));
+    setView("inboxes");
+  }, []);
+  // The Domain filter as it stands, for a domain opened from the address to put back on Back.
+  const domainFilter = useRef<string[]>([]);
+  domainFilter.current = filters.domain;
+  const fromAddress = useCallback(() => {
+    const q = new URLSearchParams(window.location.search);
+    const domain = q.get("domain")?.trim().toLowerCase();
+    if (q.get("view") === "domains") {
+      closeDomain();
+      setView("domains");
+    } else if (domain) {
+      showDomain(domain, domainFilter.current);
+    } else {
+      closeDomain();
+      setView("inboxes");
+    }
+  }, [closeDomain, showDomain]);
+  useEffect(() => {
+    fromAddress();
+    window.addEventListener("popstate", fromAddress);
+    return () => window.removeEventListener("popstate", fromAddress);
+  }, [fromAddress]);
+  const chooseView = (next: InboxView) => {
+    if (next === "domains") closeDomain();
+    setView(next);
+    address((q) => {
+      q.delete("domain");
+      if (next === "domains") q.set("view", "domains");
+      else q.delete("view");
+    });
+  };
   /*
    * By inbox id, not by row position, so a selection survives sorting,
    * filtering and paging: ticking five, sorting by Sent and coming back must
@@ -160,7 +259,12 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
   // The database's rows with EmailBison's warmup scores and exact assignment
   // laid over them once those have been read.
   const all = useMemo(() => withExtras(data?.rows ?? NO_ROWS, extras?.extras ?? null), [data, extras]);
-  const notes = useMemo(() => inboxNotes(data?.notes ?? [], extras), [data, extras]);
+  const notes = useMemo(() => {
+    const said = inboxNotes(data?.notes ?? [], extras, data?.positivesAsOf ?? null);
+    if (view !== "domains") return said;
+    // On the Domains view, what a domain row is comes first, then what "positive" means.
+    return [DOMAINS_NOTE, ...said.filter(isPositiveNote), ...said.filter((n) => !isPositiveNote(n))];
+  }, [data, extras, view]);
   const perPlatform = useMemo(() => {
     const counts = new Map<InboxPlatform, number>();
     for (const row of all) counts.set(row.platform, (counts.get(row.platform) ?? 0) + 1);
@@ -189,11 +293,55 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
   /*
    * Page derived during render, not reset from an effect: a filter or a sort
    * moves back to page 1 without drawing the stale page once first.
+   *
+   * And forgotten, not just hidden (14 Nov): reading page 2, choosing a filter
+   * and clearing it again brought page 2 back, because the key matched again.
+   * Setting state while rendering is React's own pattern for this; it renders
+   * again at once, before anything is drawn.
    */
   const viewKey = `${JSON.stringify(filters)}|${JSON.stringify(ranges)}|${sort?.key ?? ""}|${sort?.dir ?? ""}`;
   const [pageState, setPageState] = useState({ key: viewKey, page: 1 });
+  if (pageState.key !== viewKey) setPageState({ key: viewKey, page: 1 });
   const page = pageState.key === viewKey ? pageState.page : 1;
   const rows = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // One row per domain of the inboxes the filters leave; the total is of every inbox.
+  const domains = useMemo(() => domainRows(matching), [matching]);
+  const domainTotal = useMemo(() => domainRows(all).length, [all]);
+  // Addresses, as the Inboxes column counts them: a mailbox on both platforms is one inbox here.
+  const domainInboxes = useMemo(() => domains.reduce((n, d) => n + d.inboxes, 0), [domains]);
+  const domainSorted = useMemo(
+    () => sortRows(domains, domainSorting.sort, domainSortValue),
+    [domains, domainSorting.sort],
+  );
+  const domainViewKey = `${JSON.stringify(filters)}|${JSON.stringify(ranges)}|${domainSorting.sort?.key ?? ""}|${domainSorting.sort?.dir ?? ""}`;
+  const [domainPageState, setDomainPageState] = useState({ key: domainViewKey, page: 1 });
+  if (domainPageState.key !== domainViewKey) setDomainPageState({ key: domainViewKey, page: 1 });
+  const domainPage = domainPageState.key === domainViewKey ? domainPageState.page : 1;
+  const domainPageRows = domainSorted.slice((domainPage - 1) * PAGE_SIZE, domainPage * PAGE_SIZE);
+
+  /** A domain's inboxes: the Domain filter set to it, the rest of the filters kept, and a step Back can undo. */
+  const openDomain = (domain: string) => {
+    openedRef.current = { domain, before: filters.domain };
+    setOpened(domain);
+    setFilters((f) => ({ ...f, domain: [domain] }));
+    setView("inboxes");
+    address((q) => {
+      q.delete("view");
+      q.set("domain", domain);
+    }, true);
+    // From a long list the inbox table is short: bring its top into view.
+    requestAnimationFrame(() => section.current?.scrollIntoView({ block: "nearest" }));
+  };
+  /**
+   * "← All domains": the browser's own Back when this page added the step, so
+   * the two always agree. Arrived at from a link, Back would leave the page:
+   * then it switches views instead.
+   */
+  const backToDomains = () => {
+    if ((window.history.state as Record<string, unknown> | null)?.[DRILL_MARK]) window.history.back();
+    else chooseView("domains");
+  };
 
   const available = useMemo(
     () => INBOX_COLUMNS.filter((c) => multiPlatform || c.key !== "platform"),
@@ -258,21 +406,39 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
                 : "Loading…"}
             </div>
           </div>
-          {/* The count, large, where Instantly's own list puts it. */}
+          {/* The count, large, where Instantly's own list puts it — of what the view lists. */}
           <div style={{ whiteSpace: "nowrap" }} data-inbox-total>
             <span
               className="tnum"
               style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-.02em", lineHeight: 1.1, color: "var(--ink)" }}
             >
-              {data ? fullNumber(data.total) : DASH}
+              {data ? fullNumber(view === "domains" ? domainTotal : data.total) : DASH}
             </span>
             <span className="mut" style={{ marginLeft: 8, fontSize: 14 }}>
-              {data?.total === 1 ? "inbox" : "inboxes"}
+              {view === "domains"
+                ? domainTotal === 1 ? "domain" : "domains"
+                : data?.total === 1 ? "inbox" : "inboxes"}
             </span>
           </div>
         </div>
 
-        <section className="abox" style={{ marginBottom: 20 }}>
+        <div className="seg" role="tablist" aria-label="List by" style={{ marginBottom: 12 }}>
+          {(["inboxes", "domains"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={view === v}
+              className={view === v ? "on" : undefined}
+              data-inbox-view={v}
+              onClick={() => chooseView(v)}
+            >
+              {v === "inboxes" ? "Inboxes" : "Domains"}
+            </button>
+          ))}
+        </div>
+
+        <section ref={section} className="abox" style={{ marginBottom: 20, scrollMarginTop: 12 }}>
           <div
             style={{
               display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "14px 18px",
@@ -282,7 +448,7 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
             <Search
               value={filters.search}
               onChange={(search) => setFilters((f) => ({ ...f, search }))}
-              placeholder="Search email or name…"
+              placeholder="Search email, name or domain…"
               width={260}
             />
             <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6 }}>
@@ -295,22 +461,7 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
                   onChange={(next) => setFilters((cur) => ({ ...cur, [f]: next }))}
                 />
               ))}
-              <RangeFilter value={ranges} onChange={setRanges} />
-            </span>
-            <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
-              {/* Always in the layout, only shown while loading: appearing and
-                  disappearing, it would wrap a full toolbar onto a second line. */}
-              <span className="mut" aria-hidden={!loading} style={{ fontSize: 12, visibility: loading ? "visible" : "hidden" }}>
-                Loading…
-              </span>
-              <ColumnPicker
-                groups={INBOX_COLUMN_GROUPS}
-                columns={available}
-                visible={visible.filter(isAvailable)}
-                // A column that is not on offer right now (Platform, with one
-                // platform) keeps whatever was chosen for it.
-                onChange={(next) => setVisible([...next, ...visible.filter((k) => !isAvailable(k))])}
-              />
+              <RangeFilter value={ranges} onChange={setRanges} domains={view === "domains"} />
             </span>
           </div>
 
@@ -324,12 +475,19 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
               minHeight: 52, boxSizing: "border-box", borderBottom: "1px solid var(--line-soft)", fontSize: 13,
             }}
           >
+            {view === "inboxes" && opened ? (
+              <button type="button" className="gh" data-inbox-back onClick={backToDomains} title="Back to the Domains view, with the filters you had there">
+                ← All domains
+              </button>
+            ) : null}
             <span className="tnum" role="status" data-inbox-count style={{ color: "var(--ink-2)" }}>
               {!data
                 ? "Loading inboxes…"
-                : filtered
-                  ? `${fullNumber(matching.length)} of ${fullNumber(all.length)} inboxes`
-                  : `${fullNumber(all.length)} ${all.length === 1 ? "inbox" : "inboxes"}`}
+                : view === "domains"
+                  ? `${filtered ? `${fullNumber(domains.length)} of ` : ""}${fullNumber(domainTotal)} ${domainTotal === 1 ? "domain" : "domains"} · ${fullNumber(domainInboxes)} ${domainInboxes === 1 ? "inbox" : "inboxes"}`
+                  : filtered
+                    ? `${fullNumber(matching.length)} of ${fullNumber(all.length)} inboxes`
+                    : `${fullNumber(all.length)} ${all.length === 1 ? "inbox" : "inboxes"}`}
             </span>
             {filtered ? (
               <button
@@ -343,13 +501,25 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
                 Clear filters
               </button>
             ) : null}
-            {canSelectAll ? (
+            {/* Selecting is for acting on inboxes; the Domains view lists none to tick. */}
+            {view === "inboxes" && canSelectAll ? (
               <button type="button" className="gh tnum" data-inbox-select-all onClick={selectAll}>
                 Select all {fullNumber(matching.length)}
               </button>
             ) : null}
-            <span style={{ flex: 1 }} />
-            {selected.size > 0 ? (
+            {/*
+              The right-hand group — the selection's actions, Loading and
+              Columns — moves as one: on a line too full (filters, a domain
+              opened and a selection) it wraps whole, still at the right,
+              rather than stranding a button at the left of a second line.
+            */}
+            <span
+              style={{
+                display: "inline-flex", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end",
+                gap: 10, marginLeft: "auto",
+              }}
+            >
+            {view === "inboxes" && selected.size > 0 ? (
               <>
                 <span className="tnum mut" data-inbox-selected>
                   {fullNumber(selected.size)} selected{selectedHidden > 0 ? ` · ${fullNumber(selectedHidden)} not in this view` : ""}
@@ -383,115 +553,161 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
                 ) : null}
               </>
             ) : null}
+            {/*
+              Loading and Columns sit on this line, above the table they are
+              about (14 Nov). In the filter bar they wrapped onto a line of
+              their own below 1,540px, which the Domains view — whose columns
+              are fixed — left as an empty band.
+            */}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {/* Always in the layout, only shown while loading: appearing and
+                  disappearing, it would shift this line. */}
+              <span className="mut" aria-hidden={!loading} style={{ fontSize: 12, visibility: loading ? "visible" : "hidden" }}>
+                Loading…
+              </span>
+              {/* A domain has no tags, status or warmup to choose. Hidden, not
+                  removed, so nothing moves on a switch; hidden is also out of
+                  the tab order. */}
+              <span aria-hidden={view !== "inboxes"} style={{ visibility: view === "inboxes" ? "visible" : "hidden" }}>
+                <ColumnPicker
+                  groups={INBOX_COLUMN_GROUPS}
+                  columns={available}
+                  visible={visible.filter(isAvailable)}
+                  // A column that is not on offer right now (Platform, with one
+                  // platform) keeps whatever was chosen for it.
+                  onChange={(next) => setVisible([...next, ...visible.filter((k) => !isAvailable(k))])}
+                />
+              </span>
+            </span>
+            </span>
           </div>
 
-          <div className="tbl-scroll" style={{ opacity: loading && data ? 0.7 : 1, transition: "opacity .14s" }}>
-            <table className="atbl" style={{ minWidth: 320 + columns.length * 132, width: "100%" }}>
-              <thead>
-                <tr>
-                  {/* The identity column stays pinned so a row never loses its
-                      inbox while scrolling sideways. */}
-                  <th
-                    style={{ position: "sticky", left: 0, zIndex: 2, minWidth: 280, background: "var(--surface)" }}
-                    aria-sort={emailSorted ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
-                  >
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-                      <input
-                        type="checkbox"
-                        checked={allOnPageSelected}
-                        onChange={togglePage}
-                        aria-label={allOnPageSelected ? "Deselect this page" : "Select this page"}
-                        style={{ accentColor: "var(--blue)", cursor: "pointer" }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => toggle("email")}
-                        title="Sort by Email"
-                        style={{
-                          border: 0, background: "none", font: "inherit", padding: 0, cursor: "pointer",
-                          color: emailSorted ? "var(--ink)" : "inherit", fontWeight: emailSorted ? 600 : 500,
-                          display: "inline-flex", alignItems: "center", gap: 4,
-                        }}
-                      >
-                        Email
-                        <span className="sort-ico" style={{ opacity: emailSorted ? 0.9 : 0.28 }}>
-                          {emailSorted ? (sort!.dir === "asc" ? "↑" : "↓") : "↕"}
-                        </span>
-                      </button>
-                    </span>
-                  </th>
-                  {columns.map((c) => (
-                    <SortHeader
-                      key={c.key}
-                      label={c.label}
-                      sortKey={c.key}
-                      sort={sort}
-                      onToggle={toggle}
-                      align={c.align}
-                      title={c.hint}
-                    />
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {!data ? (
-                  <EmptyRow colSpan={columns.length + 1}>Loading inboxes…</EmptyRow>
-                ) : rows.length === 0 ? (
-                  <EmptyRow colSpan={columns.length + 1}>
-                    {all.length === 0
-                      ? "No inboxes have been synced yet. The inbox sync runs every three hours."
-                      : "No inboxes match these filters."}
-                  </EmptyRow>
-                ) : (
-                  rows.map((row) => (
-                    <tr key={String(row.id)}>
-                      <td style={{ position: "sticky", left: 0, zIndex: 1, minWidth: 280, maxWidth: 360, background: "var(--surface)" }}>
-                        <span style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                          <input
-                            type="checkbox"
-                            checked={selected.has(row.id)}
-                            onChange={() => toggleRow(row.id)}
-                            aria-label={`Select ${row.email}`}
-                            style={{ accentColor: "var(--blue)", cursor: "pointer", marginTop: 3 }}
-                          />
-                          <span style={{ minWidth: 0 }}>
-                            <span
-                              title={row.email}
-                              style={{ display: "block", fontWeight: 600, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                            >
-                              {row.email}
-                            </span>
-                            {row.name ? (
-                              <span className="mut" style={{ display: "block", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {row.name}
-                              </span>
-                            ) : null}
-                          </span>
-                        </span>
-                      </td>
-                      {columns.map((c) => (
-                        <td
-                          key={c.key}
-                          className={c.align === "right" ? "tnum" : undefined}
-                          style={{ textAlign: c.align === "right" ? "right" : "left" }}
+          {view === "domains" ? (
+            <DomainTable
+              rows={domainPageRows}
+              sort={domainSorting.sort}
+              onSort={domainSorting.toggle}
+              onOpen={openDomain}
+              loaded={!!data}
+              anyInboxes={all.length > 0}
+              dim={loading && !!data}
+            />
+          ) : (
+            <div className="tbl-scroll" style={{ opacity: loading && data ? 0.7 : 1, transition: "opacity .14s" }}>
+              <table className="atbl" style={{ minWidth: 320 + columns.length * 132, width: "100%" }}>
+                <thead>
+                  <tr>
+                    {/* The identity column stays pinned so a row never loses its
+                        inbox while scrolling sideways. */}
+                    <th
+                      style={{ position: "sticky", left: 0, zIndex: 2, minWidth: 280, background: "var(--surface)" }}
+                      aria-sort={emailSorted ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
+                    >
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                        <input
+                          type="checkbox"
+                          checked={allOnPageSelected}
+                          onChange={togglePage}
+                          aria-label={allOnPageSelected ? "Deselect this page" : "Select this page"}
+                          style={{ accentColor: "var(--blue)", cursor: "pointer" }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggle("email")}
+                          title="Sort by Email"
+                          style={{
+                            border: 0, background: "none", font: "inherit", padding: 0, cursor: "pointer",
+                            color: emailSorted ? "var(--ink)" : "inherit", fontWeight: emailSorted ? 600 : 500,
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                          }}
                         >
-                          {cell(row, c.key)}
+                          Email
+                          <span className="sort-ico" style={{ opacity: emailSorted ? 0.9 : 0.28 }}>
+                            {emailSorted ? (sort!.dir === "asc" ? "↑" : "↓") : "↕"}
+                          </span>
+                        </button>
+                      </span>
+                    </th>
+                    {columns.map((c) => (
+                      <SortHeader
+                        key={c.key}
+                        label={c.label}
+                        sortKey={c.key}
+                        sort={sort}
+                        onToggle={toggle}
+                        align={c.align}
+                        title={c.hint}
+                      />
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {!data ? (
+                    <EmptyRow colSpan={columns.length + 1}>Loading inboxes…</EmptyRow>
+                  ) : rows.length === 0 ? (
+                    <EmptyRow colSpan={columns.length + 1}>
+                      {all.length === 0
+                        ? "No inboxes have been synced yet. The inbox sync runs every three hours."
+                        : "No inboxes match these filters."}
+                    </EmptyRow>
+                  ) : (
+                    rows.map((row) => (
+                      <tr key={String(row.id)}>
+                        <td style={{ position: "sticky", left: 0, zIndex: 1, minWidth: 280, maxWidth: 360, background: "var(--surface)" }}>
+                          <span style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(row.id)}
+                              onChange={() => toggleRow(row.id)}
+                              aria-label={`Select ${row.email}`}
+                              style={{ accentColor: "var(--blue)", cursor: "pointer", marginTop: 3 }}
+                            />
+                            <span style={{ minWidth: 0 }}>
+                              <span
+                                title={row.email}
+                                style={{ display: "block", fontWeight: 600, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                              >
+                                {row.email}
+                              </span>
+                              {row.name ? (
+                                <span className="mut" style={{ display: "block", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {row.name}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
                         </td>
-                      ))}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          {data ? (
+                        {columns.map((c) => (
+                          <td
+                            key={c.key}
+                            className={c.align === "right" ? "tnum" : undefined}
+                            style={{ textAlign: c.align === "right" ? "right" : "left" }}
+                          >
+                            {cell(row, c.key)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!data ? null : view === "domains" ? (
+            <Pager
+              page={domainPage}
+              pageSize={PAGE_SIZE}
+              total={domainSorted.length}
+              onPage={(next) => setDomainPageState({ key: domainViewKey, page: next })}
+            />
+          ) : (
             <Pager
               page={page}
               pageSize={PAGE_SIZE}
               total={sorted.length}
               onPage={(next) => setPageState({ key: viewKey, page: next })}
             />
-          ) : null}
+          )}
         </section>
 
         {/* What a column means and what could not be supplied, in the route's
@@ -531,13 +747,24 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
   );
 }
 
+const DOMAINS_NOTE =
+  "Each domain adds up its inboxes that match the filters. Inboxes counts addresses: a mailbox connected to " +
+  "both EmailBison and Instantly is one inbox, and its sends and replies on both are added.";
+const isPositiveNote = (n: string) => /positive repl/i.test(n);
+/** How the route's note on Replies (Master Inbox) and Positive replies begins (inboxes/route.ts NOTE_POSITIVE). */
+export const POSITIVE_NOTE_START = "Replies (Master Inbox) counts";
+
 /*
  * The notes under the table: the route's own, with the ones about Warmup and
  * Assigned replaced by what is true now that EmailBison has (or has not yet)
  * answered.
  */
-function inboxNotes(fromRoute: string[], extras: ExtrasAnswer | null): string[] {
+function inboxNotes(fromRoute: string[], extras: ExtrasAnswer | null, positivesAsOf: string | null): string[] {
   const about = (prefix: string) => (n: string) => n.startsWith(prefix);
+  // The definition gains when Master Inbox was read, so a number can be checked against a moment.
+  fromRoute = fromRoute.map((n) =>
+    positivesAsOf && n.startsWith(POSITIVE_NOTE_START) ? `${n} Read from Master Inbox ${fullStamp(positivesAsOf)} ET.` : n,
+  );
   const isWarmup = about("Warmup 3d / 7d");
   const isAssigned = about("Assigned");
   if (extras?.extras) {
@@ -569,6 +796,12 @@ function cell(row: InboxRow, key: string): React.ReactNode {
       return fullNumber(row.sentAllTime);
     case "replied":
       return fullNumber(row.repliedAllTime);
+    case "miReplies":
+      return fullNumber(row.masterInboxReplies);
+    case "positive":
+      return fullNumber(row.positiveAllTime);
+    case "positiveRate":
+      return percent(positiveRate(row), 1);
     case "bounced":
       return fullNumber(row.bouncedAllTime);
     case "warmup":
@@ -587,6 +820,125 @@ function cell(row: InboxRow, key: string): React.ReactNode {
       return row.assignedToCampaign ? <span className="badge s-done">Yes</span> : <span className="mut">No</span>;
     case "platform":
       return PLATFORM_LABEL[row.platform];
+    default:
+      return DASH;
+  }
+}
+
+/*
+ * The Domains view: one row per sending domain of the inboxes the filters
+ * leave (inbox-domains.ts), most positive replies first. A domain's name opens
+ * its inboxes. A sum that left inboxes out — their figure not known — says how
+ * many on hover.
+ */
+function DomainTable({
+  rows,
+  sort,
+  onSort,
+  onOpen,
+  loaded,
+  anyInboxes,
+  dim,
+}: {
+  rows: DomainRow[];
+  sort: SortState | null;
+  onSort: (key: string) => void;
+  onOpen: (domain: string) => void;
+  loaded: boolean;
+  anyInboxes: boolean;
+  dim: boolean;
+}) {
+  const nameSorted = sort?.key === "domain";
+  return (
+    <div className="tbl-scroll" style={{ opacity: dim ? 0.7 : 1, transition: "opacity .14s" }}>
+      <table className="atbl" data-inbox-domains style={{ minWidth: 220 + DOMAIN_COLUMNS.length * 110, width: "100%" }}>
+        <thead>
+          <tr>
+            <th
+              style={{ position: "sticky", left: 0, zIndex: 2, minWidth: 220, background: "var(--surface)" }}
+              aria-sort={nameSorted ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
+            >
+              <button
+                type="button"
+                onClick={() => onSort("domain")}
+                title="Sort by Domain"
+                style={{
+                  border: 0, background: "none", font: "inherit", padding: 0, cursor: "pointer",
+                  color: nameSorted ? "var(--ink)" : "inherit", fontWeight: nameSorted ? 600 : 500,
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                }}
+              >
+                Domain
+                <span className="sort-ico" style={{ opacity: nameSorted ? 0.9 : 0.28 }}>
+                  {nameSorted ? (sort!.dir === "asc" ? "↑" : "↓") : "↕"}
+                </span>
+              </button>
+            </th>
+            {DOMAIN_COLUMNS.map((c) => (
+              <SortHeader key={c.key} label={c.label} sortKey={c.key} sort={sort} onToggle={onSort} align="right" title={c.hint} />
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {!loaded ? (
+            <EmptyRow colSpan={DOMAIN_COLUMNS.length + 1}>Loading inboxes…</EmptyRow>
+          ) : rows.length === 0 ? (
+            <EmptyRow colSpan={DOMAIN_COLUMNS.length + 1}>
+              {anyInboxes ? "No domains match these filters." : "No inboxes have been synced yet. The inbox sync runs every three hours."}
+            </EmptyRow>
+          ) : (
+            rows.map((d) => (
+              <tr key={d.domain} data-domain={d.domain}>
+                <td style={{ position: "sticky", left: 0, zIndex: 1, minWidth: 220, maxWidth: 340, background: "var(--surface)" }}>
+                  <button
+                    type="button"
+                    className="cname-open"
+                    onClick={() => onOpen(d.domain)}
+                    title={`Show the ${d.inboxes === 1 ? "inbox" : `${fullNumber(d.inboxes)} inboxes`} on ${d.domain}`}
+                    style={{
+                      display: "block", maxWidth: "100%", fontWeight: 600, color: "var(--ink)",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}
+                  >
+                    {d.domain}
+                  </button>
+                </td>
+                {DOMAIN_COLUMNS.map((c) => (
+                  <td key={c.key} className="tnum" style={{ textAlign: "right" }}>
+                    {domainCell(d, c.key)}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A figure that left out inboxes whose figure is not known, saying so on hover. */
+function partial(value: number | null, missing: number): React.ReactNode {
+  if (value === null || missing === 0) return fullNumber(value);
+  return (
+    <span title={`${fullNumber(missing)} ${missing === 1 ? "inbox has" : "inboxes have"} no figure here and ${missing === 1 ? "is" : "are"} not in this total`} style={{ cursor: "help" }}>
+      {fullNumber(value)}
+    </span>
+  );
+}
+
+function domainCell(d: DomainRow, key: string): React.ReactNode {
+  switch (key) {
+    case "inboxes":
+      return fullNumber(d.inboxes);
+    case "sent":
+      return partial(d.sentAllTime, d.missing.sent);
+    case "miReplies":
+      return partial(d.masterInboxReplies, d.missing.replies);
+    case "positive":
+      return partial(d.positiveAllTime, d.missing.positive);
+    case "positiveRate":
+      return percent(positiveRate(d), 1);
     default:
       return DASH;
   }
@@ -622,7 +974,7 @@ function TagChips({ tags }: { tags: string[] }) {
  * They apply as they are typed — the rows are already in the browser — and a
  * box that is empty or half-typed filters nothing (inbox-ranges.ts).
  */
-function RangeFilter({ value, onChange }: { value: InboxRanges; onChange: (next: InboxRanges) => void }) {
+function RangeFilter({ value, onChange, domains = false }: { value: InboxRanges; onChange: (next: InboxRanges) => void; domains?: boolean }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -639,7 +991,7 @@ function RangeFilter({ value, onChange }: { value: InboxRanges; onChange: (next:
         aria-pressed={active}
         aria-expanded={open}
         data-inbox-filter="numbers"
-        title="Filter by daily limit, sent, replied, bounced or warmup score"
+        title="Filter by daily limit, sent, replied, Master Inbox replies, positive replies, bounced or warmup score"
         onClick={() => setOpen((v) => !v)}
         style={{ maxWidth: 260 }}
       >
@@ -659,6 +1011,7 @@ function RangeFilter({ value, onChange }: { value: InboxRanges; onChange: (next:
           </div>
           <div className="mut" style={{ fontSize: 12, lineHeight: 1.45 }}>
             An inbox with a dash in a column is left out when that column is filtered.
+            {domains ? " On Domains these pick inboxes, and each domain adds up the ones left — not domains by their totals." : ""}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
             <Btn disabled={!active} onClick={() => onChange(NO_RANGES)}>

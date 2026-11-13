@@ -5,6 +5,8 @@ import {
   fetchAllRows,
 } from "@/lib/tools/analytics/supabase";
 import { cachedGet } from "@/lib/tools/analytics/cached-get";
+import { attributeReplies, inboxKey, type Platform } from "@/lib/tools/analytics/inbox-positives.ts";
+import { loadReplies } from "@/lib/tools/analytics/inbox-positives-load";
 import {
   emailbisonInbox,
   instantlyInbox,
@@ -74,6 +76,39 @@ const NOTE_ASSIGNED =
 
 const NOTE_REPLIED =
   "Replied (all time) counts people who replied, the same figure Infrastructure's reply rate uses.";
+
+/*
+ * 14 Nov. Said under the table because the definition is a decision, not a
+ * fact of the data — see inbox-positives.ts for the measurements behind it.
+ */
+const NOTE_POSITIVE =
+  "Replies (Master Inbox) counts the conversations in Master Inbox where a lead replied to an inbox, on " +
+  "either platform: one per lead and campaign, from May 2026, when Master Inbox began. Those labelled only " +
+  "as an out-of-office or automatic reply, and those in Trash, are left out. Positive replies are those " +
+  "labelled Interested in Master Inbox (by the team or Master Inbox's AI labeller; EmailBison's own " +
+  "Interested flag is not used) or introduced — before 14 October the team usually introduced straight from " +
+  "the reply, without the Interested label — each conversation counted once, and still counted after it " +
+  "moves on. One labelled Not Interested, Not Qualified, Do Not Contact, Unsubscribe or Broker/Owner now is " +
+  "not. Each reply counts for the inbox the lead first replied to. Positive rate is positive replies ÷ " +
+  "Replies (Master Inbox).";
+
+/** Longest the page waits for Master Inbox before showing the list without its replies. */
+const POSITIVES_WAIT_MS = 25_000;
+
+/** "12 replies (3 positive)". */
+const tallyText = (t: { replies: number; positive: number }) =>
+  `${t.replies.toLocaleString("en-US")} ${t.replies === 1 ? "reply" : "replies"} (${t.positive.toLocaleString("en-US")} positive)`;
+
+/** The wait ran out. The read itself carries on, and is kept for the next visit. */
+class StillReading extends Error {}
+
+function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new StillReading(`${what} did not answer within ${ms / 1000} seconds`)), ms);
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
 
 const NOTE_INSTANTLY =
   "Instantly inboxes: Sent, Replied and Bounced are the totals of what has been synced, because Instantly " +
@@ -201,9 +236,10 @@ async function load(): Promise<Response> {
    * rows out — each says so in a note. Neither is a reason to hide 1,700
    * inboxes that loaded.
    */
-  const [assigned, instantly] = await Promise.allSettled([
+  const [assigned, instantly, positives] = await Promise.allSettled([
     sendingInboxes(teamId, senders.map((s) => s.id)),
     instantlyInboxes(teamId),
+    within(loadReplies(), POSITIVES_WAIT_MS, "Master Inbox"),
   ]);
 
   const notes = [NOTE_ASSIGNED, NOTE_WARMUP, NOTE_REPLIED];
@@ -230,6 +266,47 @@ async function load(): Promise<Response> {
     notes.push(NOTE_INSTANTLY);
   }
 
+  /*
+   * Replies and positive replies, from Master Inbox. Every inbox gets a number
+   * — 0 is a real answer here, since Master Inbox holds every reply — unless
+   * Master Inbox could not be read, when every inbox shows a dash and the note
+   * says why.
+   */
+  let positivesAsOf: string | null = null;
+  if (positives.status === "fulfilled") {
+    const unavailable: Platform[] = instantly.status === "rejected" ? ["instantly"] : [];
+    const { byInbox, unattributed, unlisted } = attributeReplies(positives.value.conversations, rows, unavailable);
+    // Each inbox's count once: a second row with the same address on the same
+    // platform (none on 14 Nov) shows a dash rather than counting it again.
+    const given = new Set<string>();
+    for (const row of rows) {
+      const key = inboxKey(row.platform, row.email);
+      if (given.has(key)) continue;
+      given.add(key);
+      const tally = byInbox.get(key);
+      row.masterInboxReplies = tally?.replies ?? 0;
+      row.positiveAllTime = tally?.positive ?? 0;
+    }
+    positivesAsOf = positives.value.asOf;
+    notes.push(NOTE_POSITIVE);
+    if (unattributed.replies) {
+      notes.push(
+        `${tallyText(unattributed)} went to an address that is not an inbox on either platform any more (or to no ` +
+          `address Master Inbox recorded), so no row counts ${unattributed.replies === 1 ? "it" : "them"}.`,
+      );
+    }
+    if (unlisted.replies) {
+      notes.push(`${tallyText(unlisted)} through Instantly ${unlisted.replies === 1 ? "is" : "are"} not counted while its inboxes cannot be loaded.`);
+    }
+  } else {
+    console.error("[api/inboxes] master inbox replies", positives.reason);
+    notes.push(
+      positives.reason instanceof StillReading
+        ? "Replies (Master Inbox) and positive replies are still being read from Master Inbox, so they show a dash. Reload the page in a minute to see them."
+        : `Replies (Master Inbox) and positive replies could not be read from Master Inbox just now, so they show a dash (${messageOf(positives.reason)}).`,
+    );
+  }
+
   // A to Z across both platforms: the order the page falls back to when no
   // column is sorted.
   rows.sort((a, b) => a.email.toLowerCase().localeCompare(b.email.toLowerCase()));
@@ -243,7 +320,7 @@ async function load(): Promise<Response> {
     ? stamps.reduce((oldest, s) => (Date.parse(s) < Date.parse(oldest) ? s : oldest))
     : null;
 
-  const body: InboxesResponse = { rows, total: rows.length, asOf, notes };
+  const body: InboxesResponse = { rows, total: rows.length, asOf, notes, positivesAsOf };
   return NextResponse.json(body);
 }
 

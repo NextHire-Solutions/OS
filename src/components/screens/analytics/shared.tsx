@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 
+import { restoreColumns, type ColumnCarry } from "@/lib/tools/analytics/column-prefs.ts";
 import { pathForId } from "@/lib/workspace/nav";
 
 import { StalenessStrip } from "./staleness-strip";
@@ -341,7 +342,7 @@ export function Search({
  * moving between the two sees the same columns. A version bump discards the
  * stored set rather than letting a stale preference hide a new column forever.
  */
-export function useColumnPrefs(key: string, version: number, defaults: string[]) {
+export function useColumnPrefs(key: string, version: number, defaults: string[], carry?: ColumnCarry) {
   const [visible, setVisible] = useState<string[]>(defaults);
   const loaded = useRef(false);
 
@@ -349,16 +350,16 @@ export function useColumnPrefs(key: string, version: number, defaults: string[])
     if (loaded.current) return;
     loaded.current = true;
     try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as { version?: number; visible?: string[] };
-      if (saved.version === version && Array.isArray(saved.visible) && saved.visible.length) {
-        setVisible(saved.visible);
-      }
+      // A corrupt preference is not worth an error state; the defaults are fine (column-prefs.ts).
+      const restored = restoreColumns(window.localStorage.getItem(key), version, carry);
+      if (!restored) return;
+      setVisible(restored.visible);
+      // Saved at this version now, so the added columns are added once — unticking one sticks.
+      if (restored.upgraded) window.localStorage.setItem(key, JSON.stringify({ version, visible: restored.visible }));
     } catch {
-      // A corrupt preference is not worth an error state; the defaults are fine.
+      // Private browsing. The defaults are fine.
     }
-  }, [key, version]);
+  }, [key, version, carry]);
 
   const set = (next: string[]) => {
     setVisible(next);

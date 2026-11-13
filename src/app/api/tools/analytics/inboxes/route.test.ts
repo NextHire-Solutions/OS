@@ -78,6 +78,10 @@ async function rpc(fn: string, args: { p_limit: number; p_offset: number }) {
 const canMock = typeof mock.module === "function";
 const skip = canMock ? false : "needs node --experimental-test-module-mocks --import ./scripts/alias-hooks.mjs";
 
+type Conversation = { threadId: string; platform: "emailbison" | "instantly" | null; candidates: string[]; positive: boolean };
+/** What Master Inbox answers (inbox-positives-load.ts), set per case. */
+let masterInbox: () => Promise<{ conversations: Conversation[]; asOf: string }> = async () => ({ conversations: [], asOf: "2026-11-14T10:00:00.000Z" });
+
 let GET: (() => Promise<Response>) | null = null;
 if (canMock) {
   for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, m, () => {});
@@ -89,6 +93,10 @@ if (canMock) {
   // The route's answers are cached for a minute; here every case asks afresh.
   mock.module("../../../../../lib/tools/analytics/cached-get.ts", {
     namedExports: { cachedGet: (handler: () => Promise<Response>) => handler },
+  });
+  // Master Inbox is read by its own loader, tested on its own; here it says what each case needs.
+  mock.module("../../../../../lib/tools/analytics/inbox-positives-load.ts", {
+    namedExports: { loadReplies: () => masterInbox() },
   });
   ({ GET } = (await import("./route.ts")) as unknown as { GET: () => Promise<Response> });
 }
@@ -114,10 +122,11 @@ const send = (sender_email_id: number | null, campaign_id: number, minute: numbe
 type Inbox = {
   id: number | string; platform: string; email: string; name: string | null; type: string | null; status: string | null;
   dailyLimit: number | null; sentAllTime: number | null; repliedAllTime: number | null; bouncedAllTime: number | null;
+  masterInboxReplies: number | null; positiveAllTime: number | null;
   warmupEnabled: boolean | null; warmup3d: number | null; warmup7d: number | null; vendor: string | null;
   tags: string[]; assignedToCampaign: boolean | null;
 };
-type Body = { rows: Inbox[]; total: number; asOf: string | null; notes: string[]; error?: string };
+type Body = { rows: Inbox[]; total: number; asOf: string | null; notes: string[]; positivesAsOf: string | null; error?: string };
 
 async function get(db: Record<string, Row[]>, failing: string[] = []) {
   for (const k of Object.keys(tables)) delete tables[k];
@@ -158,7 +167,8 @@ test("a row carries every field the page shows", { skip }, async () => {
   const r = await get({ sender_emails: [sender(7, { name: "Nicole Collins", email: "nicole@one.com", lifetime_sent: 420, lifetime_bounced: 6, unique_replied: 9 })] });
   assert.deepEqual(r.body.rows, [{
     id: 7, platform: "emailbison", email: "nicole@one.com", name: "Nicole Collins", type: "Google", status: "Connected",
-    dailyLimit: 10, sentAllTime: 420, repliedAllTime: 9, bouncedAllTime: 6, warmupEnabled: true, warmup3d: null, warmup7d: null,
+    dailyLimit: 10, sentAllTime: 420, repliedAllTime: 9, bouncedAllTime: 6, masterInboxReplies: 0, positiveAllTime: 0,
+    warmupEnabled: true, warmup3d: null, warmup7d: null,
     vendor: "Zapmail", tags: ["Google", "Nicole Pool", "p.Zapmail Google"], assignedToCampaign: false,
   }]);
   assert.equal(r.body.asOf, T1);
@@ -281,7 +291,8 @@ test("Instantly accounts are listed too — all of them, past 1,000", { skip }, 
   assert.equal(byId(r.body, "gone@two.com"), undefined);
   assert.deepEqual(byId(r.body, "acct0000@two.com"), {
     id: "acct0000@two.com", platform: "instantly", email: "acct0000@two.com", name: "Eve Lane 0", type: "Google", status: null,
-    dailyLimit: 30, sentAllTime: 100, repliedAllTime: 2, bouncedAllTime: 1, warmupEnabled: null, warmup3d: null, warmup7d: null,
+    dailyLimit: 30, sentAllTime: 100, repliedAllTime: 2, bouncedAllTime: 1, masterInboxReplies: 0, positiveAllTime: 0,
+    warmupEnabled: null, warmup3d: null, warmup7d: null,
     vendor: null, tags: ["Nicole Pool"], assignedToCampaign: null,
   });
   // The 1,150th account's totals are on the second page of the function.
@@ -340,4 +351,110 @@ test("no inboxes at all is an honest empty list", { skip }, async () => {
   assert.deepEqual(r.body.rows, []);
   assert.equal(r.body.total, 0);
   assert.equal(r.body.asOf, null);
+});
+
+/* ----------------------------- replies and positive replies, Master Inbox (14 Nov) --- */
+
+const account = (email: string) => ({
+  email, team_id: 2, first_name: null, last_name: null, provider_code: 2, daily_limit: 30, tags: [], synced_at: T1, archived_at: null,
+});
+const conv = (threadId: string, candidates: string[], over: Partial<Conversation> = {}): Conversation => ({
+  threadId, platform: "emailbison", candidates, positive: false, ...over,
+});
+const answering = (conversations: Conversation[]) => {
+  masterInbox = async () => ({ conversations, asOf: "2026-11-14T10:00:00.000Z" });
+};
+
+test("each inbox gets its replies and positive replies — 0 where there are none, never a dash", { skip }, async () => {
+  answering([
+    conv("1", ["inbox00001@one.com"], { positive: true }),
+    conv("2", ["inbox00001@one.com"]),
+    conv("3", ["shared@one.com"], { platform: "instantly", positive: true }),
+    conv("4", ["shared@one.com"], { platform: "emailbison" }),
+    conv("5", ["gone@one.com"], { positive: true }),
+  ]);
+  try {
+    const r = await get({
+      sender_emails: [sender(1), sender(2), sender(3, { email: "shared@one.com" })],
+      instantly_accounts: [account("shared@one.com")],
+      analytics_instantly_account_rows: [{ email: "shared@one.com", sent: 5, bounced: 0, replied: 1 }],
+    });
+    const fig = (id: number | string) => [byId(r.body, id).masterInboxReplies, byId(r.body, id).positiveAllTime];
+    assert.deepEqual(fig(1), [2, 1]);
+    assert.deepEqual(fig(2), [0, 0], "no reply is 0, not a dash");
+    // One mailbox on both platforms: each reply where it came through.
+    assert.deepEqual(fig(3), [1, 0]);
+    assert.deepEqual(fig("shared@one.com"), [1, 1]);
+    assert.equal(r.body.positivesAsOf, "2026-11-14T10:00:00.000Z");
+    assert.ok(r.body.notes.some((n) => n.startsWith("Replies (Master Inbox) counts the conversations in Master Inbox")));
+    assert.ok(r.body.notes.some((n) => n === "1 reply (1 positive) went to an address that is not an inbox on either platform any more (or to no address Master Inbox recorded), so no row counts it."));
+  } finally {
+    answering([]);
+  }
+});
+
+test("Master Inbox failing: those two figures are a dash on every inbox, the page still loads, and the note says why", { skip }, async () => {
+  masterInbox = async () => {
+    throw new Error("Master Inbox conversations: connection reset");
+  };
+  try {
+    const r = await get({ sender_emails: [sender(1), sender(2)] });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.total, 2);
+    for (const row of r.body.rows) {
+      assert.equal(row.masterInboxReplies, null);
+      assert.equal(row.positiveAllTime, null);
+    }
+    assert.equal(r.body.positivesAsOf, null);
+    assert.ok(r.body.notes.some((n) => /could not be read from Master Inbox just now, so they show a dash \(Master Inbox conversations: connection reset\)/.test(n)));
+    assert.ok(!r.body.notes.some((n) => n.startsWith("Replies (Master Inbox) counts")));
+  } finally {
+    answering([]);
+  }
+});
+
+test("Instantly failing: its replies are set aside, never moved onto the EmailBison inbox with the same address", { skip }, async () => {
+  answering([conv("1", ["shared@one.com"], { platform: "instantly", positive: true }), conv("2", ["shared@one.com"])]);
+  try {
+    const r = await get(
+      { sender_emails: [sender(1, { email: "shared@one.com" })], instantly_accounts: [account("shared@one.com")] },
+      ["instantly_accounts"],
+    );
+    assert.equal(byId(r.body, 1).masterInboxReplies, 1);
+    assert.equal(byId(r.body, 1).positiveAllTime, 0);
+    assert.ok(r.body.notes.includes("1 reply (1 positive) through Instantly is not counted while its inboxes cannot be loaded."));
+  } finally {
+    answering([]);
+  }
+});
+
+test("a Master Inbox that does not answer in time does not hold the page: a dash, and why", { skip }, async () => {
+  masterInbox = () => new Promise(() => {});
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const pending = get({ sender_emails: [sender(1)] });
+    // Let the inbox list be read and the wait begin, then let 25 seconds pass.
+    for (let i = 0; i < 200; i++) await Promise.resolve();
+    mock.timers.tick(25_000);
+    const r = await pending;
+    assert.equal(r.status, 200);
+    assert.equal(byId(r.body, 1).positiveAllTime, null);
+    // The read carries on and is kept, so the note says to reload rather than reporting a failure.
+    assert.ok(r.body.notes.includes("Replies (Master Inbox) and positive replies are still being read from Master Inbox, so they show a dash. Reload the page in a minute to see them."), JSON.stringify(r.body.notes));
+  } finally {
+    mock.timers.reset();
+    answering([]);
+  }
+});
+
+test("two rows with the same address on the same platform: the count is given once, the other row shows a dash", { skip }, async () => {
+  answering([conv("1", ["twin@one.com"], { positive: true })]);
+  try {
+    const r = await get({ sender_emails: [sender(1, { email: "twin@one.com" }), sender(2, { email: "Twin@One.com" })] });
+    const [a, b] = [byId(r.body, 1), byId(r.body, 2)];
+    assert.deepEqual([a.masterInboxReplies, a.positiveAllTime], [1, 1]);
+    assert.deepEqual([b.masterInboxReplies, b.positiveAllTime], [null, null]);
+  } finally {
+    answering([]);
+  }
 });

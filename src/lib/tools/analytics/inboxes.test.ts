@@ -70,6 +70,8 @@ const inbox = (over: Partial<InboxRow> = {}): InboxRow => ({
   sentAllTime: 100,
   repliedAllTime: 3,
   bouncedAllTime: 1,
+  masterInboxReplies: 2,
+  positiveAllTime: 1,
   warmupEnabled: true,
   warmup3d: null,
   warmup7d: null,
@@ -147,6 +149,8 @@ test("an EmailBison inbox becomes a row", () => {
     sentAllTime: 420,
     repliedAllTime: 9,
     bouncedAllTime: 6,
+    masterInboxReplies: null,
+    positiveAllTime: null,
     warmupEnabled: true,
     warmup3d: null,
     warmup7d: null,
@@ -210,6 +214,8 @@ test("an Instantly account becomes a row, with what Instantly does not report le
     sentAllTime: 1200,
     repliedAllTime: 22,
     bouncedAllTime: 14,
+    masterInboxReplies: null,
+    positiveAllTime: null,
     warmupEnabled: null,
     warmup3d: null,
     warmup7d: null,
@@ -570,9 +576,9 @@ test("numbers sort as numbers and text without regard to case", () => {
 test("what is not known has no sort value, so it sorts last either way", () => {
   const blank = inbox({
     type: null, status: null, dailyLimit: null, sentAllTime: null, repliedAllTime: null, bouncedAllTime: null,
-    warmupEnabled: null, vendor: null, tags: [], assignedToCampaign: null,
+    masterInboxReplies: null, positiveAllTime: null, warmupEnabled: null, vendor: null, tags: [], assignedToCampaign: null,
   });
-  for (const key of ["tags", "type", "status", "dailyLimit", "sent", "replied", "bounced", "warmup", "warmup3d", "warmup7d", "vendor", "assigned"]) {
+  for (const key of ["tags", "type", "status", "dailyLimit", "sent", "replied", "miReplies", "positive", "positiveRate", "bounced", "warmup", "warmup3d", "warmup7d", "vendor", "assigned"]) {
     assert.equal(inboxSortValue(blank, key), null, key);
   }
 });
@@ -590,4 +596,38 @@ test("a connected inbox is green, a failed one red, anything else amber", () => 
   assert.equal(statusTone("Not connected"), "s-pending");
   assert.equal(statusTone("pending_move"), "s-pending");
   assert.equal(statusTone(" connected "), "s-done");
+});
+
+/* ------------------------------------- replies, positives and domains (14 Nov) --- */
+
+test("the Domain filter: each inbox answers to its own domain, any case; the options count inboxes", () => {
+  const rows = [inbox({ id: 1, email: "a@One.com" }), inbox({ id: 2, email: "b@one.com" }), inbox({ id: 3, email: "c@two.com" })];
+  assert.deepEqual(facetValues(rows[0], "domain"), ["one.com"]);
+  assert.deepEqual(filterInboxes(rows, { ...NO_FILTERS, domain: ["one.com"] }).map((r) => r.id), [1, 2]);
+  assert.deepEqual(facetOptions(rows, NO_FILTERS, "domain").map((o) => [o.value, o.count]), [["one.com", 2], ["two.com", 1]]);
+  assert.equal(facetChipLabel("domain", ["one.com"]), "Domain: one.com");
+  assert.equal(filtersActive({ ...NO_FILTERS, domain: ["one.com"] }), true);
+});
+
+test("Replies (Master Inbox), Positive replies and Positive rate: shown by default, first after Email, and they sort", () => {
+  const keys = INBOX_COLUMNS.map((c) => c.key);
+  // On screen without scrolling sideways; the client's nine keep their order (the test above).
+  assert.deepEqual(keys.slice(0, 4), ["miReplies", "positive", "positiveRate", "dailyLimit"]);
+  assert.deepEqual(INBOX_COLUMNS.filter((c) => c.group === "Replies").map((c) => c.key), ["miReplies", "positive", "positiveRate"]);
+  for (const k of ["miReplies", "positive", "positiveRate"]) assert.ok(INBOX_DEFAULT_VISIBLE.includes(k), k);
+  const row = inbox({ masterInboxReplies: 8, positiveAllTime: 2 });
+  assert.equal(inboxSortValue(row, "miReplies"), 8);
+  assert.equal(inboxSortValue(row, "positive"), 2);
+  assert.equal(inboxSortValue(row, "positiveRate"), 0.25);
+  // No reply: no rate — it sorts last, not as 0%.
+  assert.equal(inboxSortValue(inbox({ masterInboxReplies: 0, positiveAllTime: 0 }), "positiveRate"), null);
+  // An inbox the platform knows nothing about still has its Master Inbox figures.
+  assert.equal(inboxSortValue(inbox({ repliedAllTime: null, masterInboxReplies: 3 }), "miReplies"), 3);
+});
+
+test("both platforms' rows leave the Master Inbox figures to the route: unknown until it fills them", () => {
+  for (const row of [emailbisonInbox(sender(), null), instantlyInbox({ email: "e@two.com", first_name: null, last_name: null, provider_code: 2, daily_limit: 30, tags: [], synced_at: null }, undefined)]) {
+    assert.equal(row.masterInboxReplies, null);
+    assert.equal(row.positiveAllTime, null);
+  }
 });

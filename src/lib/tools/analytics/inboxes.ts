@@ -1,3 +1,4 @@
+import { domainOf, positiveRate } from "./inbox-domains.ts";
 import { vendorFromTags } from "./sync/vendor.ts";
 
 /*
@@ -44,6 +45,13 @@ export interface InboxRow {
   /** People who replied — the same counter Infrastructure's reply rate uses. */
   repliedAllTime: number | null;
   bouncedAllTime: number | null;
+  /**
+   * Replies as Master Inbox received them, for the inbox the lead first replied
+   * to, and those the team marked Interested (or introduced) — inbox-positives.ts.
+   * Laid over the row by the route; null when Master Inbox could not be read.
+   */
+  masterInboxReplies: number | null;
+  positiveAllTime: number | null;
   warmupEnabled: boolean | null;
   warmup3d: number | null;
   warmup7d: number | null;
@@ -59,6 +67,8 @@ export interface InboxesResponse {
   asOf: string | null;
   /** What a column means, and what could not be supplied — shown under the table. */
   notes: string[];
+  /** When Master Inbox was read for Positive replies; null when it could not be. */
+  positivesAsOf: string | null;
 }
 
 /* ------------------------------------------------------ database → table row */
@@ -175,6 +185,8 @@ export function emailbisonInbox(row: SenderEmailRecord, sending: ReadonlySet<num
     sentAllTime: counter(row.lifetime_sent),
     repliedAllTime: counter(row.unique_replied),
     bouncedAllTime: counter(row.lifetime_bounced),
+    masterInboxReplies: null,
+    positiveAllTime: null,
     warmupEnabled: typeof row.warmup_enabled === "boolean" ? row.warmup_enabled : null,
     // Not synced. See the route's notes for what would supply them.
     warmup3d: null,
@@ -208,6 +220,8 @@ export function instantlyInbox(row: InstantlyAccountRecord, stats: InstantlyAcco
     sentAllTime: counter(stats?.sent),
     repliedAllTime: counter(stats?.replied),
     bouncedAllTime: counter(stats?.bounced),
+    masterInboxReplies: null,
+    positiveAllTime: null,
     warmupEnabled: null,
     warmup3d: null,
     warmup7d: null,
@@ -290,7 +304,7 @@ export async function sendersWithSends(
 /** Stands in for "no value" in a filter: an untagged inbox, an unknown status. */
 export const NONE = "__none__";
 
-export const INBOX_FACETS = ["type", "status", "tags", "vendor", "assigned", "platform"] as const;
+export const INBOX_FACETS = ["type", "status", "tags", "vendor", "domain", "assigned", "platform"] as const;
 export type InboxFacet = (typeof INBOX_FACETS)[number];
 
 /** Every filter on the page. An empty list means "not filtering on this". */
@@ -302,6 +316,7 @@ export const NO_FILTERS: InboxFilters = {
   status: [],
   tags: [],
   vendor: [],
+  domain: [],
   assigned: [],
   platform: [],
 };
@@ -311,6 +326,7 @@ export const FACET_LABEL: Record<InboxFacet, string> = {
   status: "Status",
   tags: "Tags",
   vendor: "Vendor",
+  domain: "Domain",
   assigned: "Assigned to campaign",
   platform: "Platform",
 };
@@ -321,6 +337,7 @@ const NONE_LABEL: Record<InboxFacet, string> = {
   status: "Unknown",
   tags: "No tags",
   vendor: "Untagged",
+  domain: "Unknown",
   assigned: "Unknown",
   platform: "Unknown",
 };
@@ -342,6 +359,8 @@ export function facetValues(row: InboxRow, facet: InboxFacet): string[] {
       return row.tags.length ? row.tags : [NONE];
     case "vendor":
       return [row.vendor ?? NONE];
+    case "domain":
+      return [domainOf(row.email) ?? NONE];
     case "assigned":
       return [row.assignedToCampaign === null ? NONE : row.assignedToCampaign ? "yes" : "no"];
     case "platform":
@@ -429,7 +448,7 @@ export function facetChipLabel(facet: InboxFacet, selected: readonly string[]): 
 
 /* ------------------------------------------------------------------ columns */
 
-export const INBOX_COLUMN_GROUPS = ["Inbox", "Sending", "Warmup"] as const;
+export const INBOX_COLUMN_GROUPS = ["Inbox", "Sending", "Replies", "Warmup"] as const;
 export type InboxColumnGroup = (typeof INBOX_COLUMN_GROUPS)[number];
 
 export interface InboxColumnDef {
@@ -448,6 +467,25 @@ export interface InboxColumnDef {
  * here: it is the row's identity and cannot be hidden.
  */
 export const INBOX_COLUMNS: readonly InboxColumnDef[] = [
+  /*
+   * 14 Nov: "the domains and inboxes that get the most replies and positive
+   * replies". First after Email, so they are on screen without scrolling
+   * sideways at a laptop's width; the nine below keep the client's order.
+   * Counted in Master Inbox, both platforms alike — Instantly's Replied below
+   * is only what the sync stored (inbox-positives.ts).
+   */
+  {
+    key: "miReplies", label: "Replies (Master Inbox)", group: "Replies", defaultVisible: true, align: "right",
+    hint: "Conversations in Master Inbox where a lead replied to this inbox: one per lead and campaign, from May 2026; those labelled only as an out-of-office or automatic reply are left out",
+  },
+  {
+    key: "positive", label: "Positive replies", group: "Replies", defaultVisible: true, align: "right",
+    hint: "Replies labelled Interested in Master Inbox, or introduced — not EmailBison's Interested flag",
+  },
+  {
+    key: "positiveRate", label: "Positive rate", group: "Replies", defaultVisible: true, align: "right",
+    hint: "Positive replies ÷ Replies (Master Inbox)",
+  },
   /*
    * In the order the client listed them (13 Oct): Daily Limit, Emails Sent,
    * Replied, Bounced, Warmup Score (3 days), Warmup Score (7 days), Status,
@@ -486,7 +524,13 @@ export const INBOX_COLUMNS: readonly InboxColumnDef[] = [
 
 export const INBOX_DEFAULT_VISIBLE = INBOX_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key);
 export const INBOX_COLUMN_PREFS_KEY = "bsa.inbox-columns.v1";
-export const INBOX_COLUMN_PREFS_VERSION = 1;
+export const INBOX_COLUMN_PREFS_VERSION = 2;
+/**
+ * Columns a saved choice from before them gains (version 1 → 2, 14 Nov), so a
+ * person who had picked their columns still sees the new ones on by default —
+ * without losing the rest of what they picked.
+ */
+export const INBOX_COLUMNS_ADDED = { from: 1, add: ["miReplies", "positive", "positiveRate"] } as const;
 
 /**
  * What a column sorts by. Null is "not known", which the shared sort puts
@@ -508,6 +552,12 @@ export function inboxSortValue(row: InboxRow, key: string): string | number | nu
       return row.sentAllTime;
     case "replied":
       return row.repliedAllTime;
+    case "miReplies":
+      return row.masterInboxReplies;
+    case "positive":
+      return row.positiveAllTime;
+    case "positiveRate":
+      return positiveRate(row);
     case "bounced":
       return row.bouncedAllTime;
     case "warmup":

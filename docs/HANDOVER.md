@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.05** | [Inboxes: replies and positive replies, by inbox and by domain, 14 November](#005-inboxes-replies-and-positive-replies-by-inbox-and-by-domain-14-november) — three Master Inbox columns on every inbox and a Domains view ranked by positive replies; positive = marked Interested in Master Inbox |
 | **0.04** | [A stop label from the selection bar stops the person, 14 November](#004-a-stop-label-from-the-selection-bar-stops-the-person-14-november) — Hostile / Unsubscribe / Do Not Contact / Add to Blocklist applied to several conversations at once now block and unsubscribe each person, as one conversation always did |
 | **0.03** | [Stripe: a new client's customer found, and new payments in the bell, 6 November](#003-stripe-a-new-clients-customer-found-and-new-payments-in-the-bell-6-november) — payments never make clients; after onboarding the OS finds the customer by email and asks to confirm it in one click; the bell says what it found |
 | **0.02** | [Don't bill a lead, and holding replies over the cap, 6 November](#002-dont-bill-a-lead-and-holding-replies-over-the-cap-6-november) — keep one lead off a pay-per-lead bill; over-cap replies now wait in Keep Warm |
@@ -212,6 +213,87 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.05 Inboxes: replies and positive replies, by inbox and by domain, 14 November
+
+The client: "add to Inboxes the domains and inboxes that get the most replies
+and positive replies. Positive replies are always the ones we tag as
+Interested on Master Inbox, not what Bison tags as Interested."
+
+**On the page** (Inboxes, `/analytics/inboxes`): three columns first after
+Email, shown by default — **Replies (Master Inbox)**, **Positive replies**,
+**Positive rate** (positive ÷ replies) — sortable and in the Numbers filter; a
+**Domain** filter; and a **Domains** view (switch under the title, or
+`?view=domains`): one row per sending domain adding up the inboxes the
+filters leave (Inboxes, Sent, Replies, Positive replies, Positive rate), most
+positive replies first. A domain's name opens its inboxes. People who had
+picked their columns keep their choice and gain the three
+(`column-prefs.ts`, version 1 → 2). Columns and Loading moved from the filter
+bar to the count line (the bar no longer wraps at 1,366px and up).
+
+**The definitions** (`lib/tools/analytics/inbox-positives.ts`, every number
+below measured 14 Nov):
+
+- **Replies come from Master Inbox, not the platforms' Replied.** Instantly's
+  Replied on this page is only what the sync stored (one inbox: 9 replied,
+  32 positive), so a rate over it exceeded 100% on 274 inboxes. A reply is a
+  Master Inbox conversation — one per lead and campaign; each exists because a
+  lead replied — not in Trash, not labelled only OOO / OOO Sequence /
+  Automated Response now. Master Inbox holds replies from May 2026. 13,622
+  replies.
+- **Positive = ever labelled Interested or Introduction** (`label_history`,
+  migration 0080), unless any label it carries now is a correction (Not
+  Interested, Not Qualified, Do Not Contact, Unsubscribe, Broker/Owner —
+  pay-per-lead billing's list, a test keeps them equal; 434 conversations
+  carry two labels, all are read). Interested is mostly Master Inbox's AI
+  labeller's (443 of 650 on record), which the client's "the ones we tag as
+  Interested on Master Inbox" includes. Introduction counts because before
+  14 Oct the team mostly introduced straight from the reply and the
+  Interested label was not kept: 629 conversations were ever Interested, 1,430
+  more introduced without it. **This inclusion is our reading of the request —
+  confirm it with the client.** 1,847 positives.
+- **Which inbox: the one the lead's first reply was addressed to** (its
+  "To"), then our first email's sender, then the conversation's
+  `outbound_sender_email`. That last one follows the newest email we sent, so
+  after an introduction it names Nicole's brokerstaffer.com inbox — it would
+  have held 247 positives; it holds 13 (campaigns really sent from it). 31% of
+  positives and 4.7% of other replies were elsewhere than the recorded inbox.
+- One mailbox can be an inbox on both platforms (533 addresses): a reply
+  counts on the platform it came through. If Instantly's list cannot be read,
+  its replies are set aside and the note says so, never moved to EmailBison.
+  413 replies (49 positive) went to addresses that are no longer an inbox on
+  either platform; the note says that too.
+
+**Reading** (`inbox-positives-load.ts`, read only): label history, every
+conversation and its labels now, every inbound message's recipients (~17,300),
+and our first email on the positive ones — about 50 requests, every large one
+paged by id (not offset, so a label changed mid-read cannot repeat or skip a
+row). Fresh 5 minutes, then served stale for up to a day while a fresh read
+runs; warmed once 12 s after boot (`instrumentation.ts`, not periodically). The
+route waits at most 25 s: a slow read shows a dash and "reload the page in a
+minute" (the read carries on and is kept); an unreadable Master Inbox shows
+dashes and the reason, never zeros.
+
+**Opening a domain** adds a history step (`?domain=x.com`), so the browser's
+Back — or "← All domains" — returns to every domain with the Domain filter as it
+was; a link to `?domain=` from elsewhere switches views instead of leaving the
+page. The Domains count line counts addresses (346 mailboxes are on both
+platforms), as the Inboxes column does.
+
+**Also fixed:** both tables brought back an old page when a filter was set and
+cleared again (the page was remembered per filter combination).
+
+Proof: 3,517 tests (new: rules 16, loader 9 against a database that caps at
+1,000 rows, domains 6, prefs 5, model 3, route 5 incl. the 25 s limit); 32/32
+deliberate breaks caught; an independent review, every finding fixed or
+answered (the corrections list deliberately matches billing's); the real
+route on real data (totals reconcile exactly: rows + unattributed = every
+reply; no inbox has more positives than replies); real Chrome on a local build
+reading real data with every write refused, 85–86 checks at 1,280 / 1,440 /
+1,920 wide (every figure against the route, sorts, filters, opening a domain
+and Back / Forward / links, saved columns, paging, keyboard, layout).
 
 ---
 

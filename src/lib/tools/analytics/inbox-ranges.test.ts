@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { NO_RANGES, RANGE_COLUMNS, filterByRanges, parseBound, rangeChipLabel, rangesActive } from "./inbox-ranges.ts";
 
 const row = (over: Partial<Record<string, number | null>> = {}) => ({
-  dailyLimit: 25, sentAllTime: 1000, repliedAllTime: 10, bouncedAllTime: 2, warmup3d: 100 as number | null, warmup7d: 95 as number | null, ...over,
+  dailyLimit: 25, sentAllTime: 1000, repliedAllTime: 10, masterInboxReplies: 4 as number | null, positiveAllTime: 1 as number | null, bouncedAllTime: 2, warmup3d: 100 as number | null, warmup7d: 95 as number | null, ...over,
 });
 const with_ = (over: Partial<typeof NO_RANGES>) => ({ ...NO_RANGES, ...over });
 
@@ -48,7 +48,7 @@ test("bounds on several columns must all hold", () => {
 });
 
 test("every number column reads its own value", () => {
-  const r = row({ dailyLimit: 1, sentAllTime: 2, repliedAllTime: 3, bouncedAllTime: 4, warmup3d: 5, warmup7d: 6 });
+  const r = row({ dailyLimit: 1, sentAllTime: 2, repliedAllTime: 3, masterInboxReplies: 4, positiveAllTime: 5, bouncedAllTime: 6, warmup3d: 7, warmup7d: 8 });
   RANGE_COLUMNS.forEach(({ key }, i) => {
     const exact = String(i + 1);
     assert.equal(filterByRanges([r], with_({ [key]: { min: exact, max: exact } })).length, 1, key);

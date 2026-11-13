@@ -17,6 +17,8 @@ export const RANGE_COLUMNS = [
   { key: "dailyLimit", label: "Daily limit" },
   { key: "sent", label: "Sent (all time)" },
   { key: "replied", label: "Replied (all time)" },
+  { key: "miReplies", label: "Replies (Master Inbox)" },
+  { key: "positive", label: "Positive replies" },
   { key: "bounced", label: "Bounced (all time)" },
   { key: "warmup3d", label: "Warmup (3 days)" },
   { key: "warmup7d", label: "Warmup (7 days)" },
@@ -29,6 +31,8 @@ export const NO_RANGES: InboxRanges = {
   dailyLimit: { min: "", max: "" },
   sent: { min: "", max: "" },
   replied: { min: "", max: "" },
+  miReplies: { min: "", max: "" },
+  positive: { min: "", max: "" },
   bounced: { min: "", max: "" },
   warmup3d: { min: "", max: "" },
   warmup7d: { min: "", max: "" },
@@ -38,6 +42,8 @@ interface RangeRow {
   dailyLimit: number | null;
   sentAllTime: number | null;
   repliedAllTime: number | null;
+  masterInboxReplies: number | null;
+  positiveAllTime: number | null;
   bouncedAllTime: number | null;
   warmup3d: number | null;
   warmup7d: number | null;
@@ -47,6 +53,8 @@ const VALUE: Record<RangeKey, (row: RangeRow) => number | null> = {
   dailyLimit: (r) => r.dailyLimit,
   sent: (r) => r.sentAllTime,
   replied: (r) => r.repliedAllTime,
+  miReplies: (r) => r.masterInboxReplies,
+  positive: (r) => r.positiveAllTime,
   bounced: (r) => r.bouncedAllTime,
   warmup3d: (r) => r.warmup3d,
   warmup7d: (r) => r.warmup7d,
