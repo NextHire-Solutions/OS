@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.04** | [A stop label from the selection bar stops the person, 14 November](#004-a-stop-label-from-the-selection-bar-stops-the-person-14-november) — Hostile / Unsubscribe / Do Not Contact / Add to Blocklist applied to several conversations at once now block and unsubscribe each person, as one conversation always did |
 | **0.03** | [Stripe: a new client's customer found, and new payments in the bell, 6 November](#003-stripe-a-new-clients-customer-found-and-new-payments-in-the-bell-6-november) — payments never make clients; after onboarding the OS finds the customer by email and asks to confirm it in one click; the bell says what it found |
 | **0.02** | [Don't bill a lead, and holding replies over the cap, 6 November](#002-dont-bill-a-lead-and-holding-replies-over-the-cap-6-november) — keep one lead off a pay-per-lead bill; over-cap replies now wait in Keep Warm |
 | **0.01a** | [Inboxes onto campaigns, 6 November](#001a-inboxes-onto-campaigns-6-november) — add selected inboxes to the campaigns you tick, beside Remove from campaigns |
@@ -211,6 +212,44 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.04 A stop label from the selection bar stops the person, 14 November
+
+Since 8 Oct, labelling ONE conversation Hostile, Unsubscribe, Do Not Contact or
+Add to Blocklist stops the person everywhere: their address (and any other
+address they replied from under the same name) goes on the EmailBison and
+Instantly blocklists, and their EmailBison conversations are unsubscribed by
+reply id (`inbox/apply-label.ts` → `inbox/dnc.ts stopThreadPerson`). Hostile
+also marks the lead do-not-contact on the conversation's own platform. Applied
+to several conversations from the selection bar, the same labels were only
+saved: `threads/bulk/route.ts` never called the stop, so the people stayed in
+every other campaign.
+
+The bulk route now runs the same stop for every selected conversation once
+the labels are saved, after the response, one conversation at a time (each is
+several provider calls; a selection can hold 500). One person's failure does
+not stop the rest. Log lines `[dnc] bulk stop: N conversation(s)…` and
+`…finished N` bracket the run; a start with no finish means a deploy cut it
+short, and the rest need the label applied again. Removing a stop label stops
+no one, as before. The standalone Master Inbox's bulk route still has the gap
+and was left alone by the user's decision: the team no longer uses that app.
+
+Exposure found on 13 Nov, read-only: since 8 Oct no stop label had been bulk
+applied (12 applied by staff, all one at a time, all 12 people on both
+blocklists today). 46 people were bulk labelled Unsubscribe between 26 Aug and
+21 Sep, before any label stopped anyone; they belong to the one-time DNC
+clean-up still awaiting approval, and none has replied from another campaign
+since. In a single conversation, clicking the label it already carries
+REMOVES it, so "apply it again" is not a way to re-run the stop there; the
+selection bar now is (it re-saves and stops).
+
+Proof: `threads/bulk/route.test.ts` (8 tests: the stop after the answer, one
+at a time; Hostile's do-not-contact first; every stop label; no stop for other
+labels, removal or a failed save; one failure never ends the run), 7/7
+deliberate breaks caught, 3,473 tests. `scripts/apply-port-fixes.mjs` FIX 5
+warns if a re-sync from the standalone app loses it.
 
 ---
 

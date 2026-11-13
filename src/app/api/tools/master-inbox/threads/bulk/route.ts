@@ -12,6 +12,8 @@ import { notifyIntroductionForThreads } from "@/lib/tools/master-inbox/webhooks/
 import { pushIntroPipelineEntriesForThreadsToFub } from "@/lib/tools/master-inbox/integrations/push-pipeline-entry";
 import { notifyPortalIntroductionForThreads } from "@/lib/tools/master-inbox/webhooks/slack-portal";
 import { invalidateInboxClientsCache } from "@/lib/tools/master-inbox/inbox/clients";
+import { isHostileLabel, markThreadLeadDoNotContact, stopThreadPerson } from "@/lib/tools/master-inbox/inbox/dnc";
+import { isStopContactLabel } from "@/lib/tools/master-inbox/portals/stop-person-plan";
 import {
   snapshotPipelineNotes,
   restorePipelineNotes,
@@ -365,6 +367,16 @@ export async function POST(request: Request) {
             });
           if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         }
+        // Hostile, Unsubscribe, Do Not Contact, Add to Blocklist → stop each
+        // person everywhere, exactly as labelling one conversation does
+        // (inbox/apply-label.ts). Until 14 Nov this path saved the label and
+        // nothing else, so a bulk "Unsubscribe" left people in every campaign.
+        const appliedNames = (applyLabels ?? []).map((l) => (l.name as string | null) ?? null);
+        if (appliedNames.some(isStopContactLabel)) {
+          const threadIds = targetIds;
+          const hostile = appliedNames.some(isHostileLabel);
+          after(() => stopEachPerson(threadIds, hostile));
+        }
         // Introduction / Interested / Not Interested among the
         // applied labels → fan out the matching side-effect for
         // every selected thread. `names` was resolved before the wipe
@@ -506,4 +518,24 @@ export async function POST(request: Request) {
       }
     }
   }
+}
+
+/**
+ * The stop for every conversation in a bulk stop label, one at a time: each is
+ * several provider calls, and a selection can hold 500. Neither call throws,
+ * but one person's failure must never cost the rest their stop, so each is
+ * guarded anyway. The two log lines bracket the run: a deploy that cuts it
+ * short shows as a start with no finish.
+ */
+async function stopEachPerson(threadIds: string[], hostile: boolean): Promise<void> {
+  console.log(`[dnc] bulk stop: ${threadIds.length} conversation(s) from the selection bar`);
+  for (const id of threadIds) {
+    try {
+      if (hostile) await markThreadLeadDoNotContact(id);
+      await stopThreadPerson(id);
+    } catch (err) {
+      console.error(`[dnc] bulk stop ${id} failed`, err instanceof Error ? err.message : String(err));
+    }
+  }
+  console.log(`[dnc] bulk stop: finished ${threadIds.length} conversation(s)`);
 }

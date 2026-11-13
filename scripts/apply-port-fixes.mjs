@@ -166,4 +166,21 @@ const note = (m) => { console.log(`  ${m}`); changed++; };
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * FIX 5 — a stop label applied from the selection bar stops each person.
+ *
+ * The tool's bulk route saves Hostile / Unsubscribe / Do Not Contact / Add to
+ * Blocklist and nothing else, so the people stay in every campaign. The OS's
+ * runs the same stop as one conversation does (14 Nov). Checked, not
+ * rewritten; threads/bulk/route.test.ts also fails if it is lost.
+ */
+{
+  const bulk = "src/app/api/tools/master-inbox/threads/bulk/route.ts";
+  if (fs.existsSync(bulk) && !fs.readFileSync(bulk, "utf8").includes("stopEachPerson")) {
+    console.log("  ⚠ the bulk route lost the stop for stop labels — re-apply by hand:");
+    console.log("     after the label upsert, when a label isStopContactLabel,");
+    console.log("     after(() => stopEachPerson(targetIds, hostile)) (see git log for 14 Nov)");
+  }
+}
+
 console.log(changed ? `\n  ${changed} fix(es) applied` : "\n  nothing to re-apply — already clean");
