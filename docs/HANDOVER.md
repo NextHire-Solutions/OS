@@ -243,6 +243,10 @@ invoice (view, PDF). Checked read only on every live portal: only Las Vegas chan
 LIVE 17 Nov on the Demo Portal (`ea98ca0` + `5e1e282`, Railway `961ba129`; migration **0052** run by the user first).
 Real portals stay "Coming soon" until `OS_PORTAL_CAMPAIGNS` names them. Live check 17 Nov: Demo list, editor, a real
 save on the Demo's sample and back (row identical after), phone; real portals Coming soon and their data a bare 404.
+Save bar alignment fix `5423c17` (Railway `d5973aef`): live 78/78 across 10 widths (1920 to 360), folded sidebar,
+keyboard, long emails, reduced motion. **Only on the Demo Portal, checked live on all 61 other portals** (switched on
+or off): Campaigns page Coming soon with the Soon badge, list and campaign data a bare 404, a save POSTed straight at
+the server a bare 404. `OS_PORTAL_CAMPAIGNS` is unset on Railway.
 
 **Asked** (Slack, 16 Nov): clients edit their campaigns' emails on the portal's Campaigns tab (Eddy: "we purposely
 left a campaign tab with coming soon"), any time, with no approval, because the copy must fit rules: at most 125
