@@ -10,7 +10,7 @@ import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 import { listPeriods, loadSettings, periodLeads } from "@/lib/clients/usage-billing/billing";
 import { easternDay, modeOf, type SettingsRow } from "@/lib/clients/usage-billing/model";
 
-import { BILLING_REFUSAL, pickBillingCustomer } from "./billing-pick";
+import { BILLING_REFUSAL, invoiceScope } from "./billing-pick";
 import { perLeadPeriods, startsToCount, type PerLeadPeriod } from "./billing-per-lead";
 import { introductionsByPeriod, type BillingPeriod } from "./billing-periods";
 import { clientForPortal, type OsClientRow } from "./market-model";
@@ -27,7 +27,8 @@ import { clientForPortal, type OsClientRow } from "./market-model";
 const mi = () => readOnly(createAdminSupabase());
 
 export type BillingPage =
-  | { ok: true; periods: BillingPeriod[]; portals: number }
+  /** `manage`: false when "Manage billing" can't open (a payment method shared with another client — 17 Nov). */
+  | { ok: true; periods: BillingPeriod[]; portals: number; manage: boolean }
   /** A client billed per lead, live (16 Nov): its pay-per-lead periods and the leads billed in each (billing-per-lead.ts). */
   | { ok: true; kind: "per-lead"; periods: PerLeadPeriod[]; portals: number }
   | { ok: false; reason: string };
@@ -83,12 +84,14 @@ export async function portalBillingPage(portalId: string, now: Date): Promise<Bi
   if (perLead && modeOf(perLead) === "live") return perLeadPage(record.id, perLead, easternDay(now), mine.length);
 
   const { byClient, snapshot } = await getAccountBilling();
-  const pick = pickBillingCustomer(byClient.get(record.id), byClient.values());
-  if (!pick.ok) return { ok: false, reason: BILLING_REFUSAL[pick.reason] };
+  // The customer, when it is the client's alone; on a shared one, only the client's own subscriptions (billing-pick.ts).
+  const scope = invoiceScope(byClient.get(record.id), byClient.values());
+  if (!scope.ok) return { ok: false, reason: BILLING_REFUSAL[scope.reason] };
 
   const entries = await fetchAllRows<{ source: string | null; introduced_at: string | null }>(({ from, to }) =>
     mi().from("client_pipeline_entries").select("id, source, introduced_at").in("client_id", mine).order("id").range(from, to),
   );
-  const invoices = snapshot.invoices.filter((i) => i.customer === pick.customer);
-  return { ok: true, periods: introductionsByPeriod(invoices, entries, now), portals: mine.length };
+  const own = scope.manage ? null : new Set(scope.subscriptions);
+  const invoices = snapshot.invoices.filter((i) => (own ? i.subscription !== null && own.has(i.subscription) : i.customer === (scope as { customer: string }).customer));
+  return { ok: true, periods: introductionsByPeriod(invoices, entries, now), portals: mine.length, manage: scope.manage };
 }

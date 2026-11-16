@@ -595,7 +595,7 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
 // --------------------------------------------------------------- Billing ---
 
 type BillingPageData =
-  | { ok: true; kind?: undefined; periods: Array<{ start: string; end: string; invoice: string | null; status: "paid" | "open" | "uncollectible"; introductions: number; current: boolean }>; portals: number }
+  | { ok: true; kind?: undefined; periods: Array<{ start: string; end: string; invoice: string | null; url?: string | null; status: "paid" | "open" | "uncollectible"; introductions: number; current: boolean }>; portals: number; manage?: boolean }
   /** Billed per lead (16 Nov): the leads billed in each pay-per-lead period (lib/crm-preview/billing-per-lead.ts). */
   | { ok: true; kind: "per-lead"; periods: Array<{ start: string; end: string; invoice: string | null; status: keyof typeof PER_LEAD_PILL; leads: number | null; current: boolean }>; portals: number }
   | { ok: false; reason: string };
@@ -615,7 +615,7 @@ const PER_LEAD_PILL = {
 } as const;
 /* One row of either page, as the table draws it. */
 /* count null: the leads couldn't be counted just now (a dash, never a wrong 0). */
-type ShownPeriod = { start: string; end: string; invoice: string | null; current: boolean; count: number | null; pill: readonly [string, string] };
+type ShownPeriod = { start: string; end: string; invoice: string | null; url?: string | null; current: boolean; count: number | null; pill: readonly [string, string] };
 
 /*
  * Billing (22 Oct): the introductions BrokerStaffer made in each billing
@@ -646,13 +646,16 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
     ? []
     : page.kind === "per-lead"
       ? page.periods.map((p) => ({ start: p.start, end: p.end, invoice: p.invoice, current: p.current, count: p.leads, pill: PER_LEAD_PILL[p.status] }))
-      : page.periods.map((p) => ({ start: p.start, end: p.end, invoice: p.invoice, current: p.current, count: p.introductions, pill: STATUS_PILL[p.status] }));
+      : page.periods.map((p) => ({ start: p.start, end: p.end, invoice: p.invoice, url: p.url, current: p.current, count: p.introductions, pill: STATUS_PILL[p.status] }));
   const now = periods.find((p) => p.current) ?? null;
+  // A payment method shared with another of the client's accounts (17 Nov, Douglas Elliman Las Vegas): Stripe's page
+  // can't open for it, so the button goes and the page says why; the invoices below are this account's own.
+  const shared = !!page && page.ok && "manage" in page && page.manage === false;
   return (
     <>
       <header className={k("top")}>
         <div className={k("ttl")}><h1>Billing</h1></div>
-        {manageBilling ? (
+        {manageBilling && !shared ? (
           <div className={k("hr")}>
             <a className={k("btn")} href={`/api/crm-preview/billing?client=${encodeURIComponent(clientId)}`} target="_blank" rel="noopener" title={`Opens ${clientName}'s Stripe billing page — real changes`}>
               <Icon name="external" size={15} />Manage billing
@@ -699,7 +702,13 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
                   {periods.map((p) => (
                     <tr key={`${p.start}:${p.end}`}>
                       <td><span className={k("nm")}>{periodText(p.start, p.end)}</span>{p.current ? <span className={k("tag")} style={{ marginLeft: 8 }}>Current</span> : null}</td>
-                      <td className={p.invoice ? undefined : k("noinv")}>{p.invoice ?? <Dash />}</td>
+                      <td className={p.invoice ? undefined : k("noinv")}>
+                        {p.invoice && p.url ? (
+                          <a className="cpv-invl" href={p.url} target="_blank" rel="noopener noreferrer" title={`Opens invoice ${p.invoice} in Stripe: view it, download the PDF`}>
+                            {p.invoice}<Icon name="external" size={12} />
+                          </a>
+                        ) : (p.invoice ?? <Dash />)}
+                      </td>
                       <td><span className={k(p.pill[1])}>{p.pill[0]}</span></td>
                       <td className={k("r")} style={{ fontVariantNumeric: "tabular-nums" }}>{p.count === null ? <Dash /> : <>{p.count.toLocaleString("en-US")}<span className={k("bunit")}> {unit(p.count)}</span></>}</td>
                     </tr>
@@ -708,6 +717,7 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
               </table>
             </div>
             {page && page.ok && page.portals > 1 ? <p className={k("hint")}>Counted across all {page.portals} of your portals — one billing covers them.</p> : null}
+            {shared ? <p className={k("hint")} data-billing-shared>This account&apos;s payment method also pays for another of your accounts, so card and plan changes go through our team. Open an invoice to view or download it.</p> : null}
           </>
         )}
       </div>

@@ -436,3 +436,8 @@ html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }
   /* A page with nothing in the header's right-hand slot: on a phone that slot wraps to an empty row of its own. */
   .cpv-shell .crx-hr:empty { display: none; }
 }
+
+/* The Billing page's invoice number, linking to Stripe's page for it (17 Nov). */
+.cpv-shell a.cpv-invl { display: inline-flex; align-items: center; gap: 5px; color: #2f55a8; font-weight: 500; text-decoration: none; }
+.cpv-shell a.cpv-invl:hover { text-decoration: underline; }
+.cpv-shell a.cpv-invl:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; border-radius: 3px; }

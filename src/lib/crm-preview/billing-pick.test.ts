@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { BILLING_REFUSAL, pickBillingCustomer } from "./billing-pick.ts";
+import { BILLING_REFUSAL, invoiceScope, pickBillingCustomer } from "./billing-pick.ts";
 
 /* The portal's Billing link opens only a Stripe customer that is the client's alone (19 Oct). */
 
@@ -57,4 +57,33 @@ test("the route: the reviewers or the portal's own signed-in client only, a real
   assert.match(lib, /if \(!\/\^https:\\\/\\\/billing\\\.stripe\\\.com\\\/\/\.test\(body\.url\)\)/, "only a billing.stripe.com address is followed");
   assert.equal((lib.match(/method: "POST"/g) ?? []).length, 1, "one Stripe write: making the session");
   assert.match(lib, /`\$\{STRIPE\}\/billing_portal\/sessions`/);
+});
+
+/* The Billing PAGE (17 Nov, Douglas Elliman Las Vegas): on a shared card, only the client's own subscriptions' invoices. */
+const own = (id: string, customer: string, current: boolean, source = "record") => ({ id, customer, current, source } as never);
+
+test("the page: a customer of the client's alone lists all its invoices, and Manage billing opens it", () => {
+  assert.deepEqual(invoiceScope({ clientId: "me", subscriptions: [own("s1", "cus_me", true)], customers: [cus("cus_me")] }), { ok: true, manage: true, customer: "cus_me" });
+});
+
+test("the page: a card shared with another client lists only this client's own subscriptions (Las Vegas, not Los Angeles)", () => {
+  const lv = { clientId: "lv", subscriptions: [own("sub_lv", "cus_de", true)], customers: [cus("cus_de", true)] };
+  const la = { clientId: "la", subscriptions: [own("sub_la", "cus_de", true)], customers: [cus("cus_de", true)] };
+  assert.deepEqual(invoiceScope(lv, [lv, la]), { ok: true, manage: false, subscriptions: ["sub_lv"] });
+  assert.deepEqual(invoiceScope(la, [lv, la]), { ok: true, manage: false, subscriptions: ["sub_la"] });
+  // The Billing link still refuses the shared customer.
+  assert.deepEqual(pickBillingCustomer(lv, [lv, la]), { ok: false, reason: "shared" });
+});
+
+test("the page: a subscription the client only got by guess (the card's first client), or that another client also lists, is never shown", () => {
+  const guessed = { clientId: "a", subscriptions: [own("s_old", "cus_x", false, "subscription"), own("s_a", "cus_x", true)], customers: [cus("cus_x", true)] };
+  const other = { clientId: "b", subscriptions: [own("s_b", "cus_x", true), own("s_a", "cus_x", false)], customers: [cus("cus_x", true)] };
+  assert.deepEqual(invoiceScope(guessed, [guessed, other]), { ok: false, reason: "shared" }, "s_old is a guess, s_a is listed by b too");
+  const onlyGuess = { clientId: "c", subscriptions: [own("s_c", "cus_y", true, "subscription")], customers: [cus("cus_y", true)] };
+  assert.deepEqual(invoiceScope(onlyGuess, [onlyGuess]), { ok: false, reason: "shared" });
+});
+
+test("the page: the Billing link's other refusals stand (no billing, ambiguous)", () => {
+  assert.deepEqual(invoiceScope(undefined), { ok: false, reason: "no-billing" });
+  assert.deepEqual(invoiceScope({ clientId: "me", subscriptions: [], customers: [cus("c1"), cus("c2")] }), { ok: false, reason: "ambiguous" });
 });

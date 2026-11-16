@@ -17,6 +17,8 @@ export interface BillingPeriod {
   end: string;
   /** The invoice's number, as Stripe shows it. */
   invoice: string | null;
+  /** Stripe's page for that invoice (view, download the PDF and receipt), or its PDF; null when there is neither. */
+  url: string | null;
   status: "paid" | "open" | "uncollectible";
   /** Introductions from our side in the period. */
   introductions: number;
@@ -24,7 +26,7 @@ export interface BillingPeriod {
   current: boolean;
 }
 
-type Invoice = { number: string | null; status: string; serviceStart?: number; serviceEnd?: number };
+type Invoice = { number: string | null; status: string; serviceStart?: number; serviceEnd?: number; url?: string | null; pdf?: string | null };
 type Entry = { source: string | null; introduced_at: string | null };
 
 const SHOWN = new Set(["paid", "open", "uncollectible"]);
@@ -37,14 +39,14 @@ export function introductionsByPeriod(invoices: readonly Invoice[], entries: rea
     .filter((e) => e.source !== CLIENT_ENTRY_SOURCE && e.introduced_at)
     .map((e) => Date.parse(e.introduced_at as string))
     .filter((t) => Number.isFinite(t));
-  const byPeriod = new Map<string, { startMs: number; endMs: number; invoice: string | null; status: BillingPeriod["status"] }>();
+  const byPeriod = new Map<string, { startMs: number; endMs: number; invoice: string | null; url: string | null; status: BillingPeriod["status"] }>();
   for (const inv of invoices) {
     if (!SHOWN.has(inv.status) || typeof inv.serviceStart !== "number" || typeof inv.serviceEnd !== "number" || inv.serviceEnd <= inv.serviceStart) continue;
     const key = `${inv.serviceStart}:${inv.serviceEnd}`;
     // Two invoices for one period (a retry, a correction): one row, the paid one's number.
     const had = byPeriod.get(key);
     if (had && had.status === "paid") continue;
-    byPeriod.set(key, { startMs: inv.serviceStart * 1000, endMs: inv.serviceEnd * 1000, invoice: inv.number, status: inv.status as BillingPeriod["status"] });
+    byPeriod.set(key, { startMs: inv.serviceStart * 1000, endMs: inv.serviceEnd * 1000, invoice: inv.number, url: inv.url ?? inv.pdf ?? null, status: inv.status as BillingPeriod["status"] });
   }
   return [...byPeriod.values()]
     .sort((a, b) => b.startMs - a.startMs)
@@ -54,6 +56,7 @@ export function introductionsByPeriod(invoices: readonly Invoice[], entries: rea
       // Stripe's end is the moment the next period starts: the last day paid for is the day before.
       end: etDay(p.endMs - 1),
       invoice: p.invoice,
+      url: p.url,
       status: p.status,
       introductions: ours.filter((t) => t >= p.startMs && t < p.endMs).length,
       current: now.getTime() >= p.startMs && now.getTime() < p.endMs,

@@ -24,8 +24,8 @@ test("counts our introductions in each period — never the client's own entries
     { source: "Interested Reply", introduced_at: null },
   ];
   assert.deepEqual(introductionsByPeriod(invoices, entries, NOW), [
-    { start: "2026-10-01", end: "2026-10-31", invoice: "INV-2", status: "paid", introductions: 2, current: true },
-    { start: "2026-09-01", end: "2026-09-30", invoice: "INV-1", status: "paid", introductions: 2, current: false },
+    { start: "2026-10-01", end: "2026-10-31", invoice: "INV-2", url: null, status: "paid", introductions: 2, current: true },
+    { start: "2026-09-01", end: "2026-09-30", invoice: "INV-1", url: null, status: "paid", introductions: 2, current: false },
   ]);
 });
 
@@ -49,4 +49,15 @@ test("at most twelve periods; none without an invoice", () => {
   const invoices = Array.from({ length: 20 }, (_, i) => ({ number: `I${i}`, status: "paid", serviceStart: s("2025-01-01T00:00:00Z") + i * 30 * 86400, serviceEnd: s("2025-01-01T00:00:00Z") + (i + 1) * 30 * 86400 }));
   assert.equal(introductionsByPeriod(invoices, [], NOW).length, 12);
   assert.deepEqual(introductionsByPeriod([], [{ source: "Interested Reply", introduced_at: "2026-10-01T00:00:00Z" }], NOW), []);
+});
+
+test("each period links to Stripe's page for its invoice (else its PDF); a retried period links to the paid one", () => {
+  const invoices = [
+    { number: "INV-9", status: "open", serviceStart: s("2026-10-01T04:00:00Z"), serviceEnd: s("2026-10-15T04:00:00Z"), url: "https://invoice.stripe.com/i/open", pdf: "https://pay.stripe.com/open.pdf" },
+    { number: "INV-10", status: "paid", serviceStart: s("2026-10-01T04:00:00Z"), serviceEnd: s("2026-10-15T04:00:00Z"), url: "https://invoice.stripe.com/i/paid" },
+    { number: "INV-11", status: "paid", serviceStart: s("2026-10-15T04:00:00Z"), serviceEnd: s("2026-10-29T04:00:00Z"), url: null, pdf: "https://pay.stripe.com/11.pdf" },
+    { number: "INV-12", status: "paid", serviceStart: s("2026-09-17T04:00:00Z"), serviceEnd: s("2026-10-01T04:00:00Z") },
+  ];
+  const periods = introductionsByPeriod(invoices, [], NOW);
+  assert.deepEqual(periods.map((p) => [p.invoice, p.url]), [["INV-11", "https://pay.stripe.com/11.pdf"], ["INV-10", "https://invoice.stripe.com/i/paid"], ["INV-12", null]]);
 });

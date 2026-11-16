@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.08** | [Billing page on a shared card, 17 November](#008-billing-page-on-a-shared-card-17-november) — a client whose card also pays for another client (Douglas Elliman Las Vegas + Los Angeles) sees its own subscription's invoices; invoice numbers link to Stripe
 | **0.07** | [Campaigns: clients edit their own emails, 17 November](#007-campaigns-clients-edit-their-own-emails-17-november) — the portal's Campaigns tab; rules enforced on the server; live in EmailBison at once; Demo Portal first (migration 0052), real portals behind `OS_PORTAL_CAMPAIGNS`
 | **0.06** | [Pay per lead: the portal's Billing page, and prospect adds EmailBison never applied, 16 November](#006-pay-per-lead-the-portals-billing-page-and-prospect-adds-emailbison-never-applied-16-november) — pay-per-lead portals show their periods and leads; the sync counts an add done only when the campaign's own list shows it; Hetherington's 23 missing prospects put back
 | **0.05** | [Inboxes: replies and positive replies, by inbox and by domain, 14 November](#005-inboxes-replies-and-positive-replies-by-inbox-and-by-domain-14-november) — three Master Inbox columns on every inbox and a Domains view ranked by positive replies; positive = marked Interested in Master Inbox |
@@ -217,6 +218,21 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.08 Billing page on a shared card, 17 November
+
+**Asked** (BrokerStaffer, moving Douglas Elliman Las Vegas to the new portal first): Las Vegas's Billing page said
+"handled by our team, because it shares a payment method with another account". One Stripe customer ("Douglas
+Elliman Real Estate") pays for two clients: Las Vegas's subscription and Los Angeles's (churned in the OS). Every
+invoice on it belongs to exactly one of the two subscriptions.
+
+**Now** (`billing-pick.ts invoiceScope`, used by `billing-page.ts`): on a customer that is the client's alone,
+nothing changes. On a shared one, the page lists only invoices of the client's OWN subscriptions (owned by a link,
+the record, or the OS having made it; never a guess, never one another client lists); "Manage billing" is hidden
+(Stripe's page would show the other client's subscription and let it be cancelled) with a line saying card and plan
+changes go through our team. Every subscription client's invoice numbers now link to Stripe's page for that
+invoice (view, PDF). Checked read only on every live portal: only Las Vegas changes (8 periods, VGSY6AIO-0002 to
+-0016, its even numbers); everyone else identical plus links; browser 24/24 desktop and phone.
 
 ## 0.07 Campaigns: clients edit their own emails, 17 November
 
