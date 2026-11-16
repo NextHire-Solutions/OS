@@ -70,3 +70,13 @@ test("Prospects: agents come off here and go on from Market, as the page has it 
   const market = readFileSync("src/components/crm-preview/market.tsx", "utf8");
   assert.match(market, /list === "market" \? <button[^\n]*moveAgents\("Prospects"\)/);
 });
+
+test("where Campaigns is on, its step says what the page does now; elsewhere it still says coming soon", async () => {
+  const { tourSteps, CAMPAIGNS_ON_TEXT } = await import("./tour-steps.ts");
+  const on = tourSteps(true).find((s) => s.view === "campaigns")!;
+  const off = tourSteps(false).find((s) => s.view === "campaigns")!;
+  assert.equal(on.text, CAMPAIGNS_ON_TEXT);
+  assert.match(off.text, /^Coming soon/);
+  assert.equal(tourSteps(true).length, TOUR_STEPS.length);
+  assert.doesNotMatch(CAMPAIGNS_ON_TEXT, /—/);
+});

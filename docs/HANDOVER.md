@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.07** | [Campaigns: clients edit their own emails, 17 November](#007-campaigns-clients-edit-their-own-emails-17-november) — the portal's Campaigns tab; rules enforced on the server; live in EmailBison at once; Demo Portal first (migration 0052), real portals behind `OS_PORTAL_CAMPAIGNS`
 | **0.06** | [Pay per lead: the portal's Billing page, and prospect adds EmailBison never applied, 16 November](#006-pay-per-lead-the-portals-billing-page-and-prospect-adds-emailbison-never-applied-16-november) — pay-per-lead portals show their periods and leads; the sync counts an add done only when the campaign's own list shows it; Hetherington's 23 missing prospects put back
 | **0.05** | [Inboxes: replies and positive replies, by inbox and by domain, 14 November](#005-inboxes-replies-and-positive-replies-by-inbox-and-by-domain-14-november) — three Master Inbox columns on every inbox and a Domains view ranked by positive replies; positive = marked Interested in Master Inbox |
 | **0.04** | [A stop label from the selection bar stops the person, 14 November](#004-a-stop-label-from-the-selection-bar-stops-the-person-14-november) — Hostile / Unsubscribe / Do Not Contact / Add to Blocklist applied to several conversations at once now block and unsubscribe each person, as one conversation always did |
@@ -216,6 +217,54 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.07 Campaigns: clients edit their own emails, 17 November
+
+NOT DEPLOYED. Built on branch `feat/portal-campaigns` (worktree `~/wt/os-campaigns`). Needs migration **0052** run
+first (one new, empty table for the Demo Portal's sample campaigns).
+
+**Asked** (Slack, 16 Nov): clients edit their campaigns' emails on the portal's Campaigns tab (Eddy: "we purposely
+left a campaign tab with coming soon"), any time, with no approval, because the copy must fit rules: at most 125
+words, no links or images (Amy). They may change the number of emails and the days between them; edits go live
+straight away; every change is posted to #portal-update.
+
+**Who sees it.** The Demo Portal always. A real portal only while `OS_PORTAL_CAMPAIGNS` names it (`all`, or portal
+ids, comma separated); otherwise its page stays "Coming soon" and the API is a bare 404. Staff on a real portal can
+edit too (staff act on every portal), unless it is switched off or held for an unpaid invoice.
+
+**Whose campaigns.** The client's own EmailBison campaigns, by the prospect sync's rule: the strict mapping in
+Analytics (`campaignsOfClient`) plus the ones made at setup; for a client with several portals, only those routed to
+this portal (`os_campaign_portals`). Every read and save re-checks. Finished campaigns are read only and folded
+behind "Show N finished campaigns".
+
+**What a client can do** (`lib/crm-preview/campaign-copy.ts`, pure; the browser runs the same code): change wording
+and subjects, the days between emails (1 to 30), whether a follow-up is a reply in the same thread, add emails at the
+end (10 at most; a longer campaign the team made can still be edited), remove an email that hasn't been sent and has
+no A/B versions (never the first), edit each A/B version. **Rules, on what they change only:** plain text; no links,
+web or email addresses, images, formatting (also when split across choices: `acme{.|.}com`); at most 125 words (each
+choice at its longest); subjects at most 60 characters; only fields the campaign can fill ({FIRST_NAME},
+{SENDER_FIRST_NAME}, {SENDER_FULL_NAME}, and any the campaign already uses). An email they don't touch is never
+rewritten, even if it breaks a rule. The team's 2,155 emails were run through the rules: no false link flags.
+
+**The save** (`lib/crm-preview/campaigns.ts`): refused if the campaign changed since the page read it (a fingerprint
+of every step); removals first (a refused one stops the save, nothing changed), then changed steps, then new ones;
+read back and returned. **EmailBison facts, checked live 17 Nov on throwaway campaigns that could not send:** a
+running campaign's steps can be updated, added and deleted with no pause; deleting an email renumbers the ones after
+it by itself; A/B versions keep their own numbers and are NEVER renumbered by us (doing so shifts emails); a version
+needs `variant_from_step_id` on update (the field the Sequence tab's 26 Oct failures lacked); a version must be created
+in the same request as its email; a reply goes out as "Re: <the subject that agent got on email 1>", whatever subject
+the reply step stores; `{{FIRST_NAME}}` sends like `{FIRST_NAME}`. Each save writes one `portal-edit-sequence` row to
+Analytics `campaign_audit_log` (steps as they were, to restore from) and posts to #portal-update with a link to the
+campaign in the OS.
+
+**Tested:** unit 3,603/3,603 (rules, plan, saves with a fake EmailBison, routes, the portal's guard tests); live
+round trip on a running throwaway campaign 17/17; browser (local build, writes guarded): Demo 64/64 and 34/34, real
+portals read only 22/22 (22 portals, 88 emails, 35 versions), Coming soon unchanged with the switch off 5/5. An
+independent review's 11 findings were fixed and re-tested.
+
+**To ship:** run 0052 → deploy → check the Demo Portal's Campaigns tab → later set `OS_PORTAL_CAMPAIGNS` (start with
+BrokerStaffer's own portal). Before real clients: Eddy to approve the Help answer "Can I change my emails?" (still
+says "ask support"); campaign names show as named in EmailBison (internal codes like "ZF NS1" included).
 
 ## 0.06 Pay per lead: the portal's Billing page, and prospect adds EmailBison never applied, 16 November
 

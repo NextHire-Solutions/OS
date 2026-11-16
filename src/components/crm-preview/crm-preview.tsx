@@ -23,6 +23,7 @@ import { PipelineScreen } from "./pipeline";
 import { BillingScreen, DncScreen, IntegrationsScreen, MyAgentsScreen, TeamScreen } from "./pages";
 import { MarketScreen, ReportsScreen } from "./market";
 import { CampaignsScreen, HelpScreen } from "./static-pages";
+import { CampaignsPage } from "./campaigns";
 import logo from "./brokerstaffer-logo.png";
 
 export interface PreviewClient {
@@ -81,6 +82,8 @@ export function CrmPreview({
   now,
   audience = "staff",
   manageBilling = true,
+  campaignsOn = false,
+  initialCampaign = null,
 }: {
   client: PreviewClient;
   portals: Array<{ id: string; name: string }>;
@@ -114,6 +117,10 @@ export function CrmPreview({
   audience?: "staff" | "client";
   /** "Manage billing" (the client's Stripe page): the client, and of staff only the Billing tab's people (3 Nov). */
   manageBilling?: boolean;
+  /** Campaigns is the real page here (17 Nov, campaigns.ts campaignsOn): the Demo Portal, and real portals once switched on. */
+  campaignsOn?: boolean;
+  /** The campaign the address names (?campaign=), opened on the Campaigns page. */
+  initialCampaign?: string | null;
 }) {
   const [view, setView] = useState<PreviewView>(initialView);
   // The Help article open (its slug; the address's ?article=), and the page the tour started from — set while it runs.
@@ -178,7 +185,25 @@ export function CrmPreview({
   const today = useMemo(() => new Date(now), [now]);
 
   const hrefFor = (v: PreviewView) => `/crm-preview?client=${encodeURIComponent(client.id)}&view=${v}`;
-  const go = (v: PreviewView) => {
+  /*
+   * A page with unsaved changes (the Campaigns editor) registers here; leaving it asks first. Clicking Campaigns while
+   * on it goes back to its list (a new key), so it asks then too.
+   */
+  const leaveGuard = useRef<(() => boolean) | null>(null);
+  const onGuard = useCallback((fn: (() => boolean) | null) => { leaveGuard.current = fn; }, []);
+  const [pendingView, setPendingView] = useState<PreviewView | null>(null);
+  // The question came from the browser's Back; leaving goes Back again, the guard stepping aside once.
+  const [pendingBack, setPendingBack] = useState(false);
+  const backing = useRef(false);
+  const [campaignsKey, setCampaignsKey] = useState(0);
+  const [startCampaign, setStartCampaign] = useState<string | null>(initialCampaign);
+  const go = (v: PreviewView, force = false) => {
+    if (!force && (v !== view || v === "campaigns") && leaveGuard.current?.()) {
+      setDrawer(false);
+      setPendingView(v);
+      return;
+    }
+    if (v === "campaigns") { setCampaignsKey((n) => n + 1); setStartCampaign(null); }
     setDrawer(false);
     setView(v);
     setArticle(null);
@@ -200,6 +225,16 @@ export function CrmPreview({
     const onBack = () => {
       const p = new URLSearchParams(window.location.search);
       const v = p.get("view");
+      // Back from a page with unsaved changes (the Campaigns editor): stay, put the address back, and ask first. Leaving
+      // then goes Back for real (`backing`), to exactly the page it came from (a Help article too).
+      if (backing.current) backing.current = false;
+      else if (leaveGuard.current?.()) {
+        const open = document.querySelector("[data-cmp-campaign]")?.getAttribute("data-cmp-campaign");
+        window.history.pushState(null, "", `${hrefFor("campaigns")}${open ? `&campaign=${encodeURIComponent(open)}` : ""}`);
+        setPendingBack(true);
+        setPendingView((PREVIEW_VIEWS as readonly string[]).includes(v ?? "") ? (v as PreviewView) : "pipeline");
+        return;
+      }
       if ((PREVIEW_VIEWS as readonly string[]).includes(v ?? "")) setView(v as PreviewView);
       setArticle(p.get("article"));
     };
@@ -220,7 +255,17 @@ export function CrmPreview({
   };
   const toastNote = toast ? <div className={toast.bad ? "cpv-toast cpv-bad" : "cpv-toast"} role={toast.bad ? "alert" : "status"}>{toast.text}</div> : null;
 
-  const openSetup = () => { setStep(1); setView("setup"); setContext(null); window.history.replaceState(null, "", `${hrefFor("setup")}&step=1`); window.scrollTo(0, 0); };
+  const openSetup = (force = false) => {
+    if (!force && leaveGuard.current?.()) { setDrawer(false); setPendingView("setup"); return; }
+    setStep(1); setView("setup"); setContext(null); window.history.replaceState(null, "", `${hrefFor("setup")}&step=1`); window.scrollTo(0, 0);
+  };
+  // The leave question closes on Escape, as every dialog here.
+  useEffect(() => {
+    if (!pendingView) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { setPendingView(null); setPendingBack(false); } };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [pendingView]);
   const [leaving, setLeaving] = useState(false);
   // A client's sign-out: this browser's session ends (api/portal-signin/signout), back to the sign-in page.
   const signOut = async () => {
@@ -314,7 +359,7 @@ export function CrmPreview({
                   >
                     <Icon name={item.icon} size={17} />
                     <span className={k("t")}>{item.label}</span>
-                    {item.badge ? <span className={k("bd")}>{item.badge}</span> : null}
+                    {item.badge && !(v === "campaigns" && campaignsOn) ? <span className={k("bd")}>{item.badge}</span> : null}
                   </a>
                 );
               })}
@@ -336,7 +381,7 @@ export function CrmPreview({
               <div className="cpv-uacts">
                 {offer === null ? (
                   <>
-                    <button type="button" onClick={openSetup}>Setup wizard</button>
+                    <button type="button" onClick={() => openSetup()}>Setup wizard</button>
                     <span aria-hidden="true">·</span>
                   </>
                 ) : null}
@@ -360,7 +405,11 @@ export function CrmPreview({
           ) : view === "reports" ? (
             <ReportsScreen clientId={client.id} entries={entries} onContext={setContext} />
           ) : view === "campaigns" ? (
-            <CampaignsScreen onChat={() => setChat(true)} />
+            campaignsOn ? (
+              <CampaignsPage key={campaignsKey} clientId={client.id} initialCampaign={startCampaign} onChat={() => setChat(true)} onGuard={onGuard} />
+            ) : (
+              <CampaignsScreen onChat={() => setChat(true)} />
+            )
           ) : view === "help" ? (
             <HelpScreen onChat={() => setChat(true)} onTour={startTour} article={article} hrefOf={articleHref} onArticle={openArticle} />
           ) : view === "agents" ? (
@@ -400,7 +449,30 @@ export function CrmPreview({
         </a>
         {toastNote}
       </div>
-      {tourFrom ? <Tour go={go} onClose={endTour} /> : null}
+      {tourFrom ? <Tour go={go} onClose={endTour} campaignsOn={campaignsOn} /> : null}
+      {pendingView ? (
+        <div className={`${k("ov")} cpv-leave-ov`} onClick={(e) => { if (e.target === e.currentTarget) { setPendingView(null); setPendingBack(false); } }}>
+          <div className={k("dlg")} role="alertdialog" aria-modal="true" aria-labelledby="cpv-leave-title" aria-describedby="cpv-leave-text" style={{ width: 440, maxWidth: "calc(100vw - 32px)" }}>
+            <div className={k("dh")}>
+              <h2 id="cpv-leave-title">Leave without saving?</h2>
+              <button type="button" className={k("ib")} aria-label="Close" onClick={() => { setPendingView(null); setPendingBack(false); }}><Icon name="x" size={16} /></button>
+            </div>
+            <div className={k("db")}><p id="cpv-leave-text" style={{ margin: 0, color: "#555a64", lineHeight: 1.55 }}>Your changes to this campaign&apos;s emails haven&apos;t been saved and will be lost.</p></div>
+            <div className={k("df")}>
+              {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the safe choice, as every leave question here */}
+              <button type="button" className={k("btn")} autoFocus onClick={() => { setPendingView(null); setPendingBack(false); }}>Keep editing</button>
+              <button type="button" className={k("btn danger")} onClick={() => {
+                const v = pendingView;
+                const back = pendingBack;
+                setPendingView(null);
+                setPendingBack(false);
+                if (back) { leaveGuard.current = null; backing.current = true; window.history.back(); return; }
+                if (v === "setup") openSetup(true); else go(v, true);
+              }}>Discard changes</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       </div>
       )}
     </DemoContext.Provider>

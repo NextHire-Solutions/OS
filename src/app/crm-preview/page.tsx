@@ -57,6 +57,7 @@ import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags
 import { CrmPreview } from "@/components/crm-preview/crm-preview";
 import { clientForPortal, type OsClientRow } from "@/lib/crm-preview/market-model";
 import { isDemoPortal } from "@/lib/crm-preview/demo";
+import { campaignsOn } from "@/lib/crm-preview/campaigns";
 import { warmPortalMarket } from "@/lib/crm-preview/market";
 import { osTable } from "@/lib/clients/os-db";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/tools/master-inbox/portals/flag";
@@ -69,6 +70,7 @@ import { SessionKeeper } from "@/components/shell/session-keeper";
 import "./crm-preview.css";
 import "./preview.css";
 import "./mobile.css";
+import "./campaigns.css";
 
 export const dynamic = "force-dynamic";
 
@@ -263,6 +265,9 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       initialStep={step}
       initialArticle={one(params.article) || null}
       initialThread={one(params.thread) || null}
+      // Campaigns: the real page on the Demo Portal, and on a real portal once OS_PORTAL_CAMPAIGNS has it on (17 Nov).
+      campaignsOn={campaignsOn(client.id as string)}
+      initialCampaign={one(params.campaign) || null}
       now={new Date().toISOString()}
     />,
   );

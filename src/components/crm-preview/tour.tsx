@@ -10,11 +10,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { PreviewView } from "@/lib/crm-preview/model";
-import { CARD_WIDTH, cardPlace, holeRadius, TOUR_STEPS } from "@/lib/crm-preview/tour-steps";
+import { CARD_WIDTH, cardPlace, holeRadius, tourSteps } from "@/lib/crm-preview/tour-steps";
 
 type Hole = { top: number; left: number; width: number; height: number; borderRadius: number };
 
-export function Tour({ go, onClose }: { go: (view: PreviewView) => void; onClose: () => void }) {
+export function Tour({ go, onClose, campaignsOn = false }: { go: (view: PreviewView) => void; onClose: () => void; campaignsOn?: boolean }) {
+  const TOUR_STEPS = tourSteps(campaignsOn);
   const [at, setAt] = useState(0);
   const [hole, setHole] = useState<Hole | null>(null);
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);

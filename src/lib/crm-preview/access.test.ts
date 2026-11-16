@@ -58,13 +58,13 @@ const ROUTES = filesUnder("src/app/api/crm-preview").filter((r) => r !== FORWARD
 const PREVIEW_FILES = [...filesUnder("src/app/crm-preview"), ...ROUTES, ...filesUnder("src/components/crm-preview"), ...filesUnder("src/lib/crm-preview")];
 
 test("the preview's routes: the reviewers, or a signed-in client on their own open portal — checked first; anyone else a bare 404; GET, except the chat's POST", () => {
-  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["ask-person/route.ts", "billing-periods/route.ts", "billing/route.ts", "chat/route.ts", "conversation/route.ts", "export/route.ts", "market/route.ts", "person-chat/route.ts", "report/route.ts", "save/route.ts"]);
+  assert.deepEqual(ROUTES.map((r) => path.relative("src/app/api/crm-preview", r)).sort(), ["ask-person/route.ts", "billing-periods/route.ts", "billing/route.ts", "campaign-save/route.ts", "campaigns/route.ts", "chat/route.ts", "conversation/route.ts", "export/route.ts", "market/route.ts", "person-chat/route.ts", "report/route.ts", "save/route.ts"]);
   assert.match(read(FORWARDER), /^export \{ POST \} from "\.\.\/save\/route";$/m, "the old address only forwards to /save");
   assert.doesNotMatch(read(FORWARDER), /function|import /, "and has nothing of its own");
   for (const r of ROUTES) {
     const src = read(r);
     const methods = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
-    assert.deepEqual(methods, [r.includes("/chat/") || r.includes("/save/") || r.includes("/ask-person/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
+    assert.deepEqual(methods, [r.includes("/chat/") || r.includes("/save/") || r.includes("/ask-person/") || r.includes("/campaign-save/") ? "POST" : "GET"], `${r}: ${methods.join(", ")}`);
     assert.doesNotMatch(src, /canSeeCrmPreview\(|verifySso\(/, `${r}: the one gate, not its own`);
     const gate = src.indexOf("crmViewerOf(request)");
     assert.ok(gate > 0, `${r} calls the gate`);
@@ -74,11 +74,11 @@ test("the preview's routes: the reviewers, or a signed-in client on their own op
     assert.ok(own > gate, `${r}: checks the portal is the viewer's`);
     assert.match(src.slice(own, own + 120), /\)\) return new NextResponse\(null, \{ status: 404 \}\)/, `${r}: a bare 404 for a portal not theirs`);
     const start = src.indexOf(`export async function ${methods[0]}`);
-    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "runPortalAction(", "createAdminSupabase(", "portalBillingPage("]) {
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "searchParams", "request.json(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "runPortalAction(", "createAdminSupabase(", "portalBillingPage(", "listCampaigns(", "readCampaign(", "saveCampaign(", "campaignSaveLock("]) {
       const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > gate, `${r}: ${load} only after the gate`);
     }
-    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "runPortalAction(", "portalBillingPage(", "admit("]) {
+    for (const load of ["marketContext(", "marketPage(", "marketReport(", "marketOptions(", "portalClient(", "loadPortalChatData(", "answer(", "getAccountBilling(", "billingPortalUrl(", "runDemoAction(", "runPortalAction(", "portalBillingPage(", "admit(", "listCampaigns(", "readCampaign(", "saveCampaign(", "campaignSaveLock("]) {
       const at = src.indexOf(load, start);
       assert.ok(at === -1 || at > own, `${r}: ${load} only after the portal check`);
     }
@@ -86,7 +86,7 @@ test("the preview's routes: the reviewers, or a signed-in client on their own op
     if (!r.includes("/save/")) {
       const closed = src.indexOf("if (await closedToClient(viewer, client as string)) return new NextResponse(null, { status: 404 });");
       assert.ok(closed > own, `${r}: a switched-off or held portal is closed to its client`);
-      for (const load of ["marketContext(", "marketPage(", "marketReport(", "portalClient(", "loadPortalChatData(", "getAccountBilling(", "billingPortalUrl(", "portalBillingPage(", "admit("]) {
+      for (const load of ["marketContext(", "marketPage(", "marketReport(", "portalClient(", "loadPortalChatData(", "getAccountBilling(", "billingPortalUrl(", "portalBillingPage(", "admit(", "listCampaigns(", "readCampaign(", "saveCampaign(", "campaignSaveLock("]) {
         const at = src.indexOf(load, start);
         assert.ok(at === -1 || at > closed, `${r}: ${load} only after the closed check`);
       }
@@ -140,16 +140,38 @@ test("the page checks who is looking before it reads anything, and the portal is
  */
 const WRITER = "src/lib/crm-preview/demo.ts";
 const PORTAL_WRITER = "src/lib/crm-preview/portal-save.ts";
+// The Campaigns page (17 Nov): a campaign's emails, written to EmailBison; the Demo's own samples; the campaign's history.
+const CAMPAIGN_WRITER = "src/lib/crm-preview/campaigns.ts";
 
-test("read-only: nothing in the preview writes to a database or calls a server action — except the saves, in two files", () => {
+test("read-only: nothing in the preview writes to a database or calls a server action — except the saves, in three files", () => {
   assert.ok(PREVIEW_FILES.length >= 4, PREVIEW_FILES.join(", "));
-  assert.ok(PREVIEW_FILES.includes(WRITER) && PREVIEW_FILES.includes(PORTAL_WRITER));
+  assert.ok(PREVIEW_FILES.includes(WRITER) && PREVIEW_FILES.includes(PORTAL_WRITER) && PREVIEW_FILES.includes(CAMPAIGN_WRITER));
   const WRITES = [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /["']use server["']/, /formAction/, /navigator\.sendBeacon/];
-  for (const f of PREVIEW_FILES.filter((f) => f !== WRITER && f !== PORTAL_WRITER)) for (const w of WRITES) assert.doesNotMatch(read(f), w, `${f} matches ${w}`);
+  for (const f of PREVIEW_FILES.filter((f) => f !== WRITER && f !== PORTAL_WRITER && f !== CAMPAIGN_WRITER)) for (const w of WRITES) assert.doesNotMatch(read(f), w, `${f} matches ${w}`);
   assert.doesNotMatch(read(WRITER), /\.upsert\(|["']use server["']/);
   // Only the save route runs them (the old /demo address forwards to it).
   for (const f of PREVIEW_FILES.filter((f) => f !== WRITER && f !== "src/app/api/crm-preview/save/route.ts")) assert.doesNotMatch(read(f), /runDemoAction/, f);
   for (const f of PREVIEW_FILES.filter((f) => f !== PORTAL_WRITER && f !== "src/app/api/crm-preview/save/route.ts")) assert.doesNotMatch(read(f), /runPortalAction/, f);
+});
+
+/*
+ * campaigns.ts (17 Nov): the Demo's sample campaigns (its own table, its own rows, never deleted) and one history row
+ * per save of a real campaign; the emails themselves only through the EmailBison client's three sequence calls, and
+ * every save only through saveCampaign — which the save route alone runs.
+ */
+test("the Campaigns page's writes: the Demo's samples, the campaign's history, and the emails through EmailBison's sequence calls — nothing else", () => {
+  const src = read(CAMPAIGN_WRITER);
+  assert.doesNotMatch(src, /\.delete\(|["']use server["']|\.rpc\(/);
+  const writes = [...src.matchAll(/\.from\(([^)]+)\)\s*\.(insert|update|upsert)\(/g)].map((m) => `${m[1]}.${m[2]}`).sort();
+  assert.deepEqual(writes, ['"campaign_audit_log".insert', '"os_demo_campaigns".update', '"os_demo_campaigns".upsert']);
+  // The Demo's rows: only this portal's, only if unchanged since read; samples made only where none exist.
+  assert.match(src, /\.from\("os_demo_campaigns"\)\s*\.update\(\{ steps, updated_at: [^}]+\}\)\s*\.eq\("portal_id", portalId\)\s*\.eq\("campaign_id", campaignId\)\s*\.eq\("updated_at", updatedAt\)/);
+  assert.match(src, /\{ onConflict: "portal_id,campaign_id", ignoreDuplicates: true \}/);
+  assert.match(src, /if \(rows\.length \|\| portalId !== DEMO_PORTAL_ID\) return rows;/, "samples only on the Demo Portal");
+  // EmailBison: only the sequence's own three calls.
+  const eb = [...src.matchAll(/eb\(\)\.(\w+)\(/g)].map((m) => m[1]).sort();
+  assert.deepEqual([...new Set(eb)], ["createSequenceSteps", "deleteSequenceStep", "getCampaign", "getCampaignSequenceSteps", "updateSequenceSteps"]);
+  for (const f of PREVIEW_FILES.filter((f) => f !== CAMPAIGN_WRITER && f !== "src/app/api/crm-preview/campaign-save/route.ts")) assert.doesNotMatch(read(f), /saveCampaign\(/, f);
 });
 
 /*
@@ -211,6 +233,9 @@ const BROWSER_REQUESTS = [
   /^\/api\/crm-preview\/ask-person$/,
   /^\/api\/crm-preview\/person-chat\?\$\{[^}]+\}$/,
   /^\/api\/crm-preview\/save$/,
+  // Campaigns (17 Nov): the client's campaigns and one campaign's emails; a save of them.
+  /^\/api\/crm-preview\/campaigns\?client=\$\{[^}]+\}(&campaign=\$\{[^}]+\})?$/,
+  /^\/api\/crm-preview\/campaign-save$/,
   // Export (2 Nov): the list on screen as a file — a client's own Prospects; staff, Market too.
   /^\/api\/crm-preview\/export\?\$\{[^}]+\}$/,
   // A signed-in client's Sign out (27 Oct): ends this browser's session.
@@ -220,7 +245,7 @@ const SERVER_REQUESTS: Record<string, RegExp[]> = {
   "src/lib/crm-preview/chat.ts": [/^https:\/\/api\.openai\.com\/v1\/chat\/completions$/],
   "src/lib/crm-preview/billing-portal.ts": [/^\$\{STRIPE\}\/billing_portal\/configurations\?limit=100&active=true$/, /^\$\{STRIPE\}\/billing_portal\/sessions$/],
 };
-const POSTS: Record<string, number> = { "src/components/crm-preview/crm-preview.tsx": 1, "src/components/crm-preview/chat.tsx": 2, "src/components/crm-preview/demo-save.ts": 1, "src/lib/crm-preview/chat.ts": 1, "src/lib/crm-preview/billing-portal.ts": 1 };
+const POSTS: Record<string, number> = { "src/components/crm-preview/campaigns.tsx": 1, "src/components/crm-preview/crm-preview.tsx": 1, "src/components/crm-preview/chat.tsx": 2, "src/components/crm-preview/demo-save.ts": 1, "src/lib/crm-preview/chat.ts": 1, "src/lib/crm-preview/billing-portal.ts": 1 };
 
 test("requests: the preview's reads, the chat's two POSTs, OpenAI from the server, and Stripe's billing page — nothing else", () => {
   for (const f of PREVIEW_FILES) {
