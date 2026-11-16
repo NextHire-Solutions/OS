@@ -686,7 +686,7 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
               </div>
             ) : null}
             <div className={k("card")} style={{ overflow: "hidden" }}>
-              <table className={k("tb")}>
+              <table className={k("tb bills")}>
                 <thead>
                   <tr>
                     <th scope="col">Billing period</th>
@@ -699,9 +699,9 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
                   {periods.map((p) => (
                     <tr key={`${p.start}:${p.end}`}>
                       <td><span className={k("nm")}>{periodText(p.start, p.end)}</span>{p.current ? <span className={k("tag")} style={{ marginLeft: 8 }}>Current</span> : null}</td>
-                      <td>{p.invoice ?? <Dash />}</td>
+                      <td className={p.invoice ? undefined : k("noinv")}>{p.invoice ?? <Dash />}</td>
                       <td><span className={k(p.pill[1])}>{p.pill[0]}</span></td>
-                      <td className={k("r")} style={{ fontVariantNumeric: "tabular-nums" }}>{p.count === null ? <Dash /> : p.count.toLocaleString("en-US")}</td>
+                      <td className={k("r")} style={{ fontVariantNumeric: "tabular-nums" }}>{p.count === null ? <Dash /> : <>{p.count.toLocaleString("en-US")}<span className={k("bunit")}> {unit(p.count)}</span></>}</td>
                     </tr>
                   ))}
                 </tbody>
