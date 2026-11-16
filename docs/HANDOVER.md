@@ -251,9 +251,9 @@ counted). A pay-per-lead client's invoices are the OS's own, one line per lead, 
 - **Manage billing** opens the client's one Stripe customer. Checked live for both clients: it is the same customer
   the per-lead invoices are on.
 
-Two design notes, not changed: once a client is live per lead, the page shows per-lead periods even for months it
-was on a subscription; and periods start at `anchor_date`, so an anchor set earlier than go-live would list periods
-before it.
+Two design notes, not changed: once a client is live per lead, its older subscription invoices are no longer listed
+on this page (they stay in Stripe, behind Manage billing); and periods start at `anchor_date`, so an anchor set
+earlier than go-live would list periods before it (as "No charge" or "Not billed yet").
 
 Verified live in Chrome (GET only, writes blocked): 46/46 checks for Homebase and Hetherington at 1440px and 390px,
 plus The Toll Group (subscription) unchanged at both widths.
