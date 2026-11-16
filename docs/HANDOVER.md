@@ -226,6 +226,10 @@ recommendation to revoke the secrets stored in Railway.
 Elliman Real Estate") pays for two clients: Las Vegas's subscription and Los Angeles's (churned in the OS). Every
 invoice on it belongs to exactly one of the two subscriptions.
 
+LIVE 17 Nov (`6cf2f1f`, Railway `961ba129`); live check 37/37 with the Campaigns one (Las Vegas desktop and phone: its
+8 invoices linked, no Manage billing, the note; an invoice link opens at Stripe; every live portal's data answers and
+only Las Vegas is on a shared card).
+
 **Now** (`billing-pick.ts invoiceScope`, used by `billing-page.ts`): on a customer that is the client's alone,
 nothing changes. On a shared one, the page lists only invoices of the client's OWN subscriptions (owned by a link,
 the record, or the OS having made it; never a guess, never one another client lists); "Manage billing" is hidden
@@ -236,8 +240,9 @@ invoice (view, PDF). Checked read only on every live portal: only Las Vegas chan
 
 ## 0.07 Campaigns: clients edit their own emails, 17 November
 
-NOT DEPLOYED. Built on branch `feat/portal-campaigns` (worktree `~/wt/os-campaigns`). Needs migration **0052** run
-first (one new, empty table for the Demo Portal's sample campaigns).
+LIVE 17 Nov on the Demo Portal (`ea98ca0` + `5e1e282`, Railway `961ba129`; migration **0052** run by the user first).
+Real portals stay "Coming soon" until `OS_PORTAL_CAMPAIGNS` names them. Live check 17 Nov: Demo list, editor, a real
+save on the Demo's sample and back (row identical after), phone; real portals Coming soon and their data a bare 404.
 
 **Asked** (Slack, 16 Nov): clients edit their campaigns' emails on the portal's Campaigns tab (Eddy: "we purposely
 left a campaign tab with coming soon"), any time, with no approval, because the copy must fit rules: at most 125
