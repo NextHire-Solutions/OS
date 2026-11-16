@@ -313,6 +313,49 @@ function render(tokens: Token[], pick: (options: Token[][]) => Token[], fill: (k
 
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
 
+/*
+ * The most words the copy can come out with, exactly: a word starts wherever a non-space follows a space (or the start),
+ * so words merge or split where a choice meets its neighbours ("x{a b c| a b }y" can be 4 words). For each piece:
+ * the most words it adds, by whether the text before it ended mid-word and whether it ends mid-word. Choices take the
+ * best option for each pair; each choice is worked out once.
+ */
+type Edge = [[number, number], [number, number]]; // [startsMidWord][endsMidWord] -> most words added
+const NONE = Number.NEGATIVE_INFINITY;
+function textEdge(text: string): Edge {
+  const out: Edge = [[NONE, NONE], [NONE, NONE]];
+  for (const s0 of [0, 1] as const) {
+    let state = s0, n = 0;
+    for (const ch of text) {
+      const space = /\s/.test(ch);
+      if (!space && state === 0) n++;
+      state = space ? 0 : 1;
+    }
+    out[s0][state] = Math.max(out[s0][state], n);
+  }
+  return out;
+}
+const IDENTITY: Edge = [[0, NONE], [NONE, 0]];
+function compose(a: Edge, b: Edge): Edge {
+  const out: Edge = [[NONE, NONE], [NONE, NONE]];
+  for (const s of [0, 1]) for (const m of [0, 1]) for (const e of [0, 1]) out[s][e] = Math.max(out[s][e], a[s][m] + b[m][e]);
+  return out;
+}
+function maxWords(tokens: Token[]): number {
+  const memo = new WeakMap<Token, Edge>();
+  const seq = (ts: Token[]): Edge => ts.reduce<Edge>((acc, t) => compose(acc, piece(t)), IDENTITY);
+  const piece = (t: Token): Edge => {
+    if (t.kind === "text") return textEdge(t.value);
+    if (t.kind === "field") return textEdge("W");
+    const hit = memo.get(t);
+    if (hit) return hit;
+    const out = t.options.map(seq).reduce<Edge>((best, o) => [[Math.max(best[0][0], o[0][0]), Math.max(best[0][1], o[0][1])], [Math.max(best[1][0], o[1][0]), Math.max(best[1][1], o[1][1])]], [[NONE, NONE], [NONE, NONE]]);
+    memo.set(t, out);
+    return out;
+  };
+  const e = seq(tokens);
+  return Math.max(e[0][0], e[0][1], 0);
+}
+
 /** Words in the longest way the copy can come out (each choice at its longest; a field is one word). Bad braces: null. */
 export function wordCount(text: string): number | null {
   let tokens: Token[];
@@ -321,7 +364,7 @@ export function wordCount(text: string): number | null {
   } catch {
     return null;
   }
-  return words(longestRender(tokens, () => "W", words));
+  return maxWords(tokens);
 }
 
 const sampleOf = (key: string) => STANDARD_FIELDS.find((f) => f.key === key)?.sample ?? null;
@@ -366,62 +409,50 @@ const LINK_PATTERNS: Array<[RegExp, string]> = [
 
 /**
  * A link split across choices — "acme{.|.}com", "bob{@|@}gmail{.|.}com" — reads as text above but goes out as a link
- * (independent review, 17 Nov). A link has no spaces in it, so only choices joined to each other and to the words
- * around them, with no space between, can build one: every way each such run can come out is checked. Fields count as
- * a word. A run with more ways than CAP is refused rather than half-checked (spaces between the choices fix it).
+ * (independent review, 17 Nov). A link has no spaces in it, so every WORD the copy can come out with is checked, a word
+ * being built as the copy is read: the words open at each point are carried forward (each choice adds its options'
+ * endings), and every word finished by a space is checked once. Only the open word crosses a choice's edge, so a
+ * paragraph-long choice carries one word, not every way its inside can come out. Fields count as a word. Past CAP
+ * open words (choices glued together with no spaces) the text is refused rather than half-checked.
  */
 const CAP = 5000;
+const TOO_MANY = "Too many choices are joined together without spaces here. Put a space between them.";
 function hiddenLink(tokens: Token[]): string | null {
-  const TOO_MANY = "Too many choices are joined together here. Put a space between them.";
+  const seen = new Set<string>();
+  let found: string | null = null;
   let tooMany = false;
-  const allWays = (ts: Token[]): string[] => {
-    let acc = [""];
+  const word = (w: string) => {
+    if (!w || found || seen.has(w)) return;
+    seen.add(w);
+    for (const [re, message] of LINK_PATTERNS) {
+      const m = re.exec(w);
+      if (m) { found = `${message} ("${clip(m[0])}").`; return; }
+    }
+  };
+  const walk = (ts: Token[], open: Set<string>): Set<string> => {
+    let cur = open;
     for (const t of ts) {
-      const opts = t.kind === "text" ? [t.value] : t.kind === "field" ? ["x"] : t.options.flatMap(allWays);
-      // Every way, or a refusal — never a list cut short (a link could sit in the part cut off).
-      if (acc.length * opts.length > CAP) { tooMany = true; return [""]; }
-      acc = acc.flatMap((a) => opts.map((o) => a + o));
-    }
-    return acc;
-  };
-  type Piece = { text: string } | { ways: string[] };
-  let run: Piece[] = [];
-  const check = (): string | null => {
-    const r = run;
-    run = [];
-    if (!r.some((p) => "ways" in p)) return null;
-    let all = [""];
-    for (const p of r) {
-      const next = "text" in p ? [p.text] : p.ways;
-      if (all.length * next.length > CAP) return TOO_MANY;
-      all = all.flatMap((a) => next.map((n) => a + n));
-    }
-    for (const str of all) {
-      for (const [re, message] of LINK_PATTERNS) {
-        const m = re.exec(str);
-        if (m) return `${message} ("${clip(m[0])}").`;
+      if (found || tooMany) return cur;
+      if (t.kind === "spin") {
+        const next = new Set<string>();
+        for (const option of t.options) {
+          for (const w of walk(option, cur)) next.add(w);
+          if (next.size > CAP) { tooMany = true; return cur; }
+        }
+        cur = next;
+        continue;
       }
+      const text = t.kind === "field" ? "x" : t.value;
+      const parts = text.split(/\s+/);
+      if (parts.length === 1) { cur = new Set([...cur].map((o) => o + text)); continue; }
+      for (const o of cur) word(o + parts[0]);
+      for (const middle of parts.slice(1, -1)) word(middle);
+      cur = new Set([parts[parts.length - 1]]);
     }
-    return null;
+    return cur;
   };
-  for (const t of tokens) {
-    if (t.kind === "spin") {
-      const ways = t.options.flatMap(allWays);
-      if (tooMany || ways.length > CAP) return TOO_MANY;
-      run.push({ ways });
-      continue;
-    }
-    const text = t.kind === "field" ? "x" : t.value;
-    const first = text.search(/\s/);
-    if (first === -1) { run.push({ text }); continue; }
-    // The words up to the first space end this run; those after the last space start the next.
-    run.push({ text: text.slice(0, first) });
-    const p = check();
-    if (p) return p;
-    const last = text.search(/\S*$/);
-    run = [{ text: text.slice(last) }];
-  }
-  return check();
+  for (const o of walk(tokens, new Set([""]))) word(o);
+  return found ?? (tooMany ? TOO_MANY : null);
 }
 
 /** What is wrong with one piece of copy, or null. `kind` picks the length rule. */

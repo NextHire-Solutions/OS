@@ -227,8 +227,13 @@ export function CrmPreview({
       const v = p.get("view");
       // Back from a page with unsaved changes (the Campaigns editor): stay, put the address back, and ask first. Leaving
       // then goes Back for real (`backing`), to exactly the page it came from (a Help article too).
-      if (backing.current) backing.current = false;
-      else if (leaveGuard.current?.()) {
+      if (backing.current) {
+        // Leaving after "Discard changes": wherever Back landed, the editor goes (a page with no view is the default one).
+        backing.current = false;
+        setView((PREVIEW_VIEWS as readonly string[]).includes(v ?? "") ? (v as PreviewView) : "pipeline");
+        setArticle(p.get("article"));
+        return;
+      } else if (leaveGuard.current?.()) {
         const open = document.querySelector("[data-cmp-campaign]")?.getAttribute("data-cmp-campaign");
         window.history.pushState(null, "", `${hrefFor("campaigns")}${open ? `&campaign=${encodeURIComponent(open)}` : ""}`);
         setPendingBack(true);

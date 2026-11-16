@@ -464,3 +464,20 @@ test("what can be removed: not the first, not sent, not off, and no A/B versions
   const m2 = copyModel(campaign());
   assert.deepEqual(m2.emails.map((e) => e.removable), [false, true, true]);
 });
+
+/* -------------------------------------------------------------- the third review's findings (17 Nov) --- */
+
+test("a whole paragraph offered as one choice is fine (only the word at each edge crosses it)", () => {
+  const para = "{Hi|Hey|Hello} {FIRST_NAME}, {{I wanted to|I thought I would} {reach out|get in touch} because {our team|we} {is|are} {growing|expanding} and {we need|we're looking for} {a few|two} {great|strong} {agents|realtors} {in your area|nearby} {this|next} {month|quarter}.|Short version here.}";
+  assert.equal(copyProblem(para, "text", fields), null);
+  // …and a link inside such a paragraph is still found.
+  assert.ok(copyProblem(para.replace("{agents|realtors}", "{agents|acme{.|.}com}"), "text", fields));
+});
+
+test("words are counted exactly where choices meet their neighbours", () => {
+  assert.equal(wordCount("x{a b c| a b }y"), 4);
+  assert.equal(wordCount("{FIRST_NAME}, hello"), 2);
+  assert.equal(wordCount("Hi{ there|}!"), 2);
+  assert.equal(wordCount("{a|b}{c|d}"), 1);
+  assert.equal(wordCount("one {two three|four} five"), 4);
+});

@@ -257,10 +257,19 @@ the reply step stores; `{{FIRST_NAME}}` sends like `{FIRST_NAME}`. Each save wri
 Analytics `campaign_audit_log` (steps as they were, to restore from) and posts to #portal-update with a link to the
 campaign in the OS.
 
-**Tested:** unit 3,603/3,603 (rules, plan, saves with a fake EmailBison, routes, the portal's guard tests); live
-round trip on a running throwaway campaign 17/17; browser (local build, writes guarded): Demo 64/64 and 34/34, real
-portals read only 22/22 (22 portals, 88 emails, 35 versions), Coming soon unchanged with the switch off 5/5. An
-independent review's 11 findings were fixed and re-tested.
+**Tested:** unit 3,609/3,609 (rules, plan, saves with a fake EmailBison, routes, the portal's guard tests); live
+round trip on a running throwaway campaign 17/17 (8 throwaway campaigns 1287–1294 made and deleted, none could send);
+browser (local build, every outside write guarded): Demo 65/65 and 37/37, real portals read only 22/22 (22 portals,
+88 emails, 35 versions), Coming soon unchanged with the switch off 5/5. Three rounds of independent review; every
+finding fixed and re-tested (links split across choices, the gap before a turned-off email, edits kept on a failed
+save, nesting capped at 3 and counting made linear — hostile input answers in under 15 ms, exact word counts, the
+Back button). The team's 2,155 emails pass except 9 old ones that really break a rule ({firstName} in lower case ×8,
+one of 186 words).
+
+**Not changed, found on the way:** Campaign Management's Sequence tab can't save a campaign with A/B versions
+(EmailBison wants `variant_from_step_id`, which the editor drops — the 26 Oct failures). Adding the field alone would
+be unsafe: that editor also renumbers versions among the emails, the move that shifts a sequence. It needs its own
+fix (keep versions' numbers) and a live test.
 
 **To ship:** run 0052 → deploy → check the Demo Portal's Campaigns tab → later set `OS_PORTAL_CAMPAIGNS` (start with
 BrokerStaffer's own portal). Before real clients: Eddy to approve the Help answer "Can I change my emails?" (still

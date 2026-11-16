@@ -645,7 +645,8 @@ function EmailCard({
 
   const words = wordCount(v.text);
   const chars = subjectLength(v.subject);
-  const hasChoices = /\{[^{}]*\|/.test(v.text) || /\{[^{}]*\|/.test(v.subject);
+  // A reply's stored subject isn't shown or sent (EmailBison uses the thread's), so only what the client sees counts.
+  const hasChoices = /\{[^{}]*\|/.test(v.text) || (!isReply && /\{[^{}]*\|/.test(v.subject));
   const labelOf = (key: string) => STANDARD_FIELDS.find((f) => f.key === key)?.label ?? `{${key}}`;
   const sentLine = e.off ? "Turned off by our team" : e.sent ? `Sent to ${plural(e.sent, "agent")}` : "Not sent yet";
   const waitProblemText = show(waitKey, !!touched[waitKey]);
