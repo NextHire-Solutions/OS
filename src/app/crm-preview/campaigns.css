@@ -159,8 +159,12 @@
 /* A question on screen: the chat button steps aside, as for the design's own dialogs (preview.css). */
 .cpv-shell:has(.cpv-cmp-ov, .cpv-leave-ov) a.crx-aiask { display: none !important; }
 
-/* Where the editor's right edge comes near the chat button (24px + 56px from the right), the bar stops short of it. */
-@media (max-width: 1320px) { .cpv-shell .cpv-cmp-barwrap { padding-right: 96px; } }
+/*
+ * Where the editor's right edge comes near the chat button (24px + 56px from the right — below about 1250px with the
+ * sidebar open), the bar keeps the column's width and keeps its buttons clear of it, as on a phone. (Narrowing the
+ * bar's own box instead moved it off the column — live check, 17 Nov, at 1280px.)
+ */
+@media (max-width: 1260px) { .cpv-shell .cpv-cmp-bar { padding-right: 96px; } }
 /* The notes' icon keeps its size beside a long line. */
 .cpv-shell .cpv-cmp-note > svg { flex-shrink: 0; margin-top: 1px; }
 
