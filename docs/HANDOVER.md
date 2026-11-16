@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.06** | [Pay per lead: the portal's Billing page, and prospect adds EmailBison never applied, 16 November](#006-pay-per-lead-the-portals-billing-page-and-prospect-adds-emailbison-never-applied-16-november) — pay-per-lead portals show their periods and leads; the sync counts an add done only when the campaign's own list shows it; Hetherington's 23 missing prospects put back
 | **0.05** | [Inboxes: replies and positive replies, by inbox and by domain, 14 November](#005-inboxes-replies-and-positive-replies-by-inbox-and-by-domain-14-november) — three Master Inbox columns on every inbox and a Domains view ranked by positive replies; positive = marked Interested in Master Inbox |
 | **0.04** | [A stop label from the selection bar stops the person, 14 November](#004-a-stop-label-from-the-selection-bar-stops-the-person-14-november) — Hostile / Unsubscribe / Do Not Contact / Add to Blocklist applied to several conversations at once now block and unsubscribe each person, as one conversation always did |
 | **0.03** | [Stripe: a new client's customer found, and new payments in the bell, 6 November](#003-stripe-a-new-clients-customer-found-and-new-payments-in-the-bell-6-november) — payments never make clients; after onboarding the OS finds the customer by email and asks to confirm it in one click; the bell says what it found |
@@ -215,6 +216,80 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.06 Pay per lead: the portal's Billing page, and prospect adds EmailBison never applied, 16 November
+
+LIVE 16 Nov: `17fb37c` (Railway `eb9fad33`) and the phone layout `c3fab06` (Railway `844af186`).
+
+**The audit that found both** (16 Nov, read only, Homebase and Hetherington): the lead numbers agree everywhere a
+person reads them: Master Inbox, the client record's Billing tab, the lead cap, Client Health, the portal pipeline.
+Homebase: John and Ram (4 Nov) billed and paid, $500, WEMAGCSG-0002; Daniel waived; current period 0; cap 2/2.
+Hetherington: Anne Sena (10 Nov), period Nov 5 to 18 = 1; cap 1/4. **The one wrong screen was the portal's Billing
+page**, which read "No billing periods yet" for both.
+
+### The portal's Billing page for a pay-per-lead client
+
+It was built for subscriptions (`billing-periods.ts`: a Stripe subscription invoice's service period, introductions
+counted). A pay-per-lead client's invoices are the OS's own, one line per lead, with no service period. Now
+(`lib/crm-preview/billing-per-lead.ts`, pure and tested; read by `billing-page.ts`):
+
+- **Which clients:** pay-per-lead settings in **live** mode (`modeOf(settings) === "live"`). A test row bills no one,
+  so it keeps the subscription page. If the settings can't be read, the subscription page is shown, never an error.
+- **Periods:** every `every_days` from `anchor_date` up to today, newest first, at most 12, exactly as the Billing tab
+  has them.
+- **The number:** a charged period shows what was charged (`lead_count` on its record), never a recount. The running
+  period counts leads so far (`periodLeads`, the Billing tab's own count: Interested labels, waived leads and
+  corrections left out). An ended period with no record is counted the same way. One the automatic run previewed
+  shows the preview's count.
+- **Statuses the client reads:** paid → Paid, charged → Due, failed → Unpaid, draft → Being billed, running → In
+  progress, ended with leads and not charged (or voided) → Not billed yet, ended with 0 → No charge. A voided
+  invoice's number is never shown.
+- A period whose leads can't be counted just then shows a dash, never a wrong 0. The page is cached 2 minutes per
+  client (`ttlCache`, shared store `crm-preview-per-lead-billing`).
+- **On a phone** each period stacks: dates, then invoice and status, the count large on the right with its unit.
+  This applies to subscription clients' Billing too (`mobile.css`, `.crx-bills`). Desktop is unchanged.
+- **Manage billing** opens the client's one Stripe customer. Checked live for both clients: it is the same customer
+  the per-lead invoices are on.
+
+Two design notes, not changed: once a client is live per lead, the page shows per-lead periods even for months it
+was on a subscription; and periods start at `anchor_date`, so an anchor set earlier than go-live would list periods
+before it.
+
+Verified live in Chrome (GET only, writes blocked): 46/46 checks for Homebase and Hetherington at 1440px and 390px,
+plus The Toll Group (subscription) unchanged at both widths.
+
+### Prospect sync: an add EmailBison didn't apply was recorded "Added"
+
+**What happened:** on 6 Nov a market change on Hetherington removed 482 leads from campaign 1214 (EmailBison applied
+482) and re-added 502 two minutes later; EmailBison applied **0** of them (`campaign_audit_log`). The sync still
+recorded all 502 "Added", because `judge` checked with EmailBison's **global** lead search
+(`findLeadsByEmail`), which still listed the leads in 1214. That search lags a removal.
+
+**The fix** (`prospect-sync/run.ts`): an add counts as done only when **the campaign's own lead list** shows the lead
+(`searchCampaignLeads`, through `onCampaign` / `membershipOf`). A global-search claim that the lead is already in one of the
+client's own campaigns is checked the same way before it is believed. When EmailBison can't confirm either way
+(error, timeout, or more hits than the one page it returns), only that lead is retried next run ("EmailBison didn't
+confirm it is in … — trying again"); the rest of its batch is decided. Other clients' campaigns are still read from
+the global search (they decide "in another sequence", which parks a lead for the weekly retry). 83 sync tests,
+including the 6 Nov sequence.
+
+**The repair** (the user's word, 16 Nov): Hetherington's shown prospects (DNC'd agents left out) that were in no
+campaign, **23 agents**, were queued through `recordProspectChanges` (the route a client's own move takes) after
+the fix was live. The live run: 23 claimed, 23 done, each confirmed on 1214's own list. 1214 went from 469 to 492
+leads and is **still paused**: Gabriel paused it by hand on 10 Nov, and the lead cap only restarts campaigns it paused
+itself.
+
+**Other clients, checked the same way (read only):**
+
+- Since 25 Oct, EmailBison applied fewer adds than were sent on 1103 (Homebase), 1104 (Homebase Boston, not a sync
+  campaign) and 1213 (Premier), all on 3 Nov. No shortfall since the fix went live.
+- **Homebase:** 212 shown prospects are recorded "Added" but are in neither campaign. 190 of them are explained:
+  Gabriel removed 190 from 1103 through the OS on 4 Nov (`remove-leads`, applied 190). The audit log does not record
+  which leads, so the other ~22 can't be told apart by name; they may be this same bug. Left alone (team decision on
+  the 190).
+- **Premier:** churned since 3 Nov; its skips ("no longer a client") are correct.
+- Campaign 1214 also holds **3 leads that never went through the sync** (added directly in EmailBison). None is on
+  Hetherington's DNC list. Left alone.
 
 ## 0.05 Inboxes: replies and positive replies, by inbox and by domain, 14 November
 
