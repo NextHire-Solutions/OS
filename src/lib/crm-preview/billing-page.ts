@@ -1,12 +1,17 @@
 import "server-only";
 
 import { getAccountBilling } from "@/lib/clients/billing-account";
+import { ttlCache } from "@/lib/cache/ttl";
 import { osTable } from "@/lib/clients/os-db";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { readOnly } from "@/lib/tools/assistant/read-only";
 import { fetchAllRows } from "@/lib/tools/master-inbox/db/paginated-select";
 
+import { listPeriods, loadSettings, periodLeads } from "@/lib/clients/usage-billing/billing";
+import { easternDay, modeOf, type SettingsRow } from "@/lib/clients/usage-billing/model";
+
 import { BILLING_REFUSAL, pickBillingCustomer } from "./billing-pick";
+import { perLeadPeriods, startsToCount, type PerLeadPeriod } from "./billing-per-lead";
 import { introductionsByPeriod, type BillingPeriod } from "./billing-periods";
 import { clientForPortal, type OsClientRow } from "./market-model";
 
@@ -23,7 +28,34 @@ const mi = () => readOnly(createAdminSupabase());
 
 export type BillingPage =
   | { ok: true; periods: BillingPeriod[]; portals: number }
+  /** A client billed per lead, live (16 Nov): its pay-per-lead periods and the leads billed in each (billing-per-lead.ts). */
+  | { ok: true; kind: "per-lead"; periods: PerLeadPeriod[]; portals: number }
   | { ok: false; reason: string };
+
+/**
+ * A live pay-per-lead client's periods: charged ones as charged; the rest counted as the Billing tab counts them, each
+ * on its own (one that can't be counted shows a dash, never the page an error). Kept two minutes per client: a count
+ * reads Master Inbox's label history, and the page is opened and reopened.
+ */
+const perLeadPage = ttlCache(
+  async (osClientId: string, s: SettingsRow, today: string, portals: number): Promise<BillingPage> => {
+    const records = await listPeriods(osClientId, 52, false);
+    const shape = { anchor: s.anchor_date, everyDays: s.every_days, today, records };
+    const counts = new Map<string, number | null>();
+    await Promise.all(
+      startsToCount(shape).map(async (start) => {
+        try {
+          counts.set(start, (await periodLeads(osClientId, s, start)).leads.length);
+        } catch (err) {
+          console.error(`[crm-preview] billing: leads for ${osClientId} from ${start}`, err instanceof Error ? err.message : err);
+          counts.set(start, null);
+        }
+      }),
+    );
+    return { ok: true, kind: "per-lead", periods: perLeadPeriods({ ...shape, counts }), portals };
+  },
+  { ttlMs: 2 * 60_000, key: (osClientId, s, today, portals) => `${osClientId}:${s.updated_at ?? ""}:${today}:${portals}`, shared: "crm-preview-per-lead-billing" },
+);
 
 export async function portalBillingPage(portalId: string, now: Date): Promise<BillingPage | null> {
   const [{ data: portalRows, error: pErr }, { data: osRows, error: oErr }] = await Promise.all([
@@ -39,12 +71,21 @@ export async function portalBillingPage(portalId: string, now: Date): Promise<Bi
   const record = clientForPortal({ id: portal.id, name: portal.name ?? "" }, records);
   if (!record) return { ok: false, reason: "This portal has no client record, so there is no billing to show." };
 
+  // Every portal of this client — one billing covers them all.
+  const mine = portals.filter((p) => clientForPortal({ id: p.id, name: p.name ?? "" }, records)?.id === record.id).map((p) => p.id);
+
+  // Billed per lead (live): its own periods, not a subscription's. A test row bills no one, so it is not this client's
+  // billing. Settings that can't be read leave a subscription client's page as it was, never an error.
+  const perLead = await loadSettings(record.id).catch((err) => {
+    console.error(`[crm-preview] billing: pay-per-lead settings for ${record.id}`, err instanceof Error ? err.message : err);
+    return null;
+  });
+  if (perLead && modeOf(perLead) === "live") return perLeadPage(record.id, perLead, easternDay(now), mine.length);
+
   const { byClient, snapshot } = await getAccountBilling();
   const pick = pickBillingCustomer(byClient.get(record.id), byClient.values());
   if (!pick.ok) return { ok: false, reason: BILLING_REFUSAL[pick.reason] };
 
-  // Every portal of this client — the subscription pays for all of them.
-  const mine = portals.filter((p) => clientForPortal({ id: p.id, name: p.name ?? "" }, records)?.id === record.id).map((p) => p.id);
   const entries = await fetchAllRows<{ source: string | null; introduced_at: string | null }>(({ from, to }) =>
     mi().from("client_pipeline_entries").select("id, source, introduced_at").in("client_id", mine).order("id").range(from, to),
   );

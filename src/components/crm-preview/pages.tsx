@@ -594,7 +594,11 @@ export function IntegrationsScreen({ fubConnected }: { fubConnected: boolean }) 
 
 // --------------------------------------------------------------- Billing ---
 
-type BillingPageData = { ok: true; periods: Array<{ start: string; end: string; invoice: string | null; status: "paid" | "open" | "uncollectible"; introductions: number; current: boolean }>; portals: number } | { ok: false; reason: string };
+type BillingPageData =
+  | { ok: true; kind?: undefined; periods: Array<{ start: string; end: string; invoice: string | null; status: "paid" | "open" | "uncollectible"; introductions: number; current: boolean }>; portals: number }
+  /** Billed per lead (16 Nov): the leads billed in each pay-per-lead period (lib/crm-preview/billing-per-lead.ts). */
+  | { ok: true; kind: "per-lead"; periods: Array<{ start: string; end: string; invoice: string | null; status: keyof typeof PER_LEAD_PILL; leads: number | null; current: boolean }>; portals: number }
+  | { ok: false; reason: string };
 
 /* "Oct 1 – Oct 31, 2026", from yyyy-mm-dd days (no time zone to shift them). */
 function periodText(start: string, end: string): string {
@@ -605,6 +609,13 @@ function periodText(start: string, end: string): string {
   return `${f(a, a.getUTCFullYear() !== b.getUTCFullYear())} – ${f(b, true)}`;
 }
 const STATUS_PILL = { paid: ["Paid", "pill p-live"], open: ["Due", "pill p-nu"], uncollectible: ["Unpaid", "pill p-nu"] } as const;
+const PER_LEAD_PILL = {
+  paid: ["Paid", "pill p-live"], due: ["Due", "pill p-nu"], unpaid: ["Unpaid", "pill p-nu"], billing: ["Being billed", "pill p-nu"],
+  unbilled: ["Not billed yet", "pill p-nu"], current: ["In progress", "pill p-nu"], none: ["No charge", "pill p-nu"],
+} as const;
+/* One row of either page, as the table draws it. */
+/* count null: the leads couldn't be counted just now (a dash, never a wrong 0). */
+type ShownPeriod = { start: string; end: string; invoice: string | null; current: boolean; count: number | null; pill: readonly [string, string] };
 
 /*
  * Billing (22 Oct): the introductions BrokerStaffer made in each billing
@@ -628,7 +639,14 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
     return () => ctrl.abort();
   }, [clientId]);
   const page = state.page;
-  const periods = page && page.ok ? page.periods : [];
+  // Billed per lead: leads per pay-per-lead period. Otherwise: introductions per subscription period.
+  const perLead = !!page && page.ok && page.kind === "per-lead";
+  const unit = (n: number) => (perLead ? (n === 1 ? "lead" : "leads") : n === 1 ? "introduction" : "introductions");
+  const periods: ShownPeriod[] = !page || !page.ok
+    ? []
+    : page.kind === "per-lead"
+      ? page.periods.map((p) => ({ start: p.start, end: p.end, invoice: p.invoice, current: p.current, count: p.leads, pill: PER_LEAD_PILL[p.status] }))
+      : page.periods.map((p) => ({ start: p.start, end: p.end, invoice: p.invoice, current: p.current, count: p.introductions, pill: STATUS_PILL[p.status] }));
   const now = periods.find((p) => p.current) ?? null;
   return (
     <>
@@ -643,7 +661,11 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
         ) : null}
       </header>
       <div className={k("content")}>
-        <p className={k("lede")}>Introductions BrokerStaffer made in each billing period. Agents you add yourself aren&apos;t&nbsp;counted.</p>
+        <p className={k("lede")}>
+          {perLead
+            ? <>Leads BrokerStaffer sent you in each billing period: agents who replied interested. You&apos;re billed per lead; agents you add yourself aren&apos;t&nbsp;counted.</>
+            : <>Introductions BrokerStaffer made in each billing period. Agents you add yourself aren&apos;t&nbsp;counted.</>}
+        </p>
         {state.loading ? (
           <p className={k("sub")} role="status">Loading your billing periods…</p>
         ) : state.error ? (
@@ -658,8 +680,8 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
               <div className={k("kpis")}>
                 <div className={k("card kpi")}>
                   <div className={k("k")}><span className={k("lb")}>This billing period</span><span className={k("ki")}><Icon name="card" size={16} /></span></div>
-                  <span className={k("v")} style={{ color: "#3e6bd1" }}>{now.introductions.toLocaleString("en-US")}</span>
-                  <span className={k("s")}>{now.introductions === 1 ? "introduction" : "introductions"} · {periodText(now.start, now.end)}</span>
+                  <span className={k("v")} style={{ color: "#3e6bd1" }}>{now.count === null ? <Dash /> : now.count.toLocaleString("en-US")}</span>
+                  <span className={k("s")}>{now.count === null ? "Couldn't count the leads just now" : `${unit(now.count)}${perLead ? " so far" : ""}`} · {periodText(now.start, now.end)}</span>
                 </div>
               </div>
             ) : null}
@@ -670,7 +692,7 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
                     <th scope="col">Billing period</th>
                     <th scope="col">Invoice</th>
                     <th scope="col">Status</th>
-                    <th scope="col" className={k("r")}>Introductions</th>
+                    <th scope="col" className={k("r")}>{perLead ? "Leads" : "Introductions"}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -678,8 +700,8 @@ export function BillingScreen({ clientId, clientName, manageBilling = true }: { 
                     <tr key={`${p.start}:${p.end}`}>
                       <td><span className={k("nm")}>{periodText(p.start, p.end)}</span>{p.current ? <span className={k("tag")} style={{ marginLeft: 8 }}>Current</span> : null}</td>
                       <td>{p.invoice ?? <Dash />}</td>
-                      <td><span className={k(STATUS_PILL[p.status][1])}>{STATUS_PILL[p.status][0]}</span></td>
-                      <td className={k("r")} style={{ fontVariantNumeric: "tabular-nums" }}>{p.introductions.toLocaleString("en-US")}</td>
+                      <td><span className={k(p.pill[1])}>{p.pill[0]}</span></td>
+                      <td className={k("r")} style={{ fontVariantNumeric: "tabular-nums" }}>{p.count === null ? <Dash /> : p.count.toLocaleString("en-US")}</td>
                     </tr>
                   ))}
                 </tbody>

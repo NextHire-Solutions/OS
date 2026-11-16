@@ -11,7 +11,7 @@ const db = new FakePostgrest();
 globalThis.fetch = db.fetch as typeof fetch;
 for (const m of ["log", "warn", "error", "info"] as const) mock.method(console, m, () => {});
 
-const { runProspectSync, MAX_ATTEMPTS, BACKOFF_MIN, WAIT_MS, YOUNG_MS, SETTLE_MS, SEQUENCE_WAIT_MS } = await import("./run.ts");
+const { runProspectSync, membershipOf, MAX_ATTEMPTS, BACKOFF_MIN, WAIT_MS, YOUNG_MS, SETTLE_MS, SEQUENCE_WAIT_MS } = await import("./run.ts");
 type Deps = NonNullable<Parameters<typeof runProspectSync>[0]>;
 
 const PORTAL = "2944199b-bfbc-4e97-aeed-c38ba28f40b0";
@@ -44,6 +44,11 @@ interface World {
   listed: Set<string> | null;
   leads: Map<string, Found[]>;
   afterAttach: Map<string, Found[]> | null;
+  /**
+   * The campaign's OWN lead list, when it differs from what the lead search says (16 Nov: the search lags a removal).
+   * Null: the list agrees with the search.
+   */
+  truth: ((campaignId: number, email: string, leadId: number) => "on" | "off" | "unsure") | null;
   attachSkips: number;
   refuse: Set<string>;
   upsertFails: boolean;
@@ -87,6 +92,14 @@ function deps(extra: Partial<Deps> = {}): Deps {
       return leads.filter((l) => !w.refuse.has(l.email)).map((l) => ({ id: nextLead++, email: l.email }));
     },
     findLeads: async (email) => { calls.push({ what: "find", args: [email] }); return ((attached && w.afterAttach) ? w.afterAttach : w.leads).get(email) ?? []; },
+    onCampaign: async (campaignId, email, leadId) => {
+      calls.push({ what: "onCampaign", args: [campaignId, email, leadId] });
+      if (w.truth) return w.truth(campaignId, email, leadId);
+      const found = ((attached && w.afterAttach) ? w.afterAttach : w.leads).get(email) ?? [];
+      // By address: this world's fixtures give a found lead its own id (real EmailBison answers the same id for one
+      // address); membershipOf's own tests hold the id rule.
+      return found.some((f) => f.campaigns.some((c) => String(c.campaignId) === String(campaignId))) ? "on" : "off";
+    },
     attach: async (campaignId, leadIds, actor) => { calls.push({ what: "attach", args: [campaignId, leadIds, actor] }); attached = true; return { ok: true, attempted: leadIds.length, applied: leadIds.length - w.attachSkips, skipped: w.attachSkips, chunks: [{ size: leadIds.length, ok: true }], batchId: "b" }; },
     remove: async (campaignId, leadIds, actor) => {
       calls.push({ what: "remove", args: [campaignId, leadIds, actor] });
@@ -124,7 +137,7 @@ function seed() {
   w = {
     agents: new Map(), mlsCodes: ["REcolorado"], byMls: {}, setupByMls: new Map(), campaigns: [{ id: "100", name: "Homebase + Greater Denver + ZF NS1 (MST)", status: "active" }, { id: "200", name: "Homebase + Old (MST)", status: "completed" }],
     extraAll: [], routes: [], orch: null, chosen: { id: "100", name: "Homebase + Greater Denver + ZF NS1 (MST)" }, setup: null, setupFinished: true,
-    setupOutcome: async () => ({ kind: "waiting", reason: "Its first campaign is being made." }), listed: null, leads: new Map(), afterAttach: null, attachSkips: 0,
+    setupOutcome: async () => ({ kind: "waiting", reason: "Its first campaign is being made." }), listed: null, leads: new Map(), afterAttach: null, truth: null, attachSkips: 0,
     refuse: new Set(), upsertFails: false, removeFails: false, ctx: undefined,
   };
 }
@@ -993,6 +1006,8 @@ test("EmailBison refusing every lead in a request (their state changed since the
   await runProspectSync(deps({
     attach: async (c, ids) => { attached = true; return refuse.attach(c, ids); },
     findLeads: async (email) => (attached ? after.get(email) ?? [] : []),
+    // The campaign's own list agrees with the search here: a3 really is in it.
+    onCampaign: async (cid, email) => ((attached ? after.get(email) ?? [] : []).some((f) => f.campaigns.some((c) => String(c.campaignId) === String(cid))) ? "on" : "off"),
   }));
   assert.equal(rowOf("a1").status, "pending");
   assert.match(String(rowOf("a1").detail), /^In another campaign's sequence/);
@@ -1161,4 +1176,146 @@ test("a churned client: an agent's older change isn't let through when its held 
   await runProspectSync(deps({ clientRecord: async () => ({ name: "Homebase", aliases: [], areas: [], mls: [], analyticsClientId: null, healthClientId: null, status: "churned" }) }));
   assert.equal(callsOf("attach").length, 0);
   assert.deepEqual(db.rows("os_prospect_sync").map((r) => [r.status, r.detail]), [["skipped", "Not added: Homebase is no longer a client."], ["skipped", "Not added: Homebase is no longer a client."]]);
+});
+
+
+/* ---------------------------------------------------------------------------------------------------------------------
+ * 16 Nov: the lead search's campaigns lag a removal. On 6 Nov, Hetherington: 482 taken out of its campaign at 20:51 UTC,
+ * re-added at 20:53–20:57 — EmailBison applied none of the 502, its search still named the campaign, and every one was
+ * recorded "Added". 291 of its Prospects ended up in no campaign. Only the campaign's own list decides now.
+ * ------------------------------------------------------------------------------------------------------------------ */
+
+test("a lead the search still lists in the campaign, though the campaign's own list no longer has it: added back, never 'already in'", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  // Taken out two minutes ago; the search hasn't caught up.
+  w.leads = new Map([["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]]]);
+  let attached = false;
+  w.truth = () => (attached ? "on" : "off");
+  queue([{ agent: "a1", action: "add" }]);
+  await runProspectSync(deps({
+    attach: async (campaignId, leadIds) => { attached = true; calls.push({ what: "attach", args: [campaignId, leadIds] }); return { ok: true, attempted: leadIds.length, applied: leadIds.length, skipped: 0, chunks: [{ size: leadIds.length, ok: true }], batchId: "b" }; },
+  }));
+  assert.equal(callsOf("attach").length, 1, "attached, not taken on the search's word");
+  assert.equal(callsOf("attach")[0].args[0], 100, "into its campaign (made or updated first, as a lead in no campaign is)");
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").detail], ["done", `Added to ${CAMPAIGN}.`]);
+});
+
+test("EmailBison applying none of a re-add while its search still names the campaign: none is recorded added — each tried again", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  const stale = (id: number, e: string): Found[] => [{ id, email: e, status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }];
+  w.leads = new Map([["a1@agent.test", stale(11, "a1@agent.test")], ["a2@agent.test", stale(22, "a2@agent.test")], ["a3@agent.test", stale(33, "a3@agent.test")]]);
+  w.truth = () => "off"; // the campaign's own list: none of them, before or after
+  w.attachSkips = 3; // "added" — applied 0
+  queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
+  await runProspectSync(deps());
+  for (const a of ["a1", "a2", "a3"]) {
+    assert.deepEqual([rowOf(a).status, rowOf(a).attempts], ["pending", 1], `${a}: tried again, not called added`);
+    assert.match(String(rowOf(a).detail), /didn't add it .*gave no reason — trying again/);
+  }
+});
+
+test("after a shortfall, a lead the campaign's list can't settle is tried again on its own; the others are decided", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  w.attachSkips = 1;
+  w.afterAttach = new Map([
+    ["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]],
+    ["a2@agent.test", [{ id: 22, email: "a2@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]],
+    ["a3@agent.test", inOther(33, "a3@agent.test", "bounced", "bounced")],
+  ]);
+  w.truth = (_c, email) => (email === "a1@agent.test" ? "unsure" : email === "a2@agent.test" ? "on" : "off");
+  queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
+  await runProspectSync(deps());
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1]);
+  assert.match(String(rowOf("a1").detail), /didn't confirm it is in .* trying again/);
+  assert.equal(rowOf("a2").status, "done", "settled: in it");
+  assert.deepEqual([rowOf("a3").status, rowOf("a3").detail], ["skipped", `Not added to ${CAMPAIGN}: the address has bounced.`], "settled: bounced");
+});
+
+test("before adding, a claim the campaign's list can't settle: tried again — never attached blind, never called 'already in'", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]]]);
+  w.truth = () => "unsure";
+  queue([{ agent: "a1", action: "add" }]);
+  await runProspectSync(deps());
+  assert.equal(callsOf("attach").length, 0);
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1]);
+  assert.match(String(rowOf("a1").detail), /couldn't confirm which of the client's campaigns it is in/);
+});
+
+test("a lead really in another of the client's campaigns is still left there — confirmed by that campaign's list", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 200, status: "in_sequence" }] }]]]);
+  w.truth = (cid) => (cid === 200 ? "on" : "off");
+  queue([{ agent: "a1", action: "add" }]);
+  await runProspectSync(deps());
+  assert.equal(callsOf("attach").length, 0);
+  assert.deepEqual(callsOf("onCampaign").map((c) => c.args[0]), [200], "only the claimed campaign of its own is asked");
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").detail], ["done", "Already in Homebase + Old (MST) — not added twice."]);
+});
+
+test("another client's campaign is never asked about: it only says why a lead is held", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.leads = new Map([["a1@agent.test", inOther(11, "a1@agent.test")]]);
+  queue([{ agent: "a1", action: "add" }]);
+  await runProspectSync(deps());
+  assert.equal(callsOf("onCampaign").length, 0);
+  assert.match(String(rowOf("a1").detail), /^In another campaign's sequence/);
+});
+
+test("membershipOf: the campaign's own search — on by the lead's id, off only when it narrowed to the address", () => {
+  assert.equal(membershipOf({ total: 1, leadIds: [11] }, 11), "on");
+  assert.equal(membershipOf({ total: 0, leadIds: [] }, 11), "off");
+  assert.equal(membershipOf({ total: 2, leadIds: [12, 13] }, 11), "off", "two others with a similar address: not this lead");
+  assert.equal(membershipOf({ total: 400, leadIds: [1, 2, 3] }, 11), "unsure", "the search didn't narrow: it proves nothing");
+  assert.equal(membershipOf({ total: 400, leadIds: [11] }, 11), "on", "found by id even in a wide answer");
+  const page = Array.from({ length: 15 }, (_, i) => 100 + i);
+  assert.equal(membershipOf({ total: 15, leadIds: page }, 11), "off", "every hit came back, and none is this lead");
+  assert.equal(membershipOf({ total: 16, leadIds: page }, 11), "unsure", "one more hit than came back: it could be this lead");
+  assert.equal(membershipOf({ total: 26, leadIds: [] }, 11), "unsure");
+});
+
+
+test("before adding, one lead its campaign's list can't settle doesn't hold up the rest of the batch", async () => {
+  seed();
+  w.agents = new Map(["a1", "a2", "a3"].map((a) => [a, agent(a, `${a}@agent.test`)]));
+  w.leads = new Map([["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]]]);
+  w.truth = (_c, email) => (email === "a1@agent.test" ? "unsure" : "on");
+  queue(["a1", "a2", "a3"].map((a) => ({ agent: a, action: "add" as const })));
+  await runProspectSync(deps());
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1], "the unsettled one: tried again");
+  assert.equal(rowOf("a2").status, "done");
+  assert.equal(rowOf("a3").status, "done");
+  assert.equal(callsOf("attach").length, 1, "the others went in");
+});
+
+test("after a shortfall, a stale 'in sequence' for another of the client's own campaigns never parks a lead for a week", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.attachSkips = 1;
+  // The search still says campaign 200 (the client's own, taken out of it) holds it in sequence; 200's own list doesn't have it.
+  w.afterAttach = new Map([["a1@agent.test", [{ id: 11, email: "a1@agent.test", status: "unverified", campaigns: [{ campaignId: 200, status: "in_sequence" }] }]]]);
+  w.truth = () => "off";
+  queue([{ agent: "a1", action: "add" }]);
+  await runProspectSync(deps());
+  assert.deepEqual([rowOf("a1").status, rowOf("a1").attempts], ["pending", 1]);
+  assert.match(String(rowOf("a1").detail), /gave no reason — trying again/, "tried again soon — not 'in another campaign's sequence', a week away");
+});
+
+test("after a shortfall, a lead the campaign's list has is added — one question, not a search as well", async () => {
+  seed();
+  w.agents = new Map([["a1", agent("a1", "a1@agent.test")]]);
+  w.attachSkips = 1;
+  w.truth = () => "on";
+  queue([{ agent: "a1", action: "add" }]);
+  calls.length = 0;
+  await runProspectSync(deps());
+  assert.equal(rowOf("a1").status, "done");
+  const finds = callsOf("find").length;
+  assert.equal(finds, 1, "searched once before adding, never again to confirm");
 });

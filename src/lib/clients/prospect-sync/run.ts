@@ -6,6 +6,7 @@ import { allCampaignsOfClient, campaignsOfClient } from "@/lib/clients/pause-cam
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { isDemoPortal } from "@/lib/crm-preview/demo";
 import { marketContext } from "@/lib/crm-preview/market";
+import { MAX_SEARCH_HITS } from "@/lib/tools/analytics/campaigns/confirm-off";
 import { attachLeads, removeLeads, type MembershipResult } from "@/lib/tools/analytics/campaigns/lead-membership";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client";
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors";
@@ -76,6 +77,20 @@ function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> 
   return Promise.race([p, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })]).finally(() => clearTimeout(timer));
 }
 
+export type Membership = "on" | "off" | "unsure";
+
+/**
+ * A search of one campaign's own leads for an address, as an answer: the lead is on it, off it, or the search said
+ * nothing (it didn't narrow to the address — confirm-off.ts's MAX_SEARCH_HITS).
+ */
+export function membershipOf(search: { total: number; leadIds: readonly number[] }, leadId: number): Membership {
+  if (search.leadIds.includes(leadId)) return "on";
+  if (search.total > MAX_SEARCH_HITS) return "unsure";
+  // Only the first page comes back (15): more hits than that, and the lead could be on the next one.
+  if (search.total > search.leadIds.length) return "unsure";
+  return "off";
+}
+
 export interface Ctx {
   portalId: string;
   portalName: string;
@@ -117,6 +132,13 @@ export interface RunDeps {
   loadAgents?: (ids: readonly string[], o: { mlsScope?: readonly string[] | null }) => Promise<Map<string, SyncAgent>>;
   upsertLeads?: (leads: readonly BisonLeadPayload[]) => Promise<Array<{ id: number; email: string }>>;
   findLeads?: (email: string) => Promise<FoundLead[]>;
+  /**
+   * Is this lead on this campaign, by the campaign's OWN lead list (16 Nov)? The lead search's campaign list lags a
+   * removal by minutes: on 6 Nov it still named Hetherington's campaign for 502 leads taken out two minutes earlier,
+   * so their re-add — which EmailBison applied to none — was recorded as done. "unsure" when the search fails or
+   * doesn't narrow to the address (confirm-off.ts, the removal side's same rule).
+   */
+  onCampaign?: (campaignId: number, email: string, leadId: number) => Promise<Membership>;
   attach?: (campaignId: number, leadIds: number[], actor: string) => Promise<MembershipResult>;
   remove?: (campaignId: number, leadIds: number[], actor: string) => Promise<MembershipResult>;
   /** Drop the agent database's record of these agents in these campaigns. */
@@ -227,6 +249,14 @@ function realDeps(d: RunDeps) {
     }),
     // A lookup that hangs never holds the run: given up after LOOKUP_TIMEOUT_MS (the rows are tried again later).
     findLeads: d.findLeads ?? ((email: string) => withTimeout(eb().findLeadsByEmail(email), LOOKUP_TIMEOUT_MS, "EmailBison lead search timed out")),
+    onCampaign: d.onCampaign ?? (async (campaignId: number, email: string, leadId: number): Promise<Membership> => {
+      try {
+        const r = await withTimeout(eb().searchCampaignLeads(campaignId, email), LOOKUP_TIMEOUT_MS, "EmailBison campaign search timed out");
+        return membershipOf(r, leadId);
+      } catch {
+        return "unsure";
+      }
+    }),
     attach: d.attach ?? ((campaignId: number, leadIds: number[], actor: string) => attachLeads(campaignId, leadIds, actor, analyticsTeamId())),
     remove: d.remove ?? ((campaignId: number, leadIds: number[], actor: string) => removeLeads(campaignId, leadIds, actor, analyticsTeamId())),
     forgetCampaignLeads: d.forgetCampaignLeads ?? (async (orchClientId: string, agentIds: readonly string[], campaignIds: readonly string[]) => {
@@ -789,21 +819,58 @@ async function leftOut(into: CampaignPick, row: QueueRow, email: string, leadId:
  * can't be told and is tried again — safe to repeat: a lead that did go in is then found there. A search that fails says
  * nothing about the rest, and they aren't each left to wait out its timeout.
  */
-async function judge(x: Deps, into: CampaignPick, part: ReadonlyArray<{ l: { row: QueueRow; email: string }; id: number }>, b: Batch): Promise<void> {
+async function judge(x: Deps, into: CampaignPick, part: ReadonlyArray<{ l: { row: QueueRow; email: string }; id: number }>, ours: ReadonlySet<string>, b: Batch): Promise<void> {
   const unread: QueueRow[] = [];
+  // One address the campaign's list can't settle says nothing about the others: tried again on its own.
+  const unsettled: QueueRow[] = [];
   let unreadWhy = "";
   for (const { l, id } of part) {
     if (unread.length) { unread.push(l.row); continue; }
     try {
-      const now = (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email);
-      if (now.some((f) => f.campaigns.some((c) => String(c.campaignId) === String(into.id)))) await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
-      else await leftOut(into, l.row, l.email, id, now, b);
+      // The campaign's own list decides, never the lead search's campaigns (they lag: 6 Nov, 502 recorded added, none were).
+      const on = await x.onCampaign(Number(into.id), l.email, id);
+      if (on === "on") {
+        await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
+        continue;
+      }
+      if (on === "unsure") { unsettled.push(l.row); continue; }
+      // Why it isn't: from the lead as it is — a claim it is in another of the client's campaigns checked the same way.
+      const now = await confirmedLeads(x, (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email), ours, l.email);
+      await leftOut(into, l.row, l.email, id, now, b);
     } catch (err) {
+      if (err instanceof Unsettled) { unsettled.push(l.row); continue; }
       unread.push(l.row);
       unreadWhy = describeEmailBisonError(err);
     }
   }
   if (unread.length) await b.retry(unread, `EmailBison could not be searched just now (${unreadWhy}) — trying again.`);
+  if (unsettled.length) await b.retry(unsettled, `EmailBison didn't confirm it is in ${into.name} — trying again.`);
+}
+
+/**
+ * The lead search's answer, with every claim that a lead is on one of OUR campaigns checked against that campaign's
+ * own list (16 Nov): a claim the list denies is dropped — a lead just taken out is then added back, not called
+ * "already in"; one it can't settle stops the lookup, tried again later. Other clients' campaigns stay as the search
+ * says: they only tell why a lead is held.
+ */
+class Unsettled extends Error {}
+
+async function confirmedLeads(x: Deps, found: FoundLead[], ours: ReadonlySet<string>, email: string): Promise<FoundLead[]> {
+  const out: FoundLead[] = [];
+  for (const f of found) {
+    const campaigns: FoundLead["campaigns"] = [];
+    for (const c of f.campaigns) {
+      if (!ours.has(String(c.campaignId))) {
+        campaigns.push(c);
+        continue;
+      }
+      const on = await x.onCampaign(Number(c.campaignId), email, f.id);
+      if (on === "unsure") throw new Unsettled(`couldn't confirm whether it is in campaign ${c.campaignId}`);
+      if (on === "on") campaigns.push(c);
+    }
+    out.push({ ...f, campaigns });
+  }
+  return out;
 }
 
 /** A client with several MLSs: each agent into the campaign picked (or made at setup) for its MLS — never a guess. */
@@ -897,7 +964,9 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
   //    EmailBison has in other campaigns: added as it is — its fields are what those campaigns' emails show, and may be
   //    another client's (3 Nov audit); one in no campaign, or new, is made or updated as the worker makes it.
   const ownIds = new Map(own.map((c) => [String(c.id), c]));
+  const ours = new Set([...ownIds.keys(), String(into.id)]);
   const send: typeof leads = [];
+  const unsettled: QueueRow[] = [];
   const asIs: Array<{ l: (typeof leads)[number]; id: number }> = [];
   const lookupFailed: QueueRow[] = [];
   let lookupWhy = "";
@@ -905,7 +974,7 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
     // EmailBison failed a lookup already this batch: the rest are tried again later, not each waiting out its retries.
     if (lookupFailed.length) { lookupFailed.push(l.row); continue; }
     try {
-      const found = (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email);
+      const found = await confirmedLeads(x, (await x.findLeads(l.email)).filter((f) => f.email.trim().toLowerCase() === l.email), ours, l.email);
       const there = found.flatMap((f) => f.campaigns).map((c) => ownIds.get(String(c.campaignId))).find(Boolean);
       const inOthers = found.find((f) => f.campaigns.length > 0);
       const inInto = found.find((f) => f.campaigns.some((c) => String(c.campaignId) === String(into.id)));
@@ -919,11 +988,14 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       else if (inOthers) asIs.push({ l, id: inOthers.id });
       else send.push(l);
     } catch (err) {
+      // One address its campaign's list can't settle says nothing about the rest: tried again on its own.
+      if (err instanceof Unsettled) { unsettled.push(l.row); continue; }
       lookupFailed.push(l.row);
       lookupWhy = describeEmailBisonError(err);
     }
   }
   if (lookupFailed.length) await b.retry(lookupFailed, `EmailBison could not be searched just now (${lookupWhy}) — trying again.`);
+  if (unsettled.length) await b.retry(unsettled, "EmailBison couldn't confirm which of the client's campaigns it is in — trying again.");
 
   // 3. Into EmailBison, 500 at a time: made or updated (only the fields sent change).
   const toAttach: Array<{ l: (typeof leads)[number]; id: number }> = [...asIs];
@@ -953,13 +1025,13 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       const why = res.chunks.find((c) => !c.ok)?.error ?? "EmailBison refused it.";
       // EmailBison refusing every one of them, in one sentence for several reasons (3 Nov, live: Homebase's one Boston
       // agent): not a moment's trouble, and never all taken as one reason — each judged.
-      if (REFUSED_LEADS.test(why)) await judge(x, into, part, b);
+      if (REFUSED_LEADS.test(why)) await judge(x, into, part, ours, b);
       else await b.retry(part.map((t) => t.l.row), `Not added to ${into.name} yet: ${why}`);
       continue;
     }
     // EmailBison answers "added" and quietly leaves out a lead it won't take: the campaign grew by less than asked.
     if (res.skipped > 0) {
-      await judge(x, into, part, b);
+      await judge(x, into, part, ours, b);
       continue;
     }
     for (const { l, id } of part) await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
