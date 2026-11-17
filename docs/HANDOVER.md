@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.09** | [Demo Portal card links to the new portal, 17 November](#009-demo-portal-card-links-to-the-new-portal-17-november) — Client Portals' Demo card shows, copies and opens `os.brokerstaffer.com/crm-preview?client=<id>`; it opens after sign-in only
 | **0.08** | [Billing page on a shared card, 17 November](#008-billing-page-on-a-shared-card-17-november) — a client whose card also pays for another client (Douglas Elliman Las Vegas + Los Angeles) sees its own subscription's invoices; invoice numbers link to Stripe
 | **0.07** | [Campaigns: clients edit their own emails, 17 November](#007-campaigns-clients-edit-their-own-emails-17-november) — the portal's Campaigns tab; rules enforced on the server; live in EmailBison at once; Demo Portal first (migration 0052), real portals behind `OS_PORTAL_CAMPAIGNS`
 | **0.06** | [Pay per lead: the portal's Billing page, and prospect adds EmailBison never applied, 16 November](#006-pay-per-lead-the-portals-billing-page-and-prospect-adds-emailbison-never-applied-16-november) — pay-per-lead portals show their periods and leads; the sync counts an add done only when the campaign's own list shows it; Hetherington's 23 missing prospects put back
@@ -216,6 +217,26 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.09 Demo Portal card links to the new portal, 17 November
+
+The user asked for the Demo Portal card at the top of **Client Portals** to carry the new portal's address instead
+of the old `portal.brokerstaffer.com/portal/demo-portal-…` link. LIVE as `2284755` (Railway a3bc0fd9).
+
+- The card shows and **Copy link** copies `https://os.brokerstaffer.com/crm-preview?client=<Demo id>`; **Open demo
+  portal** opens `/crm-preview?client=<id>` in a new tab. Helpers `newPortalUrl` / `newPortalPath` in
+  `lib/tools/master-inbox/portals/public-url.ts` (tested).
+- **It opens after sign-in only** (OS staff with portal access, or the Demo's testers: admin@outreachify.io, Eddy,
+  Amy). The old link opened for anyone, so it can't be sent to a prospect the way the old one was. The old link
+  still works; it is just no longer on the card.
+- Every real client's row is unchanged (its own old link).
+- Checked live, writes blocked: the card at 1440 / 1280 / 390 px, Copy link with the real clipboard, the link
+  opening the Demo in the new portal, 60 real rows unchanged, logs clean. The card's layout is exactly as before
+  (it is as wide as the client table, inside the page's own sideways scroll).
+- After this deploy the Market view threw one React #418 on its first load, then 0 in 3 reloads: the same
+  first-load-after-deploy blip seen 29 October, not this change.
 
 ---
 
