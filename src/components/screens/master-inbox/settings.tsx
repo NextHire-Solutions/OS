@@ -65,9 +65,14 @@ export function isSettingsTab(value: string | undefined): value is SettingsTab {
  * APIs behind these tabs refuse a teammate too — hiding a tab is not the gate.
  */
 const ADMIN_TABS = new Set<SettingsTab>(["ai-labeling", "brokerage-relay"]);
+/*
+ * An admin tab opened to a person by name (identity/named-pages.ts): Brokerage hand-off, 18 Nov (Amy). Its routes
+ * check the same list (auth/require-relay.ts).
+ */
+const NAMED_TABS: ReadonlySet<SettingsTab> = new Set<SettingsTab>(["brokerage-relay"]);
 
-export async function MasterInboxSettingsScreen({ tab = "labels", admin = false }: { tab?: string; admin?: boolean }) {
-  const tabs = SETTINGS_TABS.filter((t) => admin || !ADMIN_TABS.has(t.id));
+export async function MasterInboxSettingsScreen({ tab = "labels", admin = false, pages = [] }: { tab?: string; admin?: boolean; pages?: readonly string[] }) {
+  const tabs = SETTINGS_TABS.filter((t) => admin || !ADMIN_TABS.has(t.id) || (NAMED_TABS.has(t.id) && pages.includes(t.id)));
   const active: SettingsTab = isSettingsTab(tab) && tabs.some((t) => t.id === tab) ? tab : "labels";
 
   return (

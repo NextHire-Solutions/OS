@@ -34,6 +34,16 @@ export interface NavLeaf {
   verified?: boolean;
   /** A count badge, when the tool can tell us one. */
   badgeKey?: "inbox-unread" | "reminders";
+  /**
+   * An admin-only screen: the entry shows to admins and to the people it is opened to by name
+   * (identity/named-pages.ts) — never a dead link to a teammate whose screen would fall back elsewhere.
+   */
+  page?: string;
+}
+
+/** Whether a product's entry shows to this person (its `page`, when it has one). */
+export function canSeeLeaf(leaf: Pick<NavLeaf, "page">, admin: boolean, roles: RoleFlags = {}): boolean {
+  return !leaf.page || admin || !!roles.pages?.includes(leaf.page);
 }
 
 export interface NavProduct {
@@ -148,6 +158,11 @@ export const NAV: NavSection[] = [
           // Trash). Without this entry a trashed conversation could only be
           // found, restored or purged by typing the URL.
           { id: "trash", label: "Trash", path: "/inbox/trash", verified: true },
+          /*
+           * 18 Nov (Eddy: "Can you make this menu obvious on the OS?"): Settings › Brokerage hand-off — turning on
+           * automatic hand-off for a client — one click from the menu. Admins and the people it is opened to by name.
+           */
+          { id: "brokerage-relay", label: "Brokerage hand-off", path: "/inbox/settings/brokerage-relay", verified: true, page: "brokerage-relay" },
           // Client Portals and its Client view were here until 13 Oct; they are
           // a product of their own now (below). /inbox/portals, /inbox/portals/<id>
           // and /inbox/client-view redirect to the new addresses.
@@ -319,6 +334,8 @@ export interface Destination {
   /** Set for a workspace-owned screen. */
   route?: string;
   verified: boolean;
+  /** An admin-only screen opened by name (NavLeaf.page): offered only to whoever may open it. */
+  page?: string;
 }
 
 export function destinations(): Destination[] {
@@ -347,6 +364,7 @@ export function destinations(): Destination[] {
           grant: item.grant ?? item.id,
           path: leaf.path,
           verified: leaf.verified ?? false,
+          ...(leaf.page ? { page: leaf.page } : {}),
         });
       }
     }

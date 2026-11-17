@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { NAV, sectionKey, sectionOf, type NavPage, type NavProduct } from "@/lib/workspace/nav";
 import { RailBrand } from "./rail-brand";
 import { ToolGlyph } from "./tool-glyph";
-import { canSeePage, type RoleFlags } from "@/lib/workspace/nav";
+import { canSeeLeaf, canSeePage, type RoleFlags } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 
 /*
@@ -271,7 +271,8 @@ export function Rail({ grants, activeId, onNavigate, onPrefetch, badges = {}, us
                 return (
                   <Product
                     key={key}
-                    product={item}
+                    // An entry for an admin-only screen (its `page`) shows only to whoever may open it (18 Nov).
+                    product={{ ...item, children: item.children.filter((c) => canSeeLeaf(c, admin, roles)) }}
                     open={open === key}
                     activeId={activeId}
                     badges={badges}

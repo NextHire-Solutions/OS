@@ -39,6 +39,7 @@ import {
 } from "./rules.ts";
 import {
   brokerageFromJson,
+  brokerageLive,
   brokerageToJson,
   deliveryMode,
   effectiveCap,
@@ -743,10 +744,14 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
 
   // Live only when every lock is open; a later reply never goes live after a practised hand-off.
   const parentPractised = rec.kind === "follow_up" && parent?.practice !== false;
-  const unfenced = parentPractised ? "practice" : deliveryMode(ctx.global, client.relay, liveSendAllowed(ctx.env));
+  const listSet = liveOnlyDomains(ctx.env) !== null;
+  const unfenced = parentPractised ? "practice" : deliveryMode(ctx.global, client.relay, liveSendAllowed(ctx.env), listSet);
   // The pilot fence (gate.ts): live only when every recipient is on an allowed domain — anything else is practised, and says why.
   const fenced = unfenced === "live" && !withinLiveFence(recipients.map((r) => r.email), ctx.env);
   const mode = fenced ? "practice" : unfenced;
+  // Set to Practice on the page (18 Nov) while every other lock is open: practised, and says so.
+  const setToPractice = !parentPractised && !brokerageLive(client.relay, listSet)
+    && deliveryMode(ctx.global, { ...client.relay, live: true }, liveSendAllowed(ctx.env), listSet) === "live";
   const practice = mode === "practice";
 
   const agentMessageId = messageIdFromPayload(payload);
@@ -770,7 +775,7 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
     reason: null,
     detail: null,
     error: null,
-    ...(fenced ? { detail: `practised: a recipient is outside ${LIVE_ONLY_ENV}` } : {}),
+    ...(fenced ? { detail: `practised: a recipient is outside ${LIVE_ONLY_ENV}` } : setToPractice ? { detail: "practised: this brokerage is set to Practice" } : {}),
     recipients,
     from_name: email.fromName,
     from_address: email.fromAddress,
@@ -881,7 +886,7 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
     const { data: clientRow, error: swErr } = await ctx.os("os_clients").select("relay_settings").eq("id", osClientId).maybeSingle();
     if (swErr) return stop("held", "read_error", { ...computed, detail: `switches: ${swErr.message}` });
     const nowBrokerage = brokerageFromJson((clientRow as Row | null)?.relay_settings);
-    const stillLive = !missing && nowGlobal.enabled && deliveryMode(nowGlobal, nowBrokerage, liveSendAllowed(ctx.env)) === "live" && withinLiveFence(recipients.map((r) => r.email), ctx.env);
+    const stillLive = !missing && nowGlobal.enabled && deliveryMode(nowGlobal, nowBrokerage, liveSendAllowed(ctx.env), liveOnlyDomains(ctx.env) !== null) === "live" && withinLiveFence(recipients.map((r) => r.email), ctx.env);
     const stillMayGo = via.by === "click" || effectiveMode(nowGlobal, nowBrokerage) === "automatic";
     if (!stillLive || !stillMayGo) return settle("ready", { ...computed, practice: !stillLive, decided_by: decidedBy });
   }
@@ -1456,7 +1461,7 @@ async function releaseOverCap(ctx: Ctx, rec: RelayRow, row: Row, who: string, de
   }
   const agentEmail = agentEmailOf(lead, null);
   const recipients = planRecipients(client.relay, introClientFromRow(client.row, client.name), facts.campaignName, agentEmail ? [agentEmail] : []).recipients;
-  if (deliveryMode(ctx.global, client.relay, liveSendAllowed(ctx.env)) !== "live" || !withinLiveFence(recipients.map((r) => r.email), ctx.env)) {
+  if (deliveryMode(ctx.global, client.relay, liveSendAllowed(ctx.env), liveOnlyDomains(ctx.env) !== null) !== "live" || !withinLiveFence(recipients.map((r) => r.email), ctx.env)) {
     throw new RelayActionError("Hand-offs to this client are in practice right now, so this can't be sent yet.", 409);
   }
   let refused: string | null;
@@ -1753,7 +1758,7 @@ const STALE_SETTINGS = "These settings were changed by someone else since this p
 function sameRelay(stored: BrokerageRelaySettings, seen: unknown): boolean {
   if (!seen || typeof seen !== "object") return false;
   const o = seen as Record<string, unknown>;
-  return stored.enabled === o.enabled && (stored.mode ?? null) === (o.mode ?? null) && stored.recipients === o.recipients && (stored.address ?? null) === (o.address ?? null) && (stored.hourlyCap ?? null) === (o.hourlyCap ?? null);
+  return stored.enabled === o.enabled && (stored.mode ?? null) === (o.mode ?? null) && stored.recipients === o.recipients && (stored.address ?? null) === (o.address ?? null) && (stored.hourlyCap ?? null) === (o.hourlyCap ?? null) && (stored.live ?? null) === (o.live ?? null);
 }
 
 /** One brokerage's switch, recipients, cap, mode and pipeline entry (admins). Writes os_clients only. */

@@ -6,10 +6,15 @@
  *
  * The page check (nav.ts canSeePage, via viewer-roles) and the page's own
  * routes (auth/require-reply-agent.ts) both read this list.
+ *
+ * 18 Nov, the user: "add amy to the brokerage hand off page" — Master Inbox ›
+ * Settings › Brokerage hand-off (`brokerage-relay`): its tab, its menu entry
+ * and its routes (auth/require-relay.ts). Nothing else of Settings' admin tabs.
  */
 
 export const NAMED_PAGES: Readonly<Record<string, readonly string[]>> = {
   "reply-agent": ["amy@brokerstaffer.com"],
+  "brokerage-relay": ["amy@brokerstaffer.com"],
 };
 
 const norm = (email: string | null | undefined) => (email ?? "").trim().toLowerCase();

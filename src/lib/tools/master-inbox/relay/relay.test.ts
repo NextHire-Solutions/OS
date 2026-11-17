@@ -81,7 +81,7 @@ function seed(settings: Row = {}, jeffRelay: Row = {}) {
       contact2_name: "Lance Overstreet", contact2_role: "Broker", contact2_email: "lance@jeffcook.test",
       contact3_name: "Stan Taylor", contact3_role: "Broker", contact3_email: "stan@jeffcook.test",
       contact_territories: { "1": ["Charlotte"], "2": ["Charleston", "Summerville"], "3": ["Charleston", "Summerville"] },
-      more_contacts: [], intro_variants: [], relay_settings: jeffRelay, pipeline_entry: "introduction",
+      more_contacts: [], intro_variants: [], relay_settings: (jeffRelay.enabled === true && !("live" in jeffRelay) ? { ...jeffRelay, live: true } : jeffRelay), pipeline_entry: "introduction",
     },
     { name: "Wagner Realty", aliases: [], status: "active", mi_client_id: wag.id, contact_name: "Wendy Wagner", contact_role: "Owner", contact_email: "wendy@wagner.test", relay_settings: {}, pipeline_entry: "introduction" },
     { name: "Sleepy Homes", aliases: [], status: "paused", mi_client_id: paused.id, contact_name: "Pat", contact_role: "Owner", contact_email: "pat@sleepy.test", relay_settings: {} },
@@ -299,7 +299,7 @@ function seedBrokerStaffer(contact3: string | null = null) {
     contact_name: "Ryan", contact_role: "Sales", contact_email: "ryan.j@brokerstaffer.com",
     contact2_name: "Eddy", contact2_role: "Owner", contact2_email: "eddy@brokerstaffer.com",
     ...(contact3 ? { contact3_name: "Outside", contact3_role: "Other", contact3_email: contact3 } : {}),
-    more_contacts: [], intro_variants: [], relay_settings: { enabled: true, mode: "automatic" }, pipeline_entry: "introduction",
+    more_contacts: [], intro_variants: [], relay_settings: { enabled: true, mode: "automatic", live: true }, pipeline_entry: "introduction",
   }]);
   return { portal: portal.id, client: rec.id };
 }
@@ -344,6 +344,70 @@ test("THE PILOT FENCE: set but naming no valid domain fences everything; unset l
   await relay.sweepBrokerageRelay(NOW, deps({ ...LIVE, OS_BROKERAGE_RELAY_LIVE_ONLY: " , not a domain" }));
   assert.equal(recordFor(a.thread.id).status, "practice");
   assert.equal(handed.length, 0);
+});
+
+/*
+ * PRACTICE OR LIVE PER BROKERAGE (18 Nov, the user: "we do not want to make changes each time for new clients in
+ * railway"): each brokerage is set to Practice or Live on the page. Never chosen is Practice — except while the old server
+ * list is still set, when it decides as it did (so the change itself sent or stopped nothing).
+ */
+test("PRACTICE OR LIVE: switched on but never chosen, or set to Practice → practised and says so, Postmark never called; set to Live → sent", async () => {
+  for (const [live, status] of [[null, "practice"], [false, "practice"], [true, "sent"]] as const) {
+    seed({ practice_mode: false }, { enabled: true, mode: "automatic", live });
+    const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+    label(L.interested, thread.id);
+    await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+    const rec = recordFor(thread.id);
+    assert.equal(rec.status, status, `live ${live}`);
+    assert.equal(rec.practice, status === "practice", `live ${live}`);
+    assert.equal(handed.length, status === "sent" ? 1 : 0, `live ${live}: Postmark`);
+    if (status === "practice") assert.equal(rec.detail, "practised: this brokerage is set to Practice", `live ${live}: says why`);
+    assertContained();
+  }
+});
+
+test("PRACTICE OR LIVE: while the old server list is still set, a brokerage never chosen follows it as before — and a choice wins", async () => {
+  const list = { ...LIVE, OS_BROKERAGE_RELAY_LIVE_ONLY: "jeffcook.test" };
+  for (const [live, status] of [[null, "sent"], [false, "practice"], [true, "sent"]] as const) {
+    seed({ practice_mode: false }, { enabled: true, mode: "automatic", live });
+    const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+    label(L.interested, thread.id);
+    await relay.sweepBrokerageRelay(NOW, deps(list));
+    assert.equal(recordFor(thread.id).status, status, `live ${live}, Jeff Cook on the list`);
+  }
+  // Set to Live but not on the list while it is still set: the list still holds it back (and the transport too).
+  seed({ practice_mode: false }, { enabled: true, mode: "automatic", live: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps({ ...LIVE, OS_BROKERAGE_RELAY_LIVE_ONLY: "brokerstaffer.com" }));
+  assert.equal(recordFor(thread.id).status, "practice");
+  assert.match(String(recordFor(thread.id).detail), /OS_BROKERAGE_RELAY_LIVE_ONLY/);
+  assert.equal(handed.length, 0);
+});
+
+test("PRACTICE OR LIVE: prepared while Live, set to Practice before the press — the press sends nothing", async () => {
+  seed({ practice_mode: false, mode: "one_click" }, { enabled: true, live: true });
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  const rec = recordFor(thread.id);
+  assert.deepEqual([rec.status, rec.practice], ["ready", false], "prepared for real, waiting for a press");
+  (db.rows("os_clients").find((c) => c.id === C.jeff) as Row).relay_settings = { enabled: true, live: false };
+  await relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", deps(LIVE), new Date(NOW.getTime() + 60_000)).catch(() => null);
+  assert.equal(handed.length, 0, "nothing went");
+  assert.equal(recordFor(thread.id).practice, true, "prepared again, in practice");
+});
+
+test("PRACTICE OR LIVE: the page's save stores the choice, refuses anything but a yes/no, and an old page can't overwrite a newer choice", async () => {
+  seed({}, { enabled: true });
+  const out = await relay.saveBrokerageSettings(C.jeff, { live: false }, deps({}));
+  assert.equal(out.relay.live, false);
+  assert.equal(((db.rows("os_clients").find((c) => c.id === C.jeff) as Row).relay_settings as Row).live, false);
+  await assert.rejects(() => relay.saveBrokerageSettings(C.jeff, { live: "yes" }, deps({})), /live must be true \(Live\) or false \(Practice\)/);
+  // A page that loaded it as Live, saving after someone set it to Practice: refused, nothing changed.
+  await assert.rejects(() => relay.saveBrokerageSettings(C.jeff, { enabled: false, ifRelay: { enabled: true, mode: null, recipients: "intro_contacts", address: null, hourlyCap: null, live: true } }, deps({})), /./);
+  const kept = (db.rows("os_clients").find((c) => c.id === C.jeff) as Row).relay_settings as Row;
+  assert.deepEqual([kept.enabled, kept.live], [true, false]);
 });
 
 test("a definite Postmark refusal frees the agent's slot so Try again works; an unknown outcome refuses a retry", async () => {
@@ -510,7 +574,7 @@ test("practice does not use up the live delivery (claims are kept apart by mode)
   assert.deepEqual(db.rows("os_brokerage_relay_agents").map((r) => r.mode), ["practice"]);
   // Pilot starts; the same agent's NEW conversation is live.
   db.seed("os_relay_settings", [{ workspace_id: WS, enabled: true, practice_mode: false, mode: "automatic", hourly_cap: 5, enabled_since: GO_LIVE }]);
-  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, relay_settings: { enabled: true } } : r)));
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, relay_settings: { enabled: true, live: true } } : r)));
   const b = conversation({ portal: P.jeff, campaign: "Jeff Cook Real Estate + Charlotte", campaignId: "103" });
   label(L.interested, b.thread.id, at(1));
   await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 2 * 60_000), deps(LIVE));
@@ -771,7 +835,7 @@ test("a later reply to a hand-off that was only PRACTISED never goes live, even 
   assert.equal(recordFor(thread.id).status, "practice");
   // The pilot starts for this brokerage; the agent writes again.
   db.seed("os_relay_settings", db.rows("os_relay_settings").map((r) => ({ ...r, practice_mode: false })));
-  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, relay_settings: { enabled: true } } : r)));
+  db.seed("os_clients", db.rows("os_clients").map((r) => (r.id === C.jeff ? { ...r, relay_settings: { enabled: true, live: true } } : r)));
   add("messages", [{ thread_id: thread.id, direction: "inbound", sender: "jordan@coastal.test", sender_name: "Jordan Ellis", subject: "Re: Quick question, Jordan", body_text: "Any news?", sent_at: at(5) }]);
   await relay.sweepBrokerageRelay(new Date(NOW.getTime() + 10 * 60_000), deps(LIVE));
   const f = records().find((x) => x.kind === "follow_up")!;
@@ -1478,8 +1542,8 @@ test("replies prepared in practice, once this client goes live (John Kaye and Ra
   await relay.sweepBrokerageRelay(NOW, liveDeps());
   const rec = recordFor(thread.id);
   assert.deepEqual([rec.status, rec.practice, handed.length, entries().length], ["ready", true, 0, 0], "practice: prepared, nothing out");
-  // The client goes live, in automatic mode.
-  (db.rows("os_clients").find((c) => c.id === C.jeff) as Row).relay_settings = { enabled: true, mode: "automatic", recipients: "intro_contacts" };
+  // The client goes live (switched on and set to Live, since 18 Nov), in automatic mode.
+  (db.rows("os_clients").find((c) => c.id === C.jeff) as Row).relay_settings = { enabled: true, mode: "automatic", recipients: "intro_contacts", live: true };
   // The sweep alone never sends what was prepared in practice.
   await relay.sweepBrokerageRelay(later(1), liveDeps());
   assert.equal(handed.length, 0);

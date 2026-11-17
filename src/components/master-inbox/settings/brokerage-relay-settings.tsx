@@ -22,7 +22,13 @@ import { Btn, ConfirmButton, Field, Section, ToastHost, ToggleRow, useShowToast 
  */
 
 async function send(url: string, method: "PUT" | "POST", body: unknown): Promise<{ ok: boolean; error?: string; [k: string]: unknown }> {
-  const res = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  let res: Response;
+  try {
+    res = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  } catch {
+    // No answer at all (offline, a dropped connection): said so, and the button comes back — nothing was saved.
+    return { ok: false, error: "Couldn't reach the server — nothing was saved. Try again." };
+  }
   const json = (await res.json().catch(() => ({}))) as { error?: string };
   return { ...json, ok: res.ok, error: res.ok ? undefined : json.error ?? `Failed (${res.status})` };
 }
@@ -101,7 +107,7 @@ function Panel({ data }: { data: RelayOverview }) {
               {data.server.liveOnly ? (
                 <>
                   {" "}· Live only to:{" "}
-                  <b>{data.server.liveOnly.length ? data.server.liveOnly.map((d) => `@${d}`).join(", ") : "no one"}</b> (OS_BROKERAGE_RELAY_LIVE_ONLY — any other address is practised, never sent)
+                  <b>{data.server.liveOnly.length ? data.server.liveOnly.map((d) => `@${d}`).join(", ") : "no one"}</b> (the old server list, OS_BROKERAGE_RELAY_LIVE_ONLY: while it is set, a brokerage outside it is practised even when set to Live)
                 </>
               ) : null}
             </div>
@@ -156,7 +162,7 @@ function Panel({ data }: { data: RelayOverview }) {
 
       <TestSends tokenSet={data.server.tokenSet} tests={data.tests} />
       <Held data={data} />
-      <Brokerages rows={data.brokerages} liveGlobally={s.enabled && !s.practiceMode && data.server.liveSendAllowed && data.server.tokenSet} />
+      <Brokerages rows={data.brokerages} liveGlobally={s.enabled && !s.practiceMode && data.server.liveSendAllowed && data.server.tokenSet} serverList={data.server.liveOnly !== null} />
       <Recent data={data} />
     </>
   );
@@ -346,7 +352,7 @@ function Held({ data }: { data: RelayOverview }) {
  * box of its own with the headings kept in view, the columns are fixed so
  * every row — Save included — fits the card's width, and a search finds one.
  */
-function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally: boolean }) {
+function Brokerages({ rows, liveGlobally, serverList }: { rows: BrokerageRow[]; liveGlobally: boolean; serverList: boolean }) {
   const [q, setQ] = useState("");
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -356,7 +362,7 @@ function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally
   return (
     <Section
       title="Brokerages"
-      sub="Each brokerage's own switch (the pilot), who receives, one click or automatic, and where its agents enter the portal pipeline. A brokerage that is off is still practised — recorded, never sent. For the pilot: switch on one or two, leave the mode on one click; move to automatic after the pilot."
+      sub="Each brokerage's own switch, Practice or Live, who receives, one click or automatic, and where its agents enter the portal pipeline. A brokerage switched on starts in Practice: each Interested reply is checked and recorded (see Recent hand-offs and View email) and nothing is sent until it is set to Live. A brokerage that is off is practised too."
     >
       <div className="mis-brk-bar">
         <label className="mis-find">
@@ -370,9 +376,10 @@ function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally
       <div className="mis-brk" role="region" aria-label="Brokerages" tabIndex={0}>
         <table className="atbl">
           <colgroup>
-            <col style={{ width: "26%" }} />
+            <col style={{ width: "22%" }} />
             <col style={{ width: "60px" }} />
-            <col style={{ width: "21%" }} />
+            <col style={{ width: "112px" }} />
+            <col style={{ width: "19%" }} />
             <col style={{ width: "96px" }} />
             <col style={{ width: "15%" }} />
             <col style={{ width: "17%" }} />
@@ -382,6 +389,7 @@ function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally
             <tr>
               <th>Brokerage</th>
               <th>On</th>
+              <th>Sends</th>
               <th>Receives</th>
               <th>Per hour</th>
               <th>Mode</th>
@@ -391,11 +399,11 @@ function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally
           </thead>
           <tbody>
             {shown.map((b) => (
-              <BrokerageLine key={`${b.id}:${JSON.stringify(b.relay)}:${b.pipelineEntry}`} row={b} liveGlobally={liveGlobally} />
+              <BrokerageLine key={`${b.id}:${JSON.stringify(b.relay)}:${b.pipelineEntry}`} row={b} liveGlobally={liveGlobally} serverList={serverList} />
             ))}
             {shown.length === 0 ? (
               <tr>
-                <td colSpan={7} className="mut">No brokerage matches “{q.trim()}”.</td>
+                <td colSpan={8} className="mut">No brokerage matches “{q.trim()}”.</td>
               </tr>
             ) : null}
           </tbody>
@@ -405,10 +413,16 @@ function Brokerages({ rows, liveGlobally }: { rows: BrokerageRow[]; liveGlobally
   );
 }
 
-function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally: boolean }) {
+/* Practice or Live as the select shows it: never chosen reads Practice — or "Server list" while the old list still decides. */
+type Sends = "practice" | "live" | "list";
+const sendsOf = (live: boolean | null, serverList: boolean): Sends => (live === true ? "live" : live === false ? "practice" : serverList ? "list" : "practice");
+
+function BrokerageLine({ row, liveGlobally, serverList }: { row: BrokerageRow; liveGlobally: boolean; serverList: boolean }) {
   const router = useRouter();
   const show = useShowToast();
   const [enabled, setEnabled] = useState(row.relay.enabled);
+  const savedSends = sendsOf(row.relay.live, serverList);
+  const [sends, setSends] = useState<Sends>(savedSends);
   const [recipients, setRecipients] = useState<RecipientMode>(row.relay.recipients);
   const [address, setAddress] = useState(row.relay.address ?? "");
   const [cap, setCap] = useState(row.relay.hourlyCap == null ? "" : String(row.relay.hourlyCap));
@@ -417,6 +431,7 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
   const [busy, setBusy] = useState(false);
   const dirty =
     enabled !== row.relay.enabled ||
+    sends !== savedSends ||
     recipients !== row.relay.recipients ||
     address !== (row.relay.address ?? "") ||
     cap !== (row.relay.hourlyCap == null ? "" : String(row.relay.hourlyCap)) ||
@@ -430,6 +445,7 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
       osClientId: row.id,
       ifRelay: row.relay,
       ...(enabled !== row.relay.enabled ? { enabled } : {}),
+      ...(sends !== savedSends && sends !== "list" ? { live: sends === "live" } : {}),
       ...(recipients !== row.relay.recipients ? { recipients } : {}),
       ...(address !== (row.relay.address ?? "") ? { address: address || null } : {}),
       ...(cap !== (row.relay.hourlyCap == null ? "" : String(row.relay.hourlyCap)) ? { hourlyCap: cap === "" ? null : Number(cap) } : {}),
@@ -451,6 +467,20 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
       </td>
       <td>
         <Switch checked={enabled} aria-label={`${row.name} on`} onCheckedChange={setEnabled} />
+      </td>
+      <td>
+        <select
+          className="sel"
+          value={sends}
+          onChange={(e) => setSends(e.target.value as Sends)}
+          aria-label={`${row.name}: Practice or Live`}
+          title="Practice: each Interested reply is checked and recorded, and nothing is sent. Live: hand-offs go to the brokerage for real."
+          data-relay-sends=""
+        >
+          <option value="practice">Practice</option>
+          <option value="live">Live</option>
+          {savedSends === "list" ? <option value="list" disabled>Server list</option> : null}
+        </select>
       </td>
       <td>
         <select className="sel" value={recipients} onChange={(e) => setRecipients(e.target.value as RecipientMode)} aria-label="Receives" title="Introduction contacts: the client's introduction contacts, chosen by territory. One address: a single inbox you type.">
@@ -484,8 +514,8 @@ function BrokerageLine({ row, liveGlobally }: { row: BrokerageRow; liveGlobally:
         </select>
       </td>
       <td>
-        {/* Switching a brokerage on while sending is live means real emails from its next hand-off: two clicks. */}
-        {enabled && !row.relay.enabled && liveGlobally ? (
+        {/* A brokerage becoming able to send for real (switched on and set to Live) while sending is live: two clicks. */}
+        {enabled && sends === "live" && !(row.relay.enabled && savedSends === "live") && liveGlobally ? (
           <ConfirmButton
             label="Save"
             armedLabel={`Click again: ${row.name} can receive real emails`}

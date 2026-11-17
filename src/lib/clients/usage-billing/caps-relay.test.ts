@@ -93,8 +93,8 @@ function seed(o: { status?: string; settings?: Row; relay?: Row } = {}) {
     { id: OTHER_PORTAL, name: "Wagner Realty", slug: "wagner-realty", aliases: [] },
   ]);
   db.seed("os_clients", [
-    { id: HB, name: "Homebase Real Estate", aliases: [], status: o.status ?? "active", mi_client_id: PORTAL, ch_client_id: "ch-hb", brokerage: "Homebase Real Estate", contact_name: "Oona Owner", contact_role: "Owner", contact_email: "owner@homebase.test", relay_settings: { enabled: true }, pipeline_entry: "interested" },
-    { id: OTHER, name: "Wagner Realty", aliases: [], status: "active", mi_client_id: OTHER_PORTAL, ch_client_id: "ch-wag", brokerage: "Wagner Realty", contact_name: "Wendy", contact_role: "Owner", contact_email: "wendy@wagner.test", relay_settings: { enabled: true }, pipeline_entry: "introduction" },
+    { id: HB, name: "Homebase Real Estate", aliases: [], status: o.status ?? "active", mi_client_id: PORTAL, ch_client_id: "ch-hb", brokerage: "Homebase Real Estate", contact_name: "Oona Owner", contact_role: "Owner", contact_email: "owner@homebase.test", relay_settings: { enabled: true, live: true }, pipeline_entry: "interested" },
+    { id: OTHER, name: "Wagner Realty", aliases: [], status: "active", mi_client_id: OTHER_PORTAL, ch_client_id: "ch-wag", brokerage: "Wagner Realty", contact_name: "Wendy", contact_role: "Owner", contact_email: "wendy@wagner.test", relay_settings: { enabled: true, live: true }, pipeline_entry: "introduction" },
   ]);
   db.seed("os_relay_settings", [{ workspace_id: WS, enabled: true, practice_mode: false, mode: "automatic", forward_later_replies: false, counts_as_introduction: false, hourly_cap: 50, enabled_since: "2026-10-15T00:00:00.000Z", ...o.relay }]);
   db.seed("os_usage_billing_settings", [{ os_client_id: HB, enabled: true, test_only: false, price_cents: 25_000, every_days: 14, anchor_date: "2026-10-28", lead_source: "handoffs", stripe_customer_id: "cus_1", default_payment_method_id: "pm_1", card_label: "Visa", setup_session_id: null, ...o.settings }]);

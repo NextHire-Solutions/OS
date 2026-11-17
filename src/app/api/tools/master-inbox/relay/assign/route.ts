@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireRelaySession } from "@/lib/tools/master-inbox/auth/require-relay";
 import { assignCampaign, RelayActionError } from "@/lib/tools/master-inbox/relay/relay";
 
 /*
@@ -17,7 +17,7 @@ import { assignCampaign, RelayActionError } from "@/lib/tools/master-inbox/relay
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const session = await requireAdminSession();
+  const session = await requireRelaySession();
   if (session instanceof NextResponse) return session;
   const b = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const s = (k: string) => (typeof b?.[k] === "string" && (b[k] as string).trim()) || null;

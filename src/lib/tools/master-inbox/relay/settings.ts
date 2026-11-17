@@ -62,6 +62,12 @@ export interface BrokerageRelaySettings {
   address: string | null;
   /** Overrides the global hourly cap; null = the global one. */
   hourlyCap: number | null;
+  /**
+   * Practice or Live for THIS brokerage (18 Nov, the user: "we do not want to make changes each time for new clients in
+   * railway"): false = Practice (decided and recorded, never sent), true = Live. null = never chosen: Practice — except
+   * while the old server list (OS_BROKERAGE_RELAY_LIVE_ONLY) is still set, when that list decides, as it did before.
+   */
+  live: boolean | null;
 }
 
 export const DEFAULT_BROKERAGE: BrokerageRelaySettings = {
@@ -70,6 +76,7 @@ export const DEFAULT_BROKERAGE: BrokerageRelaySettings = {
   recipients: "intro_contacts",
   address: null,
   hourlyCap: null,
+  live: null,
 };
 
 const bool = (v: unknown, fallback: boolean) => (typeof v === "boolean" ? v : fallback);
@@ -120,6 +127,8 @@ export function brokerageFromJson(value: unknown): BrokerageRelaySettings {
     recipients,
     address: isEmail(address) ? address!.toLowerCase() : null,
     hourlyCap: v.hourly_cap == null || v.hourly_cap === "" ? null : clampCap(v.hourly_cap, DEFAULT_GLOBAL.hourlyCap),
+    // Exactly true is Live; exactly false is Practice; anything else was never chosen.
+    live: v.live === true ? true : v.live === false ? false : null,
   };
 }
 
@@ -130,6 +139,8 @@ export function brokerageToJson(s: BrokerageRelaySettings): Record<string, unkno
     recipients: s.recipients,
     address: s.address,
     hourly_cap: s.hourlyCap,
+    // Never chosen stays unwritten: an old copy of this code reads the same row the same way.
+    ...(s.live === null ? {} : { live: s.live }),
   };
 }
 
@@ -147,18 +158,28 @@ export function effectiveCap(global: GlobalRelaySettings, brokerage: BrokerageRe
   return brokerage.hourlyCap ?? global.hourlyCap;
 }
 
+/**
+ * Whether this brokerage is set to Live (18 Nov). Chosen on the page: that. Never chosen: Practice — unless the old
+ * server list (OS_BROKERAGE_RELAY_LIVE_ONLY) is still set, when it decides as before (the caller's fence check), so the
+ * change to per-brokerage choices never sent or stopped anything by itself.
+ */
+export function brokerageLive(brokerage: BrokerageRelaySettings, serverListSet: boolean): boolean {
+  return brokerage.live ?? serverListSet;
+}
+
 /*
  * Live or practice, for one brokerage. EVERY lock must be open for "live":
- * the server's env switch, the global switch, practice mode off, and the
- * brokerage's own switch. Anything else is practice — decided and recorded,
- * never sent. (The Postmark transport checks the env switch again itself.)
+ * the server's env switch, the global switch, practice mode off, the
+ * brokerage's own switch, and the brokerage set to Live (brokerageLive). Anything else is practice — decided and
+ * recorded, never sent. (The Postmark transport checks the env switch again itself.)
  */
 export function deliveryMode(
   global: GlobalRelaySettings,
   brokerage: BrokerageRelaySettings,
   liveSendAllowed: boolean,
+  serverListSet: boolean,
 ): "live" | "practice" {
-  return liveSendAllowed && global.enabled && !global.practiceMode && brokerage.enabled ? "live" : "practice";
+  return liveSendAllowed && global.enabled && !global.practiceMode && brokerage.enabled && brokerageLive(brokerage, serverListSet) ? "live" : "practice";
 }
 
 export class RelaySettingsError extends Error {}
@@ -243,6 +264,10 @@ export function parseBrokeragePatch(body: unknown, current: BrokerageRelaySettin
     const a = str(b.address);
     if (a && !isEmail(a)) throw new RelaySettingsError("The relay address is not an email address.");
     next.address = a ? a.toLowerCase() : null;
+  }
+  if (b.live !== undefined) {
+    if (typeof b.live !== "boolean") throw new RelaySettingsError("live must be true (Live) or false (Practice).");
+    next.live = b.live;
   }
   if (b.recipients !== undefined) {
     if (b.recipients !== "intro_contacts" && b.recipients !== "address") {

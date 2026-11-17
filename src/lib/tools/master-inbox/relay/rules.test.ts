@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 
 import {
   brokerageFromJson,
+  brokerageLive,
+  brokerageToJson,
   DEFAULT_BROKERAGE,
   DEFAULT_GLOBAL,
   deliveryMode,
@@ -72,15 +74,46 @@ test("practice is anything but an explicit false; a brokerage is on only when it
   assert.equal(brokerageFromJson({ recipients: "address", address: "Leads@Brokerage.com" }).address, "leads@brokerage.com");
 });
 
-test("live needs every lock open: env, global switch, practice off, brokerage switch", () => {
+test("live needs every lock open: env, global switch, practice off, brokerage switch, brokerage set to Live", () => {
   const on = { ...DEFAULT_GLOBAL, enabled: true, practiceMode: false };
-  const b = { ...DEFAULT_BROKERAGE, enabled: true };
-  assert.equal(deliveryMode(on, b, true), "live");
-  assert.equal(deliveryMode(on, b, false), "practice", "env switch off");
-  assert.equal(deliveryMode({ ...on, enabled: false }, b, true), "practice", "global switch off");
-  assert.equal(deliveryMode({ ...on, practiceMode: true }, b, true), "practice", "practice mode");
-  assert.equal(deliveryMode(on, { ...b, enabled: false }, true), "practice", "brokerage switch off");
-  assert.equal(deliveryMode(DEFAULT_GLOBAL, DEFAULT_BROKERAGE, true), "practice", "the defaults");
+  const b = { ...DEFAULT_BROKERAGE, enabled: true, live: true };
+  assert.equal(deliveryMode(on, b, true, false), "live");
+  assert.equal(deliveryMode(on, b, false, false), "practice", "env switch off");
+  assert.equal(deliveryMode({ ...on, enabled: false }, b, true, false), "practice", "global switch off");
+  assert.equal(deliveryMode({ ...on, practiceMode: true }, b, true, false), "practice", "practice mode");
+  assert.equal(deliveryMode(on, { ...b, enabled: false }, true, false), "practice", "brokerage switch off");
+  assert.equal(deliveryMode(on, { ...b, live: false }, true, false), "practice", "brokerage set to Practice");
+  assert.equal(deliveryMode(DEFAULT_GLOBAL, DEFAULT_BROKERAGE, true, false), "practice", "the defaults");
+});
+
+test("Practice or Live per brokerage (18 Nov): never chosen is Practice — the old server list decides only while it is set", () => {
+  const on = { ...DEFAULT_GLOBAL, enabled: true, practiceMode: false };
+  const never = { ...DEFAULT_BROKERAGE, enabled: true };
+  assert.equal(DEFAULT_BROKERAGE.live, null, "a brokerage starts with nothing chosen");
+  assert.equal(brokerageLive(never, false), false);
+  assert.equal(deliveryMode(on, never, true, false), "practice", "no list: never chosen is Practice");
+  assert.equal(brokerageLive(never, true), true);
+  assert.equal(deliveryMode(on, never, true, true), "live", "list still set: as before (the list itself then decides by domain)");
+  for (const list of [true, false]) {
+    assert.equal(deliveryMode(on, { ...never, live: true }, true, list), "live", `Live, list ${list}`);
+    assert.equal(deliveryMode(on, { ...never, live: false }, true, list), "practice", `Practice, list ${list}`);
+  }
+});
+
+test("the choice is stored only once made: exactly true / false, anything else never chosen; patched only with a boolean", () => {
+  assert.equal(brokerageFromJson({ enabled: true }).live, null);
+  assert.equal(brokerageFromJson({ enabled: true, live: true }).live, true);
+  assert.equal(brokerageFromJson({ enabled: true, live: false }).live, false);
+  for (const odd of ["true", 1, "live", null, {}]) assert.equal(brokerageFromJson({ enabled: true, live: odd }).live, null, JSON.stringify(odd));
+  assert.equal("live" in brokerageToJson({ ...DEFAULT_BROKERAGE }), false, "never chosen stays unwritten");
+  assert.equal(brokerageToJson({ ...DEFAULT_BROKERAGE, live: true }).live, true);
+  assert.equal(brokerageToJson({ ...DEFAULT_BROKERAGE, live: false }).live, false);
+  assert.deepEqual(brokerageFromJson(brokerageToJson({ ...DEFAULT_BROKERAGE, enabled: true, live: true })), { ...DEFAULT_BROKERAGE, enabled: true, live: true });
+  const cur = { ...DEFAULT_BROKERAGE, enabled: true };
+  assert.equal(parseBrokeragePatch({ live: true }, cur).settings.live, true);
+  assert.equal(parseBrokeragePatch({ live: false }, { ...cur, live: true }).settings.live, false);
+  assert.equal(parseBrokeragePatch({ enabled: false }, { ...cur, live: true }).settings.live, true, "other changes keep the choice");
+  for (const bad of ["true", 1, null]) assert.throws(() => parseBrokeragePatch({ live: bad }, cur), /live must be true \(Live\) or false \(Practice\)/, JSON.stringify(bad));
 });
 
 test("mode and cap: the brokerage's override, else the global one", () => {
@@ -117,7 +150,7 @@ test("brokerage patch: address mode needs an address; pipeline entry only two va
   assert.throws(() => parseBrokeragePatch({ address: "nope" }, DEFAULT_BROKERAGE), /email/);
   assert.throws(() => parseBrokeragePatch({ pipelineEntry: "hired" }, DEFAULT_BROKERAGE), RelaySettingsError);
   const r = parseBrokeragePatch({ enabled: true, recipients: "address", address: "Team@B.com", hourlyCap: "", pipelineEntry: "interested" }, DEFAULT_BROKERAGE);
-  assert.deepEqual(r.settings, { enabled: true, mode: null, recipients: "address", address: "team@b.com", hourlyCap: null });
+  assert.deepEqual(r.settings, { enabled: true, mode: null, recipients: "address", address: "team@b.com", hourlyCap: null, live: null });
   assert.equal(r.pipelineEntry, "interested");
 });
 

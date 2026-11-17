@@ -115,7 +115,7 @@ test("at most TEST_DAILY_CAP test sends a day", () => {
   resetTestSends();
 });
 
-test("sendRelayTest changes no hand-off, takes no slot, counts no cap, and never asks for the live switch; the route is admins only", () => {
+test("sendRelayTest changes no hand-off, takes no slot, counts no cap, and never asks for the live switch; the route is the page's people only", () => {
   const src = readFileSync("src/lib/tools/master-inbox/relay/relay.ts", "utf8");
   const start = src.indexOf("export async function sendRelayTest(");
   const body = src.slice(start, src.indexOf("\n}\n", start));
@@ -126,10 +126,11 @@ test("sendRelayTest changes no hand-off, takes no slot, counts no cap, and never
   assert.match(body, /sendTest\(email, \{ env, fetch: deps\.testFetch, allowed: toList \}\)/, "the transport gets the list as checked now");
   assert.match(body, /const toList = ctx \? saved\.list\.filter\(\(a\) => testAddressRefusal\(a, ctx\) === null\) : saved\.list;/, "every saved address is checked again at send time");
   const route = readFileSync("src/app/api/tools/master-inbox/relay/test/route.ts", "utf8");
-  assert.ok(route.indexOf("requireAdminSession()") < route.indexOf("sendRelayTest("), "admins first");
+  // The page's check (admins, and its named people since 18 Nov — auth/require-relay.ts), before anything else.
+  assert.ok(route.indexOf("requireRelaySession()") > 0 && route.indexOf("requireRelaySession()") < route.indexOf("sendRelayTest("), "the check first");
   assert.deepEqual([...route.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]), ["POST", "PUT"]);
   const put = route.slice(route.indexOf("export async function PUT"));
-  assert.ok(put.indexOf("requireAdminSession()") > 0 && put.indexOf("requireAdminSession()") < put.indexOf("saveTestRecipients("), "PUT: admins first");
+  assert.ok(put.indexOf("requireRelaySession()") > 0 && put.indexOf("requireRelaySession()") < put.indexOf("saveTestRecipients("), "PUT: the check first");
 });
 
 /* ---------------------------------------------- a test address set on the page (23 Oct) --- */

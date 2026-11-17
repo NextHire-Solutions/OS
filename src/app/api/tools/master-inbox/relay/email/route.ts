@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireRelaySession } from "@/lib/tools/master-inbox/auth/require-relay";
 import { RelayActionError, relayEmailView } from "@/lib/tools/master-inbox/relay/relay";
 
 /*
@@ -8,7 +8,7 @@ import { RelayActionError, relayEmailView } from "@/lib/tools/master-inbox/relay
  * From, To, Reply-To, subject, the HTML and plain-text bodies, the extra
  * headers and how Postmark would be asked to send it (relay.ts
  * relayEmailView). For checking the practice week line by line (23 Oct).
- * Admins only, as the rest of the hand-off's Settings. Reads only — sends
+ * Admins and the page’s named people only, as the rest of the hand-off’s Settings. Reads only — sends
  * nothing, changes nothing.
  */
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store, private, max-age=0" };
 
 export async function GET(request: Request) {
-  const session = await requireAdminSession();
+  const session = await requireRelaySession();
   if (session instanceof NextResponse) return session;
   const id = new URL(request.url).searchParams.get("id") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "No such hand-off." }, { status: 400, headers: NO_STORE });

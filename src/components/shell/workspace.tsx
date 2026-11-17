@@ -12,7 +12,7 @@ import { Topbar } from "./topbar";
 import { Palette } from "./palette";
 import { ToolPane } from "./tool-pane";
 import { NAV, destinations, idForPath, pathForId, type Destination } from "@/lib/workspace/nav";
-import { canSeePage, type RoleFlags } from "@/lib/workspace/nav";
+import { canSeeLeaf, canSeePage, type RoleFlags } from "@/lib/workspace/nav";
 import { ALL_TOOLS } from "@/lib/bs-auth";
 
 /*
@@ -121,7 +121,7 @@ export function Workspace({
   const all = useMemo(() => destinations(), []);
   const reachable = useMemo(
     // The command palette offers exactly what the menu does.
-    () => all.filter((d) => (!d.tool || grants.includes(d.grant ?? d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS, liveRoles)),
+    () => all.filter((d) => (!d.tool || grants.includes(d.grant ?? d.tool)) && canSeePage(d.id, admin, grants, ALL_TOOLS, liveRoles) && canSeeLeaf(d, admin, liveRoles)),
     [all, grants, admin, liveRoles],
   );
 

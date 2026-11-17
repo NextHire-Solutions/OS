@@ -12,8 +12,10 @@
  *       emails the same brokerage people. The route also needs a signed-in
  *       address, which every hand-off records.
  *   The switches, the brokerages' settings, the held-campaign answers
- *     → admins only (requireAdminSession), like AI labelling: they decide
- *       what reaches clients automatically.
+ *     → admins (requireAdminSession until 18 Nov), like AI labelling: they decide
+ *       what reaches clients automatically — and, since 18 Nov, the people the
+ *       page is opened to by name (Amy; auth/require-relay.ts). Whose email may
+ *       actually go out stays a server setting (OS_BROKERAGE_RELAY_LIVE_ONLY).
  */
 
 import { test } from "node:test";
@@ -44,23 +46,29 @@ test("pressing it needs a signed-in address, which the hand-off records", () => 
   assert.match(src, /sendToBrokerage\(relayId, threadId, who\)/);
 });
 
-test("every Settings route of the hand-off is admins only, in every method", () => {
+test("every Settings route of the hand-off is admins and the page's named people only (18 Nov: Amy), in every method", () => {
   for (const file of ["relay/route.ts", "relay/assign/route.ts", "relay/brokerage/route.ts", "relay/email/route.ts", "relay/test/route.ts"]) {
     const src = read(`${API}/${file}`);
     const handlers = [...src.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\b[^{]*\{([\s\S]*?)\n\}/g)];
     assert.ok(handlers.length > 0, file);
     for (const [, method, body] of handlers) {
-      assert.match(body, /const session = await requireAdminSession\(\);\s*if \(session instanceof NextResponse\) return session;/, `${method} ${file}`);
+      assert.match(body, /const session = await requireRelaySession\(\);\s*if \(session instanceof NextResponse\) return session;/, `${method} ${file}`);
     }
+    assert.doesNotMatch(src, /requireSession\(\)|requireAdminSession\(\)/, `${file}: no other, looser gate`);
   }
+  // The check: an admin, or someone the "brokerage-relay" page is opened to by name — that list, nothing else.
+  const gate = read("src/lib/tools/master-inbox/auth/require-relay.ts");
+  assert.match(gate, /return holdsPage\(email, "brokerage-relay"\) \|\| \(await isAdminUser\(email\)\);/);
+  assert.match(gate, /if \(!\(await canManageRelay\(session\.user\.email\)\)\) \{\s*return NextResponse\.json\(\{ error: "Only workspace admins can run this\." \}, \{ status: 403 \}\);/);
   const settings = read("src/components/screens/master-inbox/settings.tsx");
-  assert.match(settings, /const ADMIN_TABS = new Set<SettingsTab>\(\[[^\]]*"brokerage-relay"[^\]]*\]\)/, "the tab is hidden from non-admins too");
+  assert.match(settings, /const ADMIN_TABS = new Set<SettingsTab>\(\[[^\]]*"brokerage-relay"[^\]]*\]\)/, "the tab is hidden from teammates too");
+  assert.match(settings, /const NAMED_TABS: ReadonlySet<SettingsTab> = new Set<SettingsTab>\(\["brokerage-relay"\]\)/, "…except the people it is opened to by name");
 });
 
-test("View email (23 Oct) only reads: a GET, admins only, and relayEmailView never sends or writes", () => {
+test("View email (23 Oct) only reads: a GET, the page's people only, and relayEmailView never sends or writes", () => {
   const route = read(`${API}/relay/email/route.ts`);
   assert.doesNotMatch(route, /export async function (POST|PUT|PATCH|DELETE)/);
-  assert.ok(route.indexOf("requireAdminSession()") < route.indexOf("relayEmailView("), "admins first");
+  assert.ok(route.indexOf("requireRelaySession()") > 0 && route.indexOf("requireRelaySession()") < route.indexOf("relayEmailView("), "the check first");
   const src = read("src/lib/tools/master-inbox/relay/relay.ts");
   const start = src.indexOf("export async function relayEmailView(");
   const body = src.slice(start, src.indexOf("\n}\n", start));

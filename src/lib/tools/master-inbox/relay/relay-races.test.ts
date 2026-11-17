@@ -47,7 +47,7 @@ function seed(settings: Row, jeffRelay: Row) {
   const [cJeff] = db.seed("os_clients", [{
     name: "Jeff Cook Real Estate", aliases: [], status: "active", mi_client_id: jeff.id, brokerage: "Jeff Cook Real Estate",
     contact_name: "Angela Oakes", contact_role: "Recruiter", contact_email: "angela@jeffcook.test",
-    more_contacts: [], intro_variants: [], relay_settings: jeffRelay, pipeline_entry: "introduction",
+    more_contacts: [], intro_variants: [], relay_settings: (jeffRelay.enabled === true && !("live" in jeffRelay) ? { ...jeffRelay, live: true } : jeffRelay), pipeline_entry: "introduction",
   }]);
   db.seed("os_relay_settings", [{ workspace_id: WS, enabled: true, practice_mode: false, mode: "automatic", forward_later_replies: false, counts_as_introduction: false, hourly_cap: 5, enabled_since: "2026-10-15T00:00:00.000Z", ...settings }]);
   for (const t of ["os_brokerage_relays", "os_brokerage_relay_agents", "os_relay_campaigns", "os_campaign_portals", "os_portal_blocks", "os_notifications",

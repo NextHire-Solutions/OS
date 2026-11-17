@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireRelaySession } from "@/lib/tools/master-inbox/auth/require-relay";
 import { RelayActionError, saveTestRecipients, sendRelayTest } from "@/lib/tools/master-inbox/relay/relay";
 
 /*
@@ -10,12 +10,12 @@ import { RelayActionError, saveTestRecipients, sendRelayTest } from "@/lib/tools
  * hand-off.
  * PUT { recipients } — set the test address(es) (23 Oct): our own domains or
  * Team access, never a brokerage contact, at most three — checked here and
- * again at every send. Admins only, both.
+ * again at every send. Admins and the page’s named people only, both (auth/require-relay.ts).
  */
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const session = await requireAdminSession();
+  const session = await requireRelaySession();
   if (session instanceof NextResponse) return session;
   const body = (await request.json().catch(() => null)) as { relayId?: unknown } | null;
   const relayId = typeof body?.relayId === "string" && /^[0-9a-f-]{36}$/i.test(body.relayId) ? body.relayId : null;
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const session = await requireAdminSession();
+  const session = await requireRelaySession();
   if (session instanceof NextResponse) return session;
   const body = (await request.json().catch(() => null)) as { recipients?: unknown } | null;
   try {

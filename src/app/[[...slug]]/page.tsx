@@ -471,7 +471,9 @@ export default async function WorkspacePage({
           </div>
         ),
         "inbox:reminders": <RemindersScreen />,
-        "inbox:settings": <MasterInboxSettingsScreen tab={(slug ?? [])[2]} admin={admin} />,
+        "inbox:settings": <MasterInboxSettingsScreen tab={(slug ?? [])[2]} admin={admin} pages={roles.pages} />,
+        // Its own menu entry (18 Nov, Eddy: "Can you make this menu obvious on the OS?"): the same screen, on its tab.
+        "inbox:brokerage-relay": <MasterInboxSettingsScreen tab="brokerage-relay" admin={admin} pages={roles.pages} />,
         /*
          * /portals lists the client portals; /portals/<id> is the staff
          * drill-down into one of them. (Both were under /inbox until 13 Oct,

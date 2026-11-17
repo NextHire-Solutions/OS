@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireRelaySession } from "@/lib/tools/master-inbox/auth/require-relay";
 import { RelayActionError, relayOverview, saveGlobalSettings } from "@/lib/tools/master-inbox/relay/relay";
 
 /*
- * The brokerage hand-off's Settings (admins only — this decides what reaches
+ * The brokerage hand-off's Settings (admins, and the people the page is opened to by name — auth/require-relay.ts; this decides what reaches
  * client brokerages).
  *
  * GET → the switches, the server's own locks (whether live sending is allowed
@@ -16,7 +16,7 @@ import { RelayActionError, relayOverview, saveGlobalSettings } from "@/lib/tools
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const session = await requireAdminSession();
+  const session = await requireRelaySession();
   if (session instanceof NextResponse) return session;
   try {
     return NextResponse.json(await relayOverview());
@@ -26,7 +26,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const session = await requireAdminSession();
+  const session = await requireRelaySession();
   if (session instanceof NextResponse) return session;
   const body = await request.json().catch(() => null);
   try {

@@ -41,15 +41,16 @@ test("Home is for everyone, switched on or not", () => {
   }
 });
 
-test("admin-only pages opened by name: the Reply agent to Amy (21 Oct) — that page only, and nobody else", () => {
-  assert.deepEqual(NAMED_PAGES, { "reply-agent": ["amy@brokerstaffer.com"] }, "a person is added here deliberately, on the user's word");
-  assert.deepEqual(namedPagesFor(" Amy@BrokerStaffer.com "), ["reply-agent"]);
+test("admin-only pages opened by name: the Reply agent (21 Oct) and the Brokerage hand-off (18 Nov) to Amy — those only, and nobody else", () => {
+  assert.deepEqual(NAMED_PAGES, { "reply-agent": ["amy@brokerstaffer.com"], "brokerage-relay": ["amy@brokerstaffer.com"] }, "a person is added here deliberately, on the user's word");
+  assert.deepEqual(namedPagesFor(" Amy@BrokerStaffer.com "), ["reply-agent", "brokerage-relay"]);
   const amy = { pages: namedPagesFor("amy@brokerstaffer.com") };
   assert.equal(canSeePage("reply-agent", false, [], ALL_TOOLS, amy), true);
   for (const id of ["team-access", "consistency", "assistant"]) assert.equal(canSeePage(id, false, EVERY, ALL_TOOLS, amy), false, `${id}: not opened by the Reply agent`);
   for (const email of ["amy@brokerstaffer.co", "amy.anderes@brokerstaffer.com", "eddy@brokerstaffer.com", "gabriel@brokerstaffer.com", "", null]) {
     assert.deepEqual(namedPagesFor(email), [], String(email));
     assert.equal(holdsPage(email, "reply-agent"), false, String(email));
+    assert.equal(holdsPage(email, "brokerage-relay"), false, String(email));
     assert.equal(canSeePage("reply-agent", false, EVERY, ALL_TOOLS, { pages: namedPagesFor(email) }), false, String(email));
   }
 });

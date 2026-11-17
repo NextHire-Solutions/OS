@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { clientsChanged } from "@/lib/clients/after-change";
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireRelaySession } from "@/lib/tools/master-inbox/auth/require-relay";
 import { RelayActionError, saveBrokerageSettings } from "@/lib/tools/master-inbox/relay/relay";
 
 /*
- * One brokerage's hand-off settings (admins): its own on/off switch (the
+ * One brokerage’s hand-off settings (admins, and the people the page is opened to by name — auth/require-relay.ts): its own on/off switch (the
  * pilot), who receives (the introduction contacts by territory, or one
  * address), an hourly-cap and mode override, and where its agents enter the
  * portal pipeline (os_clients.pipeline_entry, 0036: on 'interested', a hand-off
@@ -16,7 +16,7 @@ import { RelayActionError, saveBrokerageSettings } from "@/lib/tools/master-inbo
 export const dynamic = "force-dynamic";
 
 export async function PUT(request: Request) {
-  const session = await requireAdminSession();
+  const session = await requireRelaySession();
   if (session instanceof NextResponse) return session;
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const osClientId = typeof body?.osClientId === "string" ? body.osClientId : "";
