@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.10** | [Market: Avg. sales price filter and column, 17 November](#010-market-avg-sales-price-filter-and-column-17-november) — the agent database's last-12-months average sales price as a range filter and a sortable column; answered from memory only once proven against the database
 | **0.09** | [Demo Portal card links to the new portal, 17 November](#009-demo-portal-card-links-to-the-new-portal-17-november) — Client Portals' Demo card shows, copies and opens `os.brokerstaffer.com/crm-preview?client=<id>`; it opens after sign-in only
 | **0.08** | [Billing page on a shared card, 17 November](#008-billing-page-on-a-shared-card-17-november) — a client whose card also pays for another client (Douglas Elliman Las Vegas + Los Angeles) sees its own subscription's invoices; invoice numbers link to Stripe
 | **0.07** | [Campaigns: clients edit their own emails, 17 November](#007-campaigns-clients-edit-their-own-emails-17-november) — the portal's Campaigns tab; rules enforced on the server; live in EmailBison at once; Demo Portal first (migration 0052), real portals behind `OS_PORTAL_CAMPAIGNS`
@@ -217,6 +218,42 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.10 Market: Avg. sales price filter and column, 17 November
+
+The user asked for a filter and a column for average sales price on the new portal's Market. LIVE as `910fb72`
+(Railway ba7d5480).
+
+**What it is.** The agent database's own `avg_sale_price` — "LTM Avg Sale Price", the last 12 months, the figure
+the Database app calls "Avg. sales price". In a market scoped per MLS the database uses, for the filter, the row and
+the sort alike, `sum(coalesce(avg_sale_price, 0) * coalesce(units, 0)) / nullif(sum(units), 0)` over the market's
+MLSs (fn_agent_where 0126, fn_filter_search 0119); otherwise the agent's own column. Bounds are inclusive; the
+order is `nulls last, a.id`. About 15–25% of agents' averages are not volume ÷ units, so the column shows the
+database's figure, never a quotient. Agents with no sales show "–" (scoped) or $0 (not scoped, as sales volume).
+
+**Where.** Market's filter bar ("Avg. sales price", quick picks $250K+ … $1M+, or a Min – Max) — the same bar is on
+Prospects and the Setup wizard; a sortable column after Units; the export's columns (`Avg. sales price`, the
+agent's own figure, as sales volume and units already are). Query keys `minPrice` / `maxPrice`, sort `price`.
+
+**Memory (market-memory.ts).** The price filter and order are answered from memory only after their own proof
+(`provePrices`: 12 real queries both ways, including each row's price to the cent), run once the market itself is
+proven (`priceReady`). Until then, or if it differs, those requests go to the database and the rest of the market is
+unaffected. Scoped prices are summed exactly as whole numbers (`PriceSums`); a price that can't be exact keeps the
+filter and order on the database but still shows in the column (independent review). A proof the database couldn't
+finish is tried again after 5 minutes, when a price is next asked for (`requestPriceProof`); one that differs waits
+for the copy's 30-minute refresh. Logs: `[market-memory] …: average sales price ready in N s — 12 checks matched`.
+
+**Layout.** One more column: between 761 and 1439px the Market headings may wrap and the brokerage column narrows
+(preview.css), so the table still fits at 1280px. 1440px and wider are unchanged; a phone scrolls the table.
+
+**Proof.** 3,635 tests; 9 deliberate breaks caught. Real-data parity on six markets (Demo, Keyes, Douglas Elliman Las
+Vegas, Rafeh — scoped; SERHANT. NJ, Howe — not): totals, order and every price identical. Live, every write blocked:
+Demo Market 45/45 (every filter, range, sort, page 2 and combination row-by-row against the database; ~0.3 s round
+trip from India once warm), Prospects 5/5, List sort + Setup 4/4, real portals 7/7 (Keyes 20,915; BrokerStaffer's own
+43,315 on the database path; Keyes's Prospects), smoke 7/7, logs clean. Right after a deploy a price change takes 2–5
+s for about 80 s, until the market and its prices are proven.
 
 ---
 
