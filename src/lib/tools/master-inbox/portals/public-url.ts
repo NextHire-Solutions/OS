@@ -15,3 +15,19 @@ export function publicPortalUrl(token: string | null | undefined): string | null
   if (!token) return null;
   return `https://${PUBLIC_PORTAL_HOST}/portal/${token}`;
 }
+
+// The NEW client portal (17 Nov): it lives in the OS, one address per portal
+// id, and opens only after sign-in (OS staff, or someone on that portal's
+// sign-in list; the Demo Portal's list is its testers). Not login-free like
+// the old link above.
+export const PUBLIC_OS_HOST = "os.brokerstaffer.com";
+
+/** Same-site path to a portal in the new client portal (for links that open it). */
+export function newPortalPath(portalId: string): string {
+  return `/crm-preview?client=${encodeURIComponent(portalId)}`;
+}
+
+/** The full address of a portal in the new client portal (to show and to copy). */
+export function newPortalUrl(portalId: string): string {
+  return `https://${PUBLIC_OS_HOST}${newPortalPath(portalId)}`;
+}

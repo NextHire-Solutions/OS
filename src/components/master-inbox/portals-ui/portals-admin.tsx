@@ -28,7 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/mi-ui/dialog";
-import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
+import { newPortalPath, newPortalUrl, publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 /*
  * The row type lives with the screen that builds it. In the tool that is the
  * portals PAGE; here it is the portals SCREEN, because the OS routes every
@@ -419,14 +419,17 @@ export function PortalsAdmin({
  * the two things that must not be done to it by reflex: there is no Live
  * switch (switching the demo off breaks every demo link in circulation; the
  * standing rule is that it stays) and no Delete.
+ *
+ * Its link is the NEW client portal's (17 Nov, the user: "update the url of
+ * demo portal with the new demo portal url"): shown, copied and opened from
+ * here. It opens after sign-in only, unlike the old login-free link.
  */
 function DemoPortal({ row, onToggleSms }: { row: PortalClientRow; onToggleSms: (enabled: boolean) => void }) {
   const [copied, setCopied] = useState(false);
-  const url = publicPortalUrl(row.portal_token);
-  const isLive = Boolean(row.portal_enabled && url);
+  const url = newPortalUrl(row.id);
+  const isLive = Boolean(row.portal_enabled && publicPortalUrl(row.portal_token));
 
   function copyLink() {
-    if (!url) return;
     navigator.clipboard.writeText(url).then(
       () => {
         setCopied(true);
@@ -452,8 +455,8 @@ function DemoPortal({ row, onToggleSms }: { row: PortalClientRow; onToggleSms: (
             {isLive ? "Live" : "Off"}
           </span>
         </div>
-        <div className="csince truncate" title={url ?? undefined}>
-          {url ?? "No portal URL set"}
+        <div className="csince truncate" title={`${url} (opens after sign-in)`} data-portal-demo-url>
+          {url}
         </div>
       </div>
       <div className="mi-portals-demo-sms" title={row.sms_alerts ? "Team gets a text for each new introduction" : "No SMS alerts"}>
@@ -465,16 +468,14 @@ function DemoPortal({ row, onToggleSms }: { row: PortalClientRow; onToggleSms: (
         />
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="outline" onClick={copyLink} disabled={!url} data-portal-demo-copy>
+        <Button variant="outline" onClick={copyLink} data-portal-demo-copy>
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
           {copied ? "Copied" : "Copy link"}
         </Button>
-        {isLive && url ? (
-          <a href={url} target="_blank" rel="noopener" className="mi-portals-demo-open" data-portal-demo-open>
-            Open demo portal
-            <ExternalLink className="size-4" />
-          </a>
-        ) : null}
+        <a href={newPortalPath(row.id)} target="_blank" rel="noopener" className="mi-portals-demo-open" data-portal-demo-open>
+          Open demo portal
+          <ExternalLink className="size-4" />
+        </a>
       </div>
     </div>
   );
