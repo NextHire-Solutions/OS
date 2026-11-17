@@ -41,15 +41,39 @@ export function domainOf(email: string): string | null {
 export interface DomainSource extends RateInputs {
   email: string;
   sentAllTime: number | null;
+  bouncedAllTime: number | null;
 }
 
-export interface DomainRow extends RateInputs {
+/**
+ * Sent and bounced, added up over the SAME inboxes: those that report both.
+ *
+ * Not the domain's whole Sent: an inbox with sends but no bounce figure would
+ * then count as "sent, never bounced" and pull the rate down — an unknown
+ * becoming a 0, which this page must not do.
+ */
+export interface BounceInputs {
+  bounceSent: number | null;
+  bounceBounced: number | null;
+}
+
+/**
+ * Bounced ÷ sent, all time, as a share — Infrastructure's bounce rate, for a
+ * domain. Not known with nothing sent, or without both figures. More bounces
+ * than sends cannot be a share, so that is not known either.
+ */
+export function bounceRate(row: BounceInputs): number | null {
+  const { bounceSent: sent, bounceBounced: bounced } = row;
+  if (sent === null || bounced === null || sent <= 0 || bounced < 0 || bounced > sent) return null;
+  return bounced / sent;
+}
+
+export interface DomainRow extends RateInputs, BounceInputs {
   domain: string;
   /** Addresses: a mailbox connected to both platforms is one inbox. */
   inboxes: number;
   sentAllTime: number | null;
   /** How many inboxes each sum left out because their figure is not known. */
-  missing: { sent: number; replies: number; positive: number };
+  missing: { sent: number; replies: number; positive: number; bounce: number };
 }
 
 const FIGURES = [
@@ -69,7 +93,8 @@ export function domainRows(rows: readonly DomainSource[]): DomainRow[] {
       d = {
         domain, inboxes: 0, addresses: new Set(),
         sentAllTime: null, masterInboxReplies: null, positiveAllTime: null,
-        missing: { sent: 0, replies: 0, positive: 0 },
+        bounceSent: null, bounceBounced: null,
+        missing: { sent: 0, replies: 0, positive: 0, bounce: 0 },
       };
       out.set(domain, d);
     }
@@ -78,6 +103,12 @@ export function domainRows(rows: readonly DomainSource[]): DomainRow[] {
       const v = r[field];
       if (v === null) d.missing[name]++;
       else d[field] = (d[field] ?? 0) + v;
+    }
+    // Both or neither, so the rate's two halves are of the same inboxes.
+    if (r.sentAllTime === null || r.bouncedAllTime === null) d.missing.bounce++;
+    else {
+      d.bounceSent = (d.bounceSent ?? 0) + r.sentAllTime;
+      d.bounceBounced = (d.bounceBounced ?? 0) + r.bouncedAllTime;
     }
   }
   return [...out.values()]
@@ -99,6 +130,8 @@ export const DOMAIN_COLUMNS: readonly DomainColumnDef[] = [
   { key: "miReplies", label: "Replies", hint: "Replies (Master Inbox): conversations where a lead replied to this domain's inboxes, one per lead and campaign, from May 2026; out-of-office and automatic replies left out" },
   { key: "positive", label: "Positive replies", hint: "Replies labelled Interested in Master Inbox, or introduced — not EmailBison's Interested flag" },
   { key: "positiveRate", label: "Positive rate", hint: "Positive replies ÷ Replies" },
+  // Domains only, not a column of the Inboxes view (asked 18 Nov).
+  { key: "bounceRate", label: "Bounce rate", hint: "Bounced ÷ Sent, all time, of this domain's inboxes that report both — as Infrastructure counts it" },
 ];
 
 /** What a Domains column sorts by. Null is "not known", which sorts last either way. */
@@ -116,6 +149,8 @@ export function domainSortValue(row: DomainRow, key: string): string | number | 
       return row.positiveAllTime;
     case "positiveRate":
       return positiveRate(row);
+    case "bounceRate":
+      return bounceRate(row);
     default:
       return null;
   }

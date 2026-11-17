@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { DASH, fullNumber, percent } from "@/lib/tools/analytics/format.ts";
 import {
+  bounceRate,
   DOMAIN_COLUMNS,
   domainRows,
   domainSortValue,
@@ -918,11 +919,11 @@ function DomainTable({
 }
 
 /** A figure that left out inboxes whose figure is not known, saying so on hover. */
-function partial(value: number | null, missing: number): React.ReactNode {
-  if (value === null || missing === 0) return fullNumber(value);
+function partial(value: number | null, missing: number, show: (v: number | null) => string = fullNumber): React.ReactNode {
+  if (value === null || missing === 0) return show(value);
   return (
     <span title={`${fullNumber(missing)} ${missing === 1 ? "inbox has" : "inboxes have"} no figure here and ${missing === 1 ? "is" : "are"} not in this total`} style={{ cursor: "help" }}>
-      {fullNumber(value)}
+      {show(value)}
     </span>
   );
 }
@@ -939,6 +940,9 @@ function domainCell(d: DomainRow, key: string): React.ReactNode {
       return partial(d.positiveAllTime, d.missing.positive);
     case "positiveRate":
       return percent(positiveRate(d), 1);
+    case "bounceRate":
+      // Two places, as Infrastructure shows a bounce rate.
+      return partial(bounceRate(d), d.missing.bounce, (v) => percent(v, 2));
     default:
       return DASH;
   }
