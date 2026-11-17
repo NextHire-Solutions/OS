@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.11** | [Brokerage hand-off: Practice or Live per client, Amy, its own menu entry; Bounce rate on Domains — 18 November](#011-brokerage-hand-off-practice-or-live-per-client-amy-its-own-menu-entry-bounce-rate-on-domains--18-november) — going live for a client is a choice on the page now (the Railway list is gone); Hassan's Bounce rate column merged; check who made the live deploy before deploying
 | **0.10** | [Market: Avg. sales price filter and column, 17 November](#010-market-avg-sales-price-filter-and-column-17-november) — the agent database's last-12-months average sales price as a range filter and a sortable column; answered from memory only once proven against the database
 | **0.09** | [Demo Portal card links to the new portal, 17 November](#009-demo-portal-card-links-to-the-new-portal-17-november) — Client Portals' Demo card shows, copies and opens `os.brokerstaffer.com/crm-preview?client=<id>`; it opens after sign-in only
 | **0.08** | [Billing page on a shared card, 17 November](#008-billing-page-on-a-shared-card-17-november) — a client whose card also pays for another client (Douglas Elliman Las Vegas + Los Angeles) sees its own subscription's invoices; invoice numbers link to Stripe
@@ -218,6 +219,40 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.11 Brokerage hand-off: Practice or Live per client, Amy, its own menu entry; Bounce rate on Domains — 18 November
+
+LIVE as `122effa` + `a31f3fa` (Railway c3432e70). Eddy and Amy asked how to turn on automatic hand-off and to make the
+setting easy to find; Amy's link had opened Labels (the tab was admins-only and she isn't an OS admin).
+
+**Practice or Live per client** (the user: "we do not want to make changes each time for new clients in railway").
+Each row of Master Inbox › Brokerage hand-off has a **Sends** choice, stored as `os_clients.relay_settings.live` (jsonb,
+no migration; written only once chosen). `deliveryMode` needs it for "live" at all three checks — the decision, the
+re-check before a send, and the release of a reply held over a cap. Never chosen is Practice (it said "follow the
+server list" only while `OS_BROKERAGE_RELAY_LIVE_ONLY` existed, so the switch-over sent or stopped nothing by itself).
+A practised hand-off says `practised: this brokerage is set to Practice`. Choosing Live keeps the two-click
+confirm. **The Railway variable `OS_BROKERAGE_RELAY_LIVE_ONLY` is deleted** (it was brokerstaffer.com,
+myrehomebase.com, hetheringtonteam.com); BrokerStaffer, Homebase and Hetherington were set to Live on the page first.
+A new client: switch On (starts in Practice), review with View email, set Live — no Railway step. Setting the variable
+again would act as an extra fence on top, as before.
+
+**Amy** has the page by name (`identity/named-pages.ts` → `brokerage-relay`; its five routes behind
+`auth/require-relay.ts`: admins and the named people). **Menu entry** Master Inbox › Brokerage hand-off
+(`/inbox/brokerage-relay`), shown only to whoever may open the page (`NavLeaf.page`, `canSeeLeaf`; the search
+palette too). The page's saves now say so when the server can't be reached.
+
+**Bounce rate on Domains** (Hassan Ahmed): Inboxes › Domains gains Bounce rate — bounced ÷ sent, all time, over the
+inboxes that report both; "-" when unknown; sorts. Cherry-picked from his repository (github.com/HassanAhmedShaik/
+OS-project) as `a31f3fa`, his authorship kept. **He had deployed it by CLI before pushing**, and a deploy from `main`
+replaced it for about an hour: check who made the live deployment (`railway deployment list --json`,
+`meta.cliAgentSessionId`) before any OS deploy, and push before deploying.
+
+**Proof.** 3,651 tests; 8 deliberate breaks caught. Local Chrome as the owner, Amy and a teammate (26/26, palette 2/2,
+Sends column 12/12). Live, writes blocked: the page 6/6 (exactly the three Live, the rest Practice, the list gone),
+Domains Bounce rate 5/5, smoke 7/7, logs clean; a read-only run of every client's decision with the live settings:
+only BrokerStaffer, Hetherington and Homebase would send for real.
 
 ---
 
