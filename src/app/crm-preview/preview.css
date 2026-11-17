@@ -441,3 +441,15 @@ html:has(.cpv-shell), body:has(.cpv-shell) { height: auto; overflow: auto; }
 .cpv-shell a.cpv-invl { display: inline-flex; align-items: center; gap: 5px; color: #2f55a8; font-weight: 500; text-decoration: none; }
 .cpv-shell a.cpv-invl:hover { text-decoration: underline; }
 .cpv-shell a.cpv-invl:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; border-radius: 3px; }
+
+/*
+ * Market's Avg. sales price column (17 Nov): one more column. Below 1440px its headings may take two lines and the
+ * brokerage column gives up a little, so the table still fits the page at 1280px as it did before (it fit with 7px to
+ * spare). 1440px and wider are unchanged; a phone's table scrolls sideways inside itself (mobile.css).
+ */
+@media (min-width: 761px) and (max-width: 1439px) {
+  .cpv-shell .crx-mkt th { white-space: normal; line-height: 1.25; }
+  .cpv-shell .crx-mkt th .cpv-sort { white-space: normal; text-align: left; }
+  .cpv-shell .crx-mkt th.crx-r .cpv-sort { text-align: right; justify-content: flex-end; }
+  .cpv-shell .crx-mkt td:nth-child(4) { min-width: 140px; }
+}

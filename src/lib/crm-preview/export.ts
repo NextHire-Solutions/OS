@@ -13,7 +13,7 @@ import type { MarketQuery } from "@/lib/crm-preview/market-model";
  */
 export const EXPORT_MAX = 10_000;
 
-export const EXPORT_COLUMNS = ["Name", "Title", "Brokerage", "Office", "Office city", "Most transacted city", "Sales volume", "Units", "Years in industry"] as const;
+export const EXPORT_COLUMNS = ["Name", "Title", "Brokerage", "Office", "Office city", "Most transacted city", "Sales volume", "Units", "Avg. sales price", "Years in industry"] as const;
 
 /** Who may export which list: Prospects, anyone who may open the portal; Market, our staff only. */
 export function mayExport(role: GuardRole, list: "market" | "prospects"): boolean {
@@ -34,7 +34,7 @@ export function csvCell(v: unknown): string {
 /** The columns on screen, for one agent — the brokerage as the list shows it (the brand, else the office). */
 export function exportLine(a: AgentRow): unknown[] {
   const months = typeof a.est_time_in_industry_months === "number" && Number.isFinite(a.est_time_in_industry_months) ? a.est_time_in_industry_months : null;
-  return [a.full_name, a.title, a.brand || a.office_name, a.office_name, a.office_city, a.most_transacted_city, a.sales_volume, a.units, months === null ? null : Math.floor(months / 12)];
+  return [a.full_name, a.title, a.brand || a.office_name, a.office_name, a.office_city, a.most_transacted_city, a.sales_volume, a.units, a.avg_sale_price ?? null, months === null ? null : Math.floor(months / 12)];
 }
 
 /** The file: a header row, then one row per agent, as Excel and Google Sheets read it (CRLF; a BOM for the accents). */

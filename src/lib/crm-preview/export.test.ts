@@ -22,7 +22,7 @@ if (canMock) {
 const agent = (id: string, name: string, extra: Partial<AgentRow> = {}): AgentRow => ({
   id, full_name: name, preferred_email: `${id}@secret.test`, enriched_email: `${id}.work@secret.test`, preferred_phone: "555-0199", brand: "KW", office_name: "KW Center City", title: "Salesperson",
   office_city: "Philadelphia", office_county: null, home_city: null, home_county: null, most_transacted_city: "Philadelphia", most_transacted_county: null, office_zip: "19103", most_transacted_zip: "19103",
-  office_state: "PA", home_state: null, transacted_state: "PA", sales_volume: 2_500_000, units: 9, est_time_in_industry_months: 131, ...extra,
+  office_state: "PA", home_state: null, transacted_state: "PA", sales_volume: 2_500_000, units: 9, avg_sale_price: 277_778, est_time_in_industry_months: 131, ...extra,
 });
 
 test("who may export: Prospects anyone who may open the portal; Market our staff only", { skip }, () => {
@@ -35,12 +35,12 @@ test("who may export: Prospects anyone who may open the portal; Market our staff
 test("the file: the columns on screen — never an email or a phone; quoted where needed; a formula never runs", { skip }, () => {
   const csv = mod.toCsv([
     agent("a1", "Jordan Ellis"),
-    agent("a2", '=HYPERLINK("http://x","click")', { brand: null, office_name: "Smith, Jones & Co", sales_volume: null, units: null, est_time_in_industry_months: null, title: "+1 Agent", office_city: "@home" }),
+    agent("a2", '=HYPERLINK("http://x","click")', { brand: null, office_name: "Smith, Jones & Co", sales_volume: null, units: null, avg_sale_price: null, est_time_in_industry_months: null, title: "+1 Agent", office_city: "@home" }),
   ]);
-  assert.ok(csv.startsWith("﻿Name,Title,Brokerage,Office,Office city,Most transacted city,Sales volume,Units,Years in industry\r\n"));
+  assert.ok(csv.startsWith("﻿Name,Title,Brokerage,Office,Office city,Most transacted city,Sales volume,Units,Avg. sales price,Years in industry\r\n"));
   const lines = csv.slice(1).trimEnd().split("\r\n");
-  assert.equal(lines[1], "Jordan Ellis,Salesperson,KW,KW Center City,Philadelphia,Philadelphia,2500000,9,10");
-  assert.equal(lines[2], `"'=HYPERLINK(""http://x"",""click"")",'+1 Agent,"Smith, Jones & Co","Smith, Jones & Co",'@home,Philadelphia,,,`);
+  assert.equal(lines[1], "Jordan Ellis,Salesperson,KW,KW Center City,Philadelphia,Philadelphia,2500000,9,277778,10");
+  assert.equal(lines[2], `"'=HYPERLINK(""http://x"",""click"")",'+1 Agent,"Smith, Jones & Co","Smith, Jones & Co",'@home,Philadelphia,,,,`);
   assert.doesNotMatch(csv, /secret\.test|555-0199/, "no email, no phone");
   assert.equal(mod.exportFileName("Smith/Jones: Realty", "prospects", "2026-11-03"), "Smith Jones Realty Prospects 2026-11-03.csv");
   assert.equal(mod.exportFileName(null, "market", "2026-11-03"), "Portal Market 2026-11-03.csv");

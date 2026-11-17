@@ -120,6 +120,8 @@ export function marketScope(mlsIds: readonly string[], titles: readonly string[]
 /** The design's filter chips, as presets (the values a chip offers), so nothing free-form reaches the database. */
 export const VOLUME_PRESETS = [1_000_000, 2_000_000, 5_000_000, 10_000_000] as const;
 export const UNIT_PRESETS = [1, 4, 10, 20] as const;
+/** Average sales price (17 Nov, the user: "add a filter and column for average sales price"). */
+export const PRICE_PRESETS = [250_000, 500_000, 750_000, 1_000_000] as const;
 export const YEAR_PRESETS = [1, 2, 5, 10] as const;
 export const TITLES = ["Salesperson", "Team Leader", "Managing Broker"] as const;
 export const PAGE_SIZE = 50;
@@ -146,6 +148,11 @@ export const SORTS = {
   title: "title",
   volume: "sales_volume",
   units: "units",
+  /*
+   * The agent database's own average sales price, the last 12 months (17 Nov): in a market scoped per MLS, the average
+   * over its MLSs weighted by units (fn_filter_search 0119) — the same figure its filter tests (fn_agent_where 0126).
+   */
+  price: "avg_sale_price",
 } as const;
 /*
  * …and the List column (Amy, 11 Nov: "sort by list … prospects first, the DNC, and then not on a list"). Not a column
@@ -153,7 +160,7 @@ export const SORTS = {
  * here (market.ts listOrdered), with sales volume, largest first, inside each list.
  */
 export type SortKey = keyof typeof SORTS | "list";
-export const FIRST_DIR: Record<SortKey, "asc" | "desc"> = { name: "asc", brokerage: "asc", officeCity: "asc", transactedCity: "asc", title: "asc", volume: "desc", units: "desc", list: "asc" };
+export const FIRST_DIR: Record<SortKey, "asc" | "desc"> = { name: "asc", brokerage: "asc", officeCity: "asc", transactedCity: "asc", title: "asc", volume: "desc", units: "desc", price: "desc", list: "asc" };
 
 /** The database sort for a query: a List sort reads the agents by sales volume and orders them by list itself. */
 export function dbSortOf(q: Pick<MarketQuery, "sort" | "dir">): { by: string; dir: "asc" | "desc" } {
@@ -214,6 +221,8 @@ export interface MarketQuery {
   /** Ranges, min and max (21 Oct, Eddy: "range filters for sales volume and number of units"). */
   volume: Range;
   units: Range;
+  /** Average sales price, the last 12 months (17 Nov). */
+  price: Range;
   years: Range;
   brokerages: string[];
   /** Office names (the Setup wizard's Office filter, 23 Oct). */
@@ -272,6 +281,7 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
     q: clean(p.get("q"), 80) ?? "",
     volume: range("minVolume", "maxVolume", 100_000_000_000),
     units: range("minUnits", "maxUnits", 100_000),
+    price: range("minPrice", "maxPrice", 1_000_000_000),
     years: range("minYears", "maxYears", 80),
     brokerages: many("brokerage"),
     offices: many("office"),
@@ -296,6 +306,8 @@ export function marketFilters(base: Record<string, unknown>, q: MarketQuery): Re
   const f: Record<string, unknown> = { ...base };
   if (set(q.volume)) f.salesVolume = { side: "all", buckets: [], ...ends(q.volume) };
   if (set(q.units)) f.closedUnits = { side: "all", buckets: [], ...ends(q.units) };
+  // fn_agent_where's avgSalePrice (no side): min and max inclusive; an agent with no average never passes a set bound.
+  if (set(q.price)) f.avgSalePrice = { buckets: [], ...ends(q.price) };
   // In YEARS: fn_agent_where turns them into months itself (Database 0109). Sending months filtered 2+ years as 24+ (21 Oct).
   if (set(q.years)) f.estTimeInIndustry = { buckets: [], ...ends(q.years) };
   const x = q.not;

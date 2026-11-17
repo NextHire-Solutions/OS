@@ -70,6 +70,8 @@ export interface AgentRow {
   transacted_state: string | null;
   sales_volume: number | null;
   units: number | null;
+  /** Average sales price, the last 12 months — the agent's own, as these lists show sales volume and units (17 Nov). */
+  avg_sale_price: number | null;
   est_time_in_industry_months: number | null;
   /** The enrichment's verdict on enriched_email ("ok", "verified", "not_found"…) — whether the campaign sync would use it. */
   enriched_email_status?: string | null;
@@ -79,7 +81,7 @@ export interface AgentRow {
   source_email_zillow?: string | null;
   source_email_realtor?: string | null;
 }
-const AGENT_COLS = "id, full_name, preferred_email, enriched_email, enriched_email_status, source_email_agent_provided:source_ids->agent_provided->>email, source_email_courted:source_ids->courted->>email, source_email_zillow:source_ids->zillow->>email, source_email_realtor:source_ids->realtor->>email, preferred_phone, brand, office_name, title, office_city, office_county, home_city, home_county, most_transacted_city, most_transacted_county, office_zip, most_transacted_zip, office_state, home_state, transacted_state, sales_volume, units, est_time_in_industry_months";
+const AGENT_COLS = "id, full_name, preferred_email, enriched_email, enriched_email_status, source_email_agent_provided:source_ids->agent_provided->>email, source_email_courted:source_ids->courted->>email, source_email_zillow:source_ids->zillow->>email, source_email_realtor:source_ids->realtor->>email, preferred_phone, brand, office_name, title, office_city, office_county, home_city, home_county, most_transacted_city, most_transacted_county, office_zip, most_transacted_zip, office_state, home_state, transacted_state, sales_volume, units, avg_sale_price, est_time_in_industry_months";
 
 /** Agents by id, in chunks the gateway's URL limit allows. */
 export async function agentsByIds(ids: readonly string[]): Promise<AgentRow[]> {
@@ -255,7 +257,7 @@ export function filterProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
   const needle = q.q.toLowerCase();
   return rows.filter((a) =>
     (!needle || (a.full_name ?? "").toLowerCase().includes(needle))
-    && inRange(a.sales_volume, q.volume) && inRange(a.units, q.units) && inRange(years(a), q.years)
+    && inRange(a.sales_volume, q.volume) && inRange(a.units, q.units) && inRange(a.avg_sale_price ?? null, q.price) && inRange(years(a), q.years)
     && (!brands.size || brands.has(lower(a.brand))) && (!offices.size || offices.has(lower(a.office_name)))
     && (!anyPlace(q) || inPlaces(a, q, q.kinds))
     && (!titles.size || titleTokens(a.title).some((t) => titles.has(t)))
@@ -266,7 +268,7 @@ export function filterProspects(rows: AgentRow[], q: MarketQuery): AgentRow[] {
 
 const SORT_FIELD: Record<Exclude<MarketQuery["sort"], "list">, (a: AgentRow) => string | number | null> = {
   name: (a) => a.full_name, brokerage: (a) => a.brand, officeCity: (a) => a.office_city, transactedCity: (a) => a.most_transacted_city,
-  title: (a) => a.title, volume: (a) => a.sales_volume, units: (a) => a.units,
+  title: (a) => a.title, volume: (a) => a.sales_volume, units: (a) => a.units, price: (a) => a.avg_sale_price ?? null,
 };
 
 /** The page's order for agents sorted here: by the sort's field, blanks last either way. */

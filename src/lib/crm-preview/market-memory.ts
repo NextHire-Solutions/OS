@@ -39,7 +39,7 @@ type Row = Record<string, unknown>;
 type Db = ReturnType<typeof getCorofySupabase>;
 
 // The agent's own sales_volume / units are the market's numbers when it is NOT scoped per MLS (fn_agent_where's rule).
-const COLS = "id,full_name,title,brand,office_name,office_city,office_state,office_county,office_city_key,office_zip,most_transacted_city,transacted_state,most_transacted_county,most_transacted_city_key,most_transacted_zip,est_time_in_industry_months,sales_volume,units,preferred_email,enriched_email";
+const COLS = "id,full_name,title,brand,office_name,office_city,office_state,office_county,office_city_key,office_zip,most_transacted_city,transacted_state,most_transacted_county,most_transacted_city_key,most_transacted_zip,est_time_in_industry_months,sales_volume,units,avg_sale_price,preferred_email,enriched_email";
 /** Above this many salespeople a market stays on the database (memory budget: ~0.5 KB an agent). */
 const MAX_AGENTS = 250_000;
 const PAGE = 1000;
@@ -132,6 +132,50 @@ function addScaled(total: number | null, v: unknown, scale: number): number | nu
   return (total ?? 0) + Math.round(scaled);
 }
 
+/*
+ * The average sales price of a market scoped per MLS (17 Nov): the database's
+ * sum(coalesce(avg_sale_price, 0) * coalesce(units, 0)) / sum(units) over the market's MLSs, null when the units add
+ * to nothing. Summed here as whole numbers — cents times ten-thousandths of a unit — so the sum is numeric's exact one,
+ * and divided once (priceOf). A price finer than a cent, or a sum past what a double holds exactly, and the price
+ * FILTER AND ORDER are left to the database (`exact` false); the rest of the market is unaffected, and the column still
+ * shows each agent's price from the same sums in plain floating point — off by far less than a cent (review, 17 Nov:
+ * without it the column read "–" for every agent of such a market).
+ */
+export class PriceSums {
+  private sums = new Map<string, number>();
+  private approx = new Map<string, number>();
+  exact = true;
+  why: string | null = null;
+  add(agentId: string, price: unknown, units: unknown): void {
+    const p = nOrNull(price);
+    const u = nOrNull(units);
+    this.approx.set(agentId, (this.approx.get(agentId) ?? 0) + (p ?? 0) * (u ?? 0));
+    if (!this.exact) return;
+    const scaled = (n: number | null, scale: number) => {
+      if (n === null) return 0;
+      const x = n * scale;
+      return Math.abs(x - Math.round(x)) > Math.max(1e-6, Math.abs(x) * 1e-12) ? null : Math.round(x);
+    };
+    const cents = scaled(p, SCALE.volume);
+    const parts = scaled(u, SCALE.units);
+    if (cents === null || parts === null) { this.stop(`a price of ${p} or units of ${u} is finer than a cent or a ten-thousandth`); return; }
+    const total = (this.sums.get(agentId) ?? 0) + cents * parts;
+    if (!Number.isSafeInteger(cents * parts) || !Number.isSafeInteger(total)) { this.stop("a price sum is too large to add exactly"); return; }
+    this.sums.set(agentId, total);
+  }
+  /** The weighted average, given the agent's units summed in ten-thousandths (null: none on record) — exact when it can be. */
+  priceOf(agentId: string, unitsScaled: number | null): number | null {
+    if (unitsScaled === null || unitsScaled <= 0) return null;
+    if (this.exact) {
+      const den = unitsScaled * SCALE.volume;
+      if (Number.isSafeInteger(den)) return (this.sums.get(agentId) ?? 0) / den;
+      this.stop("a unit sum is too large to divide exactly");
+    }
+    return (this.approx.get(agentId) ?? 0) / (unitsScaled / SCALE.units);
+  }
+  private stop(why: string) { this.exact = false; this.why ??= why; }
+}
+
 export type Loaded = { market: MemMarket; stamp: MlsStamp } | { unused: string };
 
 /**
@@ -149,16 +193,18 @@ export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(ge
   const scoped = allScoped(stamp, ids);
   const [members, stats] = await Promise.all([
     readSlices(db, "agent_mls", `agent_id,mls_id,agents(${COLS})`, ids),
-    scoped ? readSlices(db, "agent_mls_stats", "agent_id,mls_id,sales_volume,units", ids) : Promise.resolve([] as Row[]),
+    scoped ? readSlices(db, "agent_mls_stats", "agent_id,mls_id,sales_volume,units,avg_sale_price", ids) : Promise.resolve([] as Row[]),
   ]);
   const volume = new Map<string, number | null>();
   const units = new Map<string, number | null>();
+  const prices = new PriceSums();
   try {
     if (scoped) {
       for (const r of stats) {
         const id = String(r.agent_id);
         volume.set(id, addScaled(volume.has(id) ? volume.get(id)! : null, r.sales_volume, SCALE.volume));
         units.set(id, addScaled(units.has(id) ? units.get(id)! : null, r.units, SCALE.units));
+        prices.add(id, r.avg_sale_price, r.units);
       }
     } else {
       for (const r of members) {
@@ -189,12 +235,16 @@ export async function loadMarket(mlsIds: readonly string[], db: Db = readOnly(ge
       office_zip: s(a.office_zip), most_transacted_zip: s(a.most_transacted_zip),
       sales_volume: v === null ? null : v / SCALE.volume,
       units: u === null ? null : u / SCALE.units,
+      // Not scoped: the agent's own, as stored (fn_agent_where compares and fn_filter_search sorts the column itself).
+      avg_sale_price: scoped ? prices.priceOf(id, u) : nOrNull(a.avg_sale_price),
       est_time_in_industry_months: nOrNull(a.est_time_in_industry_months),
       preferred_email: s(a.preferred_email), enriched_email: s(a.enriched_email),
     });
   }
   if (agents.size > MAX_AGENTS) return { unused: `${agents.size} salespeople is above the memory budget` };
-  return { market: { mlsIds: ids, agents: [...agents.values()], scoped }, stamp };
+  // Prices that could not be summed exactly are never proven or served here: those requests go to the database.
+  const priceUnused = scoped && !prices.exact ? (prices.why ?? "not exact") : undefined;
+  return { market: { mlsIds: ids, agents: [...agents.values()], scoped, ...(priceUnused ? { priceUnused } : {}) }, stamp };
 }
 
 /*
@@ -411,6 +461,45 @@ export function nameQueries(m: MemMarket, base: Record<string, unknown>): Return
   return out;
 }
 
+/*
+ * The average sales price's own proof (17 Nov): its order both ways, deep pages, ranges with one end and both, a bound
+ * some agents sit on exactly (inclusive), and with other filters — each page's prices to the cent as well.
+ */
+export function priceQueries(m: MemMarket, base: Record<string, unknown>): ReturnType<typeof parityQueries> {
+  const city = most(m.agents.map((a) => (a.office_city_key && a.office_state ? `${a.office_city_key}, ${a.office_state}` : null)));
+  // A whole-dollar price several agents have: a bound exactly on it must keep them (>= and <=).
+  const exact = most(m.agents.map((a) => (a.avg_sale_price !== null && a.avg_sale_price > 0 && Number.isInteger(a.avg_sale_price) ? a.avg_sale_price : null)));
+  const high = { by: "avg_sale_price", dir: "desc" as const };
+  const low = { by: "avg_sale_price", dir: "asc" as const };
+  const vol = { by: "sales_volume", dir: "desc" as const };
+  const price = (min: string, max: string) => ({ avgSalePrice: { buckets: [], min, max } });
+  const out: ReturnType<typeof parityQueries> = [
+    { label: "price, highest first", filters: { ...base }, sort: high },
+    { label: "price, lowest first", filters: { ...base }, sort: low },
+    { label: "price, highest first, page 2", filters: { ...base }, sort: high, offset: 50 },
+    { label: "price, highest first, the last page a search may reach", filters: { ...base }, sort: high, offset: 950 },
+    { label: "price, lowest first, page 11", filters: { ...base }, sort: low, offset: 500 },
+    { label: "price ≥ $500K", filters: { ...base, ...price("500000", "") }, sort: vol },
+    { label: "price up to $300K, by units", filters: { ...base, ...price("", "300000") }, sort: { by: "units", dir: "desc" } },
+    { label: "price $300K–$600K, highest first", filters: { ...base, ...price("300000", "600000") }, sort: high },
+    { label: "volume ≥ $2M, by price, page 2", filters: { ...base, salesVolume: { side: "all", buckets: [], min: "2000000", max: "" } }, sort: low, offset: 50 },
+  ];
+  if (exact !== null) {
+    out.push({ label: `price from exactly $${exact}, lowest first`, filters: { ...base, ...price(String(exact), "") }, sort: low });
+    out.push({ label: `price up to exactly $${exact}, highest first`, filters: { ...base, ...price("", String(exact)) }, sort: high });
+  }
+  if (city) out.push({ label: `city ${city} + price ≥ $250K, by price`, filters: { ...base, ...price("250000", ""), location: { field: "city", appliesTo: ["office", "transacted"], values: [{ f: "city", v: city }], excludeValues: [], excludeField: "city" } }, sort: high });
+  return out;
+}
+
+/** Each row's price to the cent, the database's and this one's (the column shows it). */
+function samePrice(mem: MemAgent, db: Record<string, unknown>): string | null {
+  const d = nOrNull(db.avg_sale_price);
+  const m = mem.avg_sale_price;
+  if (d === null || m === null) return d === m ? null : `price of ${mem.id}: ${m} vs ${d}`;
+  return Math.round(d * 100) === Math.round(m * 100) ? null : `price of ${mem.id}: ${m} vs ${d}`;
+}
+
 export interface Proof {
   ok: boolean;
   failures: string[];
@@ -428,7 +517,12 @@ export async function proveNames(m: MemMarket, base: Record<string, unknown>, db
   return prove({ mlsIds: m.mlsIds, agents: m.agents, sorted: new Map(), namesReady: true }, nameQueries(m, base), dbSearch);
 }
 
-async function prove(probe: MemMarket, queries: ReturnType<typeof parityQueries>, dbSearch: DbSearch): Promise<Proof> {
+/** The average sales price filter and order, answered as if ready, against the database — and every row's price. */
+export async function provePrices(m: MemMarket, base: Record<string, unknown>, dbSearch: DbSearch): Promise<Proof> {
+  return prove({ mlsIds: m.mlsIds, agents: m.agents, sorted: new Map(), priceReady: true }, priceQueries(m, base), dbSearch, samePrice);
+}
+
+async function prove(probe: MemMarket, queries: ReturnType<typeof parityQueries>, dbSearch: DbSearch, rowCheck?: (mem: MemAgent, db: Record<string, unknown>) => string | null): Promise<Proof> {
   const failures: string[] = [];
   let checked = 0;
   // Three at a time: the agent database is shared with the live apps.
@@ -437,18 +531,19 @@ async function prove(probe: MemMarket, queries: ReturnType<typeof parityQueries>
     if (!mem) { failures.push(`${q.label}: memory refused it`); return; }
     const db = await dbSearch(q.filters, 50, q.offset ?? 0, q.sort);
     checked++;
-    const why = differs(mem, db);
+    const why = differs(mem, db, rowCheck);
     if (why) failures.push(`${q.label}: ${why}`);
   }), 3);
   return { ok: failures.length === 0, failures, checked };
 }
 
-function differs(mem: MemResult, db: { rows: Array<Record<string, unknown>>; total: number; salesVolume: number }): string | null {
+function differs(mem: MemResult, db: { rows: Array<Record<string, unknown>>; total: number; salesVolume: number }, rowCheck?: (mem: MemAgent, db: Record<string, unknown>) => string | null): string | null {
   if (mem.total !== db.total) return `total ${mem.total} vs ${db.total}`;
   if (Math.round(mem.salesVolume * 100) !== Math.round(db.salesVolume * 100)) return `volume ${mem.salesVolume} vs ${db.salesVolume}`;
   const a = mem.rows.map((r) => r.id);
   const b = db.rows.map((r) => String(r.id));
   for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) return `row ${i + 1}: ${a[i] ?? "—"} vs ${b[i] ?? "—"}`;
+  if (rowCheck) for (let i = 0; i < mem.rows.length; i++) { const why = rowCheck(mem.rows[i], db.rows[i]); if (why) return `row ${i + 1}: ${why}`; }
   return null;
 }
 
@@ -499,6 +594,63 @@ function inFlight(now: number): number {
   return Object.values(store().running).filter((since) => now - since < HUNG_MS).length;
 }
 
+/** After a price proof the database couldn't finish (a timeout, an error — not a difference), when it may run again. */
+const PRICE_RETRY_MS = 5 * 60_000;
+
+/**
+ * The prices of a market now serving: proven, then answered here only if still the copy held. Never fails the load —
+ * a failure only leaves the prices to the database (logged). A proof that differs waits for the copy's next refresh
+ * (30 min, proven afresh); one the database couldn't finish may run again after PRICE_RETRY_MS (requestPriceProof).
+ */
+export async function proveMarketPrices(key: string, m: MemMarket, base: Record<string, unknown>, dbSearch: DbSearch, now: () => number = Date.now): Promise<void> {
+  const held = () => { const cur = slots()[key]; return cur?.status === "ready" && cur.market === m; };
+  try {
+    if (m.priceUnused) {
+      console.log(`[market-memory] ${key}: average sales price filter and order stay on the database — ${m.priceUnused}`);
+      return;
+    }
+    const t0 = now();
+    const proof = await provePrices(m, base, dbSearch);
+    if (!held()) return;
+    if (proof.ok) {
+      m.priceReady = true;
+      m.priceRetryAfter = undefined;
+      console.log(`[market-memory] ${key}: average sales price ready in ${Math.round((now() - t0) / 1000)} s — ${proof.checked} checks matched`);
+    } else {
+      m.priceRetryAfter = undefined;
+      console.error(`[market-memory] ${key}: average sales price NOT answered from memory — differs from the database: ${proof.failures.join(" | ")}`);
+    }
+  } catch (e) {
+    m.priceRetryAfter = now() + PRICE_RETRY_MS;
+    console.error(`[market-memory] ${key}: average sales price proof failed — tried again in ${PRICE_RETRY_MS / 60_000} min if asked: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    m.priceTried = true;
+  }
+}
+
+/**
+ * Proves a held market's prices again when its last proof couldn't be finished and the wait is over — in the
+ * background, counted as the one load running (it waits for any other, and nothing else starts meanwhile). Asked for
+ * by a price filter or order the memory had to refuse. Returns the run, for tests; callers don't wait on it.
+ */
+export function requestPriceProof(mlsIds: readonly string[], base: Record<string, unknown>, dbSearch: DbSearch, now = Date.now()): Promise<void> | null {
+  if (memoryOff() || !mlsIds.length) return null;
+  const key = keyOf(mlsIds);
+  const st = store();
+  const slot = st.slots[key];
+  if (slot?.status !== "ready") return null;
+  const m = slot.market;
+  if (m.priceReady || m.priceUnused || !m.priceTried || m.priceProving || m.priceRetryAfter === undefined) return null;
+  if (now < m.priceRetryAfter || inFlight(now) > 0) return null;
+  const token = st.next++;
+  st.running[token] = now;
+  m.priceProving = true;
+  return proveMarketPrices(key, m, base, dbSearch).finally(() => {
+    delete st.running[token];
+    m.priceProving = false;
+  });
+}
+
 /**
  * One load. Its result is written only if the slot is still the one that
  * started it (its token) — an older, slower load never overwrites a newer
@@ -536,6 +688,9 @@ function startLoad(key: string, mlsIds: readonly string[], base: Record<string, 
       all[key] = { status: "ready", market: loaded.market, stamp: loaded.stamp, at: now, lastUsed: now, verifiedAt: now, refreshing: null, refreshAfter: 0 };
       evict(all);
       console.log(`[market-memory] ${key}: ${loaded.market.agents.length} agents ready in ${Math.round((now - t0) / 1000)} s — ${proof.checked} checks matched`);
+      // The average sales price (17 Nov), proven on its own once the market serves: until then, and if it never matches,
+      // price filters and sorts go to the database while everything else is answered here.
+      await proveMarketPrices(key, loaded.market, base, dbSearch);
     } catch (e) {
       const cur = all[key];
       if (owner(cur)) {
@@ -683,6 +838,6 @@ function evict(all: Record<string, Slot>) {
 }
 
 /** For the timing script and tests: what the holder has. */
-export function memoryState(): Array<{ key: string; status: string; agents?: number; names?: boolean; reason?: string }> {
-  return Object.entries(slots()).map(([key, v]) => ({ key, status: v.status, ...(v.status === "ready" ? { agents: v.market.agents.length, names: !!v.market.namesReady } : {}), ...(v.status === "unused" ? { reason: v.reason } : {}) }));
+export function memoryState(): Array<{ key: string; status: string; agents?: number; names?: boolean; prices?: boolean; reason?: string }> {
+  return Object.entries(slots()).map(([key, v]) => ({ key, status: v.status, ...(v.status === "ready" ? { agents: v.market.agents.length, names: !!v.market.namesReady, prices: !!v.market.priceReady } : {}), ...(v.status === "unused" ? { reason: v.reason } : {}) }));
 }

@@ -43,6 +43,12 @@ export interface MemAgent {
   /** Scoped: the sum over the market's MLSs (agent_mls_stats), null when the agent has no stats there. */
   sales_volume: number | null;
   units: number | null;
+  /**
+   * Average sales price, the last 12 months (17 Nov). Scoped: the market's MLSs weighted by units —
+   * sum(coalesce(avg_sale_price, 0) * coalesce(units, 0)) / sum(units), null when those units add to nothing
+   * (fn_filter_search 0119, fn_agent_where 0126). Not scoped: the agent's own, as stored.
+   */
+  avg_sale_price: number | null;
   est_time_in_industry_months: number | null;
   /**
    * This agent's place in the DATABASE's own name order (its collation, not
@@ -70,6 +76,20 @@ export interface MemMarket {
   namesReady?: boolean;
   /** Some name holds a letter Postgres and JavaScript lower-case differently: name searches go to the database. Checked once. */
   nameRisk?: boolean;
+  /**
+   * The average sales price filter and order are answered here (17 Nov) — only once they have matched the database
+   * on their own proof (market-memory.ts provePrices). Until then, or if they never do, those requests go to the
+   * database and everything else is still answered here.
+   */
+  priceReady?: boolean;
+  /** Why this market's prices can't be answered here at all (they couldn't be summed exactly) — never proven, never served. */
+  priceUnused?: string;
+  /** The price proof has run on this copy, whatever its result: a price request that memory refuses now won't change by waiting. */
+  priceTried?: boolean;
+  /** The database couldn't finish the price proof: it may run again from this time (market-memory requestPriceProof). */
+  priceRetryAfter?: number;
+  /** A price proof is running on this copy. */
+  priceProving?: boolean;
 }
 
 export interface MemResult {
@@ -299,7 +319,7 @@ function nameFilter(f: unknown, market: MemMarket): Pred | null | typeof UNSUPPO
  * (all scoped), salespeople.
  */
 function compile(filters: Filters, market: MemMarket): Pred | typeof UNSUPPORTED {
-  const KNOWN = new Set(["mls", "title", "salesVolume", "closedUnits", "estTimeInIndustry", "officeSearch", "location", "name"]);
+  const KNOWN = new Set(["mls", "title", "salesVolume", "closedUnits", "avgSalePrice", "estTimeInIndustry", "officeSearch", "location", "name"]);
   for (const k of Object.keys(filters)) if (!KNOWN.has(k)) return UNSUPPORTED;
 
   const mls = filters.mls;
@@ -322,6 +342,10 @@ function compile(filters: Filters, market: MemMarket): Pred | typeof UNSUPPORTED
     if (r === UNSUPPORTED) return UNSUPPORTED;
     if (r) preds.push(r);
   }
+  // Average sales price: the same inclusive range, on a market whose prices are proven; otherwise the database's.
+  const price = range(filters.avgSalePrice, (a) => a.avg_sale_price);
+  if (price === UNSUPPORTED || (price && !market.priceReady)) return UNSUPPORTED;
+  if (price) preds.push(price);
   const os = filters.officeSearch;
   if (os !== undefined) {
     if (!isObj(os)) return UNSUPPORTED;
@@ -351,14 +375,17 @@ function compile(filters: Filters, market: MemMarket): Pred | typeof UNSUPPORTED
  * so names are never compared here, only their ranks in the database's
  * order. Brokerage, city and title orders go to the database.
  */
-const MEMORY_SORTS = new Set(["sales_volume", "units", "full_name"]);
+const MEMORY_SORTS = new Set(["sales_volume", "units", "avg_sale_price", "full_name"]);
 
 function comparator(sortBy: string, dir: "asc" | "desc", market?: MemMarket): ((x: MemAgent, y: MemAgent) => number) | typeof UNSUPPORTED {
   if (!MEMORY_SORTS.has(sortBy)) return UNSUPPORTED;
   if (sortBy === "full_name" && !market?.namesReady) return UNSUPPORTED;
+  // The average sales price order (17 Nov): the database's "avg_sale_price <dir> nulls last, a.id", once proven here.
+  if (sortBy === "avg_sale_price" && !market?.priceReady) return UNSUPPORTED;
   const sign = dir === "asc" ? 1 : -1;
   const get = (a: MemAgent): number | null =>
-    sortBy === "units" ? a.units : sortBy === "full_name" ? (a.nameRank === undefined || a.nameRank === Infinity ? null : a.nameRank) : a.sales_volume;
+    sortBy === "units" ? a.units : sortBy === "avg_sale_price" ? a.avg_sale_price
+    : sortBy === "full_name" ? (a.nameRank === undefined || a.nameRank === Infinity ? null : a.nameRank) : a.sales_volume;
   return (x, y) => {
     const a = get(x);
     const b = get(y);

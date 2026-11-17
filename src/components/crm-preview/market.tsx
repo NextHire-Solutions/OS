@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { PipelineEntry } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { abbrevUsd, initials } from "@/lib/crm-preview/model";
-import { FIRST_DIR, interestedReport, LIST_PILL, marketTitles, marketWho, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
+import { FIRST_DIR, interestedReport, LIST_PILL, marketTitles, marketWho, MAX_PICKS, MAX_PLACES, maxPage, PAGE_SIZE, PLACE_KINDS, PRICE_PRESETS, UNIT_PRESETS, VOLUME_PRESETS, YEAR_PRESETS, type GroupRow, type ListName, type PlaceKind, type Range, type ReportGroup, type SortKey } from "@/lib/crm-preview/market-model";
 
 import { useRangeSelect } from "@/components/screens/analytics/use-range-select";
 import { Icon } from "./icons";
@@ -41,7 +41,7 @@ function definition(list: "market" | "prospects", client: string | null, mls: Ml
 
 export type Row = {
   id: string; name: string; title: string | null; brokerage: string | null; officeCity: string | null;
-  mostTransactedCity: string | null; salesVolume: number | null; units: number | null; list: string; pill: string;
+  mostTransactedCity: string | null; salesVolume: number | null; units: number | null; avgPrice?: number | null; list: string; pill: string;
   office?: string | null; years?: number | null; email?: string | null;
 };
 type Loaded = { total: number; salesVolume: number; page: number; rows: Row[]; client: string | null; mls: Mls | null; sortPending: string | null; sortRetry: boolean };
@@ -110,12 +110,12 @@ type Pick = { f: Facet; v: string; ex: boolean };
  * holds several (BrokerStaffer's own, 29 Oct): it narrows among them, never widens (market-model marketFilters).
  * kinds: which of an agent's places Location looks at — the office, where it sold most: Market's Office city and Most transacted city columns (24 Oct).
  */
-export type Picks = { volume: Range; units: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[]; titles: Pick[] };
+export type Picks = { volume: Range; units: Range; price: Range; years: Range; brokerages: Pick[]; places: Pick[]; kinds: PlaceKind[]; titles: Pick[] };
 const NO_RANGE: Range = { min: null, max: null };
-export const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS], titles: [] };
+export const NO_PICKS: Picks = { volume: NO_RANGE, units: NO_RANGE, price: NO_RANGE, years: NO_RANGE, brokerages: [], places: [], kinds: [...PLACE_KINDS], titles: [] };
 const isSet = (r: Range) => r.min !== null || r.max !== null;
 /** Is any filter set? */
-export const anyPicks = (f: Picks) => isSet(f.volume) || isSet(f.units) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0 || f.titles.length > 0;
+export const anyPicks = (f: Picks) => isSet(f.volume) || isSet(f.units) || isSet(f.price) || isSet(f.years) || f.brokerages.length > 0 || f.places.length > 0 || f.titles.length > 0;
 const PARAM: Record<Facet, string> = { brand: "brokerage", office: "office", city: "city", county: "county", state: "state", zip: "zip", title: "title" };
 const PLURAL: Record<Facet, string> = { brand: "brokerages", office: "offices", city: "cities", county: "counties", state: "states", zip: "zip codes", title: "titles" };
 /* Location's levels. Zip codes on Market only (5 Nov): Prospects come from campaign lists the agent database can't count by zip. */
@@ -131,6 +131,7 @@ export function pickParams(sp: URLSearchParams, p: Picks, skip?: "brokerage" | "
   };
   range("Volume", p.volume);
   range("Units", p.units);
+  range("Price", p.price);
   range("Years", p.years);
   if (skip !== "brokerage") for (const x of p.brokerages) sp.append(`${x.ex ? "x" : ""}${PARAM[x.f]}`, x.v);
   for (const x of p.titles) sp.append(`${x.ex ? "x" : ""}title`, x.v);
@@ -448,6 +449,10 @@ export function MarketFilters({ clientId, list, value: f, onChange }: { clientId
       </FilterButton>
       <FilterButton id="units" label="Units" value={isSet(f.units) ? rangeText("count", f.units) : null} open={menu === "units"} onOpen={openMenu}>
         <RangePanel unit="count" presets={UNIT_PRESETS} value={f.units} onApply={(r) => apply("units", r)} register={register} />
+      </FilterButton>
+      {/* Average sales price (17 Nov): the agent database's own figure, the last 12 months, as the column shows it. */}
+      <FilterButton id="price" label="Avg. sales price" value={isSet(f.price) ? rangeText("usd", f.price) : null} open={menu === "price"} onOpen={openMenu}>
+        <RangePanel unit="usd" presets={PRICE_PRESETS} value={f.price} onApply={(r) => apply("price", r)} register={register} />
       </FilterButton>
       <FilterButton id="years" label="Years licensed" value={isSet(f.years) ? rangeText("years", f.years) : null} open={menu === "years"} onOpen={openMenu}>
         <RangePanel unit="years" presets={YEAR_PRESETS} value={f.years} onApply={(r) => apply("years", r)} register={register} />
@@ -794,16 +799,17 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                     <SortHead label="Most transacted city" by="transactedCity" sort={sort} onSort={onSort} />
                     <SortHead label="Sales volume" by="volume" sort={sort} onSort={onSort} right />
                     <SortHead label="Units" by="units" sort={sort} onSort={onSort} right />
+                    <SortHead label="Avg. sales price" by="price" sort={sort} onSort={onSort} right />
                     <SortHead label="List" by="list" sort={sort} onSort={onSort} />
                   </tr>
                 </thead>
                 <tbody>
                   {state.error ? (
-                    <tr><td /><td colSpan={8} role="alert" style={{ padding: "18px 0" }}>{state.error}</td></tr>
+                    <tr><td /><td colSpan={9} role="alert" style={{ padding: "18px 0" }}>{state.error}</td></tr>
                   ) : !data ? (
-                    <tr><td /><td colSpan={8} className="cpv-muted" style={{ padding: "18px 0" }}>Loading the {title.toLowerCase()}…</td></tr>
+                    <tr><td /><td colSpan={9} className="cpv-muted" style={{ padding: "18px 0" }}>Loading the {title.toLowerCase()}…</td></tr>
                   ) : data.rows.length === 0 ? (
-                    <tr><td /><td colSpan={8} className="cpv-muted" style={{ padding: "18px 0" }}>No agents match.</td></tr>
+                    <tr><td /><td colSpan={9} className="cpv-muted" style={{ padding: "18px 0" }}>No agents match.</td></tr>
                   ) : (
                     data.rows.map((r, i) => (
                       <tr key={r.id} data-range-index={i} className={isPicked(String(r.id)) || rowMenu === String(r.id) ? k("sel") : undefined}>
@@ -820,6 +826,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
                         <td>{r.mostTransactedCity ?? <span className={k("dash")}>&ndash;</span>}</td>
                         <td className={k("r")}><span className={k("num")} style={{ fontWeight: 500 }}>{r.salesVolume !== null ? abbrevUsd(r.salesVolume) : "–"}</span></td>
                         <td className={k("r")}>{r.units ?? "–"}</td>
+                        <td className={k("r")} data-avg-price="">{r.avgPrice !== null && r.avgPrice !== undefined ? abbrevUsd(r.avgPrice) : "–"}</td>
                         <td style={{ position: "relative" }} data-rowmenu="">
                           <button type="button" className={k("lsel")} aria-label={`Change list for ${r.name}`} aria-haspopup="menu" aria-expanded={rowMenu === String(r.id)} onClick={() => setRowMenu((m) => (m === String(r.id) ? null : String(r.id)))}>
                             <span className={k(`pill ${r.pill}`)}>{r.list}</span>
@@ -853,7 +860,7 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
               </table>
             </div>
             <div className={k("tf")}>
-              <span>{data ? `${from.toLocaleString("en-US")}–${to.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} · ` : ""}Sales volume and units are the last 12&nbsp;months</span>
+              <span>{data ? `${from.toLocaleString("en-US")}–${to.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} · ` : ""}Sales volume, units and average sales price are the last 12&nbsp;months</span>
               <div className={k("pg")}>
                 <button type="button" className={k("btn sm")} disabled={page <= 1 || state.loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</button>
                 <button type="button" className={k("btn sm")} disabled={to >= total || shownPage >= maxPage(PAGE_SIZE) || state.loading} title={shownPage >= maxPage(PAGE_SIZE) && to < total ? "A search shows its first 1,000 agents — narrow the filters or change the sort to see others" : undefined} onClick={() => setPage((p) => p + 1)}>Next</button>

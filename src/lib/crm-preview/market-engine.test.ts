@@ -19,7 +19,7 @@ function agent(p: Partial<MemAgent>): MemAgent {
     office_city: null, office_state: null, office_county: null, office_city_key: null,
     most_transacted_city: null, transacted_state: null, most_transacted_county: null, most_transacted_city_key: null,
     office_zip: null, most_transacted_zip: null,
-    sales_volume: null, units: null, est_time_in_industry_months: null, preferred_email: null, enriched_email: null,
+    sales_volume: null, units: null, avg_sale_price: null, est_time_in_industry_months: null, preferred_email: null, enriched_email: null,
     ...p,
   };
 }

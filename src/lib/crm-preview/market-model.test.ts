@@ -39,7 +39,7 @@ test("the query string: ranges, several brokerages and places, a known sort — 
   const q = parseMarketQuery(new URLSearchParams("list=prospects&page=3&q=  smith &minVolume=2000000&maxVolume=8000000&minUnits=4&maxUnits=30&minYears=2&brokerage=Keller Williams&brokerage=Compass&brokerage=Compass&city=Atlanta&county=Cobb, GA&title=Team Leader&sort=name"));
   assert.deepEqual(q, {
     list: "prospects", page: 3, per: 50, q: "smith",
-    volume: { min: 2_000_000, max: 8_000_000 }, units: { min: 4, max: 30 }, years: { min: 2, max: null },
+    volume: { min: 2_000_000, max: 8_000_000 }, units: { min: 4, max: 30 }, price: { min: null, max: null }, years: { min: 2, max: null },
     brokerages: ["Keller Williams", "Compass"], offices: [], cities: ["Atlanta"], counties: ["Cobb, GA"], states: [], kinds: ["office", "transacted"],
     titles: ["Team Leader"], zips: [], not: { brokerages: [], offices: [], cities: [], counties: [], states: [], zips: [], titles: [] }, sort: "name", dir: "asc",
   });

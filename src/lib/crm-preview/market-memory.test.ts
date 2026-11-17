@@ -13,7 +13,7 @@ const agent = (id: string, full_name: string | null): MemAgent => ({
   id, full_name, title: "Salesperson", brand: null, office_name: null, office_city: null, office_state: null, office_county: null, office_city_key: null,
   most_transacted_city: null, transacted_state: null, most_transacted_county: null, most_transacted_city_key: null,
   office_zip: null, most_transacted_zip: null,
-  sales_volume: null, units: null, est_time_in_industry_months: null, preferred_email: null, enriched_email: null,
+  sales_volume: null, units: null, avg_sale_price: null, est_time_in_industry_months: null, preferred_email: null, enriched_email: null,
 });
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 

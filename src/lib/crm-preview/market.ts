@@ -9,7 +9,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadAgentEntries, loadDncEntries, loadPipelineEntries } from "@/lib/tools/master-inbox/portals/portal-data";
 import { DEMO_MARKET_MLS, DEMO_PORTAL_ID, isDemoPortal } from "@/lib/crm-preview/demo";
 import { searchMarket } from "@/lib/crm-preview/market-engine";
-import { loadMarketZips, marketFromMemory, requestNameOrder } from "@/lib/crm-preview/market-memory";
+import { loadMarketZips, marketFromMemory, requestNameOrder, requestPriceProof } from "@/lib/crm-preview/market-memory";
 import { agentsByIds, demoProspectIds, dncAddresses, filterProspects, marketDncEmails, mergeProspects, placeOf, PROSPECTS_MIGRATION, shownProspects, sortProspects, type AgentRow } from "@/lib/crm-preview/demo-market";
 
 import {
@@ -242,6 +242,8 @@ export interface MarketRow {
   mostTransactedCity: string | null;
   salesVolume: number | null;
   units: number | null;
+  /** Average sales price, the last 12 months — the agent database's own figure, as its filter tests it (17 Nov). */
+  avgPrice: number | null;
   /** The office's own name (the Setup wizard's Office column). */
   office: string | null;
   /** Whole years in the industry, where the database records it. */
@@ -335,7 +337,7 @@ async function movedProspects(ctx: MarketContext, q: MarketQuery | null): Promis
 }
 
 /** An agent-database search row in the shape the moved prospects are sorted with (its numbers may come as text). */
-const asAgentRow = (r: Record<string, unknown>): AgentRow => ({ ...(r as unknown as AgentRow), id: String(r.id), sales_volume: num(r.sales_volume), units: num(r.units) });
+const asAgentRow = (r: Record<string, unknown>): AgentRow => ({ ...(r as unknown as AgentRow), id: String(r.id), sales_volume: num(r.sales_volume), units: num(r.units), avg_sale_price: num(r.avg_sale_price) });
 
 /*
  * A real client's Prospects page: its campaign agents and the moved ones as one list (mergeProspects) — the campaigns'
@@ -419,8 +421,12 @@ async function readListOrdered(ctx: MarketContext, q: MarketQuery): Promise<List
     const mem = inMemory(ctx) ? await marketFromMemory(ctx.mls.ids, base, search) : null;
     if (!mem) return GETTING_READY;
     const found = searchMarket(mem, marketFilters(base, q), volume, Number.MAX_SAFE_INTEGER, 0);
+    // An average sales price filter just after the market loaded: its prices are proven a few seconds later — ask again.
+    const priced = q.price.min !== null || q.price.max !== null;
+    if (!found && priced && !mem.priceReady && !mem.priceTried && !mem.priceUnused) return GETTING_READY;
+    if (!found && priced && !mem.priceReady) void requestPriceProof(ctx.mls.ids, base, search);
     // A search the memory doesn't answer (some name searches and places): no List order for it, however long one waits.
-    if (!found) return { pending: "This search can't be sorted by List — showing the largest sales volume first. Change the search or the place filters to sort by list.", retry: false };
+    if (!found) return { pending: "This search can't be sorted by List — showing the largest sales volume first. Change the search, the place or the average sales price filters to sort by list.", retry: false };
     const campaign = isDemoPortal(ctx.portal.id) ? new Set<string>() : ctx.orchClientId ? heldClientSet(ctx.orchClientId) : new Set<string>();
     if (!campaign) return GETTING_READY;
     rows = found.rows as unknown as Array<Record<string, unknown>>;
@@ -465,6 +471,9 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
     const mem = q.list === "market" && inMemory(ctx) ? await marketFromMemory(ctx.mls.ids, base, search) : null;
     // A name sort before this market's name order is read: the database answers, and the order starts loading.
     if (mem && sort.by === "full_name" && !mem.namesReady) requestNameOrder(ctx.mls.ids, base, search);
+    // A price filter or order before the market's prices are proven: the database answers; a proof the database
+    // couldn't finish is tried again (when its wait is over).
+    if (mem && !mem.priceReady && (sort.by === "avg_sale_price" || "avgSalePrice" in filters)) void requestPriceProof(ctx.mls.ids, base, search);
     const fast = mem ? searchMarket(mem, filters, sort, q.per, offset) : null;
     page = fast
       ? { rows: fast.rows as unknown as Array<Record<string, unknown>>, total: fast.total, salesVolume: fast.salesVolume }
@@ -494,6 +503,7 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
       mostTransactedCity: str(r.most_transacted_city),
       salesVolume: num(r.sales_volume),
       units: num(r.units),
+      avgPrice: num(r.avg_sale_price),
       office: str(r.office_name),
       years: num(r.est_time_in_industry_months) !== null ? Math.floor((num(r.est_time_in_industry_months) as number) / 12) : null,
       // Only an address the client already has on its own list — never the agent database's (ownListEmail).
