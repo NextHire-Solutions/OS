@@ -20,6 +20,7 @@ const NUMERIC_LEAD_ATTRIBUTES = new Set([
   "list-side",
 ]);
 import { dedupeBy } from "./dedupe.ts";
+import { reconcileArchive } from "./reconcile.ts";
 import { vendorFromTags } from "./vendor.ts";
 import {
   syncInstantlyAccounts,
@@ -669,41 +670,40 @@ export const syncSenders: JobFn = async ({ teamId }): Promise<JobResult> => {
    * carry sender_email_id, and a removed inbox's past sends still happened.
    */
   const sb = getSupabase();
-  const seen = new Set(rows.map((r) => r.id));
-
-  const { data: live, error: liveError } = await sb
-    .from("sender_emails")
-    .select("id")
-    .eq("team_id", teamId)
-    .is("archived_at", null);
-  if (liveError) throw new Error(`sender reconcile: ${liveError.message}`);
-
-  const stale = ((live ?? []) as Array<{ id: number }>)
-    .map((r) => r.id)
-    .filter((id) => !seen.has(id));
+  const archivedAt = new Date().toISOString();
 
   /*
-   * THE GUARD. A walk that returns far less than we hold is a truncated walk,
-   * not a mass deletion — and acting on it would archive a working estate on
-   * the strength of one bad response. Half is a wide margin: real deletions
-   * come in ones and tens, and the job re-runs hourly, so declining to act
-   * costs an hour and acting wrongly costs the Infrastructure tab.
+   * Read a page at a time (reconcile.ts). Read whole, this stopped at 1,000 of
+   * 3,482 rows and never saw the 484 inboxes EmailBison had deleted, so they
+   * stayed on the Inboxes page, mostly as "Not connected" (18 Nov). The guard
+   * against a cut-short walk is there too, now measured against every row.
    */
-  const suspicious = rows.length < ((live?.length ?? 0) * 0.5);
-  let archived = 0;
-
-  if (stale.length && !suspicious) {
-    const { error } = await sb
-      .from("sender_emails")
-      .update({ archived_at: new Date().toISOString() })
-      .eq("team_id", teamId)
-      .in("id", stale);
-    if (error) throw new Error(`sender archive: ${error.message}`);
-    archived = stale.length;
-  } else if (suspicious) {
+  let reconciled;
+  try {
+    reconciled = await reconcileArchive<number>({
+      seen: new Set(rows.map((r) => r.id)),
+      readLive: async (from, to) => {
+        const { data, error } = await sb
+          .from("sender_emails")
+          .select("id")
+          .eq("team_id", teamId)
+          .is("archived_at", null)
+          // A fixed order, or two pages can overlap and a row fall between them.
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id)), error };
+      },
+      archive: async (ids) =>
+        sb.from("sender_emails").update({ archived_at: archivedAt }).eq("team_id", teamId).in("id", ids),
+    });
+  } catch (error) {
+    throw new Error(`sender reconcile: ${(error as { message?: string } | null)?.message ?? String(error)}`);
+  }
+  const archived = reconciled.archived;
+  if (reconciled.suspicious) {
     console.warn(
-      `[sync-senders] declined to archive ${stale.length} rows: walk returned ` +
-        `${rows.length} against ${live?.length ?? 0} live — looks truncated`,
+      `[sync-senders] declined to archive ${reconciled.stale} rows: walk returned ` +
+        `${rows.length} against ${reconciled.live} live — looks truncated`,
     );
   }
 

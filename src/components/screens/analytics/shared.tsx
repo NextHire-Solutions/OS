@@ -342,7 +342,7 @@ export function Search({
  * moving between the two sees the same columns. A version bump discards the
  * stored set rather than letting a stale preference hide a new column forever.
  */
-export function useColumnPrefs(key: string, version: number, defaults: string[], carry?: ColumnCarry) {
+export function useColumnPrefs(key: string, version: number, defaults: string[], carry?: ColumnCarry | readonly ColumnCarry[]) {
   const [visible, setVisible] = useState<string[]>(defaults);
   const loaded = useRef(false);
 

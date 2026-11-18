@@ -124,6 +124,20 @@ export function markInboxExtrasStale(): void {
   state().outOfDate = true;
 }
 
+/**
+ * The Inboxes page's Sync button (18 Nov): read warmup and assignment again,
+ * unless the last read is younger than `minAgeMs` or one is running now. A
+ * read is about 700 EmailBison requests, so pressing Sync five times in a
+ * minute must not become five reads. True when a fresh read will start.
+ */
+export function refreshInboxExtras(minAgeMs: number, now = Date.now()): boolean {
+  const s = state();
+  if (s.reading) return false;
+  if (s.value && now - Date.parse(s.value.asOf) < minAgeMs) return false;
+  s.outOfDate = true;
+  return true;
+}
+
 /** What is known right now — and, if that is nothing or is stale, starts a read behind the answer. */
 export function inboxExtras(now = Date.now()): InboxExtrasSnapshot {
   const s = state();

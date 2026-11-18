@@ -8,6 +8,7 @@ import {
   NONE,
   NO_FILTERS,
   counter,
+  describeInboxSync,
   emailbisonInbox,
   emailbisonType,
   facetChipLabel,
@@ -16,6 +17,7 @@ import {
   facetValues,
   filterInboxes,
   filtersActive,
+  inboxBounceRate,
   inboxSortValue,
   instantlyInbox,
   instantlyType,
@@ -630,4 +632,55 @@ test("both platforms' rows leave the Master Inbox figures to the route: unknown 
     assert.equal(row.masterInboxReplies, null);
     assert.equal(row.positiveAllTime, null);
   }
+});
+
+/* ------------------------------------------------- Bounce rate (18 Nov) */
+
+test("bounce rate per inbox: Bounced ÷ Sent, and not known whenever either half is not", () => {
+  assert.equal(inboxBounceRate(inbox({ sentAllTime: 1000, bouncedAllTime: 25 })), 0.025);
+  assert.equal(inboxBounceRate(inbox({ sentAllTime: 1000, bouncedAllTime: 0 })), 0, "none bounced is a real 0%");
+  for (const [sent, bounced] of [[null, 3], [500, null], [0, 0], [10, 11], [10, -1]] as const) {
+    assert.equal(inboxBounceRate(inbox({ sentAllTime: sent, bouncedAllTime: bounced })), null, `${sent}/${bounced}`);
+  }
+});
+
+test("bounce rate is a column on by default, beside Bounced, and sorts by the rate with unknowns as null", () => {
+  const keys = INBOX_COLUMNS.map((c) => c.key);
+  assert.equal(keys.indexOf("bounceRate"), keys.indexOf("bounced") + 1);
+  const col = INBOX_COLUMNS.find((c) => c.key === "bounceRate")!;
+  assert.equal(col.defaultVisible, true);
+  assert.equal(col.align, "right");
+  assert.ok(INBOX_DEFAULT_VISIBLE.includes("bounceRate"));
+  assert.equal(inboxSortValue(inbox({ sentAllTime: 200, bouncedAllTime: 5 }), "bounceRate"), 0.025);
+  assert.equal(inboxSortValue(inbox({ sentAllTime: 0, bouncedAllTime: 0 }), "bounceRate"), null);
+  // The same figure the Domains view adds up, for a domain of one inbox.
+  assert.equal(inboxSortValue(inbox({ sentAllTime: 3, bouncedAllTime: 1 }), "bounceRate"), 1 / 3);
+});
+
+/* --------------------------------------------------- the Sync button (18 Nov) */
+
+test("a sync that worked says how many inboxes, how many not connected, and what came off the list", () => {
+  assert.deepEqual(
+    describeInboxSync({ status: "ok", detail: { senders: 2998, disconnected: 177, archived: 484 }, extrasRefreshing: true }),
+    { text: "Synced with EmailBison: 2,998 inboxes, 177 not connected. 484 inboxes are no longer in EmailBison and were taken off this list. Warmup scores and campaign assignment are being read again." },
+  );
+  assert.deepEqual(describeInboxSync({ status: "ok", detail: { senders: 1, disconnected: 0, archived: 1 } }), {
+    text: "Synced with EmailBison: 1 inbox, 0 not connected. 1 inbox is no longer in EmailBison and was taken off this list.",
+  });
+  assert.deepEqual(describeInboxSync({ status: "ok", detail: { senders: 2998, disconnected: 3, archived: 0 } }), {
+    text: "Synced with EmailBison: 2,998 inboxes, 3 not connected.",
+  });
+  // No counts at all is still a sync that worked, not a failure and not "0 inboxes".
+  assert.deepEqual(describeInboxSync({ status: "ok" }), { text: "Synced with EmailBison." });
+});
+
+test("already running is not a failure; a failure says why and is marked bad", () => {
+  const skipped = describeInboxSync({ status: "skipped", error: "already running" });
+  assert.equal(skipped.bad, undefined);
+  assert.match(skipped.text, /already being synced/);
+  const failed = describeInboxSync({ status: "error", error: "EmailBison 503" });
+  assert.equal(failed.bad, true);
+  assert.match(failed.text, /failed: EmailBison 503\. The list below is from the last sync that worked\./);
+  assert.match(describeInboxSync({ status: "circuit-open" }).text, /failed several times in a row/);
+  assert.equal(describeInboxSync({}).bad, true, "no status at all is not a success");
 });

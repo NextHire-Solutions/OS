@@ -1,4 +1,4 @@
-import { domainOf, positiveRate } from "./inbox-domains.ts";
+import { bounceRate, domainOf, positiveRate } from "./inbox-domains.ts";
 import { vendorFromTags } from "./sync/vendor.ts";
 
 /*
@@ -500,6 +500,14 @@ export const INBOX_COLUMNS: readonly InboxColumnDef[] = [
     hint: "People who replied to this inbox",
   },
   { key: "bounced", label: "Bounced (all time)", group: "Sending", defaultVisible: true, align: "right" },
+  /*
+   * 18 Nov: "the Bounce Rate (%) column … in the individual Inboxes tab, just
+   * like we currently have in the Domains tab". The same sum, for one inbox.
+   */
+  {
+    key: "bounceRate", label: "Bounce rate", group: "Sending", defaultVisible: true, align: "right",
+    hint: "Bounced ÷ Sent, all time, as the Domains view and Infrastructure count it",
+  },
   {
     key: "warmup3d", label: "Warmup (3 days)", group: "Warmup", defaultVisible: true, align: "right",
     hint: "EmailBison's warmup score, 0–100, over the last 3 days",
@@ -524,13 +532,17 @@ export const INBOX_COLUMNS: readonly InboxColumnDef[] = [
 
 export const INBOX_DEFAULT_VISIBLE = INBOX_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key);
 export const INBOX_COLUMN_PREFS_KEY = "bsa.inbox-columns.v1";
-export const INBOX_COLUMN_PREFS_VERSION = 2;
+export const INBOX_COLUMN_PREFS_VERSION = 3;
 /**
- * Columns a saved choice from before them gains (version 1 → 2, 14 Nov), so a
- * person who had picked their columns still sees the new ones on by default —
- * without losing the rest of what they picked.
+ * Columns a saved choice from before them gains, so a person who had picked
+ * their columns still sees the new ones on by default — without losing the
+ * rest of what they picked. One step per version: 1 → 2 (14 Nov), 2 → 3
+ * (Bounce rate, 18 Nov). A choice saved at 1 takes both.
  */
-export const INBOX_COLUMNS_ADDED = { from: 1, add: ["miReplies", "positive", "positiveRate"] } as const;
+export const INBOX_COLUMNS_ADDED = [
+  { from: 1, add: ["miReplies", "positive", "positiveRate"] },
+  { from: 2, add: ["bounceRate"] },
+] as const;
 
 /**
  * What a column sorts by. Null is "not known", which the shared sort puts
@@ -560,6 +572,8 @@ export function inboxSortValue(row: InboxRow, key: string): string | number | nu
       return positiveRate(row);
     case "bounced":
       return row.bouncedAllTime;
+    case "bounceRate":
+      return inboxBounceRate(row);
     case "warmup":
       return row.warmupEnabled === null ? null : row.warmupEnabled ? 1 : 0;
     case "warmup3d":
@@ -575,6 +589,61 @@ export function inboxSortValue(row: InboxRow, key: string): string | number | nu
     default:
       return null;
   }
+}
+
+/**
+ * One inbox's bounce rate: Bounced ÷ Sent, all time — the Domains view's sum
+ * (inbox-domains.ts), for one inbox. Not known without both figures or with
+ * nothing sent; for Instantly both are the totals of what was synced.
+ */
+export function inboxBounceRate(row: Pick<InboxRow, "sentAllTime" | "bouncedAllTime">): number | null {
+  return bounceRate({ bounceSent: row.sentAllTime, bounceBounced: row.bouncedAllTime });
+}
+
+/* --------------------------------------------------------------- the sync */
+
+/** What the Sync button's route answers: the sync's own outcome (runner.ts), plus whether warmup is read again. */
+export interface InboxSyncOutcome {
+  status?: string;
+  error?: string;
+  detail?: Record<string, unknown> | string;
+  /** Warmup scores and campaign assignment are being read again from EmailBison. */
+  extrasRefreshing?: boolean;
+}
+
+const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const many = (n: number, one: string, more: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : more}`;
+
+/**
+ * One sentence for what the Sync button did, in the page's words.
+ *
+ * `bad` for a failure, so it is drawn as one. A run the schedule already had
+ * going is not a failure: it is the same sync, and the list will have it.
+ */
+export function describeInboxSync(outcome: InboxSyncOutcome): { text: string; bad?: boolean } {
+  if (outcome.status === "skipped") {
+    return { text: "EmailBison is already being synced. Press Sync again in a couple of minutes to see the result." };
+  }
+  if (outcome.status !== "ok") {
+    const why = outcome.status === "circuit-open"
+      ? "it has failed several times in a row, so it is paused until someone looks"
+      : outcome.error?.trim() || "EmailBison did not answer";
+    return { text: `The sync with EmailBison failed: ${why}. The list below is from the last sync that worked.`, bad: true };
+  }
+  const d = typeof outcome.detail === "object" && outcome.detail ? outcome.detail : {};
+  const inboxes = count(d.senders);
+  const notConnected = count(d.disconnected);
+  const removed = count(d.archived);
+  const parts = [
+    inboxes === null ? "Synced with EmailBison" : `Synced with EmailBison: ${many(inboxes, "inbox", "inboxes")}`,
+    ...(notConnected === null ? [] : [`${notConnected.toLocaleString("en-US")} not connected`]),
+  ];
+  let text = parts.join(", ") + ".";
+  if (removed) {
+    text += ` ${many(removed, "inbox is", "inboxes are")} no longer in EmailBison and ${removed === 1 ? "was" : "were"} taken off this list.`;
+  }
+  if (outcome.extrasRefreshing) text += " Warmup scores and campaign assignment are being read again.";
+  return { text };
 }
 
 /** The badge for a connection status: green when connected, red when it failed. */

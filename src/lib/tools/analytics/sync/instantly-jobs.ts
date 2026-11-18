@@ -1,6 +1,7 @@
 import { createInstantlyClient } from "@/lib/tools/analytics/instantly/client.ts";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { chunkUpsert } from "./jobs.ts";
+import { reconcileArchive } from "./reconcile.ts";
 import { exclusionReason, matchCampaign } from "@/lib/tools/analytics/clients/match.ts";
 import { setCursor, setCursorText } from "./runner";
 import type { JobFn, JobResult } from "./runner";
@@ -255,24 +256,36 @@ export const syncInstantlyAccounts: JobFn = async (): Promise<JobResult> => {
 
   await chunkUpsert("instantly_accounts", rows, "email");
 
-  const seen = new Set(rows.map((r) => r.email));
-  const { data: live } = await sb
-    .from("instantly_accounts")
-    .select("email")
-    .eq("team_id", teamId)
-    .is("archived_at", null);
-  const stale = ((live ?? []) as Array<{ email: string }>)
-    .map((r) => r.email)
-    .filter((e) => !seen.has(e));
-
+  /*
+   * Accounts Instantly no longer lists are archived. Read a page at a time
+   * (reconcile.ts): read whole, this would stop at 1,000 rows — harmless at
+   * 536 accounts, the same fault that left 484 deleted EmailBison inboxes on
+   * the Inboxes page (18 Nov) once there are more. A failure here still only
+   * warns, as it always has: the accounts above are already saved.
+   */
+  const archivedAt = new Date().toISOString();
   let archived = 0;
-  if (stale.length && rows.length >= (live?.length ?? 0) * 0.5) {
-    await sb
-      .from("instantly_accounts")
-      .update({ archived_at: new Date().toISOString() })
-      .eq("team_id", teamId)
-      .in("email", stale);
-    archived = stale.length;
+  try {
+    const reconciled = await reconcileArchive<string>({
+      seen: new Set(rows.map((r) => r.email)),
+      readLive: async (from, to) => {
+        const { data, error } = await sb
+          .from("instantly_accounts")
+          .select("email")
+          .eq("team_id", teamId)
+          .is("archived_at", null)
+          .order("email", { ascending: true })
+          .range(from, to);
+        return { data: ((data ?? []) as Array<{ email: string }>).map((r) => r.email), error };
+      },
+      archive: async (emails) =>
+        sb.from("instantly_accounts").update({ archived_at: archivedAt }).eq("team_id", teamId).in("email", emails),
+      // Addresses are longer than ids; keep each request's list short.
+      chunk: 100,
+    });
+    archived = reconciled.archived;
+  } catch (error) {
+    console.warn(`[sync-instantly-accounts] archive step skipped: ${(error as { message?: string } | null)?.message ?? String(error)}`);
   }
 
   /*

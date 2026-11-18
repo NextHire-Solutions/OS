@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invalidate, loadOnce } from "../lazy";
 import type { OpenCampaign, RemovalResult } from "@/lib/tools/analytics/campaigns/inbox-removal.ts";
 import type { AddResult } from "@/lib/tools/analytics/campaigns/inbox-add.ts";
+import type { InboxSyncOutcome } from "@/lib/tools/analytics/inboxes.ts";
 import { locationParams, type LocationSelection } from "@/lib/tools/analytics/campaigns/location-filter.ts";
 
 /*
@@ -53,6 +54,8 @@ export const VOLUME_URL = (qs: string) => `${BASE}/volume?${qs}`;
 export const INFRASTRUCTURE_URL = (qs: string) => `${BASE}/infrastructure?${qs}`;
 /** Every sending inbox in one answer — the Inboxes page filters it in the browser. */
 export const INBOXES_URL = `${BASE}/inboxes`;
+/** The same list, worked out again rather than remembered (cached-get.ts `fresh`) — after the Sync button. */
+export const INBOXES_FRESH_URL = `${INBOXES_URL}?fresh=1`;
 /** Warmup scores and exact campaign assignment, read from EmailBison in the background. */
 export const INBOX_EXTRAS_URL = `${BASE}/inboxes/extras`;
 /** The inboxes on active campaigns, for the Campaigns page's capacity strip. */
@@ -239,6 +242,17 @@ async function sendRaw<T = Record<string, unknown>>(
   const res = await fetch(path, { ...init, credentials: "same-origin" });
   const body = ((await res.json().catch(() => null)) ?? {}) as T & { error?: string };
   return { ok: res.ok, status: res.status, body };
+}
+
+/**
+ * Syncs the inboxes with EmailBison now (18 Nov) — the Inboxes page's Sync
+ * button. The route answers with the sync's outcome even when it failed, so the
+ * page can say why; a refusal (signed out, no access) becomes a failure too.
+ */
+export async function syncInboxes(): Promise<InboxSyncOutcome> {
+  const { ok, status, body } = await sendRaw<InboxSyncOutcome>(`${BASE}/inboxes/sync`, { method: "POST" });
+  if (!ok && !body.status) return { status: "error", error: body.error ?? `Request failed (${status})` };
+  return body;
 }
 
 /** The merge tags this workspace can fill in, from `lead_attributes`. */

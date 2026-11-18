@@ -130,7 +130,7 @@ export const DOMAIN_COLUMNS: readonly DomainColumnDef[] = [
   { key: "miReplies", label: "Replies", hint: "Replies (Master Inbox): conversations where a lead replied to this domain's inboxes, one per lead and campaign, from May 2026; out-of-office and automatic replies left out" },
   { key: "positive", label: "Positive replies", hint: "Replies labelled Interested in Master Inbox, or introduced — not EmailBison's Interested flag" },
   { key: "positiveRate", label: "Positive rate", hint: "Positive replies ÷ Replies" },
-  // Domains only, not a column of the Inboxes view (asked 18 Nov).
+  // Asked for the Domains view first (18 Nov); the Inboxes view has it per inbox too (inboxes.ts inboxBounceRate).
   { key: "bounceRate", label: "Bounce rate", hint: "Bounced ÷ Sent, all time, of this domain's inboxes that report both — as Infrastructure counts it" },
 ];
 

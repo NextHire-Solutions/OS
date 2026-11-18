@@ -8,6 +8,11 @@
  * that choice keeps everything it had and gains those (14 Nov, the Inboxes
  * page's Positive replies). Any other version, or anything unreadable, gives
  * nothing — the table's defaults.
+ *
+ * Several steps can be named, one per version (18 Nov, Bounce rate): each step
+ * leads to the next step's version, the last to the current one, so a choice
+ * saved two versions back gains the columns of both. A single step behaves
+ * exactly as it always has.
  */
 
 export interface ColumnCarry {
@@ -18,7 +23,7 @@ export interface ColumnCarry {
 export function restoreColumns(
   raw: string | null,
   version: number,
-  carry?: ColumnCarry,
+  carry?: ColumnCarry | readonly ColumnCarry[],
 ): { visible: string[]; upgraded: boolean } | null {
   if (!raw) return null;
   let saved: unknown;
@@ -32,8 +37,10 @@ export function restoreColumns(
   const visible = s.visible.filter((k): k is string => typeof k === "string");
   if (!visible.length) return null;
   if (s.version === version) return { visible, upgraded: false };
-  if (carry && s.version === carry.from) {
-    return { visible: [...visible, ...carry.add.filter((k) => !visible.includes(k))], upgraded: true };
-  }
-  return null;
+  const steps = (carry === undefined ? [] : "from" in carry ? [carry] : [...carry]).sort((a, b) => a.from - b.from);
+  const first = steps.findIndex((step) => step.from === s.version);
+  if (first < 0) return null;
+  const out = [...visible];
+  for (const step of steps.slice(first)) for (const k of step.add) if (!out.includes(k)) out.push(k);
+  return { visible: out, upgraded: true };
 }

@@ -115,7 +115,10 @@ export function toolForPath(pathname: string): ToolId | null {
  *     proxy cannot read roles.
  *
  * The three analytics sections share one API. Who may call it:
- *   - Inboxes' own data: the Inboxes switch only.
+ *   - Inboxes' own data: the Inboxes switch only. So is its Sync button
+ *     (18 Nov, inboxes/sync): it reads EmailBison again into the OS's copy
+ *     and changes nothing in EmailBison, so it is the page's, not a campaign
+ *     change.
  *   - Reading anything else: Campaign Analytics OR Campaign Management — both
  *     sections read the same campaign figures. The read-only sync status strip
  *     is on all three, so Inboxes may read it too.

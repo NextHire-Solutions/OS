@@ -23,10 +23,12 @@ import {
   INBOX_FACETS,
   NO_FILTERS,
   PLATFORM_LABEL,
+  describeInboxSync,
   facetChipLabel,
   facetOptions,
   filterInboxes,
   filtersActive,
+  inboxBounceRate,
   inboxSortValue,
   statusTone,
   toggleValue,
@@ -48,7 +50,7 @@ import {
 import { EXTRAS_NOTE_LOADING, EXTRAS_NOTE_READY, withExtras, type InboxExtras } from "@/lib/tools/analytics/inbox-extras.ts";
 import { fullStamp } from "@/lib/workspace/dates";
 
-import { INBOXES_URL, INBOX_EXTRAS_URL, useAnalyticsData } from "./actions";
+import { INBOXES_FRESH_URL, INBOXES_URL, INBOX_EXTRAS_URL, syncInboxes, useAnalyticsData } from "./actions";
 import {
   ColumnPicker,
   EmptyRow,
@@ -163,7 +165,7 @@ function useInboxExtras(again: number): ExtrasAnswer | null {
 }
 
 export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaigns?: boolean }) {
-  const { data, error, loading } = useAnalyticsData<InboxesResponse>(INBOXES_URL);
+  const { data, error, loading, reload } = useAnalyticsData<InboxesResponse>(INBOXES_URL);
   const [filters, setFilters] = useState<InboxFilters>(NO_FILTERS);
   // Lowest / highest on the number columns (inbox-ranges.ts).
   const [ranges, setRanges] = useState<InboxRanges>(NO_RANGES);
@@ -255,6 +257,41 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
   const [adding, setAdding] = useState(false);
   // Asks EmailBison's figures again after inboxes have come off campaigns.
   const [readAgain, setReadAgain] = useState(0);
+
+  /*
+   * Sync with EmailBison (18 Nov): the scheduled sync, run now (the route says
+   * what it reads). Then the list is worked out again — `fresh`, or the first
+   * read after a sync is the answer from before it — and shown.
+   */
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<{ text: string; bad?: boolean } | null>(null);
+  const syncNow = async () => {
+    setSyncing(true);
+    setSyncNote(null);
+    try {
+      const outcome = await syncInboxes();
+      if (outcome.status === "ok") {
+        const res = await fetch(INBOXES_FRESH_URL, { cache: "no-store", credentials: "same-origin" });
+        if (!res.ok) throw new Error(`the synced list could not be loaded (${res.status}). Reload the page to see it`);
+        await reload();
+        if (outcome.extrasRefreshing) setReadAgain((n) => n + 1);
+      }
+      setSyncNote(describeInboxSync(outcome));
+    } catch (e) {
+      setSyncNote({ text: `The sync with EmailBison did not finish: ${e instanceof Error ? e.message : "the server could not be reached"}.`, bad: true });
+    } finally {
+      setSyncing(false);
+    }
+  };
+  // An inbox the sync took off the list is no longer ticked: nothing can act on a row nobody can see.
+  useEffect(() => {
+    if (!data) return;
+    const ids = new Set<number | string>(data.rows.map((r) => r.id));
+    setSelected((current) => {
+      const kept = [...current].filter((id) => ids.has(id));
+      return kept.length === current.size ? current : new Set(kept);
+    });
+  }, [data]);
 
   const extras = useInboxExtras(readAgain);
   // The database's rows with EmailBison's warmup scores and exact assignment
@@ -421,7 +458,27 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
                 : data?.total === 1 ? "inbox" : "inboxes"}
             </span>
           </div>
+          <Btn
+            disabled={syncing}
+            onClick={syncNow}
+            data-inbox-sync
+            title="Reads every inbox from EmailBison now: status, tags, daily limit and counts. Inboxes EmailBison no longer has come off this list. Changes nothing in EmailBison."
+          >
+            {syncing ? "Syncing…" : "Sync with EmailBison"}
+          </Btn>
         </div>
+        {syncing || syncNote ? (
+          <div
+            className="tbl-sub"
+            role="status"
+            data-inbox-sync-note={syncing ? "running" : syncNote?.bad ? "bad" : "ok"}
+            style={{ marginTop: -8, marginBottom: 14, color: !syncing && syncNote?.bad ? "var(--red)" : undefined }}
+          >
+            {syncing
+              ? "Reading every inbox from EmailBison. This takes about two minutes; the list stays usable meanwhile."
+              : syncNote?.text}
+          </div>
+        ) : null}
 
         <div className="seg" role="tablist" aria-label="List by" style={{ marginBottom: 12 }}>
           {(["inboxes", "domains"] as const).map((v) => (
@@ -805,6 +862,8 @@ function cell(row: InboxRow, key: string): React.ReactNode {
       return percent(positiveRate(row), 1);
     case "bounced":
       return fullNumber(row.bouncedAllTime);
+    case "bounceRate":
+      return percent(inboxBounceRate(row), 2);
     case "warmup":
       return row.warmupEnabled === null ? DASH : row.warmupEnabled ? "On" : "Off";
     case "warmup3d":

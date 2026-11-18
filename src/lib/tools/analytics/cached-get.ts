@@ -63,10 +63,19 @@ export function cachedGet(
   onAnalyticsDataChanged(() => read.expire());
 
   return async function GET(request: NextRequest): Promise<Response> {
-    const url = request.nextUrl;
+    const url = new URL(request.nextUrl.toString());
+    /*
+     * `fresh=1` (18 Nov, the Inboxes page's Sync button): forget the
+     * remembered answer and wait for a new one, which then serves everyone.
+     * Without it, the first read after a sync is the answer from before it.
+     * Neither part of the key nor anything the handler sees.
+     */
+    const fresh = url.searchParams.get("fresh") === "1";
+    url.searchParams.delete("fresh");
     const params = new URLSearchParams(url.searchParams);
     params.sort();
     const key = `${url.pathname}?${params.toString()}|${toISODate(new Date())}`;
+    if (fresh) read.invalidate(key);
     let answer: Answer;
     try {
       answer = await read(key, url.toString());

@@ -65,6 +65,10 @@ test("Inboxes' data needs the Inboxes switch — Campaign Analytics or Managemen
   }
 });
 
+test("the Inboxes page's Sync button is the Inboxes switch's: it refreshes the copy and changes nothing in EmailBison", () => {
+  assert.deepEqual(grantsForRequest("/api/tools/analytics/inboxes/sync", "POST"), ["inboxes"]);
+});
+
 test("reading campaign data: Campaign Analytics or Campaign Management; never Inboxes alone", () => {
   for (const fam of ["kpis", "timeseries", "campaign-rows", "client-rows", "replies", "volume", "infrastructure", "attribution", "filters", "schedule", "clients", "campaigns", "campaigns/123", "campaigns/123/inboxes", "campaigns/inboxes", "copy", "merge-tags", "outcomes", "reply-dimensions"]) {
     const p = `/api/tools/analytics/${fam}`;
@@ -117,7 +121,7 @@ test("every write route under the analytics API is classified (a new one fails h
     "campaigns/actions", "campaigns/[id]/leads/remove", "campaigns/[id]/sequence", "campaigns/[id]/fan-out",
     "campaigns/[id]/copy-sequence", "campaigns/[id]/sequence/live", "campaigns/[id]/client", "campaigns/[id]/re-campaign",
     "setup-template", "campaigns/inboxes/removal/run", "campaigns/inboxes/removal/overlap", "campaigns/inboxes/removal/by-inbox", "campaigns/inboxes/removal",
-    "campaigns/inboxes/add/run"]);
+    "campaigns/inboxes/add/run", "inboxes/sync"]);
   for (const r of routes) {
     const src = fs.readFileSync(r, "utf8");
     if (!/export (async )?function (POST|PATCH|PUT|DELETE)|export const (POST|PATCH|PUT|DELETE)/.test(src)) continue;

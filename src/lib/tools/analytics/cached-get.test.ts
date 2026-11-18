@@ -43,3 +43,16 @@ test("a finished sync marks answers out of date: the next ask is answered at onc
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(await (await GET(req("?s=1"))).json(), { n: 2 });
 });
+
+test("fresh=1 waits for a new answer, which then serves the plain question; fresh is never passed on", async () => {
+  let n = 0;
+  const seen: string[] = [];
+  const GET = cachedGet(async (r) => { seen.push(r.nextUrl.search); return Response.json({ n: ++n }); });
+  assert.deepEqual(await (await GET(req("?f=1"))).json(), { n: 1 });
+  analyticsDataChanged();
+  assert.deepEqual(await (await GET(req("?f=1&fresh=1"))).json(), { n: 2 }, "not the answer from before the sync");
+  assert.deepEqual(await (await GET(req("?f=1"))).json(), { n: 2 }, "the plain question now gets the new answer");
+  assert.deepEqual(await (await GET(req("?fresh=1&f=1"))).json(), { n: 3 }, "asked again, fresh again");
+  assert.ok(seen.every((q) => !q.includes("fresh")), seen.join(" "));
+  assert.equal(n, 3);
+});
