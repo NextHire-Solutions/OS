@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.14** | [New portal: Switch portal, for a client on more than one portal — 19 November](#014-new-portal-switch-portal-for-a-client-on-more-than-one-portal--19-november) — one sign-in already opened every portal an email is listed on; now a link moves between them; live 32d4deb1
 | **0.13** | [Hand-off page: the two-click Save is red and reads Confirm — 18 November](#013-hand-off-page-the-two-click-save-is-red-and-reads-confirm--18-november) — "the save button has gone inactive"; live 96b11ee5. The Inboxes work (Bounce rate, Sync, deleted inboxes) is built on a branch, not deployed
 | **0.12** | [The Assistant for Gabriel Castillo, scoped to what he can see — 18 November](#012-the-assistant-for-gabriel-castillo-scoped-to-what-he-can-see--18-november) — opened by name; each tool follows the switch of the screen showing its data; money, commissions, team and the agent database closed to him
 | **0.11** | [Brokerage hand-off: Practice or Live per client, Amy, its own menu entry; Bounce rate on Domains — 18 November](#011-brokerage-hand-off-practice-or-live-per-client-amy-its-own-menu-entry-bounce-rate-on-domains--18-november) — going live for a client is a choice on the page now (the Railway list is gone); Hassan's Bounce rate column merged; check who made the live deploy before deploying
@@ -224,6 +225,20 @@ recommendation to revoke the secrets stored in Railway.
 
 ---
 
+## 0.14 New portal: Switch portal, for a client on more than one portal — 19 November
+
+**Asked by a client:** "Can a user have access to two portals? Would they need to use the one-time login to access each?" Already yes, and no: a portal sign-in belongs to the email (`os_portal_sessions.email`), `allowedPortals(email)` returns every portal that email is listed on, and `/portal-signin/done` sends someone with two or more to the "Choose your portal" list. The sign-in lasts 30 days. What was missing was a way back to that list from inside a portal.
+
+**Built (46c5120, Railway 32d4deb1):** a "Switch portal" link beside Sign out (`switchesPortal` and `SWITCH_PORTAL_HREF` in crm-preview/model.ts), shown only to a client listed on more than one portal; it goes to `/crm-preview`, the list. Staff are unchanged (they have the preview bar's portal dropdown). On a phone it sits in the slide-in menu.
+
+**Verified:** 3,663 tests. Local Chrome 13/13 with a made-up client sign-in (never stored) listed on the Demo Portal and BrokerStaffer's own: one sign-in, the list, both portals, Switch portal in each, phone menu, one portal = no list and no link, an unlisted portal still Not found, no write tried. Live Chrome 7/7 as staff with writes blocked: the live code carries the link, staff see their bar and no link, desktop and phone, no page errors. The client's view was not signed into on the live site.
+
+**Reply sent to the client (draft given to the user):** one sign-in opens both portals; pick one from the list, "Switch portal" next to Sign out goes to the other.
+
+**Still not deployed, on branch `feat/inboxes-sync-bounce` (b13f7e9):** the Inboxes work in 0.13.
+
+---
+
 ## 0.13 Hand-off page: the two-click Save is red and reads Confirm — 18 November
 
 **Reported:** "I was able to set up LIV, but the save button has gone inactive since I set Rise to on." Rise Real Estate Tujunga's switch-on had saved (17 Nov 19:09 UTC, Practice), so its Save was grey with nothing left to save. The real fault showed once a row is set to Live: Save becomes a two-click button (`ConfirmButton`, settings/ui.tsx), and os.css sets every `.btn`'s colour, border and background with `!important`, so its inline red was thrown away and it rendered plain white beside the blue Saves. After one click its label ("Click again: … can receive real emails", 393px) was cut off in the 80px column and it disarmed after 4 seconds.
@@ -234,7 +249,7 @@ recommendation to revoke the secrets stored in Railway.
 
 **Also found:** LIV Indy Realty is Live with Mode "As set above", and the page-wide mode is One click, so LIV is not automatic. Told the user.
 
-**Not deployed, on branch `feat/inboxes-sync-bounce` (cfa6af3):** Inboxes Bounce rate column, Sync with EmailBison, and the fix for deleted EmailBison inboxes staying on the list (the archive step read 1,000 of 3,482 rows; 484 deleted inboxes still shown, 419 "Not connected"). Deploying it archives those 484 at the next sync.
+**Not deployed, on branch `feat/inboxes-sync-bounce` (b13f7e9 after a rebase):** Inboxes Bounce rate column, Sync with EmailBison, and the fix for deleted EmailBison inboxes staying on the list (the archive step read 1,000 of 3,482 rows; 484 deleted inboxes still shown, 419 "Not connected"). Deploying it archives those 484 at the next sync.
 
 ---
 
