@@ -245,7 +245,7 @@ LIVE as `91b7fa3` (Railway 2addf560). The user: "give access to the AI assistant
   `/api/workspace/clients/stripe-summary`, which checks no person — anyone with the Clients switch sees them.
 - **18 Nov ~14:40 UTC the agent database (Supabase project for `AGENT_SEARCH_SUPABASE_URL`) answered 503 to every
   request** ("Could not query the database for the schema cache"); a market load had already timed out at 14:09.
-  Not caused by this deploy; everything reading the agent database fails until it is back.
+  Not caused by this deploy. It answered normally again by 14:51 UTC (re-checked).
 
 ---
 
