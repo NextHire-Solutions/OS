@@ -383,7 +383,8 @@ function Brokerages({ rows, liveGlobally, serverList }: { rows: BrokerageRow[]; 
             <col style={{ width: "96px" }} />
             <col style={{ width: "15%" }} />
             <col style={{ width: "17%" }} />
-            <col style={{ width: "80px" }} />
+            {/* Room for "Confirm", the Save that asks twice before a brokerage can receive real emails. */}
+            <col style={{ width: "96px" }} />
           </colgroup>
           <thead>
             <tr>
@@ -516,10 +517,16 @@ function BrokerageLine({ row, liveGlobally, serverList }: { row: BrokerageRow; l
       <td>
         {/* A brokerage becoming able to send for real (switched on and set to Live) while sending is live: two clicks. */}
         {enabled && sends === "live" && !(row.relay.enabled && savedSends === "live") && liveGlobally ? (
+          /*
+           * "Confirm", short (18 Nov): the sentence this used to show grew a
+           * 393px button in this column, cut off at the list's edge, so the
+           * second click was hard to find and it disarmed after 4 seconds —
+           * "the save button has gone inactive". The sentence is the title.
+           */
           <ConfirmButton
             label="Save"
-            armedLabel={`Click again: ${row.name} can receive real emails`}
-            title={`${row.name}'s next hand-offs are sent for real (one click: when someone presses Send to brokerage).`}
+            armedLabel="Confirm"
+            title={`Click Save, then Confirm: ${row.name}'s next hand-offs are sent for real (one click: when someone presses Send to brokerage).`}
             onConfirm={save}
             disabled={!dirty || busy}
           />

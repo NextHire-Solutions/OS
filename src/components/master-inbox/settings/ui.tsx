@@ -253,20 +253,22 @@ export function ConfirmButton({
     );
   }
 
+  /*
+   * The red is in mi-settings.css (.mis-confirm), not here: os.css sets every
+   * .btn's colour, border and background with !important, so inline red was
+   * thrown away and this rendered as a plain white button — on the hand-off
+   * page it read as switched off beside the blue Saves (18 Nov).
+   */
   return (
     <button
-      className="btn"
+      className="btn mis-confirm"
       type="button"
       disabled={disabled}
       title={title}
       data-armed={armed ? "true" : "false"}
-      aria-label={armed ? armedLabel : `${label} — ${title}`}
+      aria-label={armed ? `${armedLabel} — ${title}` : `${label} — ${title}`}
       onClick={click}
       style={{
-        color: "var(--red)",
-        borderColor: armed ? "var(--red)" : "var(--line)",
-        background: armed ? "var(--red-bg)" : undefined,
-        fontWeight: armed ? 700 : 600,
         whiteSpace: "nowrap",
         ...(compact ? { padding: "6px 11px", fontSize: 12.5 } : null),
         ...(disabled ? DIM : null),
