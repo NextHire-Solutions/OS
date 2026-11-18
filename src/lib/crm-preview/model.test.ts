@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import type { PipelineEntry, PipelineStage } from "@/lib/tools/master-inbox/portals/stages-shared";
 import { canonicalStageDefs, INTERESTED_STAGE_KEY, interestedStageRows, resolveStageDefs, type ClientStageRow } from "@/lib/tools/master-inbox/portals/stage-config";
 import {
+  SWITCH_PORTAL_HREF,
+  switchesPortal,
   abbrevUsd,
   formatPhone,
   furthestStages,
@@ -417,5 +419,13 @@ test("the screen's editor leaves it out and sends it back with every save, and a
   assert.match(src, /\(s === "introduction" \? interestedLabel : undefined\)/);
   const route = readFileSync("src/app/api/tools/master-inbox/portal/[token]/stages/route.ts", "utf8");
   assert.match(route, /Missing canonical stage/, "why it has to be sent");
+});
+
+test("Switch portal: only a client with more than one portal, never staff (they have their own switcher)", () => {
+  assert.equal(switchesPortal("client", [{ id: "a" }, { id: "b" }]), true);
+  assert.equal(switchesPortal("client", [{ id: "a" }]), false);
+  assert.equal(switchesPortal("client", []), false);
+  assert.equal(switchesPortal("staff", [{ id: "a" }, { id: "b" }, { id: "c" }]), false);
+  assert.equal(SWITCH_PORTAL_HREF, "/crm-preview", "the client's list of portals (page.tsx: no client named, more than one portal)");
 });
 

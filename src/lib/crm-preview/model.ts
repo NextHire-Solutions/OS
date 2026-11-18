@@ -545,3 +545,16 @@ export function listPage(entries: readonly PipelineEntry[], page: number): ListP
   }
   return { page: p, pages, from: total ? (p - 1) * LIST_PAGE_SIZE + 1 : 0, to: Math.min(p * LIST_PAGE_SIZE, total), total, groups };
 }
+
+/*
+ * "Switch portal" (19 Nov). One sign-in is one email address, and it opens every portal that address is on the
+ * sign-in list for (portal-login/login.ts allowedPortals) — a client asked whether a person can have two portals and
+ * sign in to each. Inside a portal there was no way to the other one. A client with more than one gets a link to the
+ * list of their portals (the "Choose your portal" page at /crm-preview); staff already have their own switcher.
+ */
+export const SWITCH_PORTAL_HREF = "/crm-preview";
+
+export function switchesPortal(audience: "staff" | "client", portals: readonly unknown[]): boolean {
+  return audience === "client" && portals.length > 1;
+}
+

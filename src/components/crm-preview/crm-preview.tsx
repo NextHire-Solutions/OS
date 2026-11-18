@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 
 import type { PipelineEntry, TeamMember } from "@/lib/tools/master-inbox/portals/stages-shared";
 import type { AgentEntry, DncEntry } from "@/lib/tools/master-inbox/portals/portal-data";
-import { initials, PREVIEW_VIEWS, type ManagedStage, type PortalOffer, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
+import { initials, PREVIEW_VIEWS, SWITCH_PORTAL_HREF, switchesPortal, type ManagedStage, type PortalOffer, type PreviewStage, type PreviewView } from "@/lib/crm-preview/model";
 
 import { Icon, type IconName } from "./icons";
 import { k, RO } from "./k";
@@ -387,6 +387,13 @@ export function CrmPreview({
                 {offer === null ? (
                   <>
                     <button type="button" onClick={() => openSetup()}>Setup wizard</button>
+                    <span aria-hidden="true">·</span>
+                  </>
+                ) : null}
+                {/* 19 Nov: one sign-in opens every portal the address is listed on; this is the way between them. */}
+                {switchesPortal(audience, portals) ? (
+                  <>
+                    <a href={SWITCH_PORTAL_HREF} data-switch-portal="">Switch portal</a>
                     <span aria-hidden="true">·</span>
                   </>
                 ) : null}
