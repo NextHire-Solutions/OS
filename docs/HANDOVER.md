@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.12** | [The Assistant for Gabriel Castillo, scoped to what he can see — 18 November](#012-the-assistant-for-gabriel-castillo-scoped-to-what-he-can-see--18-november) — opened by name; each tool follows the switch of the screen showing its data; money, commissions, team and the agent database closed to him
 | **0.11** | [Brokerage hand-off: Practice or Live per client, Amy, its own menu entry; Bounce rate on Domains — 18 November](#011-brokerage-hand-off-practice-or-live-per-client-amy-its-own-menu-entry-bounce-rate-on-domains--18-november) — going live for a client is a choice on the page now (the Railway list is gone); Hassan's Bounce rate column merged; check who made the live deploy before deploying
 | **0.10** | [Market: Avg. sales price filter and column, 17 November](#010-market-avg-sales-price-filter-and-column-17-november) — the agent database's last-12-months average sales price as a range filter and a sortable column; answered from memory only once proven against the database
 | **0.09** | [Demo Portal card links to the new portal, 17 November](#009-demo-portal-card-links-to-the-new-portal-17-november) — Client Portals' Demo card shows, copies and opens `os.brokerstaffer.com/crm-preview?client=<id>`; it opens after sign-in only
@@ -219,6 +220,32 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.12 The Assistant for Gabriel Castillo, scoped to what he can see — 18 November
+
+LIVE as `91b7fa3` (Railway 2addf560). The user: "give access to the AI assistant on the OS to Gabriel Castillo"; asked,
+"Only what he can see" (the Assistant had been admins-only since Eddy's 5 Oct rule).
+
+- **Opened by name**: `identity/named-pages.ts` → `assistant: [gabo075823532@gmail.com]`; `canUseAssistant` (admin or
+  named) guards the page and all three chat routes. Chats are per person, as before.
+- **Scoped tools** (`tools/assistant/viewer.ts`): each tool needs the Team-access switch of the screen showing the same
+  data. Money (`client_billing`, `billing_overview`) is the Billing tab's people only; `commissions`, `team`,
+  `notifications`, `data_consistency`, `reply_agent_status` are admins only; a tool with no rule is admins only.
+  The model is offered only the person's tools (`toolSchemaFor`) and the turn refuses any other (`handlersFor`);
+  `runTurn` requires who is asking. `client_report` leaves out Stripe and scrapes, `client_overview` its scrapes,
+  `workspace_home` its Performance client counts — each says so, never zero. The model is told, in people's words,
+  what is closed (without it "agents in Dallas" looped on conversation search). Admins and the Claude connector: unchanged.
+- **Proof.** 3,662 tests; 6 deliberate breaks caught. The real engine, model and data as Gabriel (read only, no chat
+  stored): billing, commissions and the agent database refused in one line with nothing read; reports without money;
+  Interested replies, rankings, Home and a client overview answered; an admin still gets MRR. Local Chrome as Gabriel,
+  Amy and the owner 12/12; live (as the owner) 4/4 + smoke 7/7. An independent review found no leak.
+- **Raised, not changed:** the Clients list's MRR and Total spend columns come from
+  `/api/workspace/clients/stripe-summary`, which checks no person — anyone with the Clients switch sees them.
+- **18 Nov ~14:40 UTC the agent database (Supabase project for `AGENT_SEARCH_SUPABASE_URL`) answered 503 to every
+  request** ("Could not query the database for the schema cache"); a market load had already timed out at 14:09.
+  Not caused by this deploy; everything reading the agent database fails until it is back.
 
 ---
 
