@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.13** | [Hand-off page: the two-click Save is red and reads Confirm — 18 November](#013-hand-off-page-the-two-click-save-is-red-and-reads-confirm--18-november) — "the save button has gone inactive"; live 96b11ee5. The Inboxes work (Bounce rate, Sync, deleted inboxes) is built on a branch, not deployed
 | **0.12** | [The Assistant for Gabriel Castillo, scoped to what he can see — 18 November](#012-the-assistant-for-gabriel-castillo-scoped-to-what-he-can-see--18-november) — opened by name; each tool follows the switch of the screen showing its data; money, commissions, team and the agent database closed to him
 | **0.11** | [Brokerage hand-off: Practice or Live per client, Amy, its own menu entry; Bounce rate on Domains — 18 November](#011-brokerage-hand-off-practice-or-live-per-client-amy-its-own-menu-entry-bounce-rate-on-domains--18-november) — going live for a client is a choice on the page now (the Railway list is gone); Hassan's Bounce rate column merged; check who made the live deploy before deploying
 | **0.10** | [Market: Avg. sales price filter and column, 17 November](#010-market-avg-sales-price-filter-and-column-17-november) — the agent database's last-12-months average sales price as a range filter and a sortable column; answered from memory only once proven against the database
@@ -220,6 +221,20 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.13 Hand-off page: the two-click Save is red and reads Confirm — 18 November
+
+**Reported:** "I was able to set up LIV, but the save button has gone inactive since I set Rise to on." Rise Real Estate Tujunga's switch-on had saved (17 Nov 19:09 UTC, Practice), so its Save was grey with nothing left to save. The real fault showed once a row is set to Live: Save becomes a two-click button (`ConfirmButton`, settings/ui.tsx), and os.css sets every `.btn`'s colour, border and background with `!important`, so its inline red was thrown away and it rendered plain white beside the blue Saves. After one click its label ("Click again: … can receive real emails", 393px) was cut off in the 80px column and it disarmed after 4 seconds.
+
+**Fix (353adae, Railway 96b11ee5):** the red is in mi-settings.css (`.mis-confirm`, selectors that beat os.css), so every two-click button on the Master Inbox settings pages is red as designed; the hand-off row's armed label is "Confirm" (the full sentence is the hover text); the column is 96px.
+
+**Verified:** local Chrome 16/16 with live sending switched on and every write refused; live Chrome 13/13 as admin@outreachify.io with writes blocked, Rise only changed on screen and never saved (still on, Practice); logs clean.
+
+**Also found:** LIV Indy Realty is Live with Mode "As set above", and the page-wide mode is One click, so LIV is not automatic. Told the user.
+
+**Not deployed, on branch `feat/inboxes-sync-bounce` (cfa6af3):** Inboxes Bounce rate column, Sync with EmailBison, and the fix for deleted EmailBison inboxes staying on the list (the archive step read 1,000 of 3,482 rows; 484 deleted inboxes still shown, 419 "Not connected"). Deploying it archives those 484 at the next sync.
 
 ---
 
