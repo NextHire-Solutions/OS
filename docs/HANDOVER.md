@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
 | **0.14** | [New portal: Switch portal, for a client on more than one portal — 19 November](#014-new-portal-switch-portal-for-a-client-on-more-than-one-portal--19-november) — one sign-in already opened every portal an email is listed on; now a link moves between them; live 32d4deb1
 | **0.13** | [Hand-off page: the two-click Save is red and reads Confirm — 18 November](#013-hand-off-page-the-two-click-save-is-red-and-reads-confirm--18-november) — "the save button has gone inactive"; live 96b11ee5. The Inboxes work (Bounce rate, Sync, deleted inboxes) is built on a branch, not deployed
 | **0.12** | [The Assistant for Gabriel Castillo, scoped to what he can see — 18 November](#012-the-assistant-for-gabriel-castillo-scoped-to-what-he-can-see--18-november) — opened by name; each tool follows the switch of the screen showing its data; money, commissions, team and the agent database closed to him
@@ -225,6 +226,18 @@ recommendation to revoke the secrets stored in Railway.
 
 ---
 
+## 0.15 Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November
+
+**Asked (client, 18 Nov):** a Bounce rate (%) column on Inboxes like the Domains view; a manual sync button; inboxes under the ALL tag shown disconnected while EmailBison shows them connected. **Then (user, 19 Nov):** "remove instantly from the sync button in this inboxes work and from the analytics tool. they have stopped using instantly. make sure you do not delete the code as we can use that later."
+
+**Inboxes (964b77b):** Bounce rate column (Bounced ÷ Sent, all time, as Domains counts it; added to saved column choices, prefs v3). "Sync with EmailBison" button (`POST /api/tools/analytics/inboxes/sync`, Inboxes switch) runs `sync-senders` and re-reads warmup at most every 10 minutes; the list re-reads fresh (`cachedGet` `fresh=1`). **The disconnected ALL inboxes:** `sync-senders`' archive step read the live `sender_emails` rows in one unpaged select, capped at 1,000 of 3,482, so the 484 inboxes deleted in EmailBison were never archived (all 61 ALL-tagged "Not connected" ones among them; EmailBison returns 404 for each). Now `sync/reconcile.ts` pages the whole table (also used for Instantly accounts). **At the next sync after this deploy (scheduled every 3 hours, or a Sync press) the 484 are archived**: the list drops 3,482 → 2,998 and "Not connected" ~596 → ~177. Archived only: an inbox that reappears in EmailBison comes back.
+
+**Instantly switched off in Campaign Analytics (98b427e):** BrokerStaffer's last Instantly send and reply were 8 Sep 2026, yet its 14 sync jobs ran ~620 times a day. `src/lib/tools/analytics/instantly-switch.ts` holds `ANALYTICS_INSTANTLY_ON = false`; set it to `true` and deploy to bring everything back (no code or data deleted). Off: the `sync-instantly-*` jobs stay registered and scheduled but are never dispatched, are left out of sync health, and the run route answers 409; every figure is EmailBison's, history included (the user's choice: 90-day and all-time totals and client lifetime sent drop Instantly's share); Attribution counts EmailBison and Direct outcomes (Instantly's 967 leave totals, coverage, list and counts); no Platform filter, no Instantly campaigns, inboxes or Estate switch, no "EmailBison only" notes; the Assistant/connector tools follow. **Not switched** (separate tools): Master Inbox, Client Health, lifecycle campaign pauses, portal DNC blocklists still call Instantly.
+
+**Verified:** 3,708 tests (the old Instantly tests pin the switch on and keep guarding the kept code; flipping it fails 10 new checks). Local Chrome against live data with database writes faked: the sync would archive exactly the 484; every analytics screen loads with no Instantly, and the server read no Instantly table, function or API. Live Chrome 36/36 as staff, writes blocked, Sync not pressed; no Instantly run since the deploy; logs clean.
+
+---
+
 ## 0.14 New portal: Switch portal, for a client on more than one portal — 19 November
 
 **Asked by a client:** "Can a user have access to two portals? Would they need to use the one-time login to access each?" Already yes, and no: a portal sign-in belongs to the email (`os_portal_sessions.email`), `allowedPortals(email)` returns every portal that email is listed on, and `/portal-signin/done` sends someone with two or more to the "Choose your portal" list. The sign-in lasts 30 days. What was missing was a way back to that list from inside a portal.
@@ -235,7 +248,7 @@ recommendation to revoke the secrets stored in Railway.
 
 **Reply sent to the client (draft given to the user):** one sign-in opens both portals; pick one from the list, "Switch portal" next to Sign out goes to the other.
 
-**Still not deployed, on branch `feat/inboxes-sync-bounce` (b13f7e9):** the Inboxes work in 0.13.
+**Inboxes work:** deployed 19 November, see 0.15.
 
 ---
 
@@ -249,7 +262,7 @@ recommendation to revoke the secrets stored in Railway.
 
 **Also found:** LIV Indy Realty is Live with Mode "As set above", and the page-wide mode is One click, so LIV is not automatic. Told the user.
 
-**Not deployed, on branch `feat/inboxes-sync-bounce` (b13f7e9 after a rebase):** Inboxes Bounce rate column, Sync with EmailBison, and the fix for deleted EmailBison inboxes staying on the list (the archive step read 1,000 of 3,482 rows; 484 deleted inboxes still shown, 419 "Not connected"). Deploying it archives those 484 at the next sync.
+**Deployed 19 November (see 0.15), was on branch `feat/inboxes-sync-bounce`:** Inboxes Bounce rate column, Sync with EmailBison, and the fix for deleted EmailBison inboxes staying on the list (the archive step read 1,000 of 3,482 rows; 484 deleted inboxes still shown, 419 "Not connected"). Deploying it archives those 484 at the next sync.
 
 ---
 
