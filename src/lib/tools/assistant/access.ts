@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SsoSession } from "@/lib/bs-auth";
+import { holdsPage } from "@/lib/identity/named-pages";
 
 /*
  * Who may use the assistant.
@@ -24,11 +25,13 @@ import type { SsoSession } from "@/lib/bs-auth";
  * caller so this stays pure.
  */
 export function canUseAssistant(session: SsoSession | null, admin: boolean): boolean {
-  return !!session?.email && admin;
+  // 18 Nov (the user): opened by name to people who aren't admins — Gabriel Castillo first. They get only the tools
+  // for the parts of the OS switched on for them (viewer.ts); admins get every tool, as before.
+  return !!session?.email && (admin || holdsPage(session.email, "assistant"));
 }
 
 export function assistantForbiddenMessage(): string {
   return (
-    "The assistant reads across every product, so it is limited to workspace admins."
+    "The assistant reads across every product, so it is limited to workspace admins and the people it is opened to."
   );
 }

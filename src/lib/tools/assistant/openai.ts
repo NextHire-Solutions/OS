@@ -68,7 +68,8 @@ export async function loadAssistantKey(workspaceId: string): Promise<{ apiKey: s
   return { apiKey, model: "gpt-4o" };
 }
 
-export function openAiModel(apiKey: string, model: string): ModelFn {
+/** `tools`: the schema this person may use (engine.ts toolSchemaFor) — every tool by default. */
+export function openAiModel(apiKey: string, model: string, tools: typeof TOOL_SCHEMA = TOOL_SCHEMA): ModelFn {
   return async (messages: ModelMessage[]): Promise<ModelReply> => {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -76,7 +77,7 @@ export function openAiModel(apiKey: string, model: string): ModelFn {
       body: JSON.stringify({
         model,
         messages,
-        tools: TOOL_SCHEMA,
+        tools,
         tool_choice: "auto",
         temperature: 0.2,
       }),

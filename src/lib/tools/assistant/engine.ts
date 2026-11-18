@@ -11,6 +11,7 @@ import "server-only";
 
 import { clientOverviewTool, clientRankingsTool, findClientTool } from "./tools.ts";
 import { clientReportTool } from "./tools-report.ts";
+import { scopeNote, seesBilling, seesScrapes, toolAllowed, type AssistantViewer } from "./viewer.ts";
 import {
   campaignsForClientTool,
   inboxActivityTool,
@@ -888,10 +889,57 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }),
 };
 
+/*
+ * The tools for one person (viewer.ts): an admin, every tool; anyone else, only the tools whose data they can open in
+ * the OS — client_report without Stripe billing (unless one of the Billing tab's people) and scrapes (unless Agent
+ * Search), client_overview without its scrape figures (unless Agent Search).
+ */
+type Handler = (args: Record<string, unknown>) => Promise<unknown>;
+export function handlersFor(viewer: AssistantViewer): Readonly<Record<string, Handler>> {
+  if (viewer.admin) return HANDLERS;
+  const out: Record<string, Handler> = {};
+  for (const [name, h] of Object.entries(HANDLERS)) if (toolAllowed(name, viewer)) out[name] = h;
+  if (out.client_report) {
+    out.client_report = (a) => clientReportTool(String(a.client ?? ""), { billing: seesBilling(viewer), scrapes: seesScrapes(viewer) });
+  }
+  if (out.client_overview && !seesScrapes(viewer)) {
+    out.client_overview = async (a) => withoutScrapes(await HANDLERS.client_overview(a));
+  }
+  // Home's client counts (added, churned, net this month) are Performance's figures now (review, 18 Nov).
+  if (out.workspace_home && !viewer.grants.includes("performance")) {
+    out.workspace_home = async (a) => withoutClientCounts(await HANDLERS.workspace_home(a));
+  }
+  return out;
+}
+
+/** workspace_home's answer without the client counts that belong to Performance. */
+export function withoutClientCounts(result: unknown): unknown {
+  if (!result || typeof result !== "object" || !("clients" in result)) return result;
+  const r = { ...(result as Record<string, unknown>) };
+  delete r.clients;
+  r.notShown = "Client counts (added, churned, net) are Performance's figures, not switched on for this person — left out, not zero.";
+  return r;
+}
+
+/** client_overview's answer without Agent Search's figures — left out, said so, never a zero. */
+export function withoutScrapes(result: unknown): unknown {
+  if (!result || typeof result !== "object" || !("scraping" in result)) return result;
+  const r = { ...(result as Record<string, unknown>) };
+  delete r.scraping;
+  r.notShown = "Scraping (Agent Search) is not switched on for this person, so its figures are left out — not zero.";
+  return r;
+}
+
+/** The tool schema the model is offered for this person: only the tools it may call. */
+export function toolSchemaFor(viewer: AssistantViewer): typeof TOOL_SCHEMA {
+  if (viewer.admin) return TOOL_SCHEMA;
+  return TOOL_SCHEMA.filter((t) => toolAllowed(t.function.name, viewer)) as typeof TOOL_SCHEMA;
+}
+
 /**
  * One tool, run exactly as the chat runs it — for the Claude connector
  * (lib/mcp, 15 Oct), which offers Claude these same tools. Throws for a name
- * that is not a tool; the read-only guard applies as it does here.
+ * that is not a tool; the read-only guard applies as it does here. Admins only (lib/mcp/access.ts).
  */
 export async function runAssistantTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   const handler = HANDLERS[name];
@@ -913,9 +961,13 @@ export async function runTurn(
   history: Array<{ role: "user" | "assistant"; content: string }>,
   question: string,
   model: ModelFn,
+  // Who is asking (viewer.ts) — required, so no caller can forget it and open every tool to someone (review, 18 Nov).
+  viewer: AssistantViewer,
 ): Promise<TurnResult> {
+  const handlers = handlersFor(viewer);
+  const note = scopeNote(viewer);
   const messages: ModelMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: note ? `${SYSTEM_PROMPT}\n\n${note}` : SYSTEM_PROMPT },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: question },
   ];
@@ -957,7 +1009,8 @@ export async function runTurn(
         args = {};
       }
 
-      const handler = HANDLERS[call.name];
+      // Only this person's tools: one outside them is refused here too, whatever the model was offered.
+      const handler = Object.prototype.hasOwnProperty.call(handlers, call.name) ? handlers[call.name] : undefined;
       /*
        * A failed tool is REPORTED TO THE MODEL, not thrown. The model can then
        * say "Client Health was unreachable" — which is a true answer — instead
@@ -966,7 +1019,9 @@ export async function runTurn(
        */
       let result: unknown;
       if (!handler) {
-        result = { error: `No tool named ${call.name}.` };
+        result = HANDLERS[call.name]
+          ? { error: `${call.name} isn't available to this person — it reads a part of the OS not switched on for them. Say so; don't estimate it.` }
+          : { error: `No tool named ${call.name}.` };
       } else {
         try {
           result = await handler(args);

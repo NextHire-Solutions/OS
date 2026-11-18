@@ -92,7 +92,14 @@ async function replyMix(portalIds: string[], since: string) {
 
 type Kpi = { sent?: number; replies?: number; replyRate?: number | null; positive?: number | null; positiveRate?: number | null; bounces?: number | null; bounceRate?: number | null };
 
-export async function clientReportTool(query: string) {
+/*
+ * For someone who isn't an admin (18 Nov, viewer.ts): `billing: false` leaves Stripe out entirely — no MRR, spend,
+ * invoices or billing flags — and `scrapes: false` leaves Agent Search out. Neither is read, and the answer says they
+ * are left out (never zero). Both default to true: admins and the Claude connector see the whole report.
+ */
+export async function clientReportTool(query: string, opts: { billing?: boolean; scrapes?: boolean } = {}) {
+  const withBilling = opts.billing !== false;
+  const withScrapes = opts.scrapes !== false;
   const { match, candidates } = await matchMasterClient(query);
   if (!match) {
     return candidates.length
@@ -109,12 +116,12 @@ export async function clientReportTool(query: string) {
 
   const [record, billing, campaigns, weekly, success, intro, scrape, pipeline, mix] = await Promise.all([
     safely("master record", gaps, () => clientRecordTool(name)),
-    safely("Stripe billing", gaps, () => clientBillingTool(name)),
+    withBilling ? safely("Stripe billing", gaps, () => clientBillingTool(name)) : Promise.resolve(null),
     safely("campaigns", gaps, () => campaignsForClientTool(name)),
     safely("weekly volume (Client Health)", gaps, () => sendingVolumeTool({ weeks: 6, client: name })),
     safely("account health (Client Health)", gaps, () => clientSuccessTool()),
     safely("introduction setup", gaps, () => clientIntroductionTool(name)),
-    safely("scraping", gaps, () => scrapeActivityTool({ client: name, limit: 3 })),
+    withScrapes ? safely("scraping", gaps, () => scrapeActivityTool({ client: name, limit: 3 })) : Promise.resolve(null),
     portalIds.length ? safely("portal pipeline", gaps, () => pipelineRows(portalIds)) : Promise.resolve(null),
     portalIds.length ? safely("reply labels", gaps, () => replyMix(portalIds, iso(30))) : Promise.resolve(null),
   ]);
@@ -235,7 +242,7 @@ export async function clientReportTool(query: string) {
       markets: rec?.markets ?? null,
       portals: (portals?.portals ?? []).map((p) => p.name),
     },
-    money: bill?.linkedToStripe === false ? { linkedToStripe: false, note: "Not linked to Stripe — MRR and spend unknown, not zero." } : bill ? {
+    money: !withBilling ? { notShown: "Billing isn't available to this person, so it is left out — not zero." } : bill?.linkedToStripe === false ? { linkedToStripe: false, note: "Not linked to Stripe — MRR and spend unknown, not zero." } : bill ? {
       mrr: bill.mrr, totalSpend: bill.totalSpend, subscription: bill.subscription?.status ?? null,
       nextCharge: bill.subscription?.nextCharge && Date.parse(bill.subscription.nextCharge) > now ? day(bill.subscription.nextCharge) : null,
       collectionPaused: bill.subscription?.collectionPaused ?? null, outstanding: bill.outstanding ?? null,
@@ -269,8 +276,8 @@ export async function clientReportTool(query: string) {
       byTerritory: Array.isArray((intro as { byTerritory?: unknown }).byTerritory),
       text: (intro as { whatIsSent?: string }).whatIsSent ?? null,
     } : null,
-    latestScrapes: ((scrape as { batches?: unknown[] } | null)?.batches ?? []).slice(0, 3),
+    ...(withScrapes ? { latestScrapes: ((scrape as { batches?: unknown[] } | null)?.batches ?? []).slice(0, 3) } : {}),
     unavailable: gaps,
-    sources: "Master record and portal pipeline (OS / Master Inbox), Stripe, Campaign Analytics (last 30 days vs the 30 before, business average on the same platforms), Client Health (weekly volume, billing cycle, health score), Agent Search (scrapes).",
+    sources: `Master record and portal pipeline (OS / Master Inbox), ${withBilling ? "Stripe, " : ""}Campaign Analytics (last 30 days vs the 30 before, business average on the same platforms), Client Health (weekly volume, billing cycle, health score)${withScrapes ? ", Agent Search (scrapes)" : ""}.`,
   };
 }

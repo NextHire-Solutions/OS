@@ -3,6 +3,9 @@ import { test, mock } from "node:test";
 
 import { runTurn, type ModelFn, type ModelMessage } from "./engine.ts";
 
+// An admin: every tool, as these tests have always run (18 Nov: who is asking is required).
+const ADMIN = { email: "admin@outreachify.io", admin: true, grants: [], billing: true };
+
 /*
  * The loop, against a scripted model.
  *
@@ -34,14 +37,14 @@ const calls = (name: string, args: unknown) => ({
 
 test("an answer with no tool call comes straight back", async () => {
   const { fn } = scripted([answer("Hello.")]);
-  const r = await runTurn([], "hi", fn);
+  const r = await runTurn([], "hi", fn, ADMIN);
   assert.equal(r.answer, "Hello.");
   assert.equal(r.toolCalls.length, 0);
 });
 
 test("the system prompt and history are sent, question last", async () => {
   const { fn, seen } = scripted([answer("ok")]);
-  await runTurn([{ role: "user", content: "earlier" }, { role: "assistant", content: "reply" }], "now", fn);
+  await runTurn([{ role: "user", content: "earlier" }, { role: "assistant", content: "reply" }], "now", fn, ADMIN);
   const sent = seen[0];
   assert.equal(sent[0].role, "system");
   assert.equal(sent[1].content, "earlier");
@@ -51,7 +54,7 @@ test("the system prompt and history are sent, question last", async () => {
 
 test("a tool result is fed back and the answer follows", async () => {
   const { fn, seen } = scripted([calls("find_client", { query: "keyes" }), answer("The Keyes Company.")]);
-  const r = await runTurn([], "who is keyes", fn);
+  const r = await runTurn([], "who is keyes", fn, ADMIN);
   assert.equal(r.answer, "The Keyes Company.");
   assert.equal(r.toolCalls.length, 1);
   assert.equal(r.toolCalls[0].name, "find_client");
@@ -67,7 +70,7 @@ test("a tool result is fed back and the answer follows", async () => {
 
 test("tokens accumulate across rounds", async () => {
   const { fn } = scripted([calls("find_client", { query: "x" }), answer("done")]);
-  const r = await runTurn([], "q", fn);
+  const r = await runTurn([], "q", fn, ADMIN);
   assert.equal(r.tokensPrompt, 20);
   assert.equal(r.tokensCompletion, 10);
 });
@@ -79,7 +82,7 @@ test("tokens accumulate across rounds", async () => {
  */
 test("a failing tool is reported to the model, not thrown", async () => {
   const { fn, seen } = scripted([calls("no_such_tool", {}), answer("That lookup is unavailable.")]);
-  const r = await runTurn([], "q", fn);
+  const r = await runTurn([], "q", fn, ADMIN);
   assert.equal(r.answer, "That lookup is unavailable.");
   const toolTurn = seen[1][seen[1].length - 1];
   assert.match(String(toolTurn.content), /No tool named no_such_tool/);
@@ -90,7 +93,7 @@ test("malformed tool arguments do not crash the turn", async () => {
     { content: null, toolCalls: [{ id: "c", name: "find_client", arguments: "{not json" }], tokensPrompt: 1, tokensCompletion: 1 },
     answer("ok"),
   ]);
-  const r = await runTurn([], "q", fn);
+  const r = await runTurn([], "q", fn, ADMIN);
   assert.equal(r.answer, "ok");
   assert.deepEqual(r.toolCalls[0].arguments, {});
 });
@@ -101,7 +104,7 @@ test("malformed tool arguments do not crash the turn", async () => {
  */
 test("a model that only ever calls tools is stopped, with an explanation", async () => {
   const { fn } = scripted([calls("find_client", { query: "x" })]);
-  const r = await runTurn([], "q", fn);
+  const r = await runTurn([], "q", fn, ADMIN);
   assert.match(r.answer, /without reaching an answer/i);
   assert.equal(r.toolCalls.length, 5, "stops after MAX_ROUNDS (5), not forever");
 });

@@ -55,6 +55,15 @@ const SUGGESTIONS: { area: string; questions: string[] }[] = [
   { area: "Performance", questions: ["Which clients are furthest behind their intro target?", "Which clients have the best reply rate?"] },
   { area: "Pipeline & leads", questions: ["How many introduced agents were hired in the last 90 days?", "What did we scrape recently?"] },
 ];
+/*
+ * For someone who isn't an admin (18 Nov): only what their tools can answer — no money, no scraping. The server
+ * decides what they may ask about (viewer.ts); this only keeps the suggestions to questions it will answer.
+ */
+const LIMITED_SUGGESTIONS: { area: string; questions: string[] }[] = [
+  { area: "Clients", questions: ["Which clients are paused, and since when?", "Give me a full picture of The Keyes Company"] },
+  { area: "Performance", questions: ["Which clients are furthest behind their intro target?", "Which clients have the best reply rate?"] },
+  { area: "Pipeline & leads", questions: ["How many introduced agents were hired in the last 90 days?", "Which replies were marked Interested this week?"] },
+];
 
 /** Today / Yesterday / Previous 7 days / Older — the grouping a sidebar needs. */
 function bucketOf(iso: string): string {
@@ -119,7 +128,7 @@ const TOOL_LABEL: Record<string, string> = {
   recent_introductions: "Reading recent introductions",
 };
 
-export function AssistantScreen() {
+export function AssistantScreen({ limited = false }: { limited?: boolean } = {}) {
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -315,12 +324,14 @@ export function AssistantScreen() {
             <div className="asst-welcome">
               <h1>Ask about the business</h1>
               <p className="mut">
-                Every client, campaign, inbox, portal and scrape — plus billing, commissions and the
-                team — in one place. Answers cite where each figure came from, and say so when
+                {limited
+                  ? "Clients, campaigns, inboxes, conversations and portals — the parts of the OS switched on for you — in one place. "
+                  : "Every client, campaign, inbox, portal and scrape — plus billing, commissions and the team — in one place. "}
+                Answers cite where each figure came from, and say so when
                 something is not tracked rather than reporting zero.
               </p>
               <div className="asst-suggest-groups">
-                {SUGGESTIONS.map((g) => (
+                {(limited ? LIMITED_SUGGESTIONS : SUGGESTIONS).map((g) => (
                   <section key={g.area} className="asst-suggest">
                     <h2>{g.area}</h2>
                     {g.questions.map((q) => (

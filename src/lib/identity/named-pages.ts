@@ -15,6 +15,8 @@
 export const NAMED_PAGES: Readonly<Record<string, readonly string[]>> = {
   "reply-agent": ["amy@brokerstaffer.com"],
   "brokerage-relay": ["amy@brokerstaffer.com"],
+  // 18 Nov, the user: "give access to the AI assistant on the OS to Gabriel Castillo" — only what he can see (viewer.ts).
+  assistant: ["gabo075823532@gmail.com"],
 };
 
 const norm = (email: string | null | undefined) => (email ?? "").trim().toLowerCase();

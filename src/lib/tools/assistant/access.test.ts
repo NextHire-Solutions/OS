@@ -7,7 +7,7 @@ import { canUseAssistant } from "./access.ts";
 const session = (email: string | null, grants: string[] = []): SsoSession | null =>
   email ? ({ email, grants, ver: 1, iat: 0, exp: Date.now() + 60_000 } as unknown as SsoSession) : null;
 
-test("the assistant is for admins only (5 Oct) — holding every tool is not enough", () => {
+test("the assistant is for admins (5 Oct) and the people it is opened to by name (18 Nov) — holding every tool is not enough", () => {
   assert.equal(canUseAssistant(null, true), false);
   assert.equal(canUseAssistant(session("member@example.com", [...ALL_TOOLS]), false), false);
   assert.equal(canUseAssistant(session("member@example.com", ["inbox"]), false), false);

@@ -518,7 +518,8 @@ export default async function WorkspacePage({
         // Client-side only: it fetches its own four endpoints, so no loader
         // joins the Promise.all above and no other screen pays for it.
         "reply-agent": <ReplyAgentScreen agents={replyAgents} />,
-        assistant: <AssistantScreen />,
+        // Someone it is opened to by name gets only their switches' tools (18 Nov, viewer.ts): suggestions to match.
+        assistant: <AssistantScreen limited={!admin} />,
         account: <AccountScreen email={email} />,
       })}
     />

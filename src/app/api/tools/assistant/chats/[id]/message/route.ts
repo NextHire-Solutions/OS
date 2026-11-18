@@ -5,7 +5,9 @@ import { readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { env } from "@/lib/tools/master-inbox/env";
 import { isAdminUser } from "@/lib/identity/admin-db";
 import { canUseAssistant, assistantForbiddenMessage } from "@/lib/tools/assistant/access";
-import { runTurn } from "@/lib/tools/assistant/engine";
+import { runTurn, toolSchemaFor } from "@/lib/tools/assistant/engine";
+import { canSeeBillingTab } from "@/lib/clients/billing-access";
+import type { AssistantViewer } from "@/lib/tools/assistant/viewer";
 import { loadAssistantKey, openAiModel } from "@/lib/tools/assistant/openai";
 import { appendMessage, getChat, titleFromFirstQuestion } from "@/lib/tools/assistant/store";
 
@@ -28,9 +30,12 @@ const Ask = z.object({ question: z.string().min(1).max(2000) });
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const me = await verifySso(process.env.AUTH_SECRET ?? "", readSsoCookie(request.headers.get("cookie")));
   if (!me?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canUseAssistant(me, await isAdminUser(me?.email))) {
+  const admin = await isAdminUser(me?.email);
+  if (!canUseAssistant(me, admin)) {
     return NextResponse.json({ error: "Forbidden", detail: assistantForbiddenMessage() }, { status: 403 });
   }
+  // Who is asking: an admin gets every tool; anyone else only those for their switches (viewer.ts, 18 Nov).
+  const viewer: AssistantViewer = { email: me.email, admin, grants: me.grants ?? [], billing: canSeeBillingTab(me.email) };
 
   const parsed = Ask.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "A question is required" }, { status: 400 });
@@ -56,7 +61,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   try {
     const { apiKey, model } = await loadAssistantKey(workspaceId);
     const history = existing.messages.map((m) => ({ role: m.role, content: m.content }));
-    const turn = await runTurn(history, question, openAiModel(apiKey, model));
+    const turn = await runTurn(history, question, openAiModel(apiKey, model, toolSchemaFor(viewer)), viewer);
 
     await appendMessage({
       chatId,
