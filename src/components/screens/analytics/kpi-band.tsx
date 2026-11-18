@@ -9,6 +9,7 @@ import {
   type Delta,
 } from "@/lib/tools/analytics/format.ts";
 import { replyRatePerContact } from "@/lib/tools/analytics/metrics.ts";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * The KPI band — twelve cells in two rows of six, in the design's own `.kpi`.
@@ -117,8 +118,10 @@ export function kpiCells(data: KpiResponse | null): { cells: Cell[]; scope?: str
    * of the bare platform name. "EmailBison only" beside a ticked Instantly chip
    * invites the reader to conclude the filter is broken.
    */
-  const scope =
-    data.coverage.instantlyExcludedBy === "tag-filter"
+  // Instantly switched off (instantly-switch.ts): every figure is EmailBison's, so no tile says so.
+  const scope = !ANALYTICS_INSTANTLY_ON
+    ? undefined
+    : data.coverage.instantlyExcludedBy === "tag-filter"
       ? "EmailBison only — tags are EmailBison campaign tags, so Instantly is not included"
       : data.coverage.instantlyExcludedBy === "campaign-filter"
         ? "EmailBison only — the campaign filter selects EmailBison campaigns, so Instantly is not included"
@@ -131,7 +134,7 @@ export function kpiCells(data: KpiResponse | null): { cells: Cell[]; scope?: str
    * dash beside eleven populated tiles reads as a broken metric.
    */
   const positiveNote =
-    data.coverage.positiveCoversInstantly === false ? "EmailBison only" : scope;
+    ANALYTICS_INSTANTLY_ON && data.coverage.positiveCoversInstantly === false ? "EmailBison only" : scope;
 
   const perContact = replyRatePerContact(c.replies, c.prospects);
   const perContactNote =

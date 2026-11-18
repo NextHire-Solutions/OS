@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { cachedGet } from "@/lib/tools/analytics/cached-get";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * The sending estate (spec §8).
@@ -72,7 +73,8 @@ async function load(request: NextRequest) {
    * be ranked against each other anyway — EmailBison reports lifetime counters
    * per inbox while Instantly's totals are only what we have synced.
    */
-  const estate = params.get("estate") === "instantly" ? "instantly" : "emailbison";
+  // Instantly switched off (instantly-switch.ts): the EmailBison estate is the only one.
+  const estate = ANALYTICS_INSTANTLY_ON && params.get("estate") === "instantly" ? "instantly" : "emailbison";
   const rcptMinLeads = Math.max(Number(params.get("rcpt_min") ?? 50) || 0, 0);
   const minSent = Number(params.get("min_sent") ?? DEFAULT_MIN_SENT);
   const limit = Math.min(Number(params.get("limit") ?? 100), 500);

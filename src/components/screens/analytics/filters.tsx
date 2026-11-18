@@ -13,6 +13,7 @@ import { rangeLabel } from "@/lib/tools/analytics/format.ts";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { loadOnce } from "../lazy";
 import { REPLY_FACETS_URL, useAnalyticsData } from "./actions";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Analytics' filter state, and the one place this port deviates from the tool.
@@ -315,7 +316,8 @@ export function FilterBar({
         onChange={(clientIds) => setFilters({ clientIds })}
       />
 
-      {supportsPlatform ? (
+      {/* Instantly switched off (instantly-switch.ts): EmailBison is the only platform, nothing to choose. */}
+      {supportsPlatform && ANALYTICS_INSTANTLY_ON ? (
         <MultiSelect
           label="Platform"
           options={[

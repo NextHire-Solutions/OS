@@ -1,6 +1,7 @@
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { JOB_NAMES } from "./jobs";
 import { SCHEDULE_ENTRIES } from "./schedule.ts";
+import { jobSwitchedOff } from "../instantly-switch.ts";
 
 /*
  * Sync health, computed once and served two ways: to the dashboard over session
@@ -82,7 +83,12 @@ export async function syncHealth(includeRuns = true): Promise<SyncHealth> {
   const byJob = new Map((state ?? []).map((s) => [s.job_name, s]));
   const now = Date.now();
 
-  const jobs = JOB_NAMES.map((job) => {
+  /*
+   * A job switched off on purpose (Instantly, instantly-switch.ts) is not a
+   * failing job: left in, it would go stale within hours and keep the whole app
+   * "unhealthy" and the data-as-of line pinned to the day it stopped.
+   */
+  const jobs = JOB_NAMES.filter((job) => !jobSwitchedOff(job)).map((job) => {
     const s = byJob.get(job);
     const lastSuccess = s?.last_success_at ? new Date(s.last_success_at).getTime() : null;
     const threshold = staleAfterMs.get(job) ?? 6 * 3_600_000;

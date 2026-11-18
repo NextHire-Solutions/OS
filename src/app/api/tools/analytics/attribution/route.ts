@@ -3,6 +3,8 @@ import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tool
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
 import { narrowToTags } from "@/lib/tools/analytics/tag-filter";
 import { CONVERSION_MEASURES, STAGE_ORDER } from "@/lib/tools/analytics/outcomes.ts";
+import { ANALYTICS_INSTANTLY_ON, outcomePlatformsParam } from "@/lib/tools/analytics/instantly-switch";
+import { coverageWithoutInstantly, type OutcomeCoverage } from "@/lib/tools/analytics/outcomes-without-instantly";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +81,7 @@ export async function GET(request: NextRequest) {
         p_campaign_ids: campaignIds,
         // The only endpoint where this is real: outcomes are the sole data with
         // more than one platform behind them.
-        p_platforms: filters.platforms.length ? filters.platforms : null,
+        p_platforms: outcomePlatformsParam(filters.platforms),
       }),
       sb.rpc("analytics_outcome_campaigns", {
         p_team_id: teamId,
@@ -88,7 +90,7 @@ export async function GET(request: NextRequest) {
         p_client_ids: clientIds,
         // Instantly outcomes are credited to no campaign, so selecting it
         // correctly empties this table instead of ignoring the filter.
-        p_platforms: filters.platforms.length ? filters.platforms : null,
+        p_platforms: outcomePlatformsParam(filters.platforms),
       }),
       sb.rpc("analytics_outcome_coverage", {
         p_team_id: teamId,
@@ -110,7 +112,7 @@ export async function GET(request: NextRequest) {
         p_to: filters.to,
         p_client_ids: clientIds,
         p_campaign_ids: campaignIds,
-        p_platforms: filters.platforms.length ? filters.platforms : null,
+        p_platforms: outcomePlatformsParam(filters.platforms),
       }),
     ]);
 
@@ -159,25 +161,28 @@ export async function GET(request: NextRequest) {
     });
 
     const cov = ((coverage.data ?? []) as CoverageRow[])[0];
+    const coverageAll: OutcomeCoverage | null = cov
+      ? {
+          total: Number(cov.total),
+          attributed: Number(cov.attributed),
+          otherPlatform: Number(cov.other_platform),
+          unattributed: Number(cov.unattributed),
+          pending: Number(cov.pending),
+          byMethod: cov.by_method ?? {},
+          byPlatform: cov.by_platform ?? {},
+        }
+      : null;
+    // Instantly switched off: its outcomes leave the coverage figures too (outcomes-without-instantly.ts).
+    const coverageOut = coverageAll && !ANALYTICS_INSTANTLY_ON ? coverageWithoutInstantly(coverageAll) : coverageAll;
 
     return NextResponse.json({
       range: { from: filters.from, to: filters.to },
-      platforms: filters.platforms,
+      platforms: ANALYTICS_INSTANTLY_ON ? filters.platforms : filters.platforms.filter((p) => p !== "instantly"),
       emailsSent,
       measures,
       funnel,
       totals: totalRows,
-      coverage: cov
-        ? {
-            total: Number(cov.total),
-            attributed: Number(cov.attributed),
-            otherPlatform: Number(cov.other_platform),
-            unattributed: Number(cov.unattributed),
-            pending: Number(cov.pending),
-            byMethod: cov.by_method ?? {},
-            byPlatform: cov.by_platform ?? {},
-          }
-        : null,
+      coverage: coverageOut,
       /*
        * Weekly buckets, pivoted to one row per week with a column per type.
        * Weeks rather than days because outcomes are rare — 1,630 across 90 days

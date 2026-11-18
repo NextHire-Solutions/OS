@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { loadSendingCapacity } from "@/lib/tools/analytics/sending-capacity-load";
+import { ANALYTICS_INSTANTLY_ON, instantlyRead } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * The campaign list, served from the Supabase cache — never from EmailBison.
@@ -32,8 +33,13 @@ export async function GET(request: NextRequest) {
    * Instantly. There is no such metric here: this is a list of campaigns, and a
    * list that silently omits 318 of 501 is the bug this replaced.
    */
-  const platforms = (params.get("platforms") ?? "")
-    .split(",").map((p) => p.trim()).filter(Boolean);
+  /*
+   * Instantly switched off (instantly-switch.ts): the list is EmailBison's,
+   * whatever the link asks for, and so are the status and platform counts.
+   */
+  const platforms = ANALYTICS_INSTANTLY_ON
+    ? (params.get("platforms") ?? "").split(",").map((p) => p.trim()).filter(Boolean)
+    : ["emailbison"];
   const search = (params.get("q") ?? "").trim();
   /*
    * THE CLIENT FILTER, UNDER THE NAME THE DASHBOARD ACTUALLY SENDS.
@@ -119,7 +125,7 @@ export async function GET(request: NextRequest) {
      */
     const [ebMaps, instMaps] = await Promise.all([
       sb.from("campaign_clients").select("campaign_id, client_id, excluded"),
-      sb.from("instantly_campaign_clients").select("campaign_id, client_id, excluded"),
+      instantlyRead(() => sb.from("instantly_campaign_clients").select("campaign_id, client_id, excluded")),
     ]);
     const rowsOf = [...(ebMaps.data ?? []), ...(instMaps.data ?? [])].map((m) => ({
       campaign_id: String((m as { campaign_id: unknown }).campaign_id),

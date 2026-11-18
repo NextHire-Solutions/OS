@@ -4,6 +4,7 @@ import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
 
 import { analyticsTeamId, getAnalyticsSupabase } from "./supabase";
 import { capacityPicture, type ActiveCampaignLimit, type CapacityPicture, type CapacityRow } from "./sending-capacity.ts";
+import { ANALYTICS_INSTANTLY_ON, instantlyRead } from "./instantly-switch.ts";
 
 /*
  * The three reads behind the capacity picture (sending-capacity.ts has the
@@ -27,7 +28,7 @@ const facts = ttlCache(
         .is("deleted_at", null),
       // Instantly's status 1 is active. Its limits are not synced, so each of
       // these counts as a campaign with no limit on record.
-      sb.from("instantly_campaigns").select("id").eq("team_id", teamId).eq("status", 1).is("archived_at", null),
+      instantlyRead(() => sb.from("instantly_campaigns").select("id").eq("team_id", teamId).eq("status", 1).is("archived_at", null)),
     ]);
     const failed = capacity.error ?? emailbison.error ?? instantly.error;
     if (failed) throw new Error(`Sending capacity: ${failed.message}`);
@@ -48,5 +49,6 @@ const facts = ttlCache(
 /** The capacity picture for the platforms asked for (empty = all). */
 export async function loadSendingCapacity(platforms: readonly string[] = []): Promise<CapacityPicture> {
   const { rows, active } = await facts();
-  return capacityPicture(rows, active, platforms);
+  // Instantly switched off (instantly-switch.ts): its inboxes' capacity is not counted, whatever was asked.
+  return capacityPicture(rows, active, ANALYTICS_INSTANTLY_ON ? platforms : ["emailbison"]);
 }

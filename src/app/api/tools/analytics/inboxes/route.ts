@@ -18,6 +18,7 @@ import {
   type InstantlyAccountStats,
   type SenderEmailRecord,
 } from "@/lib/tools/analytics/inboxes.ts";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Every sending inbox, for the Inboxes page (13 Oct).
@@ -238,7 +239,8 @@ async function load(): Promise<Response> {
    */
   const [assigned, instantly, positives] = await Promise.allSettled([
     sendingInboxes(teamId, senders.map((s) => s.id)),
-    instantlyInboxes(teamId),
+    // Instantly switched off (instantly-switch.ts): its inboxes are not listed.
+    ANALYTICS_INSTANTLY_ON ? instantlyInboxes(teamId) : Promise.resolve({ rows: [] as InboxRow[], asOf: null }),
     within(loadReplies(), POSITIVES_WAIT_MS, "Master Inbox"),
   ]);
 
@@ -274,7 +276,8 @@ async function load(): Promise<Response> {
    */
   let positivesAsOf: string | null = null;
   if (positives.status === "fulfilled") {
-    const unavailable: Platform[] = instantly.status === "rejected" ? ["instantly"] : [];
+    // Switched off, Instantly's replies are set aside like an unreadable platform's, not counted as strays.
+    const unavailable: Platform[] = instantly.status === "rejected" || !ANALYTICS_INSTANTLY_ON ? ["instantly"] : [];
     const { byInbox, unattributed, unlisted } = attributeReplies(positives.value.conversations, rows, unavailable);
     // Each inbox's count once: a second row with the same address on the same
     // platform (none on 14 Nov) shows a dash rather than counting it again.
@@ -295,7 +298,7 @@ async function load(): Promise<Response> {
           `address Master Inbox recorded), so no row counts ${unattributed.replies === 1 ? "it" : "them"}.`,
       );
     }
-    if (unlisted.replies) {
+    if (unlisted.replies && ANALYTICS_INSTANTLY_ON) {
       notes.push(`${tallyText(unlisted)} through Instantly ${unlisted.replies === 1 ? "is" : "are"} not counted while its inboxes cannot be loaded.`);
     }
   } else {

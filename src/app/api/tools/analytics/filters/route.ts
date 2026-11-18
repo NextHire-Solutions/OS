@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { cachedGet } from "@/lib/tools/analytics/cached-get";
 import { analyticsTagOptions } from "@/lib/tools/analytics/tag-filter";
+import { instantlyRead } from "@/lib/tools/analytics/instantly-switch";
 
 export const dynamic = "force-dynamic";
 
@@ -29,12 +30,15 @@ async function load() {
      * campaign and never to one of the 318 on the other platform — a filter
      * that silently covered half the estate.
      */
-    sb.from("instantly_campaigns")
-      .select("id, name, emails_sent")
-      .eq("team_id", teamId)
-      .is("archived_at", null)
-      .order("emails_sent", { ascending: false, nullsFirst: false }),
-    sb.from("instantly_campaign_clients").select("campaign_id, excluded"),
+    // Skipped while Instantly is switched off (instantly-switch.ts).
+    instantlyRead(() =>
+      sb.from("instantly_campaigns")
+        .select("id, name, emails_sent")
+        .eq("team_id", teamId)
+        .is("archived_at", null)
+        .order("emails_sent", { ascending: false, nullsFirst: false }),
+    ),
+    instantlyRead(() => sb.from("instantly_campaign_clients").select("campaign_id, excluded")),
     // EmailBison campaign tags in use, most campaigns first (13 Oct).
     analyticsTagOptions(),
   ]);

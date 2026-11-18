@@ -67,6 +67,7 @@ import { AddInboxesDialog } from "./add-inboxes-dialog";
 import { RemoveInboxesDialog } from "./remove-inboxes-dialog";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn } from "./toast";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Inboxes (13 Oct) — every sending inbox in one table.
@@ -117,7 +118,8 @@ const DOMAIN_DEFAULT_SORT: SortState = { key: "positive", dir: "desc" };
  */
 const TAGS_SHOWN = 2;
 const NO_ROWS: InboxRow[] = [];
-const PLATFORMS: InboxPlatform[] = ["emailbison", "instantly"];
+// Instantly switched off (instantly-switch.ts): its inboxes are not listed, so it is not offered.
+const PLATFORMS: InboxPlatform[] = ANALYTICS_INSTANTLY_ON ? ["emailbison", "instantly"] : ["emailbison"];
 
 interface ExtrasAnswer {
   status: "ready" | "loading" | "refreshing" | "error";
@@ -805,9 +807,10 @@ export function InboxesScreen({ canChangeCampaigns = false }: { canChangeCampaig
   );
 }
 
-const DOMAINS_NOTE =
-  "Each domain adds up its inboxes that match the filters. Inboxes counts addresses: a mailbox connected to " +
-  "both EmailBison and Instantly is one inbox, and its sends and replies on both are added.";
+const DOMAINS_NOTE = ANALYTICS_INSTANTLY_ON
+  ? "Each domain adds up its inboxes that match the filters. Inboxes counts addresses: a mailbox connected to " +
+    "both EmailBison and Instantly is one inbox, and its sends and replies on both are added."
+  : "Each domain adds up its inboxes that match the filters.";
 const isPositiveNote = (n: string) => /positive repl/i.test(n);
 /** How the route's note on Replies (Master Inbox) and Positive replies begins (inboxes/route.ts NOTE_POSITIVE). */
 export const POSITIVE_NOTE_START = "Replies (Master Inbox) counts";

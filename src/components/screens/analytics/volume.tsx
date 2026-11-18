@@ -8,6 +8,7 @@ import { VOLUME_URL, useAnalyticsData } from "./actions";
 import { AnalyticsFilters, FilterBar, todayInET, useAnalyticsFilters } from "./filters";
 import { SERIES_COLOR } from "./palette";
 import { AnalyticsTabs, Bar, Box, LoadError, Seg } from "./shared";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Campaign Analytics — Email volume.
@@ -48,7 +49,9 @@ const PLATFORM_LABEL: Record<string, string> = {
 };
 
 /** "both platforms" / "EmailBison only" — never a bare total with no scope. */
-function scopeLabel(platforms: string[] | undefined): string {
+function scopeLabel(platforms: string[] | undefined): string | null {
+  // Instantly switched off (instantly-switch.ts): EmailBison is the only platform, so naming it is noise.
+  if (!ANALYTICS_INSTANTLY_ON) return null;
   const list = platforms ?? [];
   if (list.length !== 1) return "both platforms";
   return `${PLATFORM_LABEL[list[0]] ?? list[0]} only`;
@@ -188,9 +191,12 @@ export function VolumeView({ qs }: { qs: string }) {
         {/* "How is this calculated?" — answered where the number is. */}
         <div data-capacity-how style={{ padding: "0 22px 20px", fontSize: 12, color: "var(--muted)", lineHeight: 1.55 }}>
           <b style={{ color: "var(--ink-2)", fontWeight: 600 }}>How this is worked out.</b>{" "}
-          Capacity is the daily limit of every inbox that can send, added up — EmailBison inboxes that are Connected, and
-          Instantly accounts that are not archived. Inboxes that cannot connect are listed separately and never added in.
-          A platform with no active campaign is left out of the total. Needed is the daily send limit of every active
+          {/* Instantly switched off (instantly-switch.ts): its accounts are not in the capacity, so not named here. */}
+          {ANALYTICS_INSTANTLY_ON
+            ? "Capacity is the daily limit of every inbox that can send, added up — EmailBison inboxes that are Connected, and Instantly accounts that are not archived. "
+            : "Capacity is the daily limit of every EmailBison inbox that is Connected, added up. "}
+          Inboxes that cannot connect are listed separately and never added in.
+          {" "}A platform with no active campaign is left out of the total. Needed is the daily send limit of every active
           campaign, added up. Actually sending is the emails sent in the date range, divided by its days. Active inboxes,
           on the Campaigns page, are the Connected EmailBison inboxes attached to at least one active campaign, each counted
           once, and read from EmailBison.
@@ -207,7 +213,7 @@ export function VolumeView({ qs }: { qs: string }) {
         */
         note={
           data
-            ? `${data.total.toLocaleString("en-US")} sent in range · ${scopeLabel(data.platforms)}`
+            ? [`${data.total.toLocaleString("en-US")} sent in range`, scopeLabel(data.platforms)].filter(Boolean).join(" · ")
             : undefined
         }
         right={

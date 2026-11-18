@@ -29,6 +29,7 @@ import { ReCampaignDialog } from "./re-campaign-dialog";
 import { Bar, Box, EmptyRow, LoadError, Pager, Search, Seg, SortHeader, sortRows, useDebounced, useSort } from "./shared";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn, ConfirmButton, Toast, useToast } from "./toast";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Campaign Analytics — Campaigns.
@@ -302,23 +303,26 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
           ))}
         </select>
         <Search value={rawQ} onChange={(v) => { setRawQ(v); setPage(1); }} placeholder="Search campaigns…" />
-        <select
-          className="sel"
-          aria-label="Platform"
-          value={platform}
-          onChange={(e) => {
-            setPlatform(e.target.value);
-            setPage(1);
-            // Clearing the selection: the rows about to be listed are not the
-            // rows that were ticked, and a bulk action on invisible campaigns
-            // is exactly the mistake this screen must not allow.
-            setSelected(new Set());
-          }}
-        >
-          <option value="">All platforms</option>
-          <option value="emailbison">EmailBison {data?.platformCounts?.emailbison ? `(${data.platformCounts.emailbison})` : ""}</option>
-          <option value="instantly">Instantly {data?.platformCounts?.instantly ? `(${data.platformCounts.instantly})` : ""}</option>
-        </select>
+        {/* Instantly switched off (instantly-switch.ts): the list is EmailBison's, nothing to choose. */}
+        {ANALYTICS_INSTANTLY_ON ? (
+          <select
+            className="sel"
+            aria-label="Platform"
+            value={platform}
+            onChange={(e) => {
+              setPlatform(e.target.value);
+              setPage(1);
+              // Clearing the selection: the rows about to be listed are not the
+              // rows that were ticked, and a bulk action on invisible campaigns
+              // is exactly the mistake this screen must not allow.
+              setSelected(new Set());
+            }}
+          >
+            <option value="">All platforms</option>
+            <option value="emailbison">EmailBison {data?.platformCounts?.emailbison ? `(${data.platformCounts.emailbison})` : ""}</option>
+            <option value="instantly">Instantly {data?.platformCounts?.instantly ? `(${data.platformCounts.instantly})` : ""}</option>
+          </select>
+        ) : null}
         <ClientPicker
           clients={data?.clients ?? []}
           value={clientId}

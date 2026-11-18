@@ -3,6 +3,7 @@ import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tool
 import { PLATFORMS, resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
 import { narrowToTags } from "@/lib/tools/analytics/tag-filter";
 import { loadSendingCapacity } from "@/lib/tools/analytics/sending-capacity-load";
+import { sendingPlatformsParam } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Sending capacity, and where the volume actually went.
@@ -43,7 +44,8 @@ export async function GET(request: NextRequest) {
    * reads capacity and volume as a ratio, so scoping only the volume half would
    * show Instantly's sending against the whole estate's capacity.
    */
-  const platforms = filters.platforms.length ? filters.platforms : null;
+  // Instantly switched off (instantly-switch.ts): EmailBison's alone, whatever is asked.
+  const platforms = sendingPlatformsParam(filters.platforms);
 
   const sb = getSupabase();
   const [capacity, picture, split] = await Promise.all([

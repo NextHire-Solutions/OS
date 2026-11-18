@@ -19,6 +19,8 @@
  * resolve path aliases, and this needs to be directly testable.
  */
 
+import { ANALYTICS_INSTANTLY_ON } from "./instantly-switch.ts";
+
 export interface PlatformScopeInput {
   /** Empty means "not narrowed", which is not the same as "both". */
   platforms: readonly string[];
@@ -48,10 +50,23 @@ export interface PlatformScope {
  * trade was reversed: it showed a screen of zeros to every client who sends
  * through Instantly.
  */
-export function resolvePlatformScope(input: PlatformScopeInput): PlatformScope {
+export function resolvePlatformScope(
+  input: PlatformScopeInput,
+  instantlyOn: boolean = ANALYTICS_INSTANTLY_ON,
+): PlatformScope {
   const { platforms, emailbisonCampaignIds, instantlyCampaignIds } = input;
   const anyCampaignFilter =
     emailbisonCampaignIds.length > 0 || instantlyCampaignIds.length > 0;
+
+  /*
+   * INSTANTLY SWITCHED OFF (instantly-switch.ts): EmailBison is the only
+   * platform, so the platform filter has nothing left to choose and is ignored.
+   * The campaign filter still holds: a selection of Instantly campaigns alone
+   * narrows to NOTHING, never widens to the whole workspace (the bug above).
+   */
+  if (!instantlyOn) {
+    return { emailbison: !anyCampaignFilter || emailbisonCampaignIds.length > 0, instantly: false };
+  }
 
   let emailbison = platforms.length === 0 || platforms.includes("emailbison");
   /*

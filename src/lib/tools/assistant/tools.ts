@@ -12,6 +12,7 @@ import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/
 
 import { findClient, resolveAll, type ProductKey, type ResolvedClient, normaliseName } from "./identity.ts";
 import { readOnly } from "./read-only.ts";
+import { instantlyRead } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * What the assistant is allowed to ask the estate.
@@ -292,8 +293,9 @@ async function campaignsFor(client: ResolvedClient): Promise<ClientOverview["cam
     const [eb, inst] = await Promise.all([
       an.from("campaign_clients").select("campaign_id")
         .eq("client_id", client.analyticsClientId).eq("excluded", false),
-      an.from("instantly_campaign_clients").select("campaign_id")
-        .eq("client_id", client.analyticsClientId).eq("excluded", false),
+      // Instantly switched off in Campaign Analytics (instantly-switch.ts): answers empty.
+      instantlyRead(() => an.from("instantly_campaign_clients").select("campaign_id")
+        .eq("client_id", client.analyticsClientId).eq("excluded", false)),
     ]);
     const ids = [
       ...((eb.data ?? []) as Array<{ campaign_id: string | number }>).map((r) => String(r.campaign_id)),

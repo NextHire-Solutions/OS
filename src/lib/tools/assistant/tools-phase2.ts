@@ -7,6 +7,7 @@ import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/
 import { findClient } from "./identity.ts";
 import { readOnly } from "./read-only.ts";
 import { describeDbError } from "./describe-error.ts";
+import { instantlyRead } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * The detail tools: campaigns, scrapes, inbox activity, the reply agent.
@@ -62,7 +63,8 @@ export async function campaignsForClientTool(clientQuery: string, options: { act
   const an = db.analytics();
   const [eb, inst] = await Promise.all([
     an.from("campaign_clients").select("campaign_id").eq("client_id", match.analyticsClientId).eq("excluded", false),
-    an.from("instantly_campaign_clients").select("campaign_id").eq("client_id", match.analyticsClientId).eq("excluded", false),
+    // Instantly switched off in Campaign Analytics (instantly-switch.ts): answers empty.
+    instantlyRead(() => an.from("instantly_campaign_clients").select("campaign_id").eq("client_id", match.analyticsClientId).eq("excluded", false)),
   ]);
   const ids = [
     ...((eb.data ?? []) as Array<{ campaign_id: string | number }>).map((r) => String(r.campaign_id)),

@@ -33,6 +33,12 @@ import {
   useSort,
 } from "./shared";
 import { Btn, Toast, useToast } from "./toast";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
+
+/** Where an outcome can come from; Instantly only while it is switched on (instantly-switch.ts). */
+const OUTCOME_SOURCES = ANALYTICS_INSTANTLY_ON
+  ? (["emailbison", "instantly", "direct"] as const)
+  : (["emailbison", "direct"] as const);
 
 /*
  * Campaign Analytics — Attribution.
@@ -177,7 +183,7 @@ function AttributionBody() {
           >
             <div style={{ padding: 22 }}>
               <div className="stack" style={{ height: 16, marginBottom: 14 }}>
-                {(["emailbison", "instantly", "direct"] as const).map((p) => {
+                {OUTCOME_SOURCES.map((p) => {
                   const n = c.byPlatform[p] ?? 0;
                   if (!n) return null;
                   return (
@@ -190,7 +196,7 @@ function AttributionBody() {
                 })}
               </div>
               <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 20 }}>
-                {(["emailbison", "instantly", "direct"] as const).map((p) => (
+                {OUTCOME_SOURCES.map((p) => (
                   <span key={p} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5 }}>
                     <i style={{ width: 9, height: 9, borderRadius: 3, background: PLATFORM_COLOR[p], display: "block" }} />
                     <span style={{ textTransform: "capitalize" }}>{p}</span>
@@ -202,7 +208,8 @@ function AttributionBody() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
                 {[
                   ["Credited to a campaign", c.attributed, "provable — it counts in the campaign table below"],
-                  ["Another platform", c.otherPlatform, "an Instantly result; crediting it here would flatter us"],
+                  // Instantly switched off: its outcomes are out of every figure, so there is no "another platform".
+                  ...(ANALYTICS_INSTANTLY_ON ? [["Another platform", c.otherPlatform, "an Instantly result; crediting it here would flatter us"]] : []),
                   ["No campaign found", c.unattributed, "client known, campaign not provable"],
                   ["Not yet resolved", c.pending, "the resolver has not reached these"],
                 ].map(([label, n, why]) => (

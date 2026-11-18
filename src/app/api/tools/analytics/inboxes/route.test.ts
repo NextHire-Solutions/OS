@@ -90,6 +90,14 @@ if (canMock) {
   process.env.ANALYTICS_SUPABASE_SERVICE_ROLE_KEY = "test";
   process.env.ANALYTICS_TEAM_ID = "2";
   mock.module("@supabase/supabase-js", { namedExports: { createClient: () => ({ from, rpc }) } });
+  /*
+   * Instantly is switched off in Campaign Analytics (instantly-switch.ts, 19 Nov) but its code is kept, so
+   * this file pins it ON and keeps guarding the Instantly half. route.instantly-off.test.ts covers off.
+   */
+  const realSwitch = await import("../../../../../lib/tools/analytics/instantly-switch.ts");
+  mock.module("../../../../../lib/tools/analytics/instantly-switch.ts", {
+    namedExports: { ...realSwitch, ANALYTICS_INSTANTLY_ON: true },
+  });
   // The route's answers are cached for a minute; here every case asks afresh.
   mock.module("../../../../../lib/tools/analytics/cached-get.ts", {
     namedExports: { cachedGet: (handler: () => Promise<Response>) => handler },

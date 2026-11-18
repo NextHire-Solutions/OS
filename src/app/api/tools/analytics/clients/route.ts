@@ -5,6 +5,7 @@ import { databaseOwnersForAnalytics } from "@/lib/tools/analytics/ownership/load
 import { masterByToolId } from "@/lib/clients/master-lookup";
 import { disagreements, keyOf } from "@/lib/tools/analytics/ownership/suggest";
 import { clientCampaignCounts } from "@/lib/tools/analytics/clients/campaign-counts.ts";
+import { instantlyRead } from "@/lib/tools/analytics/instantly-switch";
 
 export const dynamic = "force-dynamic";
 
@@ -36,8 +37,9 @@ export async function GET() {
      * against 38 — a client page understating most clients by more than half,
      * with nothing on screen to suggest it.
      */
-    sb.from("instantly_campaign_clients").select("campaign_id, client_id, match_method, ambiguous, excluded"),
-    sb.from("instantly_campaigns").select("id, name, status, emails_sent").eq("team_id", teamId).is("archived_at", null),
+    // Instantly switched off (instantly-switch.ts): these answer empty.
+    instantlyRead(() => sb.from("instantly_campaign_clients").select("campaign_id, client_id, match_method, ambiguous, excluded")),
+    instantlyRead(() => sb.from("instantly_campaigns").select("id, name, status, emails_sent").eq("team_id", teamId).is("archived_at", null)),
     // Which client the Database files each campaign under — offered beside the
     // queue, never written automatically (ownership/suggest.ts says why).
     databaseOwnersForAnalytics(),
@@ -48,7 +50,7 @@ export async function GET() {
      * column showed "—" for every client.
      */
     sb.from("campaigns").select("id, lifetime_emails_sent").eq("team_id", teamId),
-    sb.from("instantly_campaigns").select("id, emails_sent").eq("team_id", teamId),
+    instantlyRead(() => sb.from("instantly_campaigns").select("id, emails_sent").eq("team_id", teamId)),
   ]);
   // Which Analytics rows ARE clients (linked to a master record): their aliases
   // are edited through the master, and they are deleted from the Clients page.

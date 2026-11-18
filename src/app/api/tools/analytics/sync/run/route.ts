@@ -13,6 +13,7 @@ import {
 } from "@/lib/tools/analytics/sync/manual";
 import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { optionalEnv } from "@/lib/env";
+import { INSTANTLY_OFF_MESSAGE, jobSwitchedOff } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Run a sync job on demand — in process, with the tool's own engine.
@@ -69,6 +70,12 @@ export async function POST(request: NextRequest) {
       { error: `Not runnable from here. Choose one of: ${MANUAL_JOBS.join(", ")}` },
       { status: 400 },
     );
+  }
+
+  // Instantly is switched off (instantly-switch.ts): a dispatcher or a person
+  // asking for one of its jobs by name gets a reason, not a run.
+  if (jobSwitchedOff(job)) {
+    return NextResponse.json({ error: INSTANTLY_OFF_MESSAGE, job }, { status: 409 });
   }
 
   const fn = getJob(job);

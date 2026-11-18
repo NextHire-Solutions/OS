@@ -8,6 +8,7 @@ import { SERIES_COLOR } from "./palette";
 import { Bar, Box, LoadError } from "./shared";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn, Toast, useToast } from "./toast";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Campaign Analytics — Schedule.
@@ -178,11 +179,14 @@ export function AnalyticsScheduleScreen() {
         ))}
       </div>
 
-      <div style={{ marginTop: 18, fontSize: 12, color: "var(--muted)", lineHeight: 1.55 }}>
-        EmailBison only. The forecast is built from EmailBison&rsquo;s sending schedules joined to
-        its campaigns; Instantly publishes no equivalent, so its campaigns are absent from these
-        totals rather than counted as zero.
-      </div>
+      {/* Instantly switched off (instantly-switch.ts): with one platform the caveat says nothing. */}
+      {ANALYTICS_INSTANTLY_ON ? (
+        <div style={{ marginTop: 18, fontSize: 12, color: "var(--muted)", lineHeight: 1.55 }}>
+          EmailBison only. The forecast is built from EmailBison&rsquo;s sending schedules joined to
+          its campaigns; Instantly publishes no equivalent, so its campaigns are absent from these
+          totals rather than counted as zero.
+        </div>
+      ) : null}
       <Toast toast={toast} />
     </div>
     </div>

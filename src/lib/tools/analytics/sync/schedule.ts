@@ -1,4 +1,5 @@
 import type { JOBS } from "./jobs";
+import { jobSwitchedOff } from "../instantly-switch.ts";
 
 /*
  * The cron cadence, as data.
@@ -155,7 +156,11 @@ void _everyJobIsScheduled;
  * `entry.everyMinutes` is a type error on a daily entry. Consumers that want to
  * read either key uniformly read this instead.
  */
-export const SCHEDULE_ENTRIES: readonly ScheduleEntry[] = SCHEDULE;
+export const SCHEDULE_ENTRIES: readonly ScheduleEntry[] = SCHEDULE.filter(
+  // Instantly is switched off (instantly-switch.ts): its jobs stay registered and
+  // scheduled above, so the checks keep holding, but nothing dispatches them.
+  (entry) => !jobSwitchedOff(entry.job),
+);
 
 /**
  * Which jobs are due at this instant.
@@ -166,7 +171,7 @@ export const SCHEDULE_ENTRIES: readonly ScheduleEntry[] = SCHEDULE;
  */
 export function dueJobs(
   now: Date,
-  schedule: readonly ScheduleEntry[] = SCHEDULE,
+  schedule: readonly ScheduleEntry[] = SCHEDULE_ENTRIES,
 ): string[] {
   const hour = now.getUTCHours();
   const minute = now.getUTCMinutes();
@@ -199,7 +204,7 @@ export function dueJobs(
 export function dueJobsSince(
   now: Date,
   windowMinutes: number,
-  schedule: readonly ScheduleEntry[] = SCHEDULE,
+  schedule: readonly ScheduleEntry[] = SCHEDULE_ENTRIES,
 ): string[] {
   const due = new Set<string>();
   for (let back = 0; back < windowMinutes; back++) {

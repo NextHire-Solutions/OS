@@ -28,6 +28,7 @@ import {
   useDebounced,
   useSort,
 } from "./shared";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Campaign Analytics — Infrastructure.
@@ -224,21 +225,24 @@ export function AnalyticsInfrastructureScreen() {
             {t ? `${fullNumber(t.sending)} of ${fullNumber(t.inboxes)} inboxes sending` : "Loading…"}
           </div>
         </div>
-        <Seg
-          label="Estate"
-          value={estate}
-          options={[
-            { value: "emailbison", label: "EmailBison" },
-            { value: "instantly", label: "Instantly" },
-          ]}
-          onChange={(e) => {
-            setEstate(e);
-            // Instantly has no provider or vendor grouping. Staying on one
-            // would show an empty table under a heading that promises rows.
-            if (e === "instantly" && (view === "provider" || view === "vendor")) setView("domain");
-            setPage(1);
-          }}
-        />
+        {/* Instantly switched off (instantly-switch.ts): the EmailBison estate is the only one. */}
+        {ANALYTICS_INSTANTLY_ON ? (
+          <Seg
+            label="Estate"
+            value={estate}
+            options={[
+              { value: "emailbison", label: "EmailBison" },
+              { value: "instantly", label: "Instantly" },
+            ]}
+            onChange={(e) => {
+              setEstate(e);
+              // Instantly has no provider or vendor grouping. Staying on one
+              // would show an empty table under a heading that promises rows.
+              if (e === "instantly" && (view === "provider" || view === "vendor")) setView("domain");
+              setPage(1);
+            }}
+          />
+        ) : null}
       </div>
 
       {data?.degraded?.length ? (

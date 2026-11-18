@@ -5,6 +5,7 @@ import { getCorofySupabase as getAgentSearchSupabase } from "@/lib/tools/corofy/
 
 import { readOnly } from "./read-only.ts";
 import { describeDbError } from "./describe-error.ts";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * Onboarding, and the sending infrastructure.
@@ -63,9 +64,10 @@ export async function infrastructureHealthTool() {
     an.from("sender_emails").select("id", { count: "exact", head: true }),
   );
 
-  const instantlyTotal = await countWhere(() =>
-    an.from("instantly_accounts").select("email", { count: "exact", head: true }),
-  );
+  // Instantly switched off in Campaign Analytics (instantly-switch.ts): not read, not reported.
+  const instantlyTotal = ANALYTICS_INSTANTLY_ON
+    ? await countWhere(() => an.from("instantly_accounts").select("email", { count: "exact", head: true }))
+    : null;
 
   /*
    * Instantly's account status is an integer whose meaning is not documented
@@ -78,7 +80,7 @@ export async function infrastructureHealthTool() {
    * "0 active" is not.
    */
   const instantlyByStatus: Record<string, number> = {};
-  {
+  if (ANALYTICS_INSTANTLY_ON) {
     const { data } = await an.from("instantly_accounts").select("status").limit(1000);
     for (const row of (data ?? []) as Array<{ status: number | null }>) {
       const key = String(row.status ?? "unknown");
@@ -109,12 +111,14 @@ export async function infrastructureHealthTool() {
 
   return {
     emailBison: { total: ebTotal, byStatus: emailBison },
-    instantly: { total: instantlyTotal, byStatusCode: instantlyByStatus },
+    ...(ANALYTICS_INSTANTLY_ON ? { instantly: { total: instantlyTotal, byStatusCode: instantlyByStatus } } : {}),
     dailySendCapacity: { emails: capacity, fromConnectedInboxes: counted, ...(truncated ? { truncated: true } : {}) },
     note:
       "Capacity is the sum of the daily limits on CONNECTED EmailBison inboxes — what the fleet could " +
       "send in a day, not what it did send. Disconnected and failed inboxes contribute nothing. " +
-      "Instantly reports account state as an undocumented integer, so the codes are given raw rather " +
-      "than translated into 'active' — do not read a code as healthy or unhealthy without checking.",
+      (ANALYTICS_INSTANTLY_ON
+        ? "Instantly reports account state as an undocumented integer, so the codes are given raw rather " +
+          "than translated into 'active' — do not read a code as healthy or unhealthy without checking."
+        : "BrokerStaffer no longer sends through Instantly, so only EmailBison inboxes are counted."),
   };
 }

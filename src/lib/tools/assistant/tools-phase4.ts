@@ -7,6 +7,7 @@ import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-healt
 import { findClient } from "./identity.ts";
 import { readOnly } from "./read-only.ts";
 import { describeDbError } from "./describe-error.ts";
+import { instantlyRead } from "@/lib/tools/analytics/instantly-switch";
 
 /*
  * The content tools: what we actually said, what came back, and what it costs.
@@ -46,7 +47,8 @@ async function analyticsCampaignIds(
   const an = db.analytics();
   const [eb, inst] = await Promise.all([
     an.from("campaign_clients").select("campaign_id").eq("client_id", analyticsClientId).eq("excluded", false),
-    an.from("instantly_campaign_clients").select("campaign_id").eq("client_id", analyticsClientId).eq("excluded", false),
+    // Instantly switched off in Campaign Analytics (instantly-switch.ts): answers empty.
+    instantlyRead(() => an.from("instantly_campaign_clients").select("campaign_id").eq("client_id", analyticsClientId).eq("excluded", false)),
   ]);
   return {
     emailBison: ((eb.data ?? []) as Array<{ campaign_id: string | number }>).map((r) => String(r.campaign_id)),

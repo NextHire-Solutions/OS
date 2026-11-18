@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getAnalyticsSupabase as getSupabase, analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { resolveFilters, toISODate } from "@/lib/tools/analytics/query-params.ts";
 import { narrowToTags } from "@/lib/tools/analytics/tag-filter";
+import { ANALYTICS_INSTANTLY_ON } from "@/lib/tools/analytics/instantly-switch";
+import { facetsWithoutInstantly, outcomeListPlatforms } from "@/lib/tools/analytics/outcomes-without-instantly";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +55,14 @@ export async function GET(request: NextRequest) {
   const platforms = filters.platforms.length
     ? filters.platforms
     : (params.get("platforms")?.split(",").filter(Boolean) ?? []);
+  /*
+   * Instantly switched off (instantly-switch.ts): the list's own Source choice
+   * (EmailBison or Direct) or both, never Instantly; a global platform from an
+   * old link is ignored, as the filter bar no longer offers one.
+   */
+  const listPlatforms = ANALYTICS_INSTANTLY_ON
+    ? (platforms.length ? platforms : null)
+    : outcomeListPlatforms(params.get("platforms")?.split(",").filter(Boolean) ?? []);
   const search = params.get("q")?.trim() || null;
 
   try {
@@ -63,7 +73,7 @@ export async function GET(request: NextRequest) {
         p_from: filters.from,
         p_to: filters.to,
         p_types: types.length ? types : null,
-        p_platforms: platforms.length ? platforms : null,
+        p_platforms: listPlatforms,
         p_client_ids: filters.clientIds.length ? filters.clientIds : null,
         p_search: search,
         p_limit: PAGE_SIZE,
@@ -81,6 +91,41 @@ export async function GET(request: NextRequest) {
     if (facets.error) throw new Error(facets.error.message);
 
     const rows = (events.data ?? []) as Row[];
+    const allFacets = ((facets.data ?? []) as Array<{ kind: string; value: string; n: number }>).map(
+      (f) => ({ kind: f.kind, value: f.value, n: Number(f.n) }),
+    );
+    /*
+     * Instantly switched off: the dropdowns' counts are over every outcome in
+     * range, so each type's Instantly outcomes are counted with the list's own
+     * function (same range, same rules) and taken off.
+     */
+    let facetList = allFacets;
+    if (!ANALYTICS_INSTANTLY_ON && allFacets.some((f) => f.kind === "platform" && f.value === "instantly")) {
+      const byType = new Map<string, number>();
+      await Promise.all(
+        allFacets
+          .filter((f) => f.kind === "type")
+          .map(async (f) => {
+            const { data, error } = await sb.rpc("analytics_outcome_events", {
+              p_team_id: teamId,
+              p_from: filters.from,
+              p_to: filters.to,
+              p_types: [f.value],
+              p_platforms: ["instantly"],
+              p_client_ids: null,
+              p_search: null,
+              p_limit: 1,
+              p_sort: null,
+              p_dir: "desc",
+              p_offset: 0,
+            });
+            if (error) throw new Error(error.message);
+            const first = ((data ?? []) as Row[])[0];
+            byType.set(f.value, first ? Number(first.total_count) : 0);
+          }),
+      );
+      facetList = facetsWithoutInstantly(allFacets, byType);
+    }
 
     return NextResponse.json({
       page,
@@ -99,9 +144,7 @@ export async function GET(request: NextRequest) {
         campaign: r.campaign_name,
         client: r.client_name,
       })),
-      facets: ((facets.data ?? []) as Array<{ kind: string; value: string; n: number }>).map(
-        (f) => ({ kind: f.kind, value: f.value, n: Number(f.n) }),
-      ),
+      facets: facetList,
     });
   } catch (error) {
     console.error("[api/analytics/attribution/events]", error);
