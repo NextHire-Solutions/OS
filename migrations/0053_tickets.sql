@@ -29,6 +29,7 @@
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
+CREATE EXTENSION IF NOT EXISTS citext;
 
 -- A connected Gmail mailbox (one per Google account).
 CREATE TABLE IF NOT EXISTS public.os_ticket_mailboxes (
