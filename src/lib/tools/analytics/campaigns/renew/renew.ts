@@ -73,6 +73,8 @@ export interface RenewReads {
   liveInboxStatus(ids: number[]): Promise<Map<number, string | null>>;
   /** Analytics 098; "missing" before it is run. */
   recentBounces(ids: number[]): Promise<RecentBounces[] | "missing">;
+  /** EmailBison's warm-up score per inbox over the last WARMUP_WINDOW_DAYS, with the warm-up emails sent then. */
+  warmup(): Promise<Map<number, { score: number; sent: number }>>;
   links(id: number): Promise<LinkState>;
   /** The latest renewal of this campaign in the audit log (its rows share a batch id), or null. */
   lastRenewal(sourceId: number): Promise<LastRenewal | null>;
@@ -266,8 +268,21 @@ async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missin
   ]);
   const own = new Set(inboxes.map((i) => i.id));
   const askIds = [...new Set([...own, ...pool.map((i) => i.id)])];
-  const bounces = askIds.length ? await io.recentBounces(askIds) : [];
-  const healthReady = bounces !== "missing";
+  const [rawBounces, warm] = await Promise.all([
+    askIds.length ? io.recentBounces(askIds) : Promise.resolve([] as RecentBounces[]),
+    io.warmup().catch((e: unknown) => (e instanceof Error ? e : new Error(String(e)))),
+  ]);
+  const warmupReady = !(warm instanceof Error);
+  // Every inbox gets a row (one with no recent sends has no bounce row), carrying its warm-up score.
+  const bounces: RecentBounces[] | "missing" = rawBounces === "missing" ? "missing" : (() => {
+    const byId = new Map(rawBounces.map((r) => [Number(r.id), r]));
+    return askIds.map((id) => {
+      const b = byId.get(id);
+      const w = warm instanceof Error ? undefined : warm.get(id);
+      return { id, sent: b?.sent ?? 0, bounced: b?.bounced ?? 0, sent24h: b?.sent24h ?? 0, warmupScore: w ? w.score : null, warmupSent: w?.sent ?? 0 };
+    });
+  })();
+  const healthReady = bounces !== "missing" && warmupReady;
   const judgement = healthReady ? judgeInboxes(inboxes, bounces) : null;
   const addIds = judgement ? inboxesToAdd(judgement) : [];
   // The wider pool only makes up what the kept inboxes cannot send of the campaign's own daily limit (the user, 19 Nov).
@@ -287,7 +302,8 @@ async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missin
 
   const blockers: string[] = [];
   const warnings: string[] = [];
-  if (!healthReady) blockers.push("The inbox health check is not switched on yet: it needs the analytics database update 098_os_inbox_recent_bounces.sql to be run.");
+  if (bounces === "missing") blockers.push("The inbox health check is not switched on yet: it needs the analytics database update 098_os_inbox_recent_bounces.sql to be run.");
+  else if (!warmupReady) blockers.push(`EmailBison's warm-up scores could not be read just now, so the inboxes could not be checked. Try again in a minute. (${(warm as Error).message.slice(0, 120)})`);
   if (!links.ready) blockers.push(`The OS links to this campaign (portal choice, Prospects) could not be read, so they could not be kept: ${links.error ?? "unknown error"}.`);
   if (healthReady && inboxes.length && !addIds.length && !poolPlan?.picks.length) blockers.push("None of this campaign's inboxes passes the health check and the wider pool has none to spare, so the new campaign could not send.");
   if (!inboxes.length) blockers.push("This campaign has no inboxes, so there are none to give the new campaign.");

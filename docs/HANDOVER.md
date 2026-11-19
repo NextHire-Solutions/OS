@@ -229,6 +229,17 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.16 Duplicate & Renew Campaign — 19 November
 
+**20 Nov: inbox rules TIGHTENED (branch fix/renew-health-rules, NOT DEPLOYED — the user: "make sure you do not deploy
+anything").** The team asked: only inboxes with a bounce rate BELOW 2% are added (2% or more left out, the old
+campaign's own included; nothing is "added with a warning" any more); inboxes tagged Dead ALWAYS left out; and the
+EmailBison warm-up score as an extra check — at least 90 over the last 14 days (judged once 20 warm-up emails were
+sent; MIN_WARMUP_SCORE in inbox-health.ts), on our recommendation pending their confirmation. Measured 20 Nov on 2,805
+connected inboxes: the score is ~ the share of warm-up mail landing in the inbox (90-94: 7% rescued from spam; 85-89:
+13%); 776 inboxes score under 50 (almost all warm-up mail in spam). Real reviews read only: LIV Indy #1277 keeps 1,533
+of 1,769 (216 warm-up, 14 bounce, 6 Dead left out; no pool); C21 #401 keeps 29 of 833 (804 warm-up under 90) and takes
+83 same-group pool inboxes for its 1,000/day. Warm-up scores: EmailBison's warm-up list, 200 pages read 25 at a time
+(6.5 s cold, held 30 min); unreadable = the review stops with a reason.
+
 **Asked (BrokerStaffer spec, 19 Nov):** one button that renews a campaign round: the campaign takes the next number ("LIV Indy Realty 6 + Indianapolis Metro + ZF NS4 (EST)"), a copy with the original name gets the leads In Sequence or Sequence Finished, only healthy inboxes, the ZF / NO-ZF tag, the same settings and schedule, a review window first, and stays paused. **The team's answers:** keep Re-campaign and put this beside it; inboxes = the old campaign's healthy ones first, topped up from the wider pool (healthy, connected, with capacity). Not answered yet, built on the defaults we gave them: In Sequence leads are MOVED (as they do by hand), leads busy in another campaign are skipped, portal choice and Prospects picks follow the new campaign.
 
 **Where:** Campaigns page (one EmailBison campaign ticked) and a campaign's Sequence tab, beside Re-campaign. Route `campaigns/[id]/renew` (GET review / `?job=` progress; POST `{token, poolIds, confirm}`, Campaign Management switch). Code: `lib/tools/analytics/campaigns/renew/` (naming, inbox-health, leads, links, links-store, renew, io, jobs), `components/screens/analytics/renew-dialog.tsx`.
