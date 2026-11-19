@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { publicOrigin } from "@/lib/mcp/oauth";
-import { oauthConfig } from "@/lib/tools/tickets/config";
+import { oauthConfig, tokenKeySet } from "@/lib/tools/tickets/config";
 import { consentUrl } from "@/lib/tools/tickets/gmail-api";
 import { ticketsViewer } from "@/lib/tools/tickets/route-auth";
 
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   if (viewer instanceof NextResponse) return viewer;
   const cfg = oauthConfig();
   const back = `${publicOrigin()}/tickets/inboxes`;
-  if (!cfg) return NextResponse.redirect(`${back}?error=${encodeURIComponent("Google sign-in for Tickets isn't set up on the OS yet.")}`);
+  if (!cfg || !tokenKeySet()) return NextResponse.redirect(`${back}?error=${encodeURIComponent("Google sign-in for Tickets isn't set up on the OS yet.")}`);
   const state = randomUUID();
   const res = NextResponse.redirect(consentUrl(cfg, state, viewer.email));
   res.cookies.set(STATE_COOKIE, state, { httpOnly: true, secure: true, sameSite: "lax", path: "/api/tools/tickets/google", maxAge: 600 });

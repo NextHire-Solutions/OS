@@ -29,10 +29,15 @@ export class MemoryTicketStore implements TicketStore {
     m.claimed_at = new Date().toISOString();
     return true;
   }
+  async renewClaim(email: string, token: string) {
+    const m = this.mailboxes.get(email);
+    if (m && m.claim_token === token) m.claimed_at = new Date().toISOString();
+  }
   async releaseMailbox(email: string, token: string, patch: Partial<MailboxRow>) {
     const m = this.mailboxes.get(email);
     if (!m || m.claim_token !== token) return;
-    Object.assign(m, patch, { claim_token: null, claimed_at: null });
+    if (m.token_enc && m.state !== "paused") Object.assign(m, patch);
+    Object.assign(m, { claim_token: null, claimed_at: null });
   }
 
   async findCopy(mailbox: string, gmailId: string) { return this.copies.get(`${mailbox}|${gmailId}`) ?? null; }
@@ -60,9 +65,18 @@ export class MemoryTicketStore implements TicketStore {
     return { id, ticket_id: m.ticket_id, inserted: true };
   }
   async insertCopy(c: CopyRow) { const k = `${c.mailbox}|${c.gmail_id}`; if (!this.copies.has(k)) this.copies.set(k, { ...c }); }
-  async updateTicket(id: string, patch: Partial<TicketRow>) {
+  /** Updates seen so far, so a test can force a conflict on the next conditional one. */
+  conflictOnce = false;
+  private clock = 0;
+  async updateTicket(id: string, patch: Partial<TicketRow>, ifUpdatedAt?: string) {
     const t = this.tickets.get(id);
-    if (t) Object.assign(t, patch, { updated_at: new Date().toISOString() });
+    if (!t) return false;
+    if (ifUpdatedAt !== undefined && (t.updated_at !== ifUpdatedAt || this.conflictOnce)) {
+      if (this.conflictOnce) { this.conflictOnce = false; t.updated_at = new Date(Date.now() + ++this.clock).toISOString(); }
+      return false;
+    }
+    Object.assign(t, patch, { updated_at: new Date(Date.now() + ++this.clock).toISOString() });
+    return true;
   }
   async addEvents(ticketId: string, events: ReadonlyArray<Partial<EventRow>>) {
     for (const e of events) this.events.push({ id: randomUUID(), ticket_id: ticketId, mentions: [], created_at: new Date().toISOString(), actor: null, kind: "status", ...e } as EventRow);

@@ -11,9 +11,48 @@ import type { CopyRow, MailboxRow, NewMessage, NewTicket, TicketRow, TicketStore
  * (unique index), a copy once per (mailbox, Gmail id), so a run cut short and run again converges.
  */
 
-const fail = (what: string, e: { message: string } | null) => {
-  if (e) throw new Error(`tickets ${what}: ${e.message}`);
+/** A database error, with Postgres's code (22… data, 23… constraint) so the sync can tell bad data from an outage. */
+export class TicketsDbError extends Error {
+  readonly code: string;
+  constructor(message: string, code: string) { super(message); this.name = "TicketsDbError"; this.code = code; }
+}
+const fail = (what: string, e: { message: string; code?: string } | null) => {
+  if (e) throw new TicketsDbError(`tickets ${what}: ${e.message}`, String(e.code ?? ""));
 };
+
+/** Every string in a row without U+0000, which Postgres refuses in text and jsonb. */
+function clean<T>(v: T): T {
+  if (typeof v === "string") return (v.includes("\u0000") ? v.replace(/\u0000/g, "") : v) as T;
+  if (Array.isArray(v)) return v.map(clean) as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clean(x)])) as T;
+  return v;
+}
+
+/*
+ * supabase-js quotes `.in()` values holding commas or brackets but not a value holding a double quote or a
+ * backslash: a Message-ID like that would silently match nothing (a removed conversation coming back). Those few
+ * are looked up one by one with `.eq()`, which takes any value.
+ */
+async function byValues<R>(table: Parameters<typeof osTable>[0], column: string, select: string, values: readonly string[], limit?: number): Promise<R[]> {
+  const ids = [...new Set(values.filter(Boolean))];
+  const safe = ids.filter((v) => !/["\\]/.test(v));
+  const odd = ids.filter((v) => /["\\]/.test(v));
+  const out: R[] = [];
+  for (const part of chunks(safe, 40)) {
+    let q = osTable(table).select(select).in(column, part);
+    if (limit) q = q.limit(limit);
+    const { data, error } = await q;
+    fail(`${table} lookup`, error);
+    out.push(...((data ?? []) as R[]));
+    if (limit && out.length >= limit) return out;
+  }
+  for (const v of odd) {
+    const { data, error } = await osTable(table).select(select).eq(column, v);
+    fail(`${table} lookup`, error);
+    out.push(...((data ?? []) as R[]));
+  }
+  return out;
+}
 
 const chunks = <T,>(xs: readonly T[], n: number): T[][] => {
   const out: T[][] = [];
@@ -39,12 +78,23 @@ export const dbTicketStore: TicketStore = {
     return (data ?? []).length === 1;
   },
 
+  async renewClaim(email, token) {
+    const { error } = await osTable("os_ticket_mailboxes").update({ claimed_at: new Date().toISOString() }).eq("email", email).eq("claim_token", token);
+    fail("renew claim", error);
+  },
+
   async releaseMailbox(email, token, patch) {
+    // The run's result, unless the mailbox was disconnected while it ran (then it stays disconnected)…
     const { error } = await osTable("os_ticket_mailboxes")
-      .update({ ...patch, claim_token: null, claimed_at: null, updated_at: new Date().toISOString() })
+      .update({ ...clean(patch), updated_at: new Date().toISOString() })
       .eq("email", email)
-      .eq("claim_token", token);
+      .eq("claim_token", token)
+      .not("token_enc", "is", null)
+      .neq("state", "paused");
     fail("release", error);
+    // …and the claim ends either way.
+    const { error: e2 } = await osTable("os_ticket_mailboxes").update({ claim_token: null, claimed_at: null }).eq("email", email).eq("claim_token", token);
+    fail("release claim", e2);
   },
 
   async findCopy(mailbox, gmailId) {
@@ -60,23 +110,11 @@ export const dbTicketStore: TicketStore = {
   },
 
   async messagesByRfc(rfcIds) {
-    const ids = [...new Set(rfcIds.filter(Boolean))];
-    const out: Array<{ id: string; rfc_id: string; ticket_id: string }> = [];
-    for (const part of chunks(ids, 40)) {
-      const { data, error } = await osTable("os_ticket_messages").select("id, rfc_id, ticket_id").in("rfc_id", part);
-      fail("messages by id", error);
-      out.push(...((data ?? []) as typeof out));
-    }
-    return out;
+    return byValues<{ id: string; rfc_id: string; ticket_id: string }>("os_ticket_messages", "rfc_id", "id, rfc_id, ticket_id", rfcIds);
   },
 
   async anyBlocked(keys) {
-    for (const part of chunks([...new Set(keys)], 40)) {
-      const { data, error } = await osTable("os_ticket_blocks").select("key").in("key", part).limit(1);
-      fail("blocks", error);
-      if ((data ?? []).length) return true;
-    }
-    return false;
+    return (await byValues<{ key: string }>("os_ticket_blocks", "key", "key", keys, 1)).length > 0;
   },
 
   async block(keys, by) {
@@ -86,7 +124,7 @@ export const dbTicketStore: TicketStore = {
   },
 
   async createTicket(t: NewTicket) {
-    const { data, error } = await osTable("os_tickets").insert(t).select("*").single();
+    const { data, error } = await osTable("os_tickets").insert(clean(t)).select("*").single();
     fail("create", error);
     return data as TicketRow;
   },
@@ -98,7 +136,7 @@ export const dbTicketStore: TicketStore = {
   },
 
   async insertMessage(m: NewMessage) {
-    const { data, error } = await osTable("os_ticket_messages").upsert(m, { onConflict: "rfc_id", ignoreDuplicates: true }).select("id, ticket_id");
+    const { data, error } = await osTable("os_ticket_messages").upsert(clean(m), { onConflict: "rfc_id", ignoreDuplicates: true }).select("id, ticket_id");
     fail("message", error);
     const row = (data ?? [])[0] as { id: string; ticket_id: string } | undefined;
     if (row) return { ...row, inserted: true };
@@ -112,16 +150,18 @@ export const dbTicketStore: TicketStore = {
     fail("copy", error);
   },
 
-  async updateTicket(id, patch) {
-    if (!Object.keys(patch).length) return;
-    const { error } = await osTable("os_tickets").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+  async updateTicket(id, patch, ifUpdatedAt) {
+    let q = osTable("os_tickets").update({ ...clean(patch), updated_at: new Date().toISOString() }).eq("id", id);
+    if (ifUpdatedAt !== undefined) q = q.eq("updated_at", ifUpdatedAt);
+    const { data, error } = await q.select("id");
     fail("update", error);
+    return (data ?? []).length === 1;
   },
 
   async addEvents(ticketId, events: ReadonlyArray<TicketEvent & { mentions?: string[] }>) {
     if (!events.length) return;
     const { error } = await osTable("os_ticket_events").insert(events.map((e) => ({
-      ticket_id: ticketId, kind: e.kind, actor: e.actor, body: e.body ?? null, mentions: e.mentions ?? [],
+      ticket_id: ticketId, kind: e.kind, actor: e.actor, body: e.body ? clean(e.body) : null, mentions: e.mentions ?? [],
       from_value: e.from_value ?? null, to_value: e.to_value ?? null,
     })));
     fail("events", error);

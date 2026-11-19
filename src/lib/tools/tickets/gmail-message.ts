@@ -48,10 +48,44 @@ export interface ParsedMessage {
   to: Address[];
   cc: Address[];
   replyTo: Address[];
+  /** How many addresses the From header holds (a client's email has exactly one). */
+  fromCount: number;
   subject: string;
   snippet: string;
   sentAt: string;
   autoSubmitted: boolean;
+  /** Gmail's own verdict on the sender (its Authentication-Results header). */
+  auth: SenderAuth;
+}
+
+export interface SenderAuth { dmarc: boolean; dkimDomains: string[]; spfDomain: string | null }
+
+/*
+ * Gmail's verdict on who really sent a message (review, 20 Nov: a forged "From: client@…" from a domain without a
+ * DMARC policy still reaches the inbox). Only Google's own header counts (authserv-id mx.google.com): anyone can
+ * write an Authentication-Results line into the mail they send.
+ */
+export function parseAuth(headers: readonly GmailHeader[] | undefined): SenderAuth {
+  const out: SenderAuth = { dmarc: false, dkimDomains: [], spfDomain: null };
+  const ours = (headers ?? []).filter((h) => h.name.toLowerCase() === "authentication-results" && /^\s*mx\.google\.com\s*;/i.test(h.value));
+  for (const h of ours.slice(0, 1)) {
+    const v = h.value.replace(/\([^)]*\)/g, " ");
+    if (/\bdmarc\s*=\s*pass\b/i.test(v)) out.dmarc = true;
+    for (const m of v.matchAll(/\bdkim\s*=\s*pass\b[^;]*?\bheader\.(?:i|d)\s*=\s*@?([^\s;]+)/gi)) out.dkimDomains.push(m[1].toLowerCase().replace(/^.*@/, ""));
+    const spf = /\bspf\s*=\s*pass\b[^;]*?\bsmtp\.mailfrom\s*=\s*([^\s;]+)/i.exec(v);
+    if (spf) out.spfDomain = spf[1].toLowerCase().replace(/^.*@/, "");
+  }
+  return out;
+}
+
+const aligned = (a: string, b: string) => a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+
+/** The From address is really the sender's: DMARC passed, or DKIM / SPF passed for the From's own domain. */
+export function senderVerified(fromEmail: string | null, auth: SenderAuth): boolean {
+  const d = (fromEmail ?? "").split("@")[1]?.toLowerCase() ?? "";
+  if (!d) return false;
+  if (auth.dmarc) return true;
+  return auth.dkimDomains.some((x) => aligned(x, d)) || (!!auth.spfDomain && aligned(auth.spfDomain, d));
 }
 
 export interface ParsedBodies { html: string | null; text: string | null; attachments: Attachment[] }
@@ -102,9 +136,13 @@ export function normEmail(s: string | null | undefined): string {
 /**
  * An address-list header ("Ann <a@x.com>, \"Lee, Bo\" <b@y.com>, c@z.com, Team: d@w.com;") as addresses. Quoted
  * names may hold commas; groups are flattened; comments are dropped.
+ *
+ * SPLIT FIRST, DECODE AFTER (review, 20 Nov): RFC 2047 words are decoded only inside a display name, once the raw
+ * header has been split. Decoding first let `=?utf-8?Q?john@client.com=2C?= <attacker@evil.com>` read as two
+ * addresses with the client's first — a stranger's email filed as the client's.
  */
 export function parseAddressList(value: string | null | undefined): Address[] {
-  const s = decodeWords(String(value ?? ""));
+  const s = String(value ?? "");
   const out: Address[] = [];
   let cur = "";
   let inQuote = false;
@@ -147,11 +185,17 @@ function parseOne(raw: string): Address | null {
     if (!email) return null;
     let name = m[1].trim();
     if (name.startsWith('"') && name.endsWith('"') && name.length >= 2) name = name.slice(1, -1);
-    name = name.replace(/\\(.)/g, "$1").trim();
+    name = stripNul(decodeWords(name.replace(/\\(.)/g, "$1"))).replace(/\s+/g, " ").trim();
     return { email, name: name && normEmail(name) !== email ? name : null };
   }
+  if (/=\?/.test(t)) return null; // an encoded word where only an address may stand
   const email = normEmail(t.replace(/^"|"$/g, ""));
   return email ? { email, name: null } : null;
+}
+
+/** Postgres refuses U+0000 in text and jsonb: one such character would fail every later sync of the mailbox. */
+export function stripNul(s: string): string {
+  return s.includes("\u0000") ? s.replace(/\u0000/g, "") : s;
 }
 
 /* ------------------------------------------------------------------ message ids --- */
@@ -199,22 +243,24 @@ export function parseMessage(m: GmailMessage): ParsedMessage {
     inReplyTo,
     refs,
     from: parseAddressList(header(h, "From"))[0] ?? null,
+    fromCount: parseAddressList(header(h, "From")).length,
     to: parseAddressList(header(h, "To")),
     cc: parseAddressList(header(h, "Cc")),
     replyTo: parseAddressList(header(h, "Reply-To")),
-    subject: decodeWords(header(h, "Subject")).replace(/\s+/g, " ").trim(),
-    snippet: decodeEntities(m.snippet ?? "").trim(),
+    subject: stripNul(decodeWords(header(h, "Subject"))).replace(/\s+/g, " ").trim(),
+    snippet: stripNul(decodeEntities(m.snippet ?? "")).trim(),
     sentAt: new Date(sentMs).toISOString(),
     autoSubmitted: (!!auto && auto !== "no") || /^(bulk|junk|list|auto_reply)$/.test(precedence),
+    auth: parseAuth(h),
   };
 }
 
 /** The headers asked for with format=metadata — everything parseMessage reads. */
-export const METADATA_HEADERS = ["From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Auto-Submitted", "Precedence"];
+export const METADATA_HEADERS = ["From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Auto-Submitted", "Precedence", "Authentication-Results"];
 
 function decodeData(data: string | undefined, charset: string): string {
   if (!data) return "";
-  return decoderFor(charset).decode(Buffer.from(data, "base64url"));
+  return stripNul(decoderFor(charset).decode(Buffer.from(data, "base64url")));
 }
 
 function charsetOf(p: GmailPart): string {
@@ -243,7 +289,7 @@ export function parseBodies(m: GmailMessage): ParsedBodies {
       const disp = header(p.headers, "Content-Disposition").toLowerCase();
       attachments.push({
         partId: p.partId ?? "",
-        filename: decodeWords(p.filename || (cid ? `${cid}` : "attachment")).slice(0, 200),
+        filename: stripNul(decodeWords(p.filename || (cid ? `${cid}` : "attachment"))).slice(0, 200),
         mime: mime || "application/octet-stream",
         size: Number(p.body?.size ?? 0),
         cid,

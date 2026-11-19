@@ -21,6 +21,10 @@ export interface FakeMail {
   labels?: string[];
   thread?: string;
   autoSubmitted?: string;
+  /** Gmail's verdict on the sender: "pass" (default, DMARC/DKIM/SPF for the From's domain), "none" (no verdict), "fail". */
+  auth?: "pass" | "none" | "fail";
+  /** The raw From header, when a test needs one the builder wouldn't write (encoded words). */
+  rawFrom?: string;
   attachments?: Array<{ filename: string; mime: string; size: number; cid?: string }>;
 }
 
@@ -51,8 +55,13 @@ export class FakeGmail {
       const parentIds = [mail.inReplyTo, ...(mail.references ?? [])].filter(Boolean);
       thread = this.msgs.find((x) => parentIds.includes(x.mail.messageId))?.msg.threadId ?? id;
     }
+    const fromAddr = (/<([^>]+)>/.exec(mail.from)?.[1] ?? mail.from).trim();
+    const fromDomain = fromAddr.split("@")[1] ?? "";
+    const auth = mail.auth ?? "pass";
     const headers = [
-      { name: "From", value: mail.from },
+      ...(auth === "pass" ? [{ name: "Authentication-Results", value: `mx.google.com; dkim=pass header.i=@${fromDomain} header.s=s1; spf=pass (google.com: domain of ${fromAddr} designates 1.2.3.4 as permitted sender) smtp.mailfrom=${fromAddr}; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=${fromDomain}` }]
+        : auth === "fail" ? [{ name: "Authentication-Results", value: `mx.google.com; spf=softfail (google.com: domain of transitioning ${fromAddr} does not designate 6.6.6.6 as permitted sender) smtp.mailfrom=${fromAddr}; dmarc=fail (p=NONE) header.from=${fromDomain}` }] : []),
+      { name: "From", value: mail.rawFrom ?? mail.from },
       { name: "To", value: (mail.to ?? [this.address]).join(", ") },
       ...(mail.cc?.length ? [{ name: "Cc", value: mail.cc.join(", ") }] : []),
       { name: "Subject", value: mail.subject ?? "Hello" },

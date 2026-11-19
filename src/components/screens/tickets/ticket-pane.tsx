@@ -51,6 +51,8 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
   useDismiss(open === "snooze", closePop, snoozeRef);
   useDismiss(open === "more" || open === "client", closePop, moreRef);
 
+  const changedRef = useRef(onChanged);
+  useEffect(() => { changedRef.current = onChanged; }, [onChanged]);
   const load = useCallback(async (quiet = false) => {
     try {
       const data = await api<TicketDetail>(`/api/tools/tickets/${number}`);
@@ -59,12 +61,12 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
       setNow(Date.now());
       if (data.ticket.lastActivityAt !== lastActivity.current) {
         lastActivity.current = data.ticket.lastActivityAt;
-        void api(`/api/tools/tickets/${data.ticket.id}/ping`, { method: "POST", json: { seen: true, viewing: true } }).then(() => quiet || onChanged(), () => {});
+        void api(`/api/tools/tickets/${data.ticket.id}/ping`, { method: "POST", json: { seen: true, viewing: true } }).then(() => quiet || changedRef.current(), () => {});
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Couldn't load this ticket");
     }
-  }, [number, onChanged]);
+  }, [number]);
 
   useEffect(() => { setD(null); setErr(null); lastActivity.current = null; void load(); }, [number, load]);
 
@@ -93,14 +95,14 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
     try {
       await api(`/api/tools/tickets/${d.ticket.id}`, { method: "PATCH", json: body });
       await load(true);
-      onChanged();
+      changedRef.current();
       if (okMsg) toast.success(okMsg);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "That didn't save");
     } finally {
       setBusy(false);
     }
-  }, [d, load, onChanged]);
+  }, [d, load]);
 
   const t = d?.ticket;
   const lastClientMail = useMemo(() => [...(d?.messages ?? [])].reverse().find((m) => m.direction === "in") ?? null, [d]);
@@ -247,7 +249,7 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
 
       <Timeline d={d} now={now} people={people} />
 
-      <NoteBox ticketId={t.id} team={team} me={me} textareaRef={noteRef} onSaved={() => { void load(true); onChanged(); }} />
+      <NoteBox ticketId={t.id} team={team} me={me} textareaRef={noteRef} onSaved={() => { void load(true); changedRef.current(); }} />
 
       <ModalDialog open={confirmRemove} onClose={() => setConfirmRemove(false)} width={460} label="Remove from Tickets">
         <div className="tk-dialog">
@@ -286,6 +288,30 @@ function SnoozeCustom({ onPick }: { onPick: (iso: string) => void }) {
       </div>
     </>
   );
+}
+
+/** Fetched first: a file Gmail can't give right now shows a message, rather than replacing the OS with an error page. */
+async function download(url: string, filename: string) {
+  const id = toast.loading(`Getting ${filename}…`);
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(j.error ?? "Couldn't get that file. Open it in Gmail.", { id });
+      return;
+    }
+    const href = URL.createObjectURL(await res.blob());
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 30_000);
+    toast.dismiss(id);
+  } catch {
+    toast.error("Couldn't get that file. Open it in Gmail.", { id });
+  }
 }
 
 function listNames(names: string[]): string {
@@ -373,6 +399,9 @@ function MailCard({ m, open, onToggle, people }: { m: TicketMessageView; open: b
           <div className="tk-mail-b">
             <EmailFrame html={m.html} text={m.text} messageId={m.id} attachments={m.attachments} showImages={showImages} onBlocked={onBlocked} />
           </div>
+          {m.trimmed ? (
+            <div className="tk-trimmed">Earlier messages quoted in this email aren&apos;t kept in Tickets, only the client&apos;s own words.{m.myGmailId ? " The full email is in your Gmail." : ""}</div>
+          ) : null}
           {blocked > 0 && !showImages ? (
             <div className="tk-imgbar">
               <Icon name="shield" />
@@ -383,7 +412,8 @@ function MailCard({ m, open, onToggle, people }: { m: TicketMessageView; open: b
           {m.attachments.filter((a) => !a.inline).length ? (
             <div className="tk-files" style={{ paddingTop: 10 }}>
               {m.attachments.filter((a) => !a.inline).map((a) => (
-                <a key={a.partId} className="tk-file" href={`/api/tools/tickets/attachment?m=${encodeURIComponent(m.id)}&p=${encodeURIComponent(a.partId)}`} title={`Download ${a.filename}`}>
+                <a key={a.partId} className="tk-file" href={`/api/tools/tickets/attachment?m=${encodeURIComponent(m.id)}&p=${encodeURIComponent(a.partId)}`} title={`Download ${a.filename}`}
+                  onClick={(e) => { e.preventDefault(); void download(e.currentTarget.href, a.filename); }}>
                   <i>{(a.filename.split(".").pop() ?? "file").slice(0, 4)}</i>
                   <span>{a.filename}</span>
                   <small>{fileSize(a.size)}</small>

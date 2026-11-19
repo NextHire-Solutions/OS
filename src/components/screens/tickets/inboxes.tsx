@@ -76,13 +76,12 @@ export function TicketsInboxesScreen() {
         ) : null}
         {err ? <div className="tk-notice err" role="alert"><Icon name="ban" /><span>{err}</span></div> : null}
         {d && !d.ready ? <div className="tk-notice warn"><Icon name="flag" /><span>{d.admin ? d.setup : "An admin needs to finish one setup step before inboxes can be connected."}</span></div> : null}
-        {d && d.admin && d.ready && !d.mailboxes.some((m) => m.lastOkAt) ? (
+        {d && d.admin && d.ready && (d.missing.length > 0 || !d.mailboxes.some((m) => m.lastOkAt)) ? (
           <div className="tk-notice warn">
             <Icon name="shield" />
             <span>
-              <b>One-time Google setup (admins):</b> before anyone can connect, the Google Cloud project behind the OS&apos;s Google sign-in must list this address as an authorised redirect URI: <code>{d.callback}</code>
-              {!d.googleConfigured ? <> The OS also has no Google sign-in client set.</> : null}
-              {" "}Until then Google answers &ldquo;redirect_uri_mismatch&rdquo;.
+              <b>One-time Google setup (admins):</b> Tickets needs its own Google sign-in client: an OAuth client of type Web application in the BrokerStaffer Google Cloud, consent screen Internal, with this authorised redirect URI: <code>{d.callback}</code>
+              {d.missing.length ? <> Still to set on the OS: {d.missing.map((m, i) => <span key={m}>{i ? ", " : ""}<code>{m}</code></span>)}.</> : null}
             </span>
           </div>
         ) : null}
@@ -112,7 +111,8 @@ export function TicketsInboxesScreen() {
                       <b>Not connected</b>
                       <span>Google will ask you to allow read-only access to your Gmail.</span>
                     </div>
-                    <a className={`tk-btn pri${d.ready ? "" : " disabled"}`} href={d.ready ? "/api/tools/tickets/google/start" : undefined} aria-disabled={!d.ready}><Icon name="plus" />Connect your Gmail</a>
+                    <a className={`tk-btn pri${d.ready && d.googleConfigured ? "" : " disabled"}`} href={d.ready && d.googleConfigured ? "/api/tools/tickets/google/start" : undefined} aria-disabled={!(d.ready && d.googleConfigured)}
+                      title={d.googleConfigured ? undefined : "Google sign-in for Tickets isn't set up yet"}><Icon name="plus" />Connect your Gmail</a>
                   </div>
                 )}
             </section>

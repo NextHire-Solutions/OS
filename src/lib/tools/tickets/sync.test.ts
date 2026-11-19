@@ -177,3 +177,118 @@ test("cleanSubject strips reply and forward prefixes", () => {
   assert.equal(cleanSubject("   "), "(no subject)");
   assert.equal(cleanSubject("Recap of the call"), "Recap of the call");
 });
+
+/* ---------------------------------------------- independent review, 20 Nov: each finding pinned --- */
+
+test("REVIEW 1: an encoded comma in the From name can't pass a stranger off as the client", async () => {
+  const { store, eddy, sync } = setup();
+  await sync(EDDY);
+  eddy.deliver({ from: "attacker@evil.com", rawFrom: "=?utf-8?Q?john@myrehomebase.com=2C?= <attacker@evil.com>", subject: "Please wire", messageId: "x1@evil", date: NOW - H, text: "Please wire to…" });
+  eddy.deliver({ from: "attacker@evil.com", rawFrom: "=?utf-8?B?am9obkBteXJlaG9tZWJhc2UuY29tOw==?= <attacker@evil.com>", subject: "Again", messageId: "x2@evil", date: NOW - H, text: "B-encoded" });
+  await sync(EDDY);
+  assert.equal(store.messages.size, 0);
+  assert.equal(store.tickets.size, 0);
+});
+
+test("REVIEW 5: a forged From (Gmail could not verify the sender) is not kept", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Forged", messageId: "f1@x", date: NOW - H, text: "spoof", auth: "fail" });
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "No verdict", messageId: "f2@x", date: NOW - H, text: "spoof", auth: "none" });
+  const r = await sync(EDDY);
+  assert.equal(store.messages.size, 0);
+  assert.equal(r.unverified, 2);
+});
+
+test("REVIEW 4: a client's reply that quotes our answer keeps only the client's words", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Q", messageId: "q1@hb", date: NOW - 3 * H, text: "Question" });
+  eddy.deliver({ from: EDDY, to: ["john@myrehomebase.com"], subject: "Re: Q", messageId: "q2@bs", inReplyTo: "q1@hb", date: NOW - 2 * H, text: "TEAM-SECRET answer" });
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Re: Q", messageId: "q3@hb", inReplyTo: "q2@bs", references: ["q1@hb", "q2@bs"], date: NOW - H,
+    html: `<div>Thanks, one more thing.</div><div class="gmail_quote"><div>On Tue Eddy wrote:</div><blockquote>TEAM-SECRET answer</blockquote></div>`,
+    text: "Thanks, one more thing.\n\nOn Tue, Nov 18, 2026 at 9:00 AM Eddy <eddy@brokerstaffer.com> wrote:\n> TEAM-SECRET answer" });
+  await sync(EDDY);
+  assert.ok(!JSON.stringify([...store.messages.values()]).includes("TEAM-SECRET"));
+  const last = [...store.messages.values()].find((m) => m.rfc_id === "q3@hb")!;
+  assert.equal(last.trimmed, true);
+  assert.match(String(last.body_text), /^Thanks, one more thing\.$/);
+});
+
+test("REVIEW 10: Eddy forwarding the client's email to a vendor is not a reply (stays Open)", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Signs", messageId: "s1@hb", date: NOW - 2 * H, text: "Need signs" });
+  await sync(EDDY);
+  eddy.deliver({ from: EDDY, to: ["vendor@printco.com"], subject: "Fwd: Signs", messageId: "s2@bs", references: ["s1@hb"], date: NOW - H, text: "Can you quote?" });
+  await sync(EDDY);
+  assert.equal(store.messages.size, 1);
+  assert.equal(tickets(store)[0].status, "open");
+});
+
+test("REVIEW 6: a team reply marker keeps no other participants' ids; non-client mail in a removed thread writes nothing", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "A", messageId: "a1@hb", date: NOW - 3 * H, text: "A" });
+  eddy.deliver({ from: EDDY, to: ["john@myrehomebase.com"], subject: "Re: A", messageId: "a2@bs", inReplyTo: "a1@hb", references: ["a1@hb"], date: NOW - 2 * H, text: "B" });
+  await sync(EDDY);
+  const marker = [...store.messages.values()].find((m) => m.direction === "out")!;
+  assert.deepEqual([marker.refs, marker.in_reply_to], [[], null]);
+  const copy = [...store.copies.values()][0];
+  await store.block([`msg:a1@hb`, `thread:${EDDY}:${copy.gmail_thread_id}`], EDDY);
+  const before = store.blocks.size;
+  eddy.deliver({ from: "stranger@vendor.com", to: [EDDY], subject: "Re: A", messageId: "a3@v", inReplyTo: "a1@hb", references: ["a1@hb"], date: NOW - H, text: "x" });
+  await sync(EDDY);
+  assert.equal(store.blocks.size, before, "nothing about the stranger is written");
+});
+
+test("REVIEW 7a: after a history gap (refill), a client's new email still reopens a Done ticket", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "R", messageId: "r1@hb", date: NOW - 3 * H, text: "R" });
+  await sync(EDDY);
+  const t = tickets(store)[0];
+  await store.updateTicket(t.id, { status: "done", closed_at: new Date(NOW - 2 * H).toISOString() });
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Re: R", messageId: "r2@hb", inReplyTo: "r1@hb", references: ["r1@hb"], date: NOW - H, text: "Again" });
+  eddy.historyFloor = 10_000;
+  const r = await sync(EDDY);
+  assert.equal(r.mode, "refill");
+  assert.equal(store.tickets.get(t.id)!.status, "open");
+});
+
+test("REVIEW 8: Amy's reply is seen when the client's email was first stored from Eddy's inbox (first fill)", async () => {
+  const { store, eddy, amy, sync } = setup();
+  const mail = { from: "ann@tollrealtygroup.com", to: [EDDY, AMY], subject: "Leads?", messageId: "l1@toll", date: NOW - 3 * H, text: "Where are my leads" };
+  eddy.deliver(mail);
+  amy.deliver(mail);
+  amy.deliver({ from: AMY, to: ["ann@tollrealtygroup.com"], subject: "Re: Leads?", messageId: "l2@bs", inReplyTo: "l1@toll", references: ["l1@toll"], date: NOW - 2 * H, text: "On it" });
+  await sync(EDDY);
+  await sync(AMY);
+  const t = tickets(store)[0];
+  assert.equal(t.status, "waiting");
+  assert.equal([...store.messages.values()].filter((m) => m.direction === "out").length, 1);
+});
+
+test("REVIEW 2: one bad message is skipped and counted; the mailbox keeps syncing; NULs never reach the database", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Nul", messageId: "n1@hb", date: NOW - 2 * H, text: "bad\u0000byte" });
+  eddy.deliver({ from: "ann@tollrealtygroup.com", subject: "Fine", messageId: "n2@toll", date: NOW - H, text: "fine" });
+  const real = store.insertMessage.bind(store);
+  let n = 0;
+  store.insertMessage = async (m) => {
+    if (m.rfc_id === "n2@toll" && n++ === 0) throw Object.assign(new Error("value too long"), { code: "22001" });
+    return real(m);
+  };
+  const r = await sync(EDDY);
+  assert.equal(r.failed, 1);
+  assert.equal(r.historyId !== null, true);
+  const kept = [...store.messages.values()].find((m) => m.rfc_id === "n1@hb")!;
+  assert.equal(kept.body_text, "badbyte");
+});
+
+test("REVIEW 9: a teammate's change made while the sync works on the ticket is not overwritten", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "C", messageId: "c1@hb", date: NOW - 3 * H, text: "C" });
+  await sync(EDDY);
+  const t = tickets(store)[0];
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Re: C", messageId: "c2@hb", inReplyTo: "c1@hb", references: ["c1@hb"], date: NOW - H, text: "more" });
+  store.conflictOnce = true;
+  await sync(EDDY);
+  const after = store.tickets.get(t.id)!;
+  assert.equal(after.message_count, 2, "re-read and re-applied after the conflict");
+});

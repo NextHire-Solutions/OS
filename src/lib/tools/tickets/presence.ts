@@ -15,7 +15,9 @@ export function touch(ticketId: string, email: string, now = Date.now()) {
 }
 
 export function leave(ticketId: string, email: string) {
-  seen.get(ticketId)?.delete(email.toLowerCase());
+  const m = seen.get(ticketId);
+  m?.delete(email.toLowerCase());
+  if (m && !m.size) seen.delete(ticketId);
 }
 
 /** Who else has this ticket open. */
@@ -27,6 +29,7 @@ export function viewers(ticketId: string, except: string | null, now = Date.now(
     if (now - at > TTL_MS) { m.delete(email); continue; }
     if (email !== except?.toLowerCase()) out.push(email);
   }
+  if (!m.size) seen.delete(ticketId); // nobody left: the entry goes
   return out.sort();
 }
 

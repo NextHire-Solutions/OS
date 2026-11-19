@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
       view, me: viewer.email, admin: viewer.admin,
       client: p.get("client") || null, mailbox: p.get("mailbox") || null, q: p.get("q"),
       offset: Math.max(0, Math.min(5000, Number(p.get("offset") ?? 0) || 0)),
+      limit: Math.max(1, Math.min(500, Number(p.get("limit") ?? 100) || 100)),
     });
     return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {

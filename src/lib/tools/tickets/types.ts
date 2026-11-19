@@ -54,6 +54,8 @@ export interface TicketMessageView {
   id: string;
   rfcId: string;
   direction: "in" | "out";
+  /** Quoted or forwarded history was cut before storing: only the client's own words are here. */
+  trimmed: boolean;
   from: Address;
   to: Address[];
   cc: Address[];
@@ -103,8 +105,10 @@ export interface MailboxView {
 export interface MailboxesPage {
   ready: boolean;
   setup?: string;
-  /** False until Google lists the OS's callback for the OAuth client. */
+  /** The Tickets Google client and the token key are set on the OS. */
   googleConfigured: boolean;
+  /** The environment settings still missing (admins see them). */
+  missing: string[];
   callback: string;
   mailboxes: MailboxView[];
   team: Array<Person & { connected: boolean }>;

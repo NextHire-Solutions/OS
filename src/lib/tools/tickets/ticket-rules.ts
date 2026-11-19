@@ -88,9 +88,13 @@ export function applyMessage(s: TicketState, m: IncomingMessage, importing = fal
     if (m.auto) return { patch, events };
     const answeredAfter = s.last_outbound_at && t(s.last_outbound_at) >= t(m.sentAt);
     if (!answeredAfter) patch.waiting_since = earlier(s.waiting_since, m.sentAt);
+    /*
+     * Reopen when the team hasn't answered this email — whenever it was sent. It is new to the OS, so whoever
+     * pressed Done never saw it here (review, 20 Nov: a client writing a minute before someone pressed Done, picked up
+     * by the next sync, must not be lost).
+     */
     const afterOurs = !s.last_outbound_at || t(m.sentAt) > t(s.last_outbound_at);
-    const afterClose = !s.closed_at || t(m.sentAt) > t(s.closed_at);
-    if (!importing && afterOurs && afterClose && (s.status !== "open" || s.snoozed_until)) {
+    if (!importing && afterOurs && (s.status !== "open" || s.snoozed_until)) {
       patch.status = "open";
       patch.snoozed_until = null;
       patch.closed_at = null;

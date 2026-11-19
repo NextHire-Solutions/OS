@@ -53,9 +53,10 @@ test("Done and Ignored reopen on a new client email; snoozed wakes too", () => {
   assert.equal((events[events.length - 1] as any).from_value, "snoozed");
 });
 
-test("an email older than the close (arriving late from another mailbox) does not reopen", () => {
+test("an email the OS never had when someone pressed Done reopens it, even if sent before (sync lag); answered ones don't", () => {
   const s0 = { ...run(blankTicket(), [msg("in", 0), msg("out", 1)]).s, status: "done" as const, closed_at: at(5) };
-  assert.equal(run(s0, [msg("in", 4)]).s.status, "done");
+  assert.equal(run(s0, [msg("in", 4)]).s.status, "open", "written at 4h, closed at 5h, reached the OS after: unanswered → reopen");
+  assert.equal(run(s0, [msg("in", 0.5)]).s.status, "done", "the team replied after it (1h): no reopen");
 });
 
 test("an out-of-office or list mail never opens anything", () => {

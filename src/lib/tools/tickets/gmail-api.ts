@@ -57,7 +57,7 @@ export function consentUrl(cfg: OAuthConfig, state: string, loginHint?: string):
     scope: GMAIL_SCOPES.join(" "),
     access_type: "offline",
     prompt: "consent",
-    include_granted_scopes: "true",
+    // No include_granted_scopes: a token must never carry more than read-only Gmail (review, 20 Nov).
     state,
   });
   if (loginHint) p.set("login_hint", loginHint);
@@ -75,12 +75,26 @@ export async function exchangeCode(cfg: OAuthConfig, code: string): Promise<{ re
   if (!res.ok || !t.access_token) throw new Error(`Google refused the sign-in (${t.error ?? res.status}${t.error_description ? `: ${t.error_description}` : ""})`);
   if (!t.refresh_token) throw new Error("Google gave no lasting access. Remove the OS from your Google account's third-party access and connect again.");
   const scope = t.scope ?? "";
-  if (!/gmail\.readonly|mail\.google\.com|gmail\.modify/.test(scope)) throw new Error("Gmail access wasn't granted. Connect again and leave the Gmail box ticked.");
+  const extra = scopeBeyondReadOnly(scope);
+  if (extra.length) {
+    await revokeToken(t.refresh_token);
+    throw new Error(`Google gave this connection more than read-only access (${extra.join(", ")}), so it was refused. An admin should check the Tickets sign-in client.`);
+  }
+  if (!scope.split(/\s+/).includes("https://www.googleapis.com/auth/gmail.readonly")) throw new Error("Gmail access wasn't granted. Connect again and leave the Gmail box ticked.");
   const ui = await fetch(userinfoUrl(), { headers: { Authorization: `Bearer ${t.access_token}` } });
   const info = (await ui.json().catch(() => ({}))) as { email?: string; email_verified?: boolean; name?: string };
   const email = String(info.email ?? "").trim().toLowerCase();
   if (!ui.ok || !email) throw new Error("Couldn't tell which Google account was connected");
   return { refreshToken: t.refresh_token, accessToken: t.access_token, scope, email, name: info.name ?? null };
+}
+
+/** Granted scopes beyond read-only Gmail and sign-in identity (any of them and the connection is refused). */
+export function scopeBeyondReadOnly(scope: string): string[] {
+  const ok = new Set([
+    "https://www.googleapis.com/auth/gmail.readonly", "openid", "email", "profile",
+    "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile",
+  ]);
+  return scope.split(/\s+/).filter(Boolean).filter((s) => !ok.has(s));
 }
 
 /** Give the access back to Google (disconnect). Best effort: a token Google already dropped is fine. */

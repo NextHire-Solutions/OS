@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { osTable } from "@/lib/clients/os-db";
 
-import { oauthConfig } from "./config";
+import { oauthConfig, tokenKeySet } from "./config";
 import { clientDirectory, teamDirectory } from "./directory";
 import { GmailAuthError, GmailClient, refreshAccessToken } from "./gmail-api";
 import type { MailboxRow } from "./store";
@@ -46,11 +46,17 @@ export function forgetAccessToken(mailbox: string) {
 
 /** The Gmail client for a stored mailbox, or null when its token can't be opened. */
 export function gmailForMailbox(mb: Pick<MailboxRow, "email" | "token_enc">): GmailClient | null {
-  const refresh = openToken(mb.token_enc);
+  const refresh = openToken(mb.token_enc, mb.email);
   return refresh ? gmailFor(mb.email, refresh) : null;
 }
 
+/* One run at a time in this process, whoever starts it (the minute sweep, Check now, a new connection). */
+const RUNNING = Symbol.for("os.tickets.syncRunning");
+const flag = globalThis as unknown as Record<symbol, boolean | undefined>;
+
 export interface RunResult {
+  /** Another run was already going in this process. */
+  busy?: boolean;
   ready: boolean;
   mailboxes: number;
   synced: Array<{ email: string } & Partial<SyncReport> & { error?: string }>;
@@ -65,6 +71,16 @@ const friendly = (e: GmailAuthError) =>
       : `Google refused access: ${e.message.slice(0, 160)}`;
 
 export async function runTicketsSync(): Promise<RunResult> {
+  if (flag[RUNNING]) return { ready: true, mailboxes: 0, synced: [], woke: 0, busy: true };
+  flag[RUNNING] = true;
+  try {
+    return await runOnce();
+  } finally {
+    flag[RUNNING] = false;
+  }
+}
+
+async function runOnce(): Promise<RunResult> {
   const out: RunResult = { ready: true, mailboxes: 0, synced: [], woke: 0 };
   let mailboxes: MailboxRow[];
   try {
@@ -72,14 +88,18 @@ export async function runTicketsSync(): Promise<RunResult> {
   } catch {
     return { ...out, ready: false };
   }
-  const live = mailboxes.filter((m) => m.token_enc && (m.state === "syncing" || m.state === "ok"));
+  // Mailboxes already filled first (a minute's history each), first fills after: a long fill never holds up the rest.
+  const live = mailboxes.filter((m) => m.token_enc && (m.state === "syncing" || m.state === "ok"))
+    .sort((a, b) => Number(!a.backfill_done_at) - Number(!b.backfill_done_at));
   out.mailboxes = live.length;
 
-  if (live.length && oauthConfig()) {
+  if (live.length && oauthConfig() && tokenKeySet()) {
     let dir: Awaited<ReturnType<typeof clientDirectory>> | null = null;
+    let team: Awaited<ReturnType<typeof teamDirectory>> | null = null;
+    // Both lists or no run: without the team list a teammate's personal address on a client's record would look like the client.
     try { dir = await clientDirectory(); } catch (e) { console.error("[tickets] client list unreadable:", e instanceof Error ? e.message : e); }
-    const team = await teamDirectory(mailboxes);
-    for (const mb of dir ? live : []) {
+    try { team = await teamDirectory(mailboxes); } catch (e) { console.error("[tickets] team list unreadable:", e instanceof Error ? e.message : e); }
+    for (const mb of dir && team ? live : []) {
       const token = randomUUID();
       try {
         if (!(await dbTicketStore.claimMailbox(mb.email, token, CLAIM_STALE_MS))) continue;
@@ -90,7 +110,11 @@ export async function runTicketsSync(): Promise<RunResult> {
       try {
         const gmail = gmailForMailbox(mb);
         if (!gmail) throw new GmailAuthError("invalid_grant: the stored access can't be opened", true);
-        const r = await syncMailbox({ store: dbTicketStore, gmail, index: dir!.index, team: team.set, names: team.names }, mb);
+        const r = await syncMailbox({
+          store: dbTicketStore, gmail, index: dir!.index, team: team!.set, names: team!.names,
+          heartbeat: () => dbTicketStore.renewClaim(mb.email, token),
+        }, mb);
+        if (r.failed) console.error(`[tickets] ${mb.email}: ${r.failed} message(s) skipped: ${r.errors.join(" | ")}`);
         await dbTicketStore.releaseMailbox(mb.email, token, {
           state: "ok", history_id: r.historyId, backfill_done_at: mb.backfill_done_at ?? now(), last_sync_at: now(), last_ok_at: now(), last_error: null, error_count: 0,
         });
@@ -101,7 +125,9 @@ export async function runTicketsSync(): Promise<RunResult> {
         await dbTicketStore.releaseMailbox(mb.email, token, revoked
           ? { state: "reconnect", last_sync_at: now(), last_error: msg }
           : { last_sync_at: now(), last_error: msg, error_count: (mb.error_count ?? 0) + 1 }).catch(() => {});
-        if (revoked) {
+        // Disconnected while it ran? Then Google refusing is expected: no alert.
+        const still = revoked ? (await dbTicketStore.listMailboxes().catch(() => [])).find((m) => m.email === mb.email) : null;
+        if (revoked && still?.token_enc && still.state !== "paused") {
           forgetAccessToken(mb.email);
           await osTable("os_notifications").upsert({
             kind: "tickets_reconnect", severity: "warning",
@@ -119,7 +145,8 @@ export async function runTicketsSync(): Promise<RunResult> {
     for (const t of await dbTicketStore.snoozeDue(new Date().toISOString())) {
       const c = wake(t);
       if (!c) continue;
-      await dbTicketStore.updateTicket(t.id, c.patch);
+      // Only if nobody touched it since it was read (a teammate pressing Done a moment ago wins).
+      if (!(await dbTicketStore.updateTicket(t.id, c.patch, t.updated_at))) continue;
       await dbTicketStore.addEvents(t.id, c.events);
       out.woke++;
     }

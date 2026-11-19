@@ -64,7 +64,8 @@ export interface TeamDirectory {
 }
 
 export async function teamDirectory(mailboxes: ReadonlyArray<{ email: string; name: string | null }> = []): Promise<TeamDirectory> {
-  const members = await listTeamMembers().catch(() => []);
+  // No catch: a run without the team list must not happen (runner.ts).
+  const members = await listTeamMembers();
   const set = new Set<string>();
   const names = new Map<string, string>();
   for (const m of members) {

@@ -40,6 +40,8 @@ export interface MessageRow {
   ticket_id: string;
   rfc_id: string;
   direction: "in" | "out";
+  /** Quoted or forwarded history was cut from this email before storing (only the client's own words are kept). */
+  trimmed: boolean;
   from_email: string | null;
   from_name: string | null;
   to_list: Address[];
@@ -70,6 +72,9 @@ export interface TicketStore {
   /* mailboxes */
   listMailboxes(): Promise<MailboxRow[]>;
   claimMailbox(email: string, token: string, staleMs: number): Promise<boolean>;
+  /** Still working: keep the claim fresh so a long first fill is never run twice. */
+  renewClaim(email: string, token: string): Promise<void>;
+  /** End the run. The patch is not applied to a mailbox disconnected meanwhile (it stays disconnected). */
   releaseMailbox(email: string, token: string, patch: Partial<MailboxRow>): Promise<void>;
 
   /* the sync's lookups */
@@ -85,7 +90,11 @@ export interface TicketStore {
   /** Insert unless the Message-ID is stored already; either way, the stored row's id and ticket. */
   insertMessage(m: NewMessage): Promise<{ id: string; ticket_id: string; inserted: boolean }>;
   insertCopy(c: CopyRow): Promise<void>;
-  updateTicket(id: string, patch: Partial<TicketRow>): Promise<void>;
+  /**
+   * Apply a change. With `ifUpdatedAt`, only when nobody changed the ticket since it was read (returns false then,
+   * and the caller reads it again): a sync and a teammate pressing Done at the same moment never overwrite each other.
+   */
+  updateTicket(id: string, patch: Partial<TicketRow>, ifUpdatedAt?: string): Promise<boolean>;
   addEvents(ticketId: string, events: ReadonlyArray<TicketEvent & { mentions?: string[] }>): Promise<void>;
   deleteTicket(id: string): Promise<void>;
   /** Tickets whose snooze has ended. */

@@ -18,9 +18,14 @@ export function EmailFrame({ html, text, messageId, attachments, showImages, onB
   const [height, setHeight] = useState(60);
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
+  // Keyed on what the email IS, not on the array a refresh hands down (a new array every 15 s re-built the frame's
+  // content and dropped its size watcher, so opening "•••" stopped growing it — review, 20 Nov).
+  const attKey = attachments.map((a) => `${a.partId}:${a.cid ?? ""}`).join("|");
+  const attRef = useRef(attachments);
+  attRef.current = attachments;
   const prepared = useMemo(
-    () => (origin ? prepareEmail({ html, text, messageId, attachments, showImages, origin }) : null),
-    [html, text, messageId, attachments, showImages, origin],
+    () => (origin ? prepareEmail({ html, text, messageId, attachments: attRef.current, showImages, origin }) : null),
+    [html, text, messageId, attKey, showImages, origin],
   );
   useEffect(() => { if (prepared) onBlocked?.(prepared.blockedImages); }, [prepared, onBlocked]);
 
@@ -35,11 +40,14 @@ export function EmailFrame({ html, text, messageId, attachments, showImages, onB
     };
     const onLoad = () => {
       measure();
+      ro?.disconnect();
       const body = frame.contentDocument?.body;
       if (body && typeof ResizeObserver !== "undefined") { ro = new ResizeObserver(measure); ro.observe(body); }
       frame.contentDocument?.querySelectorAll("img").forEach((img) => img.addEventListener("load", measure));
     };
     frame.addEventListener("load", onLoad);
+    // Already loaded (the same content kept): watch it now rather than waiting for a load that won't come.
+    if (frame.contentDocument?.readyState === "complete" && frame.contentDocument.body?.childNodes.length) onLoad();
     return () => { frame.removeEventListener("load", onLoad); ro?.disconnect(); };
   }, [prepared]);
 

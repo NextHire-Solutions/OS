@@ -6,9 +6,9 @@ import { frameCsp, prepareEmail, textToHtml } from "./email-html.ts";
 test("the frame's policy: no scripts ever, remote images only once allowed", () => {
   const off = frameCsp("https://os.brokerstaffer.com", false);
   assert.match(off, /default-src 'none'/);
-  assert.match(off, /img-src data: https:\/\/os\.brokerstaffer\.com(;|$)/);
+  assert.match(off, /img-src data: https:\/\/os\.brokerstaffer\.com\/api\/tools\/tickets\/attachment(;|$)/, "only the attachment route of the OS");
   assert.ok(!/script-src/.test(off));
-  assert.match(frameCsp("https://os.brokerstaffer.com", true), /img-src data: https:\/\/os\.brokerstaffer\.com https: http:/);
+  assert.match(frameCsp("https://os.brokerstaffer.com", true), /img-src data: https:\/\/os\.brokerstaffer\.com\/api\/tools\/tickets\/attachment https: http:/);
 });
 
 test("plain text: links clickable, HTML escaped, the quoted tail folded", () => {

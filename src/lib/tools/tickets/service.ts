@@ -3,7 +3,7 @@ import "server-only";
 import { osTable } from "@/lib/clients/os-db";
 import { listTeamMembers } from "@/lib/identity/team-directory";
 
-import { CALLBACK_PATH, oauthConfig } from "./config";
+import { CALLBACK_PATH, oauthConfig, tokenKeySet } from "./config";
 import { clientDirectory } from "./directory";
 import type { Address } from "./gmail-message";
 import { revokeToken } from "./gmail-api";
@@ -90,7 +90,13 @@ async function clientMap() {
   return m;
 }
 
-export async function listTickets(opts: { view: View; me: string; admin: boolean; client?: string | null; mailbox?: string | null; q?: string | null; offset?: number }): Promise<TicketList> {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function listTickets(opts: { view: View; me: string; admin: boolean; client?: string | null; mailbox?: string | null; q?: string | null; offset?: number; limit?: number }): Promise<TicketList> {
+  // A stale or hand-typed filter is ignored, never an error.
+  if (opts.client && !UUID.test(opts.client)) opts = { ...opts, client: null };
+  if (opts.mailbox && !/^[^\s@,()"]+@[^\s@,()"]+$/.test(opts.mailbox)) opts = { ...opts, mailbox: null };
+  const pageSize = Math.max(1, Math.min(500, opts.limit ?? PAGE));
   const me = opts.me.toLowerCase();
   const empty: TicketList = { ready: true, view: opts.view, rows: [], total: 0, counts: {}, unread: {}, viewers: {}, team: [], clients: [], mailboxes: [], me, admin: opts.admin, myMailbox: null };
   const [team, clients, mbRes] = await Promise.all([teamPeople(), clientMap(), osTable("os_ticket_mailboxes").select("email, name, state")]);
@@ -128,7 +134,7 @@ export async function listTickets(opts: { view: View; me: string; admin: boolean
     if (!(only as string[]).length) return { ...base, ...(await countViews(me)) };
     q = q.in("id", (only as string[]).slice(0, 1000));
   }
-  q = order(q, opts.view).range(opts.offset ?? 0, (opts.offset ?? 0) + PAGE - 1);
+  q = order(q, opts.view).range(opts.offset ?? 0, (opts.offset ?? 0) + pageSize - 1);
   const [{ data, error, count }, counts] = await Promise.all([q, countViews(me)]);
   if (error) {
     if (MISSING.test(error.message)) return { ...base, ready: false, setup: SETUP_MIGRATION };
@@ -210,6 +216,7 @@ export async function ticketDetail(idOrNumber: string, me: string, admin: boolea
       id: String(m.id),
       rfcId: String(m.rfc_id),
       direction: m.direction as "in" | "out",
+      trimmed: m.trimmed === true,
       from: { email: String(m.from_email ?? ""), name: (m.from_name as string | null) ?? null },
       to: (m.to_list as Address[]) ?? [],
       cc: (m.cc_list as Address[]) ?? [],
@@ -261,11 +268,17 @@ export async function changeTicket(idOrNumber: string, actor: string, change: Ac
     const team = await teamPeople();
     if (!team.some((p) => p.email === change.to!.toLowerCase())) throw new TicketActionError("Only a teammate can be assigned");
   }
-  const c = act(t, change, who);
-  if (!c) return;
-  await dbTicketStore.updateTicket(t.id, { ...c.patch, last_activity_at: new Date().toISOString() } as Partial<TicketRow>);
-  await dbTicketStore.addEvents(t.id, c.events);
-  await markSeen(t.id, who);
+  // Re-read and retry if the sync changed the ticket in between (nobody's change is overwritten).
+  for (let i = 0, cur: TicketRow | null = t; i < 4 && cur; i++, cur = await dbTicketStore.getTicket(t.id)) {
+    const c = act(cur, change, who);
+    if (!c) return;
+    if (await dbTicketStore.updateTicket(cur.id, { ...c.patch, last_activity_at: new Date().toISOString() } as Partial<TicketRow>, cur.updated_at)) {
+      await dbTicketStore.addEvents(cur.id, c.events);
+      await markSeen(cur.id, who);
+      return;
+    }
+  }
+  throw new TicketActionError("The ticket changed while saving. Try again.", 409);
 }
 
 /** An internal note, with @mentions of teammates. */
@@ -322,8 +335,9 @@ export async function removeTicket(idOrNumber: string, actor: string, admin: boo
 export async function mailboxesPage(me: string, admin: boolean): Promise<MailboxesPage> {
   const meL = me.toLowerCase();
   const cfg = oauthConfig();
+  const missing = [...(cfg ? [] : ["TICKETS_GOOGLE_CLIENT_ID", "TICKETS_GOOGLE_CLIENT_SECRET"]), ...(tokenKeySet() ? [] : ["OS_TICKETS_TOKEN_KEY"])];
   const base: MailboxesPage = {
-    ready: true, googleConfigured: !!cfg, callback: `${publicOrigin()}${CALLBACK_PATH}`, mailboxes: [], team: [], me: meL, admin,
+    ready: true, googleConfigured: !missing.length, missing, callback: `${publicOrigin()}${CALLBACK_PATH}`, mailboxes: [], team: [], me: meL, admin,
   };
   const [team, res] = await Promise.all([teamPeople(), osTable("os_ticket_mailboxes").select("email, name, connected_by, state, connected_at, last_ok_at, last_error, backfill_done_at")]);
   if (res.error) return MISSING.test(res.error.message) ? { ...base, ready: false, setup: SETUP_MIGRATION, team: team.map((p) => ({ ...p, connected: false })) } : Promise.reject(new Error(res.error.message));
@@ -353,7 +367,7 @@ export async function saveMailbox(input: { email: string; name: string | null; r
     email,
     name: input.name,
     connected_by: input.connectedBy.toLowerCase(),
-    token_enc: sealToken(input.refreshToken),
+    token_enc: sealToken(input.refreshToken, email),
     scope: input.scope,
     state: (had as MailboxRow | null)?.backfill_done_at ? "ok" : "syncing",
     last_error: null,
@@ -374,7 +388,7 @@ export async function disconnectMailbox(email: string, actor: string, admin: boo
   if (!admin && e !== actor.toLowerCase() && row.connected_by.toLowerCase() !== actor.toLowerCase()) {
     throw new TicketActionError("Only the inbox's owner or an admin can disconnect it", 403);
   }
-  const token = openToken(row.token_enc);
+  const token = openToken(row.token_enc, e);
   if (token) await revokeToken(token);
   const { error } = await osTable("os_ticket_mailboxes").update({ token_enc: null, state: "paused", updated_at: new Date().toISOString() }).eq("email", e);
   if (error) throw new Error(error.message);

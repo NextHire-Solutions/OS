@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS public.os_ticket_messages (
   ticket_id    uuid NOT NULL REFERENCES public.os_tickets(id) ON DELETE CASCADE,
   rfc_id       text NOT NULL,
   direction    text NOT NULL CHECK (direction IN ('in', 'out')),
+  trimmed      boolean NOT NULL DEFAULT false,
   from_email   citext,
   from_name    text,
   to_list      jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -102,6 +103,8 @@ CREATE TABLE IF NOT EXISTS public.os_ticket_messages (
   sent_at      timestamptz NOT NULL,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
+-- For a database that ran an earlier draft of this file.
+ALTER TABLE public.os_ticket_messages ADD COLUMN IF NOT EXISTS trimmed boolean NOT NULL DEFAULT false;
 CREATE UNIQUE INDEX IF NOT EXISTS os_ticket_messages_rfc ON public.os_ticket_messages (rfc_id);
 CREATE INDEX IF NOT EXISTS os_ticket_messages_ticket ON public.os_ticket_messages (ticket_id, sent_at);
 

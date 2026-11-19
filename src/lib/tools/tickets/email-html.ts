@@ -38,11 +38,15 @@ details.tkq[open]>summary{margin-bottom:.6em}
 img.tk-blocked{display:inline-block;min-width:16px;min-height:16px;background:#f3f4f6;outline:1px dashed #d6dae0;outline-offset:-1px}
 `;
 
-/** The frame's policy: nothing runs; images only from the email itself (and the web once allowed). */
+/**
+ * The frame's policy: nothing runs; images only from the email itself — through the attachment route and nothing
+ * else of the OS (review, 20 Nov: a relative <img src="/…"> would otherwise call the OS with the viewer's cookies) —
+ * and the web once allowed.
+ */
 export function frameCsp(origin: string, showImages: boolean): string {
   return [
     "default-src 'none'",
-    `img-src data: ${origin}${showImages ? " https: http:" : ""}`,
+    `img-src data: ${origin}/api/tools/tickets/attachment${showImages ? " https: http:" : ""}`,
     "style-src 'unsafe-inline'",
     `font-src data:${showImages ? " https:" : ""}`,
   ].join("; ");
@@ -80,14 +84,20 @@ export function prepareEmail(opts: { html: string | null; text: string | null; m
         const part = cid.get(src.slice(4).replace(/^<|>$/g, "").toLowerCase());
         if (part) img.setAttribute("src", `${opts.origin}/api/tools/tickets/attachment?m=${encodeURIComponent(opts.messageId)}&p=${encodeURIComponent(part)}&inline=1`);
         else img.removeAttribute("src");
-      } else if (/^https?:/i.test(src) && !opts.showImages) {
+      } else if (/^https?:\/\//i.test(src)) {
+        if (!opts.showImages) {
+          img.removeAttribute("src");
+          img.removeAttribute("srcset");
+          img.classList.add("tk-blocked");
+          const w = Number(img.getAttribute("width"));
+          const h = Number(img.getAttribute("height"));
+          if (w <= 2 && h <= 2 && (w || h)) img.remove(); // a tracking pixel: not even a placeholder
+          blocked++;
+        }
+      } else if (!/^data:image\//i.test(src)) {
+        // Relative, protocol-relative or anything else: never fetched.
         img.removeAttribute("src");
         img.removeAttribute("srcset");
-        img.classList.add("tk-blocked");
-        const w = Number(img.getAttribute("width"));
-        const h = Number(img.getAttribute("height"));
-        if (w <= 2 && h <= 2 && (w || h)) img.remove(); // a tracking pixel: not even a placeholder
-        blocked++;
       }
     }
     if (!opts.showImages) {

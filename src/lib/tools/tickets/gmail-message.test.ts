@@ -106,3 +106,24 @@ test("a text/plain part sent as an attachment is an attachment, not the body", (
 test("htmlToText keeps lines, drops styles and tags", () => {
   assert.equal(htmlToText("<style>p{}</style><p>Hi&nbsp;there</p><div>Line<br>two</div>"), "Hi there\nLine\ntwo");
 });
+
+test("REVIEW 1: encoded words are decoded only inside a display name, after splitting", () => {
+  assert.deepEqual(parseAddressList("=?utf-8?Q?john@client.com=2C?= <attacker@evil.com>"), [{ email: "attacker@evil.com", name: "john@client.com," }]);
+  assert.deepEqual(parseAddressList("=?utf-8?Q?Caf=C3=A9_Team?= <team@cafe.com>"), [{ email: "team@cafe.com", name: "Café Team" }]);
+  assert.deepEqual(parseAddressList("=?utf-8?Q?john@client.com?="), [], "an encoded word where only an address may stand");
+});
+
+test("Gmail's sender verdict: only mx.google.com's header counts; DMARC, or DKIM/SPF aligned with the From", async () => {
+  const { parseAuth, senderVerified } = await import("./gmail-message.ts");
+  const h = (v: string) => [{ name: "Authentication-Results", value: v }];
+  assert.equal(senderVerified("a@client.com", parseAuth(h("mx.google.com; dkim=pass header.i=@client.com; spf=pass smtp.mailfrom=a@client.com; dmarc=pass header.from=client.com"))), true);
+  assert.equal(senderVerified("a@client.com", parseAuth(h("mx.google.com; dkim=pass header.i=@mail.client.com; spf=neutral"))), true, "DKIM from a subdomain aligns");
+  assert.equal(senderVerified("a@client.com", parseAuth(h("mx.google.com; dkim=pass header.i=@sendgrid.net; spf=pass smtp.mailfrom=bounce@sendgrid.net"))), false, "a third party's signature is not the client's");
+  assert.equal(senderVerified("a@client.com", parseAuth(h("evil.example; dmarc=pass"))), false, "a header the sender wrote doesn't count");
+  assert.equal(senderVerified("a@client.com", parseAuth([])), false);
+});
+
+test("REVIEW 2: NUL characters never survive into stored text", async () => {
+  const { stripNul } = await import("./gmail-message.ts");
+  assert.equal(stripNul("a\u0000b\u0000"), "ab");
+});

@@ -54,6 +54,7 @@ export function TicketsScreen() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const rowsRef = useRef<HTMLDivElement | null>(null);
   const req = useRef(0);
+  const rowsCount = useRef(0);
   const now = useNow();
   const people = usePeople(data?.team ?? []);
 
@@ -86,7 +87,8 @@ export function TicketsScreen() {
     const n = ++req.current;
     if (!quiet) setLoading(true);
     try {
-      const p = new URLSearchParams({ view });
+      // A refresh keeps every row already shown ("Show more" included); a new view starts at one page.
+      const p = new URLSearchParams({ view, limit: String(quiet ? Math.min(500, Math.max(100, rowsCount.current)) : 100) });
       if (debounced) p.set("q", debounced);
       if (client) p.set("client", client);
       if (mailbox) p.set("mailbox", mailbox);
@@ -106,6 +108,7 @@ export function TicketsScreen() {
   }, [view, debounced, client, mailbox]);
 
   useEffect(() => { if (ready) void load(); }, [ready, load]);
+  useEffect(() => { rowsCount.current = rows.length; }, [rows]);
 
   // Live: every 20 seconds while visible, and at once on coming back to the tab.
   useEffect(() => {
@@ -118,12 +121,14 @@ export function TicketsScreen() {
 
   const loadMore = async () => {
     if (!data) return;
+    const n = req.current;
     const p = new URLSearchParams({ view, offset: String(rows.length) });
     if (debounced) p.set("q", debounced);
     if (client) p.set("client", client);
     if (mailbox) p.set("mailbox", mailbox);
     try {
       const d = await api<TicketList>(`/api/tools/tickets?${p}`);
+      if (n !== req.current) return; // the view changed meanwhile: these rows belong to another list
       setRows((cur) => [...cur, ...d.rows.filter((r) => !cur.some((c) => c.id === r.id))]);
     } catch { /* the button stays */ }
   };
@@ -155,13 +160,16 @@ export function TicketsScreen() {
       else if (k === "/") { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); }
       else if (k === "?") { e.preventDefault(); setKeysOpen(true); }
       else if (k === "Escape" && selected) { e.preventDefault(); open(null); }
-      else if (k === "Enter" && !selected && rows[0]) { e.preventDefault(); open(rows[0].number); }
+      else if (k === "Enter" && !selected && rows[0] && !(e.target as HTMLElement | null)?.closest?.("button, a, select, [role=button]")) { e.preventDefault(); open(rows[0].number); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [move, selected, rows, open]);
 
-  const onChanged = useCallback(() => { void load(true); }, [load]);
+  // Stable for the open ticket: a new search or view must not reset it (and lose a half-written note).
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; }, [load]);
+  const onChanged = useCallback(() => { void loadRef.current(true); }, []);
   const counts = data?.counts ?? {};
   const connected = (data?.mailboxes ?? []).filter((m) => m.state !== "paused");
   const coverageTeam = (data?.team ?? []);

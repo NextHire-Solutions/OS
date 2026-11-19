@@ -308,3 +308,5 @@ a.tk-client:hover { background: var(--ds-brand-soft); color: var(--ds-brand-ink)
 @media (prefers-reduced-motion: reduce) {
   .tk-pop, .tk-skel i, .tk-state.syncing i { animation: none; }
 }
+.tk-trimmed { margin: 0 16px 8px 59px; font-size: 12px; color: var(--ds-faint); }
+@container tk (max-width: 720px) { .tk-trimmed { margin-left: 16px; } }
