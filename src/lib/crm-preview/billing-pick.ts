@@ -19,10 +19,25 @@ export type BillingPick =
   | { ok: true; customer: string }
   | { ok: false; reason: "no-billing" | "shared" | "ambiguous" };
 
+/**
+ * The clients that MAY open Stripe's billing page on a customer they share with another client — by name, and only
+ * on the user's word. Stripe's page then shows everything on that customer, the other client's plan, invoices and the
+ * card included, and lets them be changed.
+ *
+ *   Douglas Elliman Las Vegas (19 Nov; it asked for "Manage billing"; the user: "Turn it on anyway, if one person
+ *   manages billing for both offices"). Its customer "Douglas Elliman Real Estate" also pays for Douglas Elliman Los
+ *   Angeles, which is NOT on this list (its button stays off). Its Billing page still lists only its own invoices.
+ */
+export const SHARED_BILLING_OPEN: ReadonlySet<string> = new Set([
+  "7fb537e9-19ef-4ed5-853c-7333356cf424", // Douglas Elliman Las Vegas (its os_clients id — billing is keyed by it, not the portal id)
+]);
+
 export function pickBillingCustomer(
   account: Pick<ClientBilling, "clientId" | "subscriptions" | "customers"> | null | undefined,
   /** Every client's billing (getAccountBilling().byClient): a customer any OTHER client has a subscription on, or claims, is never opened. */
   everyone: Iterable<Pick<ClientBilling, "clientId" | "subscriptions" | "customers">> = [],
+  /** Clients allowed to open a shared customer anyway (SHARED_BILLING_OPEN); empty = the plain rule. */
+  openShared: ReadonlySet<string> = SHARED_BILLING_OPEN,
 ): BillingPick {
   if (!account || (!account.customers.length && !account.subscriptions.length)) return { ok: false, reason: "no-billing" };
   const current = account.subscriptions.find((s) => s.current);
@@ -30,7 +45,8 @@ export function pickBillingCustomer(
   if (!customer) return { ok: false, reason: account.customers.length ? "ambiguous" : "no-billing" };
   const claim = account.customers.find((c) => c.id === customer);
   if (!claim) return { ok: false, reason: "ambiguous" };
-  if (claim.shared) return { ok: false, reason: "shared" };
+  const allowed = openShared.has(account.clientId);
+  if (claim.shared) return allowed ? { ok: true, customer } : { ok: false, reason: "shared" };
   /*
    * "shared" is only "claimed by two clients". A subscription linked to
    * another client by hand, on a customer that client was excluded from,
@@ -40,7 +56,7 @@ export function pickBillingCustomer(
    */
   for (const other of everyone) {
     if (other.clientId === account.clientId) continue;
-    if (other.subscriptions.some((s) => s.customer === customer) || other.customers.some((c) => c.id === customer)) return { ok: false, reason: "shared" };
+    if (other.subscriptions.some((s) => s.customer === customer) || other.customers.some((c) => c.id === customer)) return allowed ? { ok: true, customer } : { ok: false, reason: "shared" };
   }
   return { ok: true, customer };
 }
@@ -53,13 +69,14 @@ export function pickBillingCustomer(
  *   - the customer is the client's alone: every invoice on it, and "Manage billing" opens it (manage: true);
  *   - the customer is shared: only invoices of the client's OWN subscriptions — owned by a person's link, the
  *     client's record, or the OS having made it for them, never by guess — and no other client's (manage: false:
- *     card and plan changes go through our team). Invoices with no subscription on a shared customer (a one-off)
- *     are no one's to show;
+ *     card and plan changes go through our team; manage: true for a client on SHARED_BILLING_OPEN, whose list is
+ *     still its own). Invoices with no subscription on a shared customer (a one-off) are no one's to show;
  *   - otherwise the Billing link's refusal.
  */
 export type InvoiceScope =
   | { ok: true; manage: true; customer: string }
-  | { ok: true; manage: false; subscriptions: string[] }
+  /** A shared customer: the client's own subscriptions; `manage` only for a client on SHARED_BILLING_OPEN. */
+  | { ok: true; manage: boolean; subscriptions: string[] }
   | { ok: false; reason: "no-billing" | "shared" | "ambiguous" };
 
 const OWNED = new Set(["linked", "record", "created by the OS"]);
@@ -67,14 +84,16 @@ const OWNED = new Set(["linked", "record", "created by the OS"]);
 export function invoiceScope(
   account: Pick<ClientBilling, "clientId" | "subscriptions" | "customers"> | null | undefined,
   everyone: Iterable<Pick<ClientBilling, "clientId" | "subscriptions" | "customers">> = [],
+  openShared: ReadonlySet<string> = SHARED_BILLING_OPEN,
 ): InvoiceScope {
   const others = [...everyone].filter((o) => o.clientId !== account?.clientId);
-  const pick = pickBillingCustomer(account, others);
+  // Whether the customer is shared at all — asked WITHOUT the allow list, so the invoice list stays the client's own.
+  const pick = pickBillingCustomer(account, others, new Set());
   if (pick.ok) return { ok: true, manage: true, customer: pick.customer };
   if (pick.reason !== "shared" || !account) return pick;
   const theirs = new Set(others.flatMap((o) => o.subscriptions.map((s) => s.id)));
   const mine = account.subscriptions.filter((s) => OWNED.has(s.source) && !theirs.has(s.id)).map((s) => s.id);
-  return mine.length ? { ok: true, manage: false, subscriptions: mine } : { ok: false, reason: "shared" };
+  return mine.length ? { ok: true, manage: openShared.has(account.clientId), subscriptions: mine } : { ok: false, reason: "shared" };
 }
 
 /** What the person sees when the page cannot be opened. */

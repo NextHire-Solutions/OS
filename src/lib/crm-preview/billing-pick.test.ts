@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { BILLING_REFUSAL, invoiceScope, pickBillingCustomer } from "./billing-pick.ts";
+import { BILLING_REFUSAL, SHARED_BILLING_OPEN, invoiceScope, pickBillingCustomer } from "./billing-pick.ts";
 
 /* The portal's Billing link opens only a Stripe customer that is the client's alone (19 Oct). */
 
@@ -86,4 +86,34 @@ test("the page: a subscription the client only got by guess (the card's first cl
 test("the page: the Billing link's other refusals stand (no billing, ambiguous)", () => {
   assert.deepEqual(invoiceScope(undefined), { ok: false, reason: "no-billing" });
   assert.deepEqual(invoiceScope({ clientId: "me", subscriptions: [], customers: [cus("c1"), cus("c2")] }), { ok: false, reason: "ambiguous" });
+});
+
+/* 19 Nov, the user: "Turn it on anyway, if one person manages billing for both offices" — Douglas Elliman Las Vegas. */
+const LV = "7fb537e9-19ef-4ed5-853c-7333356cf424"; // os_clients id, as billing keys it
+
+test("Douglas Elliman Las Vegas — and only it — may open the shared customer's Stripe page", () => {
+  assert.deepEqual([...SHARED_BILLING_OPEN], [LV]);
+  const lv = { clientId: LV, subscriptions: [own("sub_lv", "cus_de", true)], customers: [cus("cus_de", true)] };
+  const la = { clientId: "la", subscriptions: [own("sub_la", "cus_de", true)], customers: [cus("cus_de", true)] };
+  assert.deepEqual(pickBillingCustomer(lv, [lv, la]), { ok: true, customer: "cus_de" }, "Las Vegas: opened");
+  assert.deepEqual(pickBillingCustomer(la, [lv, la]), { ok: false, reason: "shared" }, "Los Angeles: still refused");
+  // Also when the customer is not marked shared but another client pays through it.
+  const lv2 = { clientId: LV, subscriptions: [own("sub_lv", "cus_de", true)], customers: [cus("cus_de")] };
+  assert.deepEqual(pickBillingCustomer(lv2, [lv2, la]), { ok: true, customer: "cus_de" });
+  // Any other shared customer (Raintown + JPAR) is still refused.
+  assert.deepEqual(pickBillingCustomer({ clientId: "rt", subscriptions: [sub("s_rt", "cus_rj", true)], customers: [cus("cus_rj", true)] }), { ok: false, reason: "shared" });
+});
+
+test("its Billing page shows Manage billing, but still lists only Las Vegas's own invoices (never Los Angeles's)", () => {
+  const lv = { clientId: LV, subscriptions: [own("sub_lv", "cus_de", true)], customers: [cus("cus_de", true)] };
+  const la = { clientId: "la", subscriptions: [own("sub_la", "cus_de", true)], customers: [cus("cus_de", true)] };
+  assert.deepEqual(invoiceScope(lv, [lv, la]), { ok: true, manage: true, subscriptions: ["sub_lv"] });
+  assert.deepEqual(invoiceScope(la, [lv, la]), { ok: true, manage: false, subscriptions: ["sub_la"] });
+});
+
+test("with no allow list the plain rule holds (what the list adds is only that one client)", () => {
+  const lv = { clientId: LV, subscriptions: [own("sub_lv", "cus_de", true)], customers: [cus("cus_de", true)] };
+  const la = { clientId: "la", subscriptions: [own("sub_la", "cus_de", true)], customers: [cus("cus_de", true)] };
+  assert.deepEqual(pickBillingCustomer(lv, [lv, la], new Set()), { ok: false, reason: "shared" });
+  assert.deepEqual(invoiceScope(lv, [lv, la], new Set()), { ok: true, manage: false, subscriptions: ["sub_lv"] });
 });
