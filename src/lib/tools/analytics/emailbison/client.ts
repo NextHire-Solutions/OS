@@ -5,6 +5,8 @@ import { assertApplied, EmailBisonApiError } from "./errors.ts";
 export { EmailBisonApiError } from "./errors.ts";
 import type {
   EBCampaign,
+  EBCampaignLeadRow,
+  EBCampaignSchedule,
   EBCampaignStats,
   EBConversationThread,
   EBDailySeriesResponse,
@@ -407,6 +409,67 @@ export class EmailBisonClient {
       `/api/campaigns/${campaignId}/leads/attach-leads`,
       { method: "POST", body: JSON.stringify({ lead_ids: leadIds }) },
     );
+  }
+
+  /**
+   * One page of a campaign's leads BY NUMBER (15 rows), with the page count —
+   * so many pages can be read at once (Duplicate & Renew: 4,668 leads in 12 s
+   * against ~95 s by cursor). Page numbers stop at 1,000 (15,000 leads): the
+   * caller falls back to the cursor walk past that. Each row carries the lead's
+   * own status and a `lead_campaign_data` row per campaign it is on.
+   */
+  async getCampaignLeadsPage(campaignId: number, page: number): Promise<{ rows: EBCampaignLeadRow[]; lastPage: number; total: number }> {
+    const response = await this.request<Paginated<EBCampaignLeadRow>>(`/api/campaigns/${campaignId}/leads?page=${page}`);
+    return {
+      rows: response?.data ?? [],
+      lastPage: Number(response?.meta?.last_page ?? 1),
+      total: Number(response?.meta?.total ?? 0),
+    };
+  }
+
+  /**
+   * One page of a campaign's inboxes BY NUMBER (15 rows), with the page count —
+   * read many at once: LIV Indy's 1,769 inboxes in 4.4 s against 29 s by
+   * cursor (measured 19 Nov, same 1,769 ids either way).
+   */
+  async getCampaignSenderEmailsPage(campaignId: number, page: number): Promise<{ rows: EBSenderEmail[]; lastPage: number; total: number }> {
+    const response = await this.request<Paginated<EBSenderEmail>>(`/api/campaigns/${campaignId}/sender-emails?page=${page}`);
+    return {
+      rows: response?.data ?? [],
+      lastPage: Number(response?.meta?.last_page ?? 1),
+      total: Number(response?.meta?.total ?? 0),
+    };
+  }
+
+  /** Every lead row of a campaign by cursor — for campaigns past page-number reach. */
+  async getAllCampaignLeadRows(campaignId: number): Promise<EBCampaignLeadRow[]> {
+    return this.fetchAllPages<EBCampaignLeadRow>(`/api/campaigns/${campaignId}/leads`);
+  }
+
+  /**
+   * EmailBison's own MOVE: the leads stop on `fromId` (their row there stays,
+   * reading stopped / stopped_moved_another_campaign — history kept) and start
+   * on `toId`. Measured 19 Nov on throwaways: works from a running or a paused
+   * campaign into a draft; repeating it is harmless. A lead that is ALSO In
+   * Sequence on a third campaign is stopped on `fromId` and NOT added to
+   * `toId` — callers must leave those leads out (renew/leads.ts).
+   */
+  async moveLeadsToCampaign(fromId: number, toId: number, leadIds: number[]) {
+    return this.request<{ data?: { success?: boolean; message?: string } }>(
+      `/api/campaigns/${fromId}/leads/move-to-another-campaign`,
+      { method: "POST", body: JSON.stringify({ target_campaign_id: toId, lead_ids: leadIds }) },
+    );
+  }
+
+  /** A campaign's sending schedule: days, start/end time, timezone. */
+  async getCampaignSchedule(campaignId: number): Promise<EBCampaignSchedule | null> {
+    const response = await this.request<{ data?: EBCampaignSchedule | null }>(`/api/campaigns/${campaignId}/schedule`);
+    return response?.data ?? null;
+  }
+
+  /** Every campaign whose name contains `term` (EmailBison's own search, all pages). */
+  async searchCampaigns(term: string): Promise<EBCampaign[]> {
+    return this.fetchAllPages<EBCampaign>("/api/campaigns", { search: term });
   }
 
   /** Attaches a whole lead list. */

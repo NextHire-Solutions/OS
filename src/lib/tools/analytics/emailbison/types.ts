@@ -245,6 +245,38 @@ export interface EBLead {
 }
 
 /**
+ * One row of `/api/campaigns/{id}/leads`: the lead, its own status, and a row
+ * per campaign it is on with ITS status there (in_sequence, sending_paused,
+ * sequence_finished, stopped + status_reason, …). Read 19 Nov.
+ */
+export interface EBCampaignLeadRow {
+  id: number;
+  email?: string | null;
+  status?: string | null;
+  lead_campaign_data?: Array<{
+    campaign_id: number | string;
+    status?: string | null;
+    status_reason?: string | null;
+    emails_sent?: number | null;
+  }> | null;
+}
+
+/** `/api/campaigns/{id}/schedule`: the days it sends on, its window and timezone. */
+export interface EBCampaignSchedule {
+  monday?: boolean;
+  tuesday?: boolean;
+  wednesday?: boolean;
+  thursday?: boolean;
+  friday?: boolean;
+  saturday?: boolean;
+  sunday?: boolean;
+  /** "08:00:00" */
+  start_time?: string | null;
+  end_time?: string | null;
+  timezone?: string | null;
+}
+
+/**
  * One sent email from `/api/scheduled-emails?status=sent`.
  *
  * The nested `lead` is the whole lead record — probed on 150 rows, every one

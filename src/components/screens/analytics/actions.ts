@@ -539,6 +539,14 @@ export async function reCampaign(
   );
 }
 
+/** Duplicate & Renew (19 Nov): GET = the review (or `?job=` its progress), POST = start it. */
+export const RENEW_URL = (id: string) => `${BASE}/campaigns/${id}/renew`;
+
+/** Starts a renewal on the server with the review's token; answers with the job to follow. 409 = one is already running. */
+export async function startRenew(id: string, token: string, poolIds: number[]): Promise<{ ok: boolean; status: number; body: { jobId?: string; error?: string } }> {
+  return sendRaw<{ jobId?: string }>(RENEW_URL(id), json("POST", { token, poolIds, confirm: true }));
+}
+
 export interface FanOutSummary {
   created: number;
   failed: number;

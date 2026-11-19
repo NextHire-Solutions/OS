@@ -25,6 +25,7 @@ import { FanOutDialog } from "./fan-out-dialog";
 import { LaunchTab } from "./launch-tab";
 import { PushSequenceDialog } from "./push-sequence-dialog";
 import { ReCampaignDialog } from "./re-campaign-dialog";
+import { RenewDialog } from "./renew-dialog";
 import { SequenceEditor, type EditableStep } from "./sequence-editor";
 import { Bar, Box, EmptyRow, LoadError, Seg } from "./shared";
 import { Btn, ConfirmButton, Toast, useToast } from "./toast";
@@ -469,6 +470,7 @@ function Sequence({
   const [copying, setCopying] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [reCampaigning, setReCampaigning] = useState(false);
+  const [renewing, setRenewing] = useState(false);
   const [fanningOut, setFanningOut] = useState(false);
   const deploy = useBulkDeploy(onChanged);
   /*
@@ -559,6 +561,8 @@ function Sequence({
           is what it copies — EmailBison's own duplicate carries the sequence
           and nothing else, which is the gap this closes. */}
       <Btn disabled={ebOnly} title={ebTitle} onClick={() => setReCampaigning(true)}>Re-campaign…</Btn>
+      {/* Duplicate & Renew (19 Nov): renames this round with its number and starts the next one as a draft. */}
+      <Btn data-renew-open disabled={ebOnly} title={ebTitle} onClick={() => setRenewing(true)}>Duplicate &amp; Renew…</Btn>
       <Btn disabled={ebOnly} title={ebTitle} onClick={() => setFanningOut(true)}>For multiple clients…</Btn>
       <Btn
         disabled={ebOnly || templating || template === undefined || template?.campaignId === campaignId}
@@ -578,6 +582,13 @@ function Sequence({
         open={reCampaigning}
         onOpenChange={setReCampaigning}
         onCreated={onChanged}
+      />
+      <RenewDialog
+        campaignId={campaignId}
+        campaignName={campaignName}
+        open={renewing}
+        onOpenChange={setRenewing}
+        onFinished={onChanged}
       />
       <FanOutDialog
         campaignId={campaignId}

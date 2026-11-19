@@ -26,6 +26,7 @@ import {
 import { AssignInboxesDialog } from "./assign-inboxes-dialog";
 import { CapacityStrip } from "./capacity-strip";
 import { ReCampaignDialog } from "./re-campaign-dialog";
+import { RenewDialog } from "./renew-dialog";
 import { Bar, Box, EmptyRow, LoadError, Pager, Search, Seg, SortHeader, sortRows, useDebounced, useSort } from "./shared";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn, ConfirmButton, Toast, useToast } from "./toast";
@@ -155,6 +156,9 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
   const [busy, setBusy] = useState(false);
   const [assigningInboxes, setAssigningInboxes] = useState(false);
   const [reCampaigning, setReCampaigning] = useState(false);
+  // The campaign being renewed, kept here (review, 19 Nov): the list reloads when a renewal ends, and the window
+  // must not vanish with its result if the row leaves the page or the search.
+  const [renewTarget, setRenewTarget] = useState<{ id: string; name: string } | null>(null);
   const { toast, show } = useToast();
   const { sort, toggle } = useSort();
 
@@ -434,6 +438,19 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
           >
             Re-campaign
           </Btn>
+          {/*
+            Duplicate & Renew (BrokerStaffer spec, 19 Nov): the round turned over in one click —
+            the campaign takes the next number, a draft copy with the original name gets its
+            healthy inboxes, ZF tag and leads. One campaign at a time, EmailBison only.
+          */}
+          <Btn
+            data-renew-open
+            disabled={busy || selected.size !== 1 || emailBisonSelection.length !== 1}
+            title={selected.size !== 1 ? "Select exactly one campaign to renew it" : emailBisonSelection.length !== 1 ? "Duplicate & Renew is EmailBison only" : undefined}
+            onClick={() => { if (chosen.length === 1) setRenewTarget({ id: chosen[0].id, name: chosen[0].name }); }}
+          >
+            Duplicate &amp; Renew
+          </Btn>
           <Btn onClick={() => setSelected(new Set())}>Clear</Btn>
         </div>
       ) : null}
@@ -460,6 +477,15 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
           open={reCampaigning}
           onOpenChange={setReCampaigning}
           onCreated={() => void reload()}
+        />
+      ) : null}
+      {renewTarget ? (
+        <RenewDialog
+          campaignId={renewTarget.id}
+          campaignName={renewTarget.name}
+          open
+          onOpenChange={(o) => { if (!o) setRenewTarget(null); }}
+          onFinished={() => void reload()}
         />
       ) : null}
 
