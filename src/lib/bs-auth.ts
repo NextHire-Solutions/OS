@@ -62,7 +62,9 @@
 export type ToolId =
   | "inbox" | "portals" | "clients" | "analytics" | "search" | "onboarding"
   // Their own switches on Team access since 15 Oct (Eddy: "all products should be on settings").
-  | "roster" | "commissions" | "performance" | "campaigns" | "inboxes";
+  | "roster" | "commissions" | "performance" | "campaigns" | "inboxes"
+  // Tickets (20 Nov): client emails in the team's Gmail, shared and tracked.
+  | "tickets";
 
 /*
  * Adding a tool here is backward compatible on purpose: `grants` is intersected
@@ -99,6 +101,11 @@ export const ALL_TOOLS: readonly ToolId[] = [
   "performance",
   "campaigns",
   "inboxes",
+  /*
+   * Tickets (20 Nov, the user: "one tickets section in OS where I can see emails that come in our team's inbox").
+   * Its own switch, off for everyone but admins until Eddy turns it on for someone (team-access rule, 15 Oct).
+   */
+  "tickets",
 ];
 
 export interface SsoSession {

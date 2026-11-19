@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 
 import { ttlCache } from "@/lib/cache/ttl";
+import { osTable } from "@/lib/clients/os-db";
 import { getMasterInboxSupabase, workspaceId } from "@/lib/tools/master-inbox/supabase";
 import { loadViewBySlug, loadViewCounts } from "@/lib/tools/master-inbox/inbox/views";
 
@@ -50,7 +51,7 @@ import { loadViewBySlug, loadViewCounts } from "@/lib/tools/master-inbox/inbox/v
  * signature to type aliases but never to interfaces — so the interface form
  * failed to assign, with a message that reads like a missing property.
  */
-export type RailBadges = Partial<Record<"inbox-unread" | "reminders", number>>;
+export type RailBadges = Partial<Record<"inbox-unread" | "reminders" | "tickets-open", number>>;
 
 async function fetchBadges(): Promise<RailBadges> {
   try {
@@ -82,6 +83,9 @@ async function fetchBadges(): Promise<RailBadges> {
     if (!reminders.error && typeof reminders.count === "number" && reminders.count > 0) {
       out.reminders = reminders.count;
     }
+    // Tickets (20 Nov): conversations where a client is waiting on us. Absent until migration 0053 has run.
+    const open = await osTable("os_tickets").select("id", { count: "exact", head: true }).eq("status", "open").then((r) => r, () => null);
+    if (open && !open.error && typeof open.count === "number" && open.count > 0) out["tickets-open"] = open.count;
     return out;
   } catch {
     /*

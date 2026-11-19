@@ -79,6 +79,14 @@ export const OS_TABLES = [
   // see migrations/0047_portal_chat.sql.
   "os_portal_chat_threads",
   "os_portal_chat_messages",
+  // Tickets: client emails in the team's Gmail, shared and tracked — see migrations/0053_tickets.sql.
+  "os_ticket_mailboxes",
+  "os_tickets",
+  "os_ticket_messages",
+  "os_ticket_copies",
+  "os_ticket_events",
+  "os_ticket_reads",
+  "os_ticket_blocks",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

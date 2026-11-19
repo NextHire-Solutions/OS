@@ -40,6 +40,8 @@ const SCREEN_PREFIX: Record<string, ToolId> = {
   // Onboarding has no screens since 9 Oct: an old /onboarding link opens Home
   // for everyone rather than "no access". Its API stays gated (below).
   search: "search",
+  // Tickets (20 Nov): its screens and its API share the name.
+  tickets: "tickets",
 };
 
 /*
@@ -55,6 +57,7 @@ const API_SEGMENT: Record<string, ToolId> = {
   analytics: "analytics",
   onboarding: "onboarding",
   "agent-search": "search",
+  tickets: "tickets",
 };
 
 /**

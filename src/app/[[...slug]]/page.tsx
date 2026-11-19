@@ -34,6 +34,8 @@ import { PortalDetail } from "@/components/screens/master-inbox/portal-detail";
 import { RemindersScreen } from "@/components/screens/master-inbox/reminders";
 import { MasterInboxSettingsScreen } from "@/components/screens/master-inbox/settings";
 import { PortalsAdminScreen } from "@/components/screens/master-inbox/portals";
+import { TicketsScreen } from "@/components/screens/tickets/tickets";
+import { TicketsInboxesScreen } from "@/components/screens/tickets/inboxes";
 import { ClientsScreen, ToolClientView } from "@/components/screens/clients";
 import { CommissionsScreen } from "@/components/screens/commissions";
 import { DiscrepanciesScreen } from "@/components/screens/discrepancies";
@@ -479,6 +481,12 @@ export default async function WorkspacePage({
          * drill-down into one of them. (Both were under /inbox until 13 Oct,
          * when Client Portals became a product of its own.)
          */
+        /*
+         * Tickets (20 Nov): client emails in the team's Gmail. Both screens fetch their own data (it is live:
+         * the list refreshes every 20 seconds), so nothing is loaded here.
+         */
+        "tickets:list": <TicketsScreen />,
+        "tickets:inboxes": <TicketsInboxesScreen />,
         "portals:list": (() => {
           // Only when the URL really is /portals/<clientId>. Same lesson as
           // threadIdFrom above: this screen renders on every request.
