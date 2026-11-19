@@ -35,21 +35,21 @@ test("a PAUSED old campaign: its In Sequence leads read sending_paused and are s
   assert.deepEqual(plan.move, [1, 2]);
 });
 
-test("a lead still being emailed by ANOTHER campaign is left out before any call: never moved (it would drop out of both)", () => {
+test("the user, 19 Nov: a lead another campaign is also emailing is moved/copied too, and counted as such", () => {
   const plan = planLeads(OLD, [
     lead(1, "in_sequence", [[900, "in_sequence"]]),
     lead(2, "sequence_finished", [[901, "in_sequence"], [902, "in_sequence"]]),
     lead(3, "in_sequence", [[903, "sequence_finished"], [904, "stopped"]]),
   ]);
-  assert.deepEqual(plan.move, [3], "finished or stopped elsewhere does not block");
-  assert.deepEqual(plan.copy, []);
+  assert.deepEqual(plan.move, [1, 3]);
+  assert.deepEqual(plan.copy, [2]);
   assert.deepEqual(plan.busy, { move: 1, copy: 1, examples: [{ id: 1, email: "l1@x.com", campaignIds: [900] }, { id: 2, email: "l2@x.com", campaignIds: [901, 902] }] });
 });
 
-test("a lead paused part-way on another campaign does NOT block (EmailBison: paused campaigns don't count)", () => {
+test("a lead paused part-way on another campaign is not counted as busy (EmailBison: paused campaigns don't count)", () => {
   const plan = planLeads(OLD, [lead(1, "sequence_finished", [[900, "sending_paused"]])]);
   assert.deepEqual(plan.copy, [1]);
-  assert.equal(plan.busy.copy, 0);
+  assert.equal(plan.busy.copy, 0, "paused elsewhere is not counted as being emailed");
 });
 
 test("a bounced or unsubscribed lead is left whatever it reads here", () => {
@@ -70,6 +70,7 @@ test("statuses are read case- and space-insensitively; campaign ids may come as 
   const row: CampaignLeadRow = { id: 7, status: "Verified", lead_campaign_data: [{ campaign_id: String(OLD), status: " In_Sequence " }, { campaign_id: "55", status: "IN_SEQUENCE" }] };
   const plan = planLeads(OLD, [row]);
   assert.equal(plan.busy.move, 1, "busy on campaign '55'");
+  assert.deepEqual(plan.move, [7], "and moved anyway");
   const free = planLeads(OLD, [{ id: 8, lead_campaign_data: [{ campaign_id: String(OLD), status: "Sequence_Finished" }] }]);
   assert.deepEqual(free.copy, [8]);
 });
@@ -87,6 +88,7 @@ test("only five examples of busy leads are kept, all are counted", () => {
   const plan = planLeads(OLD, rows);
   assert.equal(plan.busy.move, 12);
   assert.equal(plan.busy.examples.length, 5);
+  assert.equal(plan.move.length, 12, "all of them moved");
 });
 
 test("statusLabel", () => {

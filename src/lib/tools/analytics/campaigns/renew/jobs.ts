@@ -106,7 +106,7 @@ export function startRenewJob(sourceId: number, token: string, poolIds: readonly
       job.result = {
         ok: false, stage: job.stage, sourceId, oldName: "", numberedName: null, newCampaignId: null, newName: null, rolledBack: false,
         inboxesAdded: 0, pool: { asked: poolIds.length, added: 0, dropped: [] }, tags: [],
-        leads: { planned: { move: 0, copy: 0 }, copied: 0, moved: 0, copyRefused: 0, notArrived: [], lost: [], skippedAtMove: 0, busy: 0 },
+        leads: { planned: { move: 0, copy: 0 }, copied: 0, moved: 0, copyRefused: 0, notArrived: [], lost: [], skippedAtMove: 0, stoppedOnOld: 0, busy: 0 },
         pinPending: null, links: null, oldRenamed: false, warnings: [],
         error: `The renewal stopped unexpectedly: ${e instanceof Error ? e.message : String(e)}. Open Duplicate & Renew again before retrying: it shows whether a copy was made.`,
       };

@@ -404,10 +404,12 @@ export class EmailBisonClient {
    * already in. A move is this followed by `removeLeadsFromCampaign` on the
    * source, and that second call is the one that changes history.
    */
-  async attachLeadsToCampaign(campaignId: number, leadIds: number[]) {
+  async attachLeadsToCampaign(campaignId: number, leadIds: number[], opts: { allowParallel?: boolean } = {}) {
+    // allowParallel: EmailBison's allow_parallel_sending — add a lead even while another campaign is emailing it
+    // (measured 19 Nov: refused without it, added with it). Off unless a caller asks.
     return this.request<{ data?: { success?: boolean; message?: string } }>(
       `/api/campaigns/${campaignId}/leads/attach-leads`,
-      { method: "POST", body: JSON.stringify({ lead_ids: leadIds }) },
+      { method: "POST", body: JSON.stringify(opts.allowParallel ? { lead_ids: leadIds, allow_parallel_sending: true } : { lead_ids: leadIds }) },
     );
   }
 
@@ -450,14 +452,29 @@ export class EmailBisonClient {
    * EmailBison's own MOVE: the leads stop on `fromId` (their row there stays,
    * reading stopped / stopped_moved_another_campaign — history kept) and start
    * on `toId`. Measured 19 Nov on throwaways: works from a running or a paused
-   * campaign into a draft; repeating it is harmless. A lead that is ALSO In
-   * Sequence on a third campaign is stopped on `fromId` and NOT added to
-   * `toId` — callers must leave those leads out (renew/leads.ts).
+   * campaign into a draft; repeating it is harmless. WITHOUT allowParallel a
+   * lead that is ALSO In Sequence on a third campaign is stopped on `fromId`
+   * and NOT added to `toId` (dropped from both). WITH it every lead is added
+   * to `toId` but stays In Sequence on `fromId` (still there 4 minutes later):
+   * a copy — renew then stops the ones that arrived (stopFutureEmails).
    */
-  async moveLeadsToCampaign(fromId: number, toId: number, leadIds: number[]) {
+  async moveLeadsToCampaign(fromId: number, toId: number, leadIds: number[], opts: { allowParallel?: boolean } = {}) {
+    // allowParallel: allow_parallel_sending, so a lead another campaign is emailing is moved too, not dropped.
     return this.request<{ data?: { success?: boolean; message?: string } }>(
       `/api/campaigns/${fromId}/leads/move-to-another-campaign`,
-      { method: "POST", body: JSON.stringify({ target_campaign_id: toId, lead_ids: leadIds }) },
+      { method: "POST", body: JSON.stringify(opts.allowParallel ? { target_campaign_id: toId, lead_ids: leadIds, allow_parallel_sending: true } : { target_campaign_id: toId, lead_ids: leadIds }) },
+    );
+  }
+
+  /**
+   * Stops future emails to these leads on THIS campaign only (their row there reads stopped / stopped_manually; their
+   * other campaigns are untouched — measured 19 Nov). Duplicate & Renew uses it after a parallel-sending move, which
+   * adds a lead to the new campaign but leaves it In Sequence on the old one.
+   */
+  async stopFutureEmails(campaignId: number, leadIds: number[]) {
+    return this.request<{ data?: { success?: boolean; message?: string } }>(
+      `/api/campaigns/${campaignId}/leads/stop-future-emails`,
+      { method: "POST", body: JSON.stringify({ lead_ids: leadIds }) },
     );
   }
 

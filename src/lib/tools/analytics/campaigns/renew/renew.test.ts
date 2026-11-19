@@ -12,10 +12,13 @@ import { previewRenew, runRenew, type ClientPin, type LastRenewal, type RenewAud
  * (throwaway campaigns 1304-1312):
  *   - Duplicate makes a draft "Copy of …" with the sequence, settings and schedule, and no tags, inboxes or leads;
  *   - a lead on a running campaign or a DRAFT reads in_sequence there; on a paused one, sending_paused;
- *   - attach refuses a lead In Sequence on another running/draft campaign (paused ones don't count), and a dead lead;
- *     when it adds none it answers 422 "No leads were added …";
- *   - Move stops the lead on the old campaign (stopped_moved_another_campaign) and adds it to the new one — EXCEPT a
- *     lead also In Sequence on a third campaign: stopped on the old one and NOT added (the trap renew must avoid).
+ *   - renew always sends allow_parallel_sending (io.ts), so attach adds a lead another campaign is emailing and refuses
+ *     only a dead lead; when it adds none it answers 422 "No leads were added …";
+ *   - Move WITH the option (what renew sends) adds the lead to the new campaign and LEAVES it In Sequence on the old one
+ *     (a copy; still there 4 minutes later); stop-future-emails then stops it there (stopped_manually).
+ *   - Move WITHOUT the option stops the lead on the old campaign (stopped_moved_another_campaign) and adds it to the new
+ *     one, except a lead In Sequence on a third campaign: stopped and NOT added. `ignoresParallel` makes this fake
+ *     behave so, to prove the run names such a lead rather than hiding it.
  */
 
 type St = "in_sequence" | "sending_paused" | "sequence_finished" | "stopped" | "replied";
@@ -33,6 +36,10 @@ class World {
   /** Throw on the nth call of a write (name → { at, error }). */
   fail: Record<string, { at: number; error: Error }> = {};
   counts: Record<string, number> = {};
+  /** EmailBison ignoring allow_parallel_sending (never seen): a busy lead is then refused / dropped by a move. */
+  ignoresParallel = false;
+  /** stop-future-emails answering ok but changing nothing (never seen): the run must notice. */
+  stopIgnored = false;
   /** Moves land only after this many lead-count reads (EmailBison: "may take a few minutes"). */
   moveDelayReads = 0;
   pendingMoves: Array<{ to: number; id: number }> = [];
@@ -138,7 +145,7 @@ class World {
         const c = w.campaigns.get(id)!;
         let added = 0;
         for (const l of ids) {
-          if (["bounced", "unsubscribed"].includes(w.leads.get(l)!.status) || w.busyElsewhere(l, [id]) || c.leads.has(l)) continue;
+          if (["bounced", "unsubscribed"].includes(w.leads.get(l)!.status) || (w.ignoresParallel && w.busyElsewhere(l, [id])) || c.leads.has(l)) continue;
           c.leads.set(l, { status: c.status === "paused" ? "sending_paused" : "in_sequence", reason: null });
           added++;
         }
@@ -150,13 +157,25 @@ class World {
         for (const l of ids) {
           const m = w.campaigns.get(from)!.leads.get(l);
           if (!m) continue;
-          m.status = "stopped";
-          m.reason = "stopped_moved_another_campaign";
-          if (w.busyElsewhere(l, [from, to])) continue; // the trap: stopped here, never added there
+          if (w.ignoresParallel) {
+            // as without the option: stopped here; and a lead another campaign is emailing is never added there
+            m.status = "stopped";
+            m.reason = "stopped_moved_another_campaign";
+            if (w.busyElsewhere(l, [from, to])) continue;
+          } // with the option (what renew sends): the old row is left as it is — a copy
           if (w.moveDelayReads > 0) w.pendingMoves.push({ to, id: l });
           else w.campaigns.get(to)!.leads.set(l, { status: "in_sequence", reason: null });
         }
         w.writes.push(`move ${from}->${to} ${ids.length}`);
+      },
+      stopLeads: async (id, ids) => {
+        w.hit("stopLeads");
+        w.writes.push(`stop ${id} ${ids.length}`);
+        if (w.stopIgnored) return;
+        for (const l of ids) {
+          const m = w.campaigns.get(id)!.leads.get(l);
+          if (m && (m.status === "in_sequence" || m.status === "sending_paused")) { m.status = "stopped"; m.reason = "stopped_manually"; }
+        }
       },
       deleteCampaign: async (id) => { w.hit("deleteCampaign"); w.campaigns.delete(id); w.writes.push(`delete ${id}`); },
       moveLinks: (oldId, newId, newName, by, state) => moveLinks(oldId, newId, newName, by, state, store),
@@ -206,7 +225,7 @@ test("review: every item the spec asks for, from the real-shaped campaign", asyn
   if (!p.names.ok) return;
   assert.equal(p.names.numberedName, "LIV Indy Realty 6 + Indianapolis Metro + ZF NS4 (EST)");
   assert.equal(p.names.newName, NAME);
-  assert.deepEqual({ move: p.leads.move, copy: p.leads.copy, transfer: p.leads.transfer }, { move: 2, copy: 2, transfer: 4 });
+  assert.deepEqual({ move: p.leads.move, copy: p.leads.copy, transfer: p.leads.transfer }, { move: 3, copy: 3, transfer: 6 }, "the busy ones (13, 23) included");
   assert.deepEqual({ move: p.leads.busy.move, copy: p.leads.busy.copy }, { move: 1, copy: 1 });
   assert.deepEqual(p.leads.left, { replied: 1, stopped: 1, bounced: 1 });
   const j = p.inboxes.judgement!;
@@ -217,7 +236,7 @@ test("review: every item the spec asks for, from the real-shaped campaign", asyn
   assert.deepEqual(p.limits, { maxEmailsPerDay: 3000, maxNewLeadsPerDay: 1500 });
   assert.deepEqual(p.schedule?.days, ["monday", "tuesday"]);
   assert.deepEqual({ portal: p.links.portal, picks: p.links.picks }, { portal: true, picks: 1 });
-  assert.ok(p.warnings.some((x) => /2 leads are still being emailed by another campaign/.test(x)));
+  assert.ok(p.warnings.some((x) => /2 of these leads are also being emailed by another campaign right now\. They are added anyway/.test(x)));
   assert.ok(p.warnings.some((x) => /still sending/.test(x)));
   assert.match(p.token, /^[0-9a-f]{32}$/);
   assert.deepEqual(w.writes, [], "the review writes nothing");
@@ -241,20 +260,22 @@ test("run: the whole renewal, in order, and the old campaign's history kept", as
   assert.deepEqual(copy.tags.map((t) => t.name), ["ZF"]);
   assert.deepEqual([...copy.inboxes].sort(), [1, 2, 3]);
   assert.equal(r.inboxesAdded, 3);
-  // leads: 2 moved, 2 copied, the busy ones untouched everywhere
-  assert.deepEqual([...copy.leads.keys()].sort(), [11, 12, 21, 22]);
-  assert.equal(r.leads.moved, 2);
-  assert.equal(r.leads.copied, 2);
+  // leads: 3 moved, 3 copied — the ones another campaign is emailing (13, 23) included
+  assert.deepEqual([...copy.leads.keys()].sort(), [11, 12, 13, 21, 22, 23]);
+  assert.equal(r.leads.moved, 3);
+  assert.equal(r.leads.copied, 3);
   assert.deepEqual(r.leads.notArrived, []);
-  assert.equal(old.leads.get(11)!.reason, "stopped_moved_another_campaign", "moved: stopped on the old one, row kept");
+  assert.equal(old.leads.get(11)!.reason, "stopped_manually", "moved: stopped on the old one once on the new one, row kept");
+  assert.equal(r.leads.stoppedOnOld, 3);
   assert.equal(old.leads.get(21)!.status, "sequence_finished", "copied: still finished on the old one");
-  assert.equal(old.leads.get(13)!.status, "in_sequence", "busy elsewhere: never sent to Move, still on the old campaign");
+  assert.equal(old.leads.get(13)!.reason, "stopped_manually", "busy elsewhere: moved all the same, then stopped on the old one");
+  assert.equal(w.campaigns.get(900)!.leads.get(13)!.status, "in_sequence", "and still on the other campaign (both sequences)");
   assert.equal(old.leads.get(23)!.status, "sequence_finished");
   assert.equal(old.leads.size, 9, "no lead removed from the old campaign");
   // order: copy → name → tag → inboxes → copies → move → old renamed → links
   const order = w.writes.map((x) => x.split(" ")[0]);
-  assert.deepEqual(order, ["duplicate", "rename", "tag", "inboxes", "attach", "move", "rename", "route", "pick"]);
-  assert.ok(w.writes[1].includes(`rename ${NEW}`) && w.writes[6].includes(`rename ${OLD}`), "the old campaign is renamed LAST");
+  assert.deepEqual(order, ["duplicate", "rename", "tag", "inboxes", "attach", "move", "stop", "rename", "route", "pick"]);
+  assert.ok(w.writes[1].includes(`rename ${NEW}`) && w.writes[7].includes(`rename ${OLD}`), "the old campaign is renamed LAST");
   assert.deepEqual(r.links, { portal: "copied", picksMoved: 1, setupsMoved: 0, errors: [] });
   assert.deepEqual(w.audits.map((a) => a.stage), ["started", "copied", "finished"]);
   assert.deepEqual(w.audits.map((a) => a.ok), [true, true, true]);
@@ -296,7 +317,7 @@ test("blockers: a draft, an earlier round, analytics 098 not run, no healthy inb
     ["098 missing", (w) => { w.bounces = "missing"; }, /098_os_inbox_recent_bounces/],
     ["no healthy inbox, none in the pool", (w) => { const c = w.campaigns.get(OLD)!; c.inboxes = new Set([4, 5]); for (const i of [1, 2, 3]) w.inboxes.delete(i); }, /None of this campaign's inboxes passes the health check and the wider pool has none to spare/],
     ["no inbox", (w) => { w.campaigns.get(OLD)!.inboxes = new Set(); }, /has no inboxes/],
-    ["no leads", (w) => { const c = w.campaigns.get(OLD)!; for (const id of [11, 12, 21, 22]) c.leads.delete(id); }, /new campaign would be empty/],
+    ["no leads", (w) => { const c = w.campaigns.get(OLD)!; for (const id of [11, 12, 13, 21, 22, 23]) c.leads.delete(id); }, /new campaign would be empty/],
     ["links unreadable", (w) => { w.links = { ready: false, error: "table missing", portalRoute: null, picks: [], setups: [] }; }, /could not be read.*table missing/],
   ];
   for (const [label, change, why] of cases) {
@@ -360,7 +381,7 @@ test("a failure DURING the move is never undone: it says where things are, the o
   assert.equal(w.counts.moveLeads, 2, "stopped at the failing chunk");
 });
 
-test("big campaigns go in chunks of 500 (1,102 to move = 3 moves)", async () => {
+test("big campaigns go in chunks of 500 (1,103 to move = 3 moves)", async () => {
   const w = liv();
   for (let i = 0; i < 1100; i++) w.lead(5000 + i, [[OLD, "in_sequence"]]);
   const p = await previewRenew(OLD, w.io());
@@ -368,7 +389,7 @@ test("big campaigns go in chunks of 500 (1,102 to move = 3 moves)", async () => 
   const r = await runRenew(OLD, p.token, p.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", w.io());
   assert.equal(r.ok, true, r.error ?? "");
   assert.equal(w.counts.moveLeads, 3);
-  assert.equal(r.leads.moved, 1102);
+  assert.equal(r.leads.moved, 1103);
 });
 
 test("a PAUSED old campaign: its sending_paused leads are moved", async () => {
@@ -378,11 +399,11 @@ test("a PAUSED old campaign: its sending_paused leads are moved", async () => {
   for (const m of old.leads.values()) if (m.status === "in_sequence") m.status = "sending_paused";
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
-  assert.equal(p.leads.move, 2);
+  assert.equal(p.leads.move, 3);
   assert.ok(!p.warnings.some((x) => /still sending/.test(x)), "no 'still sending' warning when paused");
   const r = await runRenew(OLD, p.token, p.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", w.io());
   assert.equal(r.ok, true, r.error ?? "");
-  assert.equal(r.leads.moved, 2);
+  assert.equal(r.leads.moved, 3);
 });
 
 test("a completed old campaign: nothing to move, the finished leads are copied", async () => {
@@ -396,7 +417,7 @@ test("a completed old campaign: nothing to move, the finished leads are copied",
   assert.equal(r.ok, true, r.error ?? "");
   assert.equal(r.leads.moved, 0);
   assert.ok(!w.writes.some((x) => x.startsWith("move")));
-  assert.equal(r.leads.copied, 4);
+  assert.equal(r.leads.copied, 6, "every finished lead, the one another campaign is emailing included");
 });
 
 test("a move EmailBison takes its time over is waited for; one that never lands is named, not hidden", async () => {
@@ -406,7 +427,7 @@ test("a move EmailBison takes its time over is waited for; one that never lands 
   if ("error" in p) throw new Error(p.error);
   const r = await runRenew(OLD, p.token, p.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", w.io());
   assert.equal(r.ok, true);
-  assert.equal(r.leads.moved, 2, "landed after a few checks");
+  assert.equal(r.leads.moved, 3, "landed after a few checks");
 
   const w2 = liv();
   w2.moveDelayReads = 10_000; // never lands
@@ -415,6 +436,9 @@ test("a move EmailBison takes its time over is waited for; one that never lands 
   const r2 = await runRenew(OLD, p2.token, p2.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", w2.io());
   assert.equal(r2.ok, true);
   assert.deepEqual(r2.leads.notArrived.map((x) => x.email).sort(), ["l11@x.com", "l12@x.com"]);
+  assert.deepEqual(r2.leads.lost.map((x) => x.email), ["l13@x.com"], "not on the new campaign, but another campaign is still emailing it");
+  for (const id of [11, 12, 13]) assert.equal(w2.campaigns.get(OLD)!.leads.get(id)!.status, "in_sequence", `lead ${id} never arrived: NOT stopped on the old campaign`);
+  assert.equal(r2.leads.stoppedOnOld, 0);
   assert.ok(r2.warnings.some((x) => /2 moved leads are not on the new campaign yet/.test(x)));
   assert.ok(w2.clock <= 8 * 60_000 + 10_000, "gave up waiting after about 8 minutes");
 });
@@ -426,22 +450,34 @@ test("a lead that bounced since the review is left out by the run's own fresh re
   w.leads.get(21)!.status = "bounced";
   const r = await runRenew(OLD, p.token, p.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", w.io());
   assert.equal(r.ok, true);
-  assert.equal(r.leads.planned.copy, 1);
-  assert.equal(r.leads.copied, 1);
+  assert.equal(r.leads.planned.copy, 2);
+  assert.equal(r.leads.copied, 2);
   assert.equal(r.leads.copyRefused, 0);
 });
 
-test("copies EmailBison refuses at the moment of adding (busy elsewhere by then) are counted, not reported as copied", async () => {
+test("copies EmailBison refuses at the moment of adding (a lead that bounced by then) are counted, not reported as copied", async () => {
+  const w = liv();
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  const io = w.io();
+  const attach = io.attachLeads;
+  io.attachLeads = async (id, ids) => { w.leads.get(21)!.status = "bounced"; return attach(id, ids); };
+  const r = await runRenew(OLD, p.token, p.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", io);
+  assert.equal(r.ok, true);
+  assert.equal(r.leads.copied, 2);
+  assert.equal(r.leads.copyRefused, 1);
+});
+
+test("a lead another campaign starts emailing at the moment of copying is still copied (allow_parallel_sending)", async () => {
   const w = liv();
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
   const io = w.io();
   const attach = io.attachLeads;
   io.attachLeads = async (id, ids) => { w.campaigns.get(900)!.leads.set(21, { status: "in_sequence", reason: null }); return attach(id, ids); };
-  const r = await runRenew(OLD, p.token, p.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", io);
-  assert.equal(r.ok, true);
-  assert.equal(r.leads.copied, 1);
-  assert.equal(r.leads.copyRefused, 1);
+  const r = await runRenew(OLD, p.token, [], "amy@x.com", io);
+  assert.equal(r.leads.copied, 3);
+  assert.equal(r.leads.copyRefused, 0);
 });
 
 test("every copy refused (EmailBison's 422) is counted, and the run carries on to the moves", async () => {
@@ -453,8 +489,8 @@ test("every copy refused (EmailBison's 422) is counted, and the run carries on t
   const r = await runRenew(OLD, p.token, p.inboxes.pool?.picks.map((x) => x.id) ?? [], "amy@x.com", io);
   assert.equal(r.ok, true);
   assert.equal(r.leads.copied, 0);
-  assert.equal(r.leads.copyRefused, 2);
-  assert.equal(r.leads.moved, 2);
+  assert.equal(r.leads.copyRefused, 3);
+  assert.equal(r.leads.moved, 3);
 });
 
 test("renaming the old campaign failing at the end keeps the copy and says so", async () => {
@@ -675,10 +711,10 @@ test("review #2: a failure part-way through the move reports what is really on t
   w.fail.moveLeads = { at: 2, error: new Error("EmailBison 500") };
   const r = await runRenew(OLD, p.token, [], "amy@x.com", w.io());
   assert.equal(r.leads.moved, 500);
-  assert.match(r.error ?? "", /500 of 1102 In Sequence leads are on it \(500 were sent to EmailBison's move\)/);
+  assert.match(r.error ?? "", /500 of 1103 In Sequence leads are on it \(500 were sent to EmailBison's move; 0 stopped on the old campaign\)/);
 });
 
-test("review #3: a lead another campaign takes after the review (paused old campaign) is re-checked and NOT moved", async () => {
+test("a lead another campaign takes after the review (paused old campaign) is still moved (allow_parallel_sending)", async () => {
   const w = liv();
   const old = w.campaigns.get(OLD)!;
   old.status = "paused";
@@ -690,24 +726,35 @@ test("review #3: a lead another campaign takes after the review (paused old camp
   io.attachInboxes = async (id, ids) => { await attach(id, ids); w.campaigns.get(900)!.leads.set(11, { status: "in_sequence", reason: null }); };
   const r = await runRenew(OLD, p.token, [], "amy@x.com", io);
   assert.equal(r.ok, true, r.error ?? "");
-  assert.equal(r.leads.skippedAtMove, 1);
-  assert.equal(r.leads.moved, 1);
-  assert.equal(old.leads.get(11)!.status, "sending_paused", "left exactly as it was on the old campaign");
+  assert.equal(r.leads.skippedAtMove, 0);
+  assert.equal(r.leads.moved, 3);
+  assert.ok(w.campaigns.get(r.newCampaignId!)!.leads.has(11));
   assert.deepEqual(r.leads.lost, []);
-  assert.ok(r.warnings.some((x) => /1 In Sequence lead was left on the old campaign at the last check/.test(x)));
 });
 
-test("review #3: a lead taken between the last check and the move is named LOST, not 'still moving'", async () => {
+test("a lead that replied or was stopped since the review is NOT moved: re-checked just before the move", async () => {
   const w = liv();
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
   const io = w.io();
-  const move = io.moveLeads;
-  io.moveLeads = async (from, to, ids) => { w.campaigns.get(900)!.leads.set(12, { status: "in_sequence", reason: null }); return move(from, to, ids); };
+  const attach = io.attachInboxes;
+  io.attachInboxes = async (id, ids) => { await attach(id, ids); w.campaigns.get(OLD)!.leads.set(11, { status: "replied", reason: null }); };
   const r = await runRenew(OLD, p.token, [], "amy@x.com", io);
-  assert.deepEqual(r.leads.lost, [{ id: 12, email: "l12@x.com", campaignIds: [900] }]);
+  assert.equal(r.leads.skippedAtMove, 1);
+  assert.equal(r.leads.moved, 2);
+  assert.equal(w.campaigns.get(OLD)!.leads.get(11)!.status, "replied", "left as it is");
+  assert.ok(r.warnings.some((x) => /1 lead was left on the old campaign at the last check: no longer In Sequence/.test(x)));
+});
+
+test("safety net: if EmailBison ever ignored allow_parallel_sending, a dropped lead is named LOST, not 'still moving'", async () => {
+  const w = liv();
+  w.ignoresParallel = true;
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  const r = await runRenew(OLD, p.token, [], "amy@x.com", w.io());
+  assert.deepEqual(r.leads.lost, [{ id: 13, email: "l13@x.com", campaignIds: [900] }]);
   assert.deepEqual(r.leads.notArrived, []);
-  assert.equal(r.leads.moved, 1);
+  assert.equal(r.leads.moved, 2);
 });
 
 test("review #7: a hand-set client follows the new campaign: pending until it is synced, then applied by the job", async () => {
@@ -810,4 +857,60 @@ test("full: a renewable campaign is read in full (checked = full)", async () => 
   if ("error" in p) throw new Error(p.error);
   assert.equal(p.checked, "full");
   assert.ok(w.heavyReads.includes(`leadRows ${OLD}`) && w.heavyReads.includes(`inboxes ${OLD}`) && w.heavyReads.includes("pool"));
+});
+
+/* ------------------------------------------- the user, 19 Nov: every lead goes, even one another campaign emails --- */
+
+test("parallel-sending move: every arrived lead is stopped on the old campaign (the move alone would leave it there)", async () => {
+  const w = liv();
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  const r = await runRenew(OLD, p.token, [], "amy@x.com", w.io());
+  assert.equal(r.ok, true, r.error ?? "");
+  const old = w.campaigns.get(OLD)!;
+  for (const id of [11, 12, 13]) {
+    assert.equal(old.leads.get(id)!.status, "stopped", `${id} stopped on the old campaign`);
+    assert.ok(w.campaigns.get(r.newCampaignId!)!.leads.has(id), `${id} on the new one`);
+  }
+  assert.equal(w.campaigns.get(900)!.leads.get(13)!.status, "in_sequence", "13 still on its other campaign (both sequences, as chosen)");
+  assert.equal(r.leads.stoppedOnOld, 3);
+});
+
+test("a stop that does not take at first is tried again; if the old campaign still emails them, the run stops BEFORE renaming and names them", async () => {
+  const w = liv();
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  w.stopIgnored = true;
+  const r = await runRenew(OLD, p.token, [], "amy@x.com", w.io());
+  assert.equal(r.ok, false);
+  assert.equal(w.counts.stopLeads, 2, "stopped, checked, stopped again");
+  assert.match(r.error ?? "", /3 moved leads are on the new campaign but the old campaign is still emailing them \(l11@x\.com, l12@x\.com, l13@x\.com\): stop them on the old campaign in EmailBison/);
+  assert.match(r.error ?? "", /The old campaign was NOT renamed/);
+  assert.equal(w.campaigns.get(OLD)!.name, NAME);
+  assert.ok(w.campaigns.has(r.newCampaignId!), "the new campaign is kept");
+});
+
+test("a stop the old campaign takes only on the second try still finishes", async () => {
+  const w = liv();
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  const io = w.io();
+  const stop = io.stopLeads;
+  let n = 0;
+  io.stopLeads = async (id, ids) => { n++; if (n === 1) { w.writes.push("stop ignored"); return; } return stop(id, ids); };
+  const r = await runRenew(OLD, p.token, [], "amy@x.com", io);
+  assert.equal(r.ok, true, r.error ?? "");
+  assert.equal(n, 2);
+  assert.equal(r.leads.stoppedOnOld, 3);
+});
+
+test("a stop call that fails outright stops the run before renaming, nothing undone", async () => {
+  const w = liv();
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  w.fail.stopLeads = { at: 1, error: new Error("EmailBison 500 on stop") };
+  const r = await runRenew(OLD, p.token, [], "amy@x.com", w.io());
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /EmailBison 500 on stop .*The old campaign was NOT renamed/);
+  assert.equal(r.rolledBack, false);
 });

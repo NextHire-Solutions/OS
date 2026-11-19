@@ -13,8 +13,8 @@ import { statusRefusal } from "./status.ts";
  * ("LIV Indy Realty 6 + …"), and a copy with the original name gets its
  * sequence, settings and schedule (EmailBison's Duplicate carries those —
  * measured), its ZF / NO-ZF tag (Duplicate drops tags — measured), its healthy
- * inboxes, topped up from the wider pool to the capacity the left-out ones had
- * (inbox-health.ts), its In Sequence leads MOVED and its Sequence
+ * inboxes, topped up from the wider pool when they cannot cover the campaign's
+ * daily limit (inbox-health.ts), its In Sequence leads MOVED and its Sequence
  * Finished leads COPIED (leads.ts). The new campaign is a DRAFT: it sends
  * nothing until someone starts it. The OS's own links follow (links.ts).
  *
@@ -111,7 +111,10 @@ export interface RenewWrites {
   attachInboxes(campaignId: number, inboxIds: number[]): Promise<void>;
   /** "added" or "refused" (EmailBison's 422: every lead is in another sequence, bounced or unsubscribed). Throws otherwise. */
   attachLeads(campaignId: number, leadIds: number[]): Promise<"added" | "refused">;
+  /** EmailBison's move with allow_parallel_sending: the lead lands on toId but stays In Sequence on fromId (a copy). */
   moveLeads(fromId: number, toId: number, leadIds: number[]): Promise<void>;
+  /** Stops future emails to these leads on this campaign only. */
+  stopLeads(campaignId: number, leadIds: number[]): Promise<void>;
   deleteCampaign(id: number): Promise<void>;
   moveLinks(oldId: number, newId: number, newName: string, by: string, state: LinkState): Promise<LinkResult>;
   /** Sets the new campaign's client mapping like the old one's; false while the new campaign is not synced yet. */
@@ -288,7 +291,7 @@ async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missin
   if (!links.ready) blockers.push(`The OS links to this campaign (portal choice, Prospects) could not be read, so they could not be kept: ${links.error ?? "unknown error"}.`);
   if (healthReady && inboxes.length && !addIds.length && !poolPlan?.picks.length) blockers.push("None of this campaign's inboxes passes the health check and the wider pool has none to spare, so the new campaign could not send.");
   if (!inboxes.length) blockers.push("This campaign has no inboxes, so there are none to give the new campaign.");
-  if (!leadsToTransfer(plan)) blockers.push("No lead is In Sequence or Sequence Finished and free to start again, so the new campaign would be empty.");
+  if (!leadsToTransfer(plan)) blockers.push("No lead is In Sequence or Sequence Finished, so the new campaign would be empty.");
 
   const orphan = siblings.find((c) => c.id !== source.id && nameKey(c.name) === nameKey(`Copy of ${source.name}`));
   if (orphan) warnings.push(`A campaign named "Copy of ${source.name}" (#${orphan.id}, ${orphan.status ?? "status unknown"}) exists, probably left by an earlier attempt. Delete it if it is not needed.`);
@@ -303,7 +306,8 @@ async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missin
     warnings.push(`${names.sameName.map((c) => `#${c.id}${c.status ? ` (${c.status})` : ""}`).join(", ")} also ${names.sameName.length === 1 ? "has" : "have"} this exact name and ${names.sameName.length === 1 ? "is" : "are"} left as ${names.sameName.length === 1 ? "it is" : "they are"}.`);
   }
   if (plan.busy.move + plan.busy.copy) {
-    warnings.push(`${plan.busy.move + plan.busy.copy} lead${plan.busy.move + plan.busy.copy === 1 ? " is" : "s are"} still being emailed by another campaign, so ${plan.busy.move + plan.busy.copy === 1 ? "it is" : "they are"} left out (EmailBison would refuse ${plan.busy.move + plan.busy.copy === 1 ? "it" : "them"}).`);
+    const n = plan.busy.move + plan.busy.copy;
+    warnings.push(`${n} of these lead${n === 1 ? " is" : "s are"} also being emailed by another campaign right now. ${n === 1 ? "It is" : "They are"} added anyway, so ${n === 1 ? "it gets" : "they get"} both sequences until one of them ends.`);
   }
   if (status === "active" && plan.move.length) {
     warnings.push(`This campaign is still sending: its ${plan.move.length} In Sequence lead${plan.move.length === 1 ? "" : "s"} stop here and start again from the first email on the new campaign once it is started.`);
@@ -335,7 +339,7 @@ export async function previewRenew(sourceId: number, io: RenewReads): Promise<Re
 
 /* ------------------------------------------------------------------------------------------------ the run --- */
 
-export type RenewStage = "checking" | "copying" | "naming" | "tagging" | "inboxes" | "copying-leads" | "moving-leads" | "waiting" | "renaming-old" | "links" | "done";
+export type RenewStage = "checking" | "copying" | "naming" | "tagging" | "inboxes" | "copying-leads" | "moving-leads" | "waiting" | "stopping-old" | "renaming-old" | "links" | "done";
 
 export interface RenewResult {
   ok: boolean;
@@ -360,12 +364,15 @@ export interface RenewResult {
     /** Moved leads not on the new campaign when the run finished, and not taken by another campaign: still arriving. */
     notArrived: Array<{ id: number; email: string | null }>;
     /**
-     * Moved leads NOT on the new campaign that another campaign started emailing meanwhile: stopped here, never added
-     * there (EmailBison's move). Should never happen — each is re-checked just before the move — named if it does.
+     * Moved leads NOT on the new campaign when the run finished that another campaign is emailing: stopped here, not
+     * added there (yet). Not lost from sending — the other campaign still emails them — but not where they were meant to
+     * go: named so they can be added by hand. The move says allow_parallel_sending, so this should not happen.
      */
     lost: Array<{ id: number; email: string | null; campaignIds: number[] }>;
-    /** Left out at the moment of the move: no longer In Sequence here, or another campaign took them since the review. */
+    /** Left out at the moment of the move: no longer In Sequence here since the review (replied, stopped…). */
     skippedAtMove: number;
+    /** Moved leads stopped on the old campaign once they were on the new one (the move itself leaves them there). */
+    stoppedOnOld: number;
     busy: number;
   };
   /** The client mapping the new campaign is still to be given (once synced): the job keeps trying. */
@@ -395,7 +402,7 @@ export async function runRenew(sourceId: number, token: string, poolIds: readonl
   const result: RenewResult = {
     ok: false, stage: "checking", sourceId, oldName: "", numberedName: null, newCampaignId: null, newName: null, rolledBack: false,
     inboxesAdded: 0, pool: { asked: 0, added: 0, dropped: [] }, tags: [],
-    leads: { planned: { move: 0, copy: 0 }, copied: 0, moved: 0, copyRefused: 0, notArrived: [], lost: [], skippedAtMove: 0, busy: 0 },
+    leads: { planned: { move: 0, copy: 0 }, copied: 0, moved: 0, copyRefused: 0, notArrived: [], lost: [], skippedAtMove: 0, stoppedOnOld: 0, busy: 0 },
     pinPending: null, links: null, oldRenamed: false, warnings: [], error: null,
   };
   const step = (stage: RenewStage, line: string) => { result.stage = stage; progress(stage, line); };
@@ -509,15 +516,15 @@ export async function runRenew(sourceId: number, token: string, poolIds: readonl
   let sent = 0;
   try {
     if (plan.move.length) {
-      // Checked AGAIN at the moment of the move (review, 19 Nov): a lead another campaign started emailing since the review
-      // (a paused campaign's leads can be added elsewhere) would be stopped here and never added there.
-      step("moving-leads", "Checking each In Sequence lead is still free to move…");
+      // Checked AGAIN at the moment of the move: only leads still In Sequence here are moved (one that replied or was
+      // stopped since the review stays). Another campaign emailing it does not matter: the move says allow_parallel_sending.
+      step("moving-leads", "Checking each lead is still In Sequence…");
       const fresh = planLeads(sourceId, await io.leadRows(sourceId));
       const freeNow = new Set(fresh.move);
       toMove = plan.move.filter((id) => freeNow.has(id));
       result.leads.skippedAtMove = plan.move.length - toMove.length;
       if (result.leads.skippedAtMove) {
-        result.warnings.push(`${result.leads.skippedAtMove} In Sequence lead${result.leads.skippedAtMove === 1 ? " was" : "s were"} left on the old campaign at the last check: no longer In Sequence there, or another campaign started emailing ${result.leads.skippedAtMove === 1 ? "it" : "them"} since the review.`);
+        result.warnings.push(`${result.leads.skippedAtMove} lead${result.leads.skippedAtMove === 1 ? " was" : "s were"} left on the old campaign at the last check: no longer In Sequence there (replied or stopped since the review).`);
       }
       step("moving-leads", `Moving ${toMove.length} In Sequence lead${toMove.length === 1 ? "" : "s"}…`);
       for (const part of chunks(toMove, CHUNK_LEADS)) {
@@ -539,13 +546,49 @@ export async function runRenew(sourceId: number, token: string, poolIds: readonl
       }
       // Which moved leads are on the copy: read its leads and compare, lead by lead.
       const onCopy = new Set((await io.leadRows(newId)).map((r) => Number(r.id)));
+      const arrived = toMove.filter((id) => onCopy.has(id));
       const missing = toMove.filter((id) => !onCopy.has(id));
-      result.leads.moved = toMove.length - missing.length;
+      result.leads.moved = arrived.length;
+
+      /*
+       * THE MOVE IS A COPY WITH allow_parallel_sending (measured 19 Nov: the lead lands on the new campaign and stays In
+       * Sequence on the old one). So the old campaign is told to stop emailing exactly the leads that ARRIVED — never one
+       * that did not, which keeps its old sequence rather than dropping out of both. Checked by reading the old campaign
+       * again; one more stop for any still going; if the old campaign is still emailing some after that, the run stops
+       * here (before the old campaign is renamed) and names them.
+       */
+      const IN_SEQ = new Set(["in_sequence", "sending_paused"]);
+      const stillOnOld = (rows: CampaignLeadRow[], ids: readonly number[]) => {
+        const want = new Set(ids);
+        return rows.filter((r) => want.has(Number(r.id)) && IN_SEQ.has(String((r.lead_campaign_data ?? []).find((d) => Number(d.campaign_id) === sourceId)?.status ?? "").trim().toLowerCase()));
+      };
+      let rowsNow: CampaignLeadRow[] = [];
+      if (arrived.length) {
+        step("stopping-old", `Stopping the ${arrived.length} moved lead${arrived.length === 1 ? "" : "s"} on the old campaign…`);
+        for (const part of chunks(arrived, CHUNK_LEADS)) await io.stopLeads(sourceId, part);
+        await io.sleep(10_000);
+        rowsNow = await io.leadRows(sourceId);
+        let still = stillOnOld(rowsNow, arrived);
+        if (still.length) {
+          for (const part of chunks(still.map((r) => Number(r.id)), CHUNK_LEADS)) await io.stopLeads(sourceId, part);
+          await io.sleep(15_000);
+          rowsNow = await io.leadRows(sourceId);
+          still = stillOnOld(rowsNow, arrived);
+        }
+        result.leads.stoppedOnOld = arrived.length - still.length;
+        if (still.length) {
+          throw new Error(
+            `${still.length} moved lead${still.length === 1 ? " is" : "s are"} on the new campaign but the old campaign is still emailing ${still.length === 1 ? "it" : "them"}` +
+              ` (${still.slice(0, 5).map((r) => r.email ?? `#${r.id}`).join(", ")}${still.length > 5 ? "…" : ""}): stop ${still.length === 1 ? "it" : "them"} on the old campaign in EmailBison.`,
+          );
+        }
+      }
       if (missing.length) {
-        // Taken by another campaign (In Sequence on a campaign other than these two) = lost from both; otherwise still arriving.
-        const rowsNow = new Map((await io.leadRows(sourceId)).map((r) => [Number(r.id), r]));
+        // Not on the new campaign: still arriving, or (another campaign emailing it) not added. Never stopped on the old one.
+        if (!rowsNow.length) rowsNow = await io.leadRows(sourceId);
+        const byId = new Map(rowsNow.map((r) => [Number(r.id), r]));
         for (const id of missing) {
-          const r = rowsNow.get(id);
+          const r = byId.get(id);
           const elsewhere = (r?.lead_campaign_data ?? [])
             .filter((d) => ![sourceId, newId].includes(Number(d.campaign_id)) && String(d.status ?? "").trim().toLowerCase() === "in_sequence")
             .map((d) => Number(d.campaign_id));
@@ -581,7 +624,9 @@ export async function runRenew(sourceId: number, token: string, poolIds: readonl
         result.leads.moved = toMove.filter((id) => onCopy.has(id)).length;
       } catch { /* told as unknown below */ }
     }
-    const moved = toMove.length ? ` ${result.leads.moved} of ${toMove.length} In Sequence leads are on it (${sent} were sent to EmailBison's move).` : "";
+    const moved = toMove.length
+      ? ` ${result.leads.moved} of ${toMove.length} In Sequence leads are on it (${sent} were sent to EmailBison's move; ${result.leads.stoppedOnOld} stopped on the old campaign).`
+      : "";
     result.error = `${errText(e)} The new campaign (#${newId}) exists with what was done so far; nothing was undone.${moved}${result.oldRenamed ? "" : " The old campaign was NOT renamed."}`;
   }
   await audit("finished");

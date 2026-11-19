@@ -19,13 +19,14 @@
  * files them under never_contacted — the filter would lose them all. So the
  * status is read from the lead's own row for this campaign.
  *
- * A LEAD STILL BEING EMAILED BY ANOTHER CAMPAIGN IS LEFT OUT — BEFORE ANY CALL.
- * EmailBison refuses to add a lead that is In Sequence on another campaign
- * (a draft counts; a paused one does not). For a copy that only skips it, but a
- * MOVE of such a lead STOPS it on the old campaign and then does not add it to
- * the new one (measured 19 Nov): it would drop out of both. So every lead's
- * other campaigns are checked first and those leads are never sent to either
- * call; the review window counts them.
+ * A LEAD ANOTHER CAMPAIGN IS ALSO EMAILING GOES TOO (the user, 19 Nov: "I want
+ * 'in sequence' and 'sequence finished' leads added to this new campaign
+ * whether they are present in any other campaign or not"). EmailBison refuses
+ * such a lead unless the call says allow_parallel_sending (a draft counts as
+ * emailing it; a paused campaign does not), and a MOVE without it stops the lead
+ * on the old campaign and never adds it to the new one — so renew always sends
+ * that option (io.ts). Those leads get both sequences until one ends; the
+ * review counts and names them ("busy").
  *
  * Pure: no I/O, so these rules are pinned by leads.test.ts.
  */
@@ -55,11 +56,11 @@ export interface BusyExample {
 }
 
 export interface LeadPlan {
-  /** In Sequence here, free elsewhere: to be moved. */
+  /** In Sequence here: to be moved. */
   move: number[];
-  /** Sequence Finished here, free elsewhere: to be copied. */
+  /** Sequence Finished here: to be copied. */
   copy: number[];
-  /** Would have been moved/copied, but another campaign is emailing them: left out. */
+  /** Of `move` and `copy`, the leads another campaign is also emailing right now: added anyway (both sequences). */
   busy: { move: number; copy: number; examples: BusyExample[] };
   /** Left where they are, by what they are here (replied, stopped, never_contacted, bounced, unsubscribed, …). */
   left: Record<string, number>;
@@ -95,7 +96,6 @@ export function planLeads(campaignId: number, rows: readonly CampaignLeadRow[]):
     if (busyIn.length) {
       plan.busy[want]++;
       if (plan.busy.examples.length < 5) plan.busy.examples.push({ id, email: row.email ?? null, campaignIds: busyIn });
-      continue;
     }
     plan[want].push(id);
   }

@@ -225,7 +225,8 @@ export function realRenewIO(): RenewIO {
     },
     async attachLeads(campaignId, leadIds) {
       try {
-        await eb.attachLeadsToCampaign(campaignId, leadIds);
+        // Every lead, even one another campaign is emailing (the user, 19 Nov: "whether they are present in any other campaign or not").
+        await eb.attachLeadsToCampaign(campaignId, leadIds, { allowParallel: true });
         return "added";
       } catch (e) {
         if (isAllRefused(e)) return "refused";
@@ -234,7 +235,15 @@ export function realRenewIO(): RenewIO {
     },
     async moveLeads(fromId, toId, leadIds) {
       try {
-        await eb.moveLeadsToCampaign(fromId, toId, leadIds);
+        // allow_parallel_sending: without it a lead another campaign is emailing is stopped here and never added there.
+        await eb.moveLeadsToCampaign(fromId, toId, leadIds, { allowParallel: true });
+      } catch (e) {
+        throw new Error(describeEmailBisonError(e));
+      }
+    },
+    async stopLeads(campaignId, leadIds) {
+      try {
+        await eb.stopFutureEmails(campaignId, leadIds);
       } catch (e) {
         throw new Error(describeEmailBisonError(e));
       }

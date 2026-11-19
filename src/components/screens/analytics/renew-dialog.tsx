@@ -143,7 +143,7 @@ function Review({ p }: { p: RenewPreview }) {
             </Row>
           </div>
           {p.leads.busy.move + p.leads.busy.copy > 0 ? (
-            <Row label="Left out: still being emailed by another campaign">{fullNumber(p.leads.busy.move + p.leads.busy.copy)}</Row>
+            <Row label="Of them, also being emailed by another campaign (added anyway)">{fullNumber(p.leads.busy.move + p.leads.busy.copy)}</Row>
           ) : null}
           {leftEntries.length ? (
             <div className="mut" style={{ fontSize: 12 }}>
@@ -280,7 +280,7 @@ function Outcome({ r }: { r: RenewResult }) {
         <Row label="Leads moved (In Sequence)">{fullNumber(r.leads.moved)}</Row>
         <Row label="Leads copied (Sequence Finished)">{fullNumber(r.leads.copied)}</Row>
         {r.leads.copyRefused ? <Row label="Copies EmailBison refused">{fullNumber(r.leads.copyRefused)}</Row> : null}
-        {r.leads.busy ? <Row label="Left out (being emailed by another campaign)">{fullNumber(r.leads.busy)}</Row> : null}
+        {r.leads.busy ? <Row label="Of them, also in another campaign's sequence">{fullNumber(r.leads.busy)}</Row> : null}
         {r.leads.skippedAtMove ? <Row label="Left on the old campaign at the last check">{fullNumber(r.leads.skippedAtMove)}</Row> : null}
         <Row label="Inboxes added">{fullNumber(r.inboxesAdded)}</Row>
         {r.pool.asked ? <Row label="Of them from the wider pool">{fullNumber(r.pool.added)}{r.pool.dropped.length ? ` (${fullNumber(r.pool.dropped.length)} dropped at the last check)` : ""}</Row> : null}
@@ -289,9 +289,10 @@ function Outcome({ r }: { r: RenewResult }) {
       {r.leads.lost.length ? (
         <Fail>
           <span data-renew-lost>
-            {fullNumber(r.leads.lost.length)} lead{r.leads.lost.length === 1 ? " was" : "s were"} stopped on the old campaign but not added to the new one, because another
-            campaign started emailing {r.leads.lost.length === 1 ? "it" : "them"} at that moment: {r.leads.lost.slice(0, 10).map((l) => l.email ?? `#${l.id}`).join(", ")}
-            {r.leads.lost.length > 10 ? ` and ${r.leads.lost.length - 10} more` : ""}. {r.leads.lost.length === 1 ? "It is" : "They are"} still being emailed by that campaign.
+            {fullNumber(r.leads.lost.length)} lead{r.leads.lost.length === 1 ? " was" : "s were"} stopped on the old campaign but {r.leads.lost.length === 1 ? "is" : "are"} not on the new one:{" "}
+            {r.leads.lost.slice(0, 10).map((l) => l.email ?? `#${l.id}`).join(", ")}
+            {r.leads.lost.length > 10 ? ` and ${r.leads.lost.length - 10} more` : ""}. Another campaign is still emailing {r.leads.lost.length === 1 ? "it" : "them"}; add{" "}
+            {r.leads.lost.length === 1 ? "it" : "them"} to the new campaign by hand if you want {r.leads.lost.length === 1 ? "it" : "them"} there.
           </span>
         </Fail>
       ) : null}
