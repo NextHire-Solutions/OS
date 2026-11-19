@@ -26,7 +26,15 @@ export async function GET(request: NextRequest) {
   const viewer = await ticketsViewer(request);
   if (viewer instanceof NextResponse) return done(`error=${encodeURIComponent("Sign in to the OS, then press Connect again.")}`);
   const p = request.nextUrl.searchParams;
-  if (p.get("error")) return done(`error=${encodeURIComponent(p.get("error") === "access_denied" ? "Google access wasn't given, so nothing was connected." : `Google said: ${p.get("error")}`)}`);
+  const gErr = p.get("error");
+  if (gErr) {
+    const why = gErr === "access_denied"
+      ? "Google access wasn't given, so nothing was connected."
+      : /admin_policy|org_internal|unauthorized_client/.test(gErr)
+        ? "Your Google Workspace admin is blocking this app from reading Gmail. An admin can allow it: Google Admin console > Security > Access and data control > API controls > Manage third-party app access > Add app > search for the Tickets Client ID > Trusted. Then press Connect again."
+        : `Google refused the connection (${gErr}). Press Connect again; if it keeps happening, tell an admin.`;
+    return done(`error=${encodeURIComponent(why)}`);
+  }
   const expected = request.cookies.get(STATE_COOKIE)?.value;
   const state = p.get("state");
   const code = p.get("code");
