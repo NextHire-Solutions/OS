@@ -26,6 +26,7 @@ import { LaunchTab } from "./launch-tab";
 import { PushSequenceDialog } from "./push-sequence-dialog";
 import { ReCampaignDialog } from "./re-campaign-dialog";
 import { RenewDialog } from "./renew-dialog";
+import { statusRefusalShort } from "@/lib/tools/analytics/campaigns/renew/status.ts";
 import { SequenceEditor, type EditableStep } from "./sequence-editor";
 import { Bar, Box, EmptyRow, LoadError, Seg } from "./shared";
 import { Btn, ConfirmButton, Toast, useToast } from "./toast";
@@ -305,6 +306,7 @@ export function CampaignDetailScreen({ id, onBack }: { id: string; onBack?: () =
             varied={spintax.varied}
             campaignId={String(c.id)}
             campaignName={c.name}
+            campaignStatus={c.status}
             platform={data.platform ?? "emailbison"}
             sequenceId={c.sequence_id ?? null}
             sentStepIds={data.sentStepIds ?? []}
@@ -414,6 +416,7 @@ function Sequence({
   varied,
   campaignId,
   campaignName,
+  campaignStatus,
   platform,
   sequenceId,
   sentStepIds,
@@ -424,6 +427,8 @@ function Sequence({
   varied: boolean;
   campaignId: string;
   campaignName: string;
+  /** For Duplicate & Renew: greyed out straight away for a status it cannot take (draft, archived…). */
+  campaignStatus: string;
   platform: "emailbison" | "instantly";
   sequenceId: number | null;
   sentStepIds: number[];
@@ -562,7 +567,14 @@ function Sequence({
           and nothing else, which is the gap this closes. */}
       <Btn disabled={ebOnly} title={ebTitle} onClick={() => setReCampaigning(true)}>Re-campaign…</Btn>
       {/* Duplicate & Renew (19 Nov): renames this round with its number and starts the next one as a draft. */}
-      <Btn data-renew-open disabled={ebOnly} title={ebTitle} onClick={() => setRenewing(true)}>Duplicate &amp; Renew…</Btn>
+      <Btn
+        data-renew-open
+        disabled={ebOnly || !!statusRefusalShort(campaignStatus)}
+        title={ebTitle ?? statusRefusalShort(campaignStatus) ?? undefined}
+        onClick={() => setRenewing(true)}
+      >
+        Duplicate &amp; Renew…
+      </Btn>
       <Btn disabled={ebOnly} title={ebTitle} onClick={() => setFanningOut(true)}>For multiple clients…</Btn>
       <Btn
         disabled={ebOnly || templating || template === undefined || template?.campaignId === campaignId}

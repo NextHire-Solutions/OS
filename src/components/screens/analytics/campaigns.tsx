@@ -27,6 +27,7 @@ import { AssignInboxesDialog } from "./assign-inboxes-dialog";
 import { CapacityStrip } from "./capacity-strip";
 import { ReCampaignDialog } from "./re-campaign-dialog";
 import { RenewDialog } from "./renew-dialog";
+import { statusRefusalShort } from "@/lib/tools/analytics/campaigns/renew/status.ts";
 import { Bar, Box, EmptyRow, LoadError, Pager, Search, Seg, SortHeader, sortRows, useDebounced, useSort } from "./shared";
 import { StalenessStrip } from "./staleness-strip";
 import { Btn, ConfirmButton, Toast, useToast } from "./toast";
@@ -445,8 +446,14 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
           */}
           <Btn
             data-renew-open
-            disabled={busy || selected.size !== 1 || emailBisonSelection.length !== 1}
-            title={selected.size !== 1 ? "Select exactly one campaign to renew it" : emailBisonSelection.length !== 1 ? "Duplicate & Renew is EmailBison only" : undefined}
+            disabled={busy || selected.size !== 1 || emailBisonSelection.length !== 1 || !!statusRefusalShort(chosen[0]?.status)}
+            title={
+              selected.size !== 1
+                ? "Select exactly one campaign to renew it"
+                : emailBisonSelection.length !== 1
+                  ? "Duplicate & Renew is EmailBison only"
+                  : (statusRefusalShort(chosen[0]?.status) ?? undefined)
+            }
             onClick={() => { if (chosen.length === 1) setRenewTarget({ id: chosen[0].id, name: chosen[0].name }); }}
           >
             Duplicate &amp; Renew

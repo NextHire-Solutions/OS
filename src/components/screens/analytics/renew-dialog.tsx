@@ -79,6 +79,25 @@ function PoolList({ items }: { items: PoolPick[] }) {
   );
 }
 
+/** A campaign the quick checks already refused: the reason, and the campaign to renew instead when there is one. */
+function Refused({ p }: { p: RenewPreview }) {
+  const currentId = !p.names.ok ? p.names.currentId : undefined;
+  return (
+    <>
+      <Fail>
+        <div data-renew-blockers>{p.blockers.join("\n")}</div>
+      </Fail>
+      {currentId ? (
+        <div>
+          <a href={`/analytics/campaigns/${currentId}`} data-renew-current style={{ color: "var(--blue)" }}>
+            Open the current campaign (#{currentId})
+          </a>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function Review({ p }: { p: RenewPreview }) {
   const j = p.inboxes.judgement;
   const pool = p.inboxes.pool;
@@ -146,9 +165,14 @@ function Review({ p }: { p: RenewPreview }) {
               <span data-renew-inboxes-own>{fullNumber(fromOld)}</span>
             </Row>
             {pool && pool.needed > 0 ? (
-              <Row label={`From the wider pool, to make up the ${fullNumber(pool.needed)}/day the left-out inboxes could send`}>
+              <Row label={`From the wider pool, as the kept inboxes can send ${fullNumber(p.inboxes.capacity.kept)}/day and the campaign up to ${fullNumber(p.inboxes.capacity.campaignLimit)}/day`}>
                 <span data-renew-inboxes-pool>{fullNumber(pool.picks.length)}</span>
               </Row>
+            ) : pool && p.inboxes.capacity.campaignLimit ? (
+              <div className="mut" style={{ fontSize: 12 }} data-renew-pool-none>
+                No inboxes needed from the wider pool: the kept inboxes can send {fullNumber(p.inboxes.capacity.kept)}/day, enough for the
+                campaign&rsquo;s {fullNumber(p.inboxes.capacity.campaignLimit)}/day.
+              </div>
             ) : null}
             <div className="mut" style={{ fontSize: 12 }}>
               Connected in EmailBison, and a bounce rate under 5% over the last {HEALTH_WINDOW_DAYS} days. An inbox is judged once it
@@ -369,8 +393,11 @@ export function RenewDialog({
   const result = job?.result ?? null;
   const runningNow = phase.kind === "running" && !result;
 
+  const refused = phase.kind === "review" && phase.preview.checked === "quick";
   const footer =
-    phase.kind === "review" ? (
+    refused ? (
+      <Btn onClick={close}>Close</Btn>
+    ) : phase.kind === "review" ? (
       <>
         <Btn onClick={close} disabled={starting}>Cancel</Btn>
         <Btn primary data-renew-confirm onClick={() => void confirm()} disabled={starting || phase.preview.blockers.length > 0}>
@@ -383,7 +410,8 @@ export function RenewDialog({
         <Btn onClick={() => void loadReview()}>Try again</Btn>
       </>
     ) : (
-      <Btn primary={!runningNow} onClick={close}>{runningNow ? "Close (it carries on)" : "Close"}</Btn>
+      // Blue only once there is a result to close on; plain while loading or running (no blue-to-white flash).
+      <Btn primary={!!result} onClick={close}>{runningNow ? "Close (it carries on)" : "Close"}</Btn>
     );
 
   return (
@@ -391,16 +419,16 @@ export function RenewDialog({
       open={open}
       onClose={close}
       width={640}
-      title={result ? (result.ok ? "Campaign renewed" : "Renewal stopped") : "Duplicate & Renew Campaign"}
+      title={result ? (result.ok ? "Campaign renewed" : "Renewal stopped") : refused ? "This campaign cannot be renewed" : "Duplicate & Renew Campaign"}
       description={<span style={{ overflowWrap: "anywhere" }}>{campaignName}</span>}
       footer={footer}
     >
       {phase.kind === "loading" ? (
-        <div className="mut" data-renew-loading>Reading the campaign, its leads and its inboxes… (up to half a minute on a big campaign)</div>
+        <div className="mut" data-renew-loading>Checking the campaign, then reading its leads and inboxes… (up to half a minute on a big campaign)</div>
       ) : phase.kind === "error" ? (
         <Fail><span data-renew-load-error>{phase.message}</span></Fail>
       ) : phase.kind === "review" ? (
-        <Review p={phase.preview} />
+        phase.preview.checked === "quick" ? <Refused p={phase.preview} /> : <Review p={phase.preview} />
       ) : result ? (
         <Outcome r={result} />
       ) : (

@@ -14,9 +14,12 @@
  * the healthy inboxes from the previous campaign. If additional inboxes are
  * needed, the system can select other healthy, connected inboxes from the wider
  * pool, as long as they meet our health requirements and have available
- * sending capacity." Read here as: the new campaign keeps the sending capacity
- * the old one had. The inboxes left out took their daily limits with them;
- * that much is made up from the pool (pickFromPool).
+ * sending capacity." Read (the user, 19 Nov) as: pool inboxes are added only
+ * when the inboxes kept from the old campaign cannot cover the campaign's own
+ * daily sending limit, and only enough to make up the difference (poolNeeded).
+ * Replacing the left-out inboxes' capacity instead added 234 inboxes to a
+ * campaign whose kept inboxes already covered its limit (C21 #363): the
+ * Not connected ones it "replaced" were never sending.
  *
  * Blocking inboxes everywhere and Slack alerts are a separate piece of work;
  * this only decides what the NEW campaign is given.
@@ -239,7 +242,21 @@ export function pickFromPool(
   return { needed, added, picks, shortfall: Math.max(0, needed - added), moreAvailable: eligible.length - picks.length };
 }
 
-/** The daily capacity the left-out inboxes had: what the pool is asked to make up. */
+/** The daily capacity the left-out inboxes had. */
 export function capacityLeftOut(j: InboxJudgement): number {
   return j.leave.reduce((sum, v) => sum + Math.max(0, Number(v.dailyLimit ?? 0)), 0);
+}
+
+/** The daily capacity of the inboxes the new campaign keeps (healthy and warned). */
+export function capacityKept(j: InboxJudgement): number {
+  return [...j.add, ...j.warn].reduce((sum, v) => sum + Math.max(0, Number(v.dailyLimit ?? 0)), 0);
+}
+
+/**
+ * What the pool must add: how far the kept inboxes fall short of the campaign's own daily sending limit (the user,
+ * 19 Nov). A campaign with no limit set falls back to the capacity of the inboxes left out.
+ */
+export function poolNeeded(j: InboxJudgement, campaignDailyLimit: number | null): number {
+  if (campaignDailyLimit === null || !(campaignDailyLimit > 0)) return capacityLeftOut(j);
+  return Math.max(0, campaignDailyLimit - capacityKept(j));
 }

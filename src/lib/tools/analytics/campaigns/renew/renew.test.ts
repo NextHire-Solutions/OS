@@ -53,6 +53,8 @@ class World {
   }
   /** EmailBison's status read live at run time, when it differs from the analytics copy. */
   liveStatus = new Map<number, string>();
+  /** The slow reads (every lead, every inbox, the pool) the review made: none when a quick check already refused. */
+  heavyReads: string[] = [];
   /** The old campaign's hand-set client mapping, and whether the new campaign is synced (its row exists) yet. */
   pin: ClientPin | null = null;
   pinRowsFor = new Set<number>();
@@ -109,11 +111,11 @@ class World {
       schedule: async () => ({ days: ["monday", "tuesday"], start: "08:00", end: "17:00", timezone: "America/New_York" }),
       stepCount: async (id) => w.campaigns.get(id)?.steps ?? 0,
       searchCampaigns: async (term) => [...w.campaigns.values()].filter((c) => c.name.includes(term)).map((c) => ({ id: c.id, name: c.name, status: c.status })),
-      leadRows: async (id) => w.rows(id),
+      leadRows: async (id) => { w.heavyReads.push(`leadRows ${id}`); return w.rows(id); },
       leadCount: async (id) => { if (w.pendingMoves.length && --w.moveDelayReads <= 0) w.landMoves(); return w.campaigns.get(id)?.leads.size ?? 0; },
-      inboxes: async (id) => [...(w.campaigns.get(id)?.inboxes ?? [])].map((i) => w.inboxes.get(i)!),
+      inboxes: async (id) => { w.heavyReads.push(`inboxes ${id}`); return [...(w.campaigns.get(id)?.inboxes ?? [])].map((i) => w.inboxes.get(i)!); },
       inboxCount: async (id) => w.campaigns.get(id)?.inboxes.size ?? 0,
-      poolInboxes: async () => [...w.inboxes.values()],
+      poolInboxes: async () => { w.heavyReads.push("pool"); return [...w.inboxes.values()]; },
       liveInboxStatus: async (ids) => new Map(ids.map((i) => [i, w.liveStatus.get(i) ?? w.inboxes.get(i)?.status ?? null])),
       recentBounces: async (ids) => (w.bounces === "missing" ? "missing" : ids.map((i) => (w.bounces as Map<number, RecentBounces>).get(i) ?? { id: i, sent: 0, bounced: 0 })),
       links: async () => w.links,
@@ -506,24 +508,29 @@ test("one renewal per campaign at a time: a second start is answered with the ru
 
 /* ------------------------------------------------------------------------------------------- the wider pool --- */
 
-/** LIV Indy plus a wider pool. The two left-out inboxes (4: 10% bounce, 5: not connected) could send 25 + 25 = 50/day. */
-function livWithPool() {
+/**
+ * LIV Indy plus a wider pool. The kept inboxes (1, 2, 3) can send 25 + 25 + 25 = 75/day; the old campaign's own daily
+ * limit is set per test. The pool is only asked for what 75/day falls short of that limit (the user, 19 Nov).
+ */
+function livWithPool(limit: number | null = 125) {
   const w = liv();
+  w.campaigns.get(OLD)!.maxE = limit as number;
   w.inbox(61, {}, 500, 1, 0); // healthy, idle: 25 spare
   w.inbox(62, { dailyLimit: 30 }, 0, 0, 0); // never sent: 30 spare
   w.inbox(63, { tags: ["Dead"] }); // never picked
   w.inbox(64, {}, 500, 0, 25); // sent its whole limit today: no capacity
   w.inbox(65, {}, 1000, 30, 0); // 3%: never picked fresh
   w.inbox(66, { status: "Not connected" });
-  w.inbox(67, {}, 500, 2, 20); // 5 spare: enough left after 61 and 62? not needed
+  w.inbox(67, {}, 500, 2, 20); // 5 spare
   return w;
 }
 
-test("pool: the left-out inboxes' capacity (50/day) is made up from healthy pool inboxes with capacity, most spare first", async () => {
-  const w = livWithPool();
+test("pool: the kept inboxes (75/day) fall 50/day short of the campaign's 125/day: made up from the pool, most spare first", async () => {
+  const w = livWithPool(125);
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
   const pool = p.inboxes.pool!;
+  assert.deepEqual(p.inboxes.capacity, { kept: 75, campaignLimit: 125 });
   assert.equal(pool.needed, 50);
   assert.deepEqual(pool.picks.map((x) => x.id), [62, 61], "30 spare (never sent) then 25: 55 covers 50");
   assert.equal(pool.shortfall, 0);
@@ -535,8 +542,19 @@ test("pool: the left-out inboxes' capacity (50/day) is made up from healthy pool
   assert.equal(r.inboxesAdded, 5);
 });
 
+test("pool (the user, 19 Nov): kept inboxes that cover the campaign's limit get NO pool inboxes, however many were left out", async () => {
+  // As C21 #363: 244 inboxes left out (bouncing or Not connected), yet the 143 kept can send more than its 3,000/day.
+  const w = livWithPool(75);
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  assert.deepEqual(p.inboxes.judgement!.leave.map((v) => v.id).sort(), [4, 5], "inboxes were left out");
+  assert.equal(p.inboxes.pool!.needed, 0);
+  assert.deepEqual(p.inboxes.pool!.picks, []);
+  assert.ok(!p.warnings.some((x) => /wider pool/.test(x)));
+});
+
 test("pool: a pick that used up its capacity since the review is dropped and named; the rest go on", async () => {
-  const w = livWithPool();
+  const w = livWithPool(125);
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
   (w.bounces as Map<number, RecentBounces>).set(62, { id: 62, sent: 30, bounced: 0, sent24h: 30 });
@@ -549,7 +567,7 @@ test("pool: a pick that used up its capacity since the review is dropped and nam
 });
 
 test("pool: a pick EmailBison says is not connected right now is dropped (checked live before adding)", async () => {
-  const w = livWithPool();
+  const w = livWithPool(125);
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
   w.liveStatus.set(61, "Not connected");
@@ -559,7 +577,7 @@ test("pool: a pick EmailBison says is not connected right now is dropped (checke
 });
 
 test("pool: ids that were never eligible (the old campaign's own left-out inbox, a Dead one) are refused, not added", async () => {
-  const w = livWithPool();
+  const w = livWithPool(125);
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
   const r = await runRenew(OLD, p.token, [4, 63, 61], "amy@x.com", w.io());
@@ -568,32 +586,33 @@ test("pool: ids that were never eligible (the old campaign's own left-out inbox,
   assert.ok(!inb.has(4) && !inb.has(63) && inb.has(61));
 });
 
-test("pool: nothing left out, nothing picked", async () => {
-  const w = livWithPool();
-  w.campaigns.get(OLD)!.inboxes = new Set([1, 2, 3]);
+test("pool: when the pool cannot cover the shortfall, the review says how much it could add", async () => {
+  const w = liv(); // the campaign's 3,000/day against 75/day kept, and no pool beyond its own inboxes
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
-  assert.equal(p.inboxes.pool!.needed, 0);
-  assert.deepEqual(p.inboxes.pool!.picks, []);
-});
-
-test("pool: when the pool cannot cover it, the review says how much it could make up", async () => {
-  const w = liv(); // no pool beyond the campaign's own inboxes
-  const p = await previewRenew(OLD, w.io());
-  if ("error" in p) throw new Error(p.error);
-  assert.equal(p.inboxes.pool!.shortfall, 50);
-  assert.ok(p.warnings.some((x) => /could send 50\/day; the wider pool has healthy inboxes to make up only 0\/day/.test(x)), p.warnings.join(" | "));
+  assert.equal(p.inboxes.pool!.shortfall, 2925);
+  assert.ok(p.warnings.some((x) => /kept inboxes can send 75\/day, less than the campaign's 3000\/day, and the wider pool has healthy inboxes for only 0\/day more/.test(x)), p.warnings.join(" | "));
 });
 
 test("pool: an old campaign with no healthy inbox is still renewable when the pool can supply them", async () => {
-  const w = livWithPool();
+  const w = livWithPool(125);
   w.campaigns.get(OLD)!.inboxes = new Set([4, 5]);
   const p = await previewRenew(OLD, w.io());
   if ("error" in p) throw new Error(p.error);
   assert.deepEqual(p.blockers, []);
+  assert.equal(p.inboxes.capacity.kept, 0);
   const r = await runRenew(OLD, p.token, p.inboxes.pool!.picks.map((x) => x.id), "amy@x.com", w.io());
   assert.equal(r.ok, true, r.error ?? "");
-  assert.deepEqual([...w.campaigns.get(r.newCampaignId!)!.inboxes].sort((a, b) => a - b), [61, 62]);
+  // 125 needed: every healthy pool inbox with capacity (62: 30, 1/2/3: 25 each, 61: 25, 67: 5 = 135), most spare first
+  assert.ok(w.campaigns.get(r.newCampaignId!)!.inboxes.size >= 5);
+});
+
+test("pool: a campaign with no daily limit set falls back to the left-out inboxes' capacity (25 + 25 = 50)", async () => {
+  const w = livWithPool(null);
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  assert.equal(p.inboxes.pool!.needed, 50);
+  assert.deepEqual(p.inboxes.pool!.picks.map((x) => x.id), [62, 61]);
 });
 
 /* --------------------------------------------------------------------------- the independent review, 19 Nov --- */
@@ -746,4 +765,49 @@ test("review: every audit row of a run belongs to the OLD campaign, with started
   const r = await runRenew(OLD, p.token, [], "amy@x.com", w.io());
   assert.deepEqual(w.audits.map((a) => [a.stage, a.sourceId]), [["started", OLD], ["copied", OLD], ["finished", OLD]]);
   assert.equal(w.audits[1].newCampaignId, r.newCampaignId);
+});
+
+/* ------------------------------------------------- quick refusals (user, 19 Nov: "show ... a little faster") --- */
+
+test("quick: an earlier round is refused WITHOUT reading any lead, inbox or the pool, and names the campaign to open", async () => {
+  const w = liv();
+  const p = await previewRenew(385, w.io()); // "LIV Indy Realty 5 + …" in this fake
+  if ("error" in p) throw new Error(p.error);
+  assert.equal(p.checked, "quick");
+  assert.ok(p.blockers.some((b) => /round 5 of "LIV Indy Realty \+ Indianapolis Metro \+ ZF NS4 \(EST\)"/.test(b)));
+  assert.equal(!p.names.ok && p.names.currentId, OLD, "the current campaign's id, for the Open link");
+  assert.deepEqual(w.heavyReads, [], "no slow read at all");
+  const r = await runRenew(385, p.token, [], "amy@x.com", w.io());
+  assert.equal(r.ok, false);
+  assert.deepEqual(w.writes, []);
+});
+
+test("quick: a draft, an archived campaign, one with no emails, and an unfinished renewal — all without the slow reads", async () => {
+  const cases: Array<[string, (w: World) => void, RegExp]> = [
+    ["draft", (w) => { w.campaigns.get(OLD)!.status = "draft"; }, /draft/],
+    ["archived", (w) => { w.campaigns.get(OLD)!.status = "archived"; }, /archived/],
+    ["no emails", (w) => { w.campaigns.get(OLD)!.steps = 0; }, /no emails in its sequence/],
+    ["unfinished renewal", (w) => {
+      w.campaign({ id: 3000, name: NAME, status: "draft" });
+      w.audits.push({ stage: "started", sourceId: OLD, sourceName: NAME, newCampaignId: null, ok: true, actor: "amy@x.com", detail: {}, error: null });
+      w.audits.push({ stage: "copied", sourceId: OLD, sourceName: NAME, newCampaignId: 3000, ok: true, actor: "amy@x.com", detail: {}, error: null });
+    }, /did not finish, and its copy #3000/],
+  ];
+  for (const [label, change, why] of cases) {
+    const w = liv();
+    change(w);
+    const p = await previewRenew(OLD, w.io());
+    if ("error" in p) throw new Error(p.error);
+    assert.equal(p.checked, "quick", label);
+    assert.ok(p.blockers.some((b) => why.test(b)), `${label}: ${p.blockers.join(" | ")}`);
+    assert.deepEqual(w.heavyReads, [], `${label}: no slow read`);
+  }
+});
+
+test("full: a renewable campaign is read in full (checked = full)", async () => {
+  const w = liv();
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  assert.equal(p.checked, "full");
+  assert.ok(w.heavyReads.includes(`leadRows ${OLD}`) && w.heavyReads.includes(`inboxes ${OLD}`) && w.heavyReads.includes("pool"));
 });

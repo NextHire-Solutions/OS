@@ -58,7 +58,8 @@ export type NamePlan =
        */
       sameName: Array<{ id: number; name: string; status: string | null }>;
     }
-  | { ok: false; reason: string };
+  /** currentId: the series' current campaign, when the refusal is "this is an earlier round of …". */
+  | { ok: false; reason: string; currentId?: number };
 
 /** Spaces collapsed, ends trimmed, lower case: how two names are compared. */
 export function nameKey(name: string): string {
@@ -137,6 +138,7 @@ export function planNames(source: NamedCampaign, campaigns: readonly NamedCampai
         reason: current
           ? `This campaign is round ${tokens[i]} of "${current.name}". Renew that one instead.`
           : `This campaign is round ${tokens[i]} of a numbered series. Renew the series' current (unnumbered) campaign instead.`,
+        ...(current ? { currentId: current.id } : {}),
       };
     }
   }

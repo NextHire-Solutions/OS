@@ -99,7 +99,7 @@ test("formatRate never shows more than the true value", () => {
 });
 
 /* ------------------------------------------------------------------------------------------- the wider pool --- */
-import { capacityLeftOut, pickFromPool, poolRefusal } from "./inbox-health.ts";
+import { capacityKept, capacityLeftOut, pickFromPool, poolNeeded, poolRefusal } from "./inbox-health.ts";
 
 const pool = (id: number, o: Partial<SourceInbox> = {}): SourceInbox => ({ id, email: `p${id}@x.com`, status: "Connected", tags: [], dailyLimit: 25, ...o });
 const used = (id: number, attempts: number, bounced: number, sent24h: number) => ({ id, sent: attempts - bounced, bounced, sent24h });
@@ -148,4 +148,17 @@ test("pool (review 19 Nov): the old campaign's own groups first; the intro sende
   const plan = pickFromPool(inboxes, [], 30, new Set(), { groupTags: new Set(["nicole pool"]), reservedEmails: new Set(["nicole.c@brokerstaffer.com"]) });
   assert.deepEqual(plan.picks.map((p) => [p.id, p.sameGroup]), [[2, true], [1, false]], "same group first even with less to spare; the reserved address never");
   assert.equal(poolRefusal(inboxes[2], undefined, { reservedEmails: new Set(["nicole.c@brokerstaffer.com"]) }), "reserved");
+});
+
+test("poolNeeded (the user, 19 Nov): what the kept inboxes fall short of the campaign's own daily limit", () => {
+  const j = judgeInboxes(
+    [inbox({ id: 1, status: "Not connected", dailyLimit: 25 }), inbox({ id: 2, dailyLimit: 1 }), inbox({ id: 3, dailyLimit: 30 }), inbox({ id: 4, dailyLimit: 20 })],
+    [recent(200, 50, 2), recent(200, 0, 3), recent(1000, 30, 4)],
+  );
+  assert.equal(capacityKept(j), 50, "30 healthy + 20 warned; the left-out ones never count");
+  assert.equal(poolNeeded(j, 40), 0, "kept 50 covers 40");
+  assert.equal(poolNeeded(j, 50), 0);
+  assert.equal(poolNeeded(j, 120), 70);
+  assert.equal(poolNeeded(j, null), 26, "no limit set: the left-out capacity, as before");
+  assert.equal(poolNeeded(j, 0), 26);
 });

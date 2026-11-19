@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { capacityLeftOut, inboxesToAdd, isConnected, judgeInboxes, pickFromPool, poolRefusal, type InboxJudgement, type PoolPlan, type RecentBounces, type SourceInbox } from "./inbox-health.ts";
+import { capacityKept, inboxesToAdd, poolNeeded, isConnected, judgeInboxes, pickFromPool, poolRefusal, type InboxJudgement, type PoolPlan, type RecentBounces, type SourceInbox } from "./inbox-health.ts";
 import { leadsToTransfer, planLeads, type BusyExample, type CampaignLeadRow, type LeadPlan } from "./leads.ts";
 import type { LinkResult, LinkState } from "./links.ts";
 import { HIGH_ROUND, nameKey, planNames, searchTermFor, type NamedCampaign, type NamePlan } from "./naming.ts";
+import { statusRefusal } from "./status.ts";
 
 /*
  * DUPLICATE & RENEW CAMPAIGN (BrokerStaffer spec, 19 Nov) — the review and the run.
@@ -146,7 +147,14 @@ export interface RenewPreview {
     left: Record<string, number>;
     total: number;
   };
-  inboxes: { onSource: number; judgement: InboxJudgement | null; healthReady: boolean; pool: PoolPlan | null };
+  inboxes: {
+    onSource: number;
+    judgement: InboxJudgement | null;
+    healthReady: boolean;
+    pool: PoolPlan | null;
+    /** What the kept inboxes can send a day, against the campaign's own daily limit (the pool makes up any shortfall). */
+    capacity: { kept: number; campaignLimit: number | null };
+  };
   tag: { ids: number[]; names: string[] };
   schedule: RenewSchedule | null;
   limits: { maxEmailsPerDay: number | null; maxNewLeadsPerDay: number | null };
@@ -157,12 +165,15 @@ export interface RenewPreview {
   warnings: string[];
   /** What the run must still find: the names, the tag, the inboxes. */
   token: string;
+  /**
+   * "quick": a check that needs no lead or inbox read already said no (status, an earlier round, no emails, an
+   * unfinished renewal), so nothing else was read and the leads/inboxes parts are empty. "full": everything read.
+   */
+  checked: "quick" | "full";
 }
 
 /* --------------------------------------------------------------------------------------------- the review --- */
 
-/** Statuses a campaign can be renewed from: running, paused part-way, or finished. */
-const RENEWABLE = new Set(["active", "paused", "completed"]);
 /** Inbox tags too broad to be a group (every inbox has one of them). */
 const GENERIC_TAGS = new Set(["all", "google", "outlook"]);
 /** The workspace's tags that mark the copy; carried from the old campaign to the new one. */
@@ -188,19 +199,66 @@ export function tokenFor(p: Pick<RenewPreview, "source" | "names" | "tag">, addI
   return createHash("sha256").update(body).digest("hex").slice(0, 32);
 }
 
+const NO_LINKS: LinkState = { ready: true, error: null, portalRoute: null, picks: [], setups: [] };
+
 async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missing: string }> {
   const source = await io.campaign(sourceId);
   if (!source) return { missing: "This campaign was not found in EmailBison." };
 
-  const [steps, schedule, siblings, rows, inboxes, links, pool, last, pin] = await Promise.all([
+  /*
+   * THE QUICK CHECKS FIRST (user, 19 Nov: "show if we cannot duplicate and renew any campaign little faster"). They
+   * need four small reads — the status, the name search, the step count, the audit log — about a second, where the
+   * leads and inboxes take 10-40 s on a big campaign. A campaign they refuse is told so straight away, nothing more read.
+   */
+  const [steps, siblings, last] = await Promise.all([
     io.stepCount(sourceId),
-    io.schedule(sourceId),
     io.searchCampaigns(searchTermFor(source.name)),
+    io.lastRenewal(sourceId),
+  ]);
+  const names = planNames({ id: source.id, name: source.name, status: source.status }, siblings.some((c) => c.id === source.id) ? siblings : [...siblings, { id: source.id, name: source.name, status: source.status }]);
+  const tags = zfTags(source.tags);
+  const status = source.status.trim().toLowerCase();
+  const quick: string[] = [];
+  const byStatus = statusRefusal(source.status);
+  if (byStatus) quick.push(byStatus);
+  if (!names.ok) quick.push(names.reason);
+  if (steps === 0) quick.push("This campaign has no emails in its sequence.");
+  // An earlier renewal that did not finish, and whose copy is still there: never a second copy beside it (review, 19 Nov).
+  if (last && last.newCampaignId && !last.rolledBack && (!last.finished || last.ok === false)) {
+    const copy = await io.campaign(last.newCampaignId);
+    const gone = !copy || /pending deletion|deleted/i.test(copy.status);
+    if (!gone) {
+      quick.push(
+        `A renewal of this campaign started ${last.at.slice(0, 16).replace("T", " ")} UTC by ${last.actor} did not finish, and its copy #${copy!.id} ("${copy!.name}", ${copy!.status}) is still there. ` +
+          "Check that copy in EmailBison: finish it by hand, or delete it, before renewing again.",
+      );
+    }
+  }
+  if (quick.length) {
+    const preview: RenewPreview = {
+      source: { id: source.id, name: source.name, status: source.status, steps, tags: source.tags.map((t) => t.name) },
+      names,
+      leads: { move: 0, copy: 0, transfer: 0, busy: { move: 0, copy: 0, examples: [] }, left: {}, total: 0 },
+      inboxes: { onSource: 0, judgement: null, healthReady: true, pool: null, capacity: { kept: 0, campaignLimit: source.maxEmailsPerDay } },
+      tag: { ids: tags.map((t) => t.id), names: tags.map((t) => t.name) },
+      schedule: null,
+      limits: { maxEmailsPerDay: source.maxEmailsPerDay, maxNewLeadsPerDay: source.maxNewLeadsPerDay },
+      links: { ready: true, error: null, portal: false, picks: 0, setups: 0, clientPinned: false },
+      blockers: quick,
+      warnings: [],
+      token: "",
+      checked: "quick",
+    };
+    preview.token = tokenFor(preview, []);
+    return { preview, plan: null, addIds: [], poolEligible: new Map(), linkState: NO_LINKS, pin: null };
+  }
+
+  const [schedule, rows, inboxes, links, pool, pin] = await Promise.all([
+    io.schedule(sourceId),
     io.leadRows(sourceId),
     io.inboxes(sourceId),
     io.links(sourceId),
     io.poolInboxes(),
-    io.lastRenewal(sourceId),
     io.clientPin(sourceId),
   ]);
   const own = new Set(inboxes.map((i) => i.id));
@@ -209,56 +267,36 @@ async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missin
   const healthReady = bounces !== "missing";
   const judgement = healthReady ? judgeInboxes(inboxes, bounces) : null;
   const addIds = judgement ? inboxesToAdd(judgement) : [];
-  // The wider pool makes up the capacity the left-out inboxes had (the team, 19 Nov).
+  // The wider pool only makes up what the kept inboxes cannot send of the campaign's own daily limit (the user, 19 Nov).
   // Same-group inboxes first: the old campaign's own inbox groups (its tags, the generic ones aside).
   const groupTags = new Set(inboxes.flatMap((i) => i.tags.map((t) => t.trim().toLowerCase())).filter((t) => t && !GENERIC_TAGS.has(t)));
   const reserved = new Set(io.reservedInboxEmails().map((e) => e.trim().toLowerCase()));
   const poolOptions = { groupTags, reservedEmails: reserved };
-  const poolPlan = healthReady && judgement ? pickFromPool(pool, bounces, capacityLeftOut(judgement), own, poolOptions) : null;
+  const poolPlan = healthReady && judgement ? pickFromPool(pool, bounces, poolNeeded(judgement, source.maxEmailsPerDay), own, poolOptions) : null;
+  const keptCapacity = judgement ? capacityKept(judgement) : 0;
   const poolEligible = new Map<number, SourceInbox>();
   if (healthReady) {
     const byId = new Map(bounces.map((r) => [Number(r.id), r]));
     for (const i of pool) if (!own.has(i.id) && !poolRefusal(i, byId.get(i.id), poolOptions)) poolEligible.set(i.id, i);
   }
 
-  const names = planNames({ id: source.id, name: source.name, status: source.status }, siblings.some((c) => c.id === source.id) ? siblings : [...siblings, { id: source.id, name: source.name, status: source.status }]);
   const plan = planLeads(sourceId, rows);
-  const tags = zfTags(source.tags);
-  const status = source.status.trim().toLowerCase();
 
   const blockers: string[] = [];
   const warnings: string[] = [];
-  if (!RENEWABLE.has(status)) {
-    blockers.push(
-      status === "draft"
-        ? "This campaign is a draft: it has not started, so there is nothing to renew. Use Duplicate instead."
-        : `This campaign is ${status || "in an unknown state"}. Only a running, paused or finished campaign can be renewed.`,
-    );
-  }
-  if (!names.ok) blockers.push(names.reason);
   if (!healthReady) blockers.push("The inbox health check is not switched on yet: it needs the analytics database update 098_os_inbox_recent_bounces.sql to be run.");
   if (!links.ready) blockers.push(`The OS links to this campaign (portal choice, Prospects) could not be read, so they could not be kept: ${links.error ?? "unknown error"}.`);
   if (healthReady && inboxes.length && !addIds.length && !poolPlan?.picks.length) blockers.push("None of this campaign's inboxes passes the health check and the wider pool has none to spare, so the new campaign could not send.");
   if (!inboxes.length) blockers.push("This campaign has no inboxes, so there are none to give the new campaign.");
   if (!leadsToTransfer(plan)) blockers.push("No lead is In Sequence or Sequence Finished and free to start again, so the new campaign would be empty.");
-  if (steps === 0) blockers.push("This campaign has no emails in its sequence.");
-  // An earlier renewal that did not finish, and whose copy is still there: never a second copy beside it (review, 19 Nov).
-  if (last && last.newCampaignId && !last.rolledBack && (!last.finished || last.ok === false)) {
-    const copy = await io.campaign(last.newCampaignId);
-    const gone = !copy || /pending deletion|deleted/i.test(copy.status);
-    if (!gone) {
-      blockers.push(
-        `A renewal of this campaign started ${last.at.slice(0, 16).replace("T", " ")} UTC by ${last.actor} did not finish, and its copy #${copy!.id} ("${copy!.name}", ${copy!.status}) is still there. ` +
-          "Check that copy in EmailBison: finish it by hand, or delete it, before renewing again.",
-      );
-    }
-  }
 
   const orphan = siblings.find((c) => c.id !== source.id && nameKey(c.name) === nameKey(`Copy of ${source.name}`));
   if (orphan) warnings.push(`A campaign named "Copy of ${source.name}" (#${orphan.id}, ${orphan.status ?? "status unknown"}) exists, probably left by an earlier attempt. Delete it if it is not needed.`);
   if (pin) warnings.push("This campaign's client is pinned by hand; the new campaign is pinned to the same client as soon as the analytics sync lists it (within about 30 minutes).");
   if (names.ok && names.round > HIGH_ROUND) warnings.push(`This would be round ${names.round}. Check the earlier rounds listed: a number in another campaign's name may have been read as a round.`);
-  if (poolPlan && poolPlan.shortfall > 0) warnings.push(`The inboxes left out could send ${poolPlan.needed}/day; the wider pool has healthy inboxes to make up only ${poolPlan.added}/day of it.`);
+  if (poolPlan && poolPlan.shortfall > 0) {
+    warnings.push(`The kept inboxes can send ${keptCapacity}/day, less than the campaign's ${source.maxEmailsPerDay ?? "?"}/day, and the wider pool has healthy inboxes for only ${poolPlan.added}/day more.`);
+  }
   if (!tags.length) warnings.push("The old campaign has no ZF or NO-ZF tag, so the new one gets none.");
   if (tags.length > 1) warnings.push(`The old campaign has both ${tags.map((t) => t.name).join(" and ")}; the new one gets both.`);
   if (names.ok && names.sameName.length) {
@@ -275,7 +313,7 @@ async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missin
     source: { id: source.id, name: source.name, status: source.status, steps, tags: source.tags.map((t) => t.name) },
     names,
     leads: { move: plan.move.length, copy: plan.copy.length, transfer: leadsToTransfer(plan), busy: plan.busy, left: plan.left, total: plan.total },
-    inboxes: { onSource: inboxes.length, judgement, healthReady, pool: poolPlan },
+    inboxes: { onSource: inboxes.length, judgement, healthReady, pool: poolPlan, capacity: { kept: keptCapacity, campaignLimit: source.maxEmailsPerDay } },
     tag: { ids: tags.map((t) => t.id), names: tags.map((t) => t.name) },
     schedule,
     limits: { maxEmailsPerDay: source.maxEmailsPerDay, maxNewLeadsPerDay: source.maxNewLeadsPerDay },
@@ -283,6 +321,7 @@ async function load(sourceId: number, io: RenewReads): Promise<Loaded | { missin
     blockers,
     warnings,
     token: "",
+    checked: "full",
   };
   preview.token = tokenFor(preview, addIds);
   return { preview, plan, addIds, poolEligible, linkState: links, pin };
