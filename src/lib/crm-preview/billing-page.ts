@@ -91,7 +91,8 @@ export async function portalBillingPage(portalId: string, now: Date): Promise<Bi
   const entries = await fetchAllRows<{ source: string | null; introduced_at: string | null }>(({ from, to }) =>
     mi().from("client_pipeline_entries").select("id, source, introduced_at").in("client_id", mine).order("id").range(from, to),
   );
-  const own = scope.manage ? null : new Set(scope.subscriptions);
+  // A shared customer lists only the client's own subscriptions' invoices, whether or not Manage billing opens it.
+  const own = "subscriptions" in scope ? new Set(scope.subscriptions) : null;
   const invoices = snapshot.invoices.filter((i) => (own ? i.subscription !== null && own.has(i.subscription) : i.customer === (scope as { customer: string }).customer));
   return { ok: true, periods: introductionsByPeriod(invoices, entries, now), portals: mine.length, manage: scope.manage };
 }

@@ -490,6 +490,14 @@ changes go through our team. Every subscription client's invoice numbers now lin
 invoice (view, PDF). Checked read only on every live portal: only Las Vegas changes (8 periods, VGSY6AIO-0002 to
 -0016, its even numbers); everyone else identical plus links; browser 24/24 desktop and phone.
 
+**20 Nov: Manage billing turned ON for Las Vegas anyway** (the client asked for the button; the user: "Turn it on
+anyway, if one person manages billing for both offices"). `SHARED_BILLING_OPEN` in `billing-pick.ts` lists the
+clients whose shared Stripe customer may still open Stripe's billing page, by **os_clients id** (Las Vegas =
+`7fb537e9-…`; the portal id `20b335bf-…` is a different id and does nothing there). Stripe's page shows the whole
+customer, so Las Vegas also sees Los Angeles's (paused) subscription: accepted. The invoice list stays Las Vegas's
+own. Los Angeles, Discover Phx, JPAR Iron Horse, Raintown and Discover Flag (all on shared cards) stay refused. LIVE
+20 Nov (`e3c8b9b`, Railway `25d732a4`); live browser check 29/29 desktop and phone (button shown, not clicked).
+
 ## 0.07 Campaigns: clients edit their own emails, 17 November
 
 LIVE 17 Nov on the Demo Portal (`ea98ca0` + `5e1e282`, Railway `961ba129`; migration **0052** run by the user first).
