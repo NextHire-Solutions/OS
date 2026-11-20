@@ -1,3 +1,5 @@
+import type { AttachHealthView } from "./attach-health.ts";
+
 /*
  * Several inbox pools at once (13 Oct: "allow us to select multiple groups of
  * inboxes when adding or removing").
@@ -103,6 +105,8 @@ export interface PoolSummary {
   action: "attach" | "remove";
   inboxes: number;
   skippedDisconnected: number;
+  /** Connected but left out by the health rules (attach-health.ts); attach only. */
+  skippedUnhealthy?: number;
   results: PoolResult[];
 }
 
@@ -114,6 +118,9 @@ export interface PoolsSummary {
   /** Distinct inboxes across the pools where known, else the sum of the pools. */
   inboxes: number;
   skippedDisconnected: number;
+  /** Connected inboxes the health rules left out, across the pools (attach only), and why. */
+  skippedUnhealthy?: number;
+  health?: Omit<AttachHealthView, "healthy">;
   /** One row per campaign: ok only if every pool went through for it. */
   results: PoolResult[];
   /** Each pool's own outcome, in the order they ran. */

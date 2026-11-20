@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AttachHealthView } from "@/lib/tools/analytics/campaigns/attach-health.ts";
 
 import { invalidate, loadOnce } from "../lazy";
 import type { OpenCampaign, RemovalResult } from "@/lib/tools/analytics/campaigns/inbox-removal.ts";
@@ -137,6 +138,10 @@ export const removalRun = (input: { campaignId: number; inboxIds: number[]; paus
 export const addRun = (input: { campaignId: number; inboxIds: number[]; batchId: string }) =>
   send(`${BASE}/campaigns/inboxes/add/run`, json("POST", { ...input, confirm: true })) as unknown as Promise<AddResult & { name: string }>;
 
+/** Which of these inboxes the health rules let onto a campaign (20 Nov — attach-health.ts). Reads only. */
+export const addCheck = (inboxIds: number[]) =>
+  send(`${BASE}/campaigns/inboxes/add/check`, json("POST", { inboxIds })) as unknown as Promise<AttachHealthView>;
+
 /* -------------------------------- clients -------------------------------- */
 
 export type MatchMode = "contains" | "prefix" | "exact";
@@ -271,12 +276,23 @@ export const CAMPAIGN_INBOXES_URL = (id: string, summary?: boolean) =>
 export const INBOX_TAGS_URL = (platform: "emailbison" | "instantly") =>
   `${BASE}/campaigns/inboxes?platform=${platform}`;
 
-/** The EmailBison inboxes in several pools, each once — for the dialog's counts (13 Oct). */
-export const INBOX_POOL_IDS_URL = (platform: "emailbison" | "instantly", pools: string[]) => {
+/**
+ * The EmailBison inboxes in several pools, each once — for the dialog's counts (13 Oct). With `health`, also which of
+ * the connected ones the health rules let on (20 Nov — attach-health.ts).
+ */
+export const INBOX_POOL_IDS_URL = (platform: "emailbison" | "instantly", pools: string[], health = false) => {
   const p = new URLSearchParams({ platform });
   for (const pool of pools) p.append("pool", pool);
+  if (health) p.set("health", "1");
   return `${BASE}/campaigns/inboxes?${p.toString()}`;
 };
+
+/** What the pool ids answer carries. `healthError`: the health couldn't be checked, so nothing would be assigned. */
+export interface PoolIdsAnswer {
+  ids: { all: number[]; connected: number[]; healthy?: number[] } | null;
+  health?: Omit<AttachHealthView, "healthy">;
+  healthError?: string;
+}
 
 /** How many leads a re-campaign would move (GET on the same route as the POST). */
 export const RECAMPAIGN_PREVIEW_URL = (id: string) => `${BASE}/campaigns/${id}/re-campaign`;
@@ -484,6 +500,9 @@ export interface InboxAssignmentSummary {
   action: "attach" | "remove";
   inboxes: number;
   skippedDisconnected: number;
+  /** Connected inboxes the health rules left out, and why (20 Nov — attach-health.ts). Attach only. */
+  skippedUnhealthy?: number;
+  health?: Omit<AttachHealthView, "healthy">;
   results: Array<{
     campaignId: string | number;
     name: string;

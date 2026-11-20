@@ -4,6 +4,8 @@ import { z } from "zod";
 import { AUTH_COOKIE, verifySessionToken } from "@/lib/tools/analytics/session";
 import { assignInboxesByTags, listInboxTags, poolInboxIds } from "@/lib/tools/analytics/campaigns/inbox-assignment.ts";
 import { MAX_POOLS, cleanPools } from "@/lib/tools/analytics/campaigns/inbox-pools.ts";
+import { healthView } from "@/lib/tools/analytics/campaigns/attach-health.ts";
+import { readAttachHealth } from "@/lib/tools/analytics/campaigns/attach-health-io";
 import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
 
 /*
@@ -58,7 +60,18 @@ export async function GET(request: NextRequest) {
   if (pools.length) {
     if (platform !== "emailbison") return NextResponse.json({ platform, pools, ids: null });
     try {
-      return NextResponse.json({ platform, pools, ids: await poolInboxIds(TEAM_ID(), pools) });
+      const ids = await poolInboxIds(TEAM_ID(), pools);
+      /*
+       * `&health=1` (20 Nov): which of the connected ones the health rules let on (attach-health.ts), so the window
+       * counts what an Assign really sends. `healthError` when it can't be checked: then nothing would be assigned.
+       */
+      if (request.nextUrl.searchParams.get("health") === "1") {
+        const r = await readAttachHealth(ids.connected);
+        return NextResponse.json(r.ok
+          ? { platform, pools, ids: { ...ids, healthy: r.health.healthy }, health: (({ healthy: _h, ...v }) => v)(healthView(r.health)) }
+          : { platform, pools, ids, healthError: r.error });
+      }
+      return NextResponse.json({ platform, pools, ids });
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "Could not read those pools." }, { status: 500 });
     }

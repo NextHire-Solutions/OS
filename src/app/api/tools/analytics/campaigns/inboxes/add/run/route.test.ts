@@ -15,6 +15,8 @@ const calls: string[] = [];
 const audit: Array<Record<string, unknown>> = [];
 const added: number[] = [];
 let stale = 0;
+/** The health verdict the fake gives: ids it passes, or an error as if it couldn't be read. */
+const health: { pass: Set<number> | null; error: string | null; reads: number } = { pass: null, error: null, reads: 0 };
 
 let POST: (r: NextRequest) => Promise<Response>;
 test("setup", { skip }, async () => {
@@ -44,6 +46,17 @@ test("setup", { skip }, async () => {
   });
   mock.module("@/lib/tools/analytics/campaign-inboxes-load", { namedExports: { inboxesAdded: (id: number) => added.push(id) } });
   mock.module("@/lib/tools/analytics/inbox-extras-load", { namedExports: { markInboxExtrasStale: () => { stale++; } } });
+  mock.module("@/lib/tools/analytics/campaigns/attach-health-io", {
+    namedExports: {
+      readAttachHealth: async (ids: number[]) => {
+        health.reads++;
+        if (health.error) return { ok: false, error: health.error };
+        const healthy = ids.filter((id) => !health.pass || health.pass.has(id));
+        const leftOut = ids.filter((id) => !healthy.includes(id)).map((id) => ({ id, email: `${id}@x.test`, reasons: ["Bounce rate 3.0%"], kinds: ["bounce"] }));
+        return { ok: true, health: { healthy, leftOut, counts: { "not connected": 0, Dead: 0, bounce: leftOut.length, "warm-up": 0, "not found": 0 }, unjudged: 0 } };
+      },
+    },
+  });
   mock.module("next/server", { namedExports: { NextResponse, NextRequest } });
   POST = (await import("./route.ts")).POST;
 });
@@ -53,6 +66,7 @@ const send = (b: unknown) => POST(new NextRequest("https://os.example/api/tools/
 const reset = (status: string, inboxes = [1, 2]) => {
   Object.assign(campaign, { status, inboxes: new Set(inboxes) });
   calls.length = 0; audit.length = 0; added.length = 0; stale = 0;
+  Object.assign(health, { pass: null, error: null, reads: 0 });
   session.current = { email: "person@example.com" };
 };
 
@@ -86,7 +100,7 @@ test("an active campaign: added without pausing, written to the audit log with w
   assert.deepEqual(calls, ["status", "attach"], "never paused or resumed");
   assert.equal(audit.length, 1);
   assert.deepEqual([audit[0].table, audit[0].action, audit[0].actor, audit[0].status, audit[0].campaign_id, audit[0].batch_id], ["campaign_audit_log", "attach-inboxes", "person@example.com", "ok", 5, BATCH]);
-  assert.deepEqual(audit[0].before_state, { from: "inboxes page", inbox_ids: [3, 4], inboxes: 2, status: "active" });
+  assert.deepEqual(audit[0].before_state, { from: "inboxes page", inbox_ids: [3, 4], left_out_by_health: [], inboxes: 2, status: "active" });
   assert.deepEqual(audit[0].after_state, { applied: 2, already_on: 0, inboxes: 4, dropped: 0 });
   assert.deepEqual(added, [5]);
   assert.equal(stale, 1);
@@ -107,4 +121,49 @@ test("all already on it: said as nothing to do, recorded, the kept lists left al
   assert.equal(j.outcome, "nothing");
   assert.equal(audit.length, 1);
   assert.deepEqual(added, []);
+});
+
+/* The inbox health rules (20 Nov — attach-health.ts): judged here, whatever the window showed. */
+
+test("only healthy inboxes go on; the ones left out are recorded with why", { skip }, async () => {
+  reset("active");
+  health.pass = new Set([3]);
+  const j = await (await send(body({ batchId: "22222222-2222-4222-8222-222222222222" }))).json();
+  assert.deepEqual([j.ok, j.outcome, j.added, j.leftOutUnhealthy], [true, "added", 1, 1]);
+  assert.ok(campaign.inboxes.has(3) && !campaign.inboxes.has(4), "4 never sent");
+  assert.deepEqual((audit[0].before_state as Record<string, unknown>).inbox_ids, [3]);
+  assert.deepEqual((audit[0].before_state as Record<string, unknown>).left_out_by_health, [{ id: 4, reasons: ["bounce"] }]);
+});
+
+test("none healthy: nothing sent to EmailBison, nothing recorded", { skip }, async () => {
+  reset("active");
+  health.pass = new Set();
+  const j = await (await send(body({ batchId: "33333333-3333-4333-8333-333333333333" }))).json();
+  assert.deepEqual([j.ok, j.outcome, j.added, j.leftOutUnhealthy], [true, "unhealthy", 0, 2]);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(audit, []);
+});
+
+test("health that can't be read: nothing sent, the reason given", { skip }, async () => {
+  reset("active");
+  health.error = "The inbox health check isn't switched on (analytics 098)";
+  const j = await (await send(body({ batchId: "44444444-4444-4444-8444-444444444444" }))).json();
+  assert.deepEqual([j.ok, j.outcome], [false, "failed"]);
+  assert.match(j.error, /098/);
+  assert.deepEqual(calls, []);
+});
+
+test("one run of the window is judged once for all its campaigns; a failed read is tried again", { skip }, async () => {
+  reset("active");
+  const b = "55555555-5555-4555-8555-555555555555";
+  await send(body({ batchId: b }));
+  await send(body({ batchId: b, campaignId: 6 }));
+  assert.equal(health.reads, 1);
+  health.error = "down";
+  const c = "66666666-6666-4666-8666-666666666666";
+  await send(body({ batchId: c }));
+  await new Promise((r) => setTimeout(r, 0));
+  health.error = null;
+  await send(body({ batchId: c }));
+  assert.equal(health.reads, 3);
 });

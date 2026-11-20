@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { fullNumber } from "@/lib/tools/analytics/format.ts";
 import { MAX_POOLS, poolNames, poolPreview, togglePool } from "@/lib/tools/analytics/campaigns/inbox-pools.ts";
+import { RULE_WORDS, leftOutWords } from "@/lib/tools/analytics/campaigns/attach-health.ts";
 import {
   CAMPAIGN_INBOXES_URL,
   INBOX_POOL_IDS_URL,
@@ -11,6 +12,7 @@ import {
   assignInboxes,
   useAnalyticsData,
   type InboxAssignmentSummary,
+  type PoolIdsAnswer,
 } from "./actions";
 import { DialogFrame, Fail, Panel, Warn } from "./dialog-frame";
 import { Search, Seg } from "./shared";
@@ -125,25 +127,35 @@ export function AssignInboxesDialog({
    * exact. While it loads (or if it cannot be read) the dialog says "up to"
    * the pools added together rather than claim a number it does not have.
    */
-  const unionQuery = useAnalyticsData<{ ids: { all: number[]; connected: number[] } | null }>(
-    INBOX_POOL_IDS_URL(platform ?? "emailbison", picked),
-    { skip: !open || !many || platform !== "emailbison" },
+  /*
+   * An EmailBison attach always asks, one pool or several (20 Nov): only the inboxes the health rules pass go on
+   * (attach-health.ts), and the counts below are of those. Nothing can be assigned until they are known.
+   */
+  const checkHealth = open && action === "attach" && platform === "emailbison" && picked.length > 0;
+  const unionQuery = useAnalyticsData<PoolIdsAnswer>(
+    INBOX_POOL_IDS_URL(platform ?? "emailbison", picked, checkHealth),
+    { skip: !open || !(many || checkHealth) || platform !== "emailbison" },
   );
-  const union = many && platform === "emailbison" ? (unionQuery.data?.ids ?? null) : null;
-  const exact = !many || union !== null;
-  const counting = many && platform === "emailbison" && !union && unionQuery.loading;
+  const answer = (many || checkHealth) && platform === "emailbison" ? unionQuery.data : null;
+  const healthError = checkHealth ? answer?.healthError ?? null : null;
+  const healthy = checkHealth ? answer?.ids?.healthy ?? null : null;
+  const union = answer?.ids && (!checkHealth || healthy) ? answer.ids : null;
+  const exact = !(many || checkHealth) || union !== null;
+  const counting = (many || checkHealth) && platform === "emailbison" && !union && !healthError && unionQuery.loading;
+  const healthWaiting = checkHealth && !healthy;
+  const unhealthy = checkHealth && union && healthy ? union.connected.length - healthy.length : 0;
 
   const summed = {
     all: chosen.reduce((t, c) => t + c.inboxes, 0),
     connected: chosen.reduce((t, c) => t + c.connected, 0),
   };
   const preview = union
-    ? poolPreview({ action, all: union.all, connected: union.connected, assigned: single && assigned ? assigned.inboxes.map((i) => i.id) : null })
+    ? poolPreview({ action, all: union.all, connected: checkHealth && healthy ? healthy : union.connected, assigned: single && assigned ? assigned.inboxes.map((i) => i.id) : null })
     : null;
 
-  // What will actually be sent: an attach skips inboxes that cannot send.
+  // What will actually be sent: an attach skips inboxes that cannot send, and (EmailBison) ones that aren't healthy.
   const willSend = preview ? preview.willSend : action === "attach" ? summed.connected : summed.all;
-  const dead = preview ? preview.dead : summed.all - summed.connected;
+  const dead = union ? union.all.length - union.connected.length : summed.all - summed.connected;
 
   /*
    * How many of these are ALREADY on the campaign, and therefore how many
@@ -215,6 +227,8 @@ export function AssignInboxesDialog({
                 // nothing safe to apply.
                 !platform ||
                 chosen.length === 0 ||
+                // An EmailBison attach waits for the health check, and is refused without it.
+                healthWaiting ||
                 willSend === 0 ||
                 // Nothing would change: every connected inbox in this pool is
                 // already on the campaign.
@@ -222,8 +236,8 @@ export function AssignInboxesDialog({
                 (action === "attach" && single && platform === "emailbison" && exact && newlyAdded === 0)
               }
             >
-              {running ? "Working…" : action === "attach" ? "Assign" : "Remove"}
-              {chosen.length && !running
+              {running ? "Working…" : healthWaiting && !healthError ? "Checking inboxes…" : action === "attach" ? "Assign" : "Remove"}
+              {chosen.length && !running && !healthWaiting
                 ? ` ${exact ? "" : "up to "}${fullNumber(action === "attach" && single && onAlready > 0 ? newlyAdded : willSend)}`
                 : ""}
             </Btn>
@@ -258,6 +272,11 @@ export function AssignInboxesDialog({
             <p className="tnum mut" style={{ margin: 0, fontSize: 12.5 }}>
               {fullNumber(summary.skippedDisconnected)} tagged {summary.skippedDisconnected === 1 ? "inbox is" : "inboxes are"} not
               connected and {summary.skippedDisconnected === 1 ? "was" : "were"} left out — they cannot send.
+            </p>
+          ) : null}
+          {summary.skippedUnhealthy && summary.health ? (
+            <p className="tnum mut" data-assign-unhealthy-done style={{ margin: 0, fontSize: 12.5 }}>
+              {fullNumber(summary.skippedUnhealthy)} connected {summary.skippedUnhealthy === 1 ? "inbox was" : "inboxes were"} left out by the health rules: {leftOutWords(summary.health.counts)}.
             </p>
           ) : null}
           {failed.length ? (
@@ -422,7 +441,11 @@ export function AssignInboxesDialog({
           {chosen.length && showing === "pools" ? (
             <Warn>
               <span className="tnum" data-inbox-pool-preview>
-                {!exact ? (
+                {healthError ? (
+                  <>Nothing can be assigned until the inboxes&apos; health can be checked.</>
+                ) : checkHealth && !exact ? (
+                  <span role="status">Checking the health of the inboxes in {label}… Nothing is assigned until it&apos;s known.</span>
+                ) : !exact ? (
                   // Several pools, union not in yet: no number is claimed that
                   // the write might not match.
                   <>
@@ -450,6 +473,16 @@ export function AssignInboxesDialog({
                       </>
                     )}
                     {dead > 0 ? <> {fullNumber(dead)} tagged {dead === 1 ? "inbox is" : "inboxes are"} not connected and will be left out.</> : null}
+                    {unhealthy > 0 && answer?.health ? (
+                      <details className="an-add-health" data-assign-unhealthy>
+                        <summary>{fullNumber(unhealthy)} connected {unhealthy === 1 ? "inbox is" : "inboxes are"} left out by the health rules: {leftOutWords(answer.health.counts)}.</summary>
+                        <ul>
+                          {answer.health.examples.map((x) => <li key={x.email}><span className="an-add-health-email">{x.email}</span> <span className="mut">{x.reasons.join("; ")}</span></li>)}
+                          {answer.health.leftOut > answer.health.examples.length ? <li className="mut">and {fullNumber(answer.health.leftOut - answer.health.examples.length)} more</li> : null}
+                        </ul>
+                      </details>
+                    ) : null}
+                    {checkHealth ? <div className="mut" style={{ fontSize: 12, marginTop: 4 }}>{RULE_WORDS}</div> : null}
                   </>
                 ) : (
                   <>
@@ -462,6 +495,7 @@ export function AssignInboxesDialog({
           ) : null}
         </>
       )}
+      {healthError && !summary ? <Fail>{healthError}</Fail> : null}
       {error ? <Fail>{error}</Fail> : null}
     </DialogFrame>
   );
