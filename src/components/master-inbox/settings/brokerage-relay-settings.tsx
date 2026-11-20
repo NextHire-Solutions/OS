@@ -362,7 +362,7 @@ function Brokerages({ rows, liveGlobally, serverList }: { rows: BrokerageRow[]; 
   return (
     <Section
       title="Brokerages"
-      sub="Each brokerage's own switch, Practice or Live, who receives, one click or automatic, and where its agents enter the portal pipeline. A brokerage switched on starts in Practice: each Interested reply is checked and recorded (see Recent hand-offs and View email) and nothing is sent until it is set to Live. A brokerage that is off is practised too."
+      sub="Each brokerage's own switch, Practice or Live, who receives, one click or automatic, and what happens once a hand-off has gone (Label Introduction: as if introduced; Add at Interested: clients billed per lead). A brokerage switched on starts in Practice: each Interested reply is checked and recorded (see Recent hand-offs and View email) and nothing is sent until it is set to Live. A brokerage that is off is practised too."
     >
       <div className="mis-brk-bar">
         <label className="mis-find">
@@ -376,13 +376,13 @@ function Brokerages({ rows, liveGlobally, serverList }: { rows: BrokerageRow[]; 
       <div className="mis-brk" role="region" aria-label="Brokerages" tabIndex={0}>
         <table className="atbl">
           <colgroup>
-            <col style={{ width: "22%" }} />
+            <col style={{ width: "20%" }} />
             <col style={{ width: "60px" }} />
             <col style={{ width: "112px" }} />
-            <col style={{ width: "19%" }} />
-            <col style={{ width: "96px" }} />
-            <col style={{ width: "15%" }} />
             <col style={{ width: "17%" }} />
+            <col style={{ width: "96px" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "22%" }} />
             {/* Room for "Confirm", the Save that asks twice before a brokerage can receive real emails. */}
             <col style={{ width: "96px" }} />
           </colgroup>
