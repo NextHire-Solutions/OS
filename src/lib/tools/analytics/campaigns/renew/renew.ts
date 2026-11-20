@@ -74,7 +74,7 @@ export interface RenewReads {
   /** Analytics 098; "missing" before it is run. */
   recentBounces(ids: number[]): Promise<RecentBounces[] | "missing">;
   /** EmailBison's warm-up score per inbox over the last WARMUP_WINDOW_DAYS, with the warm-up emails sent then. */
-  warmup(): Promise<Map<number, { score: number; sent: number }>>;
+  warmup(): Promise<Map<number, { score: number | null; sent: number }>>;
   links(id: number): Promise<LinkState>;
   /** The latest renewal of this campaign in the audit log (its rows share a batch id), or null. */
   lastRenewal(sourceId: number): Promise<LastRenewal | null>;

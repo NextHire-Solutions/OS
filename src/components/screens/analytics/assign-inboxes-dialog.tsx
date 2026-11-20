@@ -132,12 +132,15 @@ export function AssignInboxesDialog({
    * (attach-health.ts), and the counts below are of those. Nothing can be assigned until they are known.
    */
   const checkHealth = open && action === "attach" && platform === "emailbison" && picked.length > 0;
-  const unionQuery = useAnalyticsData<PoolIdsAnswer>(
-    INBOX_POOL_IDS_URL(platform ?? "emailbison", picked, checkHealth),
-    { skip: !open || !(many || checkHealth) || platform !== "emailbison" },
-  );
+  // Asked fresh each time the window opens: a verdict (or a failure) from earlier in the session is never shown again.
+  const [openedAt, setOpenedAt] = useState(() => Date.now());
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) { setWasOpen(open); if (open) setOpenedAt(Date.now()); }
+  const poolUrl = INBOX_POOL_IDS_URL(platform ?? "emailbison", picked, checkHealth) + (checkHealth ? `&opened=${openedAt}` : "");
+  const unionQuery = useAnalyticsData<PoolIdsAnswer>(poolUrl, { skip: !open || !(many || checkHealth) || platform !== "emailbison" });
   const answer = (many || checkHealth) && platform === "emailbison" ? unionQuery.data : null;
-  const healthError = checkHealth ? answer?.healthError ?? null : null;
+  // The check failing (503, or no answer at all) is shown with Check again; the Assign button stays off meanwhile.
+  const healthError = checkHealth && unionQuery.error && !unionQuery.loading ? unionQuery.error : null;
   const healthy = checkHealth ? answer?.ids?.healthy ?? null : null;
   const union = answer?.ids && (!checkHealth || healthy) ? answer.ids : null;
   const exact = !(many || checkHealth) || union !== null;
@@ -495,7 +498,12 @@ export function AssignInboxesDialog({
           ) : null}
         </>
       )}
-      {healthError && !summary ? <Fail>{healthError}</Fail> : null}
+      {healthError && !summary ? (
+        <Fail>
+          <span data-assign-health-failed>{healthError}</span>{" "}
+          <button type="button" className="gh" onClick={() => void unionQuery.reload()}>Check again</button>
+        </Fail>
+      ) : null}
       {error ? <Fail>{error}</Fail> : null}
     </DialogFrame>
   );

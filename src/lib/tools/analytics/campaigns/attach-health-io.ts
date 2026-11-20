@@ -14,7 +14,7 @@ export type AttachHealthRead = { ok: true; health: AttachHealth } | { ok: false;
 export interface AttachHealthReads {
   inboxes: typeof inboxesById;
   bounces: typeof recentBounces;
-  warmup: () => Promise<Map<number, { score: number; sent: number }>>;
+  warmup: () => Promise<Map<number, { score: number | null; sent: number }>>;
 }
 
 const REAL: AttachHealthReads = { inboxes: inboxesById, bounces: recentBounces, warmup: () => warmupScores() };

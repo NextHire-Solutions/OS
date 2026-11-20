@@ -348,6 +348,7 @@ function Running({ targets, results, stopping }: { targets: OpenCampaign[]; resu
 function Done({ targets, results, stopped }: { targets: OpenCampaign[]; results: RunResult[]; stopped: boolean }) {
   const added = results.filter((r) => r.ok && r.outcome === "added");
   const already = results.filter((r) => r.ok && r.outcome === "nothing");
+  const unhealthy = results.filter((r) => r.ok && r.outcome === "unhealthy");
   const failed = results.filter((r) => !r.ok);
   const notReached = targets.length - results.length;
   return (
@@ -356,6 +357,7 @@ function Done({ targets, results, stopped }: { targets: OpenCampaign[]; results:
         <div className="tnum" data-add-done>
           Added to <b>{fullNumber(added.length)} of {plural(targets.length, "campaign")}</b>.
           {already.length ? <> {plural(already.length, "campaign")} had every one already.</> : null}
+          {unhealthy.length ? <> {plural(unhealthy.length, "campaign")} got none: when the add ran, none of these inboxes passed the health rules any more.</> : null}
         </div>
         {stopped && notReached > 0 ? <div className="mut tnum" style={{ fontSize: 12.5, marginTop: 3 }}>Stopped: {plural(notReached, "campaign")} not reached, and not changed.</div> : null}
         {added.length ? <div className="mut" style={{ fontSize: 12.5, marginTop: 3 }}>The Assigned column and Active inboxes catch up within a few minutes.</div> : null}

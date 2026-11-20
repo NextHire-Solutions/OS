@@ -67,9 +67,10 @@ export async function GET(request: NextRequest) {
        */
       if (request.nextUrl.searchParams.get("health") === "1") {
         const r = await readAttachHealth(ids.connected);
-        return NextResponse.json(r.ok
-          ? { platform, pools, ids: { ...ids, healthy: r.health.healthy }, health: (({ healthy: _h, ...v }) => v)(healthView(r.health)) }
-          : { platform, pools, ids, healthError: r.error });
+        // 503 when it can't be checked, so the window shows the reason with Check again and never keeps the answer.
+        return r.ok
+          ? NextResponse.json({ platform, pools, ids: { ...ids, healthy: r.health.healthy }, health: (({ healthy: _h, ...v }) => v)(healthView(r.health)) }, { headers: { "Cache-Control": "no-store" } })
+          : NextResponse.json({ error: r.error, healthError: r.error }, { status: 503, headers: { "Cache-Control": "no-store" } });
       }
       return NextResponse.json({ platform, pools, ids });
     } catch (e) {

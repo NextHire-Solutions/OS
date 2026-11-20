@@ -49,7 +49,7 @@ export function kindOf(reason: string): LeftOutReason {
 }
 
 /** Every asked id gets a row (one with no recent sends has no bounce row), with its warm-up score: as Duplicate & Renew. */
-export function healthRows(ids: readonly number[], bounces: readonly RecentBounces[], warmup: ReadonlyMap<number, { score: number; sent: number }>): RecentBounces[] {
+export function healthRows(ids: readonly number[], bounces: readonly RecentBounces[], warmup: ReadonlyMap<number, { score: number | null; sent: number }>): RecentBounces[] {
   const byId = new Map(bounces.map((r) => [Number(r.id), r]));
   return ids.map((id) => {
     const b = byId.get(id);
