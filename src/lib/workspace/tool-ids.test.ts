@@ -43,7 +43,8 @@ test("Campaign Management and Inboxes have their own grants and Campaign Analyti
   assert.equal(toConnectorId("inboxes"), "analytics");
   assert.equal(toGrantId("analytics"), "analytics", "the service's status still belongs to Campaign Analytics");
   assert.deepEqual([...SHARES_A_SERVICE].sort(), ["campaigns", "inboxes", "portals"]);
-  assert.deepEqual([...NO_SERVICE].sort(), ["commissions", "performance", "roster"]);
+  // Tickets (20 Nov) reads Gmail itself: no upstream service.
+  assert.deepEqual([...NO_SERVICE].sort(), ["commissions", "performance", "roster", "tickets"]);
 });
 
 test("every connector id maps to a grant id and back", () => {

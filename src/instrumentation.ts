@@ -220,6 +220,32 @@ export async function register() {
   setInterval(sweepInterestedSafely, 60_000).unref?.();
 
   /*
+   * Tickets (20 Nov): client emails from the team's connected Gmail, every minute — see lib/tools/tickets/runner.ts.
+   * Read-only towards Gmail; writes only the OS's own ticket tables. Does nothing until someone connects an inbox
+   * (and migration 0053 has run). OS_TICKETS_SYNC=0 switches it off. Railway only.
+   */
+  let ticketsRunning = false;
+  const sweepTickets = async () => {
+    if (ticketsRunning) return;
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || process.env.OS_TICKETS_SYNC === "0") return;
+    if (!(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    ticketsRunning = true;
+    try {
+      const { runTicketsSync } = await import("./lib/tools/tickets/runner");
+      const r = await runTicketsSync();
+      const busy = r.synced.filter((s) => s.error || s.stored || s.created || s.mode !== "history");
+      if (busy.length || r.woke) {
+        console.log(`[tickets] ${busy.map((s) => s.error ? `${s.email}: ${s.error}` : `${s.email}: ${s.mode} ${s.created ?? 0} new · ${s.stored ?? 0} emails · ${s.copies ?? 0} copies · ${s.units ?? 0} units`).join(" | ")}${r.woke ? ` · ${r.woke} snoozes ended` : ""}`);
+      }
+    } finally {
+      ticketsRunning = false;
+    }
+  };
+  const sweepTicketsSafely = () => { sweepTickets().catch((e) => console.error("[tickets] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(sweepTicketsSafely, 45_000).unref?.();
+  setInterval(sweepTicketsSafely, 60_000).unref?.();
+
+  /*
    * Introductions that reached their portal late (15 Oct): Master Inbox
    * migration 0078 creates the portal entry when a labelled conversation gets
    * its client afterwards; this sends the three introduction notices once for

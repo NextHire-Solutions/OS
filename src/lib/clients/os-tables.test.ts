@@ -64,6 +64,8 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_prospect_sync_settings",
     "os_portal_chat_threads",
     "os_portal_chat_messages",
+    // Added 2026-11-20: Tickets (0053).
+    "os_ticket_mailboxes", "os_tickets", "os_ticket_messages", "os_ticket_copies", "os_ticket_events", "os_ticket_reads", "os_ticket_blocks",
   ]);
 });
 

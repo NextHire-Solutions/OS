@@ -13,6 +13,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
 | **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — BUILT on feat/cycle-pause, NOT deployed; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
+| **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; no inbox connected yet. Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
 | **0.14** | [New portal: Switch portal, for a client on more than one portal — 19 November](#014-new-portal-switch-portal-for-a-client-on-more-than-one-portal--19-november) — one sign-in already opened every portal an email is listed on; now a link moves between them; live 32d4deb1
@@ -243,6 +244,88 @@ recommendation to revoke the secrets stored in Railway.
 **To switch on (only on the user's word):** run 0054, deploy, read a few `[cycle-pause] dry run` lines, then set `OS_CYCLE_PAUSE=1`. Note: every client already at its due in the current cycle pauses on the first live run.
 
 ---
+## 0.17 Tickets — client emails in the team's Gmail, shared and tracked — 20 November
+
+**LIVE 20 Nov 15:10 UTC (7358626, Railway 176b50d3)** on the user's "Yes, deploy it". Go-live: 0053 run by the user;
+Tickets' own Google OAuth client added by the user in Railway (TICKETS_GOOGLE_CLIENT_ID / _SECRET, a different client
+from Onboarding's); OS_TICKETS_TOKEN_KEY generated and set by a script, never printed (64 chars; never change it: every
+stored Gmail token is sealed with it). Before the deploy: OS-look pass (Connected inboxes uses the OS PageHeader, the
+nav leaf is "Client email", chips ellipsise, the header shows when the client first wrote, Reply in Gmail says who
+received the email); 3,881 tests; local Chrome 77/77. Live check read only as admin@outreachify.io, nothing pressed,
+11/12 (the miss was the test's own selector; the screenshot shows the sidebar right): both pages open, Connect is
+enabled, it sends to accounts.google.com with Tickets' client, redirect_uri
+`https://os.brokerstaffer.com/api/tools/tickets/google/callback`, scope gmail.readonly + openid email profile only,
+the state cookie set, and Google ACCEPTS the app and the return address (sign-in page, no redirect_uri_mismatch).
+**Nobody has connected yet.** The admin "One-time Google setup" notice now shows only while a setting is missing
+(178dc6c, Railway 1d7a14ac, 20 Nov, the user: "remove this yellow setup note"; live check 13/13). The user turned the
+Tickets switch on for Eddy, Amy and Gabriel (20 Nov). If the consent screen was set up as Internal (the setup steps said so; not seen from here), only brokerstaffer.com
+Google accounts can connect (Eddy, Amy; not a gmail.com or outreachify.io address); External in Testing would expire
+each connection after 7 days. Never sign in as Eddy or Amy to test: they connect their own.
+
+**Asked** (the user): "one tickets section in OS where I can see emails that come in our team's inbox (brokerstaffer
+team like eddy, amy and more team members) … emails that come from our clients so that every team member can see
+those emails", top-notch UI/UX. Then, mid-build: **"make sure we only see emails that came from client's email
+addresses. no other emails should be shown here, this is very important."**
+
+**Status: BUILT, NOT LIVE.** Branch `feat/tickets` in `~/wt/os-tickets` (based on 7886082; rebase onto main before
+any deploy). Not merged, not pushed, not deployed. **The user, 20 Nov: "make sure you do not deploy anything."**
+
+**THE RULE (sync.ts, client-match.ts, quote-trim.ts).** An email is kept only when (1) its From header holds exactly
+one address, (2) that address EXACTLY equals one the OS holds for a client — contacts 1-3, more contacts, point of
+contact, the portals' sign-in and team lists (billing-emails.ts sources) — and (3) Gmail verified the sender
+(mx.google.com's Authentication-Results: DMARC pass, or DKIM/SPF pass aligned with the From's domain). Even then
+only the CLIENT'S OWN WORDS are stored: quoted replies and forwarded mail are cut before storing (never shown,
+never searched; the email says so). No company-domain guessing, never To/Cc, never our own domains, never internal
+records. A teammate's reply in a tracked conversation, ADDRESSED TO THE CLIENT, is a dated MARKER only (sender +
+time: no subject, text, recipients, files or ids) so the ticket moves to Waiting. Everything else — personal mail,
+vendors in a client thread, forwards to vendors, out-of-office, newsletters, internal forwards, forged senders — is
+never stored, and nothing about it is written anywhere.
+
+**Independent review (20 Nov), all fixed and pinned by tests:** an RFC 2047 encoded comma in the From name could pass
+a stranger off as a client (addresses are now split before names are decoded); one message with a NUL byte could stop
+a mailbox for good (NULs stripped; per-message failures skipped and counted, only outages retry); reusing the
+Onboarding OAuth client could carry gmail.send/modify via include_granted_scopes, and its revoke would end the
+Onboarding Gmail link (Tickets now REQUIRES its own client; no include_granted_scopes; any scope beyond read-only is
+refused and revoked); quoted history and forged senders (above); reopen lost after a refill or a Done pressed before
+the sync (a client email the team hasn't answered now always reopens); a teammate's replies missed when the client's
+email was first stored from another inbox (that inbox's thread is read on first link); overlapping runs (one run per
+process, claim heartbeat, conditional updates on updated_at so nobody's change is overwritten); forwards counted as
+replies (a reply must go to the client); Enter, draft loss on search, frame resizing, Show more, download errors in
+the screen; tokens bound to their mailbox and sealed with their own key (OS_TICKETS_TOKEN_KEY, not AUTH_SECRET).
+
+**How it works.** Each teammate connects their own Gmail at Tickets › Connected inboxes (OAuth, `gmail.readonly`,
+refresh token AES-256-GCM-encrypted with a key derived from `OS_TICKETS_TOKEN_KEY` or `AUTH_SECRET`). The sweep
+(instrumentation.ts, every minute, Railway only, off with `OS_TICKETS_SYNC=0`) does a first fill of the last 30
+days (Gmail searched for client addresses only), then `users.history.list`; a 404 refills since the last good run.
+One ticket per conversation, the same email in two inboxes stored once (RFC Message-ID) with a copy per inbox.
+Open / Waiting / Done (+ Not a ticket, Snooze): a client's new email reopens and keeps the assignee; a teammate's
+reply moves Open → Waiting; conversations quiet 7+ days import as Done. Notes with @mentions, presence ("Amy is
+looking at this"), Reply in Gmail (only when the email is in the viewer's own inbox), outside pictures blocked until
+"Show pictures" (tracking pixels), attachments fetched from Gmail on demand (never stored), Remove from Tickets
+(blocks the conversation from ever coming back). Own Team access switch `tickets` — off for everyone but admins until
+Eddy turns it on. Rail badge = open tickets. Assistant/Claude connector tool `tickets`.
+
+**Google (checked 20 Nov).** There is NO service account. The Onboarding app's OAuth client (Google Cloud project
+675296613069) must NOT be reused (review: shared grant and revoke). Tickets needs ITS OWN OAuth client — type Web
+application, consent screen Internal, authorised redirect URI `https://os.brokerstaffer.com/api/tools/tickets/google/callback`
+— created by someone with access to the BrokerStaffer Google Cloud. (Redirect-URI probe of the Onboarding client:
+only the orchestrator's Railway address is registered; Google's mismatch hides in a base64 `authError`.)
+
+**To go live (only on the user's word):** (1) run `migrations/0053_tickets.sql` in the Master Inbox Supabase project
+(idempotent; 7 tables, RLS on, no policies); (2) create Tickets' OAuth client; (3) set on the `os` service:
+`TICKETS_GOOGLE_CLIENT_ID`, `TICKETS_GOOGLE_CLIENT_SECRET`, `OS_TICKETS_TOKEN_KEY` (32+ random characters; changing it
+later means everyone reconnects); (4) rebase onto main and deploy; (5) each teammate connects at /tickets/inboxes;
+(6) Eddy switches Tickets on per person in Team access. Optional: `OS_TICKETS_SYNC=0` stops the sweep.
+
+**Tested (20 Nov).** Unit: matching, Gmail parsing (incl. the encoded-comma attack and Gmail's sender verdict), quote
+trimming, sync (incl. every review finding), lifecycle, token sealing, email rendering, access (proxy + route).
+Local end to end: real Chrome against the local build, the ticket tables in a local Postgres with 0053 run twice
+(and once more over an earlier draft: the upgrade path), every other read from production with every write refused,
+a fake Gmail with three real clients' addresses and nine kinds of noise (personal, unlisted person at a client's
+domain, vendor in a client thread, out-of-office, internal forward, newsletter, the encoded-comma spoof, a forged
+client sender, a forward to a vendor) plus a client reply quoting our secret reply text → 77/77: none of it appears
+on any page or in the database. Full suite 3,878/3,878. NOT yet tested against a real Gmail mailbox (needs the
+OAuth client).
 
 ## 0.16 Duplicate & Renew Campaign — 19 November
 
