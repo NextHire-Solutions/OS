@@ -215,8 +215,11 @@ export function ReCampaignDialog({
           ) : null}
 
           <Warn>
-            The new campaign is created as a <b>draft</b> and sends nothing until you start it. The leads
-            stay on {campaignName} too — nothing is removed.
+            {/* One element: the box is a flex row, and loose text around <b> became three columns. */}
+            <span>
+              The new campaign is created as a <b>draft</b> and sends nothing until you start it. The leads
+              stay on {campaignName} too — nothing is removed.
+            </span>
           </Warn>
         </>
       )}

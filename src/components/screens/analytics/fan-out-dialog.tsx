@@ -118,7 +118,7 @@ export function FanOutDialog({
             ))}
           </Panel>
           <Warn>
-            <b>They are drafts with no leads.</b> Add each client&rsquo;s leads, then start them from the Campaigns page.
+            <span><b>They are drafts with no leads.</b> Add each client&rsquo;s leads, then start them from the Campaigns page.</span>
           </Warn>
         </>
       ) : (
@@ -188,8 +188,10 @@ export function FanOutDialog({
                 otherwise: these clients have different audiences, so copying
                 the template's leads would mail one client's list under
                 another's name. */}
-            Each campaign is created as a <b>draft with no leads</b> — the sequence and inboxes are
-            copied, the audience is not. Add each client&rsquo;s own leads before starting them.
+            <span>
+              Each campaign is created as a <b>draft with no leads</b> — the sequence and the healthy inboxes are
+              copied, the audience is not. Add each client&rsquo;s own leads before starting them.
+            </span>
           </Warn>
         </>
       )}
