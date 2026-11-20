@@ -126,7 +126,22 @@ function label(labelId: string, threadId: string, when = at(-2)) {
 }
 
 const CHARLESTON = "Jeff Cook Real Estate + Charleston, SC + ZF NS1";
-const deps = (env: Env = {}) => ({ ws: WS, transport, env });
+/*
+ * The Introduction label after a hand-off (handoff-introduction.ts), faked: it records the conversation and does what
+ * the real label does to the conversation's labels (one label per conversation: Introduction replaces the others).
+ * `alertSettled` says the Interested Slack alert has had its turn, unless a test says otherwise.
+ */
+const introduced: string[] = [];
+let introduceFails: string | null = null;
+let alertDone = true;
+const fakeIntroduce = async (threadId: string) => {
+  if (introduceFails) return { ok: false as const, error: introduceFails };
+  introduced.push(threadId);
+  const keep = db.rows("label_assignments").filter((r) => !(r.target_type === "thread" && r.target_id === threadId));
+  db.seed("label_assignments", [...keep, { workspace_id: WS, label_id: L.introduction, target_type: "thread", target_id: threadId, assigned_at: new Date().toISOString() }]);
+  return { ok: true as const, announced: true };
+};
+const deps = (env: Env = {}) => ({ ws: WS, transport, env, introduce: fakeIntroduce, alertSettled: async () => alertDone });
 const records = () => db.rows("os_brokerage_relays");
 const recordFor = (threadId: string) => records().find((r) => r.thread_id === threadId)!;
 
@@ -162,7 +177,7 @@ test("PRACTICE (the default): decided, recorded with the full message, and the t
   assert.ok(String(rec.text_body).startsWith("Sure, happy to chat."));
   assert.match(String(rec.text_body), /Nicole Collins wrote:\n> Hi Jordan/);
   assert.deepEqual(rec.headers, [{ Name: "In-Reply-To", Value: "<agent-1@mail.test>" }, { Name: "References", Value: "<agent-1@mail.test>" }]);
-  assert.equal(rec.pipeline_action, "none", "an existing client keeps entering at Introduction");
+  assert.equal(rec.pipeline_action, "label_introduction", "an existing client: labelled Introduction once a hand-off really goes (20 Nov)");
   assert.equal(rec.counts_as_introduction, false);
   assertContained();
 });
@@ -801,7 +816,7 @@ test("a client without the 0036 column reads as today's behaviour", async () => 
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
   label(L.interested, thread.id);
   await relay.sweepBrokerageRelay(NOW, deps());
-  assert.equal(recordFor(thread.id).pipeline_action, "none");
+  assert.equal(recordFor(thread.id).pipeline_action, "label_introduction");
 });
 
 /* ============================================================ later replies */
@@ -938,7 +953,7 @@ test("ONE SEND under a double press: two presses on the same hand-off at once se
   label(L.interested, thread.id);
   await relay.sweepBrokerageRelay(NOW, deps(LIVE));
   const id = String(recordFor(thread.id).id);
-  const d = { ws: WS, transport: slowTransport(), env: LIVE };
+  const d = { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport: slowTransport(), env: LIVE };
   // Two tabs, or two people, press at the same moment. Both pass the agent-slot claim (it is this record's own).
   const results = await Promise.allSettled([
     relay.sendToBrokerage(id, thread.id, "amy@brokerstaffer.com", d, NOW),
@@ -961,7 +976,7 @@ test("ONE SEND when two sweeps re-check the same interrupted hand-off at once (r
     status: "held", reason: "evaluating", practice: true, created_at: at(-40), updated_at: at(-40), attempts: 0, recipients: [],
   }]);
   // Two OS replicas (or a slow sweep overlapping the next) pick it up together.
-  const d = { ws: WS, transport: slowTransport(), env: LIVE };
+  const d = { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport: slowTransport(), env: LIVE };
   await Promise.all([relay.sweepBrokerageRelay(NOW, d), relay.sweepBrokerageRelay(NOW, d)]);
   assert.equal(handed.length, 1);
   assert.equal(db.rows("os_brokerage_relays").find((r) => r.id === rec.id)!.status, "sent");
@@ -1404,17 +1419,105 @@ test("new model, live: the email goes, and the agent is in the client's Pipeline
   assert.deepEqual(db.blocked, [], "nothing reached any other service");
 });
 
-test("not on the new model: a live hand-off writes nothing outside the OS's own tables, as ever", async () => {
+test("Introduction model: a live hand-off that went labels the conversation Introduction, once, and the relay itself writes nothing else", async () => {
   seed({ practice_mode: false }, { enabled: true });
-  fubCalls.length = 0;
+  fubCalls.length = 0; introduced.length = 0; alertDone = true; introduceFails = null;
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
   label(L.interested, thread.id);
   await relay.sweepBrokerageRelay(NOW, liveDeps());
   assert.equal(handed.length, 1);
-  assert.equal(entries().length, 0);
-  assert.equal(fubCalls.length, 0);
+  assert.deepEqual(introduced, [thread.id], "labelled Introduction (the label's own trigger makes the Pipeline entry and the alerts)");
+  assert.equal(entries().length, 0, "no entry written by the hand-off itself: that's the label's trigger, so it can't be made twice");
+  assert.equal(fubCalls.length, 0, "Follow Up Boss hears through the label's own announcement, not from here");
   assert.equal(recordFor(thread.id).detail, null);
-  assert.equal(recordFor(thread.id).pipeline_action, "none");
+  assert.equal(recordFor(thread.id).pipeline_action, "label_introduction");
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  await relay.sweepBrokerageRelay(later(2), liveDeps());
+  assert.equal(handed.length, 1, "never a second email");
+  assert.deepEqual(introduced, [thread.id], "never labelled twice");
+});
+
+test("Introduction model: the label waits for the Interested Slack alert, at most 10 minutes", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  introduced.length = 0; introduceFails = null; alertDone = false;
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  assert.equal(handed.length, 1);
+  assert.deepEqual(introduced, [], "the alert hasn't had its turn: Introduction would replace Interested and stop it");
+  assert.equal(recordFor(thread.id).detail, relay.INTRO_PENDING);
+  alertDone = true;
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.deepEqual(introduced, [thread.id], "labelled at the next sweep once the alert went");
+  assert.equal(recordFor(thread.id).detail, null);
+  // The alert never comes (switched off, or stuck): labelled anyway after 10 minutes.
+  seed({ practice_mode: false }, { enabled: true });
+  introduced.length = 0; alertDone = false;
+  const two = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, two.thread.id);
+  const sentAt = new Date();
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  assert.deepEqual(introduced, []);
+  // Measured from when it was sent, on the sweep's clock.
+  recordFor(two.thread.id).sent_at = NOW.toISOString();
+  void sentAt;
+  await relay.sweepBrokerageRelay(later(9), liveDeps());
+  assert.deepEqual(introduced, [], "9 minutes: still waiting");
+  await relay.sweepBrokerageRelay(later(11), liveDeps());
+  assert.deepEqual(introduced, [two.thread.id], "11 minutes: labelled without it");
+  alertDone = true;
+});
+
+test("Introduction model: a conversation a person relabelled after the email went is left alone, and one already introduced isn't announced again", async () => {
+  for (const [which, want] of [["notInterested", "relabelled Not Interested"], ["introduction", null]] as Array<["notInterested" | "introduction", string | null]>) {
+    seed({ practice_mode: false }, { enabled: true });
+    const relabel = L[which];
+    handed.length = 0;
+    introduced.length = 0; introduceFails = null; alertDone = false;
+    const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+    label(L.interested, thread.id);
+    await relay.sweepBrokerageRelay(NOW, liveDeps());
+    assert.equal(handed.length, 1);
+    // A person, before the label went on.
+    db.seed("label_assignments", [...db.rows("label_assignments").filter((r) => r.target_id !== thread.id), { workspace_id: WS, label_id: relabel, target_type: "thread", target_id: thread.id, assigned_at: new Date().toISOString() }]);
+    alertDone = true;
+    await relay.sweepBrokerageRelay(later(1), liveDeps());
+    assert.deepEqual(introduced, [], "never labelled over a person's choice, never announced twice");
+    const d = recordFor(thread.id).detail;
+    if (want) assert.match(String(d), new RegExp(want)); else assert.equal(d, null);
+    await relay.sweepBrokerageRelay(later(2), liveDeps());
+    assert.deepEqual(introduced, [], "and not tried again");
+  }
+});
+
+test("Introduction model: the label fails — the bell rings once, it's tried every minute, then done; never a second email", async () => {
+  seed({ practice_mode: false }, { enabled: true });
+  introduced.length = 0; alertDone = true; introduceFails = "labels: the database is down";
+  const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, thread.id);
+  await relay.sweepBrokerageRelay(NOW, liveDeps());
+  await relay.sweepBrokerageRelay(later(1), liveDeps());
+  assert.equal(handed.length, 1);
+  assert.deepEqual(introduced, []);
+  assert.equal(recordFor(thread.id).detail, relay.INTRO_PENDING);
+  const bells = db.rows("os_notifications").filter((n) => String(n.ref).startsWith("relay_introduction:"));
+  assert.equal(bells.length, 1, "one bell, not one a minute");
+  assert.match(String(bells[0].title), /isn't labelled Introduction yet/);
+  introduceFails = null;
+  await relay.sweepBrokerageRelay(later(2), liveDeps());
+  assert.deepEqual(introduced, [thread.id]);
+  assert.equal(recordFor(thread.id).detail, null);
+  assert.equal(handed.length, 1);
+});
+
+test("Introduction model: nothing really sent, nothing labelled (practice, Postmark refusing)", async () => {
+  seed({}, { enabled: true });
+  introduced.length = 0; introduceFails = null; alertDone = true;
+  const a = conversation({ portal: P.jeff, campaign: CHARLESTON });
+  label(L.interested, a.thread.id);
+  await relay.sweepBrokerageRelay(NOW, deps(LIVE));
+  assert.equal(recordFor(a.thread.id).practice, true);
+  assert.deepEqual(introduced, [], "practice: nothing labelled");
 });
 
 test("new model, but nothing really sent: no Pipeline entry — practice, the fence, or Postmark refusing", async () => {
@@ -1643,7 +1746,7 @@ test("over the cap: held, nothing sent, the agent's once-only slot not taken", a
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
   label(L.interested, thread.id);
   const caps = capStub();
-  const r = await relay.sweepBrokerageRelay(NOW, { ws: WS, transport, env: LIVE, caps: caps.hook });
+  const r = await relay.sweepBrokerageRelay(NOW, { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport, env: LIVE, caps: caps.hook });
   assert.deepEqual(r.outcomes, { held: 1 }, JSON.stringify(r));
   assert.equal(handed.length, 0);
   const rec = recordFor(thread.id);
@@ -1696,7 +1799,7 @@ test("a cap that can't be read: held and checked again, never sent", async () =>
   seed({ practice_mode: false }, { enabled: true });
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
   label(L.interested, thread.id);
-  await relay.sweepBrokerageRelay(NOW, { ws: WS, transport, env: LIVE, caps: capStub({ overCap: async () => { throw new Error("Client Health is down"); } }).hook });
+  await relay.sweepBrokerageRelay(NOW, { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport, env: LIVE, caps: capStub({ overCap: async () => { throw new Error("Client Health is down"); } }).hook });
   assert.equal(handed.length, 0);
   assert.equal(recordFor(thread.id).status, "held");
   assert.equal(recordFor(thread.id).reason, "read_error");
@@ -1707,7 +1810,7 @@ test("a hold that can't be finished: the record is what holds it, so it is never
   seed({ practice_mode: false }, { enabled: true });
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
   label(L.interested, thread.id);
-  await relay.sweepBrokerageRelay(NOW, { ws: WS, transport, env: LIVE, caps: capStub({ hold: async () => { throw new Error("no table"); } }).hook });
+  await relay.sweepBrokerageRelay(NOW, { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport, env: LIVE, caps: capStub({ hold: async () => { throw new Error("no table"); } }).hook });
   assert.equal(handed.length, 0);
   assert.deepEqual([recordFor(thread.id).status, recordFor(thread.id).reason], ["held", "over_cap"]);
 });
@@ -1807,7 +1910,7 @@ test("pressing the button at the cap: refused in words, nothing changes, nothing
   const { thread } = conversation({ portal: P.jeff, campaign: CHARLESTON });
   label(L.interested, thread.id);
   const caps = capStub({ room: "Jeff Cook is at its cap (2 of 2) until Nov 25, so this wasn't sent." });
-  const d = { ws: WS, transport, env: LIVE, caps: caps.hook };
+  const d = { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport, env: LIVE, caps: caps.hook };
   await relay.sweepBrokerageRelay(NOW, d);
   db.seed("label_assignments", []);
   const rec = recordFor(thread.id);
@@ -1824,7 +1927,7 @@ test("pressing the button with room, weeks later: back to Interested, released, 
   let room = false;
   const caps = capStub();
   const hook = { ...caps.hook, overCap: async () => (room ? null : over) };
-  const d = { ws: WS, transport, env: LIVE, caps: hook };
+  const d = { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport, env: LIVE, caps: hook };
   await relay.sweepBrokerageRelay(NOW, d);
   db.seed("label_assignments", []);
   room = true;
@@ -1843,7 +1946,7 @@ test("the label can't be moved back: nothing is released or sent", async () => {
   label(L.interested, thread.id);
   const caps = capStub();
   const hook = { ...caps.hook, backToInterested: async () => { throw new Error("label write failed"); } };
-  const d = { ws: WS, transport, env: LIVE, caps: hook };
+  const d = { ws: WS, introduce: fakeIntroduce, alertSettled: async () => alertDone, transport, env: LIVE, caps: hook };
   await relay.sweepBrokerageRelay(NOW, d);
   const rec = recordFor(thread.id);
   await assert.rejects(relay.sendToBrokerage(String(rec.id), thread.id, "amy@brokerstaffer.com", d, NOW), /couldn't be moved back to Interested/);

@@ -6,6 +6,7 @@ import type { OverCap, RelayCapHook } from "@/lib/clients/usage-billing/caps";
 
 import { introClientFromRow, INTRO_ROW_COLUMNS } from "../inbox/intro-macro.ts";
 import { enterPipeline } from "./portal-entry.ts";
+import { introduceDecision, type IntroduceFn } from "./handoff-introduction.ts";
 import { escapeLike, sameName } from "../portals/stop-person-plan.ts";
 import { getMasterInboxSupabase, workspaceId } from "../supabase";
 
@@ -167,6 +168,10 @@ export interface RelayDeps {
   testFetch?: typeof fetch;
   /** Follow Up Boss, for a new portal entry. It does nothing for a client that hasn't connected it. */
   pushFub?: (portalId: string, entryId: string) => Promise<unknown>;
+  /** The conversation labelled Introduction, with all that label does (tests pass a fake; handoff-introduction.ts). */
+  introduce?: IntroduceFn;
+  /** Whether the Interested Slack alert has had its turn on this conversation (tests pass a fake). */
+  alertSettled?: (threadId: string) => Promise<boolean>;
   /** Tests: holding replies past the lead caps. Otherwise caps.ts, and only when OS_LEAD_CAPS_HOLD=1. */
   caps?: RelayCapHook | null;
 }
@@ -190,6 +195,8 @@ interface Ctx {
   records: Map<string, ClientRecord>;
   now: Date;
   pushFub: (portalId: string, entryId: string) => Promise<unknown>;
+  introduce: IntroduceFn;
+  alertSettled: (threadId: string) => Promise<boolean>;
   /** Null unless holding replies past the cap is switched on (OS_LEAD_CAPS_HOLD=1): then nothing here reads or holds anything for it. */
   caps: RelayCapHook | null;
 }
@@ -784,7 +791,7 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
     text_body: email.textBody,
     html_body: email.htmlBody,
     headers: email.headers,
-    pipeline_action: client.pipelineEntry === "interested" ? "enter_at_interested" : "none",
+    pipeline_action: client.pipelineEntry === "interested" ? "enter_at_interested" : "label_introduction",
     counts_as_introduction: ctx.global.countsAsIntroduction,
     practice,
   };
@@ -913,16 +920,24 @@ async function evaluate(ctx: Ctx, given: RelayRow, via: Via): Promise<RelayStatu
   // The transport checks the env switch again before it builds a request.
   const res = await ctx.transport.send(email);
   if (res.ok) {
-    // On the new model the agent goes into the client's Pipeline too. Marked with the send, so a run that dies after this line is finished by the next sweep.
+    /*
+     * On the new model the agent goes into the client's Pipeline too. Everyone else's conversation is labelled
+     * Introduction (20 Nov, the user: "these automatic hand off agents should be automatically labeled as introduction
+     * and added to the client portal pipeline and all the actions after"). Marked with the send, so a run that dies
+     * after this line is finished by the next sweep.
+     */
     const entering = rec.kind === "handoff" && client.pipelineEntry === "interested";
+    const introducing = rec.kind === "handoff" && client.pipelineEntry !== "interested";
+    const sentAt = new Date().toISOString();
     try {
-      await afterSend(ctx, rec.id, { status: "sent", sent_at: new Date().toISOString(), provider_message_id: res.messageId, ...(entering ? { detail: PIPELINE_PENDING } : {}) });
+      await afterSend(ctx, rec.id, { status: "sent", sent_at: sentAt, provider_message_id: res.messageId, ...(entering ? { detail: PIPELINE_PENDING } : introducing ? { detail: INTRO_PENDING } : {}) });
     } catch (e) {
       // It WENT. The record stays "sending", which is never retried; this line is how to repair it.
       console.error(`[brokerage-relay] SENT hand-off ${rec.id} (Postmark MessageID ${res.messageId}) but could not record it: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     }
     if (entering) await settlePipelineEntry(ctx, { id: rec.id, mi_client_id: portalId, thread_id: rec.threadId, os_client_id: osClientId, brokerage_name: client.name, agent_name: agentName, agent_email: agentEmail });
+    if (introducing) await settleIntroduction(ctx, { id: rec.id, thread_id: rec.threadId, os_client_id: osClientId, brokerage_name: client.name, agent_name: agentName, sent_at: sentAt });
     return "sent";
   }
   if (res.definite && rec.kind === "handoff") {
@@ -967,12 +982,76 @@ async function settlePipelineEntry(ctx: Ctx, rec: { id: string; mi_client_id: st
   }
 }
 
+/** On a sent hand-off until its conversation carries the Introduction label: what the sweep finishes. */
+export const INTRO_PENDING = "Sent. Not labelled Introduction yet: done at the next sweep.";
+
+/**
+ * The email has gone: the conversation labelled Introduction, so the agent joins the client's Pipeline, counts as an
+ * introduction and the usual alerts go (Slack, Follow Up Boss, the text alert), exactly as when a person introduces.
+ * Through applyLabelToThread, which never announces twice. Never throws: nothing here can undo or repeat the send.
+ *
+ * Waits for the Interested Slack alert to have had its turn first (it posts only while the conversation still says
+ * Interested, and this label replaces that one), at most INTRO_ALERT_WAIT_MS after the send. Leaves alone a
+ * conversation a person has relabelled since (Not Interested, Do Not Contact...): their call stands. A failure stays
+ * marked for the next sweep, and our team's bell rings once.
+ */
+async function settleIntroduction(ctx: Ctx, rec: { id: string; thread_id: string | null; os_client_id: string | null; brokerage_name: string | null; agent_name: string | null; sent_at: string | null }): Promise<boolean> {
+  const clear = async (detail: string | null) => {
+    const { error } = await ctx.os("os_brokerage_relays").update({ detail, updated_at: ctx.now.toISOString() }).eq("id", rec.id).eq("detail", INTRO_PENDING);
+    if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
+  };
+  try {
+    if (!rec.thread_id) throw new Error("the hand-off names no conversation");
+    const labels = await threadLabelNames(ctx, rec.thread_id);
+    const waited = rec.sent_at ? ctx.now.getTime() - Date.parse(rec.sent_at) : Infinity;
+    const settled = await ctx.alertSettled(rec.thread_id).catch(() => false);
+    const d = introduceDecision({ labels, alertSettled: settled, waitedMs: waited });
+    if (d === "wait") return false;
+    if (d === "already") { await clear(null); return true; }
+    if (d === "relabelled") { await clear(`Sent. Not labelled Introduction: ${labels.length ? `relabelled ${labels.join(", ")}` : "its label was taken off"} since.`); return true; }
+    const r = await ctx.introduce(rec.thread_id);
+    if (!r.ok) throw new Error(r.error);
+    await clear(null);
+    return true;
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(`[brokerage-relay] hand-off ${rec.id} sent, but not labelled Introduction: ${why}`);
+    await ctx.os("os_notifications").upsert(
+      {
+        kind: "relay_pipeline",
+        severity: "critical",
+        title: `A hand-off to ${rec.brokerage_name ?? "a brokerage"} isn't labelled Introduction yet`,
+        body: `${rec.agent_name ?? "An agent"}'s reply was emailed to the brokerage, but the conversation couldn't be labelled Introduction (${why.slice(0, 300)}), so the agent isn't in their Pipeline yet. It's tried again every minute.`,
+        os_client_id: rec.os_client_id,
+        ref: `relay_introduction:${rec.id}`,
+      },
+      { onConflict: "ref", ignoreDuplicates: true },
+    ).then(undefined, () => undefined);
+    return false;
+  }
+}
+
+/** The conversation's labels, by name. */
+async function threadLabelNames(ctx: Ctx, threadId: string): Promise<string[]> {
+  const { data, error } = await ctx.mi.from("label_assignments").select("label_id").eq("target_type", "thread").eq("target_id", threadId);
+  if (error) throw new Error(`label_assignments: ${error.message}`);
+  const ids = ((data ?? []) as Row[]).map((r) => String(r.label_id));
+  if (!ids.length) return [];
+  const { data: named, error: nErr } = await ctx.mi.from("labels").select("name").in("id", ids);
+  if (nErr) throw new Error(`labels: ${nErr.message}`);
+  return ((named ?? []) as Row[]).map((l) => String(l.name ?? "")).filter(Boolean);
+}
+
 /** Finishes any hand-off still marked: a run that died after the send, or a write that failed. A bounce doesn't stop it; after a week it's left to the bell, not tried every minute for ever. */
 async function sweepPipelineEntries(ctx: Ctx): Promise<void> {
   const since = new Date(ctx.now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await ctx.os("os_brokerage_relays").select("id, mi_client_id, thread_id, os_client_id, brokerage_name, agent_name, agent_email").eq("workspace_id", ctx.ws).in("status", ["sent", "bounced"]).eq("detail", PIPELINE_PENDING).gte("sent_at", since).order("sent_at", { ascending: true }).limit(50);
+  const { data, error } = await ctx.os("os_brokerage_relays").select("id, mi_client_id, thread_id, os_client_id, brokerage_name, agent_name, agent_email, detail, sent_at").eq("workspace_id", ctx.ws).in("status", ["sent", "bounced"]).in("detail", [PIPELINE_PENDING, INTRO_PENDING]).gte("sent_at", since).order("sent_at", { ascending: true }).limit(50);
   if (error) throw new Error(`os_brokerage_relays: ${error.message}`);
   for (const r of (data ?? []) as Row[]) {
+    if (r.detail === INTRO_PENDING) {
+      await settleIntroduction(ctx, { id: String(r.id), thread_id: str(r.thread_id), os_client_id: str(r.os_client_id), brokerage_name: str(r.brokerage_name), agent_name: str(r.agent_name), sent_at: str(r.sent_at) });
+      continue;
+    }
     await settlePipelineEntry(ctx, { id: String(r.id), mi_client_id: str(r.mi_client_id), thread_id: str(r.thread_id), os_client_id: str(r.os_client_id), brokerage_name: str(r.brokerage_name), agent_name: str(r.agent_name), agent_email: str(r.agent_email) });
   }
 }
@@ -1001,6 +1080,8 @@ async function makeCtx(now: Date, deps: RelayDeps): Promise<{ ctx: Ctx | null; o
       // Loaded only when there's an entry to push: nothing about the hand-off depends on it.
       caps: deps.caps !== undefined ? deps.caps : capsHoldLive(env) ? (await import("@/lib/clients/usage-billing/caps")).relayCapHook() : null,
       pushFub: deps.pushFub ?? (async (portalId, entryId) => (await import("@/lib/tools/master-inbox/integrations/push-pipeline-entry")).pushPipelineEntryToFub(portalId, entryId)),
+      introduce: deps.introduce ?? (async (threadId) => (await import("./handoff-introduction-io")).labelIntroduction(ws, threadId)),
+      alertSettled: deps.alertSettled ?? (async (threadId) => (await import("../interested-alerts")).interestedAlertSettled(threadId, { ws })),
     },
     off: null,
   };

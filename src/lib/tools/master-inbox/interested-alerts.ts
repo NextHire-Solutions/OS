@@ -167,6 +167,20 @@ export interface SweepResult {
  * One sweep: every conversation newly labelled Interested since `sweepSince`,
  * claimed once in the outbox, then delivered. Never throws.
  */
+/**
+ * Whether the Interested alert has had its turn on this conversation: claimed (posted, or being posted) by the sweep,
+ * or the alerts are off. The brokerage hand-off waits for this before it labels the conversation Introduction, which
+ * would replace Interested and so stop the alert (relay/handoff-introduction.ts).
+ */
+export async function interestedAlertSettled(threadId: string, deps: { sb?: Supabase; ws?: string } = {}): Promise<boolean> {
+  if (!env.SLACK_CHANNEL_INTERESTED || !env.SLACK_BOT_TOKEN) return true;
+  const sb = deps.sb ?? getMasterInboxSupabase();
+  const ws = deps.ws ?? (await workspaceId());
+  const { data, error } = await sb.from("side_effect_outbox").select("id").eq("workspace_id", ws).eq("kind", KIND).eq("subject_id", threadId).limit(1);
+  if (error) throw new Error(`side_effect_outbox: ${error.message}`);
+  return ((data ?? []) as Row[]).length > 0;
+}
+
 export async function sweepInterestedAlerts(
   now: Date = new Date(),
   deps: { sb?: Supabase; post?: typeof postToSlack; channel?: string | undefined; ws?: string } = {},

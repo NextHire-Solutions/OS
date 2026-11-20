@@ -394,7 +394,7 @@ function Brokerages({ rows, liveGlobally, serverList }: { rows: BrokerageRow[]; 
               <th>Receives</th>
               <th>Per hour</th>
               <th>Mode</th>
-              <th>Pipeline entry</th>
+              <th>After the hand-off</th>
               <th><span className="sr-only">Save</span></th>
             </tr>
           </thead>
@@ -507,11 +507,11 @@ function BrokerageLine({ row, liveGlobally, serverList }: { row: BrokerageRow; l
           className="sel"
           value={entry}
           onChange={(e) => setEntry(e.target.value as PipelineEntry)}
-          aria-label="Pipeline entry"
-          title="Interested is the new model: while this brokerage's own switch is on, a hand-off that has really gone adds the agent to its Pipeline, and the Introduce button is off. Introduction: agents enter the Pipeline when they're introduced."
+          aria-label="After the hand-off"
+          title="What happens once a hand-off has really gone (it always starts from the Interested label). Label Introduction: the conversation is labelled Introduction, as if introduced: the agent joins the client's Pipeline, counts as an introduction, and the usual alerts go (Slack, Follow Up Boss, text). Add at Interested (clients billed per lead): the agent joins the Pipeline at Interested, nothing is labelled, and the Introduce button is off."
         >
-          <option value="introduction">Introduction</option>
-          <option value="interested">Interested</option>
+          <option value="introduction">Label Introduction</option>
+          <option value="interested">Add at Interested</option>
         </select>
       </td>
       <td>
