@@ -69,6 +69,8 @@ export const OS_TABLES = [
   "os_cap_held_leads",
   // Added 2026-11-06: a lead a billing person chose not to bill (0050).
   "os_usage_billing_waivers",
+  // Added 2026-11-20: the billing-cycle pause (0054). One row per client per cycle that reached its target.
+  "os_cycle_pauses",
   // A portal's Prospects kept in step with the client's campaign: every change,
   // the first campaign made at setup, and the setup template — see
   // migrations/0046_prospect_campaigns.sql.

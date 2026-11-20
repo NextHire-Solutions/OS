@@ -312,6 +312,10 @@ select.ds-input { padding-right: 28px; background-image: linear-gradient(45deg, 
 /* ------------------------------------------ Client Health billing cycles --- */
 /* "2 / 6 due" and "6/8" with their carry badge. */
 .ds-ib { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; font-variant-numeric: tabular-nums; }
+/* The billing-cycle pause (cycle-pause.tsx): the chip beside Intros / Billing, and Campaign Management's line under a client. */
+td > .ds-ib + .ds-badge { margin-left: 6px; }
+.cyc-line { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11.5px; line-height: 18px; color: var(--ds-muted); white-space: nowrap; overflow: hidden; }
+.cyc-line .ds-badge { font-size: 11px; line-height: 16px; padding: 0 7px; }
 .ds-ib > b { font-weight: 650; }
 .ds-ib-due { font-size: 11.5px; color: var(--ds-muted); }
 

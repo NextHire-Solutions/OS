@@ -385,4 +385,30 @@ export async function register() {
   const syncProspectsSafely = () => { syncProspects().catch((e) => console.error("[prospect-sync] failed:", e instanceof Error ? e.message : e)); };
   setTimeout(syncProspectsSafely, 50_000).unref?.();
   setInterval(syncProspectsSafely, 60_000).unref?.();
+
+  /*
+   * The billing-cycle pause (20 Nov; lib/tools/client-health/cycle-pause.ts): every 15 minutes, a client whose billing
+   * cycle reached its required introductions has its sending campaigns paused, once per cycle, never restarted by
+   * itself. Railway only. Without OS_CYCLE_PAUSE=1 it pauses nothing and writes nothing: the log says what it would do.
+   */
+  const { cyclePauseScheduled } = await import("./lib/tools/client-health/cycle-pause-model");
+  if (cyclePauseScheduled(process.env)) {
+    let cycleRunning = false;
+    const runCycle = async () => {
+      if (cycleRunning) return;
+      cycleRunning = true;
+      try {
+        const { runCyclePauses } = await import("./lib/tools/client-health/cycle-pause");
+        const r = await runCyclePauses();
+        if (r.reached || r.paused || r.notes.length || r.errors.length) {
+          console.log(`[cycle-pause] ${r.live ? "live" : "dry run"} · ${r.clients} at target · ${r.reached} newly reached · ${r.paused} paused · ${r.leftRunning} left running${r.notes.length ? ` · ${r.notes.join(" | ").slice(0, 1500)}` : ""}${r.errors.length ? ` · errors: ${r.errors.join(" | ").slice(0, 500)}` : ""}`);
+        }
+      } finally {
+        cycleRunning = false;
+      }
+    };
+    const runCycleSafely = () => { runCycle().catch((e) => console.error("[cycle-pause] failed:", e instanceof Error ? e.message : e)); };
+    setTimeout(runCycleSafely, 150_000).unref?.();
+    setInterval(runCycleSafely, 15 * 60_000).unref?.();
+  }
 }

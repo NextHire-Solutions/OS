@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — BUILT on feat/cycle-pause, NOT deployed; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
 | **0.14** | [New portal: Switch portal, for a client on more than one portal — 19 November](#014-new-portal-switch-portal-for-a-client-on-more-than-one-portal--19-november) — one sign-in already opened every portal an email is listed on; now a link moves between them; live 32d4deb1
@@ -224,6 +225,22 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.18 Billing-cycle auto-pause — 20 November
+
+**Status: BUILT on branch `feat/cycle-pause`, NOT deployed (the user: "make sure you do not deploy anything").** Deployed, it is a dry run until `OS_CYCLE_PAUSE=1` is set on `os`, and it cannot act until migration `0054_cycle_pauses.sql` is run (Master Inbox database).
+
+**Asked (BrokerStaffer, "Campaign Activation, Deactivation & Billing Cycle Management", Section 2; team answers 20 Nov):** the target is per client, shared by its campaigns; use Client Health's Intros / Billing (required introductions per billing cycle, Stripe or record dates); when reached, pause ALL the client's active campaigns; they stay paused until someone resumes them, even into a new cycle; Deactivate: disregard; no billing-cycle notifications. Defaults we chose, to confirm with the team: clients billed per lead are left to Lead caps; a campaign linked to another client too is left running; "required" means introductions (their answer 1 said "unique new prospects contacted", which contradicts answer 3 and the main goal).
+
+**How it works:** every 15 minutes on Railway (`instrumentation.ts`, `[cycle-pause]` log lines). Rules in `lib/tools/client-health/cycle-pause-model.ts` (pure, tested), the sweep in `cycle-pause.ts`. A client is acted on when its OS status is Active, it isn't marked paused on Client Health, it isn't billed per lead, it has a billing date and a target, and its cycle's introductions reach `cycle.required` (target plus carried shortfall: exactly the "due" of Intros / Billing). It pauses through Client Health's own Pause (`campaign-toggle.ts` pauseListed: live statuses, the held list Play resumes, `campaign_toggle_log` with actor "billing cycle target"). Once per cycle: the row in `os_cycle_pauses` (unique per client and cycle, written BEFORE pausing, so the insert is the claim) means a campaign a person resumes keeps running for the rest of that cycle. Nothing restarts by itself. A failed pause, or a status that couldn't be read, is tried again each run until the cycle ends. It refuses to act on seed data, an unread per-lead list, unread Stripe dates (the loader's 4 s cap; `datesUnsure`), a Client Health client two OS clients point at, or no table.
+
+**Screens:** Client Health's Intros / Billing cell gets "Paused at target" (or "Target reached · dry run" while off; "Pause incomplete" if something is still to retry), hover lists what was paused, left running and why. Campaign Management's Client column gets "4 / 6 intros · due Dec 1" under the client, with the same chip. Both read `GET /api/tools/client-health/cycle-pauses`, under Client Health's path, so only people with the Client Health switch see either.
+
+**Verified:** 32 tests (rules + the sweep end to end on the in-memory database with fake campaigns); full suite green. Read-only dry run on real data, every write refused (20 Nov): Stripe dates read, 17 Active clients judged, none at its due today, so nothing would pause; numbers identical to Client Health's Delivery view for every client (LIV Indy 9/10 due Nov 20, The Toll Group 2/4 due Nov 29, ...). Skipped: 36 churned, 2 paused, 1 onboarding, 2 per lead.
+
+**To switch on (only on the user's word):** run 0054, deploy, read a few `[cycle-pause] dry run` lines, then set `OS_CYCLE_PAUSE=1`. Note: every client already at its due in the current cycle pauses on the first live run.
 
 ---
 
