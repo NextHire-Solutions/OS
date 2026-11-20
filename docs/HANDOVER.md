@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — BUILT on feat/handoff-introduction, NOT deployed; Introduction-model clients get the Introduction label once a live hand-off has gone
+| **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)**; Introduction-model clients get the Introduction label once a live hand-off has gone; first real one not seen yet
 | **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; no inbox connected yet. Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
@@ -231,7 +231,7 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.20 A delivered hand-off is an introduction — 20 November
 
-**Status: BUILT on branch `feat/handoff-introduction`, NOT deployed.**
+**LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)** on the user's "yes deploy hand off change". Before: last deploy was ours (1d7a14ac), main unmoved, 3,891 tests, tsc clean. After, read only: logs clean; live hand-off page in Chrome (writes blocked) 4/4, 59 rows, CRA "Label Introduction", Homebase "Add at Interested", nothing saved; no record waiting, no bell; 12 clients send for real (10 Label Introduction). **No real hand-off has gone since: watch the first** (record pipeline_action label_introduction and detail cleared; the conversation labelled Introduction by system; slack_interested before it; slack_introduction / n8n_introduction / fub_push done; one portal entry).
 
 **Why (CRA, 20 Nov):** David Kerner's automatic hand-off was emailed to Mike and Jamal (delivered), but he wasn't in CRA's portal or tagged Introduction: for a client whose Pipeline entry is "Introduction", the hand-off only emailed. The user: "these automatic hand off agents should be automatically labeled as introduction and added to the client portal pipeline and all the actions after". (A hand-off always starts from the Interested label, set by the AI; the old "Pipeline entry" setting was never a trigger.) Amy labelled David by hand at 15:42 UTC: entry made, n8n / Slack introduction / Follow Up Boss done.
 
