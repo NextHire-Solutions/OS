@@ -20,11 +20,13 @@ import {
   TZ_SHORT_BY_VALUE, type ClientMarket, type DashboardClient,
 } from "@/lib/tools/client-health/types";
 import type { ClientHealthWeeklyData } from "@/lib/tools/client-health/weekly";
+import type { CycleProgress } from "@/lib/tools/client-health/cycle-pause-model";
 
 import { IntrosBillingCell, MonthlyCell, asDate, fmtMDY, isBehind, notCounted } from "./billing-cells";
 import { CampaignToggleDialog } from "./campaign-toggle-dialog";
 import { ClientCampaignsName } from "./campaigns-link";
 import { CampaignsPopup } from "./campaigns-popup";
+import { CyclePauseBadge, useCyclePauses } from "./cycle-pause";
 import { ClientModal } from "./client-modal";
 import { FilterBar } from "./filter-bar";
 import { ClientHealthFrame } from "./frame";
@@ -93,6 +95,8 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
   const [modal, setModal] = useState<ClientFormState | null>(null);
   const [popup, setPopup] = useState<string | null>(null);
   const [toggle, setToggle] = useState<ToggleTarget | null>(null);
+  /** The billing-cycle pause: what it did or would do this cycle (cycle-pause.ts). The current cycle only. */
+  const pauses = useCyclePauses();
 
   /*
    * The SERVER's clock — not the browser's. Daily Emails only counts when the
@@ -219,6 +223,8 @@ function WeeklyView({ data }: { data: ClientHealthWeeklyData }) {
                     onEdit={() => openEdit(row.client)}
                     onCampaigns={() => setPopup(row.client.id)}
                     onToggle={(action) => setToggle({ id: row.client.id, name: row.client.name, action })}
+                    pause={isCurrent ? pauses.byHealthId.get(row.client.id) : undefined}
+                    pauseLive={pauses.live}
                   />
                 ))
               )}
@@ -282,7 +288,7 @@ function SortableTh({
 }
 
 function Row({
-  row, now, todayET, convAvg, picked, onPick, onEdit, onCampaigns, onToggle,
+  row, now, todayET, convAvg, picked, onPick, onEdit, onCampaigns, onToggle, pause, pauseLive,
 }: {
   row: WeeklyRow;
   now: Date;
@@ -293,6 +299,8 @@ function Row({
   onEdit: () => void;
   onCampaigns: () => void;
   onToggle: (action: "pause" | "resume") => void;
+  pause?: CycleProgress;
+  pauseLive: boolean;
 }) {
   const { client: c, derived: d, snap } = row;
 
@@ -459,7 +467,10 @@ function Row({
         )}
       </td>
 
-      <td><IntrosBillingCell snap={snap} onSetBilling={onEdit} perLead={c.per_lead} /></td>
+      <td>
+        <IntrosBillingCell snap={snap} onSetBilling={onEdit} perLead={c.per_lead} />
+        <CyclePauseBadge p={pause} live={pauseLive} />
+      </td>
 
       <td className="num">{todayEmails > 0 ? n(todayEmails) : <span className="ds-none">—</span>}</td>
 

@@ -24,6 +24,7 @@ import {
   type ActionResult,
 } from "./actions";
 import { AssignInboxesDialog } from "./assign-inboxes-dialog";
+import { CycleProgressLine, useCyclePauses, type CyclePauses } from "../client-health/cycle-pause";
 import { CapacityStrip } from "./capacity-strip";
 import { ReCampaignDialog } from "./re-campaign-dialog";
 import { RenewDialog } from "./renew-dialog";
@@ -150,6 +151,8 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
   const [platform, setPlatform] = useState("");
   const [clientId, setClientId] = useState("");
   const [tag, setTag] = useState("");
+  /** Each client's billing cycle against its due, and the cycle pause (Client Health): shown only to people with Client Health. */
+  const pauses = useCyclePauses();
   const [page, setPage] = useState(1);
   const [view, setView] = useState<"list" | "grid">("list");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -528,6 +531,7 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
             setSelected={setSelected}
             busy={busy}
             onAction={(action, c) => void apply(action, [c])}
+            pauses={pauses}
           />
         ) : (
         <div className="tbl-scroll">
@@ -630,6 +634,7 @@ export function AnalyticsCampaignsScreen({ onOpen }: { onOpen?: (id: string) => 
                         ) : (
                           c.clientName ?? <span className="mut">Unassigned</span>
                         )}
+                        {!c.excluded && c.clientId ? <CycleProgressLine p={pauses.byAnalyticsId.get(c.clientId)} live={pauses.live} /> : null}
                       </td>
                       <td><StatusChip status={c.status} /></td>
                       <td className="tnum" style={{ textAlign: "right" }}>{fullNumber(c.lifetime_emails_sent)}</td>
@@ -818,6 +823,7 @@ function CampaignGrid({
   setSelected,
   busy,
   onAction,
+  pauses,
 }: {
   rows: Campaign[];
   loaded: boolean;
@@ -826,6 +832,7 @@ function CampaignGrid({
   setSelected: React.Dispatch<React.SetStateAction<Set<string>>>;
   busy: boolean;
   onAction: (action: CampaignAction, campaign: Campaign) => void;
+  pauses: CyclePauses;
 }) {
   if (rows.length === 0) {
     return (
@@ -888,6 +895,7 @@ function CampaignGrid({
                 {c.excluded ? "excluded" : c.clientName ?? "Unassigned"}
               </span>
             </div>
+            {!c.excluded && c.clientId ? <CycleProgressLine p={pauses.byAnalyticsId.get(c.clientId)} live={pauses.live} /> : null}
             <div className="tnum mut" style={{ display: "flex", gap: 14, fontSize: 12.5 }}>
               <span>{fullNumber(c.lifetime_emails_sent)} sent</span>
               <span>{fullNumber(c.total_leads)} leads</span>

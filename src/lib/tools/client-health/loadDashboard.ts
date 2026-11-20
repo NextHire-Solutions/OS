@@ -63,6 +63,11 @@ export async function loadDashboardClients(): Promise<{
   error?: string;
   /** Why the clients billed per lead couldn't be read: they are then shown by introductions, and the screens say so. */
   perLeadError?: string;
+  /**
+   * Set when the cycle dates may not be the ones Client Health usually shows: the OS records or Stripe couldn't be
+   * read, so every client fell back to the dates on its own record. The billing-cycle pause acts on none then.
+   */
+  datesUnsure?: string;
 }> {
   let sb;
   try {
@@ -233,5 +238,8 @@ export async function loadDashboardClients(): Promise<{
     };
   });
 
-  return { clients: dashboardClients, allInstantlyCampaigns, allBisonCampaigns, source: 'supabase', perLeadError };
+  const datesUnsure = masters === null ? 'the OS client records could not be read'
+    : stripeFacts === null ? 'Stripe could not be read'
+    : undefined;
+  return { clients: dashboardClients, allInstantlyCampaigns, allBisonCampaigns, source: 'supabase', perLeadError, ...(datesUnsure ? { datesUnsure } : {}) };
 }
