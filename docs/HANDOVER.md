@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.19** | [Inbox health rules on Add to campaigns and Assign — 20 November](#019-inbox-health-rules-on-add-to-campaigns-and-assign--20-november) — BUILT on feat/inbox-health-assign (with the Duplicate & Renew tightening underneath), NOT deployed
 | **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; no inbox connected yet. Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
@@ -225,6 +226,18 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.19 Inbox health rules on Add to campaigns and Assign — 20 November
+
+**Status: BUILT on branch `feat/inbox-health-assign`, NOT deployed.** It sits on `fix/renew-health-rules` (93168fc: Duplicate & Renew keeps only inboxes under 2% bounce, never Dead, warm-up score 90+), also not deployed, so deploying this deploys both.
+
+**Asked (BrokerStaffer, Section 3, and the team's 20 Nov tweaks):** the same health rules Duplicate & Renew uses on every other way an inbox goes onto a campaign. An inbox goes on only when it is connected, not tagged Dead, its bounce rate over 30 days is under 2% (judged once it has sent 100) and its EmailBison warm-up score over 14 days is 90 or more (judged once it has sent 20 warm-up emails); one with too little sending to judge goes on, as in Duplicate & Renew. The 90 is our recommendation, still to be confirmed by the team.
+
+**Where:** Inboxes page › Add to campaigns (the window shows how many will go on and lists each one left out with its reason; `POST campaigns/inboxes/add/check`, Campaign Management switch) and Campaigns page › Inboxes (Assign: the pool counts are of healthy inboxes, the left-out ones listed, `GET campaigns/inboxes?pool=…&health=1`). The server judges again before every attach, whatever the window showed (add/run once per window run; Assign once over the ticked pools' union), and attaches nothing when the health can't be read (098 missing, warm-up list unreadable). Removing inboxes is never checked. Instantly pools are assigned as a live tag, so nothing per inbox is checked there. Code: `lib/tools/analytics/campaigns/attach-health.ts` (rules, pure), `attach-health-io.ts`, `health-reads.ts` (warm-up scores and 098, shared with Duplicate & Renew's io.ts).
+
+**Verified:** full suite green (3,901 after merging main); tests for the rules, the reads refusing, the add route (healthy only, none healthy, unreadable, one judgement per run) and Assign (union, refusal, remove unchecked, no unchecked attach). Real data read only, 20 Nov (connected → healthy): ALL 1,844 → 1,525; Outlook 1,600 → 1,077 (523 warm-up under 90); Google 521 → 490; Nicole Pool 20 → 13 (7 Dead); Peeker Prewarm 700 → 700 (all too new to judge). Local Chrome on main + both branches with every write refused, nothing confirmed: Assign on Google "490 will start sending … 31 left out: 16 bounce, 9 warm-up, 7 Dead", button "Assign 490"; Add to campaigns on 30 inboxes "17 will be added … 13 left out". First check of the day ~5.5 s (warm-up list), then ~1.5 s.
 
 ---
 
