@@ -332,7 +332,7 @@ function Row({ r, active, onOpen, now, me, people, viewers, view }: {
       {r.unread ? <span className="tk-udot" aria-label="New activity" /> : null}
       <span className="tk-row-top">
         <span className="tk-who">{who}</span>
-        {r.client ? <span className="tk-client" title={r.client.name}><i className={r.client.status === "churned" ? "churned" : r.client.status === "paused" ? "paused" : ""} />{r.client.name}</span> : null}
+        {r.client ? <span className="tk-client" title={r.client.name}><i className={r.client.status === "churned" ? "churned" : r.client.status === "paused" ? "paused" : ""} /><span className="tk-client-n">{r.client.name}</span></span> : null}
         <span className={`tk-age${tone ? ` ${tone === "fresh" ? "" : tone}` : " plain"}`} title={r.status === "open" && r.waitingSince ? `Waiting since ${new Date(r.waitingSince).toLocaleString()}` : "Last activity"}>{age}</span>
       </span>
       <span className="tk-subj">{r.subject}</span>
@@ -346,7 +346,7 @@ function Row({ r, active, onOpen, now, me, people, viewers, view }: {
         <span className="tk-sp" />
         {r.messageCount > 1 ? <span className="tk-recv" title={`${r.messageCount} emails`}>{r.messageCount}</span> : null}
         {r.assignee ? <Avatar email={r.assignee} name={people.name(r.assignee)} title={r.assignee === me ? "Assigned to you" : `Assigned to ${people.name(r.assignee)}`} />
-          : <span className="tk-av none" title="Unassigned">?</span>}
+          : <span className="tk-av none" title="Unassigned" aria-label="Unassigned"><Icon name="user" /></span>}
       </span>
     </button>
   );

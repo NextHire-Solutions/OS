@@ -167,6 +167,7 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
     ...(t.assignee ? [{ id: "__none", label: "Unassign", icon: <Icon name="userx" /> }] : []),
   ];
   const presets = snoozePresets(now);
+  const firstAt = d.messages.reduce((min, m) => (m.sentAt && m.sentAt < min ? m.sentAt : min), t.createdAt);
 
   return (
     <div className="tk-read">
@@ -176,12 +177,12 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
           <span className="tk-num">#{t.number}</span>
           {t.client ? (
             <a className="tk-client big" href={`/roster?client=${encodeURIComponent(t.client.id)}`} title={`Open ${t.client.name}'s record`}>
-              <i className={t.client.status === "churned" ? "churned" : t.client.status === "paused" ? "paused" : ""} />{t.client.name}
+              <i className={t.client.status === "churned" ? "churned" : t.client.status === "paused" ? "paused" : ""} /><span className="tk-client-n">{t.client.name}</span>
             </a>
           ) : <span className="tk-client big">No client</span>}
-          <span>{t.contact.name ? `${t.contact.name} · ` : ""}{t.contact.email}</span>
-          <span aria-hidden="true">·</span>
-          <span title={fullTime(t.createdAt)}>Started {ago(t.createdAt, now)}</span>
+          <span className="tk-crumb" title={t.contact.email ?? undefined}>{t.contact.name ?? t.contact.email}</span>
+          {/* When the client first wrote, not when Tickets first saw it (an inbox connected later imports older mail). */}
+          <span className="tk-crumb tk-crumb-dot" title={fullTime(firstAt)}>First email {ago(firstAt, now)}</span>
         </div>
         <h2 className="tk-title">{t.subject}</h2>
         <div className="tk-actions">
@@ -242,6 +243,10 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
               onPick={(cid) => void change({ client: cid }, "Client changed")} />
           </div>
         </div>
+        {!myCopy && lastClientMail?.receivedBy.length ? (
+          // Said, not only on hover: why Reply in Gmail can't be pressed, and who can.
+          <p className="tk-replyhint">This email went to {listNames(lastClientMail.receivedBy.map((e) => people.first(e) || e))}, not to your inbox, so {lastClientMail.receivedBy.length === 1 ? (people.first(lastClientMail.receivedBy[0]) || "they") : "one of them"} replies from Gmail. Assign it to whoever answers.</p>
+        ) : null}
         {d.viewers.length ? (
           <div className="tk-banner presence" role="status"><Icon name="eye" />{listNames(d.viewers.map((v) => people.first(v)))} {d.viewers.length === 1 ? "is" : "are"} looking at this ticket too</div>
         ) : null}

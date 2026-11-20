@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/ds";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -60,14 +61,12 @@ export function TicketsInboxesScreen() {
   return (
     <div className="tk-shell">
       <div className="tk-page">
-        <div className="tk-page-h">
-          <div>
-            <h1>Connected inboxes</h1>
-            <p>Tickets reads the Gmail of each teammate who connects, and shares only the email that comes from a client&apos;s address. Connect yours so client email sent to you reaches the whole team.</p>
-          </div>
-          <span className="tk-sp" />
-          <a className="tk-btn" href="/tickets"><Icon name="back" />Back to Tickets</a>
-        </div>
+        {/* The OS's own page header, as Performance and Consistency (the sidebar is the way back to the tickets). */}
+        <PageHeader
+          kicker="Tickets"
+          title="Connected inboxes"
+          description="Tickets reads the Gmail of each teammate who connects, and shares only the email that comes from a client's address. Connect yours so client email sent to you reaches the whole team."
+        />
 
         {notice ? (
           <div className={`tk-notice ${notice.kind}`} role="status">
@@ -126,7 +125,7 @@ export function TicketsInboxesScreen() {
                     <tbody>
                       {d.mailboxes.map((m) => (
                         <tr key={m.email}>
-                          <td><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Avatar email={m.email} name={m.name} /><div><div>{m.name ?? m.email}</div><div style={{ fontSize: 12, color: "var(--ds-faint)" }}>{m.email}</div></div></div>{m.lastError && m.state !== "paused" ? <span className="err">{m.lastError}</span> : null}</td>
+                          <td><div className="tk-ibx"><Avatar email={m.email} name={m.name} /><div><div className="tk-ibx-n">{m.name ?? m.email}</div>{m.name && m.name !== m.email ? <div className="tk-ibx-e">{m.email}</div> : null}</div></div>{m.lastError && m.state !== "paused" ? <span className="err">{m.lastError}</span> : null}</td>
                           <td><span className={`tk-state ${STATE[m.state].cls}`}><i />{STATE[m.state].label}</span></td>
                           <td className="n">{m.tickets}</td>
                           <td className="n" title={m.lastOkAt ?? ""}>{m.lastOkAt ? ago(m.lastOkAt, now) : "–"}</td>

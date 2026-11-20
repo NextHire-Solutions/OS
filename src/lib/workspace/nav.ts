@@ -211,7 +211,8 @@ export const NAV: NavSection[] = [
         label: "Tickets",
         baseUrlEnv: "TICKETS_URL",
         children: [
-          { id: "list", label: "Tickets", path: "/tickets", verified: true, badgeKey: "tickets-open" },
+          // "Client email", not "Tickets" again: the breadcrumb read "Tickets › Tickets" (20 Nov).
+          { id: "list", label: "Client email", path: "/tickets", verified: true, badgeKey: "tickets-open" },
           { id: "inboxes", label: "Connected inboxes", path: "/tickets/inboxes", verified: true },
         ],
       },
