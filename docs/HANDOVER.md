@@ -241,6 +241,10 @@ recommendation to revoke the secrets stored in Railway.
 
 **Verified:** 32 tests (rules + the sweep end to end on the in-memory database with fake campaigns); full suite green. Read-only dry run on real data, every write refused (20 Nov): Stripe dates read, 17 Active clients judged, none at its due today, so nothing would pause; numbers identical to Client Health's Delivery view for every client (LIV Indy 9/10 due Nov 20, The Toll Group 2/4 due Nov 29, ...). Skipped: 36 churned, 2 paused, 1 onboarding, 2 per lead.
 
+**Screens checked 20 Nov** (local Chrome, main + this branch + the inbox-health branch, every write refused; the cycle reply rewritten in the test browser only, since no client is at its due): "Paused at target" and "Target reached · dry run" beside Intros / Billing with the hover, not clipped; Campaign Management "N / M intros · due <date>" inside the Client column.
+
+**Hand-offs don't count (found 20 Nov, Carolina Realty Advisors):** a client on the automatic Brokerage hand-off with Pipeline entry "Introduction" gets its agents by email but no Introduction label, and Client Health's intro dates come only from that label (Corofy /api/clients/intros). Such a client never reaches its due here, so this pause never acts on it. Whether a hand-off counts as an introduction is Eddy's decision.
+
 **To switch on (only on the user's word):** run 0054, deploy, read a few `[cycle-pause] dry run` lines, then set `OS_CYCLE_PAUSE=1`. Note: every client already at its due in the current cycle pauses on the first live run.
 
 ---
