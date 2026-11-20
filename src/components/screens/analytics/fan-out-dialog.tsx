@@ -112,13 +112,13 @@ export function FanOutDialog({
                 </div>
                 {/* Client fields filled in — or not — for this client's copy (13 Oct). */}
                 {t.note ? (
-                  <div data-fan-out-note style={{ marginLeft: 20, color: /not filled|Could not/.test(t.note) ? "var(--red)" : "var(--muted)" }}>{t.note}</div>
+                  <div data-fan-out-note style={{ marginLeft: 20, color: /not filled|Could not|No inboxes added/.test(t.note) ? "var(--red)" : "var(--muted)" }}>{t.note}</div>
                 ) : null}
               </div>
             ))}
           </Panel>
           <Warn>
-            <b>They are drafts with no leads.</b> Add each client&rsquo;s leads, then start them from the Campaigns page.
+            <span><b>They are drafts with no leads.</b> Add each client&rsquo;s leads, then start them from the Campaigns page.</span>
           </Warn>
         </>
       ) : (
@@ -176,15 +176,22 @@ export function FanOutDialog({
             )}
           </div>
 
-          <Check checked={copyInboxes} onChange={setCopyInboxes} label={`Give each one the same inboxes as ${campaignName}.`} />
+          <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+            <Check checked={copyInboxes} onChange={setCopyInboxes} label="Give each one this campaign's healthy inboxes" />
+            <span className="mut" data-fanout-inbox-rule style={{ fontSize: 12, lineHeight: 1.45, paddingLeft: 24 }}>
+              Only healthy ones go on: connected, not tagged Dead, bounce rate under 2% and warm-up score 90 or more.
+            </span>
+          </div>
 
           <Warn>
             {/* Said plainly because it is the one thing someone might assume
                 otherwise: these clients have different audiences, so copying
                 the template's leads would mail one client's list under
                 another's name. */}
-            Each campaign is created as a <b>draft with no leads</b> — the sequence and inboxes are
-            copied, the audience is not. Add each client&rsquo;s own leads before starting them.
+            <span>
+              Each campaign is created as a <b>draft with no leads</b> — the sequence and the healthy inboxes are
+              copied, the audience is not. Add each client&rsquo;s own leads before starting them.
+            </span>
           </Warn>
         </>
       )}

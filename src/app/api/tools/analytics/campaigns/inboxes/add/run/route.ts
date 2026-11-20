@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AUTH_COOKIE, verifySessionToken } from "@/lib/tools/analytics/session";
 import { inboxesAdded } from "@/lib/tools/analytics/campaign-inboxes-load";
 import { addToCampaign } from "@/lib/tools/analytics/campaigns/inbox-add.ts";
+import { readAttachHealth, type AttachHealthRead } from "@/lib/tools/analytics/campaigns/attach-health-io";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors.ts";
 import { markInboxExtrasStale } from "@/lib/tools/analytics/inbox-extras-load";
@@ -32,6 +33,26 @@ const RUNNING = Symbol.for("os.analytics.inboxAddRunning");
 function runningNow(): Set<number> {
   const g = globalThis as unknown as Record<symbol, Set<number> | undefined>;
   return (g[RUNNING] ??= new Set());
+}
+
+/*
+ * The health verdict for one run of the window (its batchId and the same ids), judged once and used for every campaign
+ * of it: one run gives every campaign the same inboxes, and pays for the reads once. Ten minutes, then judged again.
+ */
+const VERDICTS = Symbol.for("os.analytics.inboxAddHealth");
+async function healthFor(batchId: string, ids: number[]): Promise<AttachHealthRead> {
+  const g = globalThis as unknown as Record<symbol, Map<string, { at: number; read: Promise<AttachHealthRead> }> | undefined>;
+  const memo = (g[VERDICTS] ??= new Map());
+  const now = Date.now();
+  for (const [k, v] of memo) if (now - v.at > 10 * 60_000) memo.delete(k);
+  const key = `${batchId}:${[...ids].sort((a, b) => a - b).join(",")}`;
+  const hit = memo.get(key);
+  if (hit) return hit.read;
+  const read = readAttachHealth(ids);
+  memo.set(key, { at: now, read });
+  // A failed read isn't kept: the next campaign tries again.
+  void read.then((r) => { if (!r.ok) memo.delete(key); });
+  return read;
 }
 
 export async function POST(request: NextRequest) {
@@ -64,6 +85,22 @@ export async function POST(request: NextRequest) {
   let name = `#${campaignId}`;
   let statusBefore: string | null = null;
   try {
+    // Only healthy inboxes go on (attach-health.ts), judged here whatever the window showed. Unreadable health: none.
+    const health = await healthFor(batchId, inboxIds);
+    if (!health.ok) {
+      return NextResponse.json(
+        { campaignId, name, ok: false, outcome: "failed", added: 0, alreadyOn: 0, before: null, after: null, dropped: 0, error: health.error },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    const healthy = health.health.healthy;
+    const leftOutUnhealthy = inboxIds.length - healthy.length;
+    if (!healthy.length) {
+      return NextResponse.json(
+        { campaignId, name, ok: true, outcome: "unhealthy", added: 0, alreadyOn: 0, before: null, after: null, dropped: 0, leftOutUnhealthy },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
     const result = await addToCampaign(
       {
         status: async (id) => {
@@ -75,8 +112,9 @@ export async function POST(request: NextRequest) {
         count: (id) => eb.getCampaignSenderEmailCount(id),
         attach: (id, ids) => eb.attachSenderEmails(id, ids),
       },
-      { campaignId, inboxIds },
+      { campaignId, inboxIds: healthy },
     );
+    result.leftOutUnhealthy = leftOutUnhealthy;
 
     // Only what reached EmailBison is history: a finished campaign left alone changed nothing.
     if (result.outcome !== "finished") {
@@ -90,7 +128,7 @@ export async function POST(request: NextRequest) {
         actor: session.email,
         status: result.ok ? "ok" : "error",
         error: result.error ?? null,
-        before_state: { from: "inboxes page", inbox_ids: inboxIds, inboxes: result.before, status: statusBefore },
+        before_state: { from: "inboxes page", inbox_ids: healthy, left_out_by_health: leftOutUnhealthy ? health.health.leftOut.map((x) => ({ id: x.id, reasons: x.kinds })) : [], inboxes: result.before, status: statusBefore },
         after_state: result.after !== null ? { applied: result.added, already_on: result.alreadyOn, inboxes: result.after, dropped: result.dropped } : null,
         batch_id: batchId,
       });

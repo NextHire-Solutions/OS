@@ -13,6 +13,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
 | **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)**; Introduction-model clients get the Introduction label once a live hand-off has gone; first real one not seen yet
+| **0.19** | [Inbox health rules on Add to campaigns and Assign — 20 November](#019-inbox-health-rules-on-add-to-campaigns-and-assign--20-november) — BUILT on feat/inbox-health-assign (with the Duplicate & Renew tightening underneath), NOT deployed
 | **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — BUILT on feat/cycle-pause, NOT deployed; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
 | **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; Amy connected 21 Nov; reading pane redesigned, LIVE 21 Nov (20c4c85, Railway 6de41125). Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
@@ -244,6 +245,20 @@ recommendation to revoke the secrets stored in Railway.
 
 ---
 
+## 0.19 Inbox health rules on Add to campaigns and Assign — 20 November
+
+**Status: BUILT on branch `feat/inbox-health-assign`, NOT deployed.** It sits on `fix/renew-health-rules` (93168fc: Duplicate & Renew keeps only inboxes under 2% bounce, never Dead, warm-up score 90+), also not deployed, so deploying this deploys both.
+
+**Asked (BrokerStaffer, Section 3, and the team's 20 Nov tweaks):** the same health rules Duplicate & Renew uses on every other way an inbox goes onto a campaign. An inbox goes on only when it is connected, not tagged Dead, its bounce rate over 30 days is under 2% (judged once it has sent 100) and its EmailBison warm-up score over 14 days is 90 or more (judged once it has sent 20 warm-up emails); one with too little sending to judge goes on, as in Duplicate & Renew. The 90 is our recommendation, still to be confirmed by the team.
+
+**Where:** Inboxes page › Add to campaigns (the window shows how many will go on and lists each one left out with its reason; `POST campaigns/inboxes/add/check`, Campaign Management switch) and Campaigns page › Inboxes (Assign: the pool counts are of healthy inboxes, the left-out ones listed, `GET campaigns/inboxes?pool=…&health=1`). The server judges again before every attach, whatever the window showed (add/run once per window run; Assign once over the ticked pools' union), and attaches nothing when the health can't be read (098 missing, warm-up list unreadable). Removing inboxes is never checked. Instantly pools are assigned as a live tag, so nothing per inbox is checked there. Code: `lib/tools/analytics/campaigns/attach-health.ts` (rules, pure), `attach-health-io.ts`, `health-reads.ts` (warm-up scores and 098, shared with Duplicate & Renew's io.ts).
+
+**Verified:** full suite green (3,901 after merging main); tests for the rules, the reads refusing, the add route (healthy only, none healthy, unreadable, one judgement per run) and Assign (union, refusal, remove unchecked, no unchecked attach). Real data read only, 20 Nov (connected → healthy): ALL 1,844 → 1,525; Outlook 1,600 → 1,077 (523 warm-up under 90); Google 521 → 490; Nicole Pool 20 → 13 (7 Dead); Peeker Prewarm 700 → 700 (all too new to judge). Local Chrome on main + both branches with every write refused, nothing confirmed: Assign on Google "490 will start sending … 31 left out: 16 bounce, 9 warm-up, 7 Dead", button "Assign 490"; Add to campaigns on 30 inboxes "17 will be added … 13 left out". First check of the day ~5.5 s (warm-up list), then ~1.5 s.
+
+**Independent review, 20 Nov, fixed (65ac3f2, d6fd0a7):** the warm-up cache never kept anything (the cache's 12 s in-flight limit dropped reads that ran longer): now 120 s, proven on real data (2,298 inboxes = EmailBison's total, 154 pages, 5.2 s; second call 0 pages); the list must be complete against EmailBison's own total (read again once, else refused) and an empty score stays unjudged, never 0; Assign's check answers 503 on failure, the window shows it with Check again and only ever uses an answer for exactly the ticked pools from this opening (a failed check had left "Assign 490" enabled). **Tested 20 Nov with no EmailBison write at all** (local server, every attach caught and recorded): Add on 30 inboxes sent exactly the window's 19, all healthy on re-check; Assign of Nicole Pool sent its 13 healthy and none of the 7 unhealthy; with 098 broken nothing was sent and both windows said why; Duplicate & Renew's review on LIV Indy shows the rules (1,519 healthy of 1,769, 250 left out). **Every other attach path, on the team's answer (20 Nov: "apply the same inbox health requirements across all campaign operations"), built (ef48a16, c8c580c, 354b52f):** For multiple clients (fan-out), Re-campaign, a new client's first campaign (prospect-sync setup) and the onboarding connector all pass the inboxes they copy through `healthyOnly` (attach-health-io.ts): only healthy ones go on, the campaign is still made, and unreadable health puts none on with a note to add them with Assign. Re-campaign's result and each For-multiple-clients row say what was left out; the checkbox reads "Use this campaign's healthy inboxes" with the rule on its own line (a long rule beside the never-wrapping checkbox had pushed the window wider than itself; the notes no longer split into columns). **Tested:** 3,919 suite; new tests for each path (attach-paths.test.ts, connector-bison-health.test.ts, setup-campaign.test.ts); Chrome 15/15 (wording, no sideways spill at 1440/1280), screens 21/21, no-write attach 16/17 + Renew review 2/2.
+
+---
+
 ## 0.18 Billing-cycle auto-pause — 20 November
 
 **Status: BUILT on branch `feat/cycle-pause`, NOT deployed (the user: "make sure you do not deploy anything").** Deployed, it is a dry run until `OS_CYCLE_PAUSE=1` is set on `os`, and it cannot act until migration `0054_cycle_pauses.sql` is run (Master Inbox database).
@@ -364,6 +379,17 @@ header says "Started <date>". Tests: seed step 7 adds a long conversation shaped
 desktop-width page (by design, workspace.css), so a phone screenshot of Tickets is that page scrolled sideways.
 
 ## 0.16 Duplicate & Renew Campaign — 19 November
+
+**20 Nov: inbox rules TIGHTENED (branch fix/renew-health-rules, NOT DEPLOYED — the user: "make sure you do not deploy
+anything").** The team asked: only inboxes with a bounce rate BELOW 2% are added (2% or more left out, the old
+campaign's own included; nothing is "added with a warning" any more); inboxes tagged Dead ALWAYS left out; and the
+EmailBison warm-up score as an extra check — at least 90 over the last 14 days (judged once 20 warm-up emails were
+sent; MIN_WARMUP_SCORE in inbox-health.ts), on our recommendation pending their confirmation. Measured 20 Nov on 2,805
+connected inboxes: the score is ~ the share of warm-up mail landing in the inbox (90-94: 7% rescued from spam; 85-89:
+13%); 776 inboxes score under 50 (almost all warm-up mail in spam). Real reviews read only: LIV Indy #1277 keeps 1,533
+of 1,769 (216 warm-up, 14 bounce, 6 Dead left out; no pool); C21 #401 keeps 29 of 833 (804 warm-up under 90) and takes
+83 same-group pool inboxes for its 1,000/day. Warm-up scores: EmailBison's warm-up list, 200 pages read 25 at a time
+(6.5 s cold, held 30 min); unreadable = the review stops with a reason.
 
 **Asked (BrokerStaffer spec, 19 Nov):** one button that renews a campaign round: the campaign takes the next number ("LIV Indy Realty 6 + Indianapolis Metro + ZF NS4 (EST)"), a copy with the original name gets the leads In Sequence or Sequence Finished, only healthy inboxes, the ZF / NO-ZF tag, the same settings and schedule, a review window first, and stays paused. **The team's answers:** keep Re-campaign and put this beside it; inboxes = the old campaign's healthy ones first, topped up from the wider pool (healthy, connected, with capacity). Not answered yet, built on the defaults we gave them: In Sequence leads are MOVED (as they do by hand), leads busy in another campaign are skipped, portal choice and Prospects picks follow the new campaign.
 

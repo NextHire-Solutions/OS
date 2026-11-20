@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { formatRate, HEALTH_WINDOW_DAYS, MIN_SENDS, type InboxVerdict, type PoolPick } from "@/lib/tools/analytics/campaigns/renew/inbox-health.ts";
+import { BLOCK_AT, formatRate, HEALTH_WINDOW_DAYS, MIN_SENDS, MIN_WARMUP_SCORE, MIN_WARMUP_SENT, WARMUP_WINDOW_DAYS, type InboxVerdict, type PoolPick } from "@/lib/tools/analytics/campaigns/renew/inbox-health.ts";
 import { statusLabel } from "@/lib/tools/analytics/campaigns/renew/leads.ts";
 import type { RenewJob } from "@/lib/tools/analytics/campaigns/renew/jobs.ts";
 import type { RenewPreview, RenewResult } from "@/lib/tools/analytics/campaigns/renew/renew.ts";
@@ -175,10 +175,11 @@ function Review({ p }: { p: RenewPreview }) {
               </div>
             ) : null}
             <div className="mut" style={{ fontSize: 12 }}>
-              Connected in EmailBison, and a bounce rate under 5% over the last {HEALTH_WINDOW_DAYS} days. An inbox is judged once it
-              has sent {MIN_SENDS} emails in that time{unjudged ? `; ${fullNumber(unjudged)} had sent too few to judge and are added` : ""}.
+              Added only when connected in EmailBison, not tagged Dead, with a bounce rate under {BLOCK_AT}% over the last {HEALTH_WINDOW_DAYS} days
+              (judged once an inbox has sent {MIN_SENDS} emails) and a warm-up score of at least {MIN_WARMUP_SCORE} over the last {WARMUP_WINDOW_DAYS} days
+              (judged once it has sent {MIN_WARMUP_SENT} warm-up emails){unjudged ? `; ${fullNumber(unjudged)} had sent too little to judge and are added` : ""}.
               {pool && pool.needed > 0
-                ? " Pool inboxes must also be under 2% and not be tagged Dead or Warm up, with sending capacity left today (from synced sends, so approximate); inboxes in this campaign's own groups come first, and each is checked again just before it is added."
+                ? " Pool inboxes must also not be tagged Warm up, with sending capacity left today (from synced sends, so approximate); inboxes in this campaign's own groups come first, and each is checked again just before it is added."
                 : null}
             </div>
             {pool && pool.picks.length ? (

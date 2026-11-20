@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { RULE_WORDS, leftOutWords, type AttachHealthView } from "@/lib/tools/analytics/campaigns/attach-health.ts";
 import { addSelection, type AddResult } from "@/lib/tools/analytics/campaigns/inbox-add.ts";
 import type { OpenCampaign } from "@/lib/tools/analytics/campaigns/inbox-removal.ts";
 import { fullNumber } from "@/lib/tools/analytics/format.ts";
 
-import { addRun, removalCampaigns } from "./actions";
+import { addCheck, addRun, removalCampaigns } from "./actions";
 import { DialogFrame, Fail, Panel } from "./dialog-frame";
 import { Btn } from "./toast";
 
@@ -29,6 +30,8 @@ type Stage =
   | { name: "done"; targets: OpenCampaign[]; results: RunResult[]; stopped: boolean };
 
 type StatusFilter = "all" | "active" | "paused" | "draft";
+/** The health rules' verdict on the selection (attach-health.ts), read when the window opens. */
+type Health = { name: "checking" } | { name: "ok"; view: AttachHealthView } | { name: "failed"; message: string };
 const STATUS_TONE: Record<string, string> = { active: "s-done", queued: "plan-prod", launching: "plan-prod", paused: "s-ok", draft: "plan-min" };
 const plural = (n: number, one: string, many = `${one}s`) => `${fullNumber(n)} ${n === 1 ? one : many}`;
 /** Queued and launching are on their way to sending: they count as active here, as on the Campaigns page. */
@@ -46,6 +49,7 @@ export function AddInboxesDialog({
   // The selection as it was when this opened, once: the page behind re-renders on its own and hands in new arrays.
   const [selection] = useState(() => addSelection(selectedRows));
   const [stage, setStage] = useState<Stage>({ name: "loading" });
+  const [health, setHealth] = useState<Health>({ name: "checking" });
   const [campaigns, setCampaigns] = useState<OpenCampaign[]>([]);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState("");
@@ -56,8 +60,19 @@ export function AddInboxesDialog({
   const changed = useRef(false);
   const startedAt = useRef(0);
 
+  const checkHealth = async () => {
+    setHealth({ name: "checking" });
+    try {
+      const view = selection.send.length ? await addCheck(selection.send) : { healthy: [], leftOut: 0, counts: { "not connected": 0, Dead: 0, bounce: 0, "warm-up": 0, "not found": 0 }, unjudged: 0, examples: [] };
+      if (!closed.current) setHealth({ name: "ok", view });
+    } catch (e) {
+      if (!closed.current) setHealth({ name: "failed", message: e instanceof Error ? e.message : "The inboxes' health couldn't be checked." });
+    }
+  };
+
   const load = async () => {
     setStage({ name: "loading" });
+    void checkHealth();
     try {
       const { campaigns: open } = await removalCampaigns();
       if (closed.current) return;
@@ -123,7 +138,7 @@ export function AddInboxesDialog({
       if (stop.current || closed.current) break;
       let result: RunResult;
       try {
-        result = await addRun({ campaignId: target.id, inboxIds: selection.send, batchId });
+        result = await addRun({ campaignId: target.id, inboxIds: sendIds, batchId });
       } catch (e) {
         result = {
           campaignId: target.id, name: target.name, ok: false, outcome: "failed", added: 0, alreadyOn: 0, before: null, after: null, dropped: 0,
@@ -140,6 +155,8 @@ export function AddInboxesDialog({
   };
 
   const running = stage.name === "running";
+  // What is sent: the ones the health rules passed. The server judges them again before each campaign.
+  const sendIds = health.name === "ok" ? health.view.healthy : [];
   const footer = (() => {
     if (stage.name === "loading") return <Btn onClick={close}>Cancel</Btn>;
     if (stage.name === "failed") return <><Btn onClick={close}>Close</Btn><Btn primary onClick={() => void load()}>Try again</Btn></>;
@@ -167,8 +184,8 @@ export function AddInboxesDialog({
     return (
       <>
         <Btn onClick={close}>Cancel</Btn>
-        <Btn primary data-add-go disabled={!targets.length || !selection.send.length} onClick={() => void run(targets)}>
-          {!selection.send.length ? "Nothing to add" : targets.length ? `Add to ${plural(targets.length, "campaign")}` : "Pick campaigns"}
+        <Btn primary data-add-go disabled={!targets.length || !sendIds.length} onClick={() => void run(targets)}>
+          {health.name === "checking" && selection.send.length ? "Checking inboxes…" : !sendIds.length ? "Nothing to add" : targets.length ? `Add to ${plural(targets.length, "campaign")}` : "Pick campaigns"}
         </Btn>
       </>
     );
@@ -191,10 +208,34 @@ export function AddInboxesDialog({
           <>
             <Panel style={{ background: "var(--inset)" }}>
               <div className="tnum" data-add-summary>
-                {selection.send.length
-                  ? <><b>{plural(selection.send.length, "inbox", "inboxes")}</b> will be added to each campaign you pick.</>
-                  : <>None of these inboxes is connected to EmailBison, so there&apos;s nothing to add.</>}
+                {!selection.send.length
+                  ? <>None of these inboxes is connected to EmailBison, so there&apos;s nothing to add.</>
+                  : health.name === "checking"
+                    ? <span role="status" className="mut">Checking the inboxes&apos; health…</span>
+                    : health.name === "failed"
+                      ? <>Nothing can be added until the inboxes&apos; health can be checked.</>
+                      : health.view.healthy.length
+                        ? <><b>{plural(health.view.healthy.length, "inbox", "inboxes")}</b> will be added to each campaign you pick.</>
+                        : <>None of these inboxes passes the health rules, so there&apos;s nothing to add.</>}
               </div>
+              {health.name === "failed" ? (
+                <div data-add-health-failed style={{ marginTop: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ color: "var(--red)", fontSize: 12.5 }}>{health.message}</span>
+                  <button type="button" className="gh" onClick={() => void checkHealth()}>Check again</button>
+                </div>
+              ) : null}
+              {health.name === "ok" && health.view.leftOut > 0 ? (
+                <details className="an-add-health" data-add-unhealthy>
+                  <summary className="tnum" style={{ fontSize: 12.5 }}>
+                    {plural(health.view.leftOut, "inbox", "inboxes")} left out by the health rules: {leftOutWords(health.view.counts)}.
+                  </summary>
+                  <ul>
+                    {health.view.examples.map((x) => <li key={x.email}><span className="an-add-health-email">{x.email}</span> <span className="mut">{x.reasons.join("; ")}</span></li>)}
+                    {health.view.leftOut > health.view.examples.length ? <li className="mut">and {fullNumber(health.view.leftOut - health.view.examples.length)} more</li> : null}
+                  </ul>
+                </details>
+              ) : null}
+              <div className="mut" style={{ fontSize: 12.5, marginTop: 3 }}>{RULE_WORDS}</div>
               {selection.notConnected > 0 ? (
                 <div className="mut tnum" data-add-notconnected style={{ fontSize: 12.5, marginTop: 3 }}>
                   {plural(selection.notConnected, "inbox", "inboxes")} that can&apos;t connect {selection.notConnected === 1 ? "is" : "are"} left out: {selection.notConnected === 1 ? "it" : "they"} couldn&apos;t send.
@@ -265,8 +306,9 @@ function Bar({ share }: { share: number }) {
 
 function resultLine(r: RunResult): string {
   switch (r.outcome) {
-    case "added": return `${fullNumber(r.added)} added${r.alreadyOn ? `, ${fullNumber(r.alreadyOn)} already on it` : ""}${r.after === null ? "" : `, ${fullNumber(r.after)} now`}${r.dropped ? ` · ${plural(r.dropped, "inbox", "inboxes")} EmailBison no longer has` : ""}`;
-    case "nothing": return "Every one was on it already";
+    case "added": return `${fullNumber(r.added)} added${r.alreadyOn ? `, ${fullNumber(r.alreadyOn)} already on it` : ""}${r.after === null ? "" : `, ${fullNumber(r.after)} now`}${r.dropped ? ` · ${plural(r.dropped, "inbox", "inboxes")} EmailBison no longer has` : ""}${r.leftOutUnhealthy ? ` · ${plural(r.leftOutUnhealthy, "inbox", "inboxes")} left out by the health rules` : ""}`;
+    case "nothing": return `Every one was on it already${r.leftOutUnhealthy ? ` · ${plural(r.leftOutUnhealthy, "inbox", "inboxes")} left out by the health rules` : ""}`;
+    case "unhealthy": return "Nothing added: none of these inboxes passes the health rules";
     case "finished": return "Not changed: it has finished";
     case "failed": return `${r.error ?? "It didn't go through"}${r.added > 0 ? ` ${fullNumber(r.added)} did go on.` : ""}`;
   }
@@ -306,6 +348,7 @@ function Running({ targets, results, stopping }: { targets: OpenCampaign[]; resu
 function Done({ targets, results, stopped }: { targets: OpenCampaign[]; results: RunResult[]; stopped: boolean }) {
   const added = results.filter((r) => r.ok && r.outcome === "added");
   const already = results.filter((r) => r.ok && r.outcome === "nothing");
+  const unhealthy = results.filter((r) => r.ok && r.outcome === "unhealthy");
   const failed = results.filter((r) => !r.ok);
   const notReached = targets.length - results.length;
   return (
@@ -314,6 +357,7 @@ function Done({ targets, results, stopped }: { targets: OpenCampaign[]; results:
         <div className="tnum" data-add-done>
           Added to <b>{fullNumber(added.length)} of {plural(targets.length, "campaign")}</b>.
           {already.length ? <> {plural(already.length, "campaign")} had every one already.</> : null}
+          {unhealthy.length ? <> {plural(unhealthy.length, "campaign")} got none: when the add ran, none of these inboxes passed the health rules any more.</> : null}
         </div>
         {stopped && notReached > 0 ? <div className="mut tnum" style={{ fontSize: 12.5, marginTop: 3 }}>Stopped: {plural(notReached, "campaign")} not reached, and not changed.</div> : null}
         {added.length ? <div className="mut" style={{ fontSize: 12.5, marginTop: 3 }}>The Assigned column and Active inboxes catch up within a few minutes.</div> : null}

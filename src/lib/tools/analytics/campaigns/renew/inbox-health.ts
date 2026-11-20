@@ -1,14 +1,20 @@
 /*
  * DUPLICATE & RENEW — which of the old campaign's inboxes the new one gets.
  *
- * The team's rules (their "Section 3", 19 Nov) as told back to them for this
- * button: an inbox is added when it is CONNECTED in EmailBison and its bounce
- * rate over the last 30 days is under 5%. 2% or less is healthy; above 2% and
- * under 5% is a warning (added, flagged in the review window); 5% or more is
- * left out. An inbox is only judged on its bounce rate once it has sent 100
- * emails in those 30 days ("a sufficient sample size to avoid unnecessary
- * restrictions") — most inboxes send 1 to 3 a day, so below that it is added
- * and the review window says there was not enough sending to judge.
+ * THE TEAM'S RULES (Section 3, 19 Nov; tightened 20 Nov: "I'd prefer that only inboxes with a bounce rate below 2% be
+ * automatically assigned", "inboxes tagged Dead are always excluded, including those from the previous campaign", and
+ * the warm-up score "as an additional health check"). An inbox — the old campaign's own or one from the pool — is
+ * added only when ALL hold:
+ *   - CONNECTED in EmailBison;
+ *   - NOT tagged "Dead";
+ *   - its bounce rate over the last 30 days is UNDER 2% (2% or more: left out). Judged once it has sent 100 emails
+ *     in those 30 days ("a sufficient sample size to avoid unnecessary restrictions"); below that it is added and the
+ *     review window says there was not enough sending to judge;
+ *   - its EmailBison WARM-UP SCORE over the last 14 days is at least MIN_WARMUP_SCORE. Measured 20 Nov on 2,805
+ *     inboxes, the score is about the share of warm-up mail that reached the inbox rather than spam (90-94: 7% rescued
+ *     from spam; 85-89: 13%; under 50: almost all). Judged once it has sent MIN_WARMUP_SENT warm-up emails in the
+ *     window; below that it is added with a note.
+ * Nothing is "added with a warning" any more: an inbox passes or is left out, with the reason.
  *
  * THEN THE WIDER POOL (the team, 19 Nov): "The new campaign should prioritize
  * the healthy inboxes from the previous campaign. If additional inboxes are
@@ -33,10 +39,15 @@
 export const HEALTH_WINDOW_DAYS = 30;
 /** Sends (incl. bounced ones) in the window before an inbox's bounce rate is judged. */
 export const MIN_SENDS = 100;
-/** Above this (%) and under BLOCK_AT: a warning. */
-export const WARN_ABOVE = 2;
-/** At or above this (%): left out. */
-export const BLOCK_AT = 5;
+/** At or above this bounce rate (%): left out (the team, 20 Nov: "only inboxes with a bounce rate below 2%"). */
+export const BLOCK_AT = 2;
+/** Kept for the display rule in formatRate: the threshold a rate is shown precisely around. */
+export const WARN_ABOVE = BLOCK_AT;
+/** The warm-up window, and the score an inbox needs (EmailBison's warm-up score, 0-100). */
+export const WARMUP_WINDOW_DAYS = 14;
+export const MIN_WARMUP_SCORE = 90;
+/** Warm-up emails sent in the window before the score is judged. */
+export const MIN_WARMUP_SENT = 20;
 
 export interface SourceInbox {
   id: number;
@@ -53,6 +64,17 @@ export interface RecentBounces {
   bounced: number;
   /** Sends in the last 24 hours (analytics 098): what is used of its daily limit. */
   sent24h?: number;
+  /** EmailBison's warm-up score over WARMUP_WINDOW_DAYS (0-100), and how many warm-up emails it sent then. */
+  warmupScore?: number | null;
+  warmupSent?: number;
+}
+
+/** The warm-up verdict: null when there was too little warm-up mail to judge, else whether it passes. */
+export function warmupJudged(recent: RecentBounces | undefined): { score: number; ok: boolean } | null {
+  const sent = Number(recent?.warmupSent ?? 0);
+  const score = recent?.warmupScore;
+  if (score === null || score === undefined || !Number.isFinite(Number(score)) || sent < MIN_WARMUP_SENT) return null;
+  return { score: Number(score), ok: Number(score) >= MIN_WARMUP_SCORE };
 }
 
 export type Verdict = "add" | "warn" | "leave";
@@ -101,14 +123,18 @@ export function judgeInbox(inbox: SourceInbox, recent: RecentBounces | undefined
     const said = String(inbox.status ?? "").trim();
     return { ...base, verdict: "leave", reasons: [said ? `${said} in EmailBison` : "No connection status from EmailBison"], note: null };
   }
-  if (rate !== null && rate >= BLOCK_AT) {
-    return { ...base, verdict: "leave", reasons: [`Bounce rate ${formatRate(rate)} over ${window} (${bounced} of ${attempts})`], note: null };
-  }
   const reasons: string[] = [];
-  if (rate !== null && rate > WARN_ABOVE) reasons.push(`Bounce rate ${formatRate(rate)} over ${window} (${bounced} of ${attempts}): warning`);
   if (inbox.tags.some((t) => t.trim().toLowerCase() === "dead")) reasons.push('Tagged "Dead"');
-  const note = rate === null ? `Too little sending to judge its bounce rate (${attempts} in ${window})` : null;
-  return { ...base, verdict: reasons.length ? "warn" : "add", reasons, note };
+  if (rate !== null && rate >= BLOCK_AT) reasons.push(`Bounce rate ${formatRate(rate)} over ${window} (${bounced} of ${attempts}); must be under ${BLOCK_AT}%`);
+  const w = warmupJudged(recent);
+  if (w && !w.ok) reasons.push(`Warm-up score ${Math.floor(w.score)} over the last ${WARMUP_WINDOW_DAYS} days; must be at least ${MIN_WARMUP_SCORE}`);
+  if (reasons.length) return { ...base, verdict: "leave", reasons, note: null };
+  const notes = [
+    ...(rate === null ? [`too little sending to judge its bounce rate (${attempts} in ${window})`] : []),
+    ...(!w ? [`too little warm-up mail to judge its warm-up score (${Number(recent?.warmupSent ?? 0)} in the last ${WARMUP_WINDOW_DAYS} days)`] : []),
+  ];
+  const note = notes.length ? notes.join("; ").replace(/^./, (c) => c.toUpperCase()) : null;
+  return { ...base, verdict: "add", reasons: [], note };
 }
 
 export interface InboxJudgement {
@@ -190,8 +216,9 @@ export function poolRefusal(inbox: SourceInbox, recent: RecentBounces | undefine
   const sent = Math.max(0, Number(recent?.sent ?? 0));
   const bounced = Math.max(0, Number(recent?.bounced ?? 0));
   const attempts = sent + bounced;
-  // Only HEALTHY ones from the pool: a warning-band inbox is kept on the old campaign's say-so, never picked fresh.
-  if (attempts >= MIN_SENDS && (bounced / attempts) * 100 > WARN_ABOVE) return "bounce rate";
+  if (attempts >= MIN_SENDS && (bounced / attempts) * 100 >= BLOCK_AT) return "bounce rate";
+  const w = warmupJudged(recent);
+  if (w && !w.ok) return "warm-up score";
   if (limit - Math.max(0, Number(recent?.sent24h ?? 0)) <= 0) return "no capacity to spare";
   return null;
 }

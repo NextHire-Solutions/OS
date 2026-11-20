@@ -24,7 +24,8 @@ import { isOpenStatus } from "./inbox-removal.ts";
  *   dropped and the call made again.
  *
  * Only Connected inboxes are sent, as the Campaigns page's own Assign does (inbox-assignment.ts): one that can't connect
- * would sit on the campaign sending nothing. What is reported is the campaign's own count before and after, never the
+ * would sit on the campaign sending nothing. And since 20 Nov only HEALTHY ones (attach-health.ts: not Dead, bounce rate
+ * under 2%, warm-up score 90 or more), judged on the server before every campaign, whatever the window showed. What is reported is the campaign's own count before and after, never the
  * number of ids sent. Finished and archived campaigns can't send, so they aren't offered or changed.
  *
  * Pure: the EmailBison calls are passed in.
@@ -38,6 +39,8 @@ export type AddOutcome =
   | "added"
   /** Every one was on it already. */
   | "nothing"
+  /** None of the inboxes passed the health rules: nothing sent. */
+  | "unhealthy"
   /** It has finished or been archived since the list was read: not touched. */
   | "finished"
   /** See `error`. Anything that did go on is in `added`. */
@@ -56,6 +59,8 @@ export interface AddResult {
   after: number | null;
   /** Ids EmailBison didn't know (deleted since the list was read), left out. */
   dropped: number;
+  /** Inboxes the health rules left out before anything was sent (attach-health.ts). */
+  leftOutUnhealthy?: number;
   error?: string;
 }
 

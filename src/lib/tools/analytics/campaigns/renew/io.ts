@@ -7,7 +7,8 @@ import { EmailBisonApiError, describeEmailBisonError } from "@/lib/tools/analyti
 import { analyticsTeamId, getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 import { introSenderEmail } from "@/lib/tools/master-inbox/inbox/intro-sender";
 
-import { HEALTH_WINDOW_DAYS, type RecentBounces, type SourceInbox } from "./inbox-health.ts";
+import { recentBounces, warmupScores } from "../health-reads.ts";
+import type { SourceInbox } from "./inbox-health.ts";
 import type { CampaignLeadRow } from "./leads.ts";
 import { linkStore } from "./links-store.ts";
 import { moveLinks, readLinks } from "./links.ts";
@@ -24,6 +25,8 @@ const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
 const PAGE_LIMIT = 1000;
 /** Pages read at once; the client's own gate paces EmailBison underneath. */
 const PAGES_AT_ONCE = 10;
+
+// The warm-up scores and recent bounces are shared with Add to campaigns and Assign (../health-reads.ts).
 
 const num = (v: unknown): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 
@@ -149,16 +152,8 @@ export function realRenewIO(): RenewIO {
       }
       return out;
     },
-    async recentBounces(ids) {
-      const { data, error } = await sb.rpc("analytics_os_inbox_recent_bounces", { p_team_id: teamId, p_sender_ids: ids, p_days: HEALTH_WINDOW_DAYS });
-      if (error) {
-        if (/analytics_os_inbox_recent_bounces|schema cache|does not exist|PGRST202/i.test(`${error.code ?? ""} ${error.message}`)) return "missing";
-        throw new Error(`Recent bounces: ${error.message}`);
-      }
-      return ((Array.isArray(data) ? data : []) as Array<{ id: unknown; sent: unknown; bounced: unknown; sent_24h?: unknown }>).map((r): RecentBounces => ({
-        id: Number(r.id), sent: Number(r.sent ?? 0), bounced: Number(r.bounced ?? 0), sent24h: Number(r.sent_24h ?? 0),
-      }));
-    },
+    recentBounces: (ids) => recentBounces(ids),
+    warmup: () => warmupScores(),
     links: (id) => readLinks(id, linkStore),
     async lastRenewal(sourceId) {
       const { data, error } = await sb

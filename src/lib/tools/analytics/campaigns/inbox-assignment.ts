@@ -4,6 +4,8 @@ import { createInstantlyClient } from "@/lib/tools/analytics/instantly/client.ts
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors.ts";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
 import { cleanPools, mergeAssignments, unionIds, type PoolSummary, type PoolsSummary } from "./inbox-pools.ts";
+import { healthView } from "./attach-health.ts";
+import { readAttachHealth, type AttachHealthRead } from "./attach-health-io.ts";
 
 /*
  * Attaching a pool of inboxes to campaigns by tag.
@@ -40,6 +42,8 @@ export interface AssignmentSummary {
   inboxes: number;
   /** Tagged but not Connected, so deliberately left out. */
   skippedDisconnected: number;
+  /** Connected but left out by the health rules (attach-health.ts). Attach only. */
+  skippedUnhealthy?: number;
   results: InboxAssignmentResult[];
 }
 
@@ -205,6 +209,11 @@ export async function assignInboxesByTag(
   action: "attach" | "remove",
   actor: string,
   teamId: number,
+  /**
+   * On an attach, the EmailBison inboxes the health rules passed (attach-health.ts): only these go on. Required for an
+   * attach with EmailBison campaigns, so nothing can attach unchecked by leaving it out.
+   */
+  healthy?: ReadonlySet<number>,
 ): Promise<AssignmentSummary> {
   const sb = getSupabase();
   const eb = createEmailBisonClient();
@@ -241,8 +250,11 @@ export async function assignInboxesByTag(
   if (error) throw new Error(`inbox lookup: ${error.message}`);
   if (allError) throw new Error(`inbox lookup: ${allError.message}`);
 
-  const inboxIds = (usableIds ?? []) as number[];
+  const connectedIds = (usableIds ?? []) as number[];
   const allTagged = (allIds ?? []) as number[];
+  if (action === "attach" && campaignIds.length && !healthy) throw new Error("The inboxes' health wasn't checked, so nothing was assigned.");
+  // An attach sends only the healthy ones; a remove takes off whatever is asked.
+  const inboxIds = action === "attach" && healthy ? connectedIds.filter((id) => healthy.has(id)) : connectedIds;
 
   /*
    * THE INSTANTLY POOL IS COUNTED SEPARATELY, AND EARLY.
@@ -276,7 +288,8 @@ export async function assignInboxesByTag(
      * from the API, and there the sum is the truthful total.
      */
     inboxes: (campaignIds.length ? inboxIds.length : 0) + instantlyPool,
-    skippedDisconnected: allTagged.length - inboxIds.length,
+    skippedDisconnected: allTagged.length - connectedIds.length,
+    ...(action === "attach" && healthy ? { skippedUnhealthy: connectedIds.length - inboxIds.length } : {}),
     results: [],
   };
 
@@ -406,7 +419,7 @@ export async function assignInboxesByTag(
       actor,
       status: result.ok ? "ok" : "error",
       error: result.error ?? null,
-      before_state: { tag, inboxes: inboxIds.length },
+      before_state: { tag, inboxes: inboxIds.length, ...(summary.skippedUnhealthy ? { left_out_by_health: summary.skippedUnhealthy } : {}) },
       after_state: result.ok ? { applied: result.applied } : null,
       batch_id: batchId,
     });
@@ -518,12 +531,37 @@ export async function assignInboxesByTags(
   action: "attach" | "remove",
   actor: string,
   teamId: number,
+  readHealth: (ids: number[]) => Promise<AttachHealthRead> = readAttachHealth,
 ): Promise<PoolsSummary> {
   const pools = cleanPools(tags);
+  const ebTargets = targets.some((t) => t.platform === "emailbison");
+
+  /*
+   * THE HEALTH RULES, ONCE, OVER EVERY TICKED POOL (20 Nov — attach-health.ts). An attach puts only healthy inboxes
+   * on: connected, not Dead, bounce rate under 2%, warm-up score 90 or more. If that can't be checked, no EmailBison
+   * campaign is given anything, and each says why.
+   */
+  let healthy: ReadonlySet<number> | undefined;
+  let health: Awaited<ReturnType<typeof readAttachHealth>> | null = null;
+  let connectedUnion: number[] = [];
+  if (action === "attach" && ebTargets) {
+    try {
+      connectedUnion = (await poolInboxIds(teamId, pools)).connected;
+      health = await readHealth(connectedUnion);
+    } catch (caught) {
+      health = { ok: false, error: `The inboxes' health couldn't be checked just now, so nothing was assigned. (${(caught instanceof Error ? caught.message : String(caught)).slice(0, 160)})` };
+    }
+    if (health.ok) healthy = new Set(health.health.healthy);
+  }
+  // Unchecked: the EmailBison campaigns fail with the reason; Instantly's, assigned as a live tag, go ahead.
+  const runTargets = health && !health.ok ? targets.filter((t) => t.platform !== "emailbison") : targets;
+  const refusedEb = health && !health.ok ? targets.filter((t) => t.platform === "emailbison") : [];
+
   const summaries: PoolSummary[] = [];
   for (const tag of pools) {
+    if (!runTargets.length) break;
     try {
-      summaries.push(await assignInboxesByTag(targets, tag, action, actor, teamId));
+      summaries.push(await assignInboxesByTag(runTargets, tag, action, actor, teamId, healthy));
     } catch (caught) {
       const error = caught instanceof Error ? caught.message : String(caught);
       summaries.push({
@@ -532,9 +570,19 @@ export async function assignInboxesByTags(
         action,
         inboxes: 0,
         skippedDisconnected: 0,
-        results: targets.map((t) => ({ campaignId: t.id, platform: t.platform, name: `#${t.id}`, ok: false, applied: 0, error })),
+        results: runTargets.map((t) => ({ campaignId: t.id, platform: t.platform, name: `#${t.id}`, ok: false, applied: 0, error })),
       });
     }
+  }
+  if (refusedEb.length && health && !health.ok) {
+    summaries.push({
+      batchId: randomUUID(),
+      tag: pools[0] ?? "",
+      action,
+      inboxes: 0,
+      skippedDisconnected: 0,
+      results: refusedEb.map((t) => ({ campaignId: t.id, platform: t.platform, name: `#${t.id}`, ok: false, applied: 0, error: health.error })),
+    });
   }
 
   /*
@@ -547,9 +595,9 @@ export async function assignInboxesByTags(
     try {
       let inboxes = 0;
       let skippedDisconnected = 0;
-      if (targets.some((t) => t.platform === "emailbison")) {
+      if (ebTargets) {
         const ids = await poolInboxIds(teamId, pools);
-        inboxes += (action === "attach" ? ids.connected : ids.all).length;
+        inboxes += action === "attach" ? (healthy ? ids.connected.filter((id) => healthy.has(id)).length : 0) : ids.all.length;
         if (action === "attach") skippedDisconnected += ids.all.length - ids.connected.length;
       }
       if (targets.some((t) => t.platform === "instantly")) inboxes += (await poolInstantlyEmails(teamId, pools)).length;
@@ -559,7 +607,13 @@ export async function assignInboxesByTags(
     }
   }
 
-  return mergeAssignments(action, summaries, distinct);
+  const merged = mergeAssignments(action, summaries, distinct);
+  if (health?.ok) {
+    const { healthy: _ids, ...view } = healthView(health.health, 20);
+    merged.skippedUnhealthy = connectedUnion.length - health.health.healthy.length;
+    merged.health = view;
+  }
+  return merged;
 }
 
 /** The inbox tags worth offering, read from the cache. */

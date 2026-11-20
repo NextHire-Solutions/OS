@@ -29,6 +29,8 @@ class World {
   leads = new Map<number, { email: string; status: string }>();
   inboxes = new Map<number, SourceInbox>();
   bounces: Map<number, RecentBounces> | "missing" = new Map();
+  /** EmailBison's warm-up scores by inbox ("error": the warm-up list can't be read). */
+  warmup: Map<number, { score: number; sent: number }> | "error" | undefined = undefined;
   links: LinkState = { ready: true, error: null, portalRoute: { osClientId: "c1", miClientId: "p1", source: "manual" }, picks: [{ osClientId: "c1", mlsCode: "" }], setups: [] };
   nextId = 2000;
   writes: string[] = [];
@@ -125,6 +127,7 @@ class World {
       poolInboxes: async () => { w.heavyReads.push("pool"); return [...w.inboxes.values()]; },
       liveInboxStatus: async (ids) => new Map(ids.map((i) => [i, w.liveStatus.get(i) ?? w.inboxes.get(i)?.status ?? null])),
       recentBounces: async (ids) => (w.bounces === "missing" ? "missing" : ids.map((i) => (w.bounces as Map<number, RecentBounces>).get(i) ?? { id: i, sent: 0, bounced: 0 })),
+      warmup: async () => { if (w.warmup === "error") throw new Error("EmailBison 503"); return w.warmup ?? new Map(); },
       links: async () => w.links,
       lastRenewal: async (id) => w.lastRenewal(id),
       clientPin: async () => w.pin,
@@ -199,7 +202,7 @@ function liv() {
   void other;
   w.inbox(1, {}, 500, 2); // 0.4% healthy
   w.inbox(2, {}, 40, 30); // too little to judge: added
-  w.inbox(3, {}, 200, 6); // 3% warning
+  w.inbox(3, {}, 200, 3); // 1.5% healthy (under the team's 2%, 20 Nov)
   w.inbox(4, {}, 200, 20); // 10% left out
   w.inbox(5, { status: "Not connected" }); // left out
   for (const i of [1, 2, 3, 4, 5]) old.inboxes.add(i);
@@ -229,8 +232,8 @@ test("review: every item the spec asks for, from the real-shaped campaign", asyn
   assert.deepEqual({ move: p.leads.busy.move, copy: p.leads.busy.copy }, { move: 1, copy: 1 });
   assert.deepEqual(p.leads.left, { replied: 1, stopped: 1, bounced: 1 });
   const j = p.inboxes.judgement!;
-  assert.deepEqual(j.add.map((v) => v.id).sort(), [1, 2]);
-  assert.deepEqual(j.warn.map((v) => v.id), [3]);
+  assert.deepEqual(j.add.map((v) => v.id).sort(), [1, 2, 3]);
+  assert.deepEqual(j.warn, [], "nothing is added with a warning any more (the team, 20 Nov)");
   assert.deepEqual(j.leave.map((v) => v.id), [4, 5]);
   assert.deepEqual(p.tag.names, ["ZF"], "ZF only; the COPY tag is not carried");
   assert.deepEqual(p.limits, { maxEmailsPerDay: 3000, maxNewLeadsPerDay: 1500 });
@@ -913,4 +916,31 @@ test("a stop call that fails outright stops the run before renaming, nothing und
   assert.equal(r.ok, false);
   assert.match(r.error ?? "", /EmailBison 500 on stop .*The old campaign was NOT renamed/);
   assert.equal(r.rolledBack, false);
+});
+
+test("THE TEAM, 20 Nov: the old campaign's own inboxes at 2%+, tagged Dead, or with a warm-up score under 90 are left out", async () => {
+  const w = liv();
+  w.inbox(6, {}, 200, 4); // exactly 2%
+  w.inbox(7, { tags: ["Dead"] }, 500, 0);
+  w.inbox(8, {}, 500, 0);
+  w.inbox(9, {}, 500, 0);
+  for (const i of [6, 7, 8, 9]) w.campaigns.get(OLD)!.inboxes.add(i);
+  w.warmup = new Map([[8, { score: 72, sent: 60 }], [9, { score: 95, sent: 60 }], [1, { score: 99, sent: 80 }]]);
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  const j = p.inboxes.judgement!;
+  assert.deepEqual(j.add.map((v) => v.id).sort(), [1, 2, 3, 9]);
+  const why = Object.fromEntries(j.leave.map((v) => [v.id, v.reasons.join(" | ")]));
+  assert.match(why[6], /Bounce rate 2\.0% .*must be under 2%/);
+  assert.match(why[7], /Tagged "Dead"/);
+  assert.match(why[8], /Warm-up score 72 over the last 14 days; must be at least 90/);
+});
+
+test("warm-up scores that can't be read stop the review with a clear reason (never judged half-blind)", async () => {
+  const w = liv();
+  w.warmup = "error";
+  const p = await previewRenew(OLD, w.io());
+  if ("error" in p) throw new Error(p.error);
+  assert.ok(p.blockers.some((b) => /warm-up scores could not be read just now/.test(b)), p.blockers.join(" | "));
+  assert.equal(p.inboxes.judgement, null);
 });
