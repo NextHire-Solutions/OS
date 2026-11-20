@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — BUILT, NOT LIVE (branch feat/tickets). Only a verified client address's own words are kept. Go-live needs migration 0053, Tickets' own Google OAuth client and two env settings. The user: do not deploy |
+| **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; no inbox connected yet. Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
 | **0.14** | [New portal: Switch portal, for a client on more than one portal — 19 November](#014-new-portal-switch-portal-for-a-client-on-more-than-one-portal--19-november) — one sign-in already opened every portal an email is listed on; now a link moves between them; live 32d4deb1
@@ -229,6 +229,20 @@ recommendation to revoke the secrets stored in Railway.
 ---
 
 ## 0.17 Tickets — client emails in the team's Gmail, shared and tracked — 20 November
+
+**LIVE 20 Nov 15:10 UTC (7358626, Railway 176b50d3)** on the user's "Yes, deploy it". Go-live: 0053 run by the user;
+Tickets' own Google OAuth client added by the user in Railway (TICKETS_GOOGLE_CLIENT_ID / _SECRET, a different client
+from Onboarding's); OS_TICKETS_TOKEN_KEY generated and set by a script, never printed (64 chars; never change it: every
+stored Gmail token is sealed with it). Before the deploy: OS-look pass (Connected inboxes uses the OS PageHeader, the
+nav leaf is "Client email", chips ellipsise, the header shows when the client first wrote, Reply in Gmail says who
+received the email); 3,881 tests; local Chrome 77/77. Live check read only as admin@outreachify.io, nothing pressed,
+11/12 (the miss was the test's own selector; the screenshot shows the sidebar right): both pages open, Connect is
+enabled, it sends to accounts.google.com with Tickets' client, redirect_uri
+`https://os.brokerstaffer.com/api/tools/tickets/google/callback`, scope gmail.readonly + openid email profile only,
+the state cookie set, and Google ACCEPTS the app and the return address (sign-in page, no redirect_uri_mismatch).
+**Nobody has connected yet.** The admin "One-time Google setup" notice shows until the first inbox has synced; it is
+done. The consent screen is Internal, so only brokerstaffer.com Google accounts can connect (Eddy, Amy; not a gmail.com
+or outreachify.io address). Never sign in as Eddy or Amy to test: they connect their own.
 
 **Asked** (the user): "one tickets section in OS where I can see emails that come in our team's inbox (brokerstaffer
 team like eddy, amy and more team members) … emails that come from our clients so that every team member can see
