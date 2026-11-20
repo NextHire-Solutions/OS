@@ -245,6 +245,10 @@ recommendation to revoke the secrets stored in Railway.
 
 **Hand-offs don't count (found 20 Nov, Carolina Realty Advisors):** a client on the automatic Brokerage hand-off with Pipeline entry "Introduction" gets its agents by email but no Introduction label, and Client Health's intro dates come only from that label (Corofy /api/clients/intros). Such a client never reaches its due here, so this pause never acts on it. Whether a hand-off counts as an introduction is Eddy's decision.
 
+**Independent review, 20 Nov, fixed (3630bbc):** the due is stored as numeric (14-day billing of an odd monthly target gives x.5; the integer column refused it, so such a client would never have been paused); a record covers the cycle it was MADE in (reached_at within (start, end]), so a Stripe date moved earlier can't carry last cycle's pause over; a retried campaign since linked to another client is left running; a campaign that keeps refusing is tried 8 times, then left listed ("Pause incomplete", hover says pause it by hand); saves retried. **Tested 20 Nov:** 39 unit/sweep tests; 0054 run twice on local Postgres (2.5 accepted, same cycle refused 409); LIVE-mode run on REAL data with every pause and Client Health write caught (LIV Indy pushed to 10/10 in memory): one pause call for its one sending campaign, the cycle recorded once, not re-paused while it runs (= a person resumed), two runs at once pause once, a refused pause retried and cleared, 17/17 three times (one run refused on a slow Stripe read, as designed). Properties & Estates genuinely reached 5/4 (none running: nothing to pause). Screens in local Chrome at 1440 and 1280: 21/21 with Step 2's.
+
+**Still the team's call:** the first live run pauses every client already at its due at once (the dry-run lines name them first).
+
 **To switch on (only on the user's word):** run 0054, deploy, read a few `[cycle-pause] dry run` lines, then set `OS_CYCLE_PAUSE=1`. Note: every client already at its due in the current cycle pauses on the first live run.
 
 ---
