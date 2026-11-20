@@ -13,8 +13,8 @@ figure will age, the query that produced it is given so you can re-run it.
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
 | **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)**; Introduction-model clients get the Introduction label once a live hand-off has gone; first real one not seen yet
-| **0.19** | [Inbox health rules on Add to campaigns and Assign — 20 November](#019-inbox-health-rules-on-add-to-campaigns-and-assign--20-november) — BUILT on feat/inbox-health-assign (with the Duplicate & Renew tightening underneath), NOT deployed
-| **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — BUILT on feat/cycle-pause, NOT deployed; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
+| **0.19** | [Inbox health rules on Add to campaigns and Assign — 20 November](#019-inbox-health-rules-on-add-to-campaigns-and-assign--20-november) — **LIVE 21 Nov (2be7e46, Railway 59e19820)** — BUILT on feat/inbox-health-assign (with the Duplicate & Renew tightening underneath), NOT deployed
+| **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — **LIVE 21 Nov as a dry run (2be7e46, Railway 59e19820)**; 0054 run 21 Nov; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
 | **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; Amy connected 21 Nov; reading pane redesigned, LIVE 21 Nov (20c4c85, Railway 6de41125). Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
@@ -247,7 +247,8 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.19 Inbox health rules on Add to campaigns and Assign — 20 November
 
-**Status: BUILT on branch `feat/inbox-health-assign`, NOT deployed.** It sits on `fix/renew-health-rules` (93168fc: Duplicate & Renew keeps only inboxes under 2% bounce, never Dead, warm-up score 90+), also not deployed, so deploying this deploys both.
+**Status: LIVE 21 Nov (2be7e46, Railway 59e19820), with the Renew rules (fix/renew-health-rules) and every attach
+path. Live read-only check: Assign "ALL" pool → 1,533 healthy; Add to campaigns, 30 picked → 19 go on.** (Was: BUILT.) It sits on `fix/renew-health-rules` (93168fc: Duplicate & Renew keeps only inboxes under 2% bounce, never Dead, warm-up score 90+), also not deployed, so deploying this deploys both.
 
 **Asked (BrokerStaffer, Section 3, and the team's 20 Nov tweaks):** the same health rules Duplicate & Renew uses on every other way an inbox goes onto a campaign. An inbox goes on only when it is connected, not tagged Dead, its bounce rate over 30 days is under 2% (judged once it has sent 100) and its EmailBison warm-up score over 14 days is 90 or more (judged once it has sent 20 warm-up emails); one with too little sending to judge goes on, as in Duplicate & Renew. The 90 is our recommendation, still to be confirmed by the team.
 
@@ -261,7 +262,10 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.18 Billing-cycle auto-pause — 20 November
 
-**Status: BUILT on branch `feat/cycle-pause`, NOT deployed (the user: "make sure you do not deploy anything").** Deployed, it is a dry run until `OS_CYCLE_PAUSE=1` is set on `os`, and it cannot act until migration `0054_cycle_pauses.sql` is run (Master Inbox database).
+**Status: LIVE 21 Nov as a DRY RUN (2be7e46, Railway 59e19820) on the user's "deploy"; 0054 run by the user 21 Nov
+(verified: both tables, `required` numeric). OS_CYCLE_PAUSE unset: the sweep only logs. First run: "dry run · 1 at
+target · Properties & Estates: 5 of 4 since Nov 6, due Nov 20, reached Nov 20, before the switch-on: left to the team".
+Live read-only check 9/9 (with Step 2). To switch on: OS_CYCLE_PAUSE=1 on the os service.** (Was: BUILT, not deployed.) Deployed, it is a dry run until `OS_CYCLE_PAUSE=1` is set on `os`, and it cannot act until migration `0054_cycle_pauses.sql` is run (Master Inbox database).
 
 **Asked (BrokerStaffer, "Campaign Activation, Deactivation & Billing Cycle Management", Section 2; team answers 20 Nov):** the target is per client, shared by its campaigns; use Client Health's Intros / Billing (required introductions per billing cycle, Stripe or record dates); when reached, pause ALL the client's active campaigns; they stay paused until someone resumes them, even into a new cycle; Deactivate: disregard; no billing-cycle notifications. Defaults we chose, to confirm with the team: clients billed per lead are left to Lead caps; a campaign linked to another client too is left running; "required" means introductions (their answer 1 said "unique new prospects contacted", which contradicts answer 3 and the main goal).
 
