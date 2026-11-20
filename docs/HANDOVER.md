@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — BUILT on feat/handoff-introduction, NOT deployed; Introduction-model clients get the Introduction label once a live hand-off has gone
 | **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; no inbox connected yet. Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
@@ -225,6 +226,20 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.20 A delivered hand-off is an introduction — 20 November
+
+**Status: BUILT on branch `feat/handoff-introduction`, NOT deployed.**
+
+**Why (CRA, 20 Nov):** David Kerner's automatic hand-off was emailed to Mike and Jamal (delivered), but he wasn't in CRA's portal or tagged Introduction: for a client whose Pipeline entry is "Introduction", the hand-off only emailed. The user: "these automatic hand off agents should be automatically labeled as introduction and added to the client portal pipeline and all the actions after". (A hand-off always starts from the Interested label, set by the AI; the old "Pipeline entry" setting was never a trigger.) Amy labelled David by hand at 15:42 UTC: entry made, n8n / Slack introduction / Follow Up Boss done.
+
+**What it does:** once a LIVE hand-off has really gone, for a client whose Pipeline entry is Introduction, the conversation is labelled Introduction through applyLabelToThread (actor "brokerage hand-off", assigned_by system; never announces twice): the label's trigger makes the Pipeline entry, Client Health counts it, and the usual alerts go (n8n, Slack introductions, Follow Up Boss, text). It first waits for the Interested Slack alert (which posts only while the conversation says Interested; David's went 3 s before his hand-off), at most 10 minutes. A conversation a person has relabelled since, or that already carries Introduction, is left alone. A failure rings the bell once and is retried every minute for a week (same machinery as the Interested model's Pipeline entry). Practice never labels. The Interested model (clients billed per lead) is unchanged; per-lead billing counts every conversation EVER marked Interested, so the label swap removes no billed lead. The settings column now reads "After the hand-off" with "Label Introduction" / "Add at Interested" (same stored values). Code: `relay/handoff-introduction.ts` (when), `handoff-introduction-io.ts` (the label), `relay.ts` settleIntroduction, `interested-alerts.ts` interestedAlertSettled.
+
+**Who it affects (20 Nov):** live + automatic on Introduction: Momentum, The Toll Group, BrokerStaffer (its own recruits too: its portal, Slack, FUB), CRA, Rise, Properties & Estates, LIV Indy, PRG, Bastion, ChuckTown. Only David has gone so far.
+
+**Tested:** full suite 3,891; relay 222 incl. labelled once, waits for the alert and labels after 10 minutes without it, relabelled left alone, already-introduced not announced again, failure bell + retry with no second email, practice never; the REAL label call on the in-memory database (Introduction replaces Interested, announcement queued once, second call silent); the settings page in local Chrome at 1440/1280, nothing saved, 12/12.
 
 ---
 
