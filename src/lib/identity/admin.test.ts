@@ -103,7 +103,8 @@ test("the grantable tools exclude the Database app", () => {
   // 15 Oct (Eddy: "All products should be on settings"): the Workspace pages
   // first, then every product — Campaign Management and Inboxes no longer ride
   // on Campaign Analytics.
-  assert.deepEqual(ids, ["roster", "commissions", "performance", "inbox", "portals", "clients", "analytics", "campaigns", "inboxes", "search"]);
+  // 20 Nov: Tickets, its own switch, after Client Portals as in the menu.
+  assert.deepEqual(ids, ["roster", "commissions", "performance", "inbox", "portals", "tickets", "clients", "analytics", "campaigns", "inboxes", "search"]);
   assert.equal(ids.includes("database" as never), false);
 });
 
@@ -112,7 +113,7 @@ test("Team access groups the switches as the menu does: Workspace pages, then Pr
     GRANTABLE_TOOLS.map((t) => `${t.group}:${t.label}`),
     [
       "Workspace:Clients", "Workspace:Commissions", "Workspace:Performance",
-      "Products:Master Inbox", "Products:Client Portals", "Products:Client Health", "Products:Campaign Analytics",
+      "Products:Master Inbox", "Products:Client Portals", "Products:Tickets", "Products:Client Health", "Products:Campaign Analytics",
       "Products:Campaign Management", "Products:Inboxes", "Products:Agent Search",
     ],
   );

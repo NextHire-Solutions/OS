@@ -33,7 +33,7 @@ export interface NavLeaf {
   path?: string;
   verified?: boolean;
   /** A count badge, when the tool can tell us one. */
-  badgeKey?: "inbox-unread" | "reminders";
+  badgeKey?: "inbox-unread" | "reminders" | "tickets-open";
   /**
    * An admin-only screen: the entry shows to admins and to the people it is opened to by name
    * (identity/named-pages.ts) — never a dead link to a teammate whose screen would fall back elsewhere.
@@ -198,6 +198,22 @@ export const NAV: NavSection[] = [
           // §8's Portal view of each client's record — it was Master Inbox's
           // "Client view", and it is about portals.
           { id: "client-view", label: "Client view", verified: true },
+        ],
+      },
+      /*
+       * Tickets (20 Nov, the user: "one tickets section in OS where I can see emails that come in our team's inbox
+       * … emails that come from our clients so that every team member can see those emails"). Each teammate
+       * connects their own Gmail; only client conversations are kept. Its own grant, `tickets`.
+       */
+      {
+        kind: "product",
+        id: "tickets",
+        label: "Tickets",
+        baseUrlEnv: "TICKETS_URL",
+        children: [
+          // "Client email", not "Tickets" again: the breadcrumb read "Tickets › Tickets" (20 Nov).
+          { id: "list", label: "Client email", path: "/tickets", verified: true, badgeKey: "tickets-open" },
+          { id: "inboxes", label: "Connected inboxes", path: "/tickets/inboxes", verified: true },
         ],
       },
       {
@@ -405,6 +421,7 @@ export function products(): NavProduct[] {
 const PRODUCT_SLUG: Record<string, ToolId> = {
   inbox: "inbox",
   portals: "portals",
+  tickets: "tickets",
   clients: "clients",
   analytics: "analytics",
   search: "search",

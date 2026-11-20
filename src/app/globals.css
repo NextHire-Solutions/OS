@@ -262,3 +262,5 @@
 @import "./ds-clients.css";
 @import "./os.css";
 @import "./commissions.css";
+/* Tickets (20 Nov): client emails in the team's Gmail — tk- prefixed, after the design system. */
+@import "./tickets.css";

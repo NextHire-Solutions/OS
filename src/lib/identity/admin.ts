@@ -99,6 +99,8 @@ export const GRANTABLE_TOOLS: ToolDescriptor[] = [
   { id: "inbox", label: "Master Inbox", description: "Unified sales inbox for cold outreach replies.", group: "Products" },
   // Its own switch since 13 Oct; it used to come with Master Inbox.
   { id: "portals", label: "Client Portals", description: "The client portals: each one's link, on/off, SMS alerts and pipeline.", group: "Products" },
+  // 20 Nov: client emails in the team's Gmail. Off for everyone but admins until switched on per person.
+  { id: "tickets", label: "Tickets", description: "Client emails that reach the team's Gmail, shared and tracked to done.", group: "Products" },
   { id: "clients", label: "Client Health", description: "Live client outreach health.", group: "Products" },
   // Three switches since 15 Oct; until then one switch opened all three sections.
   { id: "analytics", label: "Campaign Analytics", description: "Campaign performance, volume, infrastructure and attribution.", group: "Products" },

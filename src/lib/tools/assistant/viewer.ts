@@ -102,6 +102,8 @@ export const TOOL_NEEDS: Readonly<Record<string, Need>> = {
   commissions: admin,
   team: admin,
   notifications: admin,
+  // Tickets (20 Nov): its own switch.
+  tickets: any("tickets"),
   data_consistency: admin,
   reply_agent_status: admin,
 };

@@ -41,7 +41,7 @@ export const SHARES_A_SERVICE: ReadonlySet<GrantId> = new Set<GrantId>(["portals
  * pages, not an upstream service — there is nothing to monitor, so no
  * connector.
  */
-export const NO_SERVICE: ReadonlySet<GrantId> = new Set<GrantId>(["roster", "commissions", "performance"]);
+export const NO_SERVICE: ReadonlySet<GrantId> = new Set<GrantId>(["roster", "commissions", "performance", "tickets"]);
 
 export const CONNECTOR_BY_GRANT: Record<GrantId, ConnectorId | null> = {
   inbox: "master-inbox",
@@ -57,6 +57,8 @@ export const CONNECTOR_BY_GRANT: Record<GrantId, ConnectorId | null> = {
   roster: null,
   commissions: null,
   performance: null,
+  // Tickets (20 Nov) is the OS's own: it reads Gmail directly, no upstream service.
+  tickets: null,
 };
 
 export function toGrantId(id: ConnectorId): GrantId {
