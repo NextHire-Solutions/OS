@@ -240,8 +240,9 @@ received the email); 3,881 tests; local Chrome 77/77. Live check read only as ad
 enabled, it sends to accounts.google.com with Tickets' client, redirect_uri
 `https://os.brokerstaffer.com/api/tools/tickets/google/callback`, scope gmail.readonly + openid email profile only,
 the state cookie set, and Google ACCEPTS the app and the return address (sign-in page, no redirect_uri_mismatch).
-**Nobody has connected yet.** The admin "One-time Google setup" notice shows until the first inbox has synced; it is
-done. If the consent screen was set up as Internal (the setup steps said so; not seen from here), only brokerstaffer.com
+**Nobody has connected yet.** The admin "One-time Google setup" notice now shows only while a setting is missing
+(178dc6c, Railway 1d7a14ac, 20 Nov, the user: "remove this yellow setup note"; live check 13/13). The user turned the
+Tickets switch on for Eddy, Amy and Gabriel (20 Nov). If the consent screen was set up as Internal (the setup steps said so; not seen from here), only brokerstaffer.com
 Google accounts can connect (Eddy, Amy; not a gmail.com or outreachify.io address); External in Testing would expire
 each connection after 7 days. Never sign in as Eddy or Amy to test: they connect their own.
 
