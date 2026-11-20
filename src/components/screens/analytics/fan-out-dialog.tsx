@@ -176,7 +176,12 @@ export function FanOutDialog({
             )}
           </div>
 
-          <Check checked={copyInboxes} onChange={setCopyInboxes} label={`Give each one the healthy inboxes of ${campaignName}.`} hint="Only healthy ones go on: connected, not tagged Dead, bounce rate under 2% and warm-up score 90 or more." />
+          <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+            <Check checked={copyInboxes} onChange={setCopyInboxes} label="Give each one this campaign's healthy inboxes" />
+            <span className="mut" data-fanout-inbox-rule style={{ fontSize: 12, lineHeight: 1.45, paddingLeft: 24 }}>
+              Only healthy ones go on: connected, not tagged Dead, bounce rate under 2% and warm-up score 90 or more.
+            </span>
+          </div>
 
           <Warn>
             {/* Said plainly because it is the one thing someone might assume

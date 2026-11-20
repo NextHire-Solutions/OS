@@ -191,7 +191,13 @@ export function ReCampaignDialog({
             <input className="inp" value={effectiveName} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} />
           </label>
 
-          <Check checked={copyInboxes} onChange={setCopyInboxes} label={`Use the healthy inboxes of ${campaignName}.`} hint="Only healthy ones go on: connected, not tagged Dead, bounce rate under 2% and warm-up score 90 or more. A campaign with no inboxes cannot send." />
+          <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+            <Check checked={copyInboxes} onChange={setCopyInboxes} label="Use this campaign's healthy inboxes" />
+            {/* Its own wrapping line: the checkbox row never wraps, and a long rule beside it pushed the window wider than itself. */}
+            <span className="mut" data-recampaign-inbox-rule style={{ fontSize: 12, lineHeight: 1.45, paddingLeft: 24 }}>
+              Only healthy ones go on: connected, not tagged Dead, bounce rate under 2% and warm-up score 90 or more. A campaign with no inboxes cannot send.
+            </span>
+          </div>
 
           {/* Offered only when there is something to clean. A checkbox that
               would do nothing is worse than no checkbox. */}
