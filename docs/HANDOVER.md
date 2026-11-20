@@ -241,8 +241,9 @@ enabled, it sends to accounts.google.com with Tickets' client, redirect_uri
 `https://os.brokerstaffer.com/api/tools/tickets/google/callback`, scope gmail.readonly + openid email profile only,
 the state cookie set, and Google ACCEPTS the app and the return address (sign-in page, no redirect_uri_mismatch).
 **Nobody has connected yet.** The admin "One-time Google setup" notice shows until the first inbox has synced; it is
-done. The consent screen is Internal, so only brokerstaffer.com Google accounts can connect (Eddy, Amy; not a gmail.com
-or outreachify.io address). Never sign in as Eddy or Amy to test: they connect their own.
+done. If the consent screen was set up as Internal (the setup steps said so; not seen from here), only brokerstaffer.com
+Google accounts can connect (Eddy, Amy; not a gmail.com or outreachify.io address); External in Testing would expire
+each connection after 7 days. Never sign in as Eddy or Amy to test: they connect their own.
 
 **Asked** (the user): "one tickets section in OS where I can see emails that come in our team's inbox (brokerstaffer
 team like eddy, amy and more team members) … emails that come from our clients so that every team member can see
