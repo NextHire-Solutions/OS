@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  afterAttempt, cyclePauseLive, cyclePauseScheduled, judge, progressState, recordForCycle, sharedWith, splitShared,
+  MAX_TRIES, afterAttempt, cyclePauseLive, cyclePauseScheduled, judge, progressState, recordForCycle, sharedWith, splitShared,
   type CycleFacts, type CyclePauseRecord, type JudgeInput,
 } from "./cycle-pause-model.ts";
 
@@ -64,6 +64,18 @@ describe("cycle pause: judge", () => {
     assert.deepEqual(judge(input({ cycle: cycle({ delivered: 6 }), record: record({ to_retry: list }) })), { kind: "retry", list });
   });
 
+  it("gives up on a campaign after MAX_TRIES runs: the cycle counts as done, the campaign stays listed", () => {
+    const stuck = { ...bison("b1"), error: "EmailBison 500", attempts: MAX_TRIES };
+    const fresh = { ...bison("b2"), error: "EmailBison 500", attempts: MAX_TRIES - 1 };
+    assert.deepEqual(judge(input({ cycle: cycle({ delivered: 6 }), record: record({ to_retry: [stuck] }) })), { kind: "done" });
+    assert.deepEqual(judge(input({ cycle: cycle({ delivered: 6 }), record: record({ to_retry: [stuck, fresh] }) })), { kind: "retry", list: [fresh] });
+  });
+
+  it("a due with a half (14-day billing of an odd monthly target) is reached at the next whole introduction", () => {
+    assert.equal(judge(input({ cycle: cycle({ target: 2.5, required: 2.5, delivered: 2 }) })).kind, "below");
+    assert.deepEqual(judge(input({ cycle: cycle({ target: 2.5, required: 2.5, delivered: 3 }) })), { kind: "reached", delivered: 3, required: 2.5 });
+  });
+
   it("a new cycle with no record is judged afresh, so it pauses again when its target is reached", () => {
     const next = cycle({ start: new Date("2026-12-01T00:00:00Z"), end: new Date("2026-12-29T00:00:00Z"), delivered: 6 });
     const r = recordForCycle([record()], next);
@@ -73,15 +85,26 @@ describe("cycle pause: judge", () => {
 });
 
 describe("cycle pause: the record for the cycle", () => {
-  it("finds a record whose dates overlap the cycle, even if they moved a day", () => {
-    const moved = record({ cycle_start: "2026-11-04", cycle_end: "2026-12-02" });
+  it("finds the record made during this cycle, even if its stored dates moved a day", () => {
+    const moved = record({ cycle_start: "2026-11-04", cycle_end: "2026-12-02", reached_at: "2026-11-20T10:00:00Z" });
     assert.equal(recordForCycle([moved], cycle()), moved);
   });
 
   it("ignores the cycle before and the one after", () => {
-    const before = record({ cycle_start: "2026-10-06", cycle_end: "2026-11-03" });
-    const after = record({ cycle_start: "2026-12-01", cycle_end: "2026-12-29" });
+    const before = record({ cycle_start: "2026-10-06", cycle_end: "2026-11-03", reached_at: "2026-10-30T10:00:00Z" });
+    const after = record({ cycle_start: "2026-12-01", cycle_end: "2026-12-29", reached_at: "2026-12-10T10:00:00Z" });
     assert.equal(recordForCycle([before, after], cycle()), null);
+  });
+
+  it("a record made on the last billing date belongs to the cycle that billed that day, not this one", () => {
+    assert.equal(recordForCycle([record({ reached_at: "2026-11-03T18:00:00Z" })], cycle()), null);
+    assert.ok(recordForCycle([record({ reached_at: "2026-12-01T18:00:00Z" })], cycle()), "the next billing date is still this cycle");
+  });
+
+  it("when Stripe moves the charge date earlier, last cycle's pause doesn't cover the new cycle (review, 20 Nov)", () => {
+    const last = record({ cycle_start: "2026-11-03", cycle_end: "2026-12-01", reached_at: "2026-11-20T10:00:00Z" });
+    const moved = cycle({ start: new Date("2026-11-28T00:00:00Z"), end: new Date("2026-12-26T00:00:00Z") });
+    assert.equal(recordForCycle([last], moved), null);
   });
 });
 
@@ -116,13 +139,19 @@ describe("cycle pause: after an attempt", () => {
       "2026-11-20T10:00:00Z",
     );
     assert.deepEqual(r.paused.map((c) => [c.id, c.paused_at]), [["b0", "2026-11-20T09:00:00Z"], ["b1", "2026-11-20T10:00:00Z"]]);
-    assert.deepEqual(r.to_retry, [{ ...bison("b2"), error: "EmailBison 500" }, { ...bison("b3"), error: "its status couldn't be read" }]);
+    assert.deepEqual(r.to_retry, [{ ...bison("b2"), error: "EmailBison 500", attempts: 1 }, { ...bison("b3"), error: "its status couldn't be read", attempts: 1 }]);
   });
 
   it("a campaign that pauses on a retry leaves the retry list", () => {
     const r = afterAttempt({ paused: [] }, { ok: [bison("b2")], failed: [], unread: [] }, "2026-11-20T10:15:00Z");
     assert.deepEqual(r.to_retry, []);
     assert.equal(r.paused.length, 1);
+  });
+
+  it("counts each try, and keeps a campaign given up on (not tried) as it was", () => {
+    const prev = [{ ...bison("b1"), error: "EmailBison 500", attempts: 3 }, { ...bison("b9"), error: "EmailBison 500", attempts: MAX_TRIES }];
+    const r = afterAttempt({ paused: [], to_retry: prev }, { ok: [], failed: [{ campaign: bison("b1"), error: "EmailBison 502" }], unread: [], tried: [bison("b1")] }, "2026-11-20T10:30:00Z");
+    assert.deepEqual(r.to_retry.map((c) => [c.id, c.attempts, c.error]), [["b1", 4, "EmailBison 502"], ["b9", MAX_TRIES, "EmailBison 500"]]);
   });
 });
 

@@ -40,7 +40,12 @@ export interface LeftRunning extends CycleCampaign {
 export interface RetryCampaign extends CycleCampaign {
   /** Null when it was written down but not tried yet (the run stopped in between). */
   error: string | null;
+  /** How many runs have tried it. After MAX_TRIES it is left, still listed, so the screens say it never paused. */
+  attempts?: number;
 }
+
+/** Tries before a campaign that won't pause is given up on: two hours of 15-minute runs. Each try writes the toggle log. */
+export const MAX_TRIES = 8;
 
 /** One row of os_cycle_pauses (migration 0054): a client whose cycle reached its target while the sweep was live. */
 export interface CyclePauseRecord {
@@ -106,15 +111,22 @@ export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 export const keyOf = (c: { platform: string; id: string }): string => `${c.platform}:${c.id}`;
 
 /**
- * The record for the cycle in progress: any whose dates overlap it. Overlap rather than an exact start, so a cycle
- * whose dates move a day (Stripe's charge date changed) is still the cycle already acted on, and a campaign a person
- * resumed isn't paused again for it.
+ * The record for the cycle in progress: the one made DURING it, i.e. reached after its last billing date and by its
+ * next (billing.ts: a cycle is (start, end] in whole UTC days). By when it acted, not by the dates stored: a cycle
+ * whose dates move (Stripe's charge date changed) is still the cycle already acted on, so a campaign a person resumed
+ * isn't paused again; and a record from the cycle before never covers this one, even when the dates moved earlier.
  */
 export function recordForCycle(records: CyclePauseRecord[], cycle: Pick<CycleFacts, "start" | "end">): CyclePauseRecord | null {
   const start = isoDay(cycle.start);
   const end = isoDay(cycle.end);
-  return records.find((r) => r.cycle_start < end && r.cycle_end > start) ?? null;
+  return records.find((r) => {
+    const day = String(r.reached_at ?? "").slice(0, 10);
+    return day > start && day <= end;
+  }) ?? null;
 }
+
+/** The campaigns still worth trying: not given up on yet. */
+export const retriable = (list: RetryCampaign[]): RetryCampaign[] => list.filter((c) => (c.attempts ?? 0) < MAX_TRIES);
 
 export function judge(i: JudgeInput): Judgement {
   const status = (i.status ?? "").trim().toLowerCase();
@@ -125,7 +137,10 @@ export function judge(i: JudgeInput): Judgement {
   if (i.cycle.target <= 0 || i.cycle.required <= 0) return { kind: "skip", reason: "no target set" };
   const { delivered, required } = i.cycle;
   if (delivered < required) return { kind: "below", delivered, required };
-  if (i.record) return i.record.to_retry.length ? { kind: "retry", list: i.record.to_retry } : { kind: "done" };
+  if (i.record) {
+    const list = retriable(i.record.to_retry);
+    return list.length ? { kind: "retry", list } : { kind: "done" };
+  }
   return { kind: "reached", delivered, required };
 }
 
@@ -169,15 +184,20 @@ export const UNREAD_STATUSES = new Set(["unreachable", "unknown"]);
  * Anything asked that is none of these was found already paused, finished or gone: nothing left to do for it.
  */
 export function afterAttempt(
-  prev: Pick<CyclePauseRecord, "paused">,
-  o: { ok: CycleCampaign[]; failed: { campaign: CycleCampaign; error: string }[]; unread: CycleCampaign[] },
+  prev: Pick<CyclePauseRecord, "paused"> & { to_retry?: RetryCampaign[] },
+  o: { ok: CycleCampaign[]; failed: { campaign: CycleCampaign; error: string }[]; unread: CycleCampaign[]; tried?: CycleCampaign[] },
   nowIso: string,
 ): Pick<CyclePauseRecord, "paused" | "to_retry"> {
   const paused = new Map(prev.paused.map((c) => [keyOf(c), c]));
   for (const c of o.ok) paused.set(keyOf(c), { platform: c.platform, id: c.id, int_id: c.int_id, name: c.name, paused_at: nowIso });
+  // Each try counts; one given up on before stays listed as it was, so the screens can say it never paused.
+  const before = new Map((prev.to_retry ?? []).map((c) => [keyOf(c), c]));
+  const triedKeys = new Set((o.tried ?? []).map(keyOf));
+  const tries = (c: CycleCampaign) => (before.get(keyOf(c))?.attempts ?? 0) + 1;
   const retry = new Map<string, RetryCampaign>();
-  for (const f of o.failed) retry.set(keyOf(f.campaign), { ...pick(f.campaign), error: f.error.slice(0, 300) });
-  for (const c of o.unread) if (!retry.has(keyOf(c))) retry.set(keyOf(c), { ...pick(c), error: "its status couldn't be read" });
+  for (const f of o.failed) retry.set(keyOf(f.campaign), { ...pick(f.campaign), error: f.error.slice(0, 300), attempts: tries(f.campaign) });
+  for (const c of o.unread) if (!retry.has(keyOf(c))) retry.set(keyOf(c), { ...pick(c), error: "its status couldn't be read", attempts: tries(c) });
+  for (const [k, c] of before) if (!triedKeys.has(k) && !retry.has(k) && !paused.has(k)) retry.set(k, c);
   return { paused: [...paused.values()], to_retry: [...retry.values()] };
 }
 

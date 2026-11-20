@@ -69,6 +69,7 @@ mock.module("./campaign-toggle", {
 });
 
 const { runCyclePauses, cycleProgress } = await import("./cycle-pause.ts");
+const { MAX_TRIES } = await import("./cycle-pause-model.ts");
 
 const ON = { OS_CYCLE_PAUSE: "1" };
 const OFF = {};
@@ -239,6 +240,34 @@ test("a campaign whose status couldn't be read is tried again once it can be", a
   assert.deepEqual(calls, ["pause ch-jc b2 by billing cycle target"]);
   assert.equal(statusOf("ch-jc", "b2"), "paused");
   assert.deepEqual(records()[0].to_retry, []);
+});
+
+test("a campaign on the retry list that has since been linked to another client too is left running, not paused", async () => {
+  seed();
+  failPause = true;
+  await runCyclePauses({ env: ON, now: NOW });
+  failPause = false;
+  // Name-linking has since put b1 on Las Vegas as well.
+  clients[1].bison_campaign_ids = ["b9", "b1"];
+  calls.length = 0;
+  await runCyclePauses({ env: ON, now: new Date("2026-11-20T15:15:00Z") });
+  assert.deepEqual(calls, ["pause ch-jc b2 by billing cycle target"]);
+  assert.equal(statusOf("ch-jc", "b1"), "active");
+  const [row] = records();
+  assert.deepEqual((row.left_running as Array<{ id: string; reason: string }>).map((c) => [c.id, c.reason]), [["b1", "also linked to Douglas Elliman Las Vegas"]]);
+  assert.deepEqual(row.to_retry, []);
+});
+
+test("a campaign that keeps refusing is tried MAX_TRIES times, then left listed so the screens say so", async () => {
+  seed();
+  failPause = true;
+  for (let i = 0; i < MAX_TRIES + 3; i++) await runCyclePauses({ env: ON, now: new Date(NOW.getTime() + i * 15 * 60_000) });
+  const tries = calls.filter((c) => c.startsWith("pause ch-jc")).length;
+  assert.equal(tries, MAX_TRIES);
+  const [row] = records();
+  assert.ok((row.to_retry as Array<{ attempts: number }>).every((c) => c.attempts === MAX_TRIES));
+  const v = await cycleProgress(ON);
+  assert.equal(v.clients.find((c) => c.chClientId === "ch-jc")!.toRetry.length, 2);
 });
 
 test("another run that claimed the cycle first wins: this one pauses nothing", async () => {

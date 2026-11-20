@@ -171,7 +171,7 @@ async function actOn(c: DashboardClient, link: OsLink, cycle: CycleFacts, j: Jud
     out.notes.push(`${name}: still to pause from the cycle ${span}: ${names(j.list)} (the switch is off, so nothing is tried)`);
     return;
   }
-  if (record) await retry(c, link, record, j.list, now, out);
+  if (record) await retry(c, link, record, j.list, all, now, out);
 }
 
 async function pauseReached(c: DashboardClient, link: OsLink, cycle: CycleFacts, j: { delivered: number; required: number }, all: DashboardClient[], now: Date, out: CyclePauseRunResult): Promise<void> {
@@ -206,7 +206,7 @@ async function pauseReached(c: DashboardClient, link: OsLink, cycle: CycleFacts,
   out.leftRunning += leftRunning.length;
   const done = toPause.length ? await attempt(c.id, toPause) : { ok: [], failed: [], unread: [] };
   out.paused += done.ok.length;
-  const next = afterAttempt({ paused: [] }, { ...done, unread: [...done.unread, ...unreadFirst] }, nowIso);
+  const next = afterAttempt({ paused: [] }, { ...done, unread: [...done.unread, ...unreadFirst], tried: [...toPause, ...unreadFirst] }, nowIso);
   await save(link.id, row.cycle_start, next, nowIso);
   const name = link.name || c.name;
   out.notes.push(
@@ -216,12 +216,17 @@ async function pauseReached(c: DashboardClient, link: OsLink, cycle: CycleFacts,
   );
 }
 
-async function retry(c: DashboardClient, link: OsLink, record: CyclePauseRecord, list: RetryCampaign[], now: Date, out: CyclePauseRunResult): Promise<void> {
+async function retry(c: DashboardClient, link: OsLink, record: CyclePauseRecord, list: RetryCampaign[], all: DashboardClient[], now: Date, out: CyclePauseRunResult): Promise<void> {
   const nowIso = now.toISOString();
-  const done = await attempt(c.id, list);
+  // Linked to another client since it was listed (linking goes by name): leave it running, as at the first pause.
+  const { toPause, leftRunning } = splitShared(list, sharedWith(c.id, list, all));
+  const done = toPause.length ? await attempt(c.id, toPause) : { ok: [], failed: [], unread: [] };
   out.paused += done.ok.length;
-  const next = afterAttempt({ paused: record.paused }, done, nowIso);
-  await save(link.id, record.cycle_start, next, nowIso);
+  out.leftRunning += leftRunning.length;
+  const sharedKeys = new Set(leftRunning.map(keyOf));
+  const next = afterAttempt({ paused: record.paused, to_retry: record.to_retry.filter((x) => !sharedKeys.has(keyOf(x))) }, { ...done, tried: toPause }, nowIso);
+  const left = leftRunning.length ? [...record.left_running.filter((x) => !sharedKeys.has(keyOf(x))), ...leftRunning] : null;
+  await save(link.id, record.cycle_start, left ? { ...next, left_running: left } : next, nowIso);
   if (done.ok.length || done.failed.length) {
     out.notes.push(`${link.name || c.name}: retried, paused ${done.ok.length ? names(done.ok) : "nothing"}${next.to_retry.length ? `; still to retry ${names(next.to_retry)}` : ""}`);
   }
@@ -238,9 +243,19 @@ async function attempt(chId: string, list: CycleCampaign[]): Promise<{ ok: Cycle
   };
 }
 
-async function save(osClientId: string, cycleStart: string, next: Pick<CyclePauseRecord, "paused" | "to_retry">, nowIso: string): Promise<void> {
-  const { error } = await osTable(TABLE).update({ ...next, updated_at: nowIso }).eq("os_client_id", osClientId).eq("cycle_start", cycleStart);
-  if (error) throw new Error(`${TABLE}: ${error.message}`);
+/*
+ * Written after the platform answered. Tried three times: a campaign paused but not written down stays on the retry
+ * list, and if a person resumed it before the next run, that run would pause it again.
+ */
+async function save(osClientId: string, cycleStart: string, next: Partial<Pick<CyclePauseRecord, "paused" | "to_retry" | "left_running">>, nowIso: string): Promise<void> {
+  let last = "";
+  for (let i = 0; i < 3; i++) {
+    const { error } = await osTable(TABLE).update({ ...next, updated_at: nowIso }).eq("os_client_id", osClientId).eq("cycle_start", cycleStart);
+    if (!error) return;
+    last = error.message;
+    await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+  }
+  throw new Error(`${TABLE}: ${last}`);
 }
 
 /* ------------------------------------------------------------------ the screens --- */
@@ -249,7 +264,7 @@ async function save(osClientId: string, cycleStart: string, next: Pick<CyclePaus
 export async function cycleProgress(env: Record<string, string | undefined> = process.env): Promise<CycleProgressView> {
   const data = await getWeekly();
   const now = new Date(data.now);
-  const [{ byCh }, records] = await Promise.all([osLinks(), recentRecords(now)]);
+  const [{ byCh, doubled }, records] = await Promise.all([osLinks(), recentRecords(now)]);
   const clients: CycleProgress[] = [];
   for (const c of data.clients) {
     const link = byCh.get(c.id);
@@ -267,7 +282,7 @@ export async function cycleProgress(env: Record<string, string | undefined> = pr
       required: cycle && cycle.required > 0 ? cycle.required : null,
       delivered: cycle ? cycle.delivered : null,
       state: link ? state : "skipped",
-      why: link ? why : "not linked to an OS client",
+      why: link ? why : doubled.has(c.id) ? "two OS clients are linked to it" : "not linked to an OS client",
       pausedAt: record?.reached_at ?? null,
       paused: record?.paused ?? [],
       leftRunning: record?.left_running ?? [],

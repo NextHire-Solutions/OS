@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ds";
-import { names, shortDay, type CycleProgress, type CycleProgressView } from "@/lib/tools/client-health/cycle-pause-model";
+import { MAX_TRIES, names, shortDay, type CycleProgress, type CycleProgressView } from "@/lib/tools/client-health/cycle-pause-model";
 
 /*
  * The billing-cycle pause on screen (cycle-pause.ts): Client Health's Intros / Billing cell and Campaign Management's
@@ -53,13 +53,13 @@ export function pauseDetail(p: CycleProgress, live: boolean): string {
     const lines = [`Reached ${p.delivered ?? "?"} of ${p.required ?? "?"} on ${p.pausedAt ? when(p.pausedAt) : "?"}, so its sending campaigns were paused. They stay paused until someone resumes them.`];
     lines.push(p.paused.length ? `Paused: ${names(p.paused)}.` : "None was running.");
     if (p.leftRunning.length) lines.push(`Left running: ${p.leftRunning.map((c) => `${c.name} (${c.reason})`).join("; ")}.`);
-    if (p.toRetry.length) lines.push(`Still trying to pause: ${p.toRetry.map((c) => `${c.name}${c.error ? ` (${c.error})` : ""}`).join("; ")}.`);
+    if (p.toRetry.length) lines.push(`Not paused yet: ${p.toRetry.map((c) => `${c.name}${c.error ? ` (${c.error})` : ""}${(c.attempts ?? 0) >= MAX_TRIES ? `, given up after ${MAX_TRIES} tries: pause it by hand` : ""}`).join("; ")}.`);
     lines.push("A campaign resumed this cycle keeps running until the next cycle reaches its target.");
     return lines.join("\n");
   }
   if (p.state === "reached") {
     return live
-      ? "This cycle's target is reached. Its sending campaigns pause within 15 minutes."
+      ? "This cycle's target is reached. Its sending campaigns are paused at the auto-pause's next check (every 15 minutes)."
       : "This cycle's target is reached. Auto-pause is in dry run, so nothing was paused: switched on, it would pause this client's sending campaigns.";
   }
   return "";

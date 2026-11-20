@@ -15,8 +15,9 @@ CREATE TABLE IF NOT EXISTS public.os_cycle_pauses (
   -- The cycle as Client Health shows it: last billing date to next billing date.
   cycle_start   date        NOT NULL,
   cycle_end     date        NOT NULL,
-  -- What it was measured at when it acted: the cycle's due (target + carried) and the intros counted.
-  required      integer     NOT NULL,
+  -- What it was measured at when it acted: the cycle's due (target + carried) and the intros counted. The due is
+  -- numeric, not integer: 14-day billing halves the monthly target, so an odd target gives a due like 2.5.
+  required      numeric     NOT NULL,
   delivered     integer     NOT NULL,
   reached_at    timestamptz NOT NULL DEFAULT now(),
   -- [{ platform, id, int_id, name, paused_at }]: the campaigns it paused.
