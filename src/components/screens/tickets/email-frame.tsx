@@ -36,7 +36,10 @@ export function EmailFrame({ html, text, messageId, attachments, showImages, onB
     const measure = () => {
       const doc = frame.contentDocument;
       if (!doc?.documentElement) return;
-      setHeight(Math.max(24, Math.ceil(doc.documentElement.scrollHeight)));
+      // The email's own height (its body), not the document's: that is never shorter than the frame itself, so a
+      // one-line email kept the frame's first 60px and left a gap under it (21 Nov).
+      const body = doc.body;
+      setHeight(Math.max(24, Math.ceil(body ? Math.max(body.scrollHeight, body.getBoundingClientRect().height) : doc.documentElement.scrollHeight)));
     };
     const onLoad = () => {
       measure();

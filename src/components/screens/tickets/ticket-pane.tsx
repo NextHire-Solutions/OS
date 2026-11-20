@@ -167,6 +167,7 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
     ...(t.assignee ? [{ id: "__none", label: "Unassign", icon: <Icon name="userx" /> }] : []),
   ];
   const presets = snoozePresets(now);
+  const replyBy = myCopy ? [] : (lastClientMail?.receivedBy ?? []).map((e) => people.first(e) || e);
   const firstAt = d.messages.reduce((min, m) => (m.sentAt && m.sentAt < min ? m.sentAt : min), t.createdAt);
 
   return (
@@ -182,7 +183,7 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
           ) : <span className="tk-client big">No client</span>}
           <span className="tk-crumb" title={t.contact.email ?? undefined}>{t.contact.name ?? t.contact.email}</span>
           {/* When the client first wrote, not when Tickets first saw it (an inbox connected later imports older mail). */}
-          <span className="tk-crumb tk-crumb-dot" title={fullTime(firstAt)}>First email {ago(firstAt, now)}</span>
+          <span className="tk-crumb tk-crumb-dot" title={fullTime(firstAt)}>Started {fullTime(firstAt)}</span>
         </div>
         <h2 className="tk-title">{t.subject}</h2>
         <div className="tk-actions">
@@ -215,10 +216,16 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
           </div>
 
           <span className="tk-sp" />
-          <button type="button" className="tk-btn pri" onClick={openGmail} disabled={!myCopy}
-            title={myCopy ? "Opens this email in your Gmail to reply (O)" : `Not in your inbox. ${lastClientMail?.receivedBy.length ? `Received by ${lastClientMail.receivedBy.map((e) => people.first(e)).join(", ")}` : ""}`}>
-            <Icon name="reply" />Reply in Gmail{myCopy ? <kbd>O</kbd> : null}
-          </button>
+          {myCopy ? (
+            <button type="button" className="tk-btn pri" onClick={openGmail} title="Opens this email in your Gmail to reply (O)">
+              <Icon name="reply" />Reply in Gmail<kbd>O</kbd>
+            </button>
+          ) : replyBy.length ? (
+            // Not a greyed-out button: a plain line saying who answers this one, and where.
+            <span className="tk-replyby" data-reply-by title={`Not in your inbox. Received by ${replyBy.join(", ")}`}>
+              <Icon name="reply" />{replyBy.length === 1 ? `${replyBy[0]} replies in Gmail` : `${listNames(replyBy, "or")} replies in Gmail`}
+            </span>
+          ) : null}
 
           <div className="tk-popwrap" ref={moreRef}>
             <button type="button" className="tk-btn icon" onClick={() => setOpen(open === "more" ? null : "more")} aria-label="More actions" aria-haspopup="menu" aria-expanded={open === "more"}>
@@ -243,10 +250,6 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
               onPick={(cid) => void change({ client: cid }, "Client changed")} />
           </div>
         </div>
-        {!myCopy && lastClientMail?.receivedBy.length ? (
-          // Said, not only on hover: why Reply in Gmail can't be pressed, and who can.
-          <p className="tk-replyhint">This email went to {listNames(lastClientMail.receivedBy.map((e) => people.first(e) || e))}, not to your inbox, so {lastClientMail.receivedBy.length === 1 ? (people.first(lastClientMail.receivedBy[0]) || "they") : "one of them"} replies from Gmail. Assign it to whoever answers.</p>
-        ) : null}
         {d.viewers.length ? (
           <div className="tk-banner presence" role="status"><Icon name="eye" />{listNames(d.viewers.map((v) => people.first(v)))} {d.viewers.length === 1 ? "is" : "are"} looking at this ticket too</div>
         ) : null}
@@ -319,51 +322,71 @@ async function download(url: string, filename: string) {
   }
 }
 
-function listNames(names: string[]): string {
+function listNames(names: string[], joiner: "and" | "or" = "and"): string {
   if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${names.slice(0, -1).join(", ")} ${joiner} ${names[names.length - 1]}`;
 }
 
 /* ------------------------------------------------------------------ timeline --- */
 
 function Timeline({ d, now, people }: { d: TicketDetail; now: number; people: ReturnType<typeof usePeople> }) {
-  const items = useMemo<Item[]>(() => {
+  /*
+   * The conversation and nothing else (21 Nov, the user: "cannot even read emails properly ... very confusing ... I
+   * need a very simple to understand ui"): the client's emails, our replies as one quiet line each, and the team's
+   * notes. Status changes, assigning, snoozing and the like are the ticket's activity, listed under it on request.
+   */
+  const conversation = useMemo<Item[]>(() => {
     const out: Item[] = [
       ...d.messages.map((m) => (m.direction === "in" ? { kind: "mail" as const, at: m.sentAt, m } : { kind: "reply" as const, at: m.sentAt, m })),
-      ...d.events.map((e) => ({ kind: "event" as const, at: e.at, e })),
+      ...d.events.filter((e) => e.kind === "note").map((e) => ({ kind: "event" as const, at: e.at, e })),
     ];
     return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   }, [d]);
-  const mails = items.filter((i) => i.kind === "mail");
+  const activity = useMemo(() => d.events.filter((e) => e.kind !== "note").sort((a, b) => Date.parse(b.at) - Date.parse(a.at)), [d]);
+  const mails = conversation.filter((i) => i.kind === "mail");
   const lastMailId = mails.length ? (mails[mails.length - 1] as Extract<Item, { kind: "mail" }>).m.id : null;
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(lastMailId ? [lastMailId] : []));
   const [showAll, setShowAll] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { setExpanded(new Set(lastMailId ? [lastMailId] : [])); setShowAll(false); }, [d.ticket.id, lastMailId]);
+  useEffect(() => { setExpanded(new Set(lastMailId ? [lastMailId] : [])); setShowAll(false); setShowActivity(false); }, [d.ticket.id, lastMailId]);
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [d.ticket.id]);
 
-  // Long conversations: the first email and the last six things, the middle behind one button (as Gmail does).
-  const hiddenCount = !showAll && items.length > 9 ? items.length - 7 : 0;
-  const visible = hiddenCount ? [items[0], ...items.slice(items.length - 6)] : items;
+  // A long conversation: its first message and the latest five, the middle behind one button (as Gmail does).
+  const hiddenCount = !showAll && conversation.length > 8 ? conversation.length - 6 : 0;
+  const visible = hiddenCount ? [conversation[0], ...conversation.slice(conversation.length - 5)] : conversation;
 
   return (
     <div className="tk-timeline" aria-label="Conversation">
       {visible.map((it, i) => (
         <TimelineItemWrap key={it.kind === "event" ? it.e.id : it.m.id}>
-          {i === 1 && hiddenCount ? <button type="button" className="tk-earlier" onClick={() => setShowAll(true)}>Show {hiddenCount} earlier {hiddenCount === 1 ? "update" : "updates"}</button> : null}
+          {i === 1 && hiddenCount ? (
+            <button type="button" className="tk-earlier" onClick={() => setShowAll(true)}>
+              Show {hiddenCount} earlier {hiddenCount === 1 ? "message" : "messages"}
+            </button>
+          ) : null}
           {it.kind === "mail" ? (
             <MailCard m={it.m} open={expanded.has(it.m.id)} onToggle={() => setExpanded((s) => { const n = new Set(s); if (n.has(it.m.id)) n.delete(it.m.id); else n.add(it.m.id); return n; })} people={people} />
           ) : it.kind === "reply" ? (
-            <div className="tk-reply">
+            <div className="tk-reply" title="Replies are sent and kept in Gmail. Tickets only notes that one was sent.">
               <Icon name="reply" />
-              <span><b>{firstName(it.m.from.name, it.m.from.email)}</b> replied in Gmail</span>
-              <time dateTime={it.m.sentAt} title={fullTime(it.m.sentAt)}>{ago(it.m.sentAt, now)}</time>
+              {/* The first message from our side started the conversation: it "wrote", it didn't reply. */}
+              <span><b>{firstName(it.m.from.name, it.m.from.email)}</b> {conversation[0] === it ? "wrote" : "replied"} from Gmail</span>
+              <time dateTime={it.m.sentAt} title={fullTime(it.m.sentAt)}>{fullTime(it.m.sentAt)}</time>
             </div>
           ) : (
             <EventLine e={it.e} now={now} people={people} />
           )}
         </TimelineItemWrap>
       ))}
+      {activity.length ? (
+        <div className="tk-activity">
+          <button type="button" className="tk-activity-t" aria-expanded={showActivity} onClick={() => setShowActivity((v) => !v)}>
+            {showActivity ? "Hide activity" : "Show activity"} <span>{activity.length}</span>
+          </button>
+          {showActivity ? <div className="tk-activity-list">{activity.map((e) => <EventLine key={e.id} e={e} now={now} people={people} />)}</div> : null}
+        </div>
+      ) : null}
       <div ref={endRef} />
     </div>
   );
@@ -381,24 +404,27 @@ function MailCard({ m, open, onToggle, people }: { m: TicketMessageView; open: b
   const snippet = (m.text ?? "").replace(/\s+/g, " ").slice(0, 160);
   return (
     <article className="tk-mail" data-open={open}>
-      <div className="tk-mail-h" onClick={open ? undefined : onToggle} role={open ? undefined : "button"} tabIndex={open ? undefined : 0}
-        onKeyDown={open ? undefined : (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}>
-        <Avatar client name={m.from.name} email={m.from.email} size="lg" />
-        <div className="tk-mail-who">
-          <b>{m.from.name ?? m.from.email}{m.from.name ? <span>{m.from.email}</span> : null}</b>
-          {open ? <span className="tk-mail-to" title={[...m.to, ...m.cc].map((a) => a.email).join(", ")}>to {toLine.slice(0, 4).join(", ")}{toLine.length > 4 ? ` +${toLine.length - 4}` : ""}</span>
-            : <span className="tk-mail-snip">{snippet}</span>}
+      {open ? (
+        <div className="tk-mail-h">
+          <Avatar client name={m.from.name} email={m.from.email} size="lg" />
+          <div className="tk-mail-who">
+            <b>{m.from.name ?? m.from.email}{m.from.name ? <span>{m.from.email}</span> : null}</b>
+            <span className="tk-mail-to" title={[...m.to, ...m.cc].map((a) => a.email).join(", ")}>to {toLine.slice(0, 4).join(", ")}{toLine.length > 4 ? ` +${toLine.length - 4}` : ""}</span>
+          </div>
+          <div className="tk-mail-when">
+            <time dateTime={m.sentAt} title={fullTime(m.sentAt)}>{fullTime(m.sentAt)}</time>
+            <button type="button" className="tk-mail-close" onClick={onToggle} aria-label="Close this email">Close</button>
+          </div>
         </div>
-        <div className="tk-mail-when">
+      ) : (
+        // Closed: one row that reads at a glance (who, the first words, when) and opens with a click.
+        <button type="button" className="tk-mail-row" onClick={onToggle} aria-label={`Open the email from ${m.from.name ?? m.from.email}, ${fullTime(m.sentAt)}`}>
+          <Avatar client name={m.from.name} email={m.from.email} />
+          <b>{m.from.name ?? m.from.email}</b>
+          <span className="tk-mail-snip">{snippet || "(no text)"}</span>
           <time dateTime={m.sentAt} title={fullTime(m.sentAt)}>{fullTime(m.sentAt)}</time>
-          {open && m.receivedBy.length ? (
-            <span className="tk-recv" title={`In ${m.receivedBy.map((e) => people.name(e)).join(", ")}'s inbox`}>
-              <span className="tk-avs">{m.receivedBy.map((e) => <Avatar key={e} email={e} name={people.name(e)} />)}</span>
-            </span>
-          ) : null}
-          {open ? <button type="button" className="tk-btn ghost" style={{ height: 22, padding: "0 6px", fontSize: 11.5 }} onClick={onToggle}>Collapse</button> : null}
-        </div>
-      </div>
+        </button>
+      )}
       {open ? (
         <>
           <div className="tk-mail-b">

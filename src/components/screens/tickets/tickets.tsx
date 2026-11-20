@@ -344,7 +344,7 @@ function Row({ r, active, onOpen, now, me, people, viewers, view }: {
         {r.lastFrom === "team" && r.status === "open" ? <span className="tk-pill view" title="The team replied last"><Icon name="reply" /></span> : null}
         {viewers.length ? <span className="tk-pill view" title={`${viewers.map((v) => people.first(v)).join(", ")} viewing`}><Icon name="eye" />{people.first(viewers[0])}</span> : null}
         <span className="tk-sp" />
-        {r.messageCount > 1 ? <span className="tk-recv" title={`${r.messageCount} emails`}>{r.messageCount}</span> : null}
+        {r.messageCount > 1 ? <span className="tk-recv" title={`${r.messageCount} emails in this conversation`}><Icon name="mail" />{r.messageCount}</span> : null}
         {r.assignee ? <Avatar email={r.assignee} name={people.name(r.assignee)} title={r.assignee === me ? "Assigned to you" : `Assigned to ${people.name(r.assignee)}`} />
           : <span className="tk-av none" title="Unassigned" aria-label="Unassigned"><Icon name="user" /></span>}
       </span>

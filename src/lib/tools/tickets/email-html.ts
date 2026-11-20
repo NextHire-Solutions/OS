@@ -35,7 +35,7 @@ details.tkq>summary{display:inline-flex;align-items:center;justify-content:cente
 details.tkq>summary::-webkit-details-marker{display:none}
 details.tkq>summary:hover{background:#e3e6ea}
 details.tkq[open]>summary{margin-bottom:.6em}
-img.tk-blocked{display:inline-block;min-width:16px;min-height:16px;background:#f3f4f6;outline:1px dashed #d6dae0;outline-offset:-1px}
+.tk-blocked{display:inline-block;padding:1px 8px;margin:2px 0;border:1px dashed #d6dae0;border-radius:4px;background:#f6f7f9;color:#8a919c;font:12px/18px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap}
 `;
 
 /**
@@ -78,26 +78,29 @@ export function prepareEmail(opts: { html: string | null; text: string | null; m
     const d = new DOMParser().parseFromString(`<div id="tkroot">${clean}</div>`, "text/html");
     const root = d.getElementById("tkroot")!;
     const cid = new Map(opts.attachments.filter((a) => a.cid).map((a) => [a.cid!.toLowerCase(), a.partId]));
+    // A picture that won't be shown becomes a quiet chip with its name, never the browser's broken-image icon;
+    // a tracking pixel (1×1, 2×2) isn't even that.
+    const hide = (img: HTMLImageElement, title: string) => {
+      const w = Number(img.getAttribute("width"));
+      const h = Number(img.getAttribute("height"));
+      if (w <= 2 && h <= 2 && (w || h)) { img.remove(); return; }
+      const chip = d.createElement("span");
+      chip.className = "tk-blocked";
+      chip.setAttribute("title", title);
+      chip.textContent = (img.getAttribute("alt") ?? "").trim().slice(0, 40) || "Picture";
+      img.replaceWith(chip);
+    };
     for (const img of Array.from(root.querySelectorAll("img"))) {
       const src = (img.getAttribute("src") ?? "").trim();
       if (/^cid:/i.test(src)) {
         const part = cid.get(src.slice(4).replace(/^<|>$/g, "").toLowerCase());
         if (part) img.setAttribute("src", `${opts.origin}/api/tools/tickets/attachment?m=${encodeURIComponent(opts.messageId)}&p=${encodeURIComponent(part)}&inline=1`);
-        else img.removeAttribute("src");
+        else hide(img, "Picture not included in this email");
       } else if (/^https?:\/\//i.test(src)) {
-        if (!opts.showImages) {
-          img.removeAttribute("src");
-          img.removeAttribute("srcset");
-          img.classList.add("tk-blocked");
-          const w = Number(img.getAttribute("width"));
-          const h = Number(img.getAttribute("height"));
-          if (w <= 2 && h <= 2 && (w || h)) img.remove(); // a tracking pixel: not even a placeholder
-          blocked++;
-        }
+        if (!opts.showImages) { hide(img, "Picture hidden. Show pictures to see it."); blocked++; }
       } else if (!/^data:image\//i.test(src)) {
         // Relative, protocol-relative or anything else: never fetched.
-        img.removeAttribute("src");
-        img.removeAttribute("srcset");
+        hide(img, "Picture can't be shown");
       }
     }
     if (!opts.showImages) {

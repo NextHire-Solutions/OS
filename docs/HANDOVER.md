@@ -326,6 +326,19 @@ client sender, a forward to a vendor) plus a client reply quoting our secret rep
 on any page or in the database. Full suite 3,878/3,878. NOT yet tested against a real Gmail mailbox (needs the
 OAuth client).
 
+**Reading pane redesign (21 Nov, branch feat/tickets-thread-ui, NOT deployed).** After Amy connected her inbox, a long
+real conversation (Kevin Toll, 11 emails) was unreadable: the timeline is a flex column and every email card shrank to
+a sliver. Root cause fixed (`.tk-timeline > * { flex: none }`) and the pane made simple, like Gmail: older emails are
+one-line rows (who · first words · date) that open on click and close with Close; the newest is open; the team's own
+replies are one quiet line ("Amy replied from Gmail", "wrote" for the first); a thread of more than 8 hides its middle
+behind "Show N earlier messages"; status changes and assignments moved out of the conversation into "Show activity"
+under it. Smaller fixes: an email's frame is measured from its body (no gap under a one-line email); a hidden picture
+is a small chip with its name, never a broken-image icon; when the email isn't in your inbox, no greyed-out Reply
+button, one line says who replies ("Amy replies in Gmail"); list rows show an envelope with the email count; the
+header says "Started <date>". Tests: seed step 7 adds a long conversation shaped like the real one; tk-thread.mts
+29/29 at 1440 and 1280; tickets-ui.mts 77/77; LEAK CHECK clean; Tickets unit 59/59. On a phone the whole OS draws its
+desktop-width page (by design, workspace.css), so a phone screenshot of Tickets is that page scrolled sideways.
+
 ## 0.16 Duplicate & Renew Campaign — 19 November
 
 **Asked (BrokerStaffer spec, 19 Nov):** one button that renews a campaign round: the campaign takes the next number ("LIV Indy Realty 6 + Indianapolis Metro + ZF NS4 (EST)"), a copy with the original name gets the leads In Sequence or Sequence Finished, only healthy inboxes, the ZF / NO-ZF tag, the same settings and schedule, a review window first, and stays paused. **The team's answers:** keep Re-campaign and put this beside it; inboxes = the old campaign's healthy ones first, topped up from the wider pool (healthy, connected, with capacity). Not answered yet, built on the defaults we gave them: In Sequence leads are MOVED (as they do by hand), leads busy in another campaign are skipped, portal choice and Prospects picks follow the new campaign.
