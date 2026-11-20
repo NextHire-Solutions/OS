@@ -13,7 +13,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
 | **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)**; Introduction-model clients get the Introduction label once a live hand-off has gone; first real one not seen yet
-| **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; no inbox connected yet. Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
+| **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; Amy connected 21 Nov; reading pane redesigned, LIVE 21 Nov (20c4c85, Railway 6de41125). Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
 | **0.14** | [New portal: Switch portal, for a client on more than one portal — 19 November](#014-new-portal-switch-portal-for-a-client-on-more-than-one-portal--19-november) — one sign-in already opened every portal an email is listed on; now a link moves between them; live 32d4deb1
@@ -326,7 +326,7 @@ client sender, a forward to a vendor) plus a client reply quoting our secret rep
 on any page or in the database. Full suite 3,878/3,878. NOT yet tested against a real Gmail mailbox (needs the
 OAuth client).
 
-**Reading pane redesign (21 Nov, branch feat/tickets-thread-ui, NOT deployed).** After Amy connected her inbox, a long
+**Reading pane redesign (21 Nov) — LIVE 21 Nov (20c4c85, Railway 6de41125; live read-only check 17/17 on the real tickets at 1440 and 1280, every write blocked).** After Amy connected her inbox, a long
 real conversation (Kevin Toll, 11 emails) was unreadable: the timeline is a flex column and every email card shrank to
 a sliver. Root cause fixed (`.tk-timeline > * { flex: none }`) and the pane made simple, like Gmail: older emails are
 one-line rows (who · first words · date) that open on click and close with Close; the newest is open; the team's own
