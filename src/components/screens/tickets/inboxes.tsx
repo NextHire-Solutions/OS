@@ -75,7 +75,8 @@ export function TicketsInboxesScreen() {
         ) : null}
         {err ? <div className="tk-notice err" role="alert"><Icon name="ban" /><span>{err}</span></div> : null}
         {d && !d.ready ? <div className="tk-notice warn"><Icon name="flag" /><span>{d.admin ? d.setup : "An admin needs to finish one setup step before inboxes can be connected."}</span></div> : null}
-        {d && d.admin && d.ready && (d.missing.length > 0 || !d.mailboxes.some((m) => m.lastOkAt)) ? (
+        {/* Only while a setting is actually missing (20 Nov, the user: the setup is done, so the note had no reason to show). */}
+        {d && d.admin && d.ready && d.missing.length > 0 ? (
           <div className="tk-notice warn">
             <Icon name="shield" />
             <span>
