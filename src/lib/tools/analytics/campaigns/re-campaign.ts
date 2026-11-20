@@ -3,6 +3,7 @@ import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors.ts";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
 import { attachLeads, removeLeads } from "./lead-membership.ts";
+import { healthyOnly } from "./attach-health-io.ts";
 
 /*
  * Duplicate a campaign and re-sequence the people who never answered.
@@ -47,6 +48,8 @@ export interface ReCampaignResult {
   /** Sequence steps EmailBison copied. */
   steps: number;
   inboxes: number;
+  /** What the health rules left out of the source's inboxes, or why none went on (attach-health.ts). */
+  inboxNote?: string | null;
   leadsSelected: number;
   /** Verified against the campaign's own count, not the ids we sent. */
   leadsAttached: number;
@@ -195,11 +198,14 @@ export async function reCampaign(
     result.stage = "inboxes";
     try {
       const senders = await eb.getCampaignSenderEmails(sourceCampaignId);
-      const senderIds = senders.map((s) => s.id).filter(Boolean);
+      // Only the healthy ones go on (20 Nov, attach-health.ts); the campaign is made either way.
+      const health = await healthyOnly(senders.map((s) => s.id).filter(Boolean));
+      const senderIds = health.ids;
       for (let i = 0; i < senderIds.length; i += 250) {
         await eb.attachSenderEmails(created, senderIds.slice(i, i + 250));
       }
       result.inboxes = senderIds.length;
+      result.inboxNote = health.note;
     } catch (error) {
       return fail("inboxes", error);
     }

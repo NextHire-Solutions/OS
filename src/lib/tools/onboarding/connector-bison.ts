@@ -5,6 +5,7 @@ import { getOnboardingDb } from "./db";
 import { onboardingEnv } from "./env";
 import { hasDelivery, logDelivery, recordPendingEmail, type PendingRecord } from "./deliveries";
 import { listTemplates } from "./templates";
+import { healthyOnly } from "@/lib/tools/analytics/campaigns/attach-health-io";
 import { CLIENT_SELECT, nowIso, type OrchClient } from "./orch-client";
 import {
   bisonSequenceSteps, campaignName, isoWeekStart, PERSONA_FULL, PERSONA_POOL, scheduleIdFor,
@@ -68,7 +69,9 @@ export async function buildBisonCampaign(c: OrchClient): Promise<{ ok: boolean; 
 
     // 15 — attach the sender pool (locked to Nicole Pool; senders only returned when filtered by tag).
     const senders = (data(await bison(`/api/sender-emails?tag=${encodeURIComponent(PERSONA_POOL)}&per_page=200`)) as unknown as { id: unknown }[]) || [];
-    const poolIds = Array.isArray(senders) ? senders.map((s) => s.id) : [];
+    // Only the pool's healthy inboxes go on (20 Nov, the team: every way a campaign is made — attach-health.ts).
+    const health = await healthyOnly(Array.isArray(senders) ? senders.map((s) => Number(s.id)) : []);
+    const poolIds = health.ids;
     if (poolIds.length) await bison(`/api/campaigns/${campaignId}/attach-sender-emails`, { method: "POST", body: JSON.stringify({ sender_email_ids: poolIds }) });
 
     // 22 — client tag, attached to the campaign
@@ -81,7 +84,7 @@ export async function buildBisonCampaign(c: OrchClient): Promise<{ ok: boolean; 
     }).eq("id", c.id);
     // Fills the master's Sender only when it is empty — never over a chosen one.
     await mirrorPeopleToMaster(c.id, { sender: c.sender_name ?? senderName }, { onlyIfEmpty: true });
-    await log(c.id, "build_campaign", "ok", { name, scheduleId, senders: poolIds.length }, { campaignId }, null);
+    await log(c.id, "build_campaign", "ok", { name, scheduleId, senders: poolIds.length, ...(health.note ? { inboxes_note: health.note } : {}) }, { campaignId }, null);
     return { ok: true, campaignId };
   } catch (e) {
     await log(c.id, "build_campaign", "error", { name }, null, msg(e));

@@ -3,6 +3,7 @@ import { clientFieldsProblem, clientFieldValues } from "@/lib/tools/analytics/ca
 import { fillCampaignSequence } from "@/lib/tools/analytics/campaigns/client-fields-load";
 import { createEmailBisonClient, type EmailBisonClient } from "@/lib/tools/analytics/emailbison/client";
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors";
+import { healthyOnly, type HealthyOnly } from "@/lib/tools/analytics/campaigns/attach-health-io";
 import { analyticsTeamId, getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 
 import { setupCampaignName } from "./rules.ts";
@@ -85,7 +86,7 @@ const STALE_CLAIM_MS = 15 * 60_000;
  * row is inserted before EmailBison is asked (its primary key is the claim), and the new campaign's id is written to
  * it the moment it exists, so a failure part-way leaves a campaign a person can find, never a second one.
  */
-export async function ensureSetupCampaign(client: SetupClient, o: { by: string; test: boolean; now?: Date; eb?: Eb }): Promise<SetupOutcome> {
+export async function ensureSetupCampaign(client: SetupClient, o: { by: string; test: boolean; now?: Date; eb?: Eb; health?: (ids: readonly number[]) => Promise<HealthyOnly> }): Promise<SetupOutcome> {
   const now = o.now ?? new Date();
   const market = (client.mlsCode ?? "").trim();
   const what = market ? `Its first campaign for ${market}` : "Its first campaign";
@@ -143,8 +144,11 @@ export async function ensureSetupCampaign(client: SetupClient, o: { by: string; 
         note = `Could not check the sequence for client fields: ${describeEmailBisonError(error)}. Open its sequence before starting it.`;
       }
 
-      const senders = (await eb.getCampaignSenderEmails(Number(template.campaignId))).map((s) => s.id).filter(Boolean);
+      // Only the template's healthy inboxes go on (20 Nov, attach-health.ts); the campaign is made either way.
+      const health = await (o.health ?? healthyOnly)((await eb.getCampaignSenderEmails(Number(template.campaignId))).map((s) => s.id).filter(Boolean));
+      const senders = health.ids;
       for (let i = 0; i < senders.length; i += 250) await eb.attachSenderEmails(created, senders.slice(i, i + 250));
+      if (health.note) note = [note, health.note].filter(Boolean).join(" ");
     }
 
     if (client.analyticsClientId) await linkInAnalytics(created, name, client.analyticsClientId, template ? Number(template.campaignId) : null, o.by);

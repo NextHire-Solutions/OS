@@ -116,6 +116,9 @@ export function ReCampaignDialog({
               Created <b>{result.name}</b> with {fullNumber(result.steps)} sequence step{result.steps === 1 ? "" : "s"},{" "}
               {fullNumber(result.inboxes)} inbox{result.inboxes === 1 ? "" : "es"} and <b>{fullNumber(result.leadsAttached)}</b> leads.
             </p>
+            {result.inboxNote ? (
+              <p className="tnum" data-recampaign-inbox-note style={{ margin: 0, fontSize: 12.5, color: /No inboxes added/.test(result.inboxNote) ? "var(--red)" : "var(--muted)" }}>{result.inboxNote}</p>
+            ) : null}
             {(result.bouncedRemoved ?? 0) > 0 ? (
               <p className="tnum mut" style={{ margin: 0, fontSize: 12.5 }}>
                 {fullNumber(result.bouncedRemoved)} bounced lead{result.bouncedRemoved === 1 ? "" : "s"} removed from {campaignName}.
@@ -188,7 +191,7 @@ export function ReCampaignDialog({
             <input className="inp" value={effectiveName} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} />
           </label>
 
-          <Check checked={copyInboxes} onChange={setCopyInboxes} label={`Use the same inboxes as ${campaignName}.`} hint="A campaign with no inboxes cannot send." />
+          <Check checked={copyInboxes} onChange={setCopyInboxes} label={`Use the healthy inboxes of ${campaignName}.`} hint="Only healthy ones go on: connected, not tagged Dead, bounce rate under 2% and warm-up score 90 or more. A campaign with no inboxes cannot send." />
 
           {/* Offered only when there is something to clean. A checkbox that
               would do nothing is worse than no checkbox. */}

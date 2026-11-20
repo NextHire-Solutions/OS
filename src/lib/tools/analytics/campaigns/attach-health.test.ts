@@ -103,3 +103,29 @@ describe("attach health: reading it", () => {
     assert.deepEqual([r.ok, read], [true, false]);
   });
 });
+
+describe("attach health: keeping only the healthy ones (every other attach path)", async () => {
+  const { healthyOnly } = await import("./attach-health-io.ts");
+  const ok = (healthy: number[], counts: Record<string, number>) => async (ids: readonly number[]) => ({ ok: true as const, health: { healthy: ids.filter((id) => healthy.includes(id)), leftOut: [], counts: { ...NO_COUNTS(), ...counts }, unjudged: 0 } });
+
+  it("keeps the healthy ids and says what was left out and why", async () => {
+    const r = await healthyOnly([1, 2, 3, 2], ok([1, 3], { bounce: 1 }));
+    assert.deepEqual(r, { ids: [1, 3], leftOut: 1, unchecked: false, note: "1 inbox left out by the health rules: 1 with a bounce rate of 2% or more." });
+  });
+
+  it("all healthy: no note", async () => {
+    assert.deepEqual(await healthyOnly([4, 5], ok([4, 5], {})), { ids: [4, 5], leftOut: 0, unchecked: false, note: null });
+  });
+
+  it("can't be read: none, and the note says to add them with Assign", async () => {
+    const r = await healthyOnly([1, 2], async () => ({ ok: false, error: "The inbox health check isn't switched on (analytics 098)." }));
+    assert.deepEqual([r.ids, r.leftOut, r.unchecked], [[], 2, true]);
+    assert.match(String(r.note), /^No inboxes added: .*Add them with Assign once it can\.$/);
+  });
+
+  it("nothing asked: nothing read", async () => {
+    let read = false;
+    assert.deepEqual(await healthyOnly([], async () => { read = true; return { ok: false, error: "x" }; }), { ids: [], leftOut: 0, unchecked: false, note: null });
+    assert.equal(read, false);
+  });
+});

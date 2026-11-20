@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { describeEmailBisonError } from "@/lib/tools/analytics/emailbison/errors.ts";
+import { healthyOnly } from "./attach-health-io.ts";
 import { getAnalyticsSupabase as getSupabase } from "@/lib/tools/analytics/supabase";
 import { renderName } from "./fan-out-name.ts";
 import { clientFieldsProblem } from "./client-fields.ts";
@@ -71,9 +72,13 @@ export async function fanOutToClients(
    * them per client would be ~45 pages each, and they cannot change midway.
    */
   let senderIds: number[] = [];
+  // Only the healthy ones go onto the new campaigns (20 Nov, attach-health.ts): judged once, for every target.
+  let inboxNote: string | null = null;
   if (options.copyInboxes) {
     const senders = await eb.getCampaignSenderEmails(sourceCampaignId);
-    senderIds = senders.map((s) => s.id).filter(Boolean);
+    const health = await healthyOnly(senders.map((s) => s.id).filter(Boolean));
+    senderIds = health.ids;
+    inboxNote = health.note;
   }
 
   const summary: FanOutSummary = { batchId, created: 0, failed: 0, targets: [] };
@@ -136,6 +141,7 @@ export async function fanOutToClients(
         }
         target.inboxes = senderIds.length;
       }
+      if (inboxNote) target.note = [target.note, inboxNote].filter(Boolean).join(" ");
 
       target.ok = true;
       summary.created++;

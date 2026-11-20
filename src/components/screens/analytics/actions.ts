@@ -536,6 +536,8 @@ export interface ReCampaignResult {
   name: string;
   steps: number;
   inboxes: number;
+  /** What the inbox health rules left out, or why none went on (20 Nov). */
+  inboxNote?: string | null;
   leadsSelected: number;
   leadsAttached: number;
   leadsSkipped: number;
