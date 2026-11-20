@@ -141,8 +141,14 @@ export function AssignInboxesDialog({
   const answer = (many || checkHealth) && platform === "emailbison" ? unionQuery.data : null;
   // The check failing (503, or no answer at all) is shown with Check again; the Assign button stays off meanwhile.
   const healthError = checkHealth && unionQuery.error && !unionQuery.loading ? unionQuery.error : null;
-  const healthy = checkHealth ? answer?.ids?.healthy ?? null : null;
-  const union = answer?.ids && (!checkHealth || healthy) ? answer.ids : null;
+  /*
+   * Only an answer for exactly the ticked pools, from this opening, and not while a newer one loads or after it failed:
+   * the hook keeps its last answer, and an older one shown beside a failed check enabled "Assign 490" (20 Nov).
+   */
+  const samePools = !!answer?.pools && [...answer.pools].sort().join("\n") === [...picked].sort().join("\n");
+  const current = !!answer && samePools && !unionQuery.loading && !unionQuery.error;
+  const healthy = checkHealth && current ? answer?.ids?.healthy ?? null : null;
+  const union = current && answer?.ids && (!checkHealth || healthy) ? answer.ids : null;
   const exact = !(many || checkHealth) || union !== null;
   const counting = (many || checkHealth) && platform === "emailbison" && !union && !healthError && unionQuery.loading;
   const healthWaiting = checkHealth && !healthy;

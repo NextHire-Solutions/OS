@@ -24,9 +24,9 @@ export async function readAttachHealth(ids: readonly number[], reads: AttachHeal
   if (!asked.length) return { ok: true, health: attachHealth([], [], []) };
   try {
     const [inboxes, bounces, warm] = await Promise.all([reads.inboxes(asked), reads.bounces(asked), reads.warmup()]);
-    if (bounces === "missing") return { ok: false, error: "The inbox health check isn't switched on (analytics 098), so no inbox can be checked. Nothing was added." };
+    if (bounces === "missing") return { ok: false, error: "The inbox health check isn't switched on (analytics 098), so no inbox can be checked, and none goes onto a campaign until it can." };
     return { ok: true, health: attachHealth(asked, inboxes, healthRows(asked, bounces, warm)) };
   } catch (e) {
-    return { ok: false, error: `The inboxes' health couldn't be checked just now, so nothing was added. Try again in a minute. (${(e instanceof Error ? e.message : String(e)).slice(0, 160)})` };
+    return { ok: false, error: `The inboxes' health couldn't be checked just now, so none goes onto a campaign. Try again in a minute. (${(e instanceof Error ? e.message : String(e)).slice(0, 160)})` };
   }
 }

@@ -93,7 +93,7 @@ describe("attach health: reading it", () => {
     for (const bad of [{ warmup: async () => { throw new Error("EmailBison 503"); } }, { inboxes: async () => { throw new Error("Inboxes: timeout"); } }]) {
       const r = await readAttachHealth([1], reads(bad as Partial<AttachHealthReads>));
       assert.equal(r.ok, false);
-      assert.match(!r.ok ? r.error : "", /nothing was added/);
+      assert.match(!r.ok ? r.error : "", /none goes onto a campaign/);
     }
   });
 

@@ -289,6 +289,8 @@ export const INBOX_POOL_IDS_URL = (platform: "emailbison" | "instantly", pools: 
 
 /** What the pool ids answer carries. `healthError`: the health couldn't be checked, so nothing would be assigned. */
 export interface PoolIdsAnswer {
+  /** The pools this answer is for (the route echoes them), so an answer for other pools is never shown. */
+  pools?: string[];
   ids: { all: number[]; connected: number[]; healthy?: number[] } | null;
   health?: Omit<AttachHealthView, "healthy">;
   healthError?: string;
