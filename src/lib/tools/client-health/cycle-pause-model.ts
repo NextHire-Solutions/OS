@@ -15,9 +15,16 @@
  *   by leads), a client with no target or no billing date, and a campaign linked to another client too, because
  *   pausing it would stop that client's emails on this client's target.
  *
+ * Only clients that reach their due AFTER the pause is switched on (the team, 20 Nov: "only pause campaigns for
+ * clients who reach their target after the automation is enabled. I'll manually review and handle any clients who have
+ * already reached their billing cycle target"). When a client reached it is the time of the introduction that made the
+ * cycle's count reach its due, counted exactly as Client Health counts them; one reached before is left to the team.
+ *
  * Off by default: without OS_CYCLE_PAUSE=1 the sweep only logs what it would do. It sends no notifications (the
  * team's answer: billing-cycle alerts are not wanted). Pure: no database, no platform, no clock.
  */
+
+import { dayNumber } from "./billing.ts";
 
 export type Platform = "instantly" | "bison";
 
@@ -69,6 +76,24 @@ export interface CycleFacts {
   target: number;
   required: number;
   delivered: number;
+  /** When the cycle's count reached its due (reachedAt below); null when it hasn't, or it couldn't be told. */
+  reachedAt?: string | null;
+}
+
+/**
+ * The introduction that made this cycle's count reach its due: the ceil(required)-th of the introductions counted in
+ * the cycle, in the order they were made. Counted as billing.ts counts a cycle: introductions on the days after the
+ * last billing date up to the next one, and not after `asOf`. Null when the count is still short of the due.
+ */
+export function reachedAt(introDates: readonly string[], cycle: Pick<CycleFacts, "start" | "end">, required: number, asOf: Date): string | null {
+  const lo = dayNumber(cycle.start);
+  const hi = Math.min(dayNumber(cycle.end), dayNumber(asOf));
+  const counted = introDates
+    .filter((d) => { const n = dayNumber(d); return Number.isFinite(n) && n > lo && n <= hi; })
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  const k = Math.ceil(required);
+  if (k <= 0 || counted.length < k) return null;
+  return counted[k - 1];
 }
 
 export interface JudgeInput {
@@ -82,6 +107,11 @@ export interface JudgeInput {
   cycle: CycleFacts | null;
   /** This cycle's record, if the sweep has already acted on it (recordForCycle). */
   record: CyclePauseRecord | null;
+  /**
+   * When the pause was switched on. A client that reached its due before this is left to the team. Absent: no such
+   * limit (the rules on their own).
+   */
+  liveSince?: string | null;
 }
 
 export type Judgement =
@@ -92,7 +122,9 @@ export type Judgement =
   /** Acted on this cycle, with campaigns still to pause. */
   | { kind: "retry"; list: RetryCampaign[] }
   /** Acted on this cycle; nothing more to do, whatever a person has resumed since. */
-  | { kind: "done" };
+  | { kind: "done" }
+  /** At its due already when the pause was switched on: left to the team (their answer, 20 Nov). */
+  | { kind: "before"; delivered: number; required: number; reachedAt: string | null };
 
 export const ACTOR = "billing cycle target";
 
@@ -140,6 +172,11 @@ export function judge(i: JudgeInput): Judgement {
   if (i.record) {
     const list = retriable(i.record.to_retry);
     return list.length ? { kind: "retry", list } : { kind: "done" };
+  }
+  if (i.liveSince) {
+    // When it reached its due can't be told (an introduction without a date): treated as before, so nothing is paused on a guess.
+    const at = i.cycle.reachedAt ?? null;
+    if (!at || Date.parse(at) < Date.parse(i.liveSince)) return { kind: "before", delivered, required, reachedAt: at };
   }
   return { kind: "reached", delivered, required };
 }
@@ -205,7 +242,7 @@ const pick = (c: CycleCampaign): CycleCampaign => ({ platform: c.platform, id: c
 
 /* ---------------------------------------------------------------- the display --- */
 
-export type ProgressState = "below" | "reached" | "paused" | "skipped";
+export type ProgressState = "below" | "reached" | "paused" | "skipped" | "before";
 
 /** One client's cycle as Campaign Management and Client Health show it. */
 export interface CycleProgress {
@@ -224,6 +261,8 @@ export interface CycleProgress {
   state: ProgressState;
   /** Why it is left alone, for "skipped". */
   why: string | null;
+  /** When it reached its due, for "before" (and "reached"). */
+  reachedAt?: string | null;
   pausedAt: string | null;
   paused: PausedCampaign[];
   leftRunning: LeftRunning[];
@@ -242,6 +281,7 @@ export function progressState(j: Judgement, record: CyclePauseRecord | null): { 
   if (record) return { state: "paused", why: null };
   if (j.kind === "skip") return { state: "skipped", why: j.reason };
   if (j.kind === "below") return { state: "below", why: null };
+  if (j.kind === "before") return { state: "before", why: null };
   return { state: "reached", why: null };
 }
 

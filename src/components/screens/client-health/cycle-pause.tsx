@@ -57,6 +57,10 @@ export function pauseDetail(p: CycleProgress, live: boolean): string {
     lines.push("A campaign resumed this cycle keeps running until the next cycle reaches its target.");
     return lines.join("\n");
   }
+  if (p.state === "before") {
+    const when = p.reachedAt ? new Date(p.reachedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" }) : null;
+    return `This cycle's target was reached${when ? ` on ${when}` : ""}, before the auto-pause was switched on, so it doesn't pause this client this cycle: the team reviews it. From the next cycle the auto-pause handles it.`;
+  }
   if (p.state === "reached") {
     return live
       ? "This cycle's target is reached. Its sending campaigns are paused at the auto-pause's next check (every 15 minutes)."
@@ -67,8 +71,9 @@ export function pauseDetail(p: CycleProgress, live: boolean): string {
 
 /** The chip beside Intros / Billing: shown only once the target is reached. */
 export function CyclePauseBadge({ p, live }: { p: CycleProgress | undefined; live: boolean }) {
-  if (!p || (p.state !== "paused" && p.state !== "reached")) return null;
+  if (!p || (p.state !== "paused" && p.state !== "reached" && p.state !== "before")) return null;
   const title = pauseDetail(p, live);
+  if (p.state === "before") return <Badge tone="amber" title={title}>At target · team to review</Badge>;
   if (p.state === "paused") {
     return <Badge tone={p.toRetry.length ? "red" : "violet"} title={title}>{p.toRetry.length ? "Pause incomplete" : "Paused at target"}</Badge>;
   }

@@ -164,3 +164,43 @@ describe("cycle pause: what the screens show", () => {
     assert.deepEqual(progressState({ kind: "skip", reason: "no target set" }, null), { state: "skipped", why: "no target set" });
   });
 });
+
+describe("cycle pause: when a cycle reached its due", async () => {
+  const { reachedAt } = await import("./cycle-pause-model.ts");
+  const CY = { start: new Date("2026-11-03T00:00:00Z"), end: new Date("2026-12-01T00:00:00Z") };
+  const AS_OF = new Date("2026-11-25T12:00:00Z");
+
+  it("is the introduction that made the count reach the due, in the order they were made", () => {
+    const d = ["2026-11-10T09:00:00Z", "2026-11-04T09:00:00Z", "2026-11-12T09:00:00Z", "2026-11-06T09:00:00Z"];
+    assert.equal(reachedAt(d, CY, 3, AS_OF), "2026-11-10T09:00:00Z");
+  });
+
+  it("counts as Client Health does: not on the last billing date, yes on the next one, and nothing after today", () => {
+    assert.equal(reachedAt(["2026-11-03T22:00:00Z", "2026-11-05T09:00:00Z"], CY, 2, AS_OF), null, "Nov 3 belongs to the cycle billed that day");
+    assert.equal(reachedAt(["2026-11-05T09:00:00Z", "2026-12-01T09:00:00Z"], CY, 2, new Date("2026-12-01T20:00:00Z")), "2026-12-01T09:00:00Z");
+    assert.equal(reachedAt(["2026-11-05T09:00:00Z", "2026-11-26T09:00:00Z"], CY, 2, AS_OF), null, "Nov 26 is after today");
+  });
+
+  it("a due with a half is reached at the next whole introduction", () => {
+    const d = ["2026-11-04T09:00:00Z", "2026-11-05T09:00:00Z", "2026-11-06T09:00:00Z"];
+    assert.equal(reachedAt(d, CY, 2.5, AS_OF), "2026-11-06T09:00:00Z");
+    assert.equal(reachedAt(d.slice(0, 2), CY, 2.5, AS_OF), null);
+  });
+});
+
+describe("cycle pause: only after the switch-on", () => {
+  const at = (reached: string | null) => input({ cycle: cycle({ delivered: 6, reachedAt: reached }), liveSince: "2026-11-20T15:00:00Z" });
+  it("reached after the switch-on: paused", () => {
+    assert.equal(judge(at("2026-11-20T15:10:00Z")).kind, "reached");
+  });
+  it("reached before it, or when can't be told: left to the team", () => {
+    assert.deepEqual(judge(at("2026-11-18T10:00:00Z")), { kind: "before", delivered: 6, required: 6, reachedAt: "2026-11-18T10:00:00Z" });
+    assert.equal(judge(at(null)).kind, "before");
+  });
+  it("a cycle already acted on stays done, whatever the switch-on", () => {
+    assert.equal(judge({ ...at("2026-11-18T10:00:00Z"), record: record() }).kind, "done");
+  });
+  it("shown as before on the screens", () => {
+    assert.equal(progressState({ kind: "before", delivered: 6, required: 6, reachedAt: null }, null).state, "before");
+  });
+});

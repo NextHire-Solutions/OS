@@ -5,7 +5,7 @@ import { tableIsMissing } from "@/lib/clients/usage-billing/caps-model";
 
 import { pauseListed, planToggle, type PlannedCampaign } from "./campaign-toggle";
 import {
-  ACTOR, UNREAD_STATUSES, afterAttempt, cyclePauseLive, isoDay, judge, keyOf, names, progressState, recordForCycle, sharedWith, shortDay, splitShared,
+  ACTOR, UNREAD_STATUSES, afterAttempt, cyclePauseLive, isoDay, judge, keyOf, names, progressState, reachedAt, recordForCycle, sharedWith, shortDay, splitShared,
   type CycleCampaign, type CycleFacts, type CyclePauseRecord, type CycleProgress, type CycleProgressView, type Judgement, type RetryCampaign,
 } from "./cycle-pause-model.ts";
 import { loadDashboardClients } from "./loadDashboard";
@@ -27,6 +27,11 @@ import { getWeekly } from "./weekly";
  */
 
 const TABLE = "os_cycle_pauses";
+const STATE = "os_cycle_pause_state";
+/** Off for longer than this (no live run): switching it on again starts afresh, so only clients reaching their due after that are paused. */
+const RESTART_AFTER_MS = 60 * 60_000;
+/** This server's start: what a dry run measures "after it was switched on" against, so its log previews what live would do. */
+const STARTED = new Date().toISOString();
 const COLUMNS = "os_client_id, cycle_start, cycle_end, required, delivered, reached_at, paused, left_running, to_retry, updated_at";
 
 export interface CyclePauseRunResult {
@@ -87,13 +92,33 @@ const arr = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 const cycleOf = (c: DashboardClient, now: Date): CycleFacts | null => {
   const snap = healthSnapshot(c, now);
-  return snap ? { start: snap.cycle.start, end: snap.cycle.end, target: snap.cycle.target, required: snap.cycle.required, delivered: snap.cycle.delivered } : null;
+  if (!snap) return null;
+  const cycle = { start: snap.cycle.start, end: snap.cycle.end, target: snap.cycle.target, required: snap.cycle.required, delivered: snap.cycle.delivered };
+  return { ...cycle, reachedAt: reachedAt(c.intro_dates ?? [], cycle, cycle.required, now) };
 };
+
+/*
+ * When the pause was switched on (the team, 20 Nov: only clients reaching their due after that are paused). Written on
+ * the first live run, and again whenever the last live run is over an hour old (switched off and on, or the service
+ * down): a client that reached its due meanwhile is left to the team, never paused late. Live runs only: a dry run
+ * writes nothing and measures against this server's start. Unreadable: throws, and nothing is paused.
+ */
+async function switchedOnAt(now: Date): Promise<string> {
+  const { data, error } = await osTable(STATE).select("live_since, last_live_run_at").eq("id", "default").maybeSingle();
+  if (error) throw new Error(`${STATE}: ${error.message}`);
+  const row = (data ?? null) as { live_since: string | null; last_live_run_at: string | null } | null;
+  const last = row?.last_live_run_at ? Date.parse(row.last_live_run_at) : NaN;
+  const fresh = !row?.live_since || !Number.isFinite(last) || now.getTime() - last > RESTART_AFTER_MS;
+  const since = fresh ? now.toISOString() : String(row!.live_since);
+  const { error: wErr } = await osTable(STATE).upsert({ id: "default", live_since: since, last_live_run_at: now.toISOString(), updated_at: now.toISOString() }, { onConflict: "id" });
+  if (wErr) throw new Error(`${STATE}: ${wErr.message}`);
+  return since;
+}
 
 /** "since Nov 3, due Dec 1": the cycle as Intros / Billing shows it (the next billing date is in it). */
 const spanOf = (cycle: Pick<CycleFacts, "start" | "end">): string => `since ${shortDay(isoDay(cycle.start))}, due ${shortDay(isoDay(cycle.end))}`;
 
-export async function runCyclePauses(o: { env?: Record<string, string | undefined>; now?: Date } = {}): Promise<CyclePauseRunResult> {
+export async function runCyclePauses(o: { env?: Record<string, string | undefined>; now?: Date; dryRunSince?: string } = {}): Promise<CyclePauseRunResult> {
   const env = o.env ?? process.env;
   const now = o.now ?? new Date();
   const out: CyclePauseRunResult = { live: cyclePauseLive(env), clients: 0, reached: 0, paused: 0, leftRunning: 0, notes: [], errors: [] };
@@ -119,6 +144,15 @@ export async function runCyclePauses(o: { env?: Record<string, string | undefine
     }
     out.notes.push(`${TABLE} isn't there yet (migration 0054)`);
   }
+  let liveSince = o.dryRunSince ?? STARTED;
+  if (out.live) {
+    try {
+      liveSince = await switchedOnAt(now);
+    } catch (e) {
+      out.errors.push(`${e instanceof Error ? e.message : String(e)}: when it was switched on is unknown, so nothing was paused`);
+      return out;
+    }
+  }
 
   for (const c of loaded.clients) {
     if (doubled.has(c.id)) {
@@ -129,7 +163,7 @@ export async function runCyclePauses(o: { env?: Record<string, string | undefine
     if (!link) continue;
     const cycle = cycleOf(c, now);
     const record = cycle ? recordForCycle(records?.get(link.id) ?? [], cycle) : null;
-    const j = judge({ status: link.status, clientPaused: c.client_paused, perLead: !!c.per_lead, cycle, record });
+    const j = judge({ status: link.status, clientPaused: c.client_paused, perLead: !!c.per_lead, cycle, record, liveSince });
     if (j.kind === "skip" || j.kind === "below") continue;
     out.clients += 1;
     try {
@@ -146,6 +180,11 @@ async function actOn(c: DashboardClient, link: OsLink, cycle: CycleFacts, j: Jud
   const name = link.name || c.name;
   const span = spanOf(cycle);
   if (j.kind === "done") return;
+  if (j.kind === "before") {
+    // Left to the team (their answer). Said in a dry run's log; a live run stays quiet about it every 15 minutes.
+    if (!out.live) out.notes.push(`${name}: ${j.delivered} of ${j.required} ${span}, reached ${j.reachedAt ? shortDay(j.reachedAt.slice(0, 10)) : "(date unknown)"}, before the switch-on: left to the team`);
+    return;
+  }
 
   if (j.kind === "reached") {
     out.reached += 1;
@@ -261,16 +300,22 @@ async function save(osClientId: string, cycleStart: string, next: Partial<Pick<C
 /* ------------------------------------------------------------------ the screens --- */
 
 /** Every linked client's cycle, as Client Health's Intros / Billing shows it, with what the pause did or would do. Reads only. */
-export async function cycleProgress(env: Record<string, string | undefined> = process.env): Promise<CycleProgressView> {
+export async function cycleProgress(env: Record<string, string | undefined> = process.env, o: { dryRunSince?: string } = {}): Promise<CycleProgressView> {
   const data = await getWeekly();
   const now = new Date(data.now);
-  const [{ byCh, doubled }, records] = await Promise.all([osLinks(), recentRecords(now)]);
+  const [{ byCh, doubled }, records, state] = await Promise.all([
+    osLinks(),
+    recentRecords(now),
+    osTable(STATE).select("live_since").eq("id", "default").maybeSingle().then((r) => (r.error ? null : ((r.data ?? null) as { live_since: string | null } | null))),
+  ]);
+  // Live: when it was switched on; not yet run live, or a dry run: this server's start (as the dry run measures).
+  const liveSince = (cyclePauseLive(env) && state?.live_since) || o.dryRunSince || STARTED;
   const clients: CycleProgress[] = [];
   for (const c of data.clients) {
     const link = byCh.get(c.id);
     const cycle = cycleOf(c, now);
     const record = cycle && link ? recordForCycle(records?.get(link.id) ?? [], cycle) : null;
-    const j = judge({ status: link?.status ?? null, clientPaused: c.client_paused, perLead: !!c.per_lead, cycle, record });
+    const j = judge({ status: link?.status ?? null, clientPaused: c.client_paused, perLead: !!c.per_lead, cycle, record, liveSince });
     const { state, why } = progressState(j, record);
     clients.push({
       chClientId: c.id,
@@ -287,6 +332,7 @@ export async function cycleProgress(env: Record<string, string | undefined> = pr
       paused: record?.paused ?? [],
       leftRunning: record?.left_running ?? [],
       toRetry: record?.to_retry ?? [],
+      reachedAt: cycle?.reachedAt ?? null,
     });
   }
   return { live: cyclePauseLive(env), recordsReady: records !== null, clients };

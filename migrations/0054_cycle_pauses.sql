@@ -9,6 +9,7 @@
 -- Run once in the Master Inbox database (Supabase, SQL editor).
 -- Additive and safe to re-run. Nothing pauses until OS_CYCLE_PAUSE=1 is set;
 -- before that the sweep writes nothing here and only logs what it would do.
+-- Only clients that reach their target AFTER it is switched on are paused.
 
 CREATE TABLE IF NOT EXISTS public.os_cycle_pauses (
   os_client_id  uuid        NOT NULL REFERENCES public.os_clients(id) ON DELETE CASCADE,
@@ -32,5 +33,16 @@ CREATE TABLE IF NOT EXISTS public.os_cycle_pauses (
 );
 CREATE INDEX IF NOT EXISTS os_cycle_pauses_end ON public.os_cycle_pauses (cycle_end);
 ALTER TABLE public.os_cycle_pauses ENABLE ROW LEVEL SECURITY;
+
+-- When the pause was switched on (the team, 20 Nov: only clients reaching their target AFTER it is enabled are paused;
+-- the ones already there are left to the team). One row. Set by the first live run, and again when it has been off for
+-- over an hour. A dry run never writes it.
+CREATE TABLE IF NOT EXISTS public.os_cycle_pause_state (
+  id                text        PRIMARY KEY DEFAULT 'default' CHECK (id = 'default'),
+  live_since        timestamptz,
+  last_live_run_at  timestamptz,
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.os_cycle_pause_state ENABLE ROW LEVEL SECURITY;
 
 NOTIFY pgrst, 'reload schema';

@@ -57,7 +57,7 @@ test("the allowlist contains exactly the OS tables", () => {
     // Added 2026-11-06: a lead not billed (0050).
     "os_usage_billing_waivers",
     // Added 2026-11-20: the billing-cycle pause (0054).
-    "os_cycle_pauses",
+    "os_cycle_pauses", "os_cycle_pause_state",
     // Added 2026-11-02: Prospects ↔ campaign, first campaign at setup (0046).
     "os_prospect_sync",
     "os_setup_campaigns",
