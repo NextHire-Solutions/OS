@@ -22,9 +22,10 @@ test("the entry: under Master Inbox, before Settings, for the Brokerage hand-off
   for (const c of inbox.children) if (c.id !== "brokerage-relay") assert.equal(c.page, undefined, c.id);
 });
 
-test("who sees it: admins, and Amy by name — not teammates, whatever their roles", () => {
+test("who sees it: admins, and Amy and Gabriel by name — not teammates, whatever their roles", () => {
   assert.equal(canSeeLeaf(leaf, true), true);
   assert.equal(canSeeLeaf(leaf, false, { pages: namedPagesFor("amy@brokerstaffer.com") }), true);
+  assert.equal(canSeeLeaf(leaf, false, { accountManager: true, pages: namedPagesFor("gabo075823532@gmail.com") }), true, "Gabriel (21 Nov)");
   for (const roles of [{}, { accountManager: true }, { salesperson: true }, { pages: ["reply-agent"] }, { pages: namedPagesFor("gabriel@brokerstaffer.com") }]) {
     assert.equal(canSeeLeaf(leaf, false, roles), false, JSON.stringify(roles));
   }

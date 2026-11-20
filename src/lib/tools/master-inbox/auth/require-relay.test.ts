@@ -18,7 +18,7 @@ if (canMock) {
 }
 
 test("admins and Amy may use the page; nobody else", { skip }, async () => {
-  for (const email of ["eddy@brokerstaffer.com", "admin@outreachify.io", "amy@brokerstaffer.com", " Amy@BrokerStaffer.com "]) assert.equal(await mod.canManageRelay(email), true, email);
+  for (const email of ["eddy@brokerstaffer.com", "admin@outreachify.io", "amy@brokerstaffer.com", " Amy@BrokerStaffer.com ", "gabo075823532@gmail.com"]) assert.equal(await mod.canManageRelay(email), true, email);
   for (const email of ["gabriel@brokerstaffer.com", "ryan.j@brokerstaffer.com", "amy@brokerstaffer.co", "", null, undefined]) assert.equal(await mod.canManageRelay(email), false, String(email));
 });
 

@@ -441,7 +441,8 @@ myrehomebase.com, hetheringtonteam.com); BrokerStaffer, Homebase and Hetheringto
 A new client: switch On (starts in Practice), review with View email, set Live — no Railway step. Setting the variable
 again would act as an extra fence on top, as before.
 
-**Amy** has the page by name (`identity/named-pages.ts` → `brokerage-relay`; its five routes behind
+**Amy** and, from 21 Nov on the user's word (Gabriel asked, to manage hand-offs and introductions), **Gabriel
+Castillo** (gabo075823532@gmail.com) have the page by name (`identity/named-pages.ts` → `brokerage-relay`; its five routes behind
 `auth/require-relay.ts`: admins and the named people). **Menu entry** Master Inbox › Brokerage hand-off
 (`/inbox/brokerage-relay`), shown only to whoever may open the page (`NavLeaf.page`, `canSeeLeaf`; the search
 palette too). The page's saves now say so when the server can't be reached.

@@ -14,7 +14,8 @@
 
 export const NAMED_PAGES: Readonly<Record<string, readonly string[]>> = {
   "reply-agent": ["amy@brokerstaffer.com"],
-  "brokerage-relay": ["amy@brokerstaffer.com"],
+  // 21 Nov, the user ("yes deploy"), on Gabriel's ask to manage hand-offs and introductions: Gabriel Castillo too.
+  "brokerage-relay": ["amy@brokerstaffer.com", "gabo075823532@gmail.com"],
   // 18 Nov, the user: "give access to the AI assistant on the OS to Gabriel Castillo" — only what he can see (viewer.ts).
   assistant: ["gabo075823532@gmail.com"],
 };

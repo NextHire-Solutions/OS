@@ -41,8 +41,11 @@ test("Home is for everyone, switched on or not", () => {
   }
 });
 
-test("admin-only pages opened by name: the Reply agent (21 Oct) and the Brokerage hand-off (18 Nov) to Amy — those only, and nobody else", () => {
-  assert.deepEqual(NAMED_PAGES, { "reply-agent": ["amy@brokerstaffer.com"], "brokerage-relay": ["amy@brokerstaffer.com"], assistant: ["gabo075823532@gmail.com"] }, "a person is added here deliberately, on the user's word");
+test("admin-only pages opened by name: the Reply agent (21 Oct) and the Brokerage hand-off (18 Nov) to Amy, the hand-off to Gabriel (21 Nov) — those only, and nobody else", () => {
+  assert.deepEqual(NAMED_PAGES, { "reply-agent": ["amy@brokerstaffer.com"], "brokerage-relay": ["amy@brokerstaffer.com", "gabo075823532@gmail.com"], assistant: ["gabo075823532@gmail.com"] }, "a person is added here deliberately, on the user's word");
+  // Gabriel: the Brokerage hand-off and the assistant, never the Reply agent.
+  assert.deepEqual(namedPagesFor("gabo075823532@gmail.com"), ["brokerage-relay", "assistant"]);
+  assert.equal(holdsPage("gabo075823532@gmail.com", "reply-agent"), false);
   assert.deepEqual(namedPagesFor(" Amy@BrokerStaffer.com "), ["reply-agent", "brokerage-relay"]);
   const amy = { pages: namedPagesFor("amy@brokerstaffer.com") };
   assert.equal(canSeePage("reply-agent", false, [], ALL_TOOLS, amy), true);
