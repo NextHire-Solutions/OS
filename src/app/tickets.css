@@ -343,3 +343,39 @@ a.tk-client:hover { background: var(--ds-brand-soft); color: var(--ds-brand-ink)
 }
 .tk-trimmed { margin: 0 16px 8px 59px; font-size: 12px; color: var(--ds-faint); }
 @container tk (max-width: 720px) { .tk-trimmed { margin-left: 16px; } }
+
+/* ---- Replies from Tickets (24 Nov) ---------------------------------------------------------------------------- */
+.tk-state.warn { background: var(--ds-amber-soft, #fdf3df); color: var(--ds-amber, #a15c07); }
+.tk-muted { color: var(--ds-muted); font-size: 12.5px; }
+/* Our reply, written in Tickets: the team's words, in the conversation (the client's emails stay white cards). */
+.tk-sent { margin: 0 0 0 28px; padding: 11px 14px 12px; border-radius: 10px; background: var(--ds-brand-soft); box-shadow: inset 0 0 0 1px rgba(1, 101, 254, .14); }
+.tk-sent-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; margin-bottom: 6px; color: var(--ds-ink-2); }
+.tk-sent-h b { font-weight: 650; color: var(--ds-ink); }
+.tk-sent-h .tk-sent-by { font-size: 11.5px; font-weight: 600; color: var(--ds-brand-ink); background: rgba(255, 255, 255, .7); border-radius: 5px; padding: 1px 6px; }
+.tk-sent-h time { margin-left: auto; color: var(--ds-faint); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tk-sent-b { font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ds-ink); }
+.tk-sent-b.clamp { max-height: 9.3em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.tk-sent-more { margin-top: 4px; border: 0; background: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ds-brand-ink); cursor: pointer; }
+
+/* The reply box: white (it goes to the client), the note box stays yellow (team only). */
+.tk-rbox { padding: 12px 22px 14px; background: var(--ds-surface); border-top: 1px solid var(--ds-border); }
+.tk-rbox-card { border: 1px solid var(--ds-border); border-radius: 11px; background: #fff; transition: border-color .12s, box-shadow .12s; }
+.tk-rbox-card:focus-within { border-color: rgba(1, 101, 254, .45); box-shadow: 0 0 0 3px rgba(1, 101, 254, .12); }
+.tk-rbox-rows { display: grid; gap: 0; padding: 8px 12px 0; }
+.tk-rbox-row { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 12.5px; border-bottom: 1px solid var(--ds-border); flex-wrap: wrap; padding: 3px 0; }
+.tk-rbox-row > .k { width: 34px; flex: none; color: var(--ds-muted); font-weight: 600; }
+.tk-rbox-row select { font: inherit; font-size: 12.5px; border: 1px solid var(--ds-border); border-radius: 7px; padding: 3px 6px; background: #fff; color: var(--ds-ink); max-width: 100%; }
+.tk-rbox-addr { color: var(--ds-ink); overflow-wrap: anywhere; }
+.tk-rbox-addr small { color: var(--ds-muted); margin-left: 4px; }
+.tk-rbox-cc { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--ds-border); border-radius: 999px; padding: 1px 9px 1px 6px; cursor: pointer; color: var(--ds-ink-2); }
+.tk-rbox-cc input { margin: 0; }
+.tk-rbox-cc[data-off="true"] { color: var(--ds-faint); text-decoration: line-through; }
+.tk-rbox textarea { display: block; width: 100%; min-height: 76px; max-height: 300px; resize: none; border: 0; background: none; padding: 10px 12px 6px; font: inherit; font-size: 13.5px; line-height: 1.55; color: var(--ds-ink); }
+.tk-rbox textarea:focus { outline: none; }
+.tk-rbox-sig { margin: 0 12px 6px; padding: 6px 0 0; border-top: 1px dashed var(--ds-border); font-size: 12px; line-height: 1.45; color: var(--ds-muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.5em; overflow: auto; }
+.tk-rbox-f { display: flex; align-items: center; gap: 8px; padding: 6px 8px 8px 12px; font-size: 11.5px; color: var(--ds-muted); flex-wrap: wrap; }
+.tk-rbox-f .tk-sp { flex: 1; }
+.tk-rbox-warn { margin: 8px 12px 0; padding: 8px 10px; border-radius: 8px; background: var(--ds-amber-soft, #fdf3df); color: var(--ds-amber-ink, #7a4504); font-size: 12.5px; line-height: 1.45; }
+.tk-rbox-warn.bad { background: var(--ds-red-soft); color: var(--ds-red); }
+.tk-rbox-warn .tk-btn { margin-top: 6px; margin-right: 6px; height: 26px; }
+@media (max-width: 720px) { .tk-rbox { padding-left: 16px; padding-right: 16px; } .tk-sent { margin-left: 0; } }

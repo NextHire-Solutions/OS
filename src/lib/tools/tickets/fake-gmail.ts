@@ -151,6 +151,36 @@ export class FakeGmail {
     };
   }
 
+  /** What was sent through send(), raw and decoded (tests read it). */
+  sent: Array<{ raw: string; threadId: string | null; id: string; decoded: string }> = [];
+  /** A send() that throws this instead (tests: refusals, a timeout). */
+  sendFails: Error | null = null;
+  /** The inbox's Gmail settings: display name and signature. */
+  sendAsList: Array<{ sendAsEmail: string; displayName?: string; signature?: string; isPrimary?: boolean }> = [];
+
+  async sendAs() { this.units += 1; this.calls.push("sendAs"); return { sendAs: this.sendAsList.length ? this.sendAsList : [{ sendAsEmail: this.address, isPrimary: true }] }; }
+
+  /** As Gmail does: the email lands in this mailbox's Sent, in the given thread, with a Message-ID Gmail makes. */
+  async send(raw: string, threadId: string | null): Promise<{ id: string; threadId: string }> {
+    this.units += 100;
+    this.calls.push(`send ${threadId ?? "-"}`);
+    if (this.sendFails) throw this.sendFails;
+    const decoded = Buffer.from(raw, "base64url").toString("utf8");
+    const head = decoded.split("\r\n\r\n")[0].replace(/\r\n[ \t]+/g, " ");
+    const h = (n: string) => new RegExp(`^${n}: (.*)$`, "mi").exec(head)?.[1] ?? "";
+    const ids = (v: string) => [...v.matchAll(/<([^>]+)>/g)].map((m) => m[1]);
+    const list = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
+    const messageId = `sent-${this.seq + 1}-${this.prefix}@mail.gmail.com`;
+    const id = this.deliver({
+      from: h("From"), to: list(h("To")), cc: list(h("Cc")), subject: h("Subject"), messageId,
+      inReplyTo: ids(h("In-Reply-To"))[0], references: ids(h("References")), date: Date.now(), text: "(sent)", labels: ["SENT"],
+      thread: threadId ?? undefined, auth: "none",
+    });
+    const threadOut = this.find(id).msg.threadId;
+    this.sent.push({ raw, threadId, id, decoded });
+    return { id, threadId: threadOut };
+  }
+
   async attachment(messageId: string, attachmentId: string) {
     this.units += 20;
     const { mail } = this.find(messageId);

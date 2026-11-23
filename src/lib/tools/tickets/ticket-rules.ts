@@ -42,6 +42,8 @@ export interface IncomingMessage {
   snippet: string;
   /** Who sent it, as people know them ("Amy", "Jane Roe"). */
   who: string;
+  /** Our reply's line on the timeline when it isn't "<who> replied from Gmail" (a reply sent from Tickets). */
+  replyNote?: string;
 }
 
 export interface TicketEvent {
@@ -114,7 +116,7 @@ export function applyMessage(s: TicketState, m: IncomingMessage, importing = fal
   }
   if (!importing && answers && s.status === "open" && !s.snoozed_until) {
     patch.status = "waiting";
-    events.push({ kind: "status", actor: null, from_value: "open", to_value: "waiting", body: `${m.who} replied from Gmail` });
+    events.push({ kind: "status", actor: null, from_value: "open", to_value: "waiting", body: m.replyNote ?? `${m.who} replied from Gmail` });
   }
   return { patch, events };
 }

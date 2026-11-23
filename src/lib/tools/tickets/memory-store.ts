@@ -64,6 +64,7 @@ export class MemoryTicketStore implements TicketStore {
     this.messages.set(id, { ...m, id });
     return { id, ticket_id: m.ticket_id, inserted: true };
   }
+  async updateMessage(id: string, patch: Partial<Omit<MessageRow, "id" | "ticket_id" | "rfc_id">>) { const m = this.messages.get(id); if (m) Object.assign(m, patch); }
   async insertCopy(c: CopyRow) { const k = `${c.mailbox}|${c.gmail_id}`; if (!this.copies.has(k)) this.copies.set(k, { ...c }); }
   /** Updates seen so far, so a test can force a conflict on the next conditional one. */
   conflictOnce = false;

@@ -1,10 +1,12 @@
 import { METADATA_HEADERS, type GmailMessage } from "./gmail-message.ts";
+import { GMAIL_SEND_SCOPE } from "./senders.ts";
 
 /*
- * TICKETS — the Gmail API and Google's OAuth, read-only (gmail.readonly). No SDK: plain fetch, like the rest of the OS.
+ * TICKETS — the Gmail API and Google's OAuth. Read-only (gmail.readonly) for every inbox; Amy's and Eddy's also send
+ * (gmail.send, 24 Nov: replies from Tickets — senders.ts). No SDK: plain fetch, like the rest of the OS.
  *
  * Quota (Google, May 2026): 6,000 units a minute per user per project; messages.get 20 (60 for format=full),
- * history.list 2, messages.list 5, threads.get 40, attachments.get 20. Each mailbox gets its own budget of 4,000 a
+ * history.list 2, messages.list 5, threads.get 40, attachments.get 20, messages.send 100. Each mailbox gets its own budget of 4,000 a
  * minute, so a first fill never runs into Google's limit and leaves room for the team's other Google tools.
  * 429 and 5xx are retried with backoff (Retry-After honoured); a 401 refreshes the access token once.
  *
@@ -48,16 +50,19 @@ export async function refreshAccessToken(cfg: Pick<OAuthConfig, "clientId" | "cl
   return { accessToken: json.access_token, expiresAt: Date.now() + Math.max(60, (json.expires_in ?? 3600) - 120) * 1000 };
 }
 
-/** The consent screen's address: read-only Gmail, a refresh token every time (prompt=consent). */
-export function consentUrl(cfg: OAuthConfig, state: string, loginHint?: string): string {
+/**
+ * The consent screen's address: read-only Gmail, a refresh token every time (prompt=consent). `send`: also Gmail's send
+ * permission — asked for only when an inbox that may send (senders.ts) is being connected.
+ */
+export function consentUrl(cfg: OAuthConfig, state: string, loginHint?: string, opts: { send?: boolean } = {}): string {
   const p = new URLSearchParams({
     client_id: cfg.clientId,
     redirect_uri: cfg.redirectUri,
     response_type: "code",
-    scope: GMAIL_SCOPES.join(" "),
+    scope: [...GMAIL_SCOPES, ...(opts.send ? [GMAIL_SEND_SCOPE] : [])].join(" "),
     access_type: "offline",
     prompt: "consent",
-    // No include_granted_scopes: a token must never carry more than read-only Gmail (review, 20 Nov).
+    // No include_granted_scopes: a token never carries more than what was asked for here (review, 20 Nov).
     state,
   });
   if (loginHint) p.set("login_hint", loginHint);
@@ -78,7 +83,7 @@ export async function exchangeCode(cfg: OAuthConfig, code: string): Promise<{ re
   const extra = scopeBeyondReadOnly(scope);
   if (extra.length) {
     await revokeToken(t.refresh_token);
-    throw new Error(`Google gave this connection more than read-only access (${extra.join(", ")}), so it was refused. An admin should check the Tickets sign-in client.`);
+    throw new Error(`Google gave this connection more access than Tickets asks for (${extra.join(", ")}), so it was refused. An admin should check the Tickets sign-in client.`);
   }
   if (!scope.split(/\s+/).includes("https://www.googleapis.com/auth/gmail.readonly")) throw new Error("Gmail access wasn't granted. Connect again and leave the Gmail box ticked.");
   const ui = await fetch(userinfoUrl(), { headers: { Authorization: `Bearer ${t.access_token}` } });
@@ -88,10 +93,13 @@ export async function exchangeCode(cfg: OAuthConfig, code: string): Promise<{ re
   return { refreshToken: t.refresh_token, accessToken: t.access_token, scope, email, name: info.name ?? null };
 }
 
-/** Granted scopes beyond read-only Gmail and sign-in identity (any of them and the connection is refused). */
+/**
+ * Granted scopes beyond read-only Gmail, sending (gmail.send: only an inbox in senders.ts may keep it — the callback
+ * checks whose inbox it is) and sign-in identity. Any other (modify, full mail, settings…) and the connection is refused.
+ */
 export function scopeBeyondReadOnly(scope: string): string[] {
   const ok = new Set([
-    "https://www.googleapis.com/auth/gmail.readonly", "openid", "email", "profile",
+    "https://www.googleapis.com/auth/gmail.readonly", GMAIL_SEND_SCOPE, "openid", "email", "profile",
     "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile",
   ]);
   return scope.split(/\s+/).filter(Boolean).filter((s) => !ok.has(s));
@@ -113,6 +121,7 @@ const UNIT_BUDGET_PER_MIN = 4_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface GmailListPage { messages?: Array<{ id: string; threadId: string }>; nextPageToken?: string; resultSizeEstimate?: number }
+export interface GmailSendAs { sendAsEmail: string; displayName?: string; signature?: string; isPrimary?: boolean; isDefault?: boolean }
 export interface GmailHistoryPage {
   history?: Array<{ id: string; messagesAdded?: Array<{ message: { id: string; threadId: string; labelIds?: string[] } }> }>;
   nextPageToken?: string;
@@ -197,5 +206,33 @@ export class GmailClient {
   }
   attachment(messageId: string, attachmentId: string) {
     return this.get<{ size?: number; data?: string }>(`/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`, {}, 20);
+  }
+  /** The inbox's own addresses, display name and Gmail signature (readable with gmail.readonly). */
+  sendAs() {
+    return this.get<{ sendAs?: GmailSendAs[] }>("/settings/sendAs", {}, 1);
+  }
+
+  /**
+   * Send one email (RFC 2822, base64url) into a Gmail thread. NEVER retried, except once after a refreshed access
+   * token (a 401 means Google refused before sending): a retry after a timeout or a 5xx could send the reply twice.
+   */
+  async send(raw: string, threadId: string | null): Promise<{ id: string; threadId: string }> {
+    const url = `${gmailBase()}/gmail/v1/users/me/messages/send`;
+    await this.pace(100);
+    for (let refreshed = false; ;) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(threadId ? { raw, threadId } : { raw }),
+      });
+      if (res.ok) {
+        const j = (await res.json()) as { id?: string; threadId?: string };
+        if (!j.id) throw new GmailError("Gmail accepted the email but returned no id", 502);
+        return { id: j.id, threadId: j.threadId ?? threadId ?? "" };
+      }
+      const body = await res.text().catch(() => "");
+      if (res.status === 401 && !refreshed) { refreshed = true; await this.accessToken(true); continue; }
+      throw new GmailError(`Gmail ${res.status} on /messages/send: ${body.slice(0, 200)}`, res.status);
+    }
   }
 }

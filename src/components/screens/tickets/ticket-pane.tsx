@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { ModalDialog } from "@/components/ui/modal-dialog";
 import type { TicketStatus } from "@/lib/tools/tickets/ticket-rules";
+import type { ReplyContextView } from "@/lib/tools/tickets/reply-service";
 import type { Person, TicketDetail, TicketEventView, TicketMessageView } from "@/lib/tools/tickets/types";
 import { snoozePresets } from "@/lib/tools/tickets/views";
 
@@ -13,9 +14,9 @@ import { ago, api, Avatar, dayTime, fileSize, firstName, fullTime, Icon, inGSequ
 
 /*
  * TICKETS — one conversation: the client's emails (each sandboxed, outside images held back), the team's replies
- * as one-line markers (their text is never stored), notes and every change, in time order; the ticket's status,
- * owner and snooze above; a note box below. Shortcuts: E done · Q mine · A assign · S snooze · N note ·
- * I not a ticket · O reply in Gmail.
+ * (a reply written in Gmail is a one-line marker, its text never stored; a reply sent from Tickets shows its text and
+ * who sent it), notes and every change, in time order; the ticket's status, owner and snooze above; the reply box and
+ * the note box below. Shortcuts: E done · Q mine · A assign · S snooze · N note · R reply · I not a ticket · O Gmail.
  */
 
 type Item =
@@ -40,6 +41,9 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
   const [open, setOpen] = useState<null | "assign" | "snooze" | "more" | "client">(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // Replying from Tickets (24 Nov): who it can go from, to whom; null until read.
+  const [rc, setRc] = useState<ReplyContextView | null>(null);
+  const [replyOpen, setReplyOpen] = useState(false);
   const people = usePeople(team);
   const noteRef = useRef<HTMLTextAreaElement | null>(null);
   const lastActivity = useRef<string | null>(null);
@@ -69,6 +73,11 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
   }, [number]);
 
   useEffect(() => { setD(null); setErr(null); lastActivity.current = null; void load(); }, [number, load]);
+
+  const loadReply = useCallback(async () => {
+    try { setRc(await api<ReplyContextView>(`/api/tools/tickets/${number}/reply`)); } catch { setRc(null); }
+  }, [number]);
+  useEffect(() => { setRc(null); setReplyOpen(hasDraft(number)); void loadReply(); }, [number, loadReply]);
 
   // Every 15 seconds while open: "I'm looking at this", and pick up anything new.
   const id = d?.ticket.id;
@@ -129,13 +138,15 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
       else if (k === "q") { e.preventDefault(); if (t.assignee !== me) void change({ assignee: me }, `#${t.number} is yours`); }
       else if (k === "a") { e.preventDefault(); setOpen("assign"); }
       else if (k === "s") { e.preventDefault(); setOpen("snooze"); }
-      else if (k === "n") { e.preventDefault(); noteRef.current?.focus(); }
+      // N: a note instead of the reply (the reply's draft is kept for later).
+      else if (k === "n") { e.preventDefault(); setReplyOpen(false); requestAnimationFrame(() => noteRef.current?.focus()); }
       else if (k === "i") { e.preventDefault(); setStatus(t.status === "ignored" ? "open" : "ignored"); }
       else if (k === "o") { e.preventDefault(); openGmail(); }
+      else if (k === "r" && rc && !rc.blocked && rc.senders.length) { e.preventDefault(); setReplyOpen(true); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [t, me, change, setStatus, openGmail]);
+  }, [t, me, change, setStatus, openGmail, rc]);
 
   if (err && !d) {
     return (
@@ -216,7 +227,14 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
           </div>
 
           <span className="tk-sp" />
-          {myCopy ? (
+          {rc && !rc.blocked && rc.senders.length ? (
+            <>
+              <button type="button" className="tk-btn pri" data-reply-open onClick={() => setReplyOpen(true)} title={`Reply to ${rc.to?.name ?? rc.to?.email ?? "the client"} from Tickets (R)`}>
+                <Icon name="reply" />Reply<kbd>R</kbd>
+              </button>
+              {myCopy ? <button type="button" className="tk-btn icon" onClick={openGmail} title="Open in your Gmail (O)" aria-label="Open in your Gmail"><Icon name="ext" /></button> : null}
+            </>
+          ) : myCopy ? (
             <button type="button" className="tk-btn pri" onClick={openGmail} title="Opens this email in your Gmail to reply (O)">
               <Icon name="reply" />Reply in Gmail<kbd>O</kbd>
             </button>
@@ -257,7 +275,15 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
 
       <Timeline d={d} now={now} people={people} />
 
-      <NoteBox ticketId={t.id} team={team} me={me} textareaRef={noteRef} onSaved={() => { void load(true); changedRef.current(); }} />
+      {replyOpen && rc && !rc.blocked && rc.senders.length ? (
+        <ReplyBox key={t.id} ticketNumber={t.number} ctx={rc} me={me} people={people}
+          onClose={() => setReplyOpen(false)}
+          onStale={() => { void load(true); void loadReply(); }}
+          onSent={() => { setReplyOpen(false); void load(true); void loadReply(); changedRef.current(); }} />
+      ) : null}
+
+      {/* One box at a time: while replying, the note box steps aside so the conversation keeps its room. */}
+      {replyOpen && rc && !rc.blocked && rc.senders.length ? null : <NoteBox ticketId={t.id} team={team} me={me} textareaRef={noteRef} onSaved={() => { void load(true); changedRef.current(); }} />}
 
       <ModalDialog open={confirmRemove} onClose={() => setConfirmRemove(false)} width={460} label="Remove from Tickets">
         <div className="tk-dialog">
@@ -367,6 +393,8 @@ function Timeline({ d, now, people }: { d: TicketDetail; now: number; people: Re
           ) : null}
           {it.kind === "mail" ? (
             <MailCard m={it.m} open={expanded.has(it.m.id)} onToggle={() => setExpanded((s) => { const n = new Set(s); if (n.has(it.m.id)) n.delete(it.m.id); else n.add(it.m.id); return n; })} people={people} />
+          ) : it.kind === "reply" && it.m.sentBy ? (
+            <SentReply m={it.m} people={people} />
           ) : it.kind === "reply" ? (
             <div className="tk-reply" title="Replies are sent and kept in Gmail. Tickets only notes that one was sent.">
               <Icon name="reply" />
@@ -587,6 +615,171 @@ function NoteBox({ ticketId, team, me, textareaRef, onSaved }: { ticketId: strin
           <span className="tk-sp" />
           <button type="button" className="tk-btn" style={{ height: 28, background: "#fff" }} disabled={!text.trim() || saving} onClick={() => void save()}>
             {saving ? "Saving…" : <>Save note <kbd>⌘↵</kbd></>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- replies (24 Nov) --- */
+
+/** A reply sent from Tickets: what was written, from which inbox, and who pressed Send. */
+function SentReply({ m, people }: { m: TicketMessageView; people: ReturnType<typeof usePeople> }) {
+  const [more, setMore] = useState(false);
+  const text = m.text ?? "";
+  const long = text.split("\n").length > 6 || text.length > 600;
+  const as = firstName(m.from.name, m.from.email);
+  const by = m.sentBy && m.sentBy !== m.from.email ? people.first(m.sentBy) || m.sentBy : null;
+  const to = [...m.to, ...m.cc].map((a) => (people.has(a.email) ? people.first(a.email) : a.name ?? a.email));
+  return (
+    <article className="tk-sent" data-sent-reply={m.id}>
+      <div className="tk-sent-h">
+        <Icon name="reply" />
+        <b>{m.from.name ?? m.from.email}</b>
+        <span>to {to.slice(0, 3).join(", ")}{to.length > 3 ? ` +${to.length - 3}` : ""}</span>
+        <span className="tk-sent-by" title="Sent from Tickets">{by ? `Sent as ${as} by ${by}` : "Sent from Tickets"}</span>
+        <time dateTime={m.sentAt} title={fullTime(m.sentAt)}>{fullTime(m.sentAt)}</time>
+      </div>
+      <div className={`tk-sent-b${long && !more ? " clamp" : ""}`}>{text}</div>
+      {long ? <button type="button" className="tk-sent-more" onClick={() => setMore((v) => !v)}>{more ? "Show less" : "Show the whole reply"}</button> : null}
+    </article>
+  );
+}
+
+const DRAFT_KEY = (n: number) => `os.tickets.reply.${n}`;
+interface Draft { text: string; from: string | null; ccOff: string[]; nonce: string; /** "It may have gone" from the last try: shown again after a reload. */ unsure?: string | null }
+function readDraft(n: number): Draft | null {
+  try { const v = window.localStorage.getItem(DRAFT_KEY(n)); return v ? (JSON.parse(v) as Draft) : null; } catch { return null; }
+}
+function writeDraft(n: number, d: Draft | null) {
+  try { if (d && d.text.trim()) window.localStorage.setItem(DRAFT_KEY(n), JSON.stringify(d)); else window.localStorage.removeItem(DRAFT_KEY(n)); } catch { /* private window */ }
+}
+function hasDraft(n: number): boolean {
+  return typeof window !== "undefined" && !!readDraft(n)?.text.trim();
+}
+const newNonce = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
+
+/**
+ * The reply box: From (the inbox the client wrote to; the other one when both got it), To (the client), Cc (people on
+ * their email, untick to leave out), the reply, the inbox's Gmail signature, Send. The draft is kept in this browser
+ * until it is sent or discarded, so switching tickets loses nothing.
+ */
+function ReplyBox({ ticketNumber, ctx, me, people, onClose, onSent, onStale }: {
+  ticketNumber: number;
+  ctx: ReplyContextView;
+  me: string;
+  people: ReturnType<typeof usePeople>;
+  onClose: () => void;
+  onSent: () => void;
+  /** A newer client email came in: read the ticket again (the draft stays). */
+  onStale: () => void;
+}) {
+  const saved = useMemo(() => readDraft(ticketNumber), [ticketNumber]);
+  const [text, setText] = useState(saved?.text ?? "");
+  const [from, setFrom] = useState<string>(() => (saved?.from && ctx.senders.some((s) => s.email === saved.from) ? saved.from : ctx.defaultSender ?? ctx.senders[0]?.email ?? ""));
+  const [ccOff, setCcOff] = useState<string[]>(saved?.ccOff ?? []);
+  const [nonce, setNonce] = useState(saved?.nonce ?? newNonce);
+  const [sending, setSending] = useState(false);
+  const [problem, setProblem] = useState<{ text: string; unsure?: boolean } | null>(saved?.unsure ? { text: saved.unsure, unsure: true } : null);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  const sender = ctx.senders.find((s) => s.email === from) ?? ctx.senders[0];
+  const asName = firstName(sender?.name ?? null, sender?.email ?? "");
+  const cc = ctx.cc.filter((a) => a.email !== from);
+  useEffect(() => { writeDraft(ticketNumber, { text, from, ccOff, nonce, unsure: problem?.unsure ? problem.text : null }); }, [ticketNumber, text, from, ccOff, nonce, problem]);
+  useEffect(() => { const el = ref.current; if (el) { el.focus(); el.style.height = "auto"; el.style.height = `${Math.min(320, el.scrollHeight)}px`; } }, []);
+
+  const send = async () => {
+    if (!sender?.ready || !text.trim() || sending) return;
+    setSending(true);
+    setProblem(null);
+    try {
+      const res = await fetch(`/api/tools/tickets/${ticketNumber}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ from, text, cc: cc.filter((a) => !ccOff.includes(a.email)).map((a) => a.email), nonce, replyTo: ctx.replyTo }),
+        cache: "no-store",
+      });
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; code?: string; note?: string; to?: string; sent?: boolean | "unknown" };
+      if (res.ok && j.ok) {
+        writeDraft(ticketNumber, null);
+        toast.success(j.note ?? `Sent as ${asName} to ${ctx.to?.name ?? ctx.to?.email ?? "the client"}`);
+        onSent();
+        return;
+      }
+      if (j.sent === false) {
+        // The server is sure nothing went: say why; the draft can be fixed and sent.
+        setProblem({ text: j.error ?? "The reply couldn't be sent. Nothing was sent." });
+        if (j.code === "stale") onStale();
+        return;
+      }
+      // Anything else (Gmail didn't confirm, an error page while the OS restarts…) may have gone: never invite a resend.
+      setProblem({ text: j.error ?? `It isn't known whether the reply went (${res.status}). Look in ${asName}'s Sent folder before sending it again.`, unsure: true });
+    } catch {
+      // The request may or may not have reached the OS: never invite a second send without a look first.
+      setProblem({ text: `The connection dropped, so it isn't known whether the reply went. Look in ${asName}'s Sent folder before sending it again.`, unsure: true });
+    } finally {
+      setSending(false);
+    }
+  };
+  const discard = () => { writeDraft(ticketNumber, null); onClose(); };
+
+  return (
+    <div className="tk-rbox" data-reply-box>
+      <div className="tk-rbox-card">
+        <div className="tk-rbox-rows">
+          <div className="tk-rbox-row">
+            <span className="k">From</span>
+            {ctx.senders.length > 1 ? (
+              <select id="tk-reply-from" aria-label="Send from" value={from} onChange={(e) => setFrom(e.target.value)} disabled={sending}>
+                {ctx.senders.map((s) => <option key={s.email} value={s.email}>{s.name} &lt;{s.email}&gt;{s.ready ? "" : " · can't send yet"}</option>)}
+              </select>
+            ) : <span className="tk-rbox-addr" data-reply-from>{sender?.name}<small>{sender?.email}</small></span>}
+            {sender && sender.email !== me ? <span className="tk-muted">· the client sees it from {asName}</span> : null}
+          </div>
+          <div className="tk-rbox-row">
+            <span className="k">To</span>
+            <span className="tk-rbox-addr" data-reply-to>{ctx.to?.name ?? ctx.to?.email}{ctx.to?.name ? <small>{ctx.to.email}</small> : null}</span>
+          </div>
+          {cc.length ? (
+            <div className="tk-rbox-row">
+              <span className="k">Cc</span>
+              {cc.map((a) => {
+                const off = ccOff.includes(a.email);
+                const label = people.has(a.email) ? people.name(a.email) : a.name ?? a.email;
+                return (
+                  <label key={a.email} className="tk-rbox-cc" data-off={off} title={a.email}>
+                    <input type="checkbox" checked={!off} disabled={sending} onChange={() => setCcOff((xs) => (off ? xs.filter((x) => x !== a.email) : [...xs, a.email]))} />
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+        {sender && !sender.ready ? <div className="tk-rbox-warn" role="status">{sender.why}</div> : null}
+        {problem ? (
+          <div className={`tk-rbox-warn${problem.unsure ? "" : " bad"}`} role="alert">
+            {problem.text}
+            {problem.unsure ? (
+              <div>
+                <button type="button" className="tk-btn" onClick={() => { writeDraft(ticketNumber, null); setProblem(null); onSent(); }}>It was sent: clear the draft</button>
+                <button type="button" className="tk-btn" onClick={() => { setNonce(newNonce()); setProblem(null); }}>It wasn&apos;t sent: let me send again</button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <textarea ref={ref} id="tk-reply-text" value={text} rows={4} aria-label={`Reply to ${ctx.to?.name ?? ctx.to?.email ?? "the client"}`}
+          placeholder={`Write your reply to ${ctx.to?.name?.split(/\s+/)[0] ?? "the client"}…`} disabled={sending || !!problem?.unsure}
+          onChange={(e) => { setText(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = `${Math.min(320, el.scrollHeight)}px`; }}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} />
+        {sender?.signature ? <div className="tk-rbox-sig" title={`${asName}'s Gmail signature, added when it's sent`}>{sender.signature}</div> : null}
+        <div className="tk-rbox-f">
+          <span>Goes to the client from {asName}&apos;s Gmail, in the same conversation{sender?.signature ? ", with the signature above" : ""}. Their email is quoted underneath.</span>
+          <span className="tk-sp" />
+          <button type="button" className="tk-btn ghost" onClick={discard} disabled={sending}>{text.trim() ? "Discard" : "Close"}</button>
+          <button type="button" className="tk-btn pri" data-reply-send disabled={!sender?.ready || !text.trim() || sending || !!problem?.unsure} onClick={() => void send()}>
+            {sending ? "Sending…" : <>Send as {asName} <kbd>⌘↵</kbd></>}
           </button>
         </div>
       </div>

@@ -3,7 +3,7 @@ import "server-only";
 import { osTable } from "@/lib/clients/os-db";
 
 import type { TicketEvent } from "./ticket-rules";
-import type { CopyRow, MailboxRow, NewMessage, NewTicket, TicketRow, TicketStore } from "./store";
+import type { CopyRow, MailboxRow, MessageRow, NewMessage, NewTicket, TicketRow, TicketStore } from "./store";
 
 /*
  * TICKETS — the TicketStore on the OS database (the Master Inbox Supabase project, service role, osTable). The
@@ -143,6 +143,11 @@ export const dbTicketStore: TicketStore = {
     const { data: had, error: e2 } = await osTable("os_ticket_messages").select("id, ticket_id").eq("rfc_id", m.rfc_id).single();
     fail("message (stored)", e2);
     return { ...(had as { id: string; ticket_id: string }), inserted: false };
+  },
+
+  async updateMessage(id: string, patch: Partial<Omit<MessageRow, "id" | "ticket_id" | "rfc_id">>) {
+    const { error } = await osTable("os_ticket_messages").update(clean(patch)).eq("id", id);
+    fail("message (update)", error);
   },
 
   async insertCopy(c: CopyRow) {

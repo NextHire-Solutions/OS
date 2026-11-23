@@ -2,9 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { publicOrigin } from "@/lib/mcp/oauth";
 import { oauthConfig } from "@/lib/tools/tickets/config";
-import { exchangeCode } from "@/lib/tools/tickets/gmail-api";
+import { exchangeCode, revokeToken } from "@/lib/tools/tickets/gmail-api";
 import { ticketsViewer } from "@/lib/tools/tickets/route-auth";
 import { forgetAccessToken } from "@/lib/tools/tickets/runner";
+import { canSendFrom, scopeCanSend } from "@/lib/tools/tickets/senders";
 import { saveMailbox } from "@/lib/tools/tickets/service";
 
 /*
@@ -44,6 +45,11 @@ export async function GET(request: NextRequest) {
   if (!cfg) return done(`error=${encodeURIComponent("Google sign-in for Tickets isn't set up on the OS yet.")}`);
   try {
     const t = await exchangeCode(cfg, code);
+    // Sending is for Amy's and Eddy's inboxes only (senders.ts): any other inbox that came back able to send is refused.
+    if (scopeCanSend(t.scope) && !canSendFrom(t.email)) {
+      await revokeToken(t.refreshToken);
+      return done(`error=${encodeURIComponent(`Only Amy's and Eddy's inboxes send replies from Tickets, and ${t.email} was connected with sending. Nothing was connected: connect your own inbox.`)}`);
+    }
     await saveMailbox({ email: t.email, name: t.name, refreshToken: t.refreshToken, scope: t.scope, connectedBy: viewer.email });
     forgetAccessToken(t.email);
     void import("@/lib/tools/tickets/runner").then((r) => r.runTicketsSync()).catch(() => {});

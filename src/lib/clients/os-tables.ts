@@ -91,6 +91,8 @@ export const OS_TABLES = [
   "os_ticket_events",
   "os_ticket_reads",
   "os_ticket_blocks",
+  // Replies from Tickets: each draft claimed before Gmail is asked (never sent twice) — see migrations/0055_ticket_replies.sql.
+  "os_ticket_sends",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

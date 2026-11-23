@@ -43,3 +43,20 @@ test("the route refuses a missing session and a teammate without the switch; an 
 test("Tickets is a product, not a workspace page: no role opens it", () => {
   assert.equal(canSeePage("tickets", false, [], [], {}), true, "workspace pages don't decide it; the proxy does");
 });
+
+test("replies (24 Nov): the reply route is behind the same switch; sending needs this OS's own Origin", async () => {
+  for (const m of ["GET", "POST"]) assert.deepEqual(grantsForRequest("/api/tools/tickets/1042/reply", m), ["tickets"], m);
+  const { GET, POST } = await import("./[id]/reply/route.ts");
+  const params = { params: Promise.resolve({ id: "1042" }) };
+  const post = (headers: Record<string, string>) => new NextRequest("https://os.example/api/tools/tickets/1042/reply", { method: "POST", headers: { "content-type": "application/json", host: "os.example", ...headers }, body: JSON.stringify({ from: "amy@brokerstaffer.com", text: "Hi", cc: [], nonce: "nonce-route-1" }) });
+  assert.equal((await GET(new NextRequest("https://os.example/api/tools/tickets/1042/reply"), params)).status, 401);
+  assert.equal((await POST(post({ cookie: await cookie("amy@brokerstaffer.com", ["inbox"]), origin: "https://os.example" }), params)).status, 403, "no Tickets switch");
+  const gabe = await cookie("gabo075823532@gmail.com", ["tickets"]);
+  assert.equal((await POST(post({ cookie: gabe }), params)).status, 403, "no Origin: refused (a form or a script elsewhere)");
+  assert.equal((await POST(post({ cookie: gabe, origin: "https://evil.example" }), params)).status, 403, "another site: refused");
+  const plain = new NextRequest("https://os.example/api/tools/tickets/1042/reply", { method: "POST", headers: { cookie: gabe, origin: "https://os.example", host: "os.example", "content-type": "text/plain" }, body: "{}" });
+  assert.equal((await POST(plain, params)).status, 415, "only JSON");
+  // Past every check, a teammate with the switch reaches the send (the fake database has no Tickets tables).
+  const ok = await POST(post({ cookie: gabe, origin: "https://os.example" }), params);
+  assert.ok(![401, 403, 415].includes(ok.status), String(ok.status));
+});

@@ -67,6 +67,8 @@ export interface TicketMessageView {
   receivedBy: string[];
   /** The viewer's own Gmail copy, for Open in Gmail; null when it isn't in their mailbox. */
   myGmailId: string | null;
+  /** Our reply sent from Tickets: who pressed Send (the From is the inbox it went from). Null: written in Gmail. */
+  sentBy: string | null;
 }
 
 export interface TicketEventView {
@@ -100,6 +102,8 @@ export interface MailboxView {
   backfilled: boolean;
   tickets: number;
   mine: boolean;
+  /** Replies from Tickets go from this inbox (Amy's, Eddy's): "on", or "reconnect" (connected before sending was allowed). Null: never sends. */
+  sends: "on" | "reconnect" | null;
 }
 
 export interface MailboxesPage {

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { ModalDialog } from "@/components/ui/modal-dialog";
 import type { MailboxesPage, MailboxView } from "@/lib/tools/tickets/types";
+import { canSendFrom } from "@/lib/tools/tickets/senders";
 
 import { ago, api, Avatar, Icon, useNow } from "./ui";
 
@@ -98,7 +99,10 @@ export function TicketsInboxesScreen() {
                       <b>{mine.email}</b>
                       <span><span className={`tk-state ${STATE[mine.state].cls}`}><i />{STATE[mine.state].label}</span> · {mine.tickets} {mine.tickets === 1 ? "ticket" : "tickets"}{mine.lastOkAt ? ` · checked ${ago(mine.lastOkAt, now)}` : ""}</span>
                       {mine.lastError ? <span style={{ color: "var(--ds-red)" }}>{mine.lastError}</span> : null}
+                      {mine.sends === "on" ? <span data-sends="on">Replies written in Tickets go from this inbox.</span> : null}
+                      {mine.sends === "reconnect" && mine.state !== "reconnect" ? <span data-sends="reconnect" style={{ color: "var(--ds-amber, #b45309)" }}>Reconnect once so the team&apos;s replies in Tickets can go from this inbox.</span> : null}
                     </div>
+                    {mine.sends === "reconnect" && mine.state !== "reconnect" ? <a className="tk-btn pri" href="/api/tools/tickets/google/start"><Icon name="reply" />Allow replies</a> : null}
                     {mine.state === "reconnect"
                       ? <a className="tk-btn pri" href="/api/tools/tickets/google/start"><Icon name="refresh" />Reconnect</a>
                       : <button type="button" className="tk-btn" onClick={() => void syncNow()}><Icon name="refresh" />Check now</button>}
@@ -109,7 +113,7 @@ export function TicketsInboxesScreen() {
                     <div className="tk-me-ico"><Icon name="mail" /></div>
                     <div className="tk-me-t">
                       <b>Not connected</b>
-                      <span>Google will ask you to allow read-only access to your Gmail.</span>
+                      <span>{canSendFrom(d.me) ? "Google will ask you to let Tickets read your Gmail and send the replies the team writes in Tickets." : "Google will ask you to allow read-only access to your Gmail."}</span>
                     </div>
                     <a className={`tk-btn pri${d.ready && d.googleConfigured ? "" : " disabled"}`} href={d.ready && d.googleConfigured ? "/api/tools/tickets/google/start" : undefined} aria-disabled={!(d.ready && d.googleConfigured)}
                       title={d.googleConfigured ? undefined : "Google sign-in for Tickets isn't set up yet"}><Icon name="plus" />Connect your Gmail</a>
@@ -122,12 +126,13 @@ export function TicketsInboxesScreen() {
               {d && d.mailboxes.length ? (
                 <div className="tk-table-wrap">
                   <table className="tk-table">
-                    <thead><tr><th>Inbox</th><th>State</th><th>Tickets</th><th>Last checked</th><th aria-label="Actions" /></tr></thead>
+                    <thead><tr><th>Inbox</th><th>State</th><th>Replies</th><th>Tickets</th><th>Last checked</th><th aria-label="Actions" /></tr></thead>
                     <tbody>
                       {d.mailboxes.map((m) => (
                         <tr key={m.email}>
                           <td><div className="tk-ibx"><Avatar email={m.email} name={m.name} /><div><div className="tk-ibx-n">{m.name ?? m.email}</div>{m.name && m.name !== m.email ? <div className="tk-ibx-e">{m.email}</div> : null}</div></div>{m.lastError && m.state !== "paused" ? <span className="err">{m.lastError}</span> : null}</td>
                           <td><span className={`tk-state ${STATE[m.state].cls}`}><i />{STATE[m.state].label}</span></td>
+                          <td data-sends-cell={m.email}>{m.sends === "on" ? <span className="tk-state ok"><i />From Tickets</span> : m.sends === "reconnect" ? <span className="tk-state warn" title={`${m.name ?? m.email} reconnects once to allow replies from Tickets`}><i />Reconnect needed</span> : <span className="tk-muted">Gmail only</span>}</td>
                           <td className="n">{m.tickets}</td>
                           <td className="n" title={m.lastOkAt ?? ""}>{m.lastOkAt ? ago(m.lastOkAt, now) : "–"}</td>
                           <td style={{ textAlign: "right" }}>{(d.admin || m.mine) && m.state !== "paused" ? <button type="button" className="tk-btn ghost danger" onClick={() => setConfirm(m)}>Disconnect</button> : null}</td>
@@ -146,8 +151,9 @@ export function TicketsInboxesScreen() {
               <div className="tk-privacy">
                 <div><Icon name="check" /><span><b>Kept and shared:</b> emails sent <b>from a client&apos;s address</b>, meaning an address on the client&apos;s record or its portal lists. The whole team with Tickets access can see them.</span></div>
                 <div><Icon name="check" /><span><b>Noted, never shown:</b> when you reply to a client in Gmail, Tickets records only that you replied and when, so the ticket moves to Waiting. Your reply&apos;s text is never stored.</span></div>
+                <div><Icon name="reply" /><span><b>Replies written in Tickets:</b> sent from Amy&apos;s or Eddy&apos;s inbox, whichever the client wrote to, in the same conversation. The reply and who sent it are kept on the ticket.</span></div>
                 <div className="no"><Icon name="x" /><span><b>Never kept:</b> everything else. That includes personal email, other senders, people the client copies in, and someone new at a client&apos;s company until they&apos;re added to the client&apos;s record.</span></div>
-                <div className="no"><Icon name="x" /><span><b>Never done:</b> sending, deleting, labelling or marking anything read in your Gmail. Access is read-only.</span></div>
+                <div className="no"><Icon name="x" /><span><b>Never done:</b> deleting, labelling or marking anything read in your Gmail. Nothing is ever sent except a reply a teammate writes and sends in Tickets, and only from Amy&apos;s or Eddy&apos;s inbox.</span></div>
                 <div><Icon name="check" /><span>Disconnect any time. Google forgets the OS&apos;s access, and tickets already shared stay.</span></div>
               </div>
             </section>

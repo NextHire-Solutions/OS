@@ -16,6 +16,8 @@ import type { MailboxesPage, MailboxView, Person, TicketDetail, TicketEventView,
 import { cleanQuery, ticketNumberIn, VIEWS, type View } from "./views";
 import { publicOrigin } from "@/lib/mcp/oauth";
 
+import { canSendFrom, scopeCanSend } from "./senders";
+
 /*
  * TICKETS — what the screens read and the actions people take. Every write is attributed to the signed-in person
  * and logged on the ticket's timeline.
@@ -58,7 +60,7 @@ async function mentionIds(me: string): Promise<string[]> {
   return [...new Set((data ?? []).map((r) => String((r as { ticket_id: string }).ticket_id)))];
 }
 
-async function teamPeople(): Promise<Person[]> {
+export async function teamPeople(): Promise<Person[]> {
   const members = await listTeamMembers().catch(() => []);
   return members.filter((m) => m.active !== false).map((m) => ({ email: m.email.toLowerCase(), name: m.name })).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -190,7 +192,7 @@ export async function countViews(me: string): Promise<{ counts: Partial<Record<V
 }
 
 /** "1042" or a uuid → the ticket row. */
-async function findTicket(idOrNumber: string): Promise<TicketRow | null> {
+export async function findTicket(idOrNumber: string): Promise<TicketRow | null> {
   const n = /^\d{1,12}$/.test(idOrNumber) ? Number(idOrNumber) : null;
   const q = osTable("os_tickets").select("*");
   const { data, error } = await (n !== null ? q.eq("number", n) : q.eq("id", idOrNumber)).maybeSingle();
@@ -232,6 +234,7 @@ export async function ticketDetail(idOrNumber: string, me: string, admin: boolea
       attachments: (m.attachments as TicketMessageView["attachments"]) ?? [],
       receivedBy: [...new Set(cs.map((c) => c.mailbox))].sort(),
       myGmailId: cs.find((c) => c.mailbox === meL)?.gmail_id ?? null,
+      sentBy: typeof m.sent_by === "string" && m.sent_by ? m.sent_by.toLowerCase() : null,
     };
   });
   const ev: TicketEventView[] = ((events.data ?? []) as Array<Record<string, unknown>>).map((e) => ({
@@ -344,7 +347,7 @@ export async function mailboxesPage(me: string, admin: boolean): Promise<Mailbox
   const base: MailboxesPage = {
     ready: true, googleConfigured: !missing.length, missing, callback: `${publicOrigin()}${CALLBACK_PATH}`, mailboxes: [], team: [], me: meL, admin,
   };
-  const [team, res] = await Promise.all([teamPeople(), osTable("os_ticket_mailboxes").select("email, name, connected_by, state, connected_at, last_ok_at, last_error, backfill_done_at")]);
+  const [team, res] = await Promise.all([teamPeople(), osTable("os_ticket_mailboxes").select("email, name, connected_by, state, connected_at, last_ok_at, last_error, backfill_done_at, scope")]);
   if (res.error) return MISSING.test(res.error.message) ? { ...base, ready: false, setup: SETUP_MIGRATION, team: team.map((p) => ({ ...p, connected: false })) } : Promise.reject(new Error(res.error.message));
   const rows = (res.data ?? []) as Array<Record<string, string | null>>;
   const counts = await Promise.all(rows.map((r) => osTable("os_ticket_copies").select("ticket_id", { count: "exact", head: true }).eq("mailbox", String(r.email))));
@@ -359,6 +362,7 @@ export async function mailboxesPage(me: string, admin: boolean): Promise<Mailbox
     backfilled: !!r.backfill_done_at,
     tickets: counts[i].count ?? 0,
     mine: String(r.email).toLowerCase() === meL || String(r.connected_by ?? "").toLowerCase() === meL,
+    sends: canSendFrom(r.email) ? (scopeCanSend(r.scope) ? "on" : "reconnect") : null,
   }));
   const connected = new Set(mailboxes.filter((m) => m.state !== "paused").map((m) => m.email));
   return { ...base, mailboxes, team: team.map((p) => ({ ...p, connected: connected.has(p.email) })) };

@@ -54,6 +54,8 @@ export interface MessageRow {
   in_reply_to: string | null;
   refs: string[];
   sent_at: string;
+  /** Who pressed Send in Tickets (migration 0055); absent/null for everything else. */
+  sent_by?: string | null;
 }
 
 export interface CopyRow { mailbox: string; gmail_id: string; gmail_thread_id: string; message_id: string; ticket_id: string; labels: string[] }
@@ -89,6 +91,8 @@ export interface TicketStore {
   getTicket(id: string): Promise<TicketRow | null>;
   /** Insert unless the Message-ID is stored already; either way, the stored row's id and ticket. */
   insertMessage(m: NewMessage): Promise<{ id: string; ticket_id: string; inserted: boolean }>;
+  /** Fill in a stored email (a reply from Tickets that the sync happened to store first, as a bare marker). */
+  updateMessage(id: string, patch: Partial<Omit<MessageRow, "id" | "ticket_id" | "rfc_id">>): Promise<void>;
   insertCopy(c: CopyRow): Promise<void>;
   /**
    * Apply a change. With `ifUpdatedAt`, only when nobody changed the ticket since it was read (returns false then,
