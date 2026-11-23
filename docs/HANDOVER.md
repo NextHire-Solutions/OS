@@ -655,7 +655,8 @@ one of 186 words).
 be unsafe: that editor also renumbers versions among the emails, the move that shifts a sequence. It needs its own
 fix (keep versions' numbers) and a live test.
 
-**23 Nov — on for every portal (the user: "make campaigns page live for all the clients").** Before the switch:
+**23 Nov — LIVE ON EVERY PORTAL (f1aa90a + OS_PORTAL_CAMPAIGNS=all, Railway cee63f2f; live checks: 8 real portals
+34/34 read-only as staff, Demo round trip 19/19).** (The user: "make campaigns page live for all the clients".) Before the switch:
 a read-only audit of all 63 real portals with the page's own code (391 campaigns, every one opens; none in two clients'
 portals; list and live status agree; 196 have A/B versions; 39 portals switched off show read-only); the local build
 with `OS_PORTAL_CAMPAIGNS=all` driven in Chrome on every portal (saves blocked in the browser, every server write
