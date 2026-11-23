@@ -656,7 +656,10 @@ be unsafe: that editor also renumbers versions among the emails, the move that s
 fix (keep versions' numbers) and a live test.
 
 **23 Nov — LIVE ON EVERY PORTAL (f1aa90a + OS_PORTAL_CAMPAIGNS=all, Railway cee63f2f; live checks: 8 real portals
-34/34 read-only as staff, Demo round trip 19/19).** (The user: "make campaigns page live for all the clients".) Before the switch:
+34/34 read-only as staff, Demo round trip 19/19).** (The user: "make campaigns page live for all the clients".)
+**Hotfix same day (2e53f6b, Railway 0c196c75):** the two Campaigns routes were missing from `proxy.ts`
+CLIENT_PORTAL_PATHS, so a signed-in CLIENT got 401 on Campaigns for ~40 minutes (16:33–17:16 UTC) while staff were fine;
+the go-live checks ran as staff. A test now requires every route under `src/app/api/crm-preview` to be on that list. Before the switch:
 a read-only audit of all 63 real portals with the page's own code (391 campaigns, every one opens; none in two clients'
 portals; list and live status agree; 196 have A/B versions; 39 portals switched off show read-only); the local build
 with `OS_PORTAL_CAMPAIGNS=all` driven in Chrome on every portal (saves blocked in the browser, every server write
