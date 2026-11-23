@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
   const campaign = request.nextUrl.searchParams.get("campaign");
   try {
     if (campaign) {
-      // EmailBison's own name only for our team (campaigns.ts NAMES): a client gets "Campaign N".
+      // EmailBison's own name only for our team (campaigns.ts NAMES): a client gets the campaign's market.
       const r = await readCampaign(client, campaign, undefined, { staff: viewer.kind === "staff" });
       if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status, headers: NO_STORE_HEADERS });
       console.info(JSON.stringify({ tag: "[crm-preview] data", kind: "campaign", who, client, campaign, emails: r.value.emails.length }));

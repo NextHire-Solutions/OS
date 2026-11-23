@@ -86,7 +86,7 @@ function CampaignRows({ list, onOpen, label }: { list: CampaignSummary[]; onOpen
                 {c.internalName ? <small className="cpv-cmp-internal" title="Only our team sees this name">{c.internalName}</small> : null}
               </span>
               <span className={k(`pill ${STATE[c.state].pill}`)}>{STATE[c.state].label}</span>
-              <span className="cpv-cmp-go">{c.state === "finished" ? "View emails" : "Edit emails"}<Icon name="next" size={14} /></span>
+              <span className="cpv-cmp-go">Edit emails<Icon name="next" size={14} /></span>
             </button>
           </li>
         ))}
@@ -98,8 +98,6 @@ function CampaignRows({ list, onOpen, label }: { list: CampaignSummary[]; onOpen
 function CampaignList({ clientId, onOpen, onChat }: { clientId: string; onOpen: (id: string) => void; onChat: () => void }) {
   const [state, setState] = useState<Load<CampaignSummary[]>>({ loading: true });
   const [tick, setTick] = useState(0);
-  // Finished campaigns (most of a long-standing client's) wait behind a button; the ones still sending lead.
-  const [showDone, setShowDone] = useState(false);
   useEffect(() => {
     const ctrl = new AbortController();
     setState({ loading: true });
@@ -115,7 +113,7 @@ function CampaignList({ clientId, onOpen, onChat }: { clientId: string; onOpen: 
       </header>
       <div className={k("content")}>
         <p className={k("lede")}>
-          The emails we send for you. Open a campaign to change its emails: what you save goes live straight away, for every agent who hasn&apos;t received that email&nbsp;yet.
+          The campaigns sending for you right now. Open one to change its emails: what you save goes live straight away, for every agent who hasn&apos;t received that email&nbsp;yet.
         </p>
         {state.loading ? (
           <div className={k("card")} aria-busy="true"><p className="cpv-cmp-state" role="status">Loading your campaigns…</p></div>
@@ -130,34 +128,14 @@ function CampaignList({ clientId, onOpen, onChat }: { clientId: string; onOpen: 
           <div className={k("card")}>
             <div className="cpv-cmp-empty">
               <span className="cpv-cmp-empty-i"><Icon name="campaigns" size={22} /></span>
-              <b>No campaigns yet</b>
-              <p>Your first campaign is drafted after you finish the Setup wizard. Once it&apos;s ready, it appears here and you can edit its emails.</p>
+              <b>No campaign is sending right now</b>
+              <p>Your campaigns appear here while they&apos;re sending, and you can edit their emails. A new campaign shows up as soon as it starts.</p>
               <button type="button" className={k("btn")} onClick={onChat}><Icon name="chat" size={15} />Ask support</button>
             </div>
           </div>
         ) : (
-          (() => {
-            const current = state.data.filter((c) => c.state !== "finished");
-            const done = state.data.filter((c) => c.state === "finished");
-            return (
-              <>
-                {current.length ? (
-                  <CampaignRows list={current} onOpen={onOpen} label="Your campaigns" />
-                ) : (
-                  <div className={k("card")}><p className="cpv-cmp-state">None of your campaigns is sending right now.</p></div>
-                )}
-                {done.length ? (
-                  <>
-                    <button type="button" className="cpv-cmp-more" aria-expanded={showDone} onClick={() => setShowDone((v) => !v)}>
-                      <Icon name={showDone ? "back" : "next"} size={14} />
-                      {showDone ? "Hide finished campaigns" : `Show ${plural(done.length, "finished campaign")}`}
-                    </button>
-                    {showDone ? <CampaignRows list={done} onOpen={onOpen} label="Finished campaigns" /> : null}
-                  </>
-                ) : null}
-              </>
-            );
-          })()
+          // Only campaigns that are sending reach the page (campaigns.ts SENDING ONLY, 24 Nov).
+          <CampaignRows list={state.data} onOpen={onOpen} label="Your campaigns" />
         )}
         <RulesNote />
       </div>

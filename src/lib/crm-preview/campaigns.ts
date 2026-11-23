@@ -32,6 +32,12 @@ import { marketContext } from "./market";
  * THE DEMO PORTAL has no EmailBison campaigns: its sample campaigns live in os_demo_campaigns (migration 0052), made
  * the first time its page opens. The same rules and plan apply; nothing goes to EmailBison or Slack.
  *
+ * SENDING ONLY (24 Nov, BrokerStaffer: "Only show Sending Campaigns on the Campaigns Tab. Clients shouldn't see paused or
+ * finished campaigns."). The page lists, opens and saves only the campaigns EmailBison is sending (onPortal): paused,
+ * draft and finished ones aren't shown, can't be opened by their id, and a save to one that stopped sending meanwhile is
+ * refused before anything is written. Our team sees the same list on a portal (the user's pick); everything else stays
+ * in the OS's Campaign Management.
+ *
  * ON FOR WHOM. The Demo Portal always; a real portal only while OS_PORTAL_CAMPAIGNS says so ("all", or portal ids,
  * comma separated) — until then it keeps the "Coming soon" page (the user, 17 Nov: "build in demo portal first").
  */
@@ -40,7 +46,7 @@ export type CampaignState = "sending" | "paused" | "draft" | "finished";
 
 export interface CampaignSummary {
   id: string;
-  /** What the page shows: "Campaign 1", "Campaign 2"… (campaignLabels) — never EmailBison's name for a client. */
+  /** What the page shows: the campaign's market, "Charleston, SC" (campaignLabels) — never EmailBison's name for a client. */
   name: string;
   state: CampaignState;
   /** EmailBison's own name: our team only (NameOpts.staff), never sent to a client. */
@@ -49,7 +55,7 @@ export interface CampaignSummary {
 
 export interface CampaignView extends CopyModel {
   id: string;
-  /** "Campaign N", as on the list (campaignLabels). */
+  /** Its market, as on the list (campaignLabels). */
   name: string;
   /** EmailBison's own name: our team only. */
   internalName?: string;
@@ -60,8 +66,8 @@ export interface CampaignView extends CopyModel {
   note: string | null;
 }
 
-/** `code`: what kind of refusal, for the page — "stale" (changed meanwhile: Reload), "finished", "locked". */
-export type CampaignResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string; code?: "stale" | "finished" | "locked"; problems?: CopyProblem[]; view?: CampaignView };
+/** `code`: what kind of refusal, for the page — "stale" (changed meanwhile: Reload), "not-sending" (stopped meanwhile), "locked". */
+export type CampaignResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string; code?: "stale" | "not-sending" | "locked"; problems?: CopyProblem[]; view?: CampaignView };
 
 const env = () => process.env;
 
@@ -84,36 +90,65 @@ export function stateOf(status: string | null | undefined): CampaignState | null
   return null;
 }
 
+/** Shown on the portal: only a campaign EmailBison is sending (SENDING ONLY at the top of this file). */
+export const onPortal = (status: string | null | undefined): boolean => stateOf(status) === "sending";
+
+const NOT_SENDING_READ = "This campaign isn't sending right now, so it isn't shown here.";
+const NOT_SENDING_SAVE = "This campaign has stopped sending, so its emails can't be changed here. Nothing was saved.";
+
 /*
- * NAMES (23 Nov, the user: "client should not see the campaign names in the campaign page in new portals"). EmailBison's
- * names carry our own codes ("+ ZF NS4 (PST)", "1 + Nicole + ARMLS"), so the page calls each campaign "Campaign 1",
- * "Campaign 2"… — numbered oldest first (EmailBison's ids only grow) among the campaigns the page shows. The real name is
- * added for our team only (NameOpts.staff), so a client's browser never receives it. Inside this file every view keeps
- * the real name (the history row and the #portal-update post use it); `named` swaps it at the edge.
+ * NAMES. EmailBison's names carry our own codes ("Jeff Cook Real Estate + Charleston, SC + ZF NS1 (EST)") and a client
+ * never sees them (23 Nov, the user). Each campaign is called by its MARKET, the part of the name after the client's
+ * (24 Nov, BrokerStaffer: "Campaigns shouldn't say 53, 54 etc."; the user picked the market name): "Charleston, SC".
+ * Never taken as a market: our copy codes (ZF NS1, "Jeff Copy", N-CI), the sender's name in older campaigns ("Nicole"),
+ * the time zone. A name with no readable market is "Your campaign". Two shown campaigns with the same market are
+ * "Charleston, SC" and "Charleston, SC (2)", oldest first (EmailBison's ids only grow). The real name is added for our
+ * team only (NameOpts.staff), so a client's browser never receives it. Inside this file every view keeps the real name
+ * (the history row and the #portal-update post use it); `named` swaps it at the edge.
  */
 export interface NameOpts {
   /** Our team (the page's staff viewer): also gets EmailBison's name as `internalName`. Default: a client. */
   staff?: boolean;
 }
 
-export function campaignLabels(list: ReadonlyArray<{ id: string; status: string }>): Map<string, string> {
+export const NO_MARKET = "Your campaign";
+const ZONE = /\s*\([A-Z]{2,5}\)/g;
+const NOT_A_MARKET = /\b(?:ZF|NS\d+|copy|prospects?|prewarmed)\b|^N-[A-Z]{2,3}$|^nicole$/i;
+
+/** The market in an EmailBison name ("Acme + Charleston, SC + ZF NS1 (EST)" → "Charleston, SC"), or null. */
+export function marketOf(name: string | null | undefined): string | null {
+  const parts = String(name ?? "")
+    .split(/\s*\+\s*/)
+    .map((x) => x.replace(ZONE, "").replace(/\s+prewarmed\b/i, "").replace(/\s+/g, " ").trim());
+  for (const part of parts.slice(1)) {
+    if (part.length < 3 || part.length > 60 || !/\p{L}/u.test(part) || NOT_A_MARKET.test(part)) continue;
+    return part;
+  }
+  return null;
+}
+
+export function campaignLabels(list: ReadonlyArray<{ id: string; name?: string | null; status: string }>): Map<string, string> {
   const num = (id: string) => (/^\d+$/.test(id) ? Number(id) : Number.POSITIVE_INFINITY);
-  const shown = list.filter((c) => stateOf(c.status)).map((c) => c.id);
-  shown.sort((a, b) => num(a) - num(b) || a.localeCompare(b));
-  return new Map(shown.map((id, i) => [id, `Campaign ${i + 1}`]));
+  const shown = list.filter((c) => onPortal(c.status)).sort((a, b) => num(a.id) - num(b.id) || a.id.localeCompare(b.id));
+  const seen = new Map<string, number>();
+  const out = new Map<string, string>();
+  for (const c of shown) {
+    const market = marketOf(c.name) ?? NO_MARKET;
+    const n = (seen.get(market.toLowerCase()) ?? 0) + 1;
+    seen.set(market.toLowerCase(), n);
+    out.set(c.id, n === 1 ? market : `${market} (${n})`);
+  }
+  return out;
 }
 
 /** The real name out, the label in (and the real one back for our team only). */
 function named<T extends { id: string; name: string }>(x: T, labels: ReadonlyMap<string, string>, opts: NameOpts): T {
   const { name, ...rest } = x;
-  return { ...rest, name: labels.get(x.id) ?? "Campaign", ...(opts.staff ? { internalName: name } : {}) } as unknown as T;
+  return { ...rest, name: labels.get(x.id) ?? NO_MARKET, ...(opts.staff ? { internalName: name } : {}) } as unknown as T;
 }
-
-const labelNumber = (name: string) => Number(/(\d+)$/.exec(name)?.[1] ?? 0);
 
 const FINISHED_NOTE = "This campaign has finished: there's nothing left to send, so its emails can't be changed.";
 
-const ORDER: Record<CampaignState, number> = { sending: 0, paused: 1, draft: 2, finished: 3 };
 
 /* --------------------------------------------------------------------------------------------- dependencies --- */
 
@@ -174,13 +209,11 @@ export async function listCampaigns(portalId: string, deps: CampaignDeps = realD
 }
 
 function summary(id: string, name: string, status: string): CampaignSummary[] {
-  const state = stateOf(status);
-  return state ? [{ id, name, state }] : [];
+  return onPortal(status) ? [{ id, name, state: "sending" }] : [];
 }
 
-/** Sending, paused, draft, finished; in each, by number — the finished ones newest first. */
-const sortSummaries = (list: CampaignSummary[]) =>
-  list.sort((a, b) => ORDER[a.state] - ORDER[b.state] || (a.state === "finished" ? labelNumber(b.name) - labelNumber(a.name) : labelNumber(a.name) - labelNumber(b.name)));
+/** By market, A to Z ("Charleston, SC (2)" after "Charleston, SC"). */
+const sortSummaries = (list: CampaignSummary[]) => list.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }) || Number(a.id) - Number(b.id));
 
 /** One campaign, read live, as the editor shows it. */
 export async function readCampaign(portalId: string, campaignId: string, deps: CampaignDeps = realDeps(), opts: NameOpts = {}): Promise<CampaignResult<CampaignView>> {
@@ -188,6 +221,7 @@ export async function readCampaign(portalId: string, campaignId: string, deps: C
     const rows = await deps.demoRows(portalId);
     const row = rows.find((r) => r.campaign_id === campaignId);
     if (!row || !stateOf(row.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
+    if (!onPortal(row.status)) return { ok: false, status: 404, error: NOT_SENDING_READ };
     return { ok: true, value: named(view(row.campaign_id, row.name, row.status, row.steps, sentMap(row.sent)), demoLabels(rows), opts) };
   }
   const mine = await ownCampaign(portalId, campaignId, deps);
@@ -195,10 +229,11 @@ export async function readCampaign(portalId: string, campaignId: string, deps: C
   const id = Number(campaignId);
   const [live, seq, sent] = await Promise.all([deps.liveCampaign(id), deps.liveSequence(id), deps.sentPerStep(id)]);
   if (!stateOf(live.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
+  if (!onPortal(live.status)) return { ok: false, status: 404, error: NOT_SENDING_READ };
   return { ok: true, value: named(view(campaignId, live.name || mine.value.name, live.status, seq.steps, sent), mine.value.labels, opts) };
 }
 
-const demoLabels = (rows: readonly DemoRow[]) => campaignLabels(rows.map((r) => ({ id: r.campaign_id, status: r.status })));
+const demoLabels = (rows: readonly DemoRow[]) => campaignLabels(rows.map((r) => ({ id: r.campaign_id, name: r.name, status: r.status })));
 
 function view(id: string, name: string, status: string, steps: LiveStep[], sent: Map<number, number>): CampaignView {
   const state = stateOf(status) as CampaignState;
@@ -208,11 +243,12 @@ function view(id: string, name: string, status: string, steps: LiveStep[], sent:
 
 const sentMap = (o: Record<string, number> | null | undefined) => new Map(Object.entries(o ?? {}).map(([k, v]) => [Number(k), Number(v) || 0]));
 
-async function ownCampaign(portalId: string, campaignId: string, deps: CampaignDeps): Promise<CampaignResult<{ name: string; status: string; labels: Map<string, string> }>> {
+async function ownCampaign(portalId: string, campaignId: string, deps: CampaignDeps, kind: "read" | "save" = "read"): Promise<CampaignResult<{ name: string; status: string; labels: Map<string, string> }>> {
   if (!/^\d{1,12}$/.test(campaignId)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
   const own = await deps.ownCampaigns(portalId);
   const hit = own?.find((c) => c.id === campaignId);
   if (!hit || !stateOf(hit.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
+  if (!onPortal(hit.status)) return kind === "save" ? { ok: false, status: 409, code: "not-sending", error: NOT_SENDING_SAVE } : { ok: false, status: 404, error: NOT_SENDING_READ };
   return { ok: true, value: { name: hit.name, status: hit.status, labels: campaignLabels(own ?? []) } };
 }
 
@@ -255,7 +291,7 @@ async function saveDemo(portalId: string, campaignId: string, input: SaveInput, 
   ref.labels = demoLabels(rows);
   const row = rows.find((r) => r.campaign_id === campaignId);
   if (!row || !stateOf(row.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
-  if (stateOf(row.status) === "finished") return { ok: false, status: 409, code: "finished", error: FINISHED_NOTE };
+  if (!onPortal(row.status)) return { ok: false, status: 409, code: "not-sending", error: NOT_SENDING_SAVE };
   const sent = sentMap(row.sent);
   const plan = planCopySave(row.steps, input, sent);
   if (!plan.ok) return { ok: false, status: plan.status, error: plan.error, ...("code" in plan ? { code: plan.code } : {}), ...("problems" in plan ? { problems: plan.problems } : {}) };
@@ -269,14 +305,14 @@ async function saveDemo(portalId: string, campaignId: string, input: SaveInput, 
 }
 
 async function saveReal(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps, ref: LabelRef = {}): Promise<CampaignResult<SaveOutcome>> {
-  const mine = await ownCampaign(portalId, campaignId, deps);
+  const mine = await ownCampaign(portalId, campaignId, deps, "save");
   if (!mine.ok) return mine;
   ref.labels = mine.value.labels;
   const id = Number(campaignId);
   const [live, seq, sent] = await Promise.all([deps.liveCampaign(id), deps.liveSequence(id), deps.sentPerStep(id)]);
   const state = stateOf(live.status);
   if (!state) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
-  if (state === "finished") return { ok: false, status: 409, code: "finished", error: FINISHED_NOTE };
+  if (state !== "sending") return { ok: false, status: 409, code: "not-sending", error: NOT_SENDING_SAVE };
   const name = live.name || mine.value.name;
   const plan = planCopySave(seq.steps, input, sent);
   if (!plan.ok) return { ok: false, status: plan.status, error: plan.error, ...("code" in plan ? { code: plan.code } : {}), ...("problems" in plan ? { problems: plan.problems } : {}) };

@@ -46,3 +46,15 @@ test("Help's 'Can I change my emails?' follows the switch too (the page passes i
   assert.match(shell, /<HelpScreen [^\n]*campaignsOn=\{campaignsOn\}/);
   assert.match(shell, /<Tour [^\n]*campaignsOn=\{campaignsOn\}/);
 });
+
+test("sending only (24 Nov): the chat, the tour and the page say what the page shows, and nothing offers finished campaigns", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { CAMPAIGNS_ON_TEXT } = await import("./tour-steps.ts");
+  assert.match(CAMPAIGNS_HELP, /sending for them right now/);
+  assert.match(CAMPAIGNS_HELP, /Paused and finished campaigns aren't shown/);
+  assert.doesNotMatch(CAMPAIGNS_HELP, /can only be read/);
+  assert.match(CAMPAIGNS_ON_TEXT, /campaigns sending for you/);
+  const page = readFileSync("src/components/crm-preview/campaigns.tsx", "utf8");
+  assert.doesNotMatch(page, /Show \$\{plural|finished campaigns"|showDone|View emails/);
+  assert.match(page, /No campaign is sending right now/);
+});

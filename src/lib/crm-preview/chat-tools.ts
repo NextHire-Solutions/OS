@@ -117,7 +117,7 @@ ${d.campaignsOn ? CAMPAIGNS_HELP : CAMPAIGNS_SOON}`.split("\n");
 }
 
 /** Where the Campaigns page is the real editor (23 Nov: on for every portal). Its rules: campaign-copy.ts COPY_RULES. */
-export const CAMPAIGNS_HELP = `- Campaigns: their recruiting campaigns, and the emails in each. To change a campaign's emails: 1. Open Campaigns 2. Click the campaign 3. Change an email's subject or text, the days between emails, or add a follow-up email 4. Click Save. What they save goes live straight away. Each email can be up to 125 words, with no links or pictures, and a campaign can have up to 10 emails. A finished campaign can only be read. For anything the page can't do, press "Ask for a person" under the message box.`;
+export const CAMPAIGNS_HELP = `- Campaigns: the recruiting campaigns sending for them right now, each named by its market, and the emails in each. Paused and finished campaigns aren't shown there. To change a campaign's emails: 1. Open Campaigns 2. Click the campaign 3. Change an email's subject or text, the days between emails, or add a follow-up email 4. Click Save. What they save goes live straight away. Each email can be up to 125 words, with no links or pictures, and a campaign can have up to 10 emails. For a campaign that isn't sending, or anything the page can't do, press "Ask for a person" under the message box.`;
 /** Before the page is switched on for a portal. */
 export const CAMPAIGNS_SOON = `- Changing their campaign emails: our team does it with them — press "Ask for a person" under the message box.
 - Campaigns: coming soon.`;

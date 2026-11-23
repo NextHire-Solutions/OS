@@ -50,7 +50,7 @@ export function cardPlace(hole: { top: number; left: number; width: number; heig
 }
 
 /** Where Campaigns is switched on (campaigns.ts campaignsOn), its step says what the page does now. */
-export const CAMPAIGNS_ON_TEXT = "Edit the emails in your campaigns: their wording, the days between them, and follow-ups. What you save goes live straight away.";
+export const CAMPAIGNS_ON_TEXT = "Edit the emails in the campaigns sending for you: their wording, the days between them, and follow-ups. What you save goes live straight away.";
 
 export function tourSteps(campaignsOn: boolean): readonly TourStep[] {
   return campaignsOn ? TOUR_STEPS.map((s) => (s.view === "campaigns" ? { ...s, text: CAMPAIGNS_ON_TEXT } : s)) : TOUR_STEPS;

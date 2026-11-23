@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { campaignsOn, DEMO_SAMPLES, listCampaigns, liveStepOf, readCampaign, saveCampaign, slackText, stateOf, type AuditRow, type CampaignDeps, type DemoRow } from "./campaigns";
+import { campaignLabels, campaignsOn, DEMO_SAMPLES, listCampaigns, liveStepOf, marketOf, onPortal, readCampaign, saveCampaign, slackText, stateOf, type AuditRow, type CampaignDeps, type DemoRow } from "./campaigns";
 import { copyModel, type LiveStep, type SaveInput, type StepWrite } from "./campaign-copy";
 import { DEMO_PORTAL_ID } from "./demo";
 
@@ -92,11 +92,13 @@ test("a step as EmailBison returns it", () => {
   assert.equal(liveStepOf({ id: 6, order: null, email_subject: "s", email_body: "", wait_in_days: 1, variant: false, variant_from_step_id: null, thread_reply: false }).order, null);
 });
 
-test("the list: the client's campaigns, archived left out, sending first", async () => {
-  const f = fake({ own: [{ id: "1", name: "B", status: "paused" }, { id: "2", name: "A", status: "active" }, { id: "3", name: "C", status: "archived" }, { id: "4", name: "D", status: "completed" }] });
+test("the list: only the client's campaigns that are sending (24 Nov); paused, draft, finished and archived left out", async () => {
+  const f = fake({ own: [{ id: "1", name: "B", status: "paused" }, { id: "2", name: "A", status: "active" }, { id: "3", name: "C", status: "archived" }, { id: "4", name: "D", status: "completed" }, { id: "5", name: "E", status: "draft" }, { id: "6", name: "F", status: "queued" }, { id: "7", name: "G", status: "stopped" }, { id: "8", name: "H", status: "launching" }] });
   const r = await listCampaigns(PORTAL, f.deps);
   assert.ok(r.ok);
-  assert.deepEqual(r.value.map((c) => [c.id, c.state]), [["2", "sending"], ["1", "paused"], ["4", "finished"]]);
+  assert.deepEqual(r.value.map((c) => [c.id, c.state]), [["2", "sending"], ["6", "sending"], ["8", "sending"]]);
+  for (const st of ["paused", "draft", "completed", "stopped", "archived", "", null]) assert.equal(onPortal(st), false, String(st));
+  for (const st of ["active", "queued", "launching", "ACTIVE"]) assert.equal(onPortal(st), true, st);
   assert.deepEqual(await listCampaigns(PORTAL, fake({ own: null }).deps), { ok: true, value: [] });
   const none = await listCampaigns(PORTAL, { ...fake().deps, ownCampaigns: async () => undefined });
   assert.equal(none.ok, false);
@@ -114,16 +116,26 @@ test("a campaign that isn't the client's is never read or saved", async () => {
   assert.deepEqual(f.calls, []);
 });
 
-test("reading: live emails, editable unless finished", async () => {
+test("reading: live emails of a sending campaign; a paused, draft or finished one can't be opened, even by its id", async () => {
   const r = await readCampaign(PORTAL, "77", fake().deps);
   assert.ok(r.ok);
   assert.equal(r.value.state, "sending");
   assert.equal(r.value.editable, true);
   assert.deepEqual(r.value.emails.map((e) => e.versions[0].text), ["Hi {FIRST_NAME},\n\nOpen to more deals?", "Following up.", "Last one."]);
-  const done = await readCampaign(PORTAL, "77", fake({ status: "completed", own: [{ id: "77", name: "x", status: "completed" }] }).deps);
-  assert.ok(done.ok);
-  assert.equal(done.value.editable, false);
-  assert.match(done.value.note!, /finished/);
+  for (const status of ["completed", "paused", "draft", "stopped"]) {
+    // Not sending on the list…
+    const f = fake({ status, own: [{ id: "77", name: "x", status }] });
+    const listed = await readCampaign(PORTAL, "77", f.deps);
+    assert.equal(listed.ok, false, status);
+    assert.equal((listed as { status: number }).status, 404);
+    assert.match((listed as { error: string }).error, /isn't sending right now/);
+    assert.equal("view" in listed, false, "nothing of it is sent back");
+    // …or only live (the list's copy not caught up yet).
+    const live = await readCampaign(PORTAL, "77", fake({ status, own: [{ id: "77", name: "x", status: "active" }] }).deps);
+    assert.equal(live.ok, false, status);
+    assert.match((live as { error: string }).error, /isn't sending right now/);
+    assert.deepEqual(f.calls, []);
+  }
 });
 
 test("a save goes to EmailBison, is read back, written to the history and posted to #portal-update", async () => {
@@ -167,10 +179,20 @@ test("rule breaks are refused with every problem, before anything is written", a
   assert.deepEqual([f.calls, f.audits, f.posts], [[], [], []]);
 });
 
-test("a finished campaign, and a stale page, are refused before anything is written", async () => {
+test("a campaign that stopped sending, and a stale page, are refused before anything is written", async () => {
   const f = fake({ status: "completed", own: [{ id: "77", name: "x", status: "active" }] });
   const r = await saveCampaign(PORTAL, "77", input(steps()), "x@y.com", f.deps);
   assert.equal((r as { status: number }).status, 409);
+  for (const [listed, live] of [["active", "paused"], ["paused", "paused"], ["paused", "active"], ["draft", "draft"]]) {
+    const p = fake({ status: live, own: [{ id: "77", name: "x", status: listed }] });
+    const i = input(steps());
+    i.emails[0].versions[0].text = "Changed.";
+    const out = await saveCampaign(PORTAL, "77", i, "x@y.com", p.deps);
+    assert.equal(out.ok, false, `${listed}/${live}`);
+    assert.equal((out as { code?: string }).code, "not-sending");
+    assert.match((out as { error: string }).error, /stopped sending.*Nothing was saved/);
+    assert.deepEqual([p.calls, p.audits, p.posts], [[], [], []]);
+  }
   const g = fake();
   const i = input(steps());
   i.version = "not-it";
@@ -252,7 +274,10 @@ test("the Demo Portal: its own samples, saved to its own rows, nothing to EmailB
   const f = fake();
   const list = await listCampaigns(DEMO_PORTAL_ID, f.deps);
   assert.ok(list.ok);
-  assert.deepEqual(list.value.map((c) => [c.id, c.state]), [["1", "sending"], ["2", "paused"]]);
+  assert.deepEqual(list.value.map((c) => [c.id, c.state]), [["1", "sending"]], "its paused sample isn't shown");
+  assert.equal((await readCampaign(DEMO_PORTAL_ID, "2", f.deps)).ok, false);
+  const paused = await saveCampaign(DEMO_PORTAL_ID, "2", { version: "x", emails: [] }, "x@y.com", f.deps);
+  assert.equal((paused as { code?: string }).code, "not-sending");
   const one = await readCampaign(DEMO_PORTAL_ID, "1", f.deps);
   assert.ok(one.ok);
   assert.equal(one.value.emails.length, 3);
@@ -301,9 +326,9 @@ test("a save that fails with nothing written keeps the client's edits (no campai
   assert.deepEqual(f.posts, []);
 });
 
-test("refusals carry a code: finished, stale", async () => {
+test("refusals carry a code: not-sending, stale", async () => {
   const f = fake({ status: "completed", own: [{ id: "77", name: "x", status: "active" }] });
-  assert.equal(((await saveCampaign(PORTAL, "77", input(steps()), "x@y.com", f.deps)) as { code?: string }).code, "finished");
+  assert.equal(((await saveCampaign(PORTAL, "77", input(steps()), "x@y.com", f.deps)) as { code?: string }).code, "not-sending");
   const g = fake();
   const i = input(steps());
   i.version = "old";
@@ -324,61 +349,100 @@ test("after a removal, a version's update is sent with the number it has now", a
   assert.equal(f.sent.find((w) => w.id === 20)!.order, 7);
 });
 
-/* ------------------------------------------------------------------------------------- names (23 Nov) --- */
-// The user: "client should not see the campaign names in the campaign page in new portals". A client gets "Campaign N"
-// (oldest first, among the campaigns shown) and never EmailBison's name, in the list, one campaign, or a save's answer;
-// our team also gets the real name as internalName. The history row and the #portal-update post keep the real name.
+/* ------------------------------------------------------------------------------- names (23 + 24 Nov) --- */
+// 23 Nov, the user: "client should not see the campaign names in the campaign page in new portals". 24 Nov, BrokerStaffer:
+// "Campaigns shouldn't say 53, 54 etc." and the user picked the market name. A client gets the campaign's market and never
+// EmailBison's name, in the list, one campaign, or a save's answer; our team also gets the real name as internalName.
+// The history row and the #portal-update post keep the real name.
 
 const OWN = [
   { id: "905", name: "Acme 2 + Austin + ZF NS4 (CST)", status: "completed" },
-  { id: "77", name: "Acme 1 + Austin + ZF NS1 (CST)", status: "completed" },
-  { id: "1203", name: "Acme + Austin + ZF NS4 (CST)", status: "active" },
+  { id: "77", name: "Acme 1 + Austin + ZF NS1 (CST)", status: "active" },
+  { id: "1203", name: "Acme + Round Rock, TX + Acme Copy (CST)", status: "active" },
+  { id: "1300", name: "Acme + Austin + ZF NS4 (CST)", status: "queued" },
   { id: "88", name: "Acme old + Nicole + ARMLS", status: "archived" },
+  { id: "1400", name: "Acme + Waco + ZF NS1 (CST)", status: "paused" },
 ];
 const leaks = (v: unknown, names: string[]) => names.filter((n) => JSON.stringify(v).includes(n));
 
-test("names: a client's list says Campaign 1, 2, 3 (oldest first, archived not counted) and carries no EmailBison name", async () => {
+test("names: the market out of EmailBison's names, as they are today (23 Nov audit of every portal)", () => {
+  const cases: Array<[string, string | null]> = [
+    ["Jeff Cook Real Estate + Charleston, SC + ZF NS1 (EST)", "Charleston, SC"],
+    ["Jeff Cook Real Estate + Charlotte–Triad, NC + Jeff Copy (EST)", "Charlotte–Triad, NC"],
+    ["Jeff Cook Real Estate 7 + Greenville, SC + ZF NS1 (EST)", "Greenville, SC"],
+    ["Douglas Elliman New York + New York OneKey (EST)", "New York OneKey"],
+    ["Momentum Realty + San Gabriel Valley & Inland Empire + ZF NS4 (PST)", "San Gabriel Valley & Inland Empire"],
+    ["C21 Results - Elite Team + Atlanta + ZF NS4 (EST) PREWARMED", "Atlanta"],
+    ["Cain Realty Group + Austin + Custom Copy + N-CI (CST)", "Austin"],
+    ["Douglas Elliman Los Angeles + Nicole + Beverly Hills + Elliman Copy (PST)", "Beverly Hills"],
+    ["Kelly + Co + Nicole + Baltimore (PST)", "Baltimore"],
+    ["Douglas Elliman NYC 1 + Nicole +REBNY", "REBNY"],
+    ["Properties & Estates REMAX + Boston + ZF NS4 (EST)", "Boston"],
+    ["SERHANT. NJ + Monmouth County + SERHANT. Copy (EST)", "Monmouth County"],
+    ["Test Real Estate + Los Angeles + Prospects", "Los Angeles"],
+    ["Copy of Wagner Real Estate Group 2", null],
+    ["The Keyes Company - Beaches East", null],
+    ["Acme + ZF NS1 (EST)", null],
+    ["Acme + 2 + (EST)", null],
+    ["", null],
+  ];
+  for (const [name, market] of cases) assert.equal(marketOf(name), market, name);
+});
+
+test("names: the same market twice is told apart, oldest first; no market reads 'Your campaign'", () => {
+  const labels = campaignLabels([
+    { id: "1378", name: "Jeff Cook Real Estate 8 + Charleston, SC + ZF NS1 (EST)", status: "active" },
+    { id: "1377", name: "Jeff Cook Real Estate + Charleston, SC + ZF NS1 (EST)", status: "active" },
+    { id: "1376", name: "Jeff Cook Real Estate + Myrtle Beach, SC + ZF NS1 (EST)", status: "paused" },
+    { id: "12", name: "Copy of Acme 2", status: "active" },
+    { id: "13", name: "Acme", status: "active" },
+  ]);
+  assert.deepEqual([...labels.entries()].sort(), [["12", "Your campaign"], ["13", "Your campaign (2)"], ["1377", "Charleston, SC"], ["1378", "Charleston, SC (2)"]].sort());
+  assert.equal(labels.has("1376"), false, "a paused campaign gets no label: it isn't shown");
+});
+
+test("names: a client's list says each market (A to Z), only sending ones, and carries no EmailBison name", async () => {
   const f = fake({ own: OWN });
   const r = await listCampaigns(PORTAL, f.deps);
   assert.ok(r.ok);
-  assert.deepEqual(r.value.map((c) => [c.id, c.name, c.state]), [["1203", "Campaign 3", "sending"], ["905", "Campaign 2", "finished"], ["77", "Campaign 1", "finished"]], "sending first; finished newest first");
+  assert.deepEqual(r.value.map((c) => [c.id, c.name, c.state]), [["77", "Austin", "sending"], ["1300", "Austin (2)", "sending"], ["1203", "Round Rock, TX", "sending"]]);
   assert.deepEqual(leaks(r.value, OWN.map((o) => o.name)), []);
   assert.ok(r.value.every((c) => !("internalName" in c)));
-  assert.doesNotMatch(JSON.stringify(r.value), /ZF|NS\d|Nicole|Austin/);
+  assert.doesNotMatch(JSON.stringify(r.value), /ZF|NS\d|Nicole|Copy|Acme|Waco|\(CST\)|Campaign \d/);
 });
 
-test("names: our team's list has the label and EmailBison's name", async () => {
+test("names: our team's list is the same list, with EmailBison's name added", async () => {
   const r = await listCampaigns(PORTAL, fake({ own: OWN }).deps, { staff: true });
   assert.ok(r.ok);
-  assert.deepEqual(r.value.map((c) => [c.name, c.internalName]), [["Campaign 3", "Acme + Austin + ZF NS4 (CST)"], ["Campaign 2", "Acme 2 + Austin + ZF NS4 (CST)"], ["Campaign 1", "Acme 1 + Austin + ZF NS1 (CST)"]]);
+  assert.deepEqual(r.value.map((c) => [c.name, c.internalName]), [["Austin", "Acme 1 + Austin + ZF NS1 (CST)"], ["Austin (2)", "Acme + Austin + ZF NS4 (CST)"], ["Round Rock, TX", "Acme + Round Rock, TX + Acme Copy (CST)"]]);
 });
 
-test("names: one campaign, opened by a client, is 'Campaign N' with no EmailBison name; by our team, both", async () => {
+test("names: one campaign, opened by a client, is its market with no EmailBison name; by our team, both", async () => {
   const f = fake();
   const c = await readCampaign(PORTAL, "77", f.deps);
   assert.ok(c.ok);
-  assert.equal(c.value.name, "Campaign 1");
+  assert.equal(c.value.name, "Austin");
   assert.ok(!("internalName" in c.value));
   assert.deepEqual(leaks(c.value, ["Acme + Austin + Prospects (CST)"]), []);
   const s = await readCampaign(PORTAL, "77", f.deps, { staff: true });
   assert.ok(s.ok);
-  assert.equal(s.value.name, "Campaign 1");
+  assert.equal(s.value.name, "Austin");
   assert.equal(s.value.internalName, "Acme + Austin + Prospects (CST)");
 });
 
-test("names: a client's save answers with 'Campaign N'; the history and #portal-update keep the real name", async () => {
+test("names: a client's save answers with the market; the history and #portal-update keep the real name", async () => {
   const f = fake();
   const i = input(f.live());
   i.emails[2].versions[0].text = "Last one, {FIRST_NAME}.";
   const r = await saveCampaign(PORTAL, "77", i, "client@acme.com", f.deps);
   assert.ok(r.ok, JSON.stringify(r));
-  assert.equal(r.value.view.name, "Campaign 1");
+  assert.equal(r.value.view.name, "Austin");
   assert.deepEqual(leaks(r.value, ["Acme + Austin + Prospects (CST)"]), []);
   assert.equal(f.audits[0].campaignName, "Acme + Austin + Prospects (CST)", "the campaign's history is ours");
   assert.match(f.posts[0], /Acme \+ Austin \+ Prospects \(CST\)/, "the Slack post is ours");
 });
 
-test("names: a save that stops part way sends back the campaign as it is, still as 'Campaign N'", async () => {
+test("names: a save that stops part way sends back the campaign as it is, still by its market", async () => {
   const f = fake({ failOn: "add" });
   const i = input(f.live());
   i.emails[0].versions[0].text = "Hi {FIRST_NAME}, changed.";
@@ -386,25 +450,26 @@ test("names: a save that stops part way sends back the campaign as it is, still 
   const r = await saveCampaign(PORTAL, "77", i, "client@acme.com", f.deps);
   assert.ok(!r.ok);
   assert.ok(r.view, "part landed, so the page gets the campaign as it is now");
-  assert.equal(r.view!.name, "Campaign 1");
+  assert.equal(r.view!.name, "Austin");
   assert.deepEqual(leaks(r, ["Acme + Austin + Prospects (CST)"]), []);
   const staff = await saveCampaign(PORTAL, "77", input(fake({ failOn: "add" }).live()), "staff@os", fake({ failOn: "add" }).deps, { staff: true });
   assert.ok(staff.ok, "nothing to change is a plain ok");
   assert.equal(staff.value.view.internalName, "Acme + Austin + Prospects (CST)");
 });
 
-test("names: the Demo Portal too — Campaign 1 and 2 for a client, the sample names only for our team", async () => {
+test("names: the Demo Portal too — its sending sample by market for a client, the sample name only for our team", async () => {
   const f = fake();
   const r = await listCampaigns(DEMO_PORTAL_ID, f.deps);
   assert.ok(r.ok);
-  assert.deepEqual(r.value.map((c) => c.name).sort(), ["Campaign 1", "Campaign 2"]);
+  assert.deepEqual(r.value.map((c) => c.name), ["Atlanta"]);
   assert.deepEqual(leaks(r.value, DEMO_SAMPLES.map((s) => s.name)), []);
   const one = await readCampaign(DEMO_PORTAL_ID, DEMO_SAMPLES[0].campaign_id, f.deps);
   assert.ok(one.ok);
+  assert.equal(one.value.name, "Atlanta");
   assert.deepEqual(leaks(one.value, DEMO_SAMPLES.map((s) => s.name)), []);
   const s = await listCampaigns(DEMO_PORTAL_ID, f.deps, { staff: true });
   assert.ok(s.ok);
-  assert.deepEqual(s.value.map((c) => c.internalName).sort(), DEMO_SAMPLES.map((x) => x.name).sort());
+  assert.deepEqual(s.value.map((c) => c.internalName), [DEMO_SAMPLES[0].name]);
 });
 
 test("names: the routes ask for EmailBison's name only for staff; the page and the chat never send a lead's campaign name", async () => {

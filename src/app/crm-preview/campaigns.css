@@ -34,15 +34,6 @@
 .cpv-shell .cpv-cmp-head p.cpv-cmp-internal { margin: 4px 0 0; display: block; font-size: 12px; color: #9aa0a8; overflow-wrap: anywhere; }
 .cpv-shell .cpv-cmp-go { display: inline-flex; align-items: center; gap: 4px; color: #2f55a8; font-weight: 500; font-size: 12.5px; white-space: nowrap; }
 
-.cpv-shell button.cpv-cmp-more {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; margin: 0; border: 0; border-radius: 7px;
-  background: transparent; font: inherit; font-size: 13px; font-weight: 500; color: #2f55a8; cursor: pointer;
-}
-.cpv-shell button.cpv-cmp-more:hover { background: #eef2fa; }
-.cpv-shell button.cpv-cmp-more:focus-visible { outline: 2px solid #3e6bd1; outline-offset: 2px; }
-.cpv-shell button.cpv-cmp-more[aria-expanded="true"] svg { transform: rotate(90deg); }
-.cpv-shell button.cpv-cmp-more[aria-expanded="false"] svg { transform: rotate(90deg); }
-
 /* --------------------------------------------------------------------------------------------------- editor --- */
 .cpv-shell button.cpv-cmp-crumb {
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; margin: 0 0 0 -6px; border: 0; border-radius: 7px;
