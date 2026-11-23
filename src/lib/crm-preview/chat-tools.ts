@@ -273,7 +273,7 @@ export async function runTool(name: string, rawArgs: string, d: PortalChatData, 
         found: hits.length,
         agents: hits.map((e) => ({
           ...row(d, e),
-          campaign: e.campaign_name,
+          // No campaign name (23 Nov): EmailBison's names carry our own codes, and clients don't see them.
           details: panelFields(e).slice(0, 12).map((f) => ({ label: f.label, value: clip(String(f.value ?? ""), 200) })),
           notes: (e.notes_log ?? []).slice(0, 5).map((n) => ({ date: day(n.created_at), text: clip(n.body, 400) })),
         })),

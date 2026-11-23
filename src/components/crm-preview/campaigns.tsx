@@ -82,6 +82,8 @@ function CampaignRows({ list, onOpen, label }: { list: CampaignSummary[]; onOpen
               <span className="cpv-cmp-name">
                 <b>{c.name}</b>
                 <small>{STATE[c.state].hint}</small>
+                {/* EmailBison's own name: sent for our team only (campaigns.ts NAMES), never to a client. */}
+                {c.internalName ? <small className="cpv-cmp-internal" title="Only our team sees this name">{c.internalName}</small> : null}
               </span>
               <span className={k(`pill ${STATE[c.state].pill}`)}>{STATE[c.state].label}</span>
               <span className="cpv-cmp-go">{c.state === "finished" ? "View emails" : "Edit emails"}<Icon name="next" size={14} /></span>
@@ -445,6 +447,7 @@ function CampaignEditor({ clientId, campaignId, onBack, onGuard }: { clientId: s
             <div className="cpv-cmp-head">
               <div>
                 <h2 ref={headingRef} tabIndex={-1}>{view.name}</h2>
+                {view.internalName ? <p className="cpv-cmp-internal" title="Only our team sees this name">In EmailBison: {view.internalName} · only our team sees this</p> : null}
                 <p>
                   <span className={k(`pill ${STATE[view.state].pill}`)}>{STATE[view.state].label}</span>
                   <span>{plural(draft.length, "email")}</span>

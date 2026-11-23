@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
   try {
     const lock = await campaignSaveLock(portal);
     if (lock) return NextResponse.json({ error: lock, code: "locked" }, { status: 409, headers: NO_STORE_HEADERS });
-    const r = await saveCampaign(portal, parsed.data.campaign, parsed.data.save, who);
+    const r = await saveCampaign(portal, parsed.data.campaign, parsed.data.save, who, undefined, { staff: viewer.kind === "staff" });
     console.info(JSON.stringify({ tag: "[crm-preview] save", kind: "campaign", who, role, client: portal, demo: isDemoPortal(portal), campaign: parsed.data.campaign, ok: r.ok, changes: r.ok ? r.value.summary.length : 0 }));
     if (!r.ok) return NextResponse.json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.problems ? { problems: r.problems } : {}), ...(r.view ? { campaign: r.view } : {}) }, { status: r.status, headers: NO_STORE_HEADERS });
     return NextResponse.json({ ok: true, campaign: r.value.view, summary: r.value.summary }, { headers: NO_STORE_HEADERS });

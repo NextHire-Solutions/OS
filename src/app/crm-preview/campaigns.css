@@ -29,6 +29,9 @@
 .cpv-shell .cpv-cmp-name { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .cpv-shell .cpv-cmp-name b { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cpv-shell .cpv-cmp-name small { font-size: 12px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* EmailBison's name, for our team only (a client never receives it). */
+.cpv-shell .cpv-cmp-name small.cpv-cmp-internal { color: #9aa0a8; font-size: 11.5px; }
+.cpv-shell .cpv-cmp-head p.cpv-cmp-internal { margin: 4px 0 0; display: block; font-size: 12px; color: #9aa0a8; overflow-wrap: anywhere; }
 .cpv-shell .cpv-cmp-go { display: inline-flex; align-items: center; gap: 4px; color: #2f55a8; font-weight: 500; font-size: 12.5px; white-space: nowrap; }
 
 .cpv-shell button.cpv-cmp-more {

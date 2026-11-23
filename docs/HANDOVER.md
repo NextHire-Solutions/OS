@@ -661,7 +661,15 @@ portals; list and live status agree; 196 have A/B versions; 39 portals switched 
 with `OS_PORTAL_CAMPAIGNS=all` driven in Chrome on every portal (saves blocked in the browser, every server write
 refused); the live Demo round trip (rules, confirm, save, reload, restore). Fixed with it: the portal chat's guide and
 Help's "Can I change my emails?" said to ask a person — both now follow the switch, as the tour already did
-(chat-tools.ts CAMPAIGNS_HELP, static-pages.tsx faqFor). Campaign names are still shown as named in EmailBison.
+(chat-tools.ts CAMPAIGNS_HELP, static-pages.tsx faqFor).
+
+**Names hidden from clients (23 Nov, the user: "client should not see the campaign names in the campaign page in new
+portals").** A client gets "Campaign 1", "Campaign 2"… (oldest first by EmailBison id, among the campaigns shown;
+finished ones listed newest first) and never EmailBison's name — not on screen and not in what the browser receives
+(campaigns.ts `named` at the edge of list / read / save; the routes ask for the real name only for `viewer.kind ===
+"staff"`, shown to our team in small grey "only our team sees this" text). The history row and the #portal-update post
+keep the real name. Also: the page no longer sends a lead's `campaign_name` to the browser (nothing showed it), and the
+portal chat's pipeline_agent tool no longer returns it. Tests pin all of it (a deliberate leak failed 6 of them).
 
 **To ship (done 23 Nov):** run 0052 → deploy → check the Demo Portal's Campaigns tab → later set `OS_PORTAL_CAMPAIGNS` (start with
 BrokerStaffer's own portal). Before real clients: Eddy to approve the Help answer "Can I change my emails?" (still

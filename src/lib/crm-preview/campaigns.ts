@@ -40,13 +40,19 @@ export type CampaignState = "sending" | "paused" | "draft" | "finished";
 
 export interface CampaignSummary {
   id: string;
+  /** What the page shows: "Campaign 1", "Campaign 2"… (campaignLabels) — never EmailBison's name for a client. */
   name: string;
   state: CampaignState;
+  /** EmailBison's own name: our team only (NameOpts.staff), never sent to a client. */
+  internalName?: string;
 }
 
 export interface CampaignView extends CopyModel {
   id: string;
+  /** "Campaign N", as on the list (campaignLabels). */
   name: string;
+  /** EmailBison's own name: our team only. */
+  internalName?: string;
   state: CampaignState;
   /** Its emails can be changed (it isn't finished). Whether this viewer may save is the page's to say. */
   editable: boolean;
@@ -77,6 +83,33 @@ export function stateOf(status: string | null | undefined): CampaignState | null
   if (s === "completed" || s === "stopped") return "finished";
   return null;
 }
+
+/*
+ * NAMES (23 Nov, the user: "client should not see the campaign names in the campaign page in new portals"). EmailBison's
+ * names carry our own codes ("+ ZF NS4 (PST)", "1 + Nicole + ARMLS"), so the page calls each campaign "Campaign 1",
+ * "Campaign 2"… — numbered oldest first (EmailBison's ids only grow) among the campaigns the page shows. The real name is
+ * added for our team only (NameOpts.staff), so a client's browser never receives it. Inside this file every view keeps
+ * the real name (the history row and the #portal-update post use it); `named` swaps it at the edge.
+ */
+export interface NameOpts {
+  /** Our team (the page's staff viewer): also gets EmailBison's name as `internalName`. Default: a client. */
+  staff?: boolean;
+}
+
+export function campaignLabels(list: ReadonlyArray<{ id: string; status: string }>): Map<string, string> {
+  const num = (id: string) => (/^\d+$/.test(id) ? Number(id) : Number.POSITIVE_INFINITY);
+  const shown = list.filter((c) => stateOf(c.status)).map((c) => c.id);
+  shown.sort((a, b) => num(a) - num(b) || a.localeCompare(b));
+  return new Map(shown.map((id, i) => [id, `Campaign ${i + 1}`]));
+}
+
+/** The real name out, the label in (and the real one back for our team only). */
+function named<T extends { id: string; name: string }>(x: T, labels: ReadonlyMap<string, string>, opts: NameOpts): T {
+  const { name, ...rest } = x;
+  return { ...rest, name: labels.get(x.id) ?? "Campaign", ...(opts.staff ? { internalName: name } : {}) } as unknown as T;
+}
+
+const labelNumber = (name: string) => Number(/(\d+)$/.exec(name)?.[1] ?? 0);
 
 const FINISHED_NOTE = "This campaign has finished: there's nothing left to send, so its emails can't be changed.";
 
@@ -126,15 +159,18 @@ export interface AuditRow {
 
 /* ----------------------------------------------------------------------------------------------------- reads --- */
 
-export async function listCampaigns(portalId: string, deps: CampaignDeps = realDeps()): Promise<CampaignResult<CampaignSummary[]>> {
+export async function listCampaigns(portalId: string, deps: CampaignDeps = realDeps(), opts: NameOpts = {}): Promise<CampaignResult<CampaignSummary[]>> {
+  let list: Array<{ id: string; name: string; status: string }>;
   if (isDemoPortal(portalId)) {
-    const rows = await deps.demoRows(portalId);
-    return { ok: true, value: sortSummaries(rows.flatMap((r) => summary(r.campaign_id, r.name, r.status))) };
+    list = (await deps.demoRows(portalId)).map((r) => ({ id: r.campaign_id, name: r.name, status: r.status }));
+  } else {
+    const own = await deps.ownCampaigns(portalId);
+    if (own === undefined) return { ok: false, status: 404, error: "No such client portal." };
+    if (own === null) return { ok: true, value: [] };
+    list = own;
   }
-  const own = await deps.ownCampaigns(portalId);
-  if (own === undefined) return { ok: false, status: 404, error: "No such client portal." };
-  if (own === null) return { ok: true, value: [] };
-  return { ok: true, value: sortSummaries(own.flatMap((c) => summary(c.id, c.name, c.status))) };
+  const labels = campaignLabels(list);
+  return { ok: true, value: sortSummaries(list.flatMap((c) => summary(c.id, c.name, c.status)).map((c) => named(c, labels, opts))) };
 }
 
 function summary(id: string, name: string, status: string): CampaignSummary[] {
@@ -142,22 +178,27 @@ function summary(id: string, name: string, status: string): CampaignSummary[] {
   return state ? [{ id, name, state }] : [];
 }
 
-const sortSummaries = (list: CampaignSummary[]) => list.sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name));
+/** Sending, paused, draft, finished; in each, by number — the finished ones newest first. */
+const sortSummaries = (list: CampaignSummary[]) =>
+  list.sort((a, b) => ORDER[a.state] - ORDER[b.state] || (a.state === "finished" ? labelNumber(b.name) - labelNumber(a.name) : labelNumber(a.name) - labelNumber(b.name)));
 
 /** One campaign, read live, as the editor shows it. */
-export async function readCampaign(portalId: string, campaignId: string, deps: CampaignDeps = realDeps()): Promise<CampaignResult<CampaignView>> {
+export async function readCampaign(portalId: string, campaignId: string, deps: CampaignDeps = realDeps(), opts: NameOpts = {}): Promise<CampaignResult<CampaignView>> {
   if (isDemoPortal(portalId)) {
-    const row = (await deps.demoRows(portalId)).find((r) => r.campaign_id === campaignId);
+    const rows = await deps.demoRows(portalId);
+    const row = rows.find((r) => r.campaign_id === campaignId);
     if (!row || !stateOf(row.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
-    return { ok: true, value: view(row.campaign_id, row.name, row.status, row.steps, sentMap(row.sent)) };
+    return { ok: true, value: named(view(row.campaign_id, row.name, row.status, row.steps, sentMap(row.sent)), demoLabels(rows), opts) };
   }
   const mine = await ownCampaign(portalId, campaignId, deps);
   if (!mine.ok) return mine;
   const id = Number(campaignId);
   const [live, seq, sent] = await Promise.all([deps.liveCampaign(id), deps.liveSequence(id), deps.sentPerStep(id)]);
   if (!stateOf(live.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
-  return { ok: true, value: view(campaignId, live.name || mine.value.name, live.status, seq.steps, sent) };
+  return { ok: true, value: named(view(campaignId, live.name || mine.value.name, live.status, seq.steps, sent), mine.value.labels, opts) };
 }
+
+const demoLabels = (rows: readonly DemoRow[]) => campaignLabels(rows.map((r) => ({ id: r.campaign_id, status: r.status })));
 
 function view(id: string, name: string, status: string, steps: LiveStep[], sent: Map<number, number>): CampaignView {
   const state = stateOf(status) as CampaignState;
@@ -167,12 +208,12 @@ function view(id: string, name: string, status: string, steps: LiveStep[], sent:
 
 const sentMap = (o: Record<string, number> | null | undefined) => new Map(Object.entries(o ?? {}).map(([k, v]) => [Number(k), Number(v) || 0]));
 
-async function ownCampaign(portalId: string, campaignId: string, deps: CampaignDeps): Promise<CampaignResult<{ name: string; status: string }>> {
+async function ownCampaign(portalId: string, campaignId: string, deps: CampaignDeps): Promise<CampaignResult<{ name: string; status: string; labels: Map<string, string> }>> {
   if (!/^\d{1,12}$/.test(campaignId)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
   const own = await deps.ownCampaigns(portalId);
   const hit = own?.find((c) => c.id === campaignId);
   if (!hit || !stateOf(hit.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
-  return { ok: true, value: hit };
+  return { ok: true, value: { name: hit.name, status: hit.status, labels: campaignLabels(own ?? []) } };
 }
 
 /* ----------------------------------------------------------------------------------------------------- saves --- */
@@ -198,12 +239,21 @@ export interface SaveOutcome {
   summary: string[];
 }
 
-export async function saveCampaign(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps = realDeps()): Promise<CampaignResult<SaveOutcome>> {
-  return oneAtATime(`${portalId}:${campaignId}`, () => (isDemoPortal(portalId) ? saveDemo(portalId, campaignId, input, who, deps) : saveReal(portalId, campaignId, input, who, deps)));
+export async function saveCampaign(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps = realDeps(), opts: NameOpts = {}): Promise<CampaignResult<SaveOutcome>> {
+  // The labels as the save found the campaigns; every view the page gets back is named with them (`named`).
+  const ref: LabelRef = {};
+  const r = await oneAtATime(`${portalId}:${campaignId}`, () => (isDemoPortal(portalId) ? saveDemo(portalId, campaignId, input, who, deps, ref) : saveReal(portalId, campaignId, input, who, deps, ref)));
+  const labels = ref.labels ?? new Map<string, string>();
+  if (r.ok) return { ok: true, value: { ...r.value, view: named(r.value.view, labels, opts) } };
+  return r.view ? { ...r, view: named(r.view, labels, opts) } : r;
 }
 
-async function saveDemo(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps): Promise<CampaignResult<SaveOutcome>> {
-  const row = (await deps.demoRows(portalId)).find((r) => r.campaign_id === campaignId);
+type LabelRef = { labels?: Map<string, string> };
+
+async function saveDemo(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps, ref: LabelRef = {}): Promise<CampaignResult<SaveOutcome>> {
+  const rows = await deps.demoRows(portalId);
+  ref.labels = demoLabels(rows);
+  const row = rows.find((r) => r.campaign_id === campaignId);
   if (!row || !stateOf(row.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
   if (stateOf(row.status) === "finished") return { ok: false, status: 409, code: "finished", error: FINISHED_NOTE };
   const sent = sentMap(row.sent);
@@ -218,9 +268,10 @@ async function saveDemo(portalId: string, campaignId: string, input: SaveInput, 
   return { ok: true, value: { view: view(row.campaign_id, row.name, row.status, steps, sent), summary: plan.summary } };
 }
 
-async function saveReal(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps): Promise<CampaignResult<SaveOutcome>> {
+async function saveReal(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps, ref: LabelRef = {}): Promise<CampaignResult<SaveOutcome>> {
   const mine = await ownCampaign(portalId, campaignId, deps);
   if (!mine.ok) return mine;
+  ref.labels = mine.value.labels;
   const id = Number(campaignId);
   const [live, seq, sent] = await Promise.all([deps.liveCampaign(id), deps.liveSequence(id), deps.sentPerStep(id)]);
   const state = stateOf(live.status);

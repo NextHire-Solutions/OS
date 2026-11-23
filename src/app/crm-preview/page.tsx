@@ -257,7 +257,9 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       audience={audience}
       manageBilling={viewer.kind === "client" || canSeeBillingTab(viewer.email)}
       furthest={furthestStages(history, tagged)}
-      entries={entries}
+      // A lead's EmailBison campaign name never reaches the browser: nothing here shows it, and it carries our own codes
+      // (23 Nov, the user: clients should not see campaign names). The pipeline still has it server-side.
+      entries={entries.map((e) => ({ ...e, campaign_name: null }))}
       agents={agents}
       dnc={dnc}
       team={team}

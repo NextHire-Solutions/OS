@@ -323,3 +323,99 @@ test("after a removal, a version's update is sent with the number it has now", a
   assert.ok(r.ok, JSON.stringify(r));
   assert.equal(f.sent.find((w) => w.id === 20)!.order, 7);
 });
+
+/* ------------------------------------------------------------------------------------- names (23 Nov) --- */
+// The user: "client should not see the campaign names in the campaign page in new portals". A client gets "Campaign N"
+// (oldest first, among the campaigns shown) and never EmailBison's name, in the list, one campaign, or a save's answer;
+// our team also gets the real name as internalName. The history row and the #portal-update post keep the real name.
+
+const OWN = [
+  { id: "905", name: "Acme 2 + Austin + ZF NS4 (CST)", status: "completed" },
+  { id: "77", name: "Acme 1 + Austin + ZF NS1 (CST)", status: "completed" },
+  { id: "1203", name: "Acme + Austin + ZF NS4 (CST)", status: "active" },
+  { id: "88", name: "Acme old + Nicole + ARMLS", status: "archived" },
+];
+const leaks = (v: unknown, names: string[]) => names.filter((n) => JSON.stringify(v).includes(n));
+
+test("names: a client's list says Campaign 1, 2, 3 (oldest first, archived not counted) and carries no EmailBison name", async () => {
+  const f = fake({ own: OWN });
+  const r = await listCampaigns(PORTAL, f.deps);
+  assert.ok(r.ok);
+  assert.deepEqual(r.value.map((c) => [c.id, c.name, c.state]), [["1203", "Campaign 3", "sending"], ["905", "Campaign 2", "finished"], ["77", "Campaign 1", "finished"]], "sending first; finished newest first");
+  assert.deepEqual(leaks(r.value, OWN.map((o) => o.name)), []);
+  assert.ok(r.value.every((c) => !("internalName" in c)));
+  assert.doesNotMatch(JSON.stringify(r.value), /ZF|NS\d|Nicole|Austin/);
+});
+
+test("names: our team's list has the label and EmailBison's name", async () => {
+  const r = await listCampaigns(PORTAL, fake({ own: OWN }).deps, { staff: true });
+  assert.ok(r.ok);
+  assert.deepEqual(r.value.map((c) => [c.name, c.internalName]), [["Campaign 3", "Acme + Austin + ZF NS4 (CST)"], ["Campaign 2", "Acme 2 + Austin + ZF NS4 (CST)"], ["Campaign 1", "Acme 1 + Austin + ZF NS1 (CST)"]]);
+});
+
+test("names: one campaign, opened by a client, is 'Campaign N' with no EmailBison name; by our team, both", async () => {
+  const f = fake();
+  const c = await readCampaign(PORTAL, "77", f.deps);
+  assert.ok(c.ok);
+  assert.equal(c.value.name, "Campaign 1");
+  assert.ok(!("internalName" in c.value));
+  assert.deepEqual(leaks(c.value, ["Acme + Austin + Prospects (CST)"]), []);
+  const s = await readCampaign(PORTAL, "77", f.deps, { staff: true });
+  assert.ok(s.ok);
+  assert.equal(s.value.name, "Campaign 1");
+  assert.equal(s.value.internalName, "Acme + Austin + Prospects (CST)");
+});
+
+test("names: a client's save answers with 'Campaign N'; the history and #portal-update keep the real name", async () => {
+  const f = fake();
+  const i = input(f.live());
+  i.emails[2].versions[0].text = "Last one, {FIRST_NAME}.";
+  const r = await saveCampaign(PORTAL, "77", i, "client@acme.com", f.deps);
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.equal(r.value.view.name, "Campaign 1");
+  assert.deepEqual(leaks(r.value, ["Acme + Austin + Prospects (CST)"]), []);
+  assert.equal(f.audits[0].campaignName, "Acme + Austin + Prospects (CST)", "the campaign's history is ours");
+  assert.match(f.posts[0], /Acme \+ Austin \+ Prospects \(CST\)/, "the Slack post is ours");
+});
+
+test("names: a save that stops part way sends back the campaign as it is, still as 'Campaign N'", async () => {
+  const f = fake({ failOn: "add" });
+  const i = input(f.live());
+  i.emails[0].versions[0].text = "Hi {FIRST_NAME}, changed.";
+  i.emails.push({ id: null, waitBefore: 2, threadReply: true, versions: [{ id: null, subject: "", text: "One more." }] });
+  const r = await saveCampaign(PORTAL, "77", i, "client@acme.com", f.deps);
+  assert.ok(!r.ok);
+  assert.ok(r.view, "part landed, so the page gets the campaign as it is now");
+  assert.equal(r.view!.name, "Campaign 1");
+  assert.deepEqual(leaks(r, ["Acme + Austin + Prospects (CST)"]), []);
+  const staff = await saveCampaign(PORTAL, "77", input(fake({ failOn: "add" }).live()), "staff@os", fake({ failOn: "add" }).deps, { staff: true });
+  assert.ok(staff.ok, "nothing to change is a plain ok");
+  assert.equal(staff.value.view.internalName, "Acme + Austin + Prospects (CST)");
+});
+
+test("names: the Demo Portal too — Campaign 1 and 2 for a client, the sample names only for our team", async () => {
+  const f = fake();
+  const r = await listCampaigns(DEMO_PORTAL_ID, f.deps);
+  assert.ok(r.ok);
+  assert.deepEqual(r.value.map((c) => c.name).sort(), ["Campaign 1", "Campaign 2"]);
+  assert.deepEqual(leaks(r.value, DEMO_SAMPLES.map((s) => s.name)), []);
+  const one = await readCampaign(DEMO_PORTAL_ID, DEMO_SAMPLES[0].campaign_id, f.deps);
+  assert.ok(one.ok);
+  assert.deepEqual(leaks(one.value, DEMO_SAMPLES.map((s) => s.name)), []);
+  const s = await listCampaigns(DEMO_PORTAL_ID, f.deps, { staff: true });
+  assert.ok(s.ok);
+  assert.deepEqual(s.value.map((c) => c.internalName).sort(), DEMO_SAMPLES.map((x) => x.name).sort());
+});
+
+test("names: the routes ask for EmailBison's name only for staff; the page and the chat never send a lead's campaign name", async () => {
+  const { readFileSync } = await import("node:fs");
+  const list = readFileSync("src/app/api/crm-preview/campaigns/route.ts", "utf8");
+  const save = readFileSync("src/app/api/crm-preview/campaign-save/route.ts", "utf8");
+  assert.match(list, /readCampaign\(client, campaign, undefined, \{ staff: viewer\.kind === "staff" \}\)/);
+  assert.match(list, /listCampaigns\(client, undefined, \{ staff: viewer\.kind === "staff" \}\)/);
+  assert.match(save, /saveCampaign\(portal, parsed\.data\.campaign, parsed\.data\.save, who, undefined, \{ staff: viewer\.kind === "staff" \}\)/);
+  const page = readFileSync("src/app/crm-preview/page.tsx", "utf8");
+  assert.match(page, /entries=\{entries\.map\(\(e\) => \(\{ \.\.\.e, campaign_name: null \}\)\)\}/);
+  assert.doesNotMatch(readFileSync("src/lib/crm-preview/chat-tools.ts", "utf8"), /campaign_name/);
+  assert.doesNotMatch(readFileSync("src/components/crm-preview/campaigns.tsx", "utf8"), /campaign_name/);
+});
