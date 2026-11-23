@@ -110,6 +110,10 @@ export const CLIENT_PORTAL_PATHS: ReadonlySet<string> = new Set([
   // "Ask for a person" in the chat (4 Nov): the conversation with our team, and reading it back.
   "/api/crm-preview/ask-person",
   "/api/crm-preview/person-chat",
+  // Campaigns (live for every portal 23 Nov): a client's own campaigns and saving their emails (campaigns.ts). Missing
+  // here at first, so a signed-in client got 401 on the page while staff (and the go-live checks) were fine.
+  "/api/crm-preview/campaigns",
+  "/api/crm-preview/campaign-save",
 ]);
 /** lib/portal-login/http.ts PORTAL_COOKIE — written out here: that module is server-only (node:crypto). A test keeps them equal. */
 export const CLIENT_PORTAL_COOKIE = "bs_portal";
