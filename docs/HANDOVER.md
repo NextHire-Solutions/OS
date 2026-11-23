@@ -675,6 +675,18 @@ finished ones listed newest first) and never EmailBison's name — not on screen
 keep the real name. Also: the page no longer sends a lead's `campaign_name` to the browser (nothing showed it), and the
 portal chat's pipeline_agent tool no longer returns it. Tests pin all of it (a deliberate leak failed 6 of them).
 
+**24 Nov — SENDING ONLY, NAMED BY MARKET (e8717fc, Railway 558f3b55).** BrokerStaffer: "Only show Sending Campaigns
+on the Campaigns Tab. Clients shouldn't see paused or finished campaigns. Campaigns shouldn't say 53, 54 etc." The
+user picked the market name, and that our team sees the same list as the client. `onPortal(status)` (active, queued,
+launching) gates the list, opening one by id (404 "isn't sending right now") and a save (409 `not-sending`, refused
+before anything is written; the live status is checked too). The label is `marketOf(EmailBison name)`: the first
+" + " part after the client's that isn't a copy code (ZF, NS1, "… Copy", Prospects, N-CI), the sender "Nicole" or a
+time zone; "Your campaign" when there is none; the same market twice is "East Bay" and "East Bay (2)", oldest id
+plain. The list is A to Z. The "Show N finished" toggle is gone; the empty state says no campaign is sending. The chat
+guide and the tour say the page shows sending campaigns. On the day: 15 campaigns sending across 23 open portals;
+about 11 portals show the empty state. Live checks read-only as staff 34/34 on every open portal; a fake client
+cookie reaches the route (404 from the route, not 401 from the proxy). Not checked with a real client sign-in.
+
 **To ship (done 23 Nov):** run 0052 → deploy → check the Demo Portal's Campaigns tab → later set `OS_PORTAL_CAMPAIGNS` (start with
 BrokerStaffer's own portal). Before real clients: Eddy to approve the Help answer "Can I change my emails?" (still
 says "ask support"); campaign names show as named in EmailBison (internal codes like "ZF NS1" included).
