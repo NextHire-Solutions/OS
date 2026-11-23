@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { canSeeBillingTab } from "@/lib/clients/billing-access";
+import { canUseBillingTab } from "@/lib/clients/billing-people";
 import { BillingControlError, readBilling, setBilling } from "@/lib/clients/billing-control";
 import { billingUser } from "@/lib/clients/billing-user";
 import { osTable } from "@/lib/clients/os-db";
@@ -71,7 +71,7 @@ export async function GET(request: Request) {
   const portalBlock = { block, enabled: blockingEnabled(), afterAttempts: blockThreshold() };
   const canCreateLinks = canManage && links !== null;
   // Changing where a customer's invoices go (12 Nov, billing/email): the Billing tab's people only, decided here, by name.
-  const canChangeEmail = canSeeBillingTab(who.email);
+  const canChangeEmail = await canUseBillingTab(who.email);
   if (!c.sub) return NextResponse.json({ linked: false, links, canCreateLinks, canManage, canChangeEmail, account, found, linksReady, accountError, portalBlock });
   try {
     return NextResponse.json({ linked: true, billing: await readBilling(c.sub), links, canCreateLinks, canManage, canChangeEmail, account, found, linksReady, accountError, portalBlock });

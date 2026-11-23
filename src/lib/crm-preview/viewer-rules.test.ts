@@ -32,7 +32,10 @@ test("the launch switch is the sign-in email's own switch (portal-login/mail.ts)
 
 test("the Demo opens as a client only to the named testers — never by the sign-in list alone, switch on or off", () => {
   assert.deepEqual([...DEMO_CLIENT_TESTERS], ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"]);
-  for (const t of DEMO_CLIENT_TESTERS) assert.ok(BILLING_TAB_PEOPLE.includes(t), `${t} is a by-name account, protected from takeover by an ordinary admin`);
+  // Protected from takeover by an ordinary admin: admin/users route.ts NAMED includes DEMO_CLIENT_TESTERS (24 Nov — Amy is
+  // no longer on the Billing list by name, she has it as an Account Manager).
+  assert.match(fs.readFileSync("src/app/api/admin/users/route.ts", "utf8"), /\.\.\.DEMO_CLIENT_TESTERS/);
+  void BILLING_TAB_PEOPLE;
   for (const on of [true, false, undefined]) withClients(on, () => {
     assert.equal(openRule(DEMO_PORTAL_ID), "testers");
     assert.equal(openToClients(DEMO_PORTAL_ID, ME), true);

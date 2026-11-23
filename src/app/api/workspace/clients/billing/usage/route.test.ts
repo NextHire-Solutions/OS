@@ -114,7 +114,8 @@ test("only the Billing tab's named people: everyone else gets a bare 404 and not
       assert.equal(p.status, 404, `POST ${action} ${who}`);
     }
   }
-  assert.deepEqual(db.calls, []);
+  // Only the gate's own question (who is an Account Manager, 24 Nov) — nothing of any client's.
+  assert.deepEqual(db.calls.filter((c: unknown) => !/os_users/.test(JSON.stringify(c))), []);
   assert.deepEqual(stripe.calls, []);
 });
 

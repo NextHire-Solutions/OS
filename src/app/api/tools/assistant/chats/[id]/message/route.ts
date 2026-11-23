@@ -6,7 +6,7 @@ import { env } from "@/lib/tools/master-inbox/env";
 import { isAdminUser } from "@/lib/identity/admin-db";
 import { canUseAssistant, assistantForbiddenMessage } from "@/lib/tools/assistant/access";
 import { runTurn, toolSchemaFor } from "@/lib/tools/assistant/engine";
-import { canSeeBillingTab } from "@/lib/clients/billing-access";
+import { canUseBillingTab } from "@/lib/clients/billing-people";
 import type { AssistantViewer } from "@/lib/tools/assistant/viewer";
 import { loadAssistantKey, openAiModel } from "@/lib/tools/assistant/openai";
 import { appendMessage, getChat, titleFromFirstQuestion } from "@/lib/tools/assistant/store";
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     return NextResponse.json({ error: "Forbidden", detail: assistantForbiddenMessage() }, { status: 403 });
   }
   // Who is asking: an admin gets every tool; anyone else only those for their switches (viewer.ts, 18 Nov).
-  const viewer: AssistantViewer = { email: me.email, admin, grants: me.grants ?? [], billing: canSeeBillingTab(me.email) };
+  const viewer: AssistantViewer = { email: me.email, admin, grants: me.grants ?? [], billing: await canUseBillingTab(me.email) };
 
   const parsed = Ask.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "A question is required" }, { status: 400 });

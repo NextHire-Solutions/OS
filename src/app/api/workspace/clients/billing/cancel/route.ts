@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { canCancelSubscriptions } from "@/lib/clients/billing-access";
+import { canCancelSubscription } from "@/lib/clients/billing-people";
 import { getClientBillingDetail, getStripeSnapshot } from "@/lib/clients/billing-account";
 import { cancelRequest, CancelError, isEnded, landed, liveCancelRefusal, planCancel, sendCancel, subscriptionNow } from "@/lib/clients/billing-cancel";
 import { billingTabUser } from "@/lib/clients/billing-user";
@@ -43,7 +43,7 @@ const day = (s: number | null) => (s ? new Date(s * 1000).toISOString() : null);
 export async function POST(request: Request) {
   const who = await billingTabUser(request);
   if (who instanceof NextResponse) return who;
-  if (!canCancelSubscriptions(who.email)) return say(403, "Cancelling a subscription is not open to you.");
+  if (!(await canCancelSubscription(who.email))) return say(403, "Cancelling a subscription is not open to you.");
   if (!fromOwnPage(request)) return say(403, "Forbidden");
   const parsed = cancelRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return say(400, "That request could not be read — reload the page and try again.");

@@ -24,10 +24,10 @@ const sub = (o: Partial<SubscriptionNow> = {}): SubscriptionNow =>
   ({ id: SUB, status: "active", cancelAtPeriodEnd: false, cancelAt: null, canceledAt: null, periodEnd: 1_800_000_000, cancelledBy: null, ...o });
 
 test("Eddy, Amy and admin@outreachify.io only — nobody else", () => {
-  assert.deepEqual([...CANCEL_SUBSCRIPTION_PEOPLE], ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"], "exactly these (the user, 27 Oct: Eddy and Amy; then 'I need this as well' for admin@outreachify.io)");
+  assert.deepEqual([...CANCEL_SUBSCRIPTION_PEOPLE], ["admin@outreachify.io", "eddy@brokerstaffer.com"], "named (24 Nov: Account Managers too, billing-people.ts) — exactly these (the user, 27 Oct: Eddy and Amy; then 'I need this as well' for admin@outreachify.io)");
   for (const who of CANCEL_SUBSCRIPTION_PEOPLE) assert.ok(BILLING_TAB_PEOPLE.includes(who), `${who} is also on the Billing tab, so its by-name account protection covers them`);
   assert.equal(canCancelSubscriptions("Eddy@BrokerStaffer.com "), true);
-  assert.equal(canCancelSubscriptions("amy@brokerstaffer.com"), true);
+  assert.equal(canCancelSubscriptions("amy@brokerstaffer.com"), false, "not by name since 24 Nov — as an Account Manager (billing-people.ts)");
   assert.equal(canCancelSubscriptions(" Admin@Outreachify.io"), true);
   for (const who of ["automation@outreachify.io", "ryan@brokerstaffer.com", "eddy@brokerstaffer.com.evil.com", "", null, undefined]) {
     assert.equal(canCancelSubscriptions(who), false, String(who));
@@ -36,19 +36,19 @@ test("Eddy, Amy and admin@outreachify.io only — nobody else", () => {
 
 test("the route: a bare 404 off the Billing tab, 403 for its other people, only from the OS's own page, live only from os.brokerstaffer.com", () => {
   const src = readFileSync("src/app/api/workspace/clients/billing/cancel/route.ts", "utf8");
-  const order = ["billingTabUser(request)", "canCancelSubscriptions(who.email)", "fromOwnPage(request)", "cancelRequest.safeParse", "liveCancelRefusal(", "getClientBillingDetail(", "subscriptionNow(", "planCancel(", "sendCancel("];
+  const order = ["billingTabUser(request)", "canCancelSubscription(who.email)", "fromOwnPage(request)", "cancelRequest.safeParse", "liveCancelRefusal(", "getClientBillingDetail(", "subscriptionNow(", "planCancel(", "sendCancel("];
   let at = -1;
   for (const s of order) {
     const i = src.indexOf(s);
     assert.ok(i > at, `${s} comes after the checks before it`);
     at = i;
   }
-  assert.match(src, /if \(!canCancelSubscriptions\(who\.email\)\) return say\(403,/);
+  assert.match(src, /if \(!\(await canCancelSubscription\(who\.email\)\)\) return say\(403,/);
   assert.match(src, /detail\.now\?\.subscriptionId !== r\.subscriptionId/, "only the client's current subscription");
   assert.match(src, /if \(!r\.preview\) \{\s*const refusal = liveCancelRefusal/, "the live guard runs before any real change");
   // The tab learns whether to show the buttons from the server, never from the browser.
   const history = readFileSync("src/app/api/workspace/clients/billing/history/route.ts", "utf8");
-  assert.match(history, /canCancel: canCancelSubscriptions\(who\.email\)/);
+  assert.match(history, /canCancel: await canCancelSubscription\(who\.email\)/);
 });
 
 test("a live key changes a subscription only on Railway and only when asked from os.brokerstaffer.com", () => {

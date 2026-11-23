@@ -42,7 +42,8 @@ const { getAccountBilling, getStripeSnapshot } = await import("../../../../../..
 
 const JEFF = "30000000-0000-4000-8000-000000000001";
 const OTHER = "30000000-0000-4000-8000-000000000002";
-const AMY = "amy@brokerstaffer.com";
+// A named person (24 Nov: Amy now has the tab as an Account Manager, which this test doesn't model).
+const ACTOR = "eddy@brokerstaffer.com";
 const OLD = "jeffcook@jeffcookrealestate.com";
 const NEW = "alma.nowatzke@jeffcookrealestate.com";
 
@@ -83,13 +84,13 @@ test("the Jeff Cook case: Amy changes it, Stripe has the new address and who cha
   const { jeff } = seed();
   const counted = (await getAccountBilling()).byClient.get(JEFF)?.customers.map((c) => [c.id, c.email]);
   assert.deepEqual(counted, [[jeff, OLD]], "the customer is counted for the client, at the old address (the page shows this)");
-  const res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: `  ${NEW.toUpperCase()} ` });
+  const res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: `  ${NEW.toUpperCase()} ` });
   const body = await res.json();
   assert.equal(res.status, 200, JSON.stringify(body));
   assert.deepEqual(body, { ok: true, email: NEW }, "typed with capitals and spaces, kept as one plain address");
   assert.equal(emailOf(jeff), NEW);
   const meta = stripe.customers.get(jeff)?.metadata as Record<string, string>;
-  assert.equal(meta.os_email_by, AMY);
+  assert.equal(meta.os_email_by, ACTOR);
   assert.equal(meta.os_email_before, OLD);
   const sent = writes(stripe);
   assert.equal(sent.length, 1, "one change sent");
@@ -101,9 +102,9 @@ test("the Jeff Cook case: Amy changes it, Stripe has the new address and who cha
 
 test("a second press (or a retry after a lost answer) sends nothing more", async () => {
   const { jeff } = seed();
-  assert.equal((await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW })).status, 200);
+  assert.equal((await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW })).status, 200);
   stripe.calls.length = 0;
-  const again = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
+  const again = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
   const body = await again.json();
   assert.equal(again.status, 200);
   assert.equal(body.done, true);
@@ -115,7 +116,7 @@ test("changed in Stripe after the page was opened: refused, nothing sent, Stripe
   const { jeff } = seed();
   await getAccountBilling(); // the page opened: the OS's copy has the old address
   (stripe.customers.get(jeff) as Record<string, unknown>).email = "someone.else@jeffcookrealestate.com";
-  const res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
+  const res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
   const body = await res.json();
   assert.equal(res.status, 409);
   assert.match(body.error, /a different address for this customer than the page showed: it is now someone\.else@jeffcookrealestate\.com\. Nothing was changed/);
@@ -129,7 +130,7 @@ test("deleted in Stripe since: refused, and the tab's next read no longer counts
   const { jeff } = seed();
   assert.ok((await getAccountBilling()).byClient.get(JEFF)?.customers.some((c) => c.id === jeff), "counted when the page opened");
   stripe.customers.delete(jeff);
-  const res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
+  const res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
   assert.equal(res.status, 404);
   assert.match((await res.json()).error, /Stripe has no such customer\. Nothing was changed/);
   assert.equal(writes(stripe).length, 0);
@@ -139,7 +140,7 @@ test("deleted in Stripe since: refused, and the tab's next read no longer counts
 test("a customer with no address yet: added", async () => {
   const { jeff } = seed();
   (stripe.customers.get(jeff) as Record<string, unknown>).email = null;
-  const res = await post(AMY, { clientId: JEFF, customerId: jeff, from: null, to: NEW });
+  const res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: null, to: NEW });
   assert.equal(res.status, 200);
   assert.equal(emailOf(jeff), NEW);
   assert.equal((stripe.customers.get(jeff)?.metadata as Record<string, string>).os_email_before, undefined, "no address before: nothing recorded as one");
@@ -147,13 +148,13 @@ test("a customer with no address yet: added", async () => {
 
 test("only a customer counted for THIS client: another client's is refused, nothing sent", async () => {
   const { beta } = seed();
-  const res = await post(AMY, { clientId: JEFF, customerId: beta, from: "billing@betahomes.com", to: NEW });
+  const res = await post(ACTOR, { clientId: JEFF, customerId: beta, from: "billing@betahomes.com", to: NEW });
   assert.equal(res.status, 404);
   assert.match((await res.json()).error, /isn't counted for this client/);
   assert.equal(writes(stripe).length, 0);
   assert.equal(emailOf(beta), "billing@betahomes.com");
   // An id Stripe has never seen, likewise.
-  assert.equal((await post(AMY, { clientId: JEFF, customerId: "cus_NoSuchCustomer1", from: OLD, to: NEW })).status, 404);
+  assert.equal((await post(ACTOR, { clientId: JEFF, customerId: "cus_NoSuchCustomer1", from: OLD, to: NEW })).status, 404);
   assert.equal(writes(stripe).length, 0);
 });
 
@@ -165,7 +166,7 @@ test("only the Billing tab's named people: everyone else gets a bare 404 and Str
     assert.equal(await res.text(), "", "a bare 404: the route does not say it exists");
   }
   assert.equal(stripe.calls.length, 0);
-  for (const who of ["admin@outreachify.io", "eddy@brokerstaffer.com", AMY]) {
+  for (const who of ["admin@outreachify.io", "eddy@brokerstaffer.com", ACTOR]) {
     const { jeff: id } = seed();
     assert.equal((await post(who, { clientId: JEFF, customerId: id, from: OLD, to: NEW })).status, 200, who);
   }
@@ -173,8 +174,8 @@ test("only the Billing tab's named people: everyone else gets a bare 404 and Str
 
 test("only from the OS's own page", async () => {
   const { jeff } = seed();
-  assert.equal((await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { "sec-fetch-site": "same-site" })).status, 403);
-  assert.equal((await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { "content-type": "text/plain" })).status, 403);
+  assert.equal((await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { "sec-fetch-site": "same-site" })).status, 403);
+  assert.equal((await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { "content-type": "text/plain" })).status, 403);
   assert.equal(stripe.calls.length, 0);
   assert.equal(emailOf(jeff), OLD);
 });
@@ -183,12 +184,12 @@ test("one real address only: anything else is refused before Stripe is asked", a
   const { jeff } = seed();
   for (const to of ["", "alma", "alma@", "alma@jeffcookrealestate", "alma@jeffcookrealestate.c", "alma nowatzke@jeffcookrealestate.com",
     `${NEW}, ${OLD}`, `${NEW};${OLD}`, `Alma <${NEW}>`, "alma@@jeffcookrealestate.com", "alma..n@jeffcookrealestate.com", `${"a".repeat(250)}@x.com`]) {
-    const res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to });
+    const res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to });
     assert.equal(res.status, 400, to);
     assert.match((await res.json()).error, /isn't one email address/, to);
   }
   for (const bad of [{ clientId: "jeff", customerId: jeff, from: OLD, to: NEW }, { clientId: JEFF, customerId: "sub_123456789", from: OLD, to: NEW }, { clientId: JEFF, customerId: jeff, to: NEW }]) {
-    assert.equal((await post(AMY, bad)).status, 400, JSON.stringify(bad));
+    assert.equal((await post(ACTOR, bad)).status, 400, JSON.stringify(bad));
   }
   assert.equal(stripe.calls.length, 0);
 });
@@ -197,12 +198,12 @@ test("a live key changes nothing from a laptop — only on Railway, asked from t
   const { jeff } = seed();
   process.env.ONBOARDING_STRIPE_SECRET_KEY = LIVE_KEY;
   process.env.ONBOARDING_STRIPE_MODE = "live";
-  const res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { origin: "https://os.test" });
+  const res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { origin: "https://os.test" });
   assert.equal(res.status, 403);
   assert.match((await res.json()).error, /only from os\.brokerstaffer\.com/);
   assert.equal(liveStripe.calls.length, 0);
   process.env.RAILWAY_ENVIRONMENT_NAME = "production";
-  const elsewhere = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { origin: "http://localhost:3000" });
+  const elsewhere = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW }, { origin: "http://localhost:3000" });
   assert.equal(elsewhere.status, 403, "on Railway, but not asked from the site");
   assert.equal(liveStripe.calls.length, 0);
 });
@@ -210,7 +211,7 @@ test("a live key changes nothing from a laptop — only on Railway, asked from t
 test("Stripe failing before the change: nothing changed; after it: it may have", async () => {
   let { jeff } = seed();
   stripe.failWhen = (c) => c.method === "GET" && c.path === `/customers/${jeff}`;
-  let res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
+  let res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
   let body = await res.json();
   assert.equal(res.status, 502);
   assert.match(body.error, /Nothing was changed/);
@@ -219,7 +220,7 @@ test("Stripe failing before the change: nothing changed; after it: it may have",
 
   ({ jeff } = seed());
   stripe.failWhen = (c) => c.method === "POST" && c.path === `/customers/${jeff}`;
-  res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
+  res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
   body = await res.json();
   assert.equal(res.status, 502);
   assert.equal(body.uncertain, true);
@@ -227,7 +228,7 @@ test("Stripe failing before the change: nothing changed; after it: it may have",
   // Pressing again once Stripe answers: the change is made, once.
   stripe.failWhen = null;
   stripe.calls.length = 0;
-  res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
+  res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
   assert.equal(res.status, 200);
   assert.equal(writes(stripe).length, 1);
   assert.equal(emailOf(jeff), NEW);
@@ -246,7 +247,7 @@ test("Stripe answers but does not have the new address: never reported as saved"
     return res;
   }) as typeof fetch;
   try {
-    const res = await post(AMY, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
+    const res = await post(ACTOR, { clientId: JEFF, customerId: jeff, from: OLD, to: NEW });
     const body = await res.json();
     assert.equal(res.status, 409);
     assert.match(body.error, /Stripe answered, but has someone\.else@jeffcookrealestate\.com for this customer, not alma\.nowatzke@/);

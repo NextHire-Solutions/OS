@@ -227,8 +227,8 @@ test("the snapshot's Stripe reads are all GETs, and the new lists cannot take bi
 /* ------------------------------------------- who sees the tab (19 Oct) --- */
 
 test("the Billing tab: admin@outreachify.io, Eddy and Amy, by name — nobody else, not even another Owner", () => {
-  assert.deepEqual([...BILLING_TAB_PEOPLE], ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"], "exactly these people, changed only on the user's word (Amy added 20 Oct)");
-  assert.equal(canSeeBillingTab("Amy@BrokerStaffer.com"), true);
+  assert.deepEqual([...BILLING_TAB_PEOPLE], ["admin@outreachify.io", "eddy@brokerstaffer.com"], "named people; since 24 Nov every active Account Manager too (billing-people.ts)");
+  assert.equal(canSeeBillingTab("Amy@BrokerStaffer.com"), false, "not by name since 24 Nov — as an Account Manager (billing-people.ts)");
   assert.equal(canSeeBillingTab("admin@outreachify.io"), true);
   assert.equal(canSeeBillingTab("  Admin@Outreachify.io "), true, "case and spaces do not matter");
   assert.equal(canSeeBillingTab("eddy@brokerstaffer.com"), true);
@@ -242,9 +242,9 @@ test("the Billing tab: admin@outreachify.io, Eddy and Amy, by name — nobody el
 
 test("the gate is decided on the server: the route answers a bare 404, the page passes the flag, the record draws the tab only with it", () => {
   const gate = readFileSync("src/lib/clients/billing-user.ts", "utf8");
-  assert.match(gate, /if \(!s\?\.email \|\| !canSeeBillingTab\(s\.email\)\) return new NextResponse\(null, \{ status: 404 \}\);/);
+  assert.match(gate, /if \(!s\?\.email \|\| !\(await canUseBillingTab\(s\.email\)\)\) return new NextResponse\(null, \{ status: 404 \}\);/);
   const page = readFileSync("src/app/[[...slug]]/page.tsx", "utf8");
-  assert.match(page, /<ClientsScreen initial=\{clientsOverview\} billingTab=\{canSeeBillingTab\(email\)\} \/>/);
+  assert.match(page, /<ClientsScreen initial=\{clientsOverview\} billingTab=\{await canUseBillingTab\(email\)\} \/>/);
   const rec = readFileSync("src/components/screens/client-record.tsx", "utf8");
   assert.match(rec, /TABS\.filter\(\(t\) => t\.id !== "billing" \|\| billingTab\)/, "the tab button only with the flag");
   assert.match(rec, /\{tab === "billing" && billingTab \? \(/, "the tab's content only with the flag");

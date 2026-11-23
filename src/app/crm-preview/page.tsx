@@ -61,7 +61,7 @@ import { campaignsOn } from "@/lib/crm-preview/campaigns";
 import { warmPortalMarket } from "@/lib/crm-preview/market";
 import { osTable } from "@/lib/clients/os-db";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/tools/master-inbox/portals/flag";
-import { canSeeBillingTab } from "@/lib/clients/billing-access";
+import { canUseBillingTab } from "@/lib/clients/billing-people";
 import { portalBillingHold } from "@/lib/tools/master-inbox/portals/billing-hold";
 import { PortalBillingHold } from "@/components/master-inbox/portals-ui/billing-hold";
 import { ClientPicker } from "@/components/crm-preview/client-picker";
@@ -255,7 +255,7 @@ export default async function CrmPreviewPage({ searchParams }: { searchParams: S
       editable={editable}
       locked={locked}
       audience={audience}
-      manageBilling={viewer.kind === "client" || canSeeBillingTab(viewer.email)}
+      manageBilling={viewer.kind === "client" || (await canUseBillingTab(viewer.email))}
       furthest={furthestStages(history, tagged)}
       // A lead's EmailBison campaign name never reaches the browser: nothing here shows it, and it carries our own codes
       // (23 Nov, the user: clients should not see campaign names). The pipeline still has it server-side.

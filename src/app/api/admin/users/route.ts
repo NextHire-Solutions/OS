@@ -7,6 +7,7 @@ import { coerceTools, describeAdmins, GRANTABLE_TOOLS, isAdmin } from "@/lib/ide
 import { isAdminUser } from "@/lib/identity/admin-db";
 import { PREVIEW_REVIEWERS } from "@/lib/crm-preview/access";
 import { BILLING_TAB_PEOPLE } from "@/lib/clients/billing-access";
+import { DEMO_CLIENT_TESTERS } from "@/lib/crm-preview/viewer-rules";
 import { NAMED_PAGES } from "@/lib/identity/named-pages";
 
 /*
@@ -19,7 +20,7 @@ import { NAMED_PAGES } from "@/lib/identity/named-pages";
  * nothing; any other admin could otherwise sign in as Eddy and get both.)
  */
 // Every list that grants access by address — the page lists too (22 Oct audit: the Reply agent's was missing).
-const NAMED = new Set([...PREVIEW_REVIEWERS, ...BILLING_TAB_PEOPLE, ...Object.values(NAMED_PAGES).flat()].map((e) => e.trim().toLowerCase()));
+const NAMED = new Set([...PREVIEW_REVIEWERS, ...BILLING_TAB_PEOPLE, ...DEMO_CLIENT_TESTERS, ...Object.values(NAMED_PAGES).flat()].map((e) => e.trim().toLowerCase()));
 const namedRefused = (target: string, actor: string) =>
   NAMED.has(target.trim().toLowerCase()) && !isAdmin(actor) && !NAMED.has(actor.trim().toLowerCase());
 import {

@@ -55,7 +55,7 @@ import { grantsForRequest } from "@/lib/workspace/tool-paths";
 import { notFound, redirect } from "next/navigation";
 import { ALL_TOOLS, readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { viewerRoles } from "@/lib/identity/viewer-roles";
-import { canSeeBillingTab } from "@/lib/clients/billing-access";
+import { canUseBillingTab } from "@/lib/clients/billing-people";
 
 /*
  * The workspace, at every address.
@@ -361,7 +361,7 @@ export default async function WorkspacePage({
         performance: <PerformanceScreen initial={performance} />,
         "billing-calendar": <BillingCalendarScreen initial={performance} />,
         // The record's Billing tab: the people named in billing-access.ts only (19 Oct). Its routes refuse everyone else too.
-        roster: <ClientsScreen initial={clientsOverview} billingTab={canSeeBillingTab(email)} />,
+        roster: <ClientsScreen initial={clientsOverview} billingTab={await canUseBillingTab(email)} />,
         // Reads everything itself on open; nothing to pass from the server.
         consistency: <DiscrepanciesScreen />,
         // Loads itself — the payouts it shows depend on who is signed in.

@@ -292,7 +292,7 @@ test("the Follow Up Boss key never reaches the browser — only whether one is s
 
 test("an account that holds access by name (Eddy, Amy, the Billing people) cannot be taken over by an ordinary admin (21 Oct review)", () => {
   const src = read("src/app/api/admin/users/route.ts");
-  assert.match(src, /const NAMED = new Set\(\[\.\.\.PREVIEW_REVIEWERS, \.\.\.BILLING_TAB_PEOPLE, \.\.\.Object\.values\(NAMED_PAGES\)\.flat\(\)\]/, "every by-name list, the pages' too (22 Oct)");
+  assert.match(src, /const NAMED = new Set\(\[\.\.\.PREVIEW_REVIEWERS, \.\.\.BILLING_TAB_PEOPLE, \.\.\.DEMO_CLIENT_TESTERS, \.\.\.Object\.values\(NAMED_PAGES\)\.flat\(\)\]/, "every by-name list, the pages' and the Demo testers' too (22 Oct, 24 Nov)");
   assert.match(src, /NAMED\.has\(target\.trim\(\)\.toLowerCase\(\)\) && !isAdmin\(actor\) && !NAMED\.has\(actor/);
   // reset password / deactivate, change email (from and to), invite, delete
   assert.equal((src.match(/namedRefused\(/g) ?? []).length, 5, "reset/deactivate, email from + to, invite, delete");
@@ -305,14 +305,15 @@ test("a client's Stripe billing page from the portal: the client, and of staff o
   const fs = await import("node:fs");
   const src = fs.readFileSync("src/app/api/crm-preview/billing/route.ts", "utf8");
   const start = src.indexOf("export async function GET");
-  const gate = src.indexOf('if (viewer.kind === "staff" && !canSeeBillingTab(who)) return notice(403,', start);
+  const gate = src.indexOf('if (viewer.kind === "staff" && !(await canUseBillingTab(who))) return notice(403,', start);
   assert.ok(gate > src.indexOf("if (!mayOpenPortal(viewer, ", start), "after the portal check");
   for (const load of ["portalClient(", "getAccountBilling(", "billingPortalUrl(", "admit("]) {
     const at = src.indexOf(load, start);
     assert.ok(at === -1 || at > gate, `${load} only after the billing check`);
   }
   const page = fs.readFileSync("src/app/crm-preview/page.tsx", "utf8");
-  assert.match(page, /manageBilling=\{viewer\.kind === "client" \|\| canSeeBillingTab\(viewer\.email\)\}/);
+  assert.match(page, /manageBilling=\{viewer\.kind === "client" \|\| \(await canUseBillingTab\(viewer\.email\)\)\}/);
   const { canSeeBillingTab } = await import("../clients/billing-access.ts");
-  assert.equal(canSeeBillingTab("gabo075823532@gmail.com"), false, "Gabriel: the portals, not a client's Stripe page");
+  // Not by NAME: since 24 Nov (Eddy) Gabriel has it as an Account Manager — billing-people.ts, tested in billing-people.test.ts.
+  assert.equal(canSeeBillingTab("gabo075823532@gmail.com"), false, "Gabriel is not on the named list");
 });

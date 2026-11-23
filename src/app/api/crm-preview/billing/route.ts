@@ -1,6 +1,6 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
-import { canSeeBillingTab } from "@/lib/clients/billing-access";
+import { canUseBillingTab } from "@/lib/clients/billing-people";
 import { crmViewerOf } from "@/lib/crm-preview/viewer";
 import { guardRole, mayOpenPortal } from "@/lib/crm-preview/viewer-rules";
 import { closedToClient } from "@/lib/crm-preview/portal-open";
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
   if (!UUID.test(client)) return notice(400, "This link is not complete. Open Billing from the portal's sidebar.");
   // A client opens only their own portals, and only those open to clients (viewer-rules.ts); staff any.
   if (!mayOpenPortal(viewer, client)) return new NextResponse(null, { status: 404 });
-  if (viewer.kind === "staff" && !canSeeBillingTab(who)) return notice(403, "A client's billing page is open to admin, Eddy and Amy only.");
+  if (viewer.kind === "staff" && !(await canUseBillingTab(who))) return notice(403, "A client's billing page is open to admin, Eddy and Account Managers only.");
   // A client's portal that is switched off or held serves them nothing, as their current portal (portal-open.ts).
   if (await closedToClient(viewer, client as string)) return new NextResponse(null, { status: 404 });
 

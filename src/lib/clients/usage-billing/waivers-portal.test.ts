@@ -39,5 +39,5 @@ test("the route answers only the Billing tab's named people, on every request, b
   assert.equal(handlers.length, 2);
   for (const h of handlers) assert.match(h, /^\w+\(request: Request\) \{\n {2}const who = await billingTabUser\(request\);\n {2}if \(who instanceof NextResponse\) return who;/);
   const user = readFileSync(join(ROOT, "src/lib/clients/billing-user.ts"), "utf8");
-  assert.match(user, /if \(!s\?\.email \|\| !canSeeBillingTab\(s\.email\)\) return new NextResponse\(null, \{ status: 404 \}\);/);
+  assert.match(user, /if \(!s\?\.email \|\| !\(await canUseBillingTab\(s\.email\)\)\) return new NextResponse\(null, \{ status: 404 \}\);/);
 });

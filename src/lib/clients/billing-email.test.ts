@@ -106,7 +106,7 @@ test("the route: a bare 404 off the Billing tab, only from the OS's own page, th
 
 test("the button shows only when the server says so — for the Billing tab's people, by name", () => {
   const route = readFileSync("src/app/api/workspace/clients/billing/route.ts", "utf8");
-  assert.match(route, /const canChangeEmail = canSeeBillingTab\(who\.email\);/);
+  assert.match(route, /const canChangeEmail = await canUseBillingTab\(who\.email\);/);
   assert.equal(route.match(/canChangeEmail, account/g)?.length, 3, "on every answer the record's Stripe control reads");
   const ui = readFileSync("src/components/screens/client-record.tsx", "utf8");
   assert.match(ui, /canChangeEmail=\{state\.canChangeEmail === true\}/);

@@ -16,8 +16,12 @@
  * the billing fields on the Record tab, under the rules they already had.
  *
  * Change this list only on the user's word.
+ *
+ * 24 Nov (Eddy, via the user): "Every Account Manager gets the whole Billing tab, including refunds and cancel." The
+ * named people below keep it whatever their title; every active Account Manager has it too — billing-people.ts
+ * canUseBillingTab is the check the screens and routes use. Amy now has it as an Account Manager, not by name.
  */
-export const BILLING_TAB_PEOPLE: readonly string[] = ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
+export const BILLING_TAB_PEOPLE: readonly string[] = ["admin@outreachify.io", "eddy@brokerstaffer.com"];
 
 export function canSeeBillingTab(email: string | null | undefined): boolean {
   const key = (email ?? "").trim().toLowerCase();
@@ -30,7 +34,8 @@ export function canSeeBillingTab(email: string | null | undefined): boolean {
  * user's own account): "no no I need this as well". By name; change only on the
  * user's word.
  */
-export const CANCEL_SUBSCRIPTION_PEOPLE: readonly string[] = ["admin@outreachify.io", "eddy@brokerstaffer.com", "amy@brokerstaffer.com"];
+// 24 Nov: plus every active Account Manager (billing-people.ts canCancelSubscription).
+export const CANCEL_SUBSCRIPTION_PEOPLE: readonly string[] = ["admin@outreachify.io", "eddy@brokerstaffer.com"];
 
 export function canCancelSubscriptions(email: string | null | undefined): boolean {
   const key = (email ?? "").trim().toLowerCase();

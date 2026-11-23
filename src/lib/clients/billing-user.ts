@@ -3,7 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { readSsoCookie, verifySso } from "@/lib/bs-auth";
-import { canSeeBillingTab } from "@/lib/clients/billing-access";
+import { canUseBillingTab } from "@/lib/clients/billing-people";
 import { viewerRoles } from "@/lib/identity/viewer-roles";
 import { sessionPageGrants } from "@/lib/workspace/switch-transition";
 
@@ -29,8 +29,8 @@ export async function billingUser(request: Request): Promise<{ email: string; ad
 }
 
 /*
- * The Billing tab's own routes (19 Oct): the people named in billing-access.ts only,
- * by name (billing-access.ts). Anyone else — signed in or not — gets a bare 404, so
+ * The Billing tab's own routes (19 Oct): the people named in billing-access.ts, and since
+ * 24 Nov every active Account Manager (billing-people.ts). Anyone else — signed in or not — gets a bare 404, so
  * the routes do not even say they exist. Not billingUser's rule: having the
  * Clients page is NOT enough here.
  */
@@ -38,6 +38,6 @@ export async function billingTabUser(request: Request): Promise<{ email: string 
   const secret = process.env.AUTH_SECRET;
   if (!secret) return new NextResponse(null, { status: 404 });
   const s = await verifySso(secret, readSsoCookie(request.headers.get("cookie")));
-  if (!s?.email || !canSeeBillingTab(s.email)) return new NextResponse(null, { status: 404 });
+  if (!s?.email || !(await canUseBillingTab(s.email))) return new NextResponse(null, { status: 404 });
   return { email: s.email.toLowerCase() };
 }
