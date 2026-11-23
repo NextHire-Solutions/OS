@@ -160,6 +160,9 @@ async function take(run: Run, meta: GmailMessage): Promise<void> {
     return;
   }
 
+  // A calendar invitation or a reply to one: never a ticket, never added to one (23 Nov, the team).
+  if (p.calendar) { report.skipped++; return; }
+
   // Already stored from another teammate's inbox: this mailbox has a copy. If this is the first time the conversation
   // reaches this mailbox's thread, read the thread too (this teammate's replies to the client).
   const stored = await store.messagesByRfc([rfc]);

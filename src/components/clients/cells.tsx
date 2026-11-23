@@ -2,6 +2,7 @@
 
 import { StatusPill } from "@/components/ds";
 import type { MasterClient } from "@/lib/clients/master-list";
+import type { BillingState } from "@/lib/clients/stripe-summary";
 import { TIME_ZONES } from "@/lib/tools/client-health/types";
 import { splitManagers } from "@/lib/identity/team-match";
 
@@ -109,6 +110,27 @@ const PACE: Record<string, { label: string; tone: "green" | "amber" | "red" }> =
  * The value of one field (a key from field-registry.ts, or one of the extra
  * keys a §8 tool view uses) for one client.
  */
+/* ------------------------------------------------------------ billing status --- */
+// Who is paying and who is not (23 Nov, the team). Per lead first: those clients pay per lead, not by subscription.
+export type BillingShown = "per_lead" | BillingState | "reading" | "unreadable";
+export const BILLING_LABEL: Record<BillingShown, string> = {
+  paying: "Paying", per_lead: "Per lead", past_due: "Past due", paused: "Paused", cancelled: "Cancelled", none: "Not set up",
+  reading: "Reading Stripe…", unreadable: "Stripe unreadable",
+};
+const BILLING_MEANING: Record<BillingShown, string> = {
+  paying: "A Stripe subscription is collecting.", per_lead: "Billed per lead (pay per lead).",
+  past_due: "Stripe is failing to collect the subscription.", paused: "The subscription's collection is paused.",
+  cancelled: "Every subscription has ended.", none: "No Stripe subscription.", reading: "Reading Stripe…", unreadable: "Stripe could not be read.",
+};
+export function billingOf(c: MasterClient): BillingShown {
+  if (c.health?.perLead) return "per_lead";
+  if (c.stripe === undefined) return "reading";
+  if (c.stripe === null) return c.stripeCustomerId || c.stripeSubscriptionId ? "unreadable" : "none";
+  return c.stripe.billing ?? "none";
+}
+/** Paying in some form: a collecting subscription, or billed per lead. */
+export const isPaying = (b: BillingShown) => b === "paying" || b === "per_lead";
+
 export function Cell({ k, c }: { k: string; c: MasterClient }) {
   switch (k) {
     case "clientId": return <Id value={c.id} />;
@@ -192,6 +214,10 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
           {k === "totalSpend" ? <span className="cx-sub"> · {c.stripe.transactions} txn</span> : null}
         </span>
       );
+    }
+    case "billingStatus": {
+      const b = billingOf(c);
+      return b === "reading" ? <None title="Reading Stripe…" /> : <span className={`cx-bill b-${b}`} title={BILLING_MEANING[b]}>{BILLING_LABEL[b]}</span>;
     }
     case "stripeCustomerId": case "stripeSubscriptionId": return <Id value={c[k]} />;
     case "campaigns": {
@@ -308,6 +334,7 @@ export function textOf(k: string, c: MasterClient): string {
     case "savedViews": return (c.savedViews ?? []).map((v) => v.name).join("; ");
     case "totalSpend": return c.stripe ? c.stripe.totalSpend.toFixed(2) : "";
     case "mrr": return c.stripe ? c.stripe.mrr.toFixed(2) : "";
+    case "billingStatus": { const b = billingOf(c); return b === "reading" ? "" : BILLING_LABEL[b]; }
     default: {
       const v = (c as unknown as Record<string, unknown>)[k];
       if (v === null || v === undefined) return "";

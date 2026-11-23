@@ -26,6 +26,24 @@ export interface StripeSummary {
   current: string | null;
   /** Open invoices Stripe failed to collect. */
   failedInvoices: number;
+  /** Is the client paying right now (23 Nov, the team: "No way to see who is paying and who is not") — billingStateOf. */
+  billing: BillingState;
+}
+
+export type BillingState = "paying" | "past_due" | "paused" | "cancelled" | "none";
+
+/*
+ * From the client's own subscriptions, as Stripe has them: paying = one collecting (active, not paused); past due =
+ * one Stripe is failing to collect; paused = collection paused; cancelled = every subscription ended; none = no
+ * subscription (a customer only, or nothing). Pay-per-lead clients are told apart on the Clients screen (health.perLead).
+ */
+export function billingStateOf(subs: ReadonlyArray<{ status: string; collectionPaused: boolean }>): BillingState {
+  const live = (s: { status: string }) => !["canceled", "incomplete_expired"].includes(s.status);
+  if (subs.some((s) => (s.status === "active" || s.status === "trialing") && !s.collectionPaused)) return "paying";
+  if (subs.some((s) => ["past_due", "unpaid", "incomplete"].includes(s.status) && !s.collectionPaused)) return "past_due";
+  if (subs.some((s) => live(s) && (s.collectionPaused || s.status === "paused"))) return "paused";
+  if (subs.length && subs.every((s) => !live(s))) return "cancelled";
+  return "none";
 }
 
 /*
@@ -44,6 +62,7 @@ export async function stripeSummaries(clients: { id: string; name: string; strip
       out[c.id] = {
         signupDate: b.signupDate, signupSource: b.signupSource, totalSpend: b.totalSpend, transactions: b.transactions,
         mrr: b.mrr, subscriptions: b.subscriptions.length, current: b.current, failedInvoices: b.failedInvoices.length,
+        billing: billingStateOf(b.subscriptions),
       };
     }
     return { byId: out, failed: [] as string[] };

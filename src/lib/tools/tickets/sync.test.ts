@@ -292,3 +292,26 @@ test("REVIEW 9: a teammate's change made while the sync works on the ticket is n
   const after = store.tickets.get(t.id)!;
   assert.equal(after.message_count, 2, "re-read and re-applied after the conflict");
 });
+
+test("calendar invitations from a client start no ticket and are never added to one (23 Nov, the team)", async () => {
+  const { store, eddy, sync } = setup();
+  // Google Calendar: the client is the organizer (From), Google is the Sender.
+  eddy.deliver({ from: "John Smith <john@myrehomebase.com>", subject: "Invitation: Weekly sync @ Wed Nov 26, 2025 10am - 10:30am (EST) (eddy@brokerstaffer.com)", messageId: "inv1@google", date: NOW - 2 * H, headers: [{ name: "Sender", value: "Google Calendar <calendar-notification@google.com>" }] });
+  // Outlook: an acceptance, marked by Exchange.
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Accepted: Pipeline review", messageId: "acc1@outlook", date: NOW - H, headers: [{ name: "Content-Class", value: "urn:content-classes:calendarmessage" }] });
+  // No marker, but an invitation subject naming a time.
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Updated invitation: Call @ Thu Nov 27, 2025 2pm - 3pm (EST)", messageId: "upd1@cal", date: NOW - 0.5 * H });
+  await sync(EDDY);
+  assert.equal(store.tickets.size, 0, "no ticket");
+  assert.equal(store.messages.size, 0, "nothing stored");
+});
+
+test("an ordinary email that only sounds like one ('Accepted: the offer') still makes a ticket; an invite in a live conversation isn't added", async () => {
+  const { store, eddy, sync } = setup();
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Accepted: the new pricing", messageId: "real1@hb", date: NOW - 2 * H });
+  await sync(EDDY);
+  assert.equal(store.tickets.size, 1);
+  eddy.deliver({ from: "john@myrehomebase.com", subject: "Invitation: Follow-up @ Fri Nov 28, 2025 9am - 9:30am (EST)", messageId: "inv2@google", references: ["real1@hb"], date: NOW - H, headers: [{ name: "Sender", value: "Google Calendar <calendar-notification@google.com>" }] });
+  await sync(EDDY);
+  assert.equal(store.messages.size, 1, "the invite isn't stored in the existing ticket");
+});

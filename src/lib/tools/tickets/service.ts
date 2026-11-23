@@ -41,8 +41,13 @@ function applyView(q: Q, view: View, me: string): Q {
   }
 }
 
-function order(q: Q, view: View): Q {
-  if (view === "open" || view === "unassigned" || view === "mine") return q.order("waiting_since", { ascending: true, nullsFirst: false }).order("last_activity_at", { ascending: false });
+/*
+ * Every list newest first (23 Nov, the team: "Doesn't make sense to have the new incoming ones at the bottom"). The open
+ * views by when the client's unanswered email came in, newest on top; the row's age badge still says how long each has
+ * waited. Snoozed: the soonest to wake first.
+ */
+export function order(q: Q, view: View): Q {
+  if (view === "open" || view === "unassigned" || view === "mine") return q.order("waiting_since", { ascending: false, nullsFirst: false }).order("last_activity_at", { ascending: false });
   if (view === "snoozed") return q.order("snoozed_until", { ascending: true });
   if (view === "done") return q.order("closed_at", { ascending: false, nullsFirst: false });
   return q.order("last_activity_at", { ascending: false });

@@ -327,7 +327,11 @@ function Row({ r, split, showMonth, open, onToggle }: { r: CommissionRow; split:
           {/* Made the deal, has since left: named, not paid (Eddy, 9 Oct). */}
           {r.salesperson && r.salespersonLeft ? <span className="cx-none" title="Made the deal and has since left — not paid from this payout on"> · left</span> : null}
         </td>
-        <td>{r.accountManager ?? <span className="cx-none">—</span>}</td>
+        <td>
+          {r.accountManager ?? <span className="cx-none">—</span>}
+          {/* Deactivated on Team access: named until someone reassigns the client, not paid (23 Nov). */}
+          {r.accountManager && r.accountManagerLeft ? <span className="cx-none" title="Deactivated on Team access: not paid from this payout on. Reassign the client's Account Manager."> · left</span> : null}
+        </td>
         <td><span className={`cm-status ${tone}`}>{r.statusLabel}</span></td>
         <td className="num"><b className={r.due ? "cx-strong" : "cx-none"}>{money(r.due, true)}</b></td>
       </tr>

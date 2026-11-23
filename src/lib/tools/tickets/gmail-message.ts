@@ -54,6 +54,8 @@ export interface ParsedMessage {
   snippet: string;
   sentAt: string;
   autoSubmitted: boolean;
+  /** A calendar invitation or a reply to one (accepted, declined…): never a ticket (23 Nov, the team). */
+  calendar: boolean;
   /** Gmail's own verdict on the sender (its Authentication-Results header). */
   auth: SenderAuth;
 }
@@ -251,12 +253,28 @@ export function parseMessage(m: GmailMessage): ParsedMessage {
     snippet: stripNul(decodeEntities(m.snippet ?? "")).trim(),
     sentAt: new Date(sentMs).toISOString(),
     autoSubmitted: (!!auto && auto !== "no") || /^(bulk|junk|list|auto_reply)$/.test(precedence),
+    calendar: isCalendarInvite(h, stripNul(decodeWords(header(h, "Subject"))).replace(/\s+/g, " ").trim()),
     auth: parseAuth(h),
   };
 }
 
+/*
+ * Calendar invitations and the replies to them (23 Nov, the team: "Exclude automatically calendar invite from creating
+ * a ticket"). Sent from a client's own address, so the client rule alone lets them in. Google Calendar marks every one
+ * with Sender: calendar-notification@google.com (the organizer stays in From); Outlook/Exchange with Content-Class:
+ * urn:content-classes:calendarmessage. Without either, only an invitation-style subject that also names a time
+ * ("… @ Wed Nov 26, 2025 10am") counts, so an ordinary "Accepted: the offer" email is never dropped.
+ */
+const INVITE_SUBJECT = /^(invitation|updated invitation|invitation from google calendar|accepted|declined|tentatively accepted|tentative|canceled event|cancelled event|updated event|new time proposed|event canceled|event cancelled)\b.*?:/i;
+export function isCalendarInvite(h: readonly GmailHeader[], subject: string): boolean {
+  if (/calendar-notification@google\.com/i.test(header(h, "Sender"))) return true;
+  if (/urn:content-classes:calendarmessage/i.test(header(h, "Content-Class"))) return true;
+  if (/^text\/calendar\b|method=(request|reply|cancel)\b/i.test(header(h, "Content-Type"))) return true;
+  return INVITE_SUBJECT.test(subject) && /\s@\s.*\b(\d{1,2}(:\d{2})?\s*(am|pm)|\d{4})\b/i.test(subject);
+}
+
 /** The headers asked for with format=metadata — everything parseMessage reads. */
-export const METADATA_HEADERS = ["From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Auto-Submitted", "Precedence", "Authentication-Results"];
+export const METADATA_HEADERS = ["From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Auto-Submitted", "Precedence", "Authentication-Results", "Sender", "Content-Class", "Content-Type"];
 
 function decodeData(data: string | undefined, charset: string): string {
   if (!data) return "";

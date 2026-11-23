@@ -60,9 +60,10 @@ const has = (q: string, ...vals: Array<string | null | undefined>) => {
   return !s || vals.some((v) => (v ?? "").toLowerCase().includes(s));
 };
 
-/* The List column's tags (Setup-2/3/4): My agent, DNC List, Prospects; anything else as plain grey text. */
+/* The List column's tags (Setup-2/3/4): My Agents, DNC List, Prospects — each its page's own name (23 Nov: "My agent"
+ * was a typo); anything else as plain grey text. */
 function ListTag({ list }: { list: string }) {
-  if (list === "My Agents") return <span className={k("tag ok")}>My agent</span>;
+  if (list === "My Agents") return <span className={k("tag ok")}>My Agents</span>;
   if (list === "DNC List") return <span className={k("tag no")}>DNC List</span>;
   if (list === "Prospects") return <span className={k("tag ltg")}>Prospects</span>;
   return <span className={k("sub")}>{list}</span>;

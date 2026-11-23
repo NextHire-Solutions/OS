@@ -127,3 +127,16 @@ test("REVIEW 2: NUL characters never survive into stored text", async () => {
   const { stripNul } = await import("./gmail-message.ts");
   assert.equal(stripNul("a\u0000b\u0000"), "ab");
 });
+
+test("isCalendarInvite: Google's Sender, Exchange's Content-Class, text/calendar, or an invitation subject naming a time", async () => {
+  const { isCalendarInvite } = await import("./gmail-message.ts");
+  const h = (name: string, value: string) => [{ name, value }];
+  assert.equal(isCalendarInvite(h("Sender", "Google Calendar <calendar-notification@google.com>"), "Anything"), true);
+  assert.equal(isCalendarInvite(h("Content-Class", "urn:content-classes:calendarmessage"), "Accepted: Pipeline review"), true);
+  assert.equal(isCalendarInvite(h("Content-Type", "text/calendar; method=REQUEST"), "x"), true);
+  assert.equal(isCalendarInvite([], "Invitation: Call @ Wed Nov 26, 2025 10am - 11am (EST)"), true);
+  assert.equal(isCalendarInvite([], "Declined: Weekly sync @ Mon Dec 1, 2025 3pm - 4pm (PST) (amy@x.com)"), true);
+  for (const s of ["Accepted: the new pricing", "Invitation to our open house", "Re: Invitation: are we still on?", "Question about this week's leads", "Declined card on file"]) {
+    assert.equal(isCalendarInvite([], s), false, s);
+  }
+});

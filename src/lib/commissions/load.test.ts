@@ -268,3 +268,40 @@ test("Month is blank for a client that has not paid yet", () => {
   const v = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, stripe: new Map([["k", { payments: [], gross: 3000, cycleDays: 14 }]]) }));
   assert.equal(v.rows.find((r) => r.id === "k")?.month, null);
 });
+
+/* ------------------------------------------------- deactivated people (23 Nov, the team) --- */
+// "If employee is deactivated, they should be removed from the commissions": nothing earned on any payout after the
+// day they were deactivated, as an account manager or a salesperson; payouts up to that day are never rewritten.
+const teamAmyOff = [{ ...member("Amy", "amy@x.com"), active: false }, member("Eddy", "eddy@x.com"), member("admin", "admin@x.com", true)];
+
+test("a deactivated account manager earns nothing after the day, shows as left, and the client needs a new one", () => {
+  const v = buildCommissionsView(base({ team: teamAmyOff, deactivated: new Map([["amy@x.com", "2026-09-20"]]), viewerEmail: "admin@x.com", admin: true }));
+  assert.ok(v.rows.every((r) => r.earnings.every((e) => e.key !== "am:amy@x.com")), "no earnings for Amy on the 1 Oct payout");
+  assert.deepEqual(v.rows.filter((r) => r.accountManagerLeft).map((r) => r.name).sort(), ["Keyes Company", "NYC Co"]);
+  assert.ok(!v.people.some((p) => /amy/i.test(JSON.stringify(p))), "not offered in the people picker");
+  const needAm = v.unassigned.filter((u) => u.missing.includes("account_manager")).map((u) => u.name).sort();
+  assert.ok(needAm.includes("Keyes Company") && needAm.includes("NYC Co"), JSON.stringify(needAm));
+});
+
+test("a payout on or before the deactivation day is never rewritten", () => {
+  const v = buildCommissionsView(base({ team: teamAmyOff, deactivated: new Map([["amy@x.com", "2026-10-05"]]), viewerEmail: "admin@x.com", admin: true }));
+  assert.ok(v.rows.some((r) => r.earnings.some((e) => e.key === "am:amy@x.com")), "Amy still earns on the 1 Oct payout");
+  assert.ok(v.rows.every((r) => !r.accountManagerLeft));
+  const onDay = buildCommissionsView(base({ team: teamAmyOff, deactivated: new Map([["amy@x.com", "2026-10-01"]]), viewerEmail: "admin@x.com", admin: true }));
+  assert.ok(onDay.rows.some((r) => r.earnings.some((e) => e.key === "am:amy@x.com")), "deactivated ON the payout day: that payout stands");
+});
+
+test("a deactivated salesperson earns nothing after the day and is shown as left (still the one who made the deal)", () => {
+  const v = buildCommissionsView(base({ deactivated: new Map([["ryan@x.com", "2026-09-20"]]), viewerEmail: "admin@x.com", admin: true }));
+  const coastal = v.rows.find((r) => r.name === "Coastal Realty")!;
+  assert.equal(coastal.salespersonLeft, true);
+  assert.ok(coastal.earnings.every((e) => e.key !== "sp:r"));
+  assert.ok(!v.salespeople.includes("Ryan Jagdeo"), "not in the salespeople list");
+  assert.ok(!v.unassigned.some((u) => u.name === "Coastal Realty" && u.missing.includes("salesperson")), "the deal still has its salesperson");
+});
+
+test("nobody deactivated: exactly as before", () => {
+  const a = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true }));
+  const b = buildCommissionsView(base({ viewerEmail: "admin@x.com", admin: true, deactivated: new Map() }));
+  assert.deepEqual(JSON.parse(JSON.stringify(b)), JSON.parse(JSON.stringify(a)));
+});

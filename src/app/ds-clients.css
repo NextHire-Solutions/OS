@@ -62,7 +62,7 @@
 .cx-primary .btn-pri:hover { background: #0057DB !important; }
 
 /* --------------------------------------------- metrics = the status filter --- */
-.cx-metrics { display: grid; grid-template-columns: 1.25fr repeat(4, 1fr) 1.1fr; background: var(--x-surface);
+.cx-metrics { display: grid; grid-template-columns: 1.25fr repeat(4, 1fr) 1.1fr 1.1fr; background: var(--x-surface);
   border: 1px solid var(--x-line); border-radius: 14px; overflow: hidden; }
 .cx-metric { appearance: none; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
   display: grid; align-content: start; gap: 6px; padding: 18px 20px 16px; border-left: 1px solid var(--x-line);
@@ -363,7 +363,7 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .rx-tool-dot.bad { background: var(--st-churned); }
 .rx-tool-dot.na { background: #D4D4D8; }
 
-@media (max-width: 1100px) { .cx-metrics { grid-template-columns: repeat(3, 1fr); } .cx-metric:nth-child(4) { border-left: 0; } .cx-metric:nth-child(n+4) { border-top: 1px solid var(--x-line); } }
+@media (max-width: 1100px) { .cx-metrics { grid-template-columns: repeat(3, 1fr); } .cx-metric:nth-child(4), .cx-metric:nth-child(7) { border-left: 0; } .cx-metric:nth-child(n+4) { border-top: 1px solid var(--x-line); } }
 @media (max-width: 900px) {
   .rx-kpis { grid-template-columns: repeat(2, 1fr); }
   .rx .ds-field { grid-template-columns: 1fr; }
@@ -631,3 +631,16 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
   .ub-paste, .ub-fake { flex-basis: 100%; }
   .ub-box .rb-tools .sp { display: none; }
 }
+
+/* Billing status (23 Nov): who is paying and who is not — a dot and a word, like Plan. */
+.cx-bill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--x-ink-2); white-space: nowrap; }
+.cx-bill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #A1A1AA; }
+.cx-bill.b-paying::before { background: var(--st-active); }
+.cx-bill.b-per_lead::before { background: #2563EB; }
+.cx-bill.b-past_due::before { background: #D97706; }
+.cx-bill.b-paused::before { background: var(--st-paused); }
+.cx-bill.b-cancelled::before, .cx-bill.b-unreadable::before { background: var(--st-churned); }
+.cx-metric.cx-paying .d { color: var(--st-active); }
+.cx-metric.cx-paying[aria-pressed="true"]::after { background: #D97706; }
+.cx-metric .cx-of { font-size: 18px; letter-spacing: -.02em; color: var(--x-faint); }
+.cx-metric:disabled { cursor: default; }

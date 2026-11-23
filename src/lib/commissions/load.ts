@@ -70,6 +70,8 @@ export interface CommissionRow {
   salesperson: string | null;
   /** The salesperson named here has left (role switched off by this payout): shown, not paid. */
   salespersonLeft?: boolean;
+  /** The Account Manager named here was deactivated before this payout: shown, not paid (23 Nov). */
+  accountManagerLeft?: boolean;
   accountManager: string | null;
   /** Gross per 28 days, and where it came from. */
   gross: number | null;
@@ -218,6 +220,18 @@ export interface BuildInputs {
   unavailable: string[];
   /** Per client id: the day it signed according to Stripe (the first $1 charge), when known. */
   signed?: Map<string, string | null>;
+  /**
+   * Deactivated people (Team access) and the Eastern day it happened (23 Nov, the team: "If employee is deactivated,
+   * they should be removed from the commissions"). They earn nothing on any payout after that day, as an account
+   * manager or a salesperson; payouts up to it are never rewritten.
+   */
+  deactivated?: Map<string, string>;
+}
+
+/** Deactivated before this payout: earns nothing on it. With no payout given (deciding which clients to read), no. */
+export function goneOn(deactivated: Map<string, string> | undefined, email: string | null | undefined, run: string | undefined): boolean {
+  const day = deactivated?.get((email ?? "").trim().toLowerCase());
+  return !!day && run !== undefined && run > day;
 }
 
 /*
@@ -236,8 +250,9 @@ const earnsOn = (sp: Salesperson, run: string | undefined) =>
   sp.active || run === undefined || (!!sp.offSince && run <= sp.offSince);
 
 /** Everyone who can earn, and who earns on each client — on one payout when `run` is given. */
-export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings"> & { run?: string | null }) {
+export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings" | "deactivated"> & { run?: string | null }) {
   const run = inp.run ?? undefined;
+  const gone = (email: string | null | undefined) => goneOn(inp.deactivated, email, run);
   const earners = new Map<string, Earner>();
   for (const sp of inp.salespeople) {
     earners.set(`sp:${sp.id}`, { key: `sp:${sp.id}`, role: "salesperson", name: sp.name, email: sp.email, rate: sp.rates.rate });
@@ -248,12 +263,14 @@ export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeo
   const named = new Set(inp.clients.map(firstManager).filter((n): n is string => !!n));
   for (const m of inp.team) {
     if (!pool.has(m.email) && ![...named].some((n) => isManagedBy(n, m))) continue;
+    // Deactivated before this payout: not an earner on it (their clients show as needing an Account Manager).
+    if (gone(m.email)) continue;
     earners.set(`am:${m.email}`, { key: `am:${m.email}`, role: "account_manager", name: m.name, email: m.email, rate: ACCOUNT_MANAGER_RATE });
   }
   const onClient = (c: MasterClient): Earner[] => {
     const out: Earner[] = [];
     const sp = c.salesperson ? inp.salespeople.find((p) => isSoldBy(c.salesperson, p)) : undefined;
-    if (sp && earnsOn(sp, run)) out.push(earners.get(`sp:${sp.id}`)!);
+    if (sp && earnsOn(sp, run) && !gone(sp.email)) out.push(earners.get(`sp:${sp.id}`)!);
     const amName = firstManager(c);
     const am = amName ? inp.team.find((m) => isManagedBy(amName, m)) : undefined;
     if (am && earners.has(`am:${am.email}`)) out.push(earners.get(`am:${am.email}`)!);
@@ -263,7 +280,7 @@ export function earnersFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeo
 }
 
 /** Which earnings a viewer may see — the one place scope is decided. */
-export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings" | "viewerEmail" | "admin" | "as"> & { run?: string | null }) {
+export function scopeFor(inp: Pick<BuildInputs, "clients" | "team" | "salespeople" | "settings" | "viewerEmail" | "admin" | "as" | "deactivated"> & { run?: string | null }) {
   const viewerEmail = inp.viewerEmail.toLowerCase();
   const { earners, onClient } = earnersFor(inp);
   // The viewer's own earner keys: as an account manager, as a salesperson, or both.
@@ -292,7 +309,13 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
   // The salesperson a client names, when their role was off by this payout — shown as none.
   const offOnRun = (c: MasterClient) => {
     const sp = c.salesperson ? inp.salespeople.find((p) => isSoldBy(c.salesperson, p)) : undefined;
-    return !!sp && !earnsOn(sp, run);
+    return !!sp && (!earnsOn(sp, run) || goneOn(inp.deactivated, sp.email, run));
+  };
+  // The Account Manager a client names, when they were deactivated before this payout — shown, not paid.
+  const managerLeft = (c: MasterClient) => {
+    const name = firstManager(c);
+    const am = name ? inp.team.find((m) => isManagedBy(name, m)) : undefined;
+    return !!am && goneOn(inp.deactivated, am.email, run);
   };
   // Payments are counted up to today only — a run still ahead shows what has been billed so far.
   const horizon = run < today ? run : today;
@@ -355,7 +378,7 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
     const all = commissionLines(payments, changes, c.status, 0);
     return {
       id: c.id, name: c.name, plan: c.plan, status: c.status,
-      salesperson: c.salesperson, salespersonLeft: offOnRun(c), accountManager: firstManager(c),
+      salesperson: c.salesperson, salespersonLeft: offOnRun(c), accountManager: firstManager(c), accountManagerLeft: managerLeft(c),
       gross, net, grossSource, manualGross: manual, stripeLinked: linked,
       statusLabel: label(c, changes, all, payments.length > 0 || gross !== null, monthTwoStarts(payments), run),
       earnings,
@@ -425,10 +448,10 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
         })
       : [],
     team: inp.admin ? accountManagerPool(inp.team).map((m) => m.name).sort() : [],
-    salespeople: inp.admin ? inp.salespeople.filter((p) => p.active).map((p) => p.name).sort() : [],
+    salespeople: inp.admin ? inp.salespeople.filter((p) => p.active && !goneOn(inp.deactivated, p.email, today)).map((p) => p.name).sort() : [],
     people: inp.admin
       ? [...[...earners.values()]
-          .filter((e) => holding.has(e.key) || (e.role === "salesperson" ? inp.salespeople.find((p) => `sp:${p.id}` === e.key)?.active : accountManagerPool(inp.team).some((m) => `am:${m.email}` === e.key)))
+          .filter((e) => holding.has(e.key) || (e.role === "salesperson" ? !!inp.salespeople.find((p) => `sp:${p.id}` === e.key)?.active && !goneOn(inp.deactivated, e.email, today) : accountManagerPool(inp.team).some((m) => `am:${m.email}` === e.key)))
           .reduce((m, e) => {
             const p = m.get(personKey(e)) ?? { key: personKey(e), name: e.name, roles: [] as EarnerRole[] };
             p.roles.push(e.role);
@@ -445,15 +468,16 @@ export function buildCommissionsView(inp: BuildInputs): CommissionsView {
 export async function loadCommissions(opts: { viewerEmail: string; admin: boolean; as?: string | null; run?: string | null }): Promise<CommissionsView> {
   const today = easternDay(new Date());
   const unavailable: string[] = [];
-  const [list, team, sp, settings, history] = await Promise.all([
+  const [list, team, sp, settings, history, deactivated] = await Promise.all([
     getMasterClientList(),
     listTeamMembers(),
     listSalespeople().catch(() => { unavailable.push("Salespeople"); return { available: false, people: [] as Salesperson[] }; }),
     readSettings().catch(() => ({ gross: new Map(), available: false } as Settings)),
     readHistory().catch(() => { unavailable.push("Status history"); return new Map<string, StatusChange[]>(); }),
+    deactivatedDays().catch(() => { unavailable.push("Deactivated people"); return new Map<string, string>(); }),
   ]);
   // A record that is not a client (BrokerStaffer's own, 24 Oct) earns no one anything and is never "unassigned".
-  const base = { clients: list.clients.filter((c) => !isKnownNonClient(c.name)), team, salespeople: sp.people, settings };
+  const base = { clients: list.clients.filter((c) => !isKnownNonClient(c.name)), team, salespeople: sp.people, settings, deactivated };
 
   // Stripe is read only for the clients this viewer may see.
   const { inScope } = scopeFor({ ...base, viewerEmail: opts.viewerEmail, admin: opts.admin, as: opts.as });
@@ -488,4 +512,18 @@ export async function loadCommissions(opts: { viewerEmail: string; admin: boolea
     viewerEmail: opts.viewerEmail, admin: opts.admin, as: opts.as, run: opts.run,
     today, unavailable: [...unavailable, ...list.unavailable], signed,
   });
+}
+
+/**
+ * Who was deactivated on Team access, and the Eastern day: os_users.updated_at, which deactivating writes (identity/
+ * store.ts setUserActive) — a later edit to someone already deactivated only moves it later, never earlier.
+ */
+async function deactivatedDays(): Promise<Map<string, string>> {
+  const { data, error } = await osTable("os_users").select("email, updated_at").eq("is_active", false);
+  if (error) throw new Error(error.message);
+  return new Map(
+    ((data ?? []) as Array<{ email: string | null; updated_at: string | null }>)
+      .filter((r) => r.email && r.updated_at)
+      .map((r) => [String(r.email).trim().toLowerCase(), easternDay(new Date(String(r.updated_at)))] as const),
+  );
 }

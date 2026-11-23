@@ -26,6 +26,8 @@ export interface FakeMail {
   /** The raw From header, when a test needs one the builder wouldn't write (encoded words). */
   rawFrom?: string;
   attachments?: Array<{ filename: string; mime: string; size: number; cid?: string }>;
+  /** Any other headers, as a real message would carry them (e.g. Google Calendar's Sender). */
+  headers?: Array<{ name: string; value: string }>;
 }
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64url");
@@ -70,6 +72,7 @@ export class FakeGmail {
       ...(mail.inReplyTo ? [{ name: "In-Reply-To", value: `<${mail.inReplyTo}>` }] : []),
       ...(mail.references?.length ? [{ name: "References", value: mail.references.map((r) => `<${r}>`).join(" ") }] : []),
       ...(mail.autoSubmitted ? [{ name: "Auto-Submitted", value: mail.autoSubmitted }] : []),
+      ...(mail.headers ?? []),
     ];
     const parts: GmailPart[] = [
       { partId: "0", mimeType: "multipart/alternative", parts: [

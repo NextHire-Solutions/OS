@@ -177,6 +177,9 @@ export const FIELDS: FieldDef[] = [
   { key: "mrr", label: "MRR", category: "billing", kind: "money",
     definition: "Monthly recurring revenue: the client's live subscriptions as a monthly amount, Stripe's way ($750 every 14 days = $1,630.58).", sourceOfTruth: "Stripe", source: "Stripe",
     editIn: "Nobody — read from Stripe", editable: false, tools: ["Billing", "Commissions"], sync: "No — read live" },
+  { key: "billingStatus", label: "Billing status", category: "billing", kind: "text",
+    definition: "Whether the client is paying right now: Paying (a subscription collecting), Per lead (billed per lead), Past due (Stripe failing to collect), Paused, Cancelled, or Not set up (no subscription).", sourceOfTruth: "Stripe", source: "Stripe",
+    editIn: "Nobody — read from Stripe", editable: false, tools: ["Billing"], sync: "No — read live" },
 
   /* ---------------------------------------------- §6 Campaign Information --- */
   { key: "campaignId", label: "Campaign ID", category: "campaign", kind: "list",

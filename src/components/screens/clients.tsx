@@ -3,7 +3,7 @@
 import { isKnownNonClient, nonClientReason } from "@/lib/clients/roster";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Cell, avatarStyle, initials, introMissing, textOf } from "@/components/clients/cells";
+import { Cell, avatarStyle, initials, introMissing, textOf, billingOf, isPaying, BILLING_LABEL } from "@/components/clients/cells";
 import {
   CATEGORIES, CATEGORY_LABEL, FIELDS, FIELD_BY_KEY, TOOL_VIEWS, shown,
   type FieldCategory, type ToolViewId,
@@ -72,7 +72,10 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
   only?: ToolViewId;
 }) {
   const [lens, setLens] = useState<Lens>(only ?? "master");
-  const [status, setStatus] = useState<ClientStatus | "all">("all");
+  const [status, setStatusRaw] = useState<ClientStatus | "all">("all");
+  // The Paying card's filter (23 Nov): active clients that aren't paying. Any status card clears it.
+  const [notPaying, setNotPaying] = useState(false);
+  const setStatus = (s: ClientStatus | "all") => { setNotPaying(false); setStatusRaw(s); };
   const [q, setQ] = useState("");
   const [hidden, setHidden] = useState<Set<FieldCategory>>(new Set());
   const [colsOpen, setColsOpen] = useState(false);
@@ -116,11 +119,25 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
     return out;
   }, [data.clients]);
   const total = data.clients.filter((c) => !isKnownNonClient(c.name)).length;
+  // Who is paying (23 Nov, the team: "19 active clients and 16 active billing… no way to see who is paying"): active
+  // clients only; per lead counts as paying. Null while Stripe is still being read.
+  const billing = useMemo(() => {
+    const active = data.clients.filter((c) => !isKnownNonClient(c.name) && c.status === "active");
+    if (active.some((c) => billingOf(c) === "reading")) return null;
+    const notPayingList = active.filter((c) => !isPaying(billingOf(c)));
+    return {
+      active: active.length,
+      paying: active.length - notPayingList.length,
+      perLead: active.filter((c) => billingOf(c) === "per_lead").length,
+      notPaying: notPayingList.map((c) => `${c.name} (${BILLING_LABEL[billingOf(c)]})`).sort(),
+    };
+  }, [data.clients]);
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const list = data.clients.filter((c) =>
       (status === "all" || c.status === status) &&
+      (!notPaying || (c.status === "active" && !isKnownNonClient(c.name) && !isPaying(billingOf(c)))) &&
       (!needle || [c.name, ...c.aliases, c.accountManager ?? "", c.salesperson ?? ""].some((s) => s.toLowerCase().includes(needle))),
     );
     return [...list].sort((a, b) => {
@@ -128,7 +145,7 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
       const cmp = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
       return cmp * sort.dir || a.name.localeCompare(b.name);
     });
-  }, [data.clients, status, q, sort]);
+  }, [data.clients, status, q, sort, notPaying]);
 
   const view = TOOL_VIEWS.find((t) => t.id === lens) ?? null;
   const columns: { key: string; label: string; category?: FieldCategory }[] =
@@ -199,6 +216,13 @@ function ClientsView({ data, onChanged, onPatch, only, billingTab = false }: {
             <span className="p">{total ? Math.round((counts[s] / total) * 100) : 0}%</span>
           </button>
         ))}
+        <button type="button" className="cx-metric cx-paying" aria-pressed={notPaying} disabled={!billing}
+          title={billing ? `${billing.paying} of ${billing.active} active clients paying${billing.perLead ? ` (${billing.perLead} per lead)` : ""}.${billing.notPaying.length ? `\nNot paying — click to list them:\n${billing.notPaying.join("\n")}` : ""}` : "Reading Stripe…"}
+          onClick={() => { const on = !notPaying; setStatusRaw("all"); setNotPaying(on); }}>
+          <span className="k"><i className="d" aria-hidden="true" />Paying</span>
+          <span className="v">{billing ? <>{billing.paying}<span className="cx-of"> / {billing.active}</span></> : "…"}</span>
+          <span className="p">{billing ? (billing.notPaying.length ? `${billing.notPaying.length} not paying` : "all paying") : "Reading Stripe…"}</span>
+        </button>
         <a className="cx-metric cx-sync" href="/consistency" title="Where the tools disagree about clients (§16)">
           <span className="k"><i className={`live${data.unavailable.length ? " warn" : ""}`} aria-hidden="true" />Sync</span>
           <span className="v sm">{data.unavailable.length ? `${data.unavailable.length} unread` : "All tools"}</span>
