@@ -423,7 +423,7 @@ export function CrmPreview({
               <CampaignsScreen onChat={() => setChat(true)} />
             )
           ) : view === "help" ? (
-            <HelpScreen onChat={() => setChat(true)} onTour={startTour} article={article} hrefOf={articleHref} onArticle={openArticle} />
+            <HelpScreen onChat={() => setChat(true)} onTour={startTour} article={article} hrefOf={articleHref} onArticle={openArticle} campaignsOn={campaignsOn} />
           ) : view === "agents" ? (
             <MyAgentsScreen agents={agents} />
           ) : view === "dnc" ? (

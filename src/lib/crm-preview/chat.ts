@@ -12,6 +12,7 @@ import { clientHasFeature } from "@/lib/tools/master-inbox/portals/feature-flags
 import { osTable } from "@/lib/clients/os-db";
 import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-portal";
 
+import { campaignsOn } from "./campaigns.ts";
 import { contactsOfPortal } from "./chat-contacts.ts";
 import { CHAT_TOOLS, runTool, systemPrompt, type ChatTurn, type MarketTotals, type PortalChatData } from "./chat-tools.ts";
 import { clientForPortal, type OsClientRow } from "./market-model.ts";
@@ -72,6 +73,7 @@ export async function loadPortalChatData(portalId: string): Promise<PortalChatDa
     team,
     contacts,
     now: new Date(),
+    campaignsOn: campaignsOn(c.id),
   };
 }
 

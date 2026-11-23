@@ -25,7 +25,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | **0.10** | [Market: Avg. sales price filter and column, 17 November](#010-market-avg-sales-price-filter-and-column-17-november) — the agent database's last-12-months average sales price as a range filter and a sortable column; answered from memory only once proven against the database
 | **0.09** | [Demo Portal card links to the new portal, 17 November](#009-demo-portal-card-links-to-the-new-portal-17-november) — Client Portals' Demo card shows, copies and opens `os.brokerstaffer.com/crm-preview?client=<id>`; it opens after sign-in only
 | **0.08** | [Billing page on a shared card, 17 November](#008-billing-page-on-a-shared-card-17-november) — a client whose card also pays for another client (Douglas Elliman Las Vegas + Los Angeles) sees its own subscription's invoices; invoice numbers link to Stripe
-| **0.07** | [Campaigns: clients edit their own emails, 17 November](#007-campaigns-clients-edit-their-own-emails-17-november) — the portal's Campaigns tab; rules enforced on the server; live in EmailBison at once; Demo Portal first (migration 0052), real portals behind `OS_PORTAL_CAMPAIGNS`
+| **0.07** | [Campaigns: clients edit their own emails, 17 November](#007-campaigns-clients-edit-their-own-emails-17-november) — the portal's Campaigns tab; rules enforced on the server; live in EmailBison at once; Demo Portal first (migration 0052), real portals behind `OS_PORTAL_CAMPAIGNS` (set to `all` 23 Nov)
 | **0.06** | [Pay per lead: the portal's Billing page, and prospect adds EmailBison never applied, 16 November](#006-pay-per-lead-the-portals-billing-page-and-prospect-adds-emailbison-never-applied-16-november) — pay-per-lead portals show their periods and leads; the sync counts an add done only when the campaign's own list shows it; Hetherington's 23 missing prospects put back
 | **0.05** | [Inboxes: replies and positive replies, by inbox and by domain, 14 November](#005-inboxes-replies-and-positive-replies-by-inbox-and-by-domain-14-november) — three Master Inbox columns on every inbox and a Domains view ranked by positive replies; positive = marked Interested in Master Inbox |
 | **0.04** | [A stop label from the selection bar stops the person, 14 November](#004-a-stop-label-from-the-selection-bar-stops-the-person-14-november) — Hostile / Unsubscribe / Do Not Contact / Add to Blocklist applied to several conversations at once now block and unsubscribe each person, as one conversation always did |
@@ -655,7 +655,15 @@ one of 186 words).
 be unsafe: that editor also renumbers versions among the emails, the move that shifts a sequence. It needs its own
 fix (keep versions' numbers) and a live test.
 
-**To ship:** run 0052 → deploy → check the Demo Portal's Campaigns tab → later set `OS_PORTAL_CAMPAIGNS` (start with
+**23 Nov — on for every portal (the user: "make campaigns page live for all the clients").** Before the switch:
+a read-only audit of all 63 real portals with the page's own code (391 campaigns, every one opens; none in two clients'
+portals; list and live status agree; 196 have A/B versions; 39 portals switched off show read-only); the local build
+with `OS_PORTAL_CAMPAIGNS=all` driven in Chrome on every portal (saves blocked in the browser, every server write
+refused); the live Demo round trip (rules, confirm, save, reload, restore). Fixed with it: the portal chat's guide and
+Help's "Can I change my emails?" said to ask a person — both now follow the switch, as the tour already did
+(chat-tools.ts CAMPAIGNS_HELP, static-pages.tsx faqFor). Campaign names are still shown as named in EmailBison.
+
+**To ship (done 23 Nov):** run 0052 → deploy → check the Demo Portal's Campaigns tab → later set `OS_PORTAL_CAMPAIGNS` (start with
 BrokerStaffer's own portal). Before real clients: Eddy to approve the Help answer "Can I change my emails?" (still
 says "ask support"); campaign names show as named in EmailBison (internal codes like "ZF NS1" included).
 

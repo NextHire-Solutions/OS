@@ -35,6 +35,8 @@ export interface PortalChatData {
   /** Who receives this portal's interested agents: the contacts on its own record (chat-contacts.ts). */
   contacts: InterestedContacts;
   now: Date;
+  /** This portal's Campaigns page is the real editor (campaigns.ts campaignsOn), not "Coming soon" (23 Nov). */
+  campaignsOn?: boolean;
 }
 
 export interface InterestedContact { name: string | null; email: string; markets: string[] }
@@ -101,7 +103,7 @@ ${helpText(d).join("\n")}`;
 }
 
 /** How the portal works — in the rules, and what portal_help returns. */
-export function helpText(d: Pick<PortalChatData, "stages">): string[] {
+export function helpText(d: Pick<PortalChatData, "stages" | "campaignsOn">): string[] {
   return `- How it works: BrokerStaffer runs a recruiting campaign for them. Every agent who replies interested is emailed to the contacts on their account and appears in Pipeline. To name those contacts, call interested_contacts.
 - Pipeline: Board (columns by stage) or List (grouped by the month the agent came in). Stages: ${d.stages.filter((s) => s.role === "stage").map((s) => s.label).join(", ") || "—"}. Tags: ${d.stages.filter((s) => s.role === "tag").map((s) => s.label).join(", ") || "—"}. Move an agent between stages by dragging their card on the Board, with the stage on their row in the List, or by ticking rows in the List and using "Move to". On the Board, an agent with an email conversation has a Conversation button on their card: press it to read the conversation. Clicking the rest of the card opens the agent's details. In the List, each row has Conversation and Add note, and clicking the name opens Edit lead. An agent with no email conversation has no Conversation button. Add agent adds one by hand; Upload CSV adds many.
 - My Agents: add agents one by one or import a CSV. BrokerStaffer never reaches out to anyone on that list.
@@ -111,9 +113,14 @@ export function helpText(d: Pick<PortalChatData, "stages">): string[] {
 - Reports: All market (agents per group) or Interested only (their pipeline per group).
 - Integrations: connect Follow Up Boss with its API key.
 - Help: step-by-step articles, answers to common questions, and Take the tour, a short guided walk round the portal.
-- Changing their campaign emails: our team does it with them — press "Ask for a person" under the message box.
-- Campaigns: coming soon.`.split("\n");
+${d.campaignsOn ? CAMPAIGNS_HELP : CAMPAIGNS_SOON}`.split("\n");
 }
+
+/** Where the Campaigns page is the real editor (23 Nov: on for every portal). Its rules: campaign-copy.ts COPY_RULES. */
+export const CAMPAIGNS_HELP = `- Campaigns: their recruiting campaigns, and the emails in each. To change a campaign's emails: 1. Open Campaigns 2. Click the campaign 3. Change an email's subject or text, the days between emails, or add a follow-up email 4. Click Save. What they save goes live straight away. Each email can be up to 125 words, with no links or pictures, and a campaign can have up to 10 emails. A finished campaign can only be read. For anything the page can't do, press "Ask for a person" under the message box.`;
+/** Before the page is switched on for a portal. */
+export const CAMPAIGNS_SOON = `- Changing their campaign emails: our team does it with them — press "Ask for a person" under the message box.
+- Campaigns: coming soon.`;
 
 /* ------------------------------------------------------------------ tools --- */
 

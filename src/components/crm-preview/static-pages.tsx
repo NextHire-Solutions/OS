@@ -58,6 +58,14 @@ const FAQ: Array<{ q: string; a: string }> = [
   { q: "How do I add a teammate?", a: "Go to Team and click Add member. To have them receive interested agents too, chat with support and ask for a person." },
 ];
 
+/** Where Campaigns is the real page (campaigns.ts campaignsOn; every portal from 23 Nov), clients change their emails there. */
+export const EMAILS_ANSWER_ON = "Yes. Open Campaigns, click the campaign and change its emails: the wording, the days between them, or a new follow-up. Click Save changes and they go live straight away. For anything else, chat with support and ask for a person.";
+
+/** The questions as this portal answers them: "Can I change my emails?" follows the Campaigns switch, as the tour does. */
+export function faqFor(campaignsOn: boolean): Array<{ q: string; a: string }> {
+  return campaignsOn ? FAQ.map((f) => (f.q === "Can I change my emails?" ? { ...f, a: EMAILS_ANSWER_ON } : f)) : FAQ;
+}
+
 /** A plain click opens the article here; a new-tab click uses the link's own address. */
 const plainClick = (e: MouseEvent) => !(e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0);
 
@@ -132,7 +140,7 @@ function ArticlePage({ article, hrefOf, onArticle, onChat }: { article: HelpArti
   );
 }
 
-export function HelpScreen({ onChat, onTour, article, hrefOf, onArticle }: { onChat: () => void; onTour: () => void; article: string | null; hrefOf: (slug: string | null) => string; onArticle: (slug: string | null) => void }) {
+export function HelpScreen({ onChat, onTour, article, hrefOf, onArticle, campaignsOn = false }: { onChat: () => void; onTour: () => void; article: string | null; hrefOf: (slug: string | null) => string; onArticle: (slug: string | null) => void; campaignsOn?: boolean }) {
   const [q, setQ] = useState("");
   const term = q.trim().toLowerCase();
   // Search looks through the articles' words too: "CSV" finds the ones that explain it, whatever they're called.
@@ -146,7 +154,7 @@ export function HelpScreen({ onChat, onTour, article, hrefOf, onArticle }: { onC
     })).filter((t) => t.links.length),
     [term],
   );
-  const faq = useMemo(() => FAQ.filter((f) => !term || `${f.q} ${f.a}`.toLowerCase().includes(term)), [term]);
+  const faq = useMemo(() => faqFor(campaignsOn).filter((f) => !term || `${f.q} ${f.a}`.toLowerCase().includes(term)), [term, campaignsOn]);
 
   const open = articleBySlug(article);
   if (open) return <ArticlePage key={open.slug} article={open} hrefOf={hrefOf} onArticle={onArticle} onChat={onChat} />;
