@@ -231,6 +231,38 @@ recommendation to revoke the secrets stored in Railway.
 
 ---
 
+## 0.21 Team feedback batch, and Billing for every Account Manager — 24 November
+
+LIVE 24 Nov (8714167 + 21c2064, Railway 2f635af3), on the user's "deploy". The team's 23 Nov list:
+
+- **Billing tab by title (Eddy: "Every Account Manager gets the whole Billing tab, including refunds and cancel").**
+  `lib/clients/billing-people.ts` `canUseBillingTab` / `canCancelSubscription`: the named people in billing-access.ts
+  (admin@outreachify.io, Eddy) or any ACTIVE `os_users.is_account_manager`, read once a minute; if os_users can't be
+  read, only the named people pass. Covers the tab, refunds, cancel, invoice email, pay per lead, a portal's Manage
+  billing for staff and the Assistant's billing tools. On the day: Eddy, Gabriel, Amy (reactivated 21 Nov; the user
+  chose to deploy with her keeping it).
+- **Commissions:** a deactivated person (is_active false; the day = updated_at, Eastern) earns nothing after that day
+  as account manager or salesperson, shows "· left", and drops off the pickers; earlier payouts unchanged
+  (`commissions/load.ts` goneOn). Nobody is deactivated today. The five "· left" rows live are October's salesperson
+  leavers.
+- **Tickets:** every list newest first (`service.ts` order). Calendar invitations and invite replies never make or join
+  a ticket (`gmail-message.ts` isCalendarInvite: Google's Sender, Exchange's Content-Class, text/calendar, or an
+  invitation subject that names a time). A typed reply ("Re: Invitation: …") stays a ticket — checked against Alma's
+  two Jeff Cook tickets of 23 Nov, which are real messages and correctly remain.
+- **Clients:** Billing status column (Paying, Per lead, Past due, Paused, Cancelled, Not set up) and a Paying card;
+  clicking it lists active clients not paying. Live on the day: 15 / 19 (Jeff Cook, Momentum paused; Rise Tujunga,
+  SERHANT. NJ past due).
+- **Portal:** Setup wizard tag "My Agents"; the Location filter keeps ≥ 5 result rows, chips scroll (92px), popup up to
+  600px.
+- **Answered, no code:** portal edits and the chat's "Ask for a person" both post to the client-portal-updates
+  channel (SLACK_CHANNEL_PORTAL), including Prospects adds and removes.
+
+**Live checks (read-only as admin, writes blocked):** Clients 1440 + 1280, Commissions, Tickets (open, unassigned,
+mine), Location filter with 24 places, Billing tab, portal Manage billing, served wizard code, Campaigns: 23/23; logs
+clean. Gabriel's Billing view was checked only locally (prod sign-in as a teammate is refused).
+
+---
+
 ## 0.20 A delivered hand-off is an introduction — 20 November
 
 **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)** on the user's "yes deploy hand off change". Before: last deploy was ours (1d7a14ac), main unmoved, 3,891 tests, tsc clean. After, read only: logs clean; live hand-off page in Chrome (writes blocked) 4/4, 59 rows, CRA "Label Introduction", Homebase "Add at Interested", nothing saved; no record waiting, no bell; 12 clients send for real (10 Label Introduction). **No real hand-off has gone since: watch the first** (record pipeline_action label_introduction and detail cleared; the conversation labelled Introduction by system; slack_interested before it; slack_introduction / n8n_introduction / fub_push done; one portal entry).
