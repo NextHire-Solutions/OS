@@ -12,6 +12,9 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.23** | [Prospects: areas linked to campaigns automatically; who gets which leads — 24 November](#023-prospects-areas-linked-to-campaigns-automatically-who-gets-which-leads--24-november) — **LIVE 24 Nov (217862c + 9cf3587, Railway b0dfcdbe then 80b178fa)**; first run put 55 Douglas Elliman NYC prospects into REBNY #1395 automatically
+| **0.22** | [Replies from Tickets, as the inbox the client wrote to — 24 November](#022-replies-from-tickets-as-the-inbox-the-client-wrote-to--24-november) — **LIVE 24 Nov (Railway 972d071a)**; Amy must press Allow replies; first real send not seen
+| **0.21** | [Team feedback batch, and Billing for every Account Manager — 24 November](#021-team-feedback-batch-and-billing-for-every-account-manager--24-november) — **LIVE 24 Nov (21c2064, Railway 2f635af3)**
 | **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)**; Introduction-model clients get the Introduction label once a live hand-off has gone; first real one not seen yet
 | **0.19** | [Inbox health rules on Add to campaigns and Assign — 20 November](#019-inbox-health-rules-on-add-to-campaigns-and-assign--20-november) — **LIVE 21 Nov (2be7e46, Railway 59e19820)** — BUILT on feat/inbox-health-assign (with the Duplicate & Renew tightening underneath), NOT deployed
 | **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — **LIVE 21 Nov as a dry run (2be7e46, Railway 59e19820)**; 0054 run 21 Nov; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
@@ -230,6 +233,52 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.23 Prospects: areas linked to campaigns automatically; who gets which leads — 24 November
+
+LIVE 24 Nov 16:57 UTC (217862c, Railway b0dfcdbe), with a Campaigns-tab fix 17:08 UTC (9cf3587, Railway 80b178fa), on the
+user's "deploy". Why: Gabriel added an agent to Jeff Cook's Prospects and nothing happened: a client with several MLSs needed
+a campaign picked by hand per MLS, and none was. The team was told (message approved by the user): each area links
+automatically to the campaign that already holds its agents, a sending one before a paused one; a hand pick stays; nothing
+fits → the prospect waits and the bell asks.
+
+- **The rule (`lib/clients/prospect-sync/auto-link.ts`, pure):** candidates = the client's own EmailBison campaigns that are
+  sending (active/queued/launching) or paused. A campaign takes an MLS's agents when >= 20% (and >= 3) of its leads are that
+  MLS's agents. Several fit: sending first, then most leads in the agent's own city (office city / top producing city),
+  then the larger share in 5-point steps, then the newest id (a renewal's near-copy). Campaign names don't carry the MLS
+  (2 of 54 do), so the leads decide.
+- **Where a campaign's leads come from (`campaign-profiles.ts`, server-only):** Analytics `campaign_leads` (newest 200 still
+  in the campaign) + `lead_attributes` "mls affiliation", "office city", "top producing city". Cached 3 h per campaign
+  (globalThis, `shared` across bundles). An unreadable campaign is never linked (sampled 0, logged
+  "campaign profile unreadable").
+- **Sync (`run.ts` runMarketAdds):** used only when there is no hand pick, no setup campaign, and the MLS's pick isn't
+  "gone". The row says "Linked automatically: no campaign is picked for its X agents, and N% of its leads are X agents."
+- **Campaigns tab (`campaign-lists/sweep.ts`, `client-campaign-lists.tsx`):** each MLS reads "Automatic · <campaign>" with
+  status, EmailBison id and the reason; a paused one is orange and says its leads are emailed once it's resumed. **The tab
+  and a saved pick find a client's campaigns by name AND by its Analytics link (`pickable`), as the sync does** —
+  Douglas Elliman New York's ("Douglas Elliman + New York REBNY") are found only by the link; before 9cf3587 the tab showed
+  "none holds REBNY agents" and couldn't offer #1395. The clean-up's removals keep the name-only `campaigns`.
+- **Introduce to (`lib/clients/intro-leads-label.ts`, `client-record.tsx`):** under each contact, what the Introduce button
+  gives them: "Gets REBNY, Manhattan, Brooklyn leads", "Gets every lead", "Gets no leads: add a role", "· not copied in: no
+  email". Replaces the "Territory:" line.
+- **Gabriel (by name):** named-pages `prospects-campaigns` → the Campaigns tab's Prospects picks. The route
+  `campaign-cleanup/client/[id]` lets a non-admin send only prospectsCampaignId / prospectsByMls / ifUpdatedAt; anything
+  else (the clean-up switch) → 403 "Only workspace admins can change that."
+- **Live data edit (user OK):** Douglas Elliman New York contact_territories {"1":["REBNY","Manhattan","Brooklyn"],
+  "2":["OneKey","Long Island"]}.
+
+**Tested:** unit 4,047; a deliberate break of the tab fix caught. Local Chrome 13/13 incl. Gabriel's view (his real
+switches, local sign-in only; never signed in as him on prod). Production as the owner, writes blocked: 19/19 (labels,
+Jeff Cook's five areas, Homebase's hand picks kept, P&E / Keyes / ChuckTown / DE NYC load, REBNY → #1395 offered).
+**First real runs:** 16:57 UTC — Douglas Elliman NYC: 55 added to REBNY #1395 automatically, 4 already in the older
+REBNY campaign, 57 OneKey agents waiting (its only OneKey campaign #1286 has finished), 91 skipped (email failed a check);
+queued by Gabriel and Amy 17–23 Nov. 17:07 UTC — Jeff Cook's Mary Ellen Maloney (CMLS) got past the campaign step and was
+skipped: no email in the agent database.
+
+**Data found, NOT changed (the team's to fix):** ChuckTown's MLS list has CHMLS and realMLS, which match none of its leads
+(its Charleston campaign's are CHSMLS), and its Savannah (HIVE) and Jacksonville (NEF) campaigns' MLSs aren't on the list.
+Keyes' "East Florida" and "West Florida" campaigns are both ~98% FTL (Palm Beach) agents; FTL → West Florida #1392;
+MFRMLS, MCRTC, NABOR wait. Douglas Elliman NYC needs a OneKey campaign for its 57 waiting OneKey prospects.
 
 ## 0.22 Replies from Tickets, as the inbox the client wrote to — 24 November
 
