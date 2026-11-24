@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.24** | [Intro wording for a person follows their areas — 24 November](#024-intro-wording-for-a-person-follows-their-areas--24-november) — **LIVE 24 Nov (db44e9a, Railway a1519cb5)**; Douglas Elliman NYC cleaned first; Properties & Estates still has Boston typed twice
 | **0.23** | [Prospects: areas linked to campaigns automatically; who gets which leads — 24 November](#023-prospects-areas-linked-to-campaigns-automatically-who-gets-which-leads--24-november) — **LIVE 24 Nov (217862c + 9cf3587, Railway b0dfcdbe then 80b178fa)**; first run put 55 Douglas Elliman NYC prospects into REBNY #1395 automatically
 | **0.22** | [Replies from Tickets, as the inbox the client wrote to — 24 November](#022-replies-from-tickets-as-the-inbox-the-client-wrote-to--24-november) — **LIVE 24 Nov (Railway 972d071a)**; Amy must press Allow replies; first real send not seen
 | **0.21** | [Team feedback batch, and Billing for every Account Manager — 24 November](#021-team-feedback-batch-and-billing-for-every-account-manager--24-november) — **LIVE 24 Nov (21c2064, Railway 2f635af3)**
@@ -231,6 +232,55 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.24 Intro wording for a person follows their areas — 24 November
+
+LIVE 24 Nov 18:51 UTC (db44e9a, Railway a1519cb5), on the user's "deploy". Why: the user asked why Douglas Elliman NYC's
+"Different wording by market or person" and the contacts' "Gets … leads" lines held the same places ("we have to enter
+everything twice?"). The team had typed Lara's and Elisa's areas into the two wordings as markets before the contacts had
+areas; §0.23 then set the areas on the contacts. A wording ticked for a person already reaches every lead routed to that
+person (`pickIntroVariant`'s person check), so a market that is one of that person's own areas adds nothing. It is also a
+trap: markets are checked first, so moving Brooklyn to Elisa on her contact and forgetting the wording would send Brooklyn
+leads to Elisa with the text that introduces Lara.
+
+**Douglas Elliman NYC, cleaned 18:32 UTC, before the code change** (the user: "do both"). Saved through the real
+`PUT /api/workspace/clients/intro` as the owner: the market words came out of both wordings; people, text and territories
+were untouched. Checked first on the live row: 43 campaign names (all 37 real ones plus what-ifs) send the same people
+the same wording. The Assistant's `client_introduction` read afterwards showed identical per-campaign routing.
+
+**The rule** (`intro-macro.ts`, pure): `peopleAreas(client)` gives each introduced person's areas, merged by name (Jeff
+Cook has Alma on three rows); people without a role are not introduced, so they don't count. `ownAreaPlaces(wording,
+people)` gives a wording's markets that are an area of a person it is for. `withoutOwnAreas` takes them out. Every lead
+gets the same people and the same wording either way: the person check fires for exactly the campaigns those areas name.
+A place that is ANOTHER person's area, or nobody's, is a real market choice and stays.
+
+**Where it applies:**
+- `saveIntroVariants` (`intro-override.ts`) stores the wordings `withoutOwnAreas`. That covers a page opened before the
+  deploy, and any reorder or remove, which re-saves the whole list.
+- `IntroView.peopleAreas` tells the page each person's areas.
+- The editor (`client-record.tsx` `IntroVariants`), when anyone on the client has an area:
+  - it asks "Who is this wording for?" first and shows each person's areas beside their name;
+  - an own area typed as a market is refused with the reason, and Save stays off;
+  - an old repeat is flagged on the card ("Boston is typed here too…") and taken out when Edit is pressed.
+- A client with no areas gets the editor exactly as before (markets first).
+
+**Tests:** `src/lib/clients/intro-wording-areas.test.ts` (9 tests):
+- DE NY's real campaign names;
+- the moved-area case;
+- 400 random sets of wordings on three real clients' people, each checked for identical sends;
+- the save, against an in-memory row.
+
+Three deliberate breaks were caught. Full suite 4,056 passed. In a local Chrome as the owner, with writes blocked, 28/28
+passed; on production after the deploy, 25/25 with nothing pressed that writes. Logs are clean.
+
+**Open:**
+- Properties & Estates' wording "Properties and Estates" still has Boston typed as a market, and Boston is Mark Barter's
+  area. Removing it changes nothing anyone receives. It was left alone (the user asked about DE NYC); the card flags it,
+  and Edit then Save tidies it.
+- For a client with NO areas, ticking a person on a wording does nothing, because the person check needs territory
+  routing (pre-existing, unchanged).
 
 ---
 
