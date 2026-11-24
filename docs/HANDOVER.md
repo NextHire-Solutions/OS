@@ -309,6 +309,13 @@ browser, so they are to be checked there by eye).
    off if the template campaign is assigned to a client (a save would fill that client's area in for good).
    **Still to do at deploy (a live EmailBison edit, with the user's go-ahead):** template #251 has the hand-written
    "[AREA]" placeholder — replace it with {CLIENT_AREA} on this page; new campaigns then get the area automatically.
+   **DONE 24 Nov 21:01 UTC** (the user: "can you get this done please"): "[AREA]" → {CLIENT_AREA} in email 1 and its 3
+   A/B versions (steps 726, 859, 860, 861), nothing else changed (read back: 8 steps, waits/reply settings/main numbers
+   identical). NOT done through this page's Edit emails: the OS sequence route renumbers every step by position,
+   versions included. Done with EmailBison's update of only those 4 steps. EmailBison REQUIRES a number on every step
+   in an update and refuses duplicates, so the versions (stored with no number) got spare numbers 6, 7, 8 — the normal
+   form (205 numbered versions elsewhere, e.g. #1395). Tested first on throwaway copies 1399–1401 (deleted). Before-copy:
+   ~/brokerstaffer-audit-2026-11-23/template-251-before-*.json. Still hand-written: "[BROKERAGE]" (not an OS field).
 9. **Select All — no limit anywhere in the client portal** (Sankalp, 24 Nov: "Remove the cap. By select all it should
    select all agents"): My Agents, the DNC List, Market › Prospects and Setup › Who we email (its 10,000 a click too) —
    portal-save.ts `moveAgents` has no cap (PORTAL_MAX_MOVE / SETUP_MAX_MOVE removed); agents looked up four parts at a
