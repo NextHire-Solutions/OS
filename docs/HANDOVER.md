@@ -231,6 +231,36 @@ recommendation to revoke the secrets stored in Railway.
 
 ---
 
+## 0.22 Replies from Tickets, as the inbox the client wrote to — 24 November
+
+LIVE 24 Nov (a452151 + 84f740e + c2b1d5f, Railway 972d071a) on the user's "yes you can deploy"; migration 0055 run by the
+user first (os_ticket_messages.sent_by + os_ticket_sends). The user: "anyone that has access to Tickets page should be able
+to reply to emails as the one who got email. like Amy got the email but eddy can reply to email as amy" (Gabriel too); "It's
+only for Amy and Eddy email"; the reply's text may be kept.
+
+- **Who sends:** `lib/tools/tickets/senders.ts` TICKETS_SENDERS = amy@, eddy@. Gmail's send permission is asked for only
+  when they connect (google/start); any other inbox that comes back able to send is revoked and refused (callback).
+  **Amy must press "Allow replies" once on Connected inboxes** (her connection predates sending); Eddy connects for the
+  first time. Until then the box says so and Send is off.
+- **The rules (reply.ts):** From = the inbox that got the client's latest email (the To first when both did, switchable);
+  To = that client, decided by the server; Cc = everyone else on that email, all ticked (reply-all), untick only. The
+  screen sends `replyTo` (the email it showed): a newer client email meanwhile → 409 "stale", nothing sent, box reloads.
+  Each draft's nonce is claimed in `os_ticket_sends` BEFORE Gmail is asked; Gmail's send is never retried; 4xx = "nothing
+  was sent"; timeout/5xx/unknown = "look in Amy's Sent folder" (Send locked, survives reload). Recorded with `sent_by`;
+  ticket → Waiting; "Eddy replied as Amy from Tickets". A Sent copy the sync stored first is filled in, not re-counted.
+- **The email (reply-mime.ts):** Re: subject, In-Reply-To/References + the inbox's thread id, the inbox's own Gmail
+  signature (settings.sendAs, readable with gmail.readonly), the client's email quoted; CR/LF stripped from headers;
+  encoded words <= 75 chars.
+- **Route:** POST /api/tools/tickets/[id]/reply — Tickets switch, Origin of this OS required, JSON only. GET = the box's data.
+- **Screen:** Reply (R) on tickets whose client wrote to Amy/Eddy; the note box steps aside while replying (N switches
+  back, the draft is kept per ticket in the browser); sent replies show their text and "Sent as Amy by Eddy". Connected
+  inboxes: "Sends replies" / "Replies: reconnect" under each inbox's state; the table's Disconnect is a × (fits at 1280px).
+
+**Tested:** unit 4,036 (reply 18, reply-mime 6, route 4); independent review → 5 fixes; local Chrome with a fake Gmail
+(no real email possible): reply-ui 45/45, widths 3/3, Amy's view 11/11. Production, read-only, nothing sent (the send
+route never called, os_ticket_sends empty): 17/17. **Not yet seen:** a real send — the first will be Amy's or Eddy's.
+Pre-existing, not changed: on a 390px phone the OS draws staff pages at desktop width.
+
 ## 0.21 Team feedback batch, and Billing for every Account Manager — 24 November
 
 LIVE 24 Nov (8714167 + 21c2064, Railway 2f635af3), on the user's "deploy". The team's 23 Nov list:
