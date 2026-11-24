@@ -372,6 +372,28 @@ test("a client with several MLSs: a Prospects campaign picked per MLS — each o
   assert.equal(j.autoAdd, "live");
 });
 
+test("a campaign found only by the client's Analytics link (Douglas Elliman New York's REBNY one, 24 Nov): the tab offers it, links an area to it automatically and saves a pick of it — the clean-up's removals keep the name-only list", async () => {
+  reset({ enabled: false, practice_mode: true, cursor_at: at(-60) });
+  const REBNY = { id: "1395", name: "Douglas Elliman + New York REBNY (EST)", status: "active" };
+  const d = {
+    ...deps(),
+    campaigns: async () => [] as Array<{ id: string; name: string; status: string }>,
+    pickable: async (c: { id: string }) => (c.id === "c-keyes" ? [REBNY] : []),
+    profiles: async () => [{ id: "1395", name: "", status: "active", sampled: 66, mls: { MFRMLS: 62, SEFMLS: 1 }, cities: {} }],
+  };
+  const v = await clientListView("c-keyes", d);
+  if (!v.available) throw new Error("unavailable");
+  assert.deepEqual(v.campaigns.map((c) => c.id), ["1395"], "offered in the picker");
+  assert.equal(v.campaignsError, null);
+  assert.deepEqual(v.byMls.markets.map((m) => [m.code, m.auto?.id ?? null, m.auto?.name ?? null]), [["MFRMLS", "1395", REBNY.name], ["SEFMLS", null, null]]);
+  const saved = await saveClientListSettings("c-keyes", { prospectsByMls: { SEFMLS: "1395" } }, "gabo075823532@gmail.com", d);
+  assert.deepEqual(saved.prospectsByMls, { SEFMLS: { id: "1395", name: REBNY.name } });
+  const one = await saveClientListSettings("c-keyes", { prospectsCampaignId: "1395" }, "x", d);
+  assert.equal(one.prospectsCampaignId, "1395");
+  const check = await checkEmail("c-keyes", "pat@agent.test", d);
+  assert.equal(check.campaignsChecked, 0, "the clean-up still reads only the campaigns it always has");
+});
+
 test("two saves at once on the Campaigns tab: the second is told someone else changed it — never both 'saved' with one pick lost", async () => {
   reset({ enabled: false, practice_mode: true, cursor_at: at(-60) });
   const first = await saveClientListSettings("c-keyes", { prospectsByMls: { MFRMLS: "642" } }, "amy@brokerstaffer.com", deps());

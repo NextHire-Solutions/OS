@@ -62,6 +62,13 @@ export interface SweepDeps {
   clients?: () => Promise<OwnerClient[]>;
   portals?: () => Promise<{ id: string; name: string; slug: string | null }[]>;
   campaigns?: (client: OwnerClient) => Promise<ClientCampaign[]>;
+  /**
+   * The campaigns the Campaigns tab offers and a Prospects pick may be saved to: by name AND by the client's own
+   * Analytics link, as the Prospects sync finds them (prospect-sync/run.ts). Douglas Elliman New York's campaigns
+   * ("Douglas Elliman + New York REBNY") are found only by the link (24 Nov). Defaults to `campaigns` when that is given.
+   * The clean-up's removals keep `campaigns`.
+   */
+  pickable?: (client: OwnerClient) => Promise<ClientCampaign[]>;
   /** The client's MLSs as its portal resolves them — a Prospects campaign is picked per MLS when it has several. */
   markets?: (osClientId: string) => Promise<Array<{ code: string; name: string }>>;
   /** The campaigns made at the client's portal setup (prospect-sync), by MLS ("" for a client with one market). */
@@ -77,6 +84,8 @@ export interface OwnerClient {
   name: string;
   aliases: string[];
   miClientId: string | null;
+  /** The client's own Analytics link (os_clients.an_client_id). */
+  analyticsClientId?: string | null;
 }
 
 export interface Cursor {
@@ -231,7 +240,7 @@ async function readEntriesFromMi(source: ListSource, cursor: Cursor, limit: numb
  * reads (listOsClients), without the 15-second master list itself.
  */
 async function ownerClients(): Promise<OwnerClient[]> {
-  return (await listOsClients()).map((c) => ({ id: c.id, name: c.name, aliases: c.aliases ?? [], miClientId: c.links.masterInbox ?? null }));
+  return (await listOsClients()).map((c) => ({ id: c.id, name: c.name, aliases: c.aliases ?? [], miClientId: c.links.masterInbox ?? null, analyticsClientId: c.links.analytics ?? null }));
 }
 
 async function portalRows(): Promise<{ id: string; name: string; slug: string | null }[]> {
@@ -254,6 +263,12 @@ async function bisonCampaigns(client: OwnerClient): Promise<ClientCampaign[]> {
   return rows.filter((r) => r.platform === "emailbison").map((r) => ({ id: r.id, name: r.name, status: r.status }));
 }
 
+/** EmailBison campaigns by name and by the client's Analytics link, as the Prospects sync reads them (pickable). */
+async function linkedBisonCampaigns(client: OwnerClient): Promise<ClientCampaign[]> {
+  const rows: CampaignRow[] = await campaignsOfClient(client, client.analyticsClientId ? [client.analyticsClientId] : []);
+  return rows.filter((r) => r.platform === "emailbison").map((r) => ({ id: r.id, name: r.name, status: r.status }));
+}
+
 function realDeps(d: SweepDeps) {
   return {
     os: d.os ?? osTable,
@@ -263,6 +278,7 @@ function realDeps(d: SweepDeps) {
     clients: d.clients ?? ownerClients,
     portals: d.portals ?? portalRows,
     campaigns: d.campaigns ?? bisonCampaigns,
+    pickable: d.pickable ?? d.campaigns ?? linkedBisonCampaigns,
     markets: d.markets ?? clientMarkets,
     setupCampaigns: d.setupCampaigns ?? setupCampaignRows,
     findLeads: d.findLeads ?? ((email: string) => createEmailBisonClient().findLeadsByEmail(email)),
@@ -773,7 +789,7 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
   let marketsError: string | null = null;
   const [row, campaigns, recent, markets, setups] = await Promise.all([
     x.os("os_campaign_list_clients").select("*").eq("os_client_id", osClientId).maybeSingle(),
-    x.campaigns(client).catch((e) => { campaignsError = e instanceof Error ? e.message : String(e); return [] as ClientCampaign[]; }),
+    x.pickable(client).catch((e) => { campaignsError = e instanceof Error ? e.message : String(e); return [] as ClientCampaign[]; }),
     recentRemovals(osClientId, 20, x.os),
     x.markets(osClientId).catch((e) => { marketsError = e instanceof Error ? e.message : String(e); return [] as Array<{ code: string; name: string }>; }),
     x.setupCampaigns(osClientId).catch(() => [] as Array<{ mlsCode: string; id: string; name: string }>),
@@ -864,7 +880,7 @@ export async function saveClientListSettings(osClientId: string, body: unknown, 
     } else {
       const client = (await x.clients()).find((c) => c.id === osClientId);
       if (!client) throw new CampaignListError("No such client.", 404);
-      const c = (await x.campaigns(client)).find((k) => k.id === String(want));
+      const c = (await x.pickable(client)).find((k) => k.id === String(want));
       if (!c) throw new CampaignListError("That campaign is not one of this client's EmailBison campaigns.");
       patch.prospects_campaign_id = c.id;
       patch.prospects_campaign_name = c.name;
@@ -875,7 +891,7 @@ export async function saveClientListSettings(osClientId: string, body: unknown, 
     if (!want || typeof want !== "object" || Array.isArray(want)) throw new CampaignListError("prospectsByMls must be an object of MLS code → campaign id.");
     const client = (await x.clients()).find((c) => c.id === osClientId);
     if (!client) throw new CampaignListError("No such client.", 404);
-    const [markets, campaigns] = await Promise.all([x.markets(osClientId), x.campaigns(client)]);
+    const [markets, campaigns] = await Promise.all([x.markets(osClientId), x.pickable(client)]);
     const codes = new Set(markets.map((m) => m.code));
     const next: Record<string, CampaignPick> = { ...current.prospectsByMls };
     for (const [code, id] of Object.entries(want as Record<string, unknown>)) {
