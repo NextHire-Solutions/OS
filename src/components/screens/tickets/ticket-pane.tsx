@@ -742,6 +742,7 @@ function ReplyBox({ ticketNumber, ctx, people, onClose, onSent, onStale }: {
           {cc.length ? (
             <div className="tk-rbox-row">
               <span className="k">Cc</span>
+              <span className="tk-rbox-ccs">
               {cc.map((a) => {
                 const off = ccOff.includes(a.email);
                 const label = people.has(a.email) ? people.name(a.email) : a.name ?? a.email;
@@ -752,6 +753,7 @@ function ReplyBox({ ticketNumber, ctx, people, onClose, onSent, onStale }: {
                   </label>
                 );
               })}
+              </span>
             </div>
           ) : null}
         </div>
@@ -773,12 +775,13 @@ function ReplyBox({ ticketNumber, ctx, people, onClose, onSent, onStale }: {
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} />
         {sender?.signature ? <div className="tk-rbox-sig" title={`${asName}'s Gmail signature, added when it's sent`}>{sender.signature}</div> : null}
         <div className="tk-rbox-f">
-          <span>Sent from {asName}&apos;s Gmail in the same conversation{sender?.signature ? ", signed as above" : ""}, with their email quoted underneath.</span>
-          <span className="tk-sp" />
-          <button type="button" className="tk-btn ghost" onClick={discard} disabled={sending}>{text.trim() ? "Discard" : "Close"}</button>
-          <button type="button" className="tk-btn pri" data-reply-send disabled={!sender?.ready || !text.trim() || sending || !!problem?.unsure} onClick={() => void send()}>
-            {sending ? "Sending…" : <>Send as {asName} <kbd>⌘↵</kbd></>}
-          </button>
+          <span className="tk-rbox-hint">Sent from {asName}&apos;s Gmail in the same conversation{sender?.signature ? ", signed as above" : ""}, with their email quoted underneath.</span>
+          <span className="tk-rbox-actions">
+            <button type="button" className="tk-btn ghost" onClick={discard} disabled={sending}>{text.trim() ? "Discard" : "Close"}</button>
+            <button type="button" className="tk-btn pri" data-reply-send disabled={!sender?.ready || !text.trim() || sending || !!problem?.unsure} onClick={() => void send()}>
+              {sending ? "Sending…" : <>Send as {asName} <kbd>⌘↵</kbd></>}
+            </button>
+          </span>
         </div>
       </div>
     </div>

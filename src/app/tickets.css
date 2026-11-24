@@ -385,3 +385,10 @@ a.tk-client:hover { background: var(--ds-brand-soft); color: var(--ds-brand-ink)
 /* The table's Disconnect is a small × (the full button is on "Your inbox"), so the row fits its card with the reply status. */
 .tk-table .tk-btn.icon.tk-disc { width: 28px; height: 28px; padding: 0; justify-content: center; }
 .tk-table th:last-child, .tk-table td:last-child { padding-left: 4px; padding-right: 0; }
+/* The reply box's footer: the note wraps beside the buttons, which always sit on the right. */
+.tk-rbox-hint { flex: 1 1 240px; min-width: 0; line-height: 1.45; }
+.tk-rbox-actions { display: flex; gap: 8px; margin-left: auto; flex: none; }
+.tk-rbox-ccs { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.tk-rbox-row > .k { align-self: flex-start; padding-top: 4px; }
+/* A narrow reading pane: the sender's address wraps inside its column instead of running under "Close". */
+.tk-mail-who b, .tk-mail-who b span { overflow-wrap: anywhere; }
