@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.25** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#025-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **Hassan Ahmed's work, merged 25 Nov (not deployed); needs migration 0056_mls_areas.sql at deploy**
+| **0.25** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#025-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **Hassan Ahmed's work, merged 25 Nov (44f2b98), not deployed; migration 0056_mls_areas.sql RUN 25 Nov (the user)**
 | **0.24** | [Intro wording for a person follows their areas — 24 November](#024-intro-wording-for-a-person-follows-their-areas--24-november) — **LIVE 24 Nov (db44e9a, Railway a1519cb5)**; Douglas Elliman NYC cleaned first; Properties & Estates still has Boston typed twice
 | **0.23** | [Prospects: areas linked to campaigns automatically; who gets which leads — 24 November](#023-prospects-areas-linked-to-campaigns-automatically-who-gets-which-leads--24-november) — **LIVE 24 Nov (217862c + 9cf3587, Railway b0dfcdbe then 80b178fa)**; first run put 55 Douglas Elliman NYC prospects into REBNY #1395 automatically
 | **0.22** | [Replies from Tickets, as the inbox the client wrote to — 24 November](#022-replies-from-tickets-as-the-inbox-the-client-wrote-to--24-november) — **LIVE 24 Nov (Railway 972d071a)**; Amy must press Allow replies; first real send not seen
@@ -238,7 +238,7 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.25 Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November
 
-**Status: Hassan Ahmed's work (his repo HassanAhmedShaik/OS-project, 539cb9f + 4e5d9ad, 24–25 Nov), merged into main on 25 Nov; NOT deployed.** One migration, **0056_mls_areas.sql** (his 0055, renumbered at the merge: our 0055_ticket_replies.sql already exists and has been run); no new environment variable. His own figures: Full suite 4,032 / 4,032
+**Status: Hassan Ahmed's work (his repo HassanAhmedShaik/OS-project, 539cb9f + 4e5d9ad, 24–25 Nov), merged into main on 25 Nov; NOT deployed.** One migration, **0056_mls_areas.sql** (his 0055, renumbered at the merge: our 0055_ticket_replies.sql already exists and has been run); **run by the user on 25 Nov** (column checked: on all 58 clients, empty); no new environment variable. His own figures: Full suite 4,032 / 4,032
 (4,011 before + 21 new), `tsc` clean. Checked read-only against production data through a local server with every
 database and outside-service write blocked: 21 live checks passed (the Clients list's buttons are drawn in the
 browser, so they are to be checked there by eye).
