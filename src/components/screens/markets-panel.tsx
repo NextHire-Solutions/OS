@@ -163,6 +163,94 @@ export function MarketSize({ codes, none }: { codes: string[]; none: string }) {
   );
 }
 
+/**
+ * THE AREA FOR EACH MLS (the client's request: "a field to the client's Record tab to configure the area name associated
+ * with each MLS"; os_clients.mls_areas, migration 0055). One box per MLS on the record: a campaign made for that MLS
+ * fills {CLIENT_AREA} with it. Shown for a client with several MLSs (with one, the record's Areas are used, as before).
+ */
+export function MlsAreasField({ clientId, mls }: { clientId: string; mls: string[] }) {
+  // null: not loaded; "missing": migration 0055 not run yet.
+  const [saved, setSaved] = useState<Record<string, string> | "missing" | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [suggest, setSuggest] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const key = mls.join("|");
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/workspace/clients/markets?clientId=${encodeURIComponent(clientId)}`, { cache: "no-store" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      const map = body.mlsAreas as Record<string, string> | null;
+      setSaved(map === null ? "missing" : map);
+      setDraft(map ?? {});
+      setSuggest([...new Set<string>([...(body.coverage?.areas ?? []), ...(body.suggestions?.areas ?? [])])]);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load");
+    }
+  }, [clientId]);
+  useEffect(() => { void load(); }, [load, key]);
+
+  if (mls.length < 2) return null;
+  const areaOf = (map: Record<string, string>, m: string) => {
+    const k = m.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return Object.entries(map).find(([code]) => code.toLowerCase().replace(/[^a-z0-9]/g, "") === k)?.[1] ?? "";
+  };
+  const missing = saved === "missing";
+  const base = saved && saved !== "missing" ? saved : {};
+  const changed = !missing && mls.some((m) => areaOf(draft, m).trim() !== areaOf(base, m));
+
+  async function save() {
+    setBusy(true); setError(null); setDone(false);
+    try {
+      const mlsAreas = Object.fromEntries(mls.map((m) => [m, areaOf(draft, m).trim()]));
+      const res = await fetch("/api/workspace/clients/markets", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, mlsAreas }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out?.error ?? `HTTP ${res.status}`);
+      setSaved(out.mlsAreas ?? {});
+      setDraft(out.mlsAreas ?? {});
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mkp mla" data-mls-areas>
+      <span className="mkp-label">Area for each MLS<span className="mkp-hint">the area each MLS&rsquo;s campaign names, as {"{CLIENT_AREA}"}</span></span>
+      {saved === null && !error ? <p className="mkp-note">Loading…</p> : null}
+      {missing ? <p className="mkp-note mkp-warn" role="status">Area for each MLS needs database migration 0055 first.</p> : null}
+      {saved !== null ? (
+        <div className="mla-rows" style={{ display: "grid", gridTemplateColumns: "minmax(80px, max-content) 1fr", gap: "6px 10px", alignItems: "center", marginTop: 6 }}>
+          {mls.map((m, i) => (
+            <label key={m} style={{ display: "contents" }}>
+              <b style={{ fontSize: 13 }}>{m}</b>
+              <input className="mkp-box mk-inp" list={`mla-sug-${clientId}`} aria-label={`Area for ${m}`} placeholder="e.g. Greater Boston" maxLength={120}
+                id={i === 0 ? `mla-${clientId}` : undefined} value={areaOf(draft, m)} disabled={busy || missing}
+                onChange={(e) => { const v = e.target.value; setDone(false); setDraft((d) => ({ ...Object.fromEntries(Object.entries(d).filter(([c]) => c.toLowerCase().replace(/[^a-z0-9]/g, "") !== m.toLowerCase().replace(/[^a-z0-9]/g, ""))), [m]: v })); }} />
+            </label>
+          ))}
+          <datalist id={`mla-sug-${clientId}`}>{suggest.map((a) => <option key={a} value={a} />)}</datalist>
+        </div>
+      ) : null}
+      {!missing && saved !== null ? (
+        <div className="mk-form" style={{ marginTop: 8 }}>
+          <button type="button" className="btn" disabled={busy || !changed} onClick={() => void save()}>{busy ? "Saving…" : "Save areas"}</button>
+          {changed && !busy ? <button type="button" className="mk-btn" onClick={() => { setDraft(base); setError(null); }}>Cancel</button> : null}
+          {done && !changed ? <span className="mk-lead" style={{ margin: 0 }}>Saved.</span> : null}
+        </div>
+      ) : null}
+      {!missing && saved !== null ? <p className="mkp-note">An MLS left blank: its campaign&rsquo;s Area is left for the team to fill.</p> : null}
+      {error ? <p className="mk-err" role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
 export function MarketsPanel({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
   const [data, setData] = useState<Payload | null>(null);
   const [markets, setMarkets] = useState("");
@@ -251,6 +339,8 @@ export function MarketsPanel({ clientId, onChanged }: { clientId: string; onChan
         {saved && !changed ? <span className="mk-lead" style={{ margin: 0 }}>Saved.</span> : null}
       </div>
       {error ? <p className="mk-err" role="alert">{error}</p> : null}
+      {/* The saved MLS list's areas (a board just added here gets its box once saved). */}
+      <MlsAreasField clientId={clientId} mls={c.mls} />
     </div>
   );
 }

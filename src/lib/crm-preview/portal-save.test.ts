@@ -562,15 +562,72 @@ test("Market: to Prospects only lists the agent — no block, no campaign, nothi
   assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === OTHER).length, 2, "the other portal's prospects untouched");
 });
 
-test("Market: at most 500 a move; Not on a list only takes off", { skip }, async () => {
+test("Market: no limit onto any list (24 Nov, Sankalp) — every agent that matches, the rows in parts", { skip }, async () => {
+  seed();
+  agentDb = Array.from({ length: 2345 }, (_, i) => agent(`m${i}`, `Market Agent ${i}`, [`market${i}@x.test`, null]));
+  matching = { ids: agentDb.map((a) => a.id), total: 2345 };
+  okResult(await run({ type: "market.moveAll", list: "market", query: "", to: "My Agents" }));
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL && /^Market Agent /.test(String(x.name))).length, 2345, "all 2,345, none left out");
+  okResult(await run({ type: "market.moveAll", list: "market", query: "", to: "DNC List" }));
+  assert.equal(fake.rows("client_dnc_entries").filter((x) => x.client_id === PORTAL && /^Market Agent /.test(String(x.name))).length, 2345);
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL && /^Market Agent /.test(String(x.name))).length, 0, "and off My Agents");
+  // …and onto Prospects (from Market, no setup flag): every one too — those on My Agents or the DNC List left out, as always.
+  fake.seed("client_dnc_entries", []);
+  okResult(await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects" }));
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).length, 2345, "all 2,345 onto Prospects, in parts");
+});
+
+test("Market: a part of the rows that doesn't save — those in are kept and blocked, the rest left where they were, and said", { skip }, async () => {
+  seed();
+  agentDb = Array.from({ length: 1500 }, (_, i) => agent(`p${i}`, `Part Agent ${i}`, [`part${i}@x.test`, null]));
+  matching = { ids: agentDb.map((a) => a.id), total: 1500 };
+  let inserts = 0;
+  fake.failWhen = ({ table, method }) => (table === "client_dnc_entries" && method === "POST" && ++inserts === 2 ? { code: "57014", message: "canceling statement due to statement timeout", status: 500 } : false);
+  const r = await run({ type: "market.moveAll", list: "market", query: "", to: "DNC List" });
+  fake.failWhen = null;
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? "" : r.error, /^1,000 of 1,500 agents were added to DNC List, but the rest didn't save — please try again.$/);
+  assert.equal(fake.rows("client_dnc_entries").filter((x) => x.client_id === PORTAL && /^Part Agent /.test(String(x.name))).length, 1000);
+  await settle();
+  const blocked = new Set(sent.filter((x) => x.what === "blockEmail").map((x) => String(x.args[0])));
+  assert.ok(blocked.has("part0@x.test") && blocked.has("part999@x.test"), "those on the list are blocked");
+  assert.ok(!blocked.has("part1000@x.test") && !blocked.has("part1499@x.test"), "never one left off the list");
+});
+
+test("Setup › Your DNC List's Remove: off the DNC List only — My Agents and Prospects stay; without dncOnly, off every list", { skip }, async () => {
+  const both = () => {
+    seed();
+    agentDb = [agent("a1", "My Agent", ["my.agent@x.test", null])];
+    // On My Agents (seed), on the DNC List by the same address, and a moved prospect.
+    fake.seed("client_dnc_entries", [
+      { client_id: PORTAL, kind: "agent", name: "My Agent", email: "my.agent@x.test", domain: null, notes: null, dedup_key: "my.agent@x.test" },
+      { client_id: OTHER, kind: "agent", name: "My Agent", email: "my.agent@x.test", domain: null, notes: null, dedup_key: "other:my.agent@x.test" },
+    ]);
+    fake.seed("os_demo_prospects", [{ portal_id: PORTAL, agent_id: "a1", added_by: "x" }]);
+  };
+  both();
+  const r = await run({ type: "market.move", ids: ["a1"], to: "Not on a list", dncOnly: true });
+  okResult(r);
+  assert.match(r.ok ? r.message ?? "" : "", /taken off your DNC List\./);
+  assert.deepEqual(fake.rows("client_dnc_entries").map((x) => x.client_id), [OTHER], "this portal's DNC entry gone — another portal's untouched");
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL && x.name === "My Agent").length, 1, "still on My Agents");
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).length, 1, "still on Prospects");
+  // The same move without dncOnly (Market's "Not on a list"): off every list, as before.
+  both();
+  okResult(await run({ type: "market.move", ids: ["a1"], to: "Not on a list" }));
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL && x.name === "My Agent").length, 0);
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).length, 0);
+  // Select all on Your DNC List: the filters plus onlist=dnc, off the DNC List only.
+  both();
+  matching = { ids: ["a1"], total: 1 };
+  okResult(await run({ type: "market.moveAll", list: "market", query: "onlist=dnc", to: "Not on a list", dncOnly: true }));
+  assert.deepEqual(fake.rows("client_dnc_entries").map((x) => x.client_id), [OTHER]);
+  assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL && x.name === "My Agent").length, 1);
+});
+
+test("Market: Not on a list only takes off", { skip }, async () => {
   seed();
   agentDb = [agent("a1", "My Agent", ["my.agent@x.test", null])];
-  let r = await run({ type: "market.move", ids: Array.from({ length: 501 }, (_, i) => `a${i}`), to: "DNC List" });
-  assert.equal(r.ok, false);
-  assert.match(r.ok ? "" : r.error, /500 or fewer/);
-  matching = { ids: ["a1"], total: 501 };
-  r = await run({ type: "market.moveAll", list: "market", query: "", to: "My Agents" });
-  assert.match(r.ok ? "" : r.error, /narrow the filters to 500 or fewer/);
   okResult(await run({ type: "market.move", ids: ["a1"], to: "Not on a list" }));
   assert.equal(fake.rows("client_agents").filter((x) => x.client_id === PORTAL).length, 0);
   assert.equal(fake.rows("client_agents").filter((x) => x.client_id === OTHER).length, 1);
@@ -752,29 +809,20 @@ test("Prospects ↔ campaign: the change is recorded BEFORE the list changes —
   assert.deepEqual(recorded().map((x) => x.action), ["add"], "recorded first (the run skips it: the agent never made it onto the list)");
 });
 
-test("Prospects ↔ campaign: the Setup wizard's pick — up to 10,000 a click (Market stays at 500), recorded as setup", { skip }, async () => {
+test("Prospects ↔ campaign: the Setup wizard's pick — every agent that matches, no limit (Sankalp, 24 Nov), recorded as setup", { skip }, async () => {
   seed();
   syncOn();
-  agentDb = Array.from({ length: 600 }, (_, i) => agent(`s${i}`, `Setup Agent ${i}`, [`setup${i}@x.test`, null]));
-  matching = { ids: agentDb.map((a) => a.id), total: 600 };
-  let r = await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects" });
-  assert.match(r.ok ? "" : r.error, /narrow the filters to 500 or fewer/, "Market's own limit without the setup flag");
+  agentDb = Array.from({ length: 12_345 }, (_, i) => agent(`s${i}`, `Setup Agent ${i}`, [`setup${i}@x.test`, null]));
+  matching = { ids: agentDb.map((a) => a.id), total: 12_345 };
   okResult(await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true }));
-  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).length, 600);
-  assert.deepEqual(recorded().map((r) => ({ action: r.action, source: r.source, n: r.agents.length })), [{ action: "add", source: "setup", n: 600 }]);
-  matching = { ids: [], total: 10_001 };
-  r = await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true });
-  assert.match(r.ok ? "" : r.error, /add up to 10,000 at a time/);
-  // The flag means nothing for the other lists: still 500.
-  matching = { ids: agentDb.map((a) => a.id), total: 600 };
-  r = await run({ type: "market.moveAll", list: "market", query: "", to: "My Agents", setup: true });
-  assert.match(r.ok ? "" : r.error, /narrow the filters to 500 or fewer/);
-  // Setup finished (the wizard is closed to the client): a client's save is held to Market's 500 — staff's is not.
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).length, 12_345, "past the old 10,000 a click: every one");
+  assert.deepEqual(recorded().map((r) => ({ action: r.action, source: r.source, n: r.agents.length })), [{ action: "add", source: "setup", n: 12_345 }], "recorded for the campaign as the setup's");
+  // Setup finished (the wizard is closed to the client): still every one, but recorded as a Prospects change, not setup.
   fake.seed("os_portal_offers", [{ portal_id: PORTAL, offers: ["Path to leadership"] }]);
   fake.seed("os_demo_prospects", []);
-  r = await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true });
-  assert.match(r.ok ? "" : r.error, /narrow the filters to 500 or fewer/, "the setup limit only while setup isn't finished");
-  okResult(await runPortalAction(PORTAL, { type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true }, "admin@outreachify.io", "staff"));
+  okResult(await run({ type: "market.moveAll", list: "market", query: "", to: "Prospects", setup: true }));
+  assert.equal(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL).length, 12_345);
+  assert.equal(recorded().at(-1)?.source, "prospects", "after setup: a Prospects change, not the setup's");
 });
 
 test("Prospects ↔ campaign: if who is a prospect can't be read, nothing is taken off (try again) — never off the list unrecorded", { skip }, async () => {

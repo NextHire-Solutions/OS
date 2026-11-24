@@ -567,13 +567,15 @@ export function MarketScreen({ clientId, list, onContext, onOpenMarket }: { clie
   }, [clientId, list, page, q, fKey, sort.key, sort.dir, reload]);
 
   /*
-   * Ticked agents, every agent that matches, or one row's agent, to a list. A real client's own portal (28 Oct): at
-   * most 500 at once, and asked first — there My Agents and the DNC List block the agents' emails in every campaign.
+   * Ticked agents, every agent that matches, or one row's agent, to a list. A real client's own portal (28 Oct): asked
+   * first — there My Agents and the DNC List block the agents' emails in every campaign. No limit on how many, to any
+   * list (24 Nov, Sankalp: "By select all it should select all agents").
    */
   const moveAgents = async (to: "Prospects" | "My Agents" | "DNC List" | "Not on a list", one?: string) => {
     if (!live || moving) return;
-    const cap = demo ? 1000 : 500;
-    if (!one && !allPicked && picked.size > cap) { say(`Move at most ${cap.toLocaleString("en-US")} agents at once — tick fewer, or narrow the filters.`, true); return; }
+    // Ticked one by one: sent by name, up to the save's limit (demo-market.ts MAX_MOVE); "Select all" sends the filters.
+    const cap = 1000;
+    if (!one && !allPicked && picked.size > cap) { say(`Tick up to ${cap.toLocaleString("en-US")} at a time — or filter and use "Select all" for more.`, true); return; }
     if (!demo) {
       const n = one ? 1 : allPicked ? (state.data?.total ?? 0) : picked.size;
       const who = n === 1 ? "this agent" : `${n.toLocaleString("en-US")} agents`;

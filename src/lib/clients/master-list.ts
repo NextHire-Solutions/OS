@@ -14,7 +14,6 @@ import type { BillingInterval } from "@/lib/tools/client-health/types";
 import { loadDatabaseClients } from "@/lib/tools/database/clients";
 import { ttlCache } from "@/lib/tools/master-inbox/cache/ttl";
 import { loadCombinedIntroSummaryByClient } from "@/lib/tools/master-inbox/portals/intro-leads";
-import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
 import { getOnboardingPipeline } from "@/lib/tools/onboarding/pipeline";
 
@@ -23,6 +22,7 @@ import { portalPeopleByMiId } from "./master-lookup";
 import { listOsClients, type OsClient } from "./os-clients";
 import { osTable } from "./os-db";
 import { portalsFor, type MiPortalRow } from "./people";
+import { clientPortalLinks, linkedRows, type PortalSourceRow } from "./portal-links.ts";
 import { keyOf } from "./roster";
 import { EMPTY_COVERAGE, type Coverage } from "./coverage";
 import { listCoverage } from "./coverage-db";
@@ -156,7 +156,7 @@ export interface MasterClient {
     perLead?: boolean;
   };
   /** `url` is the first open portal; `links` is every portal the client has (a client can run several markets). */
-  portal: { count: number; url: string | null; enabled: boolean | null; links: { name: string; url: string; enabled: boolean }[] };
+  portal: { count: number; url: string | null; enabled: boolean | null; links: { id: string; name: string; url: string; enabled: boolean; main: boolean }[] };
   analytics: { present: boolean; campaigns: number | null; sent: number | null };
   database: { present: boolean };
 }
@@ -279,7 +279,7 @@ async function readMarkets(): Promise<Map<string, Coverage>> {
 }
 
 async function readPortals(): Promise<(MiPortalRow & { portal_token: string | null })[]> {
-  const { data, error } = await getMasterInboxSupabase().from("clients").select("id, name, portal_enabled, portal_token");
+  const { data, error } = await getMasterInboxSupabase().from("clients").select("id, name, slug, portal_enabled, portal_token");
   if (error) throw new Error(error.message);
   return (data ?? []) as (MiPortalRow & { portal_token: string | null })[];
 }
@@ -372,6 +372,10 @@ async function load(): Promise<MasterClientList> {
   const now = new Date();
   const today = easternDay(now);
 
+  // Master Inbox rows each client is linked to: a row linked to one client is never another's portal button.
+  const linked = linkedRows(os.map((c) => ({ id: c.id, miClientId: c.links.masterInbox })));
+  const linkedElsewhere = (id: string): ReadonlySet<string> => new Set([...linked].filter(([, owner]) => owner !== id).map(([row]) => row));
+
   const clients: MasterClient[] = os.map((c) => {
     const h = pickHealth(c, c.links.clientHealth);
     const d = pickDb(c, c.links.onboarding);
@@ -385,7 +389,8 @@ async function load(): Promise<MasterClientList> {
     const sum = (k: "team" | "agents" | "dnc") =>
       people && portals ? mine.reduce((n, p) => n + (people.get(p.id)?.[k] ?? 0), 0) : null;
     const introList = mine.map((p) => intros?.get(p.id)).filter(Boolean) as { count: number; lastAt: string | null; notInPortal?: number; candidates?: number }[];
-    const liveToken = mine.find((p) => p.portal_token && p.portal_enabled !== false)?.portal_token ?? null;
+    // The Portal buttons: the NEW portal, for the client's own portals (portal-links.ts, 24 Nov). No token leaves the server.
+    const own = clientPortalLinks({ id: c.id, name: c.name, aliases: c.aliases, miClientId: c.links.masterInbox }, (portals ?? []) as PortalSourceRow[], linkedElsewhere(c.id));
 
     // Client Health
     const interval = (str(h?.billing_interval) ?? "biweekly") as BillingInterval;
@@ -491,12 +496,9 @@ async function load(): Promise<MasterClientList> {
       },
       portal: {
         count: mine.length,
-        url: publicPortalUrl(liveToken),
+        url: own.url,
         enabled: mine.length ? mine.some((p) => p.portal_enabled !== false) : null,
-        links: mine
-          .filter((p) => p.portal_token)
-          .map((p) => ({ name: p.name, url: publicPortalUrl(p.portal_token) as string, enabled: p.portal_enabled !== false }))
-          .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)),
+        links: own.links,
       },
       analytics: {
         present: !!a,

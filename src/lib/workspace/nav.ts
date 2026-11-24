@@ -276,6 +276,8 @@ export const NAV: NavSection[] = [
           { id: "campaigns", label: "Campaigns", path: "/analytics/campaigns", verified: true },
           { id: "schedule", label: "Schedule", path: "/analytics/schedule", verified: true },
           { id: "clients", label: "Clients", path: "/analytics/clients", verified: true },
+          // The campaign new clients' first campaigns are copied from — viewed and edited here (the client's request).
+          { id: "template", label: "New-client template", path: "/analytics/template", verified: true },
           { id: "client-view", label: "Client view", verified: true },
         ],
       },

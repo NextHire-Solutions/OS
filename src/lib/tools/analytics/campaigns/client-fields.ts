@@ -161,7 +161,7 @@ const labelOf = (key: ClientFieldKey) => CLIENT_FIELDS.find((f) => f.key === key
 export function clientFieldsProblem(missing: readonly ClientFieldKey[], values: ClientFieldValues): string | null {
   if (!missing.length || values.clientName === null) return null;
   const what = missing.map((k) => `${labelOf(k).token} (${labelOf(k).label.toLowerCase()})`).join(" and ");
-  const where = missing.includes("area") ? " Add an Area on the client's record (Clients → the client → Markets), or take the field out." : " Take the field out, or add it to the client's record.";
+  const where = missing.includes("area") ? " Add an Area on the client's record (Clients → the client → Markets) — for a client with several MLSs, the area of this campaign's MLS (Record → Area for each MLS) — or take the field out." : " Take the field out, or add it to the client's record.";
   return `${values.clientName} has nothing on record for ${what}, so the sequence cannot be saved with it.${where}`;
 }
 

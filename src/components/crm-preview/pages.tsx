@@ -58,13 +58,21 @@ function Search({ id, label, value, onChange, count }: { id: string; label: stri
   );
 }
 
-/* The bulk bar: off until rows are ticked, then the design's "N selected" (its actions inert; Cancel clears). */
-function Bulk({ count, onCancel, onExport, onDelete }: { count: number; onCancel: () => void; onExport?: () => void; onDelete?: () => void }) {
+/*
+ * The bulk bar: off until rows are ticked, then the design's "N selected" (its actions inert; Cancel clears).
+ * `onSelectAll` (24 Nov, client: "a Select All option … to select all agents at once"): a one-click "Select all N"
+ * always on the bar — every row the search shows, on every page — not only after a whole page is ticked.
+ */
+function Bulk({ count, onCancel, onExport, onDelete, total = 0, onSelectAll, noun = "agents" }: { count: number; onCancel: () => void; onExport?: () => void; onDelete?: () => void; total?: number; onSelectAll?: () => void; noun?: string }) {
+  const selectAll = onSelectAll && total > 0 && count < total
+    ? <button type="button" className={k("btn sm")} onClick={onSelectAll}><Icon name="check" size={14} />Select all {total.toLocaleString("en-US")} {noun}</button>
+    : null;
   if (count === 0) {
     return (
       <div className={k("abulk")}>
         <span>Bulk actions: tick rows below to enable</span>
         <div className={k("acts")}>
+          {selectAll}
           <button type="button" className={k("btn sm")} disabled><Icon name="download" size={14} />Export selected</button>
           <button type="button" className={k("btn sm")} disabled><Icon name="trash" size={14} />Delete selected</button>
         </div>
@@ -75,6 +83,7 @@ function Bulk({ count, onCancel, onExport, onDelete }: { count: number; onCancel
     <div className={k("abulk on")}>
       <span>{count.toLocaleString("en-US")} selected</span>
       <div className={k("acts")}>
+        {selectAll}
         <button type="button" className={k("btn sm")} {...(onExport ? { onClick: onExport } : RO)}><Icon name="download" size={14} />Export selected</button>
         <button type="button" className={k("btn sm dout")} {...(onDelete ? { onClick: onDelete } : RO)}><Icon name="trash" size={14} />Delete selected</button>
         <button type="button" className={k("btn sm")} style={{ borderColor: "transparent" }} onClick={onCancel}>Cancel</button>
@@ -208,6 +217,8 @@ export function MyAgentsScreen({ agents }: { agents: AgentEntry[] }) {
               onCancel={clear}
               onExport={live ? () => csv(found.filter((a) => picked.has(a.id))) : undefined}
               onDelete={live ? () => void remove(found.filter((a) => picked.has(a.id)).map((a) => a.id), `${count} ${count === 1 ? "agent" : "agents"}`, true) : undefined}
+              total={found.length}
+              onSelectAll={() => pick(found.map((a) => a.id), true)}
             />
             {pageAll && found.length > pageIds.length ? <SelAll onPage={pageIds.length} total={found.length} onAll={() => pick(found.map((a) => a.id), true)} /> : null}
             <div className={k("card")} style={{ overflow: "hidden" }}>

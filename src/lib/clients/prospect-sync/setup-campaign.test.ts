@@ -196,6 +196,23 @@ test("a client with several MLSs: one draft per MLS, each claimed on its own —
   assert.equal(calls.filter((c) => c.what === "duplicate").length, 2);
 });
 
+test("a client with several MLSs and an area set for an MLS (Record tab › Area for each MLS): that MLS's campaign is filled with it; one with none is left, as before", async () => {
+  seed();
+  let next = 970;
+  const { eb, calls } = fakeEb();
+  eb.duplicateCampaign = async (...args: unknown[]) => { calls.push({ what: "duplicate", args }); return { data: { id: next++ } }; };
+  const two = { ...client, areas: ["Boston", "San Diego County"], mls: ["MLSPIN", "SOCAL"] };
+  const a = await ensureSetupCampaign({ ...two, mlsCode: "MLSPIN", mlsArea: "Greater Boston" }, { by: "portal prospects", test: true, now: NOW, eb: eb as never, health: allHealthy });
+  assert.equal(a.kind, "ready");
+  assert.equal(a.kind === "ready" ? a.note : "x", null, "filled — nothing left for the team");
+  const fills = calls.filter((c) => c.what === "fill");
+  assert.equal(fills.length, 1);
+  assert.match(JSON.stringify(fills[0].args), /Agents in Greater Boston/);
+  assert.doesNotMatch(JSON.stringify(fills[0].args), /San Diego|CLIENT_AREA/, "only its own MLS's area");
+  const b = await ensureSetupCampaign({ ...two, mlsCode: "SOCAL", mlsArea: null }, { by: "portal prospects", test: true, now: NOW, eb: eb as never, health: allHealthy });
+  assert.match(b.kind === "ready" ? String(b.note) : "", /Client fields not filled/, "no area set for SOCAL: left for the team, and said");
+});
+
 test("only the template's HEALTHY inboxes go on the new client's campaign, and the note says what was left out (20 Nov)", async () => {
   seed();
   const { eb, calls } = fakeEb();

@@ -46,6 +46,58 @@ export const STANDARD_FIELDS: ReadonlyArray<{ key: string; label: string; sample
   { key: "SENDER_FULL_NAME", label: "Sender's full name", sample: "Alex Morgan" },
 ];
 
+/*
+ * The client's area (24 Nov, client: "Add an option to select an Area variable in email sequences … the correct area
+ * is dynamically assigned without requiring manual updates"). The editor's "Area" inserts {CLIENT_AREA}; the save puts
+ * the campaign's own area in its place BEFORE the rules run (so the word limit counts the words that are sent) and
+ * EmailBison only ever holds the finished text — the same field, filled the same way, as the OS's own sequence editor
+ * (analytics/campaigns/client-fields.ts). Read forgivingly, as there: any case, a space or an underscore.
+ */
+export const AREA_FIELD = "CLIENT_AREA";
+const AREA_TOKEN = /\{\s*CLIENT[ _]AREA\s*\}/gi;
+
+/** Does this text use the Area field? */
+export function usesArea(text: string): boolean {
+  AREA_TOKEN.lastIndex = 0;
+  return AREA_TOKEN.test(text);
+}
+
+/** The text with every {CLIENT_AREA} replaced by the area; unchanged with no area (the field then stays, and is refused). */
+export function withArea(text: string, area: string | null | undefined): string {
+  if (!area) return text;
+  AREA_TOKEN.lastIndex = 0;
+  return text.replace(AREA_TOKEN, () => area);
+}
+
+/** A save that uses the Area field anywhere. */
+export const inputUsesArea = (input: SaveInput): boolean => input.emails.some((e) => e.versions.some((v) => usesArea(v.subject) || usesArea(v.text)));
+
+/**
+ * The area filled in only where the client wrote it: a subject or text that differs from the live one (or is new).
+ * One left as it is live is sent back untouched — even with a {CLIENT_AREA} of the team's still in it — so it is never
+ * "changed" by the fill: a turned-off email stays saveable, an untouched one is not re-checked or rewritten, and a
+ * campaign with no area can still be saved where the client's own changes don't use it (24 Nov review).
+ * `asks`: whether anything the client changed uses the field (with no area, that save is refused — NO_AREA).
+ */
+export function areaInChanged(steps: readonly LiveStep[], input: SaveInput, area: string | null | undefined): { input: SaveInput; asks: boolean } {
+  const live = new Map<number, { subject: string; text: string }>();
+  for (const e of copyModel(steps).emails) for (const v of e.versions) if (v.id !== null) live.set(v.id, v);
+  let asks = false;
+  const fill = (now: string, unchanged: boolean) => {
+    if (unchanged || !usesArea(now)) return now;
+    asks = true;
+    return withArea(now, area);
+  };
+  const emails = input.emails.map((e) => ({
+    ...e,
+    versions: e.versions.map((v) => {
+      const was = v.id === null ? undefined : live.get(v.id);
+      return { ...v, subject: fill(v.subject, !!was && v.subject.trim() === was.subject.trim()), text: fill(v.text, !!was && sameText(v.text, was.text)) };
+    }),
+  }));
+  return { input: { ...input, emails }, asks };
+}
+
 /** A step as EmailBison returns it (GET /api/campaigns/v1.1/{id}/sequence-steps), reduced to what this needs. */
 export interface LiveStep {
   id: number;

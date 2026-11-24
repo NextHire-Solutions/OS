@@ -39,7 +39,8 @@ import { Btn, ConfirmButton, DIM } from "./toast";
  * here offered {COMPANY_NAME}, {JOB_TITLE}, {CITY} and {STATE}, none of which
  * appear in any of the 299 steps or map to anything on a lead.
  */
-const FALLBACK_MERGE_TAGS = ["{FIRST_NAME}", "{LAST_NAME}", "{EMAIL}", "{COMPANY}"];
+// The client fields too (filled by the OS, not the lead): offered even when the tag list can't be read.
+const FALLBACK_MERGE_TAGS = ["{FIRST_NAME}", "{LAST_NAME}", "{EMAIL}", "{COMPANY}", "{CLIENT_AREA}", "{CLIENT_ALIAS}"];
 
 /** Wraps the selection. Kept to tags EmailBison renders in an email body. */
 const FORMATS = [

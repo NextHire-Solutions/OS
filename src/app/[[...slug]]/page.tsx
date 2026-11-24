@@ -49,12 +49,15 @@ import { InboxesScreen } from "@/components/screens/analytics/inboxes";
 import { CampaignDetailScreen } from "@/components/screens/analytics/campaign-detail";
 import { AnalyticsScheduleScreen } from "@/components/screens/analytics/schedule";
 import { AnalyticsClientsScreen } from "@/components/screens/analytics/clients";
+import { NewClientTemplateScreen } from "@/components/screens/analytics/template";
 import { canSeePage, idForPath, products } from "@/lib/workspace/nav";
 import { isPreSplitSession, preSplitPageGrants, preSplitToolGrants } from "@/lib/workspace/switch-transition";
 import { grantsForRequest } from "@/lib/workspace/tool-paths";
 import { notFound, redirect } from "next/navigation";
 import { ALL_TOOLS, readSsoCookie, verifySso } from "@/lib/bs-auth";
 import { viewerRoles } from "@/lib/identity/viewer-roles";
+import { canSeeCrmPreview } from "@/lib/crm-preview/access";
+import { adminEmails } from "@/lib/identity/admin";
 import { canUseBillingTab } from "@/lib/clients/billing-people";
 
 /*
@@ -279,6 +282,8 @@ export default async function WorkspacePage({
   const roles = { accountManager: viewer.accountManager, salesperson: viewer.salesperson, pages: viewer.pages };
   // A session signed before the 15 Oct switch split also has the pages its roles opened (switch-transition.ts).
   const pageGrants = preSplitPageGrants(grants, isPreSplitSession(session.iat), roles);
+  // The Clients screens' Portal buttons open the new portal: links only for those it lets in (24 Nov).
+  const portalAccess = canSeeCrmPreview(email, adminEmails(), grants);
   if (!initialId.includes(":") && !canSeePage(initialId, admin, pageGrants, ALL_TOOLS, roles)) redirect("/");
 
   /*
@@ -361,7 +366,7 @@ export default async function WorkspacePage({
         performance: <PerformanceScreen initial={performance} />,
         "billing-calendar": <BillingCalendarScreen initial={performance} />,
         // The record's Billing tab: the people named in billing-access.ts only (19 Oct). Its routes refuse everyone else too.
-        roster: <ClientsScreen initial={clientsOverview} billingTab={await canUseBillingTab(email)} />,
+        roster: <ClientsScreen initial={clientsOverview} billingTab={await canUseBillingTab(email)} portalAccess={portalAccess} />,
         // Reads everything itself on open; nothing to pass from the server.
         consistency: <DiscrepanciesScreen />,
         // Loads itself — the payouts it shows depend on who is signed in.
@@ -380,10 +385,10 @@ export default async function WorkspacePage({
          * §8 — each tool's own view of the master client record: the fields
          * the document lists for that tool, read from the one record.
          */
-        "clients:client-view": <ToolClientView view="health" />,
-        "portals:client-view": <ToolClientView view="portal" />,
-        "analytics:client-view": <ToolClientView view="analytics" />,
-        "search:client-view": <ToolClientView view="database" />,
+        "clients:client-view": <ToolClientView view="health" portalAccess={portalAccess} />,
+        "portals:client-view": <ToolClientView view="portal" portalAccess={portalAccess} />,
+        "analytics:client-view": <ToolClientView view="analytics" portalAccess={portalAccess} />,
+        "search:client-view": <ToolClientView view="database" portalAccess={portalAccess} />,
         /*
          * Agent Search. Server-paged out of necessity rather than taste: the
          * table holds 1.17 million agents, so the browser is never sent more
@@ -522,6 +527,8 @@ export default async function WorkspacePage({
         // Inboxes (13 Oct): every sending inbox in one table. Loads itself.
         "analytics:inboxes": <InboxesScreen canChangeCampaigns={grants.includes("campaigns")} />,
         "analytics:clients": <AnalyticsClientsScreen />,
+        // The template new clients' first campaigns are copied from: view and edit it (loads itself).
+        "analytics:template": <NewClientTemplateScreen />,
         "team-access": <TeamAccessScreen />,
         // Client-side only: it fetches its own four endpoints, so no loader
         // joins the Promise.all above and no other screen pays for it.

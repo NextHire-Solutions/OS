@@ -95,5 +95,5 @@ async function runDemoMarketMove(a: MarketAction, who: string): Promise<DemoResu
     if (!found.ids.length) return { ok: false, status: 404, error: "No agents match these filters." };
     ids = found.ids;
   }
-  return moveAgents(createAdminSupabase(), ids, a.to, who, { onlyUnlisted: a.onlyUnlisted });
+  return moveAgents(createAdminSupabase(), ids, a.to, who, { onlyUnlisted: a.onlyUnlisted, dncOnly: a.to === "Not on a list" && !!a.dncOnly });
 }

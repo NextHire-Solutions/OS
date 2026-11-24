@@ -21,7 +21,7 @@ import { TIME_ZONES } from "@/lib/tools/client-health/types";
 
 import { ClientPeople } from "./clients-people";
 import { DeleteClient } from "./clients-delete";
-import { MarketsPanel } from "./markets-panel";
+import { MarketsPanel, MlsAreasField } from "./markets-panel";
 import { ClientBillingTab } from "./client-billing";
 import { InvoiceEmailDialog } from "./client-billing-email";
 import { ClientCampaignLists } from "./client-campaign-lists";
@@ -31,6 +31,7 @@ import type { ClaimSource, ClientBilling, FoundByEmail } from "@/lib/clients/bil
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
 import { alignmentNote } from "@/lib/clients/billing-align.ts";
 import { routeIntro, type IntroMacroClient } from "@/lib/tools/master-inbox/inbox/intro-macro";
+import { usePortalAccess } from "@/components/clients/portal-access";
 import type { ClientView } from "@/lib/clients/saved-views-match";
 
 /*
@@ -182,6 +183,7 @@ export function ClientRecord({
   /** "12 / 50" — where this client sits in the list it was opened from. */
   position?: string;
 }) {
+  const portalAccess = usePortalAccess();
   /*
    * Back from Stripe's card page (pay per lead, ?usage_setup=…), or sent from the bell (?tab=billing, 6 Nov): straight to
    * the Billing tab, where the card is read.
@@ -277,6 +279,8 @@ export function ClientRecord({
                 <button type="button" className="rx-go" onClick={() => setTab(managed)}>{managed === "campaigns" ? "View" : "Manage"} →</button>
               ) : def && !tool ? <small className="rx-why">{def.editIn}</small> : null}
             </div>
+            {/* The client's request: the area name for each MLS, set here on the Record tab (a client with several MLSs). */}
+            {key === "mls" && !tool && c.markets ? <MlsAreasField clientId={c.id} mls={c.markets.mls} /> : null}
           </div>
         </div>
       </div>
@@ -348,11 +352,12 @@ export function ClientRecord({
               </div>
             </div>
             <div className="rx-actions">
-              {(c.portal.links?.length ?? 0) > 1
+              {/* The NEW client portal, each market's own (24 Nov). Only for people it lets in (portal-access.tsx). */}
+              {!portalAccess ? null : (c.portal.links?.length ?? 0) > 1
                 ? c.portal.links.filter((l) => l.enabled).map((l) => (
-                    <a key={l.url} className="rx-btn" href={l.url} target="_blank" rel="noreferrer" title={l.name}>{portalShortName(l.name, c.portal.links)} ↗</a>
+                    <a key={l.id} className="rx-btn" href={l.url} target="_blank" rel="noreferrer" title={`Open ${l.name} in the client portal`}>{portalShortName(l.name, c.portal.links)} ↗</a>
                   ))
-                : c.portal.url ? <a className="rx-btn" href={c.portal.url} target="_blank" rel="noreferrer">Portal ↗</a> : null}
+                : c.portal.url ? <a className="rx-btn" href={c.portal.url} target="_blank" rel="noreferrer" title="Open this client's portal">Portal ↗</a> : null}
               {tool ? <a className="rx-btn" href={`/roster?client=${c.id}`}>Full record →</a> : <DeleteClient id={c.id} name={c.name} onDeleted={onDeleted} />}
             </div>
           </div>
@@ -629,6 +634,7 @@ type RowPlan = { ok: boolean; errors: string[]; notes: string[]; saved: boolean;
  * Settings → Clients, which was removed). Admins edit; account managers see.
  */
 function InboxRows({ clientId, onChanged }: { clientId: string; onChanged?: () => void }) {
+  const portalAccess = usePortalAccess();
   const [rows, setRows] = useState<InboxRowView[] | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -659,7 +665,7 @@ function InboxRows({ clientId, onChanged }: { clientId: string; onChanged?: () =
                 <b title={r.name}>{r.name}{rows.length > 1 && r.main ? <span className="rx-tag" style={{ marginLeft: 8 }}>main</span> : null}</b>
                 <small>
                   {r.threads !== null ? <span>{fmtNum(r.threads)} conversation{r.threads === 1 ? "" : "s"}</span> : null}
-                  {r.url ? <a href={r.url} target="_blank" rel="noreferrer">Portal{r.enabled ? "" : " (switched off)"} ↗</a> : <span>No portal</span>}
+                  {r.url ? (portalAccess ? <a href={r.url} target="_blank" rel="noreferrer">Portal{r.enabled ? "" : " (switched off)"} ↗</a> : <span>Portal{r.enabled ? "" : " (switched off)"}</span>) : <span>No portal</span>}
                 </small>
                 <div className="rx-spells" aria-label="Spellings">
                   {r.aliases.length ? r.aliases.map((a) => <span key={a} className="rx-spell">{a}</span>) : <span className="rx-spell none">No other spellings</span>}
@@ -811,6 +817,7 @@ function portalLabel(view: CampaignPortalView, id: string | null | undefined): s
 }
 
 function PortalsLine({ view, addPortal }: { view: CampaignPortalView; addPortal: React.ReactNode }) {
+  const portalAccess = usePortalAccess();
   const n = view.portals.length;
   return (
     <div className="rx-hint" style={{ marginTop: 0 }}>
@@ -818,7 +825,7 @@ function PortalsLine({ view, addPortal }: { view: CampaignPortalView; addPortal:
       {view.portals.map((p, i) => (
         <span key={p.id}>
           {i ? " · " : ""}
-          {p.url ? <a href={p.url} target="_blank" rel="noreferrer">{n === 1 ? p.name : portalLabel(view, p.id)}</a> : n === 1 ? p.name : portalLabel(view, p.id)}
+          {p.url && portalAccess ? <a href={p.url} target="_blank" rel="noreferrer">{n === 1 ? p.name : portalLabel(view, p.id)}</a> : n === 1 ? p.name : portalLabel(view, p.id)}
           {n > 1 && p.main ? " (main)" : ""}{!p.enabled ? " (switched off)" : ""}
         </span>
       ))}
@@ -829,6 +836,7 @@ function PortalsLine({ view, addPortal }: { view: CampaignPortalView; addPortal:
 
 /* Admins: give the client another portal, for a new market. */
 function AddPortal({ clientId, onAdded }: { clientId: string; onAdded: (v: CampaignPortalView) => void }) {
+  const portalAccess = usePortalAccess();
   const [open, setOpen] = useState(false);
   const [market, setMarket] = useState("");
   const [preview, setPreview] = useState<{ name: string; moves: string[]; keptManual: string[] } | null>(null);
@@ -893,7 +901,7 @@ function AddPortal({ clientId, onAdded }: { clientId: string; onAdded: (v: Campa
       ) : null}
       {msg ? (
         <div style={{ marginTop: 8, color: msg.bad ? "var(--x-bad, #b42318)" : undefined }}>
-          {msg.text}{msg.url ? <> <a href={msg.url} target="_blank" rel="noreferrer">Open the new portal ↗</a></> : null}
+          {msg.text}{msg.url && portalAccess ? <> <a href={msg.url} target="_blank" rel="noreferrer">Open the new portal ↗</a></> : null}
         </div>
       ) : null}
     </>

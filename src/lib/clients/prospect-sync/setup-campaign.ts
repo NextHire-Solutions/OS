@@ -18,8 +18,8 @@ import { setupCampaignName } from "./rules.ts";
  * in Analytics as a fan-out's copy is, when the client has an Analytics record.
  *
  * A client with several MLSs (a campaign per market — the user, 3 Nov) gets one per MLS, "<Client> + <MLS> + Prospects
- * (<TZ>)", each claimed on its own: its {CLIENT_AREA} is left for the team (which area an MLS covers is not recorded),
- * and the bell says so; nothing is set as the client's Prospects campaign — the run uses it for that MLS until the team
+ * (<TZ>)", each claimed on its own: its {CLIENT_AREA} is the area set for that MLS on the client's Record tab (Area for
+ * each MLS, migration 0055); with none set it is left for the team, and the bell says so; nothing is set as the client's Prospects campaign — the run uses it for that MLS until the team
  * picks one on the Campaigns tab.
  *
  * No template chosen (4 Nov, the user: "can't we just create campaign with leads in it?"): a BLANK draft under the same
@@ -63,6 +63,8 @@ export interface SetupClient {
   analyticsClientId: string | null;
   /** A client with several MLSs: the MLS this campaign is for (the agent database's code). */
   mlsCode?: string | null;
+  /** That MLS's area (the client's Record tab › Area for each MLS, 0055) — its {CLIENT_AREA}; none set: left for the team. */
+  mlsArea?: string | null;
 }
 
 export type SetupOutcome =
@@ -134,8 +136,9 @@ export async function ensureSetupCampaign(client: SetupClient, o: { by: string; 
       await eb.updateCampaign(created, { name });
 
       // The client's fields, from its own record (a client with no Analytics record has them too) — one MLS's campaign
-      // leaves its area to the team.
-      const values = clientFieldValues({ name: client.name, aliases: client.aliases, areas: market ? [] : client.areas });
+      // takes the area set for that MLS (Record tab › Area for each MLS); with none set, it is left to the team.
+      const mlsArea = (client.mlsArea ?? "").trim();
+      const values = clientFieldValues({ name: client.name, aliases: client.aliases, areas: market ? (mlsArea ? [mlsArea] : []) : client.areas });
       try {
         const filled = await fillCampaignSequence(eb as EmailBisonClient, created, name, values);
         const problem = clientFieldsProblem(filled.missing, values);

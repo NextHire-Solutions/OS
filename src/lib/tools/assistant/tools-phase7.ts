@@ -19,6 +19,7 @@ import { readOnly } from "./read-only.ts";
 import { clientsAsShown, profileOf } from "./tools-phase9.ts";
 import { blockThreshold, blockingEnabled, openPortalBlocks } from "@/lib/clients/billing-watch";
 import { openLinks } from "@/lib/clients/payment-links";
+import { newPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
 import { introBrokerage, introSubject } from "@/lib/tools/master-inbox/inbox/intro-macro";
 
 /*
@@ -105,7 +106,7 @@ export async function clientRecordTool(query: string) {
     billingSchedule: { interval: c.billingInterval, anchorDate: c.billingAnchorDate, nextBillingDate: c.nextBillingDate, linkedToStripe: Boolean(c.stripeSubscriptionId || c.stripeCustomerId) },
     targets: { weekly: c.weeklyTarget, monthly: c.monthlyTarget },
     thisCycle: c.health?.cycle ?? null,
-    portals: (c.portal.links ?? []).map((l) => ({ name: l.name, open: l.enabled, url: l.url })),
+    portals: (c.portal.links ?? []).map((l) => ({ name: l.name, open: l.enabled, url: newPortalUrl(l.id) })),
     portalPeople: { team: c.team, agents: c.agents, dncList: c.dnc },
     introducedTo: contacts,
     introductionsAllTime: c.introductions,
@@ -373,7 +374,7 @@ export async function clientPortalsTool(query: string) {
   const name = (id: string | null) => v.portals.find((p) => p.id === id)?.name ?? null;
   return {
     client: r.client.name,
-    portals: v.portals.map((p) => ({ name: p.name, open: p.enabled, main: p.main, url: p.url })),
+    portals: v.portals.map((p) => ({ name: p.name, open: p.enabled, main: p.main, url: p.url ? newPortalUrl(p.id) : null })),
     campaigns: v.campaigns.map((x) => ({
       campaign: x.name, platform: x.platform, status: x.status,
       sendsLeadsTo: name(x.portalId) ?? (x.suggestion ? `${name(x.suggestion.portalId)} (automatic choice, not saved yet)` : null),

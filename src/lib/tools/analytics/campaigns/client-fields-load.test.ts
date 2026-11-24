@@ -14,12 +14,23 @@ const skip = canMock ? false : "needs node --experimental-test-module-mocks --im
 
 type Mod = typeof import("./client-fields-load.ts");
 let mod: Mod | null = null;
-const masters = new Map<string, { name: string; aliases: string[]; markets: { areas: string[] } }>();
+const masters = new Map<string, { id?: string; name: string; aliases: string[]; markets: { areas: string[]; mls?: string[] } }>();
+/* The area for each MLS (mls-area-db.ts, 0055): what areaForCampaign is asked, and what it answers. */
+const areaAsks: Array<{ osClientId: string; campaignId: string | number; fallback: string | null }> = [];
+let perMls: (campaignId: string | number, fallback: string | null) => string | null = (_id, fallback) => fallback;
 const mappings: Record<string, { client_id: string | null; excluded: boolean } | null> = {};
 let mappingError: string | null = null;
 
 if (canMock) {
   mock.module("@/lib/clients/master-lookup", { namedExports: { masterByToolId: async () => masters } });
+  mock.module("@/lib/clients/mls-area-db", {
+    namedExports: {
+      areaForCampaign: async (osClientId: string, campaignId: string | number, _coverage: unknown, fallback: string | null) => {
+        areaAsks.push({ osClientId, campaignId, fallback });
+        return perMls(campaignId, fallback);
+      },
+    },
+  });
   mock.module("@/lib/tools/analytics/supabase", {
     namedExports: {
       analyticsTeamId: () => 2,
@@ -124,6 +135,24 @@ test("whose values: the campaign's client, from the master record", { skip }, as
   masters.set("an-1", { name: "Wagner Real Estate Group", aliases: ["Wagner"], markets: { areas: ["greater Seattle", "Tacoma"] } });
   mappings["campaign_clients:359"] = { client_id: "an-1", excluded: false };
   assert.deepEqual(await mod!.clientFieldValuesForCampaign("emailbison", 359), { clientName: "Wagner Real Estate Group", area: "greater Seattle and Tacoma", alias: "Wagner" });
+});
+
+test("whose values: a client with several MLSs — one MLS's campaign takes that MLS's area (Record tab › Area for each MLS)", { skip }, async () => {
+  areaAsks.length = 0;
+  masters.set("an-homebase", { id: "os-homebase", name: "Homebase", aliases: [], markets: { areas: ["Greater Boston", "San Diego County"], mls: ["MLSPIN", "SOCAL"] } });
+  mappings["campaign_clients:950"] = { client_id: "an-homebase", excluded: false };
+  mappings["campaign_clients:951"] = { client_id: "an-homebase", excluded: false };
+  perMls = (id, fallback) => (String(id) === "950" ? "Greater Boston" : String(id) === "951" ? null : fallback);
+  assert.equal((await mod!.clientFieldValuesForCampaign("emailbison", 950)).area, "Greater Boston", "MLSPIN's campaign: MLSPIN's area");
+  assert.equal((await mod!.clientFieldValuesForCampaign("emailbison", 951)).area, null, "an MLS with no area set: none (left for the team) — never every area run together");
+  assert.deepEqual(areaAsks.map((a) => [a.osClientId, String(a.campaignId), a.fallback]), [["os-homebase", "950", "Greater Boston and San Diego County"], ["os-homebase", "951", "Greater Boston and San Diego County"]]);
+  // One MLS: never asked — every area, exactly as before.
+  areaAsks.length = 0;
+  masters.set("an-one", { id: "os-one", name: "One Market Co", aliases: [], markets: { areas: ["Greater Denver"], mls: ["REcolorado"] } });
+  mappings["campaign_clients:960"] = { client_id: "an-one", excluded: false };
+  assert.equal((await mod!.clientFieldValuesForCampaign("emailbison", 960)).area, "Greater Denver");
+  assert.equal(areaAsks.length, 0);
+  perMls = (_id, fallback) => fallback;
 });
 
 test("whose values: unassigned and excluded campaigns have no client", { skip }, async () => {

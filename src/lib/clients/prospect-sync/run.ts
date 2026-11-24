@@ -5,7 +5,9 @@ import { osTable } from "@/lib/clients/os-db";
 import { allCampaignsOfClient, campaignsOfClient } from "@/lib/clients/pause-campaigns";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { isDemoPortal } from "@/lib/crm-preview/demo";
-import { marketContext } from "@/lib/crm-preview/market";
+import { marketContext, mlsCatalog } from "@/lib/crm-preview/market";
+import { areaForMlsCode } from "@/lib/clients/coverage";
+import { getMlsAreas } from "@/lib/clients/coverage-db";
 import { MAX_SEARCH_HITS } from "@/lib/tools/analytics/campaigns/confirm-off";
 import { attachLeads, removeLeads, type MembershipResult } from "@/lib/tools/analytics/campaigns/lead-membership";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client";
@@ -127,6 +129,8 @@ export interface RunDeps {
   readySetupCampaigns?: (osClientId: string) => Promise<Map<string, CampaignPick>>;
   setupFinished?: (portalId: string) => Promise<boolean>;
   setupCampaign?: (client: SetupClient, o: { by: string; test: boolean }) => Promise<SetupOutcome>;
+  /** The area set for one of a client's MLSs (Record tab › Area for each MLS, 0055), or null. */
+  mlsArea?: (osClientId: string, mlsCode: string) => Promise<string | null>;
   /** Which of these agents are on the portal's Prospects list (os_demo_prospects). */
   onProspects?: (portalId: string, agentIds: readonly string[]) => Promise<Set<string>>;
   loadAgents?: (ids: readonly string[], o: { mlsScope?: readonly string[] | null }) => Promise<Map<string, SyncAgent>>;
@@ -233,6 +237,11 @@ function realDeps(d: RunDeps) {
       return ((data ?? []) as unknown[]).length > 0;
     }),
     setupCampaign: d.setupCampaign ?? ((client: SetupClient, o: { by: string; test: boolean }) => ensureSetupCampaign(client, o)),
+    mlsArea: d.mlsArea ?? (async (osClientId: string, mlsCode: string) => {
+      const map = await getMlsAreas(osClientId);
+      if (!map) return null;
+      return areaForMlsCode(map, mlsCode, await mlsCatalog().catch(() => []));
+    }),
     onProspects: d.onProspects ?? (async (portalId: string, agentIds: readonly string[]) => {
       const out = new Set<string>();
       for (const part of chunks([...new Set(agentIds)], 150)) {
@@ -924,6 +933,7 @@ async function firstCampaign(x: Deps, ctx: Ctx, record: ClientRecord, client: st
   const made = await x.setupCampaign({
     osClientId: ctx.client!.id, portalId: ctx.portalId, name: client, aliases: record.aliases, areas: record.areas, mls: record.mls,
     timeZone: record.healthClientId ? await x.timeZone(record.healthClientId).catch(() => null) : null, analyticsClientId: record.analyticsClientId, mlsCode: code,
+    mlsArea: code ? await x.mlsArea(ctx.client!.id, code).catch(() => null) : null,
   }, { by: ACTOR, test });
   if (made.kind === "waiting") {
     await ask(made.reason, "waiting");

@@ -39,9 +39,10 @@ export const MAX_MOVE = 1000;
 const agentId = z.string().regex(/^[A-Za-z0-9-]{1,64}$/);
 export const marketAction = z.discriminatedUnion("type", [
   // `setup`: the Setup wizard's "Who we email" — its picks go to Prospects with the setup's own limit (portal-save.ts).
-  z.object({ type: z.literal("market.move"), ids: z.array(agentId).min(1).max(MAX_MOVE), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional(), setup: z.boolean().optional() }),
+  // `dncOnly` (with "Not on a list"): off the DNC List only — Setup › Your DNC List's Remove; My Agents and Prospects untouched.
+  z.object({ type: z.literal("market.move"), ids: z.array(agentId).min(1).max(MAX_MOVE), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional(), setup: z.boolean().optional(), dncOnly: z.boolean().optional() }),
   // Every agent matching the page's filters (the query string the page sends for its list).
-  z.object({ type: z.literal("market.moveAll"), list: z.enum(["market", "prospects"]), query: z.string().max(4000), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional(), setup: z.boolean().optional() }),
+  z.object({ type: z.literal("market.moveAll"), list: z.enum(["market", "prospects"]), query: z.string().max(4000), to: z.enum(MOVE_TARGETS), onlyUnlisted: z.boolean().optional(), setup: z.boolean().optional(), dncOnly: z.boolean().optional() }),
 ]);
 export type MarketAction = z.infer<typeof marketAction>;
 

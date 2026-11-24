@@ -102,7 +102,7 @@ test("the refusal names the client, the field and where to fix it", () => {
   const noArea = clientFieldValues({ name: "Oz Group", areas: [] });
   assert.equal(
     clientFieldsProblem(["area"], noArea),
-    "Oz Group has nothing on record for {CLIENT_AREA} (client area), so the sequence cannot be saved with it. Add an Area on the client's record (Clients → the client → Markets), or take the field out.",
+    "Oz Group has nothing on record for {CLIENT_AREA} (client area), so the sequence cannot be saved with it. Add an Area on the client's record (Clients → the client → Markets) — for a client with several MLSs, the area of this campaign's MLS (Record → Area for each MLS) — or take the field out.",
   );
   assert.equal(clientFieldsProblem([], noArea), null);
 });

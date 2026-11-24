@@ -69,6 +69,9 @@ const mlsRows = ttlCache(async (): Promise<MlsRow[]> => {
   return (data ?? []) as MlsRow[];
 }, { ttlMs: 30 * 60_000, key: () => "mls", shared: "crm-preview-mls" });
 
+/** The agent database's MLS boards (code, name, aliases), kept 30 minutes — e.g. to match an MLS by an alias. */
+export const mlsCatalog = (): Promise<MlsRow[]> => mlsRows();
+
 /**
  * How many salespeople a list of MLS codes brings — Onboard a client's preview of the new portal's market before the
  * client exists (28 Oct). The same rule as the portal's (resolveMls, marketScope), counted by the database — never
@@ -357,6 +360,8 @@ export function invalidatePortalLists(portalId: string): void {
   portalLists.invalidate(portalId);
   // …and its List orders (listOrdered): an agent just moved sorts with its new list at once.
   listOrders.forget(`${portalId}:`);
+  // …and its DNC List view (dncOnly): an agent just added or taken off shows so at once.
+  dncOnlyOrders.forget(`${portalId}:`);
 }
 
 /*
@@ -382,6 +387,39 @@ const GETTING_READY: ListPending = { pending: "Sorting by List is getting ready 
  * "Not yet" and failures are never kept.
  */
 const listOrders = boundedCache<ListOrdered>("crm-preview-list-order", { ttlMs: 60_000, max: 24, keep: (v) => !("pending" in v) });
+
+/*
+ * ONLY THE AGENTS ON THE CLIENT'S DNC LIST, with every Market filter (Setup › Your DNC List — the client: "a single DNC
+ * list in the Setup Wizard with the same functionality as the Markets section, allowing clients to search, filter, and
+ * select agents"). DNC is the first list an agent is on (listFor), so it needs no campaign set: the whole filtered
+ * market is read from memory, as the List sort reads it, and kept to the agents on the DNC List. Kept a minute; a save
+ * starts the portal's over (invalidatePortalLists).
+ */
+const dncOnlyOrders = boundedCache<ListOrdered>("crm-preview-dnc-only", { ttlMs: 60_000, max: 24, keep: (v) => !("pending" in v) });
+
+function dncOnly(ctx: MarketContext, q: MarketQuery): Promise<ListOrdered> {
+  const { page: _page, per: _per, ...asked } = q;
+  return dncOnlyOrders.get(`${ctx.portal.id}:${JSON.stringify(asked)}`, () => readDncOnly(ctx, q));
+}
+
+async function readDncOnly(ctx: MarketContext, q: MarketQuery): Promise<ListOrdered> {
+  if (!inMemory(ctx)) return { pending: "Your DNC List can't be filtered for this market here — its agents are marked on the Market page.", retry: false };
+  const base = marketBase(ctx);
+  const mem = inMemory(ctx) ? await marketFromMemory(ctx.mls.ids, base, search) : null;
+  if (!mem) return { pending: "Your DNC List is getting ready for this market — about a minute. Try again shortly.", retry: true };
+  const sort = q.sort === "list" ? dbSortOf({ sort: "volume", dir: "desc" }) : dbSortOf(q);
+  const found = searchMarket(mem, marketFilters(base, q), sort, Number.MAX_SAFE_INTEGER, 0);
+  const priced = q.price.min !== null || q.price.max !== null;
+  if (!found && priced && !mem.priceReady && !mem.priceTried && !mem.priceUnused) return { pending: "Your DNC List is getting ready for this filter — try again in a few seconds.", retry: true };
+  if (!found && priced && !mem.priceReady) void requestPriceProof(ctx.mls.ids, base, search);
+  if (!found) return { pending: "This search can't be used on your DNC List — change the search, the place or the sort.", retry: false };
+  const lists = await portalLists(ctx.portal.id);
+  const sets = listSets(lists.myAgents, lists.dnc, lists.pipeline, new Set());
+  const emailsOf = (r: Record<string, unknown>) => [str(r.preferred_email), str(r.enriched_email)].filter((e): e is string => !!e);
+  const rows = (found.rows as unknown as Array<Record<string, unknown>>).filter((r) => listFor({ id: String(r.id), full_name: str(r.full_name), emails: emailsOf(r) }, sets) === "DNC List");
+  const cents = rows.reduce((t, r) => t + Math.round((num(r.sales_volume) ?? 0) * 100), 0);
+  return { rows, total: rows.length, salesVolume: cents / 100 };
+}
 
 function listOrdered(ctx: MarketContext, q: MarketQuery): Promise<ListOrdered> {
   const { page: _page, per: _per, ...asked } = q;
@@ -445,8 +483,13 @@ export async function marketPage(ctx: MarketContext, q: MarketQuery) {
   if (why) return { unavailable: why };
   const demo = isDemoPortal(ctx.portal.id);
   let page: { rows: Array<Record<string, unknown>>; total: number; salesVolume: number };
+  // Only the DNC List (Setup › Your DNC List): every agent on it that the filters match — or why it can't be shown yet.
+  if (q.onList === "DNC List") {
+    const only = await dncOnly(ctx, q);
+    if ("pending" in only) return { unavailable: only.pending, ...(only.retry ? { unavailableRetry: true } : {}) };
+  }
   // Sorting by List: ordered here when it can be; otherwise the largest sales volume first, and the page says why.
-  const ordered = q.sort === "list" ? await listOrdered(ctx, q) : null;
+  const ordered = q.onList === "DNC List" ? await dncOnly(ctx, q) : q.sort === "list" ? await listOrdered(ctx, q) : null;
   const pending = ordered && "pending" in ordered ? ordered : null;
   if (pending) q = { ...q, sort: "volume", dir: "desc" };
   const local = q.list === "prospects" && (!ordered || pending) ? await localProspects(ctx) : null;
@@ -783,6 +826,12 @@ const cachedReport = ttlCache(async (ctx: MarketContext): Promise<MarketReport> 
 export async function matchingIds(ctx: MarketContext, q: MarketQuery, cap: number): Promise<{ unavailable: string } | { ids: string[]; total: number }> {
   const why = unavailable(ctx, q.list);
   if (why) return { unavailable: why };
+  // Only the DNC List (Setup › Your DNC List's "Select all" — to take them off): exactly the agents that view lists.
+  if (q.onList === "DNC List") {
+    const only = await dncOnly(ctx, q);
+    if ("pending" in only) return { unavailable: only.pending };
+    return only.total > cap ? { ids: [], total: only.total } : { ids: only.rows.map((r) => String(r.id)), total: only.total };
+  }
   // Sorted by List: the same order as the page (listOrdered); when it can't be, by sales volume, as the page shows.
   if (q.sort === "list") {
     const ordered = await listOrdered(ctx, q);

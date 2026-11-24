@@ -138,7 +138,7 @@ const ANALYTICS_SECTION: Record<string, ToolId> = {
   // Campaign Analytics (its first leaf, `campaign`, is also the bare /analytics).
   campaign: "analytics", volume: "analytics", infrastructure: "analytics", attribution: "analytics",
   // Campaign Management.
-  campaigns: "campaigns", schedule: "campaigns", clients: "campaigns", "client-view": "campaigns",
+  campaigns: "campaigns", schedule: "campaigns", clients: "campaigns", template: "campaigns", "client-view": "campaigns",
   // Inboxes.
   inboxes: "inboxes",
 };

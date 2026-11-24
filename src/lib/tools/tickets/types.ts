@@ -98,7 +98,10 @@ export interface MailboxView {
   lastOkAt: string | null;
   lastError: string | null;
   backfilled: boolean;
+  /** Distinct tickets this inbox received (not those marked Not a ticket). */
   tickets: number;
+  /** Email copies this inbox holds: client emails and the team's reply markers. */
+  emails: number;
   mine: boolean;
 }
 

@@ -11,8 +11,9 @@ import { analyticsTeamId, getAnalyticsSupabase } from "@/lib/tools/analytics/sup
 import { portalBillingHold } from "@/lib/tools/master-inbox/portals/billing-hold";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/tools/master-inbox/portals/flag";
 
-import { applyPlan, copyModel, planCopySave, type CopyModel, type CopyProblem, type LiveStep, type SaveInput, type StepWrite } from "./campaign-copy";
+import { applyPlan, AREA_FIELD, areaInChanged, copyModel, inputUsesArea, planCopySave, type CopyModel, type CopyProblem, type LiveStep, type SaveInput, type StepWrite } from "./campaign-copy";
 import { DEMO_PORTAL_ID, isDemoPortal } from "./demo";
+import { clientFieldValuesForCampaign } from "@/lib/tools/analytics/campaigns/client-fields-load";
 import { marketContext } from "./market";
 
 /*
@@ -64,6 +65,16 @@ export interface CampaignView extends CopyModel {
   editable: boolean;
   /** Why not, when not. */
   note: string | null;
+  /** What the editor's Area field fills in on this campaign (24 Nov); null: none on record, so it isn't offered. */
+  area: string | null;
+}
+
+/** Said when an email uses Area and the client has none on record (the field is then not offered at all). */
+export const NO_AREA = "Your area isn't set up yet, so the Area field can't be filled in. Take it out, or ask your BrokerStaffer team to add your area.";
+
+/** The Area field on a view: offered (and its value shown) only when the campaign has an area. */
+function withAreaField(v: CampaignView, area: string | null): CampaignView {
+  return area ? { ...v, area, fields: v.fields.includes(AREA_FIELD) ? v.fields : [...v.fields, AREA_FIELD] } : { ...v, area: null };
 }
 
 /** `code`: what kind of refusal, for the page — "stale" (changed meanwhile: Reload), "not-sending" (stopped meanwhile), "locked". */
@@ -178,6 +189,11 @@ export interface CampaignDeps {
   osOrigin(): string;
   /** The client's name, for the #portal-update post. */
   clientName(portalId: string): Promise<string>;
+  /**
+   * The campaign's area for {CLIENT_AREA} (24 Nov): the Area on its client's record, as the OS's sequence editor fills
+   * it (client-fields-load.ts); null when none. Throws when it can't be read (a save then refuses rather than guess).
+   */
+  areaFor(portalId: string, campaignId: string, label: string | null): Promise<string | null>;
 }
 
 export interface AuditRow {
@@ -222,7 +238,9 @@ export async function readCampaign(portalId: string, campaignId: string, deps: C
     const row = rows.find((r) => r.campaign_id === campaignId);
     if (!row || !stateOf(row.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
     if (!onPortal(row.status)) return { ok: false, status: 404, error: NOT_SENDING_READ };
-    return { ok: true, value: named(view(row.campaign_id, row.name, row.status, row.steps, sentMap(row.sent)), demoLabels(rows), opts) };
+    const labels = demoLabels(rows);
+    const area = await deps.areaFor(portalId, campaignId, labels.get(campaignId) ?? null).catch(() => null);
+    return { ok: true, value: named(withAreaField(view(row.campaign_id, row.name, row.status, row.steps, sentMap(row.sent)), area), labels, opts) };
   }
   const mine = await ownCampaign(portalId, campaignId, deps);
   if (!mine.ok) return mine;
@@ -230,7 +248,8 @@ export async function readCampaign(portalId: string, campaignId: string, deps: C
   const [live, seq, sent] = await Promise.all([deps.liveCampaign(id), deps.liveSequence(id), deps.sentPerStep(id)]);
   if (!stateOf(live.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
   if (!onPortal(live.status)) return { ok: false, status: 404, error: NOT_SENDING_READ };
-  return { ok: true, value: named(view(campaignId, live.name || mine.value.name, live.status, seq.steps, sent), mine.value.labels, opts) };
+  const area = await deps.areaFor(portalId, campaignId, mine.value.labels.get(campaignId) ?? null).catch(() => null);
+  return { ok: true, value: named(withAreaField(view(campaignId, live.name || mine.value.name, live.status, seq.steps, sent), area), mine.value.labels, opts) };
 }
 
 const demoLabels = (rows: readonly DemoRow[]) => campaignLabels(rows.map((r) => ({ id: r.campaign_id, name: r.name, status: r.status })));
@@ -238,7 +257,7 @@ const demoLabels = (rows: readonly DemoRow[]) => campaignLabels(rows.map((r) => 
 function view(id: string, name: string, status: string, steps: LiveStep[], sent: Map<number, number>): CampaignView {
   const state = stateOf(status) as CampaignState;
   const editable = state !== "finished";
-  return { id, name, state, editable, note: editable ? null : FINISHED_NOTE, ...copyModel(steps, sent) };
+  return { id, name, state, editable, note: editable ? null : FINISHED_NOTE, area: null, ...copyModel(steps, sent) };
 }
 
 const sentMap = (o: Record<string, number> | null | undefined) => new Map(Object.entries(o ?? {}).map(([k, v]) => [Number(k), Number(v) || 0]));
@@ -278,13 +297,47 @@ export interface SaveOutcome {
 export async function saveCampaign(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps = realDeps(), opts: NameOpts = {}): Promise<CampaignResult<SaveOutcome>> {
   // The labels as the save found the campaigns; every view the page gets back is named with them (`named`).
   const ref: LabelRef = {};
-  const r = await oneAtATime(`${portalId}:${campaignId}`, () => (isDemoPortal(portalId) ? saveDemo(portalId, campaignId, input, who, deps, ref) : saveReal(portalId, campaignId, input, who, deps, ref)));
+  const r = await oneAtATime(`${portalId}:${campaignId}`, async () => {
+    // The Area field (24 Nov): this campaign's area, filled in where the client wrote it (areaInChanged — against the
+    // live emails, in saveDemo / saveReal) before anything is checked or written.
+    const label = await labelFor(portalId, campaignId, deps).catch(() => null);
+    let area: string | null;
+    try {
+      area = await deps.areaFor(portalId, campaignId, label);
+    } catch {
+      if (inputUsesArea(input)) ref.areaUnread = true;
+      area = null;
+    }
+    ref.area = area;
+    return isDemoPortal(portalId) ? saveDemo(portalId, campaignId, input, who, deps, ref) : saveReal(portalId, campaignId, input, who, deps, ref);
+  });
   const labels = ref.labels ?? new Map<string, string>();
-  if (r.ok) return { ok: true, value: { ...r.value, view: named(r.value.view, labels, opts) } };
-  return r.view ? { ...r, view: named(r.view, labels, opts) } : r;
+  const area = ref.area ?? null;
+  if (r.ok) return { ok: true, value: { ...r.value, view: named(withAreaField(r.value.view, area), labels, opts) } };
+  return r.view ? { ...r, view: named(withAreaField(r.view, area), labels, opts) } : r;
 }
 
-type LabelRef = { labels?: Map<string, string> };
+/** The campaign's market label (as the list names it), for the Demo's sample area. */
+async function labelFor(portalId: string, campaignId: string, deps: CampaignDeps): Promise<string | null> {
+  if (!isDemoPortal(portalId)) return null;
+  return demoLabels(await deps.demoRows(portalId)).get(campaignId) ?? null;
+}
+
+type LabelRef = { labels?: Map<string, string>; area?: string | null; areaUnread?: boolean };
+
+/**
+ * The client's save with the area filled in where they wrote it (areaInChanged); or, when what they changed uses it and
+ * there is no area, why nothing is saved.
+ */
+function fillArea(steps: readonly LiveStep[], input: SaveInput, ref: LabelRef): { ok: true; input: SaveInput } | { ok: false; status: number; error: string; problems?: [] } {
+  const { input: filled, asks } = areaInChanged(steps, input, ref.area);
+  if (asks && !ref.area) {
+    return ref.areaUnread
+      ? { ok: false, status: 502, error: "Your area couldn't be read just now, so nothing was saved. Please try again in a minute." }
+      : { ok: false, status: 422, error: NO_AREA, problems: [] };
+  }
+  return { ok: true, input: filled };
+}
 
 async function saveDemo(portalId: string, campaignId: string, input: SaveInput, who: string, deps: CampaignDeps, ref: LabelRef = {}): Promise<CampaignResult<SaveOutcome>> {
   const rows = await deps.demoRows(portalId);
@@ -293,7 +346,9 @@ async function saveDemo(portalId: string, campaignId: string, input: SaveInput, 
   if (!row || !stateOf(row.status)) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
   if (!onPortal(row.status)) return { ok: false, status: 409, code: "not-sending", error: NOT_SENDING_SAVE };
   const sent = sentMap(row.sent);
-  const plan = planCopySave(row.steps, input, sent);
+  const filled = fillArea(row.steps, input, ref);
+  if (!filled.ok) return filled;
+  const plan = planCopySave(row.steps, filled.input, sent);
   if (!plan.ok) return { ok: false, status: plan.status, error: plan.error, ...("code" in plan ? { code: plan.code } : {}), ...("problems" in plan ? { problems: plan.problems } : {}) };
   if (!plan.updates.length && !plan.adds.length && !plan.deletes.length) return { ok: true, value: { view: view(row.campaign_id, row.name, row.status, row.steps, sent), summary: [] } };
   let next = Math.max(0, ...row.steps.map((s) => s.id)) + 1;
@@ -314,7 +369,9 @@ async function saveReal(portalId: string, campaignId: string, input: SaveInput, 
   if (!state) return { ok: false, status: 404, error: "That campaign isn't one of yours." };
   if (state !== "sending") return { ok: false, status: 409, code: "not-sending", error: NOT_SENDING_SAVE };
   const name = live.name || mine.value.name;
-  const plan = planCopySave(seq.steps, input, sent);
+  const filled = fillArea(seq.steps, input, ref);
+  if (!filled.ok) return filled;
+  const plan = planCopySave(seq.steps, filled.input, sent);
   if (!plan.ok) return { ok: false, status: plan.status, error: plan.error, ...("code" in plan ? { code: plan.code } : {}), ...("problems" in plan ? { problems: plan.problems } : {}) };
   if (!plan.updates.length && !plan.adds.length && !plan.deletes.length) return { ok: true, value: { view: view(campaignId, name, live.status, seq.steps, sent), summary: [] } };
   if (plan.updates.length && !seq.sequenceId) return { ok: false, status: 502, error: "This campaign's emails couldn't be changed just now. Please try again in a minute." };
@@ -434,6 +491,11 @@ export function liveStepOf(s: EbStep): LiveStep {
 export function realDeps(): CampaignDeps {
   const eb = () => createEmailBisonClient();
   return {
+    areaFor: async (portalId, campaignId, label) => {
+      // The Demo's sample campaigns have no client record: each fills with its own market ("Atlanta").
+      if (isDemoPortal(portalId)) return label && label !== NO_MARKET ? label : null;
+      return (await clientFieldValuesForCampaign("emailbison", campaignId)).area;
+    },
     ownCampaigns: portalCampaigns,
     liveCampaign: async (id) => {
       const c = (await eb().getCampaign(id)) as { name?: string; status?: string };

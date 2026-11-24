@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.22** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#022-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **BUILT, NOT deployed**; no migration; two decisions open (multi-MLS area; template 251 needs {CLIENT_AREA}); Members needs the client's error text
 | **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)**; Introduction-model clients get the Introduction label once a live hand-off has gone; first real one not seen yet
 | **0.19** | [Inbox health rules on Add to campaigns and Assign — 20 November](#019-inbox-health-rules-on-add-to-campaigns-and-assign--20-november) — **LIVE 21 Nov (2be7e46, Railway 59e19820)** — BUILT on feat/inbox-health-assign (with the Duplicate & Renew tightening underneath), NOT deployed
 | **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — **LIVE 21 Nov as a dry run (2be7e46, Railway 59e19820)**; 0054 run 21 Nov; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
@@ -228,6 +229,100 @@ OS_PORTAL_BLOCK_ENABLED, the Turnstile keys (waiting on the client's
 hostname). Open decisions for the user: whether to change the client portal
 links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
+
+---
+
+## 0.22 Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November
+
+**Status: BUILT and tested locally, NOT deployed.** No migration, no new environment variable. Full suite 4,032 / 4,032
+(4,011 before + 21 new), `tsc` clean. Checked read-only against production data through a local server with every
+database and outside-service write blocked: 21 live checks passed (the Clients list's buttons are drawn in the
+browser, so they are to be checked there by eye).
+
+1. **Select All (My Agents and the Setup wizard).** My Agents page: a one-click "Select all N agents" on the bulk bar
+   (pages.tsx `Bulk` `onSelectAll`). Setup › Find your agents: "Select all N that match" on the market tab (sent as the
+   filters, `market.moveAll` to My Agents, exactly as Market's own Select all) and "Select all N" on the My Agents tab
+   (for Remove selected). **No limit** (Sankalp, 24 Nov: "Remove the cap. By select all it should select all agents"):
+   every agent that matches, on every list — see 9 below.
+2. **DNC List in the Setup wizard (step 3, rebuilt).** Tab "All agents in your market": Market's own search and filters
+   (MarketFilters), ticks, "Select all N that match", "Add to DNC List" (`market.move` / `market.moveAll` to "DNC List",
+   no limit, Market's question: "We'll stop emailing them in every campaign. This can't be undone."). Tabs "DNC List
+   · Agents" / "· Companies": the entries, with search, Brokerage, Select all, Remove; Add agent and Import CSV as
+   before. A portal still has ONE DNC List ("select specific DNC lists" read as the filters and ticks; no schema change).
+3. **Members — withdrawn by the client** ("it's working now. Please disregard this request"). The form check and the
+   refusal logging first built for it were taken out again: dialogs.tsx and portal-save.ts `refusal` are as before.
+4. **Area variable.** `{CLIENT_AREA}` already existed (OS sequence editor's Insert menu; filled from the client record's
+   Area when the portal's first campaign is made). Added: the portal's Campaigns editor offers **Area** (only when the
+   campaign's client has an area); the save puts the area in before the rules run (the 125-word limit counts what is
+   sent) and EmailBison only ever holds the finished text; preview shows it; no area on record → the save is refused
+   with a plain sentence, never blanked (campaign-copy.ts `withArea`, campaigns.ts `areaFor`). The area goes only into
+   what the client changed (`areaInChanged`, against the live emails): an email left as the team wrote it — even with
+   the team's own unfilled {CLIENT_AREA}, e.g. a multi-MLS setup campaign — is sent back untouched, so a turned-off email
+   never blocks a save, an untouched one is not re-checked or rewritten, and no area blocks only an edit that uses it
+   (review of 24 Nov). The Demo fills each
+   sample with its own market. **Two things for the team / decision:** (a) the Setup template, **campaign 251, does
+   not contain {CLIENT_AREA}** — automatic campaigns only carry an area once the team adds it to that template's copy;
+   (b) the **7 multi-MLS clients** still get no automatic area (as before): which area each MLS covers is recorded
+   nowhere, and the Markets panel deliberately keeps markets / MLS / areas as three unpaired lists (30 Sep). Pairing
+   them is a decision, not built. Note: where a multi-MLS client's campaign IS filled (the client types Area on the
+   portal, or the team saves it in the OS editor), it gets the client's whole area list joined ("Boston, Cape Cod and
+   …") — as the OS editor, copy and fan-out always have. Asked of the client (24 Nov).
+5. **Portal button → the NEW portal.** Every portal link on the client record and the Clients list (header buttons, In
+   Master Inbox, Leads go to…, Add portal's message) and the Assistant's portal links now open
+   `/crm-preview?client=<portal id>` — each market its own portal (portal-links.ts: the client's linked Master Inbox row
+   plus rows by name, never another client's linked row, never "unknown", only rows that are portals). **No portal token
+   is sent to the browser any more** (the master list used to carry every client's old login-free address). **Access
+   widened, reversing the 15 Oct "only we" rule for one switch:** the new portal now also opens to staff with the
+   **Client Portals** switch (`portals`) — they could already open every client's old portal from Client Portals.
+   Staff without it are still refused (404) and see no link. To undo: the `grants` line in crm-preview/access.ts.
+   Unchanged: Client Portals' own Copy link and anything sent to clients (n8n / SMS).
+6. **Ticket counts (233 vs 6).** Root cause: Connected inboxes' "Tickets" counted **emails** (one row per Gmail
+   message in os_ticket_copies, the team's reply markers included), and the list opens on Open. On 24 Nov: 245 emails
+   = **36 tickets** (33 Done, 2 Waiting, 1 Open; 21 imported straight to Done by the first sync's 7-day rule). Not
+   pagination, permissions or sync. Now: the inbox table shows **Tickets** (distinct, not counting Not a ticket) and
+   **Emails** separately; Done and All have counts; every view's count follows the Client / Received by / search
+   filters, so it always equals what that view lists, and Open + Waiting + Snoozed + Done = All (service.ts
+   `applyScope`, `countViews`, `mailboxCounts`).
+
+**The client's answers (25 Nov) — built:**
+
+7. **Area for each MLS (client Record tab).** "Let's add a field to the client's Record tab to configure the area name
+   associated with each MLS." New column **os_clients.mls_areas** (jsonb `{ "<MLS as the record spells it>": "<area>" }`,
+   **migration 0055_mls_areas.sql — NOT run yet; run it by hand at deploy**). Record tab, under MLS: "Area for each MLS",
+   one box per MLS, for a client with 2+ MLSs (also on the Markets tab) — markets-panel.tsx `MlsAreasField`; saved by the
+   markets route (PUT `{ clientId, mlsAreas }`, coverage-db `setMlsAreas`, checked against the client's MLS list).
+   Used: a campaign made for one MLS (os_setup_campaigns.mls_code) or picked for one (prospects_by_mls) fills
+   {CLIENT_AREA} with that MLS's area — at creation (setup-campaign.ts `mlsArea`, run.ts), and on every later fill
+   (client-fields-load `clientFieldValuesForCampaign` → mls-area-db `areaForCampaign`: the OS sequence editor, copy, the
+   portal's Campaigns page). Codes matched case/punctuation-blind and through the agent database's aliases. An MLS with
+   no area set: left unfilled for the team (never every area joined). One MLS, or no MLS for the campaign: as before.
+   Before 0055 is run: everything exactly as before; the box says the migration is needed.
+8. **New-client template page.** "A section in the OS where I can view and edit the default campaign template used to
+   automatically create new campaigns. Please also add the Area variable…" Campaign Management › **New-client
+   template** (/analytics/template, `campaigns` switch; analytics/template.tsx). Shows the template (os_prospect_sync_settings),
+   who set it, its emails **read live from EmailBison** (setup-template GET ?sequence=1), whether it uses {CLIENT_AREA};
+   Change template (asks first); Edit emails = the OS's own SequenceEditor (Insert field › {CLIENT_AREA}). Editing is
+   off if the template campaign is assigned to a client (a save would fill that client's area in for good).
+   **Still to do at deploy (a live EmailBison edit, with the user's go-ahead):** template #251 has the hand-written
+   "[AREA]" placeholder — replace it with {CLIENT_AREA} on this page; new campaigns then get the area automatically.
+9. **Select All — no limit anywhere in the client portal** (Sankalp, 24 Nov: "Remove the cap. By select all it should
+   select all agents"): My Agents, the DNC List, Market › Prospects and Setup › Who we email (its 10,000 a click too) —
+   portal-save.ts `moveAgents` has no cap (PORTAL_MAX_MOVE / SETUP_MAX_MOVE removed); agents looked up four parts at a
+   time (`recordsOf`); list rows in 1,000s. Only agents ticked one by one stay at the save's 1,000 ids (MAX_MOVE);
+   the Demo Portal keeps its 1,000.
+10. **DNC step = one DNC List with Market's functionality** (client, 25 Nov: "a single DNC list in the Setup Wizard
+   with the same functionality as the Markets section, allowing clients to search, filter, and select agents").
+   Setup step 3 opens on **Your DNC List** — the market kept to agents on the DNC List (new query `onlist=dnc`,
+   market-model `onList`, market.ts `dncOnly`: the market from memory + listFor, as the List sort) with every Market
+   filter, Select all that match and **Remove** (move "Not on a list" with `dncOnly`: off the DNC List only, My Agents
+   and Prospects untouched — portal-save.ts and demo.ts); **Add from your market** (as before); **Every entry** (agents
+   and companies in one table, search / Brokerage / remove). Needs the market held in memory (live: automatic; "getting
+   ready" for ~1 min after a restart; BrokerStaffer's own multi-title portal shows a note — Every entry still works).
+
+**Tests added:** tickets/counts.test.ts, clients/portal-links.test.ts, crm-preview/setup-select-all.test.ts,
+seven Area tests in crm-preview/campaigns.test.ts, two no-limit moves in crm-preview/portal-save.test.ts, clients/mls-areas.test.ts, per-MLS cases in setup-campaign.test.ts and client-fields-load.test.ts, the `portals` rule in
+crm-preview/access.test.ts. Windows note: `npm test` finds 0 tests under cmd.exe (it keeps the quoted glob); run Node's
+test runner directly with the glob, on forward-slash paths.
 
 ---
 

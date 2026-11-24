@@ -1,6 +1,7 @@
 import "server-only";
 
 import { masterByToolId } from "@/lib/clients/master-lookup";
+import { areaForCampaign } from "@/lib/clients/mls-area-db";
 import type { EmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { analyticsTeamId, getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 
@@ -47,7 +48,13 @@ export async function clientFieldValuesForCampaign(
   const row = data as { client_id: string | null; excluded: boolean | null } | null;
   // An excluded campaign is deliberately kept out of client reporting: it has no client.
   if (!row?.client_id || row.excluded) return NO_CLIENT;
-  return clientFieldValuesForClient(row.client_id);
+  const values = await clientFieldValuesForClient(row.client_id);
+  // A client with several MLSs: one MLS's campaign takes that MLS's area (Record tab › Area for each MLS, 0055).
+  if (platform === "emailbison") {
+    const master = (await masterByToolId("analytics")).get(row.client_id);
+    if (master && (master.markets?.mls ?? []).length > 1) return { ...values, area: await areaForCampaign(master.id, campaignId, master.markets, values.area) };
+  }
+  return values;
 }
 
 /** EmailBison re-adds "Re: " to a threaded step on every write (see the sequence route). */

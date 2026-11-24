@@ -2,7 +2,7 @@ import "server-only";
 
 import { retagUnknownThreads } from "@/app/api/tools/master-inbox/clients/route";
 import { invalidateInboxClientsCache } from "@/lib/inbox/clients";
-import { publicPortalUrl } from "@/lib/portals/public-url";
+import { newPortalPath } from "@/lib/portals/public-url";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { _invalidateClientCache } from "@/lib/tools/master-inbox/clients/derive";
 import { getSupabase as getHealthSupabase } from "@/lib/tools/client-health/supabase";
@@ -74,7 +74,8 @@ export async function inboxRowsFor(clientId: string): Promise<InboxRowView[]> {
   return mine
     .map((r, i) => ({
       id: r.id, name: r.name, aliases: r.aliases ?? [], threads: counts[i],
-      url: r.portal_token ? publicPortalUrl(r.portal_token) : null,
+      // The NEW portal (24 Nov): opens after sign-in, and the token stays on the server.
+      url: r.portal_token && r.slug !== "unknown" ? newPortalPath(r.id) : null,
       enabled: r.portal_enabled !== false,
       main: r.id === client.mi_client_id,
     }))

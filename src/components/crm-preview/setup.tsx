@@ -121,7 +121,7 @@ function NoRows({ cols, why }: { cols: number; why: string }) {
 const searchWidth = (placeholder: string) => Math.max(280, 280 + (placeholder.length - 39) * 7);
 
 /** A page of the client's market or prospects, eight at a time, from the preview's market route — filtered as Market filters (pickParams). */
-function useMarket(clientId: string, list: "market" | "prospects", page: number, q: string, f: Picks, enabled = true, version = 0) {
+function useMarket(clientId: string, list: "market" | "prospects", page: number, q: string, f: Picks, enabled = true, version = 0, dncOnly = false) {
   const [state, setState] = useState<{ total: number | null; rows: Row[]; loading: boolean; unavailable: string | null }>({ total: null, rows: [], loading: true, unavailable: null });
   const fKey = JSON.stringify(f);
   useEffect(() => {
@@ -129,6 +129,8 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
     const ctrl = new AbortController();
     const sp = new URLSearchParams({ client: clientId, list, page: String(page), per: String(PER) });
     if (q) sp.set("q", q);
+    // Only the agents on the client's DNC List (Setup › Your DNC List), with every Market filter (market.ts dncOnly).
+    if (dncOnly) sp.set("onlist", "dnc");
     pickParams(sp, f);
     setState((s) => ({ ...s, loading: true }));
     fetch(`/api/crm-preview/market?${sp.toString()}`, { signal: ctrl.signal })
@@ -141,7 +143,7 @@ function useMarket(clientId: string, list: "market" | "prospects", page: number,
       .catch((err) => { if (err?.name !== "AbortError") setState({ total: null, rows: [], loading: false, unavailable: "Couldn't reach the server. Please try again." }); });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fKey stands for f
-  }, [clientId, list, page, q, fKey, enabled, version]);
+  }, [clientId, list, page, q, fKey, enabled, version, dncOnly]);
   return state;
 }
 
@@ -266,19 +268,35 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
   const [marked, setMarked] = useState<ReadonlySet<string>>(new Set());
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => setPicked(new Set()), [agents]);
+  /*
+   * Select all (24 Nov, client: "a Select All option ... to allow users to select all agents at once"). On the market
+   * tab: every agent matching the search and filters, sent as the filters (market.moveAll), as Market's own "Select
+   * all" does — every one of them, no limit (24 Nov, Sankalp), asked first: My Agents blocks each agent's email in every
+   * campaign, for good. On the My Agents tab: every agent matching the search, for Remove selected.
+   */
+  const [allMarked, setAllMarked] = useState(false);
+  useEffect(() => setAllMarked(false), [tab, q, f]);
   // As the design draws it: a row is ticked when the agent is on My Agents; ticking or unticking would change the list, so it is inert (except on the Demo, above).
   const onList = (r: { list: string }) => r.list === "My Agents";
-  const isTicked = (r: { id: string; list: string }) => (live && tab === "mine" ? picked.has(r.id) : onList(r) || (live && marked.has(r.id)));
+  const isTicked = (r: { id: string; list: string }) => (live && tab === "mine" ? picked.has(r.id) : onList(r) || (live && (allMarked || marked.has(r.id))));
   const ticked = rows.filter(isTicked).length;
+  // Unticking one row while "all" is selected keeps the rest of this page ticked (as Who we email does).
+  const pageMarketIds = () => rows.filter((r) => !onList(r)).map((r) => r.id);
   const tick = (r: { id: string; list: string }) => {
     if (tab === "mine") setPicked((cur) => withIds(cur, [r.id], !cur.has(r.id)));
-    else if (!onList(r)) setMarked((cur) => withIds(cur, [r.id], !cur.has(r.id)));
+    else if (!onList(r)) {
+      if (allMarked) { setAllMarked(false); setMarked((cur) => withIds(withIds(cur, pageMarketIds(), true), [r.id], false)); return; }
+      setMarked((cur) => withIds(cur, [r.id], !cur.has(r.id)));
+    }
   };
   const tickAll = () => {
     const ids = rows.filter((r) => tab === "mine" || !onList(r)).map((r) => r.id);
+    if (tab === "market" && allMarked) { setAllMarked(false); setMarked(new Set()); return; }
     const on = !ids.every((id) => (tab === "mine" ? picked : marked).has(id));
     (tab === "mine" ? setPicked : setMarked)((cur) => withIds(cur, ids, on));
   };
+  const selectAllMine = () => setPicked(new Set(mine.map((a) => a.id)));
+  const clearMarked = () => { setMarked(new Set()); setAllMarked(false); };
   // Only ticked agents still in the list (search can hide a ticked one — 22 Oct audit: hidden ticks were deleted too).
   const pickedShown = mine.filter((a) => picked.has(a.id)).map((a) => a.id);
   const removePicked = async () => {
@@ -288,18 +306,24 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
   // Ticked market agents onto My Agents (23 Oct, demo-market.ts): by name, brokerage and phone — never the agent database's email.
   const [adding, setAdding] = useState(false);
   const addMarked = async () => {
-    // Every agent ticked, on any page or search (only agents not on My Agents can be ticked).
+    // Every agent ticked, on any page or search (only agents not on My Agents can be ticked) — or all that match.
     const ids = [...marked];
-    if (!ids.length) { demo.say("Tick the agents on your team first."); return; }
-    // At most 500 at once on a client's own portal, as Market (portal-save.ts PORTAL_MAX_MOVE).
-    if (!demo.demo && ids.length > 500) { demo.say(`That's ${fmt(ids.length)} agents — add 500 or fewer at once.`, true); return; }
+    const count = allMarked ? total : ids.length;
+    if (!count) { demo.say("Tick the agents on your team first."); return; }
+    // No limit (24 Nov, Sankalp: "By select all it should select all agents") — asked first, naming how many. Only
+    // agents ticked one by one are sent by name, up to the save's limit (as Who we email); "Select all" sends the filters.
+    if (!allMarked && ids.length > MAX_TICKED) { demo.say(`Tick up to ${fmt(MAX_TICKED)} at a time — or filter and use "Select all" for more.`, true); return; }
     // Asked first on a client's own portal, as Market asks (28 Oct audit): My Agents are never emailed, by any campaign, for good.
-    if (!demo.demo && !window.confirm(`Add ${ids.length === 1 ? "this agent" : `${fmt(ids.length)} agents`} to My Agents? We'll never email them in any campaign. This can't be undone.`)) return;
+    if (!demo.demo && !window.confirm(`Add ${count === 1 ? "this agent" : `${fmt(count)} agents`} to My Agents? We'll never email them in any campaign. This can't be undone.${allMarked ? " Anyone already on My Agents stays as is." : ""}`)) return;
+    const sp = new URLSearchParams();
+    if (q) sp.set("q", q);
+    pickParams(sp, f);
     setAdding(true);
-    const ok = await save({ type: "market.move", ids, to: "My Agents" });
+    const ok = await save(allMarked ? { type: "market.moveAll", list: "market", query: sp.toString(), to: "My Agents" } : { type: "market.move", ids, to: "My Agents" });
     setAdding(false);
-    if (ok) { setAdded(new Set(ids)); setMarked(new Set()); setVersion((v) => v + 1); }
+    if (ok) { setAdded(new Set(allMarked ? rows.map((r) => r.id) : ids)); clearMarked(); setVersion((v) => v + 1); }
   };
+  const markedCount = allMarked ? total : marked.size;
   const placeholder = `Search all ${fmt(market.total ?? 0)} agents in your market`;
   return (
     <>
@@ -330,21 +354,27 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
           <div className={k("sbulk idle")}>
             <span className={k("bt")}>No agents added yet. Filter by your office to find them, or import a&nbsp;CSV.</span>
             {live && tab === "market" ? (
-              <button className={k("btn sm")} type="button" disabled={adding || marked.size === 0} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(marked.size)} to My Agents` : "Add to My Agents"}</button>
+              <button className={k("btn sm")} type="button" disabled={adding || markedCount === 0} onClick={() => void addMarked()}>{adding ? "Adding…" : markedCount ? `Add ${fmt(markedCount)} to My Agents` : "Add to My Agents"}</button>
             ) : (
               <button className={k("btn sm")} type="button" disabled>Add to My Agents</button>
             )}
           </div>
         ) : tab === "mine" ? (
           <div className={k("sbulk")}>
-            <span className={k("bt")}><b className={k("num")}>{fmt(n)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{live && pickedShown.length ? `${fmt(pickedShown.length)} selected` : `all ${fmt(n)} added to My Agents`}</span></span>
+            <span className={k("bt")}><b className={k("num")}>{fmt(mine.length)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{live && pickedShown.length ? `${fmt(pickedShown.length)} selected` : `all ${fmt(n)} added to My Agents`}</span>
+              {live && mine.length > 0 && pickedShown.length < mine.length ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={selectAllMine}>Select all {fmt(mine.length)}</button></> : null}
+              {live && pickedShown.length > 0 ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={() => setPicked(new Set())}>Clear selection</button></> : null}
+            </span>
             <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(), disabled: pickedShown.length === 0 } : RO)}>Remove selected</button>
           </div>
         ) : (
           <div className={k("sbulk idle")}>
-            <span className={k("bt")}><b className={k("num")}>{fmt(total)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{fmt(n)} added to My Agents</span></span>
+            <span className={k("bt")}><b className={k("num")}>{fmt(total)}</b>{" "}agents match ·{" "}<span className={k("sub")}>{allMarked ? `all ${fmt(total)} selected` : marked.size ? `${fmt(marked.size)} selected` : `${fmt(n)} added to My Agents`}</span>
+              {live && total > 0 && !allMarked ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={() => setAllMarked(true)}>Select all {fmt(total)} that match</button></> : null}
+              {live && (allMarked || marked.size > 0) ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={clearMarked}>Clear selection</button></> : null}
+            </span>
             {live ? (
-              <button className={k("btn sm")} type="button" disabled={adding} onClick={() => void addMarked()}>{adding ? "Adding…" : marked.size ? `Add ${fmt(marked.size)} to My Agents` : "Add to My Agents"}</button>
+              <button className={k("btn sm")} type="button" disabled={adding} onClick={() => void addMarked()}>{adding ? "Adding…" : markedCount ? `Add ${fmt(markedCount)} to My Agents` : "Add to My Agents"}</button>
             ) : (
               <button className={k("btn sm")} type="button" {...RO}>{ticked ? "Remove selected" : "Add to My Agents"}</button>
             )}
@@ -383,13 +413,31 @@ function AgentsStep({ clientId, agents }: { clientId: string; agents: AgentEntry
   );
 }
 
-function DncStep({ dnc }: { dnc: DncEntry[] }) {
-  const [tab, setTab] = useState<"agents" | "companies">("agents");
+/*
+ * Your DNC List — the client (24 Nov): "Display the DNC list with the same selection and filtering functionality as the
+ * Markets list", and on being asked (25 Nov): "a single DNC list in the Setup Wizard with the same functionality as the
+ * Markets section, allowing clients to search, filter, and select agents". One DNC List, three views of it:
+ *   - Your DNC List: its agents in the client's market, with Market's own search and filters, ticking and "Select all
+ *     that match" (market.ts dncOnly, ?onlist=dnc) — taken off with Remove (the Market move "Not on a list" with
+ *     dncOnly: off the DNC List only, My Agents and Prospects untouched);
+ *   - Add from your market: every agent in the market, the same filters — ticked or all that match, added to the DNC
+ *     List (market.move / moveAll to "DNC List", no limit — Sankalp, 24 Nov), asked first: never emailed, in any campaign;
+ *   - Every entry: the list as it is kept — agents and companies, anyone outside the market too — searched, by
+ *     brokerage, selected and removed; added by hand or imported as before.
+ */
+function DncStep({ clientId, dnc }: { clientId: string; dnc: DncEntry[] }) {
+  const [tab, setTab] = useState<"list" | "market" | "entries">("list");
   const [q, setQ] = useState("");
+  const qMarket = useDebounced(q);
   const [page, setPage] = useState(1);
   const people = useMemo(() => dnc.filter((d) => d.kind === "agent"), [dnc]);
   const companies = useMemo(() => dnc.filter((d) => d.kind === "company"), [dnc]);
-  // The Brokerage filter: the brokerages on the list itself.
+  // Your DNC List and Add from your market: Market's own filters (as Find your agents).
+  const [f, setF] = useState<Picks>(NO_PICKS);
+  const [version, setVersion] = useState(0);
+  const onMarket = tab !== "entries";
+  const market = useMarket(clientId, "market", onMarket ? page : 1, onMarket ? qMarket : "", f, onMarket, version, tab === "list");
+  // Every entry: the Brokerage filter, the brokerages on the list itself.
   const [brk, setBrk] = useState<string | null>(null);
   const [dncMenu, setDncMenu] = useState<string | null>(null);
   const brokerages = useMemo(() => [...new Set(dnc.map((d) => d.brokerage).filter((b): b is string => !!b && !!b.trim()))].sort((x, y) => x.localeCompare(y)), [dnc]);
@@ -402,53 +450,101 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
     document.addEventListener("keydown", close);
     return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
   }, [dncMenu]);
-  useEffect(() => setPage(1), [tab, q, brk]);
+  useEffect(() => setPage(1), [tab, q, brk, f]);
   const demo = useDemo();
   const { live, save } = demo;
-  // Agents only (3 Nov, the user: no company section — an agent's email is required).
+  // Added by hand: an agent, with their email (3 Nov, the user: no company section — an agent's email is required).
   const [dialog, setDialog] = useState<"agent" | "import" | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  useEffect(() => setPicked(new Set()), [dnc]);
+  // The list changed (an add, an import, a remove): ticks start over, and the market views read it again.
+  useEffect(() => { setPicked(new Set()); setVersion((v) => v + 1); }, [dnc]);
   const opens = (d: "agent" | "import") => (live ? { onClick: () => setDialog(d) } : RO);
   const dialogs = dialog === "import" ? (
-    <ImportDialog kind="dnc" onClose={() => setDialog(null)} onFile={(f) => importCsv(f, csvRowToDnc, "dnc.import", demo)} />
+    <ImportDialog kind="dnc" onClose={() => setDialog(null)} onFile={(file) => importCsv(file, csvRowToDnc, "dnc.import", demo)} />
   ) : dialog ? (
     <DncAddDialog
       onClose={() => setDialog(null)}
       onSave={(v) => save({ type: "dnc.add", kind: "agent", name: v.name, email: v.email, phone: v.phone, brokerage: v.brokerage, domain: null, notes: v.notes })}
     />
   ) : null;
-  // Only ticked entries on the tab and search shown (22 Oct audit: ticks on the other tab were deleted too).
+
+  // ---- Your DNC List / Add from your market: tick agents, or all that match. ----
+  const [marked, setMarked] = useState<ReadonlySet<string>>(new Set());
+  const [allMarked, setAllMarked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Agents just added or taken off show so at once; the market's reload then confirms it.
+  const [moved, setMoved] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => setMoved(new Map()), [market.rows]);
+  useEffect(() => { setAllMarked(false); setMarked(new Set()); }, [qMarket, f, tab]);
+  const marketRows = market.rows.map((r) => ({ id: String(r.id), name: r.name, office: r.office ?? r.brokerage, city: r.officeCity, years: r.years ?? null, list: moved.get(String(r.id)) ?? r.list }));
+  const marketTotal = market.total ?? 0;
+  const onDnc = (r: { list: string }) => r.list === "DNC List";
+  // On Your DNC List its agents are ticked to take off; on the market, only agents not on it yet, to add.
+  const tickable = (r: { list: string }) => (tab === "list" ? onDnc(r) : !onDnc(r));
+  const isMarked = (r: { id: string; list: string }) => (tab === "market" && onDnc(r)) || (live && tickable(r) && (allMarked || marked.has(r.id)));
+  const pageIds = marketRows.filter(tickable).map((r) => r.id);
+  const pageAll = pageIds.length > 0 && pageIds.every((id) => allMarked || marked.has(id));
+  const mark = (r: { id: string; list: string }) => {
+    if (!tickable(r)) return;
+    if (allMarked) { setAllMarked(false); setMarked((cur) => withIds(withIds(cur, pageIds, true), [r.id], false)); return; }
+    setMarked((cur) => withIds(cur, [r.id], !cur.has(r.id)));
+  };
+  const markPage = () => {
+    if (allMarked) { setAllMarked(false); setMarked(new Set()); return; }
+    setMarked((cur) => withIds(cur, pageIds, !pageAll));
+  };
+  const clearMarked = () => { setMarked(new Set()); setAllMarked(false); };
+  const markedCount = allMarked ? marketTotal : marked.size;
+  const act = async () => {
+    const ids = [...marked];
+    const count = markedCount;
+    const off = tab === "list";
+    if (!count) { demo.say(off ? "Tick the agents to take off your DNC List first." : "Tick the agents we should never email first."); return; }
+    // No limit (24 Nov, Sankalp: "By select all it should select all agents") — asked first, naming how many. Only
+    // agents ticked one by one are sent by name, up to the save's limit (as Who we email); "Select all" sends the filters.
+    if (!allMarked && ids.length > MAX_TICKED) { demo.say(`Tick up to ${fmt(MAX_TICKED)} at a time — or filter and use "Select all" for more.`, true); return; }
+    const who = count === 1 ? "this agent" : `${fmt(count)} agents`;
+    // Asked first on a client's own portal: adding is for good, in every campaign; taking off undoes no stop already made.
+    if (!demo.demo && !window.confirm(off
+      ? `Take ${who} off your DNC List? This takes them off the list only — anyone we've already stopped emailing stays stopped.`
+      : `Add ${who} to your DNC List? We'll stop emailing them in every campaign. This can't be undone.${allMarked ? " Anyone already on your DNC List stays as is." : ""}`)) return;
+    const sp = new URLSearchParams();
+    if (qMarket) sp.set("q", qMarket);
+    pickParams(sp, f);
+    if (off) sp.set("onlist", "dnc");
+    setBusy(true);
+    const ok = await save(off
+      ? (allMarked ? { type: "market.moveAll", list: "market", query: sp.toString(), to: "Not on a list", dncOnly: true } : { type: "market.move", ids, to: "Not on a list", dncOnly: true })
+      : (allMarked ? { type: "market.moveAll", list: "market", query: sp.toString(), to: "DNC List" } : { type: "market.move", ids, to: "DNC List" }));
+    setBusy(false);
+    if (ok) {
+      const shown = allMarked ? marketRows.filter(tickable).map((r) => r.id) : ids;
+      setMoved(new Map(shown.map((id) => [id, off ? "Not on a list" : "DNC List"])));
+      clearMarked();
+      setVersion((v) => v + 1);
+    }
+  };
+
+  // ---- Every entry: the list itself, to search, filter by brokerage, select and remove. ----
+  // Only ticked entries the search shows (22 Oct audit: hidden ticks were deleted too).
   const pickedIn = (rows: DncEntry[]) => rows.filter((d) => picked.has(d.id)).map((d) => d.id);
   const removePicked = async (ids: string[]) => {
     if (ids.length && window.confirm(`Remove ${fmt(ids.length)} ${ids.length === 1 ? "entry" : "entries"} from the DNC List?`)) await save({ type: "dnc.delete", ids, bulk: true });
   };
-  if (dnc.length === 0) {
-    return (
-      <>
-        <Head step={3} title="Your DNC List" text={"Sister offices, referral partners, former agents. We never email anyone on this\u00a0list."} />
-        <div className={k("card emp")}>
-          <span className={k("ei")}><Icon name="ban" size={22} /></span>
-          <h2>Your DNC List is empty</h2>
-          <p>Add the agents we should never email: add one with their email, or import a&nbsp;CSV.</p>
-          <div className={k("ea")}>
-            <button className={k("btn")} type="button" {...opens("agent")}><Icon name="plus" size={15} />Add agent</button>
-            <button className={k("btn")} type="button" {...opens("import")}><Icon name="upload" size={15} />Import CSV</button>
-          </div>
-        </div>
-        {dialogs}
-      </>
-    );
-  }
-  const list = (tab === "agents" ? people : companies).filter((d) => has(q, d.name, d.email, d.brokerage, d.domain) && (!brk || d.brokerage === brk));
+  const list = dnc.filter((d) => has(q, d.name, d.email, d.brokerage, d.domain) && (!brk || d.brokerage === brk));
   const names = companies.map((c) => c.name);
   const blocked = names.length === 0 ? "" : names.length === 1 ? ` (${names[0]})` : names.length === 2 ? ` (${names[0]} and ${names[1]})` : ` (${names[0]}, ${names[1]} and ${fmt(names.length - 2)} more)`;
+  const listPage = list.slice((page - 1) * PER, page * PER);
+  const listPageIds = listPage.map((d) => d.id);
+  const listPageAll = listPageIds.length > 0 && listPageIds.every((id) => picked.has(id));
+  const placeholder = tab === "list" ? "Search your DNC List" : tab === "market" ? `Search all ${fmt(marketTotal)} agents in your market` : "Search every entry";
+
   return (
     <>
       <Head
         step={3}
         title="Your DNC List"
-        text={"Sister offices, referral partners, former agents. We never email anyone on this\u00a0list."}
+        text={"Sister offices, referral partners, former agents — anyone we should never email. Search and filter your list as you do Markets, add agents from your market, add one with their email, or import a CSV."}
         actions={<>
           <button className={k("btn")} type="button" {...opens("agent")}><Icon name="plus" size={15} />Add agent</button>
           <button className={k("btn")} type="button" {...opens("import")}><Icon name="upload" size={15} />Import CSV</button>
@@ -456,54 +552,120 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
       />
       {dialogs}
       <div className={k("card")}>
-        <Tabs tabs={[{ id: "agents", label: "Agents", count: people.length }, { id: "companies", label: "Companies", count: companies.length }]} on={tab} onTab={setTab} />
-        <div className={k("tbar")}>
-          <label className={k("srch")} style={{ width: 280 }}>
+        <Tabs
+          tabs={[
+            { id: "list", label: "Your DNC List", count: tab === "list" ? market.total : null },
+            { id: "market", label: "Add from your market", count: tab === "market" ? market.total : null },
+            { id: "entries", label: "Every entry", count: dnc.length },
+          ]}
+          on={tab}
+          onTab={(t) => { setTab(t); setQ(""); }}
+        />
+        <div className={k("tbar")} style={{ flexWrap: "wrap" }}>
+          <label className={k("srch")} style={{ width: searchWidth(placeholder) }}>
             <Icon name="search" size={15} />
-            <input id="crx-setup-dnc-search" type="search" placeholder="Search your DNC List" aria-label="Search your DNC List" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input id="crx-setup-dnc-search" type="search" placeholder={placeholder} aria-label={placeholder} value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
           <Divider />
-          {/* Brokerage filters the list itself (23 Oct); a DNC entry records no office or city, so those two say so. */}
-          <Chip id="dnc-brokerage" label="Brokerage" value={brk} show={(v) => v} choices={brokerages} open={dncMenu === "dnc-brokerage"} onOpen={setDncMenu} onPick={(v) => { setBrk(v); setDncMenu(null); }} />
-          <button className={k("dd")} type="button" {...off("A DNC entry doesn't record an office, so there is nothing to filter by.")}>Office<Icon name="chevDown" size={14} /></button>
-          <button className={k("dd")} type="button" {...off("A DNC entry doesn't record a city, so there is nothing to filter by.")}>City<Icon name="chevDown" size={14} /></button>
-          <button className={k("clr")} type="button" onClick={() => { setQ(""); setBrk(null); }}>Clear all</button>
+          {onMarket ? (
+            <MarketFilters clientId={clientId} list="market" value={f} onChange={setF} />
+          ) : (
+            // An entry records a brokerage but no office or city: "Your DNC List" filters by everything Market does.
+            <Chip id="dnc-brokerage" label="Brokerage" value={brk} show={(v) => v} choices={brokerages} open={dncMenu === "dnc-brokerage"} onOpen={setDncMenu} onPick={(v) => { setBrk(v); setDncMenu(null); }} />
+          )}
+          <button className={k("clr")} type="button" onClick={() => { setQ(""); setBrk(null); setF(NO_PICKS); }}>Clear all</button>
         </div>
-        <div className={k("sbulk idle")}>
-          <span className={k("bt")}><b className={k("num")}>{fmt(people.length)}</b>{" "}agents ·{" "}<b className={k("num")}>{fmt(companies.length)}</b>{" "}companies blocked{blocked}{live && pickedIn(list).length ? <> · <span className={k("sub")}>{fmt(pickedIn(list).length)} selected</span></> : null}</span>
-          <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(pickedIn(list)), disabled: pickedIn(list).length === 0 } : RO)}>Remove selected</button>
-        </div>
-        <table className={k("tb")}>
-          <thead>
-            <tr>
-              <th style={{ width: 20 }}>{(() => {
-                const ids = list.slice((page - 1) * PER, page * PER).map((d) => d.id);
-                const all = ids.length > 0 && ids.every((id) => picked.has(id));
-                return <input type="checkbox" aria-label="Select all" {...(live ? { checked: all, onChange: () => setPicked((cur) => withIds(cur, ids, !all)) } : RO)} />;
-              })()}</th>
-              <th>Agent</th>
-              <th>Office</th>
-              <th>City</th>
-              <th>Email</th>
-              <th className={k("r")}>Licensed</th>
-              <th>List</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.slice((page - 1) * PER, page * PER).map((d) => (
-              <tr key={d.id} className={live && picked.has(d.id) ? k("sel") : undefined}>
-                <td><input type="checkbox" aria-label={`Select ${d.name}`} {...(live ? { checked: picked.has(d.id), onChange: () => setPicked((cur) => withIds(cur, [d.id], !cur.has(d.id))) } : RO)} /></td>
-                <td className={k("nm")}>{d.name}</td>
-                <td>{(d.kind === "agent" ? d.brokerage : null) ?? "–"}</td>
-                <td>–</td>
-                <td>{d.kind === "company" ? (d.domain ? `@${d.domain}` : "–") : d.email ?? "–"}</td>
-                <td className={k("r")}>–</td>
-                <td><span className={k("tag no")}>DNC List</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <Pager page={page} total={list.length} onPage={setPage} />
+
+        {onMarket ? (
+          <>
+            <div className={k("sbulk idle")}>
+              <span className={k("bt")}><b className={k("num")}>{market.total === null ? "…" : fmt(marketTotal)}</b>{" "}{tab === "list" ? "agents on your DNC List match" : "agents match"} ·{" "}<span className={k("sub")}>{allMarked ? `all ${fmt(marketTotal)} selected` : marked.size ? `${fmt(marked.size)} selected` : tab === "list" ? `${fmt(dnc.length)} entries in all` : `${fmt(people.length)} on your DNC List`}</span>
+                {live && marketTotal > 0 && !allMarked ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={() => setAllMarked(true)}>Select all {fmt(marketTotal)} that match</button></> : null}
+                {live && (allMarked || marked.size > 0) ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={clearMarked}>Clear selection</button></> : null}
+              </span>
+              {live ? (
+                <button className={k("btn sm")} type="button" disabled={busy || markedCount === 0} onClick={() => void act()}>
+                  {busy ? (tab === "list" ? "Removing…" : "Adding…") : tab === "list" ? (markedCount ? `Remove ${fmt(markedCount)} from DNC List` : "Remove from DNC List") : markedCount ? `Add ${fmt(markedCount)} to DNC List` : "Add to DNC List"}
+                </button>
+              ) : (
+                <button className={k("btn sm")} type="button" {...RO}>{tab === "list" ? "Remove from DNC List" : "Add to DNC List"}</button>
+              )}
+            </div>
+            <table className={k("tb")}>
+              <thead>
+                <tr>
+                  <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all on this page" checked={pageAll} {...(live ? { onChange: markPage } : { readOnly: true, ...RO })} /></th>
+                  <th>Agent</th>
+                  <th>Office</th>
+                  <th>City</th>
+                  <th className={k("r")}>Licensed</th>
+                  <th>List</th>
+                </tr>
+              </thead>
+              <tbody>
+                {marketRows.length === 0 && !market.loading ? (
+                  <NoRows cols={6} why={market.unavailable ?? (tab === "list" ? (dnc.length ? "No agents on your DNC List match." : "Your DNC List is empty — add agents from your market, add one with their email, or import a CSV.") : "No agents match.")} />
+                ) : null}
+                {marketRows.map((r) => (
+                  <tr key={r.id} className={isMarked(r) ? k("sel") : undefined}>
+                    <td><input type="checkbox" aria-label={`Select ${r.name}`} checked={isMarked(r)} {...(live && tickable(r) ? { onChange: () => mark(r) } : live ? { readOnly: true, ...off(tab === "list" ? `${r.name} is off your DNC List now.` : `${r.name} is on your DNC List already.`) } : { readOnly: true, ...RO })} /></td>
+                    <td className={k("nm")}>{r.name}</td>
+                    <td>{r.office ?? "–"}</td>
+                    <td>{r.city ?? "–"}</td>
+                    <td className={k("r")}>{r.years !== null ? `${r.years} yrs` : "–"}</td>
+                    <td><ListTag list={r.list} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Pager page={page} total={marketTotal} onPage={setPage} />
+            {tab === "list" ? (
+              <p style={{ margin: "8px 14px 12px", fontSize: 12, color: "#6b7280" }}>
+                Agents of your market on your list. Companies{companies.length ? ` (${fmt(companies.length)})` : ""} and anyone outside your market are under &ldquo;Every entry&rdquo; — so is an agent who stays here after Remove (blocked through their company, or added by an email of theirs).
+              </p>
+            ) : null}
+          </>
+        ) : dnc.length === 0 ? (
+          <div className={k("emp")} style={{ borderTop: "1px solid #ebedf0" }}>
+            <span className={k("ei")}><Icon name="ban" size={22} /></span>
+            <h2>Your DNC List is empty</h2>
+            <p>Find agents on &ldquo;Add from your market&rdquo; and add them, add one with their email, or import a&nbsp;CSV.</p>
+          </div>
+        ) : (
+          <>
+            <div className={k("sbulk idle")}>
+              <span className={k("bt")}><b className={k("num")}>{fmt(people.length)}</b>{" "}agents ·{" "}<b className={k("num")}>{fmt(companies.length)}</b>{" "}companies blocked{blocked}{live && pickedIn(list).length ? <> · <span className={k("sub")}>{fmt(pickedIn(list).length)} selected</span></> : null}
+                {live && list.length > 0 && pickedIn(list).length < list.length ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={() => setPicked((cur) => withIds(cur, list.map((d) => d.id), true))}>Select all {fmt(list.length)}</button></> : null}
+                {live && pickedIn(list).length > 0 ? <>{" "}·{" "}<button type="button" className="cpv-link" onClick={() => setPicked(new Set())}>Clear selection</button></> : null}
+              </span>
+              <button className={k("btn sm")} type="button" {...(live ? { onClick: () => void removePicked(pickedIn(list)), disabled: pickedIn(list).length === 0 } : RO)}>Remove selected</button>
+            </div>
+            <table className={k("tb")}>
+              <thead>
+                <tr>
+                  <th style={{ width: 20 }}><input type="checkbox" aria-label="Select all on this page" {...(live ? { checked: listPageAll, onChange: () => setPicked((cur) => withIds(cur, listPageIds, !listPageAll)) } : RO)} /></th>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Brokerage</th>
+                  <th>Email</th>
+                </tr>
+              </thead>
+              <tbody>
+                {listPage.length === 0 ? <NoRows cols={5} why="No entries on your DNC List match." /> : null}
+                {listPage.map((d) => (
+                  <tr key={d.id} className={live && picked.has(d.id) ? k("sel") : undefined}>
+                    <td><input type="checkbox" aria-label={`Select ${d.name}`} {...(live ? { checked: picked.has(d.id), onChange: () => setPicked((cur) => withIds(cur, [d.id], !cur.has(d.id))) } : RO)} /></td>
+                    <td className={k("nm")}>{d.name}</td>
+                    <td>{d.kind === "company" ? "Company" : "Agent"}</td>
+                    <td>{(d.kind === "agent" ? d.brokerage : null) ?? "–"}</td>
+                    <td>{d.kind === "company" ? (d.domain ? `@${d.domain}` : "–") : d.email ?? "–"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Pager page={page} total={list.length} onPage={setPage} />
+          </>
+        )}
       </div>
     </>
   );
@@ -512,12 +674,11 @@ function DncStep({ dnc }: { dnc: DncEntry[] }) {
 /*
  * Who we email: the client's market to look through with Market's filters, and their prospects — the agents in their
  * campaigns, and any they added. Since 2 Nov (Eddy: "Add their selected prospects as leads") the client picks here:
- * ticked agents, or every one matching the filters, go onto their Prospects — the Market move, with the setup's own
- * limit a click (portal-save.ts SETUP_MAX_MOVE) and no limit in all — and from there into their campaign
+ * ticked agents, or every one matching the filters, go onto their Prospects — the Market move, with no limit (Sankalp,
+ * 24 Nov: "By select all it should select all agents") — and from there into their campaign
  * (clients/prospect-sync; a new client's first campaign is made when it finishes setup). Anyone on My Agents, the DNC
  * List or the pipeline is left out, as always. Picking needs a viewer who may change the portal (`live`).
  */
-const SETUP_MAX_PICK = 10_000;
 /** Agents ticked one by one in one add (the save's limit on named agents, demo-market.ts MAX_MOVE). */
 const MAX_TICKED = 1_000;
 
@@ -551,7 +712,7 @@ function TargetStep({ clientId }: { clientId: string }) {
   const selected = allPicked ? (filtered.total ?? 0) : picked.size;
   const addToProspects = async () => {
     if (!live || adding || !selected) return;
-    if (selected > SETUP_MAX_PICK) { say(`Add up to ${SETUP_MAX_PICK.toLocaleString("en-US")} at a time — narrow the filters (a city, say), add them, then the next.`, true); return; }
+    // No limit on how many (Sankalp, 24 Nov: "By select all it should select all agents") — asked first, naming how many.
     // Ticked one by one: a thousand at a time (more go as "Select all", which sends the filters, not the names).
     if (!allPicked && picked.size > MAX_TICKED) { say(`Tick up to ${MAX_TICKED.toLocaleString("en-US")} at a time — or filter and use "Select all" for more.`, true); return; }
     const who = selected === 1 ? "this agent" : `${selected.toLocaleString("en-US")} agents`;
@@ -623,8 +784,7 @@ function TargetStep({ clientId }: { clientId: string }) {
                 {!allPicked && pageAll && (filtered.total ?? 0) > rowIds.length ? <button type="button" className="cpv-link" onClick={() => setAllPicked(true)}>Select all {fmt(filtered.total ?? 0)} that match</button> : null}
                 <span style={{ width: 1, height: 18, background: "#d9e1f2", margin: "0 4px" }} />
                 <button className={k("btn sm pri")} type="button" disabled={adding} onClick={() => void addToProspects()}><Icon name="plus" size={13} />{adding ? "Adding…" : "Add to Prospects"}</button>
-                {selected > SETUP_MAX_PICK ? <span style={{ fontSize: 12, color: "#b42318" }}>Up to {fmt(SETUP_MAX_PICK)} at a time — narrow the filters.</span>
-                  : !allPicked && picked.size > MAX_TICKED ? <span style={{ fontSize: 12, color: "#b42318" }}>Tick up to {fmt(MAX_TICKED)} at a time — or use Select all.</span> : null}
+                {!allPicked && picked.size > MAX_TICKED ?<span style={{ fontSize: 12, color: "#b42318" }}>Tick up to {fmt(MAX_TICKED)} at a time — or use Select all.</span> : null}
                 <span style={{ flexGrow: 1 }} />
                 <button type="button" className={k("dd")} style={{ height: 30, fontSize: 12, color: "#555a64" }} onClick={() => { setPicked(new Set()); setAllPicked(false); }}><Icon name="x" size={13} />Clear selection</button>
               </div>
@@ -800,7 +960,7 @@ export function SetupWizard({
           <div className={k("obc")}>
             {step === 1 ? <TeamStep client={client} team={team} />
               : step === 2 ? <AgentsStep clientId={client.id} agents={agents} />
-              : step === 3 ? <DncStep dnc={dnc} />
+              : step === 3 ? <DncStep clientId={client.id} dnc={dnc} />
               : step === 4 ? <TargetStep clientId={client.id} />
               : step === 5 ? <OfferStep value={offerDraft} onChange={setOfferDraft} />
               : <DoneStep client={client} onExit={onExit} />}
