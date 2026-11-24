@@ -63,8 +63,8 @@ import { parseMarketQuery, personKey } from "./market-model";
  *   - Market's "Move to" My Agents / DNC List / off every list (the user's choice, 28 Oct: "Block them by email,
  *     keep emails hidden"): the entry is saved by name (and brokerage, on the DNC List) — never the agent database's
  *     email or phone — and the agent's PREFERRED email is blocked as an added address is (on the DNC List also
- *     stopped, and kept in os_market_dnc_emails for the reply agent and the relay); at most PORTAL_MAX_MOVE agents a
- *     move, each counted as Market use;
+ *     stopped, and kept in os_market_dnc_emails for the reply agent and the relay); as many agents a move as the client
+ *     picks (24 Nov — PORTAL_MAX_MOVE now limits Prospects only), each counted as Market use;
  *   - Market's "Move to" Prospects (31 Oct): the agent's id on the portal's Prospects (os_demo_prospects — the Demo's
  *     table, keyed by portal) — no block, no email. An agent on My Agents, the DNC List or the pipeline stays where it
  *     is (left out, as the Setup wizard's moves leave it). Since 2 Nov (Eddy: "auto add/remove leads from campaigns as
@@ -77,9 +77,13 @@ import { parseMarketQuery, personKey } from "./market-model";
  * current import, side effects and all.
  */
 
-export const PORTAL_MAX_MOVE = 500;
-/** The Setup wizard's "Who we email": as many agents as the client picks in all (the user, 2 Nov), this many a click. */
-export const SETUP_MAX_MOVE = 10_000;
+/**
+ * No limit on a move (24 Nov, Sankalp, on the client's Select All: "Remove the cap. By select all it should select all
+ * agents") — onto My Agents, the DNC List, Prospects (Market and the Setup wizard's "Who we email") and off every list.
+ * The portal asks first, naming how many; the list rows go in in parts (MOVE_INSERT_PART). Only agents ticked one by
+ * one are sent by id, up to the save's MAX_MOVE (demo-market.ts); "Select all" sends the filters.
+ */
+const MOVE_INSERT_PART = 1000;
 
 /**
  * A change to the portal's Prospects, recorded for the client's campaign (prospect-sync) — BEFORE the list changes:
@@ -680,34 +684,25 @@ async function blockAll(table: "client_agents" | "client_dnc_entries", rows: Arr
 async function moveAgents({ client, token }: Portal, a: MarketAction, who: string, role: "client" | "staff"): Promise<DemoResult> {
   const C = client.id;
   const toProspects = a.to === "Prospects";
-  // The Setup wizard's picks: to Prospects only, with the setup's own limit a click — and a client's only while its
-  // setup isn't finished (the wizard is closed to it then; 3 Nov audit: otherwise any save could ask for 10,000 at once).
+  // The Setup wizard's picks (recorded for the campaign as "setup"): a client's only while its setup isn't finished.
   const setup = !!a.setup && toProspects && (role === "staff" || !(await setupFinished(C)));
-  const cap = setup ? SETUP_MAX_MOVE : PORTAL_MAX_MOVE;
   // To Prospects, only agents on none of the client's lists (a DNC or My Agents entry is never undone from here).
   const unlistedOnly = a.onlyUnlisted || toProspects;
   let ids: string[];
   if (a.type === "market.move") {
-    if (a.ids.length > cap) return { ok: false, status: 409, error: `That's ${a.ids.length.toLocaleString("en-US")} agents — move ${cap.toLocaleString("en-US")} or fewer at once.` };
     ids = a.ids;
   } else {
     const ctx = await marketContext(C);
     if (!ctx) return { ok: false, status: 404, error: UNAVAILABLE };
-    const found = await matchingIds(ctx, { ...parseMarketQuery(new URLSearchParams(a.query)), list: a.list }, cap);
+    // Every agent that matches — no limit (Sankalp, 24 Nov).
+    const found = await matchingIds(ctx, { ...parseMarketQuery(new URLSearchParams(a.query)), list: a.list }, Number.POSITIVE_INFINITY);
     if ("unavailable" in found) return { ok: false, status: 409, error: found.unavailable };
-    if (found.total > cap) {
-      return {
-        ok: false, status: 409,
-        error: setup
-          ? `That's ${found.total.toLocaleString("en-US")} agents — add up to ${cap.toLocaleString("en-US")} at a time: narrow the filters (a city, say), add them, then the next.`
-          : `That's ${found.total.toLocaleString("en-US")} agents — narrow the filters to ${cap.toLocaleString("en-US")} or fewer to move them all at once.`,
-      };
-    }
     if (!found.ids.length) return { ok: false, status: 404, error: "No agents match these filters." };
     ids = found.ids;
   }
 
-  let agents = await agentsByIds([...new Set(ids)]);
+  // Looked up four parts at a time: a Select all can be tens of thousands.
+  let agents = await recordsOf([...new Set(ids)]);
   if (!agents.length) return { ok: false, status: 404, error: "Those agents are not in the agent database." };
 
   // Every row of the portal's lists (a real client's can be thousands — every page of them).
@@ -805,23 +800,33 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
   // By name (and, on the DNC List, brokerage) only: never the agent database's email, nor its phone — no list a client
   // can export carries what Market itself never shows (the no-scraping rule, 28 Oct audit).
   const added: Array<{ id: string; emails: string[]; agent: AgentRow | undefined }> = [];
+  // No limit a move now (PORTAL_MAX_MOVE): the rows go in in parts. A part that fails stops there — those already in
+  // stay, and only they are blocked below (an agent is never blocked off every list); trying again adds the rest.
+  let stopped = false;
   if (adding.length && onto) {
-    const { data, error } = a.to === "My Agents"
-      ? await db.from("client_agents").insert(adding.map((ag) => ({
-          client_id: C, name: ag.full_name ?? "Unnamed agent", email: null, phone: null, license: null, notes: FROM_MARKET,
-          pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null,
-        }))).select("id, name")
-      : await db.from("client_dnc_entries").insert(adding.map((ag) => ({
-          client_id: C, kind: "agent", name: ag.full_name ?? "Unnamed agent", email: null, phone: null, brokerage: ag.brand ?? ag.office_name,
-          domain: null, notes: FROM_MARKET, added_by: "client", pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null,
-        }))).select("id, name");
-    if (error) return { ok: false, status: 400, error: TRY_AGAIN };
     // Each new row to its agent by name — never by the order rows come back (agents of one name share it either way).
     const byName = new Map<string, AgentRow[]>();
     for (const ag of adding) byName.set(ag.full_name ?? "Unnamed agent", [...(byName.get(ag.full_name ?? "Unnamed agent") ?? []), ag]);
-    for (const row of (data ?? []) as Array<{ id: string; name: string }>) {
-      const agent = byName.get(row.name)?.shift();
-      added.push({ id: row.id, emails: agent ? preferredOf(agent) : [], agent });
+    for (let i = 0; i < adding.length; i += MOVE_INSERT_PART) {
+      const part = adding.slice(i, i + MOVE_INSERT_PART);
+      const { data, error } = a.to === "My Agents"
+        ? await db.from("client_agents").insert(part.map((ag) => ({
+            client_id: C, name: ag.full_name ?? "Unnamed agent", email: null, phone: null, license: null, notes: FROM_MARKET,
+            pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null,
+          }))).select("id, name")
+        : await db.from("client_dnc_entries").insert(part.map((ag) => ({
+            client_id: C, kind: "agent", name: ag.full_name ?? "Unnamed agent", email: null, phone: null, brokerage: ag.brand ?? ag.office_name,
+            domain: null, notes: FROM_MARKET, added_by: "client", pushed_to_instantly: false, pushed_to_emailbison: false, push_error: null,
+          }))).select("id, name");
+      if (error) {
+        if (!added.length) return { ok: false, status: 400, error: TRY_AGAIN };
+        stopped = true;
+        break;
+      }
+      for (const row of (data ?? []) as Array<{ id: string; name: string }>) {
+        const agent = byName.get(row.name)?.shift();
+        added.push({ id: row.id, emails: agent ? preferredOf(agent) : [], agent });
+      }
     }
   }
 
@@ -832,12 +837,15 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
   // enriched one is a guess and may be someone else's — a block is permanent and binds every client's campaigns.
   if (onto) {
     const table = a.to === "My Agents" ? "client_agents" : "client_dnc_entries";
-    const rest = agents.flatMap(preferredOf).filter((e) => !added.some((r) => r.emails.includes(e)));
-    if (a.to === "DNC List" && adding.length) after(() => notifyPortalDncBulkAdd({ clientId: C, entries: adding.map((ag) => ({ name: ag.full_name, handle: null })) }));
+    // Stopped part way: only the agents now on the list (those just added) — the rest stay where they were, unblocked.
+    const onIt = stopped ? added.flatMap((r) => (r.agent ? [r.agent] : [])) : agents;
+    const rest = stopped ? [] : agents.flatMap(preferredOf).filter((e) => !added.some((r) => r.emails.includes(e)));
+    const newOnes = stopped ? onIt : adding;
+    if (a.to === "DNC List" && newOnes.length) after(() => notifyPortalDncBulkAdd({ clientId: C, entries: newOnes.map((ag) => ({ name: ag.full_name, handle: null })) }));
     after(async () => {
       try {
         await blockAll(table, added, rest);
-        if (a.to === "DNC List") await stopEntries(agents.flatMap((ag) => preferredOf(ag).map((email) => ({ email, name: ag.full_name }))));
+        if (a.to === "DNC List") await stopEntries(onIt.flatMap((ag) => preferredOf(ag).map((email) => ({ email, name: ag.full_name }))));
       } catch (err) {
         console.error("[crm-preview] market move", err instanceof Error ? err.message : err);
       }
@@ -868,9 +876,14 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     }
     if (await keepHidden(keep)) return unfinished;
   }
+  // A part of the list rows didn't save: said, with how many did; nothing else changes (trying again adds the rest —
+  // those already there are not added twice).
+  if (stopped) return { ok: false, status: 409, error: `${added.length.toLocaleString("en-US")} of ${n.toLocaleString("en-US")} agents were added to ${a.to}, but the rest didn't save — please try again.` };
 
   // Then off the lists it is leaving — the current portal's own bulk removal (nothing outside; a block is never undone).
-  const offMine = a.to !== "My Agents" ? mine.filter(ours) : [];
+  // Off the DNC List only (Setup › Your DNC List's Remove): My Agents and Prospects stay as they are.
+  const dncOnly = a.to === "Not on a list" && !!a.dncOnly;
+  const offMine = a.to !== "My Agents" && !dncOnly ? mine.filter(ours) : [];
   const offDnc = a.to !== "DNC List" ? dncAgents.filter(ours) : [];
   if (offMine.length) {
     const r = await inParts(offMine.map((x) => x.id), (part) => call(agentsBulkRoute.POST, "POST", { token }, { ids: part }));
@@ -882,12 +895,14 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
   }
   // And off Prospects — the agents moved there and their other records (read before anything changed, above). The one
   // delete of this file's own: the OS's own list, this portal's rows, with no current-portal equivalent or side effect.
-  await syncProspects(C, "remove", false, leaving, who, shown);
-  for (let i = 0; i < off.length; i += 100) {
-    const { error } = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", off.slice(i, i + 100).map((ag) => ag.id));
-    if (error) return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };
+  if (!dncOnly) {
+    await syncProspects(C, "remove", false, leaving, who, shown);
+    for (let i = 0; i < off.length; i += 100) {
+      const { error } = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", off.slice(i, i + 100).map((ag) => ag.id));
+      if (error) return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };
+    }
   }
 
-  console.info(JSON.stringify({ tag: "[crm-preview] market move", who, client: C, to: a.to, agents: agents.length, copies: off.length - agents.length, added: adding.length, offMine: offMine.length, offDnc: offDnc.length }));
-  return { ok: true, message: a.to === "Not on a list" ? `${who1} taken off every list.` : `${who1} moved to ${a.to}.` };
+  console.info(JSON.stringify({ tag: "[crm-preview] market move", who, client: C, to: a.to, dncOnly, agents: agents.length, copies: off.length - agents.length, added: adding.length, offMine: offMine.length, offDnc: offDnc.length }));
+  return { ok: true, message: dncOnly ? `${who1} taken off your DNC List.` : a.to === "Not on a list" ? `${who1} taken off every list.` : `${who1} moved to ${a.to}.` };
 }

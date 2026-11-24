@@ -97,7 +97,7 @@ export function TicketsInboxesScreen() {
                     <div className="tk-me-ico"><Icon name="mail" /></div>
                     <div className="tk-me-t">
                       <b>{mine.email}</b>
-                      <span><span className={`tk-state ${STATE[mine.state].cls}`}><i />{STATE[mine.state].label}</span> · {mine.tickets} {mine.tickets === 1 ? "ticket" : "tickets"}{mine.lastOkAt ? ` · checked ${ago(mine.lastOkAt, now)}` : ""}</span>
+                      <span><span className={`tk-state ${STATE[mine.state].cls}`}><i />{STATE[mine.state].label}</span> · {mine.tickets} {mine.tickets === 1 ? "ticket" : "tickets"} from {mine.emails} {mine.emails === 1 ? "email" : "emails"}{mine.lastOkAt ? ` · checked ${ago(mine.lastOkAt, now)}` : ""}</span>
                       {mine.lastError ? <span style={{ color: "var(--ds-red)" }}>{mine.lastError}</span> : null}
                       {mine.sends === "on" ? <span data-sends="on">Replies written in Tickets go from this inbox.</span> : null}
                       {mine.sends === "reconnect" && mine.state !== "reconnect" ? <span data-sends="reconnect" style={{ color: "var(--ds-amber, #b45309)" }}>Reconnect once so the team&apos;s replies in Tickets can go from this inbox.</span> : null}
@@ -126,7 +126,7 @@ export function TicketsInboxesScreen() {
               {d && d.mailboxes.length ? (
                 <div className="tk-table-wrap">
                   <table className="tk-table">
-                    <thead><tr><th>Inbox</th><th>State</th><th>Tickets</th><th>Checked</th><th aria-label="Actions" /></tr></thead>
+                    <thead><tr><th>Inbox</th><th>State</th><th title="Distinct tickets this inbox received (not those marked Not a ticket)">Tickets</th><th title="Emails stored from this inbox: client emails and your team's replies">Emails</th><th>Checked</th><th aria-label="Actions" /></tr></thead>
                     <tbody>
                       {d.mailboxes.map((m) => (
                         <tr key={m.email}>
@@ -140,6 +140,7 @@ export function TicketsInboxesScreen() {
                             </div>
                           </td>
                           <td className="n">{m.tickets}</td>
+                          <td className="n">{m.emails}</td>
                           <td className="n" title={m.lastOkAt ?? ""}>{m.lastOkAt ? ago(m.lastOkAt, now) : "–"}</td>
                           <td style={{ textAlign: "right" }}>{(d.admin || m.mine) && m.state !== "paused" ? <button type="button" className="tk-btn ghost danger icon tk-disc" onClick={() => setConfirm(m)} title={`Disconnect ${m.email}`} aria-label={`Disconnect ${m.email}`}><Icon name="x" /></button> : null}</td>
                         </tr>

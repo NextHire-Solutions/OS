@@ -41,7 +41,7 @@ test("the query string: ranges, several brokerages and places, a known sort — 
     list: "prospects", page: 3, per: 50, q: "smith",
     volume: { min: 2_000_000, max: 8_000_000 }, units: { min: 4, max: 30 }, price: { min: null, max: null }, years: { min: 2, max: null },
     brokerages: ["Keller Williams", "Compass"], offices: [], cities: ["Atlanta"], counties: ["Cobb, GA"], states: [], kinds: ["office", "transacted"],
-    titles: ["Team Leader"], zips: [], not: { brokerages: [], offices: [], cities: [], counties: [], states: [], zips: [], titles: [] }, sort: "name", dir: "asc",
+    titles: ["Team Leader"], zips: [], not: { brokerages: [], offices: [], cities: [], counties: [], states: [], zips: [], titles: [] }, sort: "name", dir: "asc", onList: null,
   });
   // The old single values (the Setup wizard still sends them) read the same way.
   const old = parseMarketQuery(new URLSearchParams("minVolume=1000000&brokerage=Compass&county=Fulton"));
@@ -363,4 +363,12 @@ test("sort=list is accepted from the page; the database reads such a page by sal
   assert.deepEqual(dbSortOf(parseMarketQuery(new URLSearchParams("sort=name&dir=desc"))), { by: "full_name", dir: "desc" }, "every other sort as before");
   assert.equal(parseMarketQuery(new URLSearchParams("sort=lists")).sort, "volume", "an unknown sort is still refused");
   for (const odd of ["constructor", "toString", "__proto__", "hasOwnProperty"]) assert.equal(parseMarketQuery(new URLSearchParams(`sort=${odd}`)).sort, "volume", `${odd} is no sort`);
+});
+
+test("onlist=dnc: Market kept to the client's DNC List (Setup › Your DNC List); anything else, or on Prospects, is everyone", () => {
+  assert.equal(parseMarketQuery(new URLSearchParams("onlist=dnc")).onList, "DNC List");
+  assert.equal(parseMarketQuery(new URLSearchParams("list=market&onlist=dnc&city=Miami")).onList, "DNC List");
+  assert.equal(parseMarketQuery(new URLSearchParams("list=prospects&onlist=dnc")).onList, null);
+  assert.equal(parseMarketQuery(new URLSearchParams("onlist=myagents")).onList, null);
+  assert.equal(parseMarketQuery(new URLSearchParams("")).onList, null);
 });

@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { copyProblem, COPY_RULES, normalizeText, previewText, STANDARD_FIELDS, subjectLength, waitProblem, wordCount, type CopyProblem } from "@/lib/crm-preview/campaign-copy";
+import { AREA_FIELD, copyProblem, COPY_RULES, normalizeText, previewText, STANDARD_FIELDS, subjectLength, waitProblem, withArea, wordCount, type CopyProblem } from "@/lib/crm-preview/campaign-copy";
 import type { CampaignState, CampaignSummary, CampaignView } from "@/lib/crm-preview/campaigns";
 
 import { Icon } from "./icons";
@@ -231,12 +231,13 @@ function localProblems(view: CampaignView, draft: DraftEmail[]): Map<string, str
     d.versions.forEach((v, j) => {
       const old = was?.e.versions[j];
       if (!old || normalizeText(v.text) !== normalizeText(old.text)) {
-        const p = copyProblem(v.text, "text", fields);
+        // As the server checks it: with the Area filled in (24 Nov), so the word limit counts what is sent.
+        const p = copyProblem(withArea(v.text, view.area), "text", fields);
         if (p) out.set(`${i}:${j}:t`, p);
       }
       const replies = versionReplies(d, j);
       if (!replies && (!old || v.subject.trim() !== old.subject.trim() || threadChanged)) {
-        const p = copyProblem(v.subject, "subject", fields);
+        const p = copyProblem(withArea(v.subject, view.area), "subject", fields);
         if (p) out.set(`${i}:${j}:s`, p);
       }
     });
@@ -466,6 +467,7 @@ function CampaignEditor({ clientId, campaignId, onBack, onGuard }: { clientId: s
                   index={i}
                   email={e}
                   fields={view.fields}
+                  area={view.area}
                   firstSubject={firstSubject}
                   firstVersions={draft[0]?.versions.length ?? 1}
                   canEdit={canEdit && !e.off}
@@ -551,6 +553,7 @@ function EmailCard({
   index: i,
   email: e,
   fields,
+  area,
   firstSubject,
   firstVersions,
   canEdit,
@@ -565,6 +568,8 @@ function EmailCard({
   index: number;
   email: DraftEmail;
   fields: string[];
+  /** What the Area field fills in on this campaign (24 Nov); null: not offered. */
+  area: string | null;
   firstSubject: string;
   /** Versions of email 1: with several, a reply's subject depends on which one the agent got. */
   firstVersions: number;
@@ -624,11 +629,12 @@ function EmailCard({
     });
   };
 
-  const words = wordCount(v.text);
-  const chars = subjectLength(v.subject);
+  // Counted as sent: the Area field with its area in it (24 Nov).
+  const words = wordCount(withArea(v.text, area));
+  const chars = subjectLength(withArea(v.subject, area));
   // A reply's stored subject isn't shown or sent (EmailBison uses the thread's), so only what the client sees counts.
   const hasChoices = /\{[^{}]*\|/.test(v.text) || (!isReply && /\{[^{}]*\|/.test(v.subject));
-  const labelOf = (key: string) => STANDARD_FIELDS.find((f) => f.key === key)?.label ?? `{${key}}`;
+  const labelOf = (key: string) => (key === AREA_FIELD ? "Area" : STANDARD_FIELDS.find((f) => f.key === key)?.label ?? `{${key}}`);
   const sentLine = e.off ? "Turned off by our team" : e.sent ? `Sent to ${plural(e.sent, "agent")}` : "Not sent yet";
   const waitProblemText = show(waitKey, !!touched[waitKey]);
   const subjProblem = show(subjKey, !!touched[subjKey]);
@@ -708,11 +714,11 @@ function EmailCard({
         <div className="cpv-cmp-preview" aria-label={`Preview of email ${i + 1}`}>
           <div className="cpv-cmp-pvh">
             <span>Subject</span>
-            <b>{isReply ? (firstVersions > 1 ? "Re: the subject this agent got on email 1" : `Re: ${previewText(firstSubject, seed)}`) : previewText(v.subject, seed) || <i>No subject</i>}</b>
+            <b>{isReply ? (firstVersions > 1 ? "Re: the subject this agent got on email 1" : `Re: ${previewText(withArea(firstSubject, area), seed)}`) : previewText(withArea(v.subject, area), seed) || <i>No subject</i>}</b>
           </div>
-          <div className="cpv-cmp-pvb">{previewText(v.text, seed) || <i>This email is empty.</i>}</div>
+          <div className="cpv-cmp-pvb">{previewText(withArea(v.text, area), seed) || <i>This email is empty.</i>}</div>
           <div className="cpv-cmp-pvf">
-            <span>Shown with a sample agent (Jordan) and sender (Alex Morgan).</span>
+            <span>Shown with a sample agent (Jordan) and sender (Alex Morgan){area ? <>, and your area ({area})</> : null}.</span>
             {hasChoices ? <button type="button" className={k("btn sm")} onClick={() => setSeed((s) => s + 1)}><Icon name="shuffle" size={14} />Another variation</button> : null}
           </div>
         </div>
@@ -774,7 +780,7 @@ function EmailCard({
             <div className="cpv-cmp-insert">
               <span>Insert</span>
               {fields.map((f) => (
-                <button key={f} type="button" className={k("chip")} onMouseDown={(ev) => ev.preventDefault()} onClick={() => insert(f)} title={`Adds {${f}} where your cursor is`}>
+                <button key={f} type="button" className={k("chip")} onMouseDown={(ev) => ev.preventDefault()} onClick={() => insert(f)} title={f === AREA_FIELD && area ? `Adds your area — sent as \u201c${area}\u201d — where your cursor is` : `Adds {${f}} where your cursor is`}>
                   <Icon name="plus" size={12} />{labelOf(f)}
                 </button>
               ))}

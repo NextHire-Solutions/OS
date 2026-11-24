@@ -19,7 +19,7 @@ import { clientPortals, type CrmViewer } from "./viewer-rules";
  */
 export async function crmViewer(cookies: { sso: string | null | undefined; portal: string | null | undefined }, now = new Date()): Promise<CrmViewer | null> {
   const me = await verifySso(process.env.AUTH_SECRET ?? "", cookies.sso ?? undefined);
-  if (me?.email && canSeeCrmPreview(me.email, adminEmails())) return { kind: "staff", email: me.email.trim().toLowerCase() };
+  if (me?.email && canSeeCrmPreview(me.email, adminEmails(), me.grants)) return { kind: "staff", email: me.email.trim().toLowerCase() };
   if (!cookies.portal) return null;
   const session = await readSession(createAdminSupabase(), cookies.portal, now).catch(() => null);
   if (!session) return null;

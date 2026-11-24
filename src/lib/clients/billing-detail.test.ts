@@ -244,7 +244,8 @@ test("the gate is decided on the server: the route answers a bare 404, the page 
   const gate = readFileSync("src/lib/clients/billing-user.ts", "utf8");
   assert.match(gate, /if \(!s\?\.email \|\| !\(await canUseBillingTab\(s\.email\)\)\) return new NextResponse\(null, \{ status: 404 \}\);/);
   const page = readFileSync("src/app/[[...slug]]/page.tsx", "utf8");
-  assert.match(page, /<ClientsScreen initial=\{clientsOverview\} billingTab=\{await canUseBillingTab\(email\)\} \/>/);
+  // (24 Nov: the same line also passes portalAccess, for the Portal buttons.)
+  assert.match(page, /<ClientsScreen initial=\{clientsOverview\} billingTab=\{await canUseBillingTab\(email\)\}[^>]*\/>/);
   const rec = readFileSync("src/components/screens/client-record.tsx", "utf8");
   assert.match(rec, /TABS\.filter\(\(t\) => t\.id !== "billing" \|\| billingTab\)/, "the tab button only with the flag");
   assert.match(rec, /\{tab === "billing" && billingTab \? \(/, "the tab's content only with the flag");

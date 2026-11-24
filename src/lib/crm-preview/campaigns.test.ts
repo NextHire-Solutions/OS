@@ -16,8 +16,8 @@ function steps(): LiveStep[] {
 }
 
 /** A fake EmailBison and everything around it, recording every call. */
-function fake(o: { status?: string; own?: Array<{ id: string; name: string; status: string }> | null; sent?: Map<number, number>; failOn?: "delete" | "update" | "add"; failMessage?: string } = {}) {
-  let live = steps();
+function fake(o: { status?: string; own?: Array<{ id: string; name: string; status: string }> | null; sent?: Map<number, number>; failOn?: "delete" | "update" | "add"; failMessage?: string; area?: string | null | Error; live?: LiveStep[] } = {}) {
+  let live = o.live ?? steps();
   let nextId = 100;
   const calls: string[] = [];
   const sent: StepWrite[] = [];
@@ -65,6 +65,12 @@ function fake(o: { status?: string; own?: Array<{ id: string; name: string; stat
     },
     osOrigin: () => "https://os.example.com",
     clientName: async () => "Acme",
+    // The Area field (24 Nov): the client record's area, or none, or unreadable; the Demo fills its own market.
+    areaFor: async (portalId, _id, label) => {
+      if (portalId === DEMO_PORTAL_ID) return label;
+      if (o.area instanceof Error) throw o.area;
+      return o.area === undefined ? null : o.area;
+    },
   };
   return { deps, calls, audits, posts, demo, sent, live: () => live };
 }
@@ -483,4 +489,122 @@ test("names: the routes ask for EmailBison's name only for staff; the page and t
   assert.match(page, /entries=\{entries\.map\(\(e\) => \(\{ \.\.\.e, campaign_name: null \}\)\)\}/);
   assert.doesNotMatch(readFileSync("src/lib/crm-preview/chat-tools.ts", "utf8"), /campaign_name/);
   assert.doesNotMatch(readFileSync("src/components/crm-preview/campaigns.tsx", "utf8"), /campaign_name/);
+});
+
+/* ------------------------------------------------------------- the Area field (24 Nov, the client's item 4) --- */
+
+test("Area: offered (with its value) only when the campaign's client has an area on record", async () => {
+  const withArea = await readCampaign(PORTAL, "77", fake({ area: "Greater Austin" }).deps);
+  assert.ok(withArea.ok);
+  assert.equal(withArea.value.area, "Greater Austin");
+  assert.ok(withArea.value.fields.includes("CLIENT_AREA"), "the editor offers Area");
+  const none = await readCampaign(PORTAL, "77", fake({ area: null }).deps);
+  assert.ok(none.ok);
+  assert.equal(none.value.area, null);
+  assert.ok(!none.value.fields.includes("CLIENT_AREA"), "no area on record: not offered");
+  const unreadable = await readCampaign(PORTAL, "77", fake({ area: new Error("down") }).deps);
+  assert.ok(unreadable.ok, "a read never fails for it");
+  assert.ok(!unreadable.value.fields.includes("CLIENT_AREA"));
+});
+
+test("Area: saved as the finished text — EmailBison never receives the placeholder", async () => {
+  const f = fake({ area: "Greater Austin" });
+  const i = input(steps());
+  i.emails[1].versions[0].text = "We help agents in {CLIENT_AREA} grow, {FIRST_NAME}.";
+  i.emails[0].versions[0].subject = "{FIRST_NAME}, agents in {client area}";
+  const r = await saveCampaign(PORTAL, "77", i, "client@acme.com", f.deps);
+  assert.ok(r.ok, JSON.stringify(r));
+  const written = f.sent.map((w) => `${w.email_subject} | ${w.email_body}`).join("\n");
+  assert.match(written, /We help agents in Greater Austin grow, \{FIRST_NAME\}\./);
+  assert.match(written, /\{FIRST_NAME\}, agents in Greater Austin/, "any case, a space or an underscore");
+  assert.doesNotMatch(written, /CLIENT[ _]AREA/i, "never the placeholder");
+  assert.equal(r.value.view.area, "Greater Austin", "the page keeps offering it after the save");
+});
+
+test("Area: with no area on record, or none readable, a save that uses it is refused and nothing is written", async () => {
+  for (const area of [null, new Error("down")]) {
+    const f = fake({ area });
+    const i = input(steps());
+    i.emails[1].versions[0].text = "Agents in {CLIENT_AREA}.";
+    const r = await saveCampaign(PORTAL, "77", i, "x@y.com", f.deps);
+    assert.equal(r.ok, false);
+    assert.equal((r as { status: number }).status, area === null ? 422 : 502);
+    assert.match((r as { error: string }).error, area === null ? /Your area isn't set up yet/ : /couldn't be read/);
+    assert.deepEqual([f.calls, f.audits, f.posts], [[], [], []], "nothing written");
+  }
+  // A save that doesn't use it isn't held up by an unreadable area.
+  const f = fake({ area: new Error("down") });
+  const i = input(steps());
+  i.emails[1].versions[0].text = "A better follow-up.";
+  assert.ok((await saveCampaign(PORTAL, "77", i, "x@y.com", f.deps)).ok);
+});
+
+/*
+ * A {CLIENT_AREA} of the team's already live (a setup campaign left for the team to fill, 24 Nov review): only what the
+ * client changes is filled; what they left is sent back as it is and never counts as changed.
+ */
+const withTeamArea = (o: { off?: boolean } = {}): LiveStep[] => {
+  const s = steps();
+  s[2] = { ...s[2], body: "<p>Still keen on {CLIENT_AREA}?</p>", active: !o.off };
+  return s;
+};
+
+test("Area: a turned-off email with the team's {CLIENT_AREA} never blocks a save of another email", async () => {
+  const f = fake({ area: "Greater Austin", live: withTeamArea({ off: true }) });
+  const i = input(f.live());
+  i.emails[1].versions[0].text = "A better follow-up.";
+  const r = await saveCampaign(PORTAL, "77", i, "x@y.com", f.deps);
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.deepEqual(f.sent.map((w) => w.id), [11], "only the email the client changed");
+  assert.equal(f.live().find((s) => s.id === 12)!.body, "<p>Still keen on {CLIENT_AREA}?</p>", "the turned-off one exactly as the team left it");
+});
+
+test("Area: an untouched email with the team's {CLIENT_AREA} is not re-checked or rewritten — with an area or none", async () => {
+  for (const area of ["Greater Austin", null, new Error("down")]) {
+    const f = fake({ area, live: withTeamArea() });
+    const i = input(f.live());
+    i.emails[1].versions[0].text = "A better follow-up.";
+    const r = await saveCampaign(PORTAL, "77", i, "x@y.com", f.deps);
+    assert.ok(r.ok, `${String(area)}: ${JSON.stringify(r)}`);
+    assert.deepEqual(f.sent.map((w) => w.id), [11], `${String(area)}: only the changed email is written`);
+    assert.ok(!r.value.summary.some((s) => /Email 3/.test(s)), "#portal-update names only what the client changed");
+  }
+  // The client editing that email: filled now, as anything they write.
+  const f = fake({ area: "Greater Austin", live: withTeamArea() });
+  const i = input(f.live());
+  i.emails[2].versions[0].text = "Still keen on {CLIENT_AREA}, {FIRST_NAME}?";
+  const r = await saveCampaign(PORTAL, "77", i, "x@y.com", f.deps);
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.match(f.sent.find((w) => w.id === 12)!.email_body, /Still keen on Greater Austin, \{FIRST_NAME\}\?/);
+  // …and with no area, that edit is refused (NO_AREA), nothing written.
+  const g = fake({ area: null, live: withTeamArea() });
+  const j = input(g.live());
+  j.emails[2].versions[0].text = "Still keen on {CLIENT_AREA}, {FIRST_NAME}?";
+  const refused = await saveCampaign(PORTAL, "77", j, "x@y.com", g.deps);
+  assert.equal(refused.ok, false);
+  assert.match((refused as { error: string }).error, /Your area isn't set up yet/);
+  assert.deepEqual(g.calls, []);
+});
+
+test("Area: the word limit counts the area's own words (what is sent)", async () => {
+  const f = fake({ area: "Boston Cape Cod and the Islands" });
+  const i = input(steps());
+  const words = (n: number) => Array.from({ length: n }, () => "word").join(" ");
+  i.emails[1].versions[0].text = `${words(120)} {CLIENT_AREA}`; // 120 + 6 = 126 words once filled
+  const r = await saveCampaign(PORTAL, "77", i, "x@y.com", f.deps);
+  assert.equal(r.ok, false);
+  assert.match(JSON.stringify((r as { problems: unknown[] }).problems), /126 words; the limit is 125/);
+  assert.deepEqual(f.calls, []);
+});
+
+test("Area on the Demo Portal: each sample campaign fills with its own market", async () => {
+  const f = fake();
+  const read = await readCampaign(DEMO_PORTAL_ID, "1", f.deps);
+  assert.ok(read.ok);
+  assert.equal(read.value.area, "Atlanta");
+  const i = input(read.value.emails.length ? (await f.deps.demoRows(DEMO_PORTAL_ID))[0].steps : []);
+  i.emails[0].versions[0].text = "Agents across {CLIENT_AREA} are joining us.";
+  const r = await saveCampaign(DEMO_PORTAL_ID, "1", i, "eddy@brokerstaffer.com", f.deps);
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.equal(r.value.view.emails[0].versions[0].text, "Agents across Atlanta are joining us.");
 });

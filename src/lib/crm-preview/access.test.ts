@@ -41,6 +41,15 @@ test("fails closed: no Owners list, no session, no address — nobody but the na
   assert.equal(canSeeCrmPreview("   ", OWNERS), false);
 });
 
+test("24 Nov: staff with the Client Portals switch open it (the record's Portal button); other switches never do", () => {
+  assert.equal(canSeeCrmPreview("someone@brokerstaffer.com", OWNERS, ["roster", "portals"]), true, "the Client Portals switch");
+  for (const grants of [[], ["roster"], ["inbox", "clients", "analytics", "search", "onboarding", "roster", "tickets", "campaigns", "inboxes"]]) {
+    assert.equal(canSeeCrmPreview("someone@brokerstaffer.com", OWNERS, grants), false, `without portals: ${grants.join(",") || "none"}`);
+  }
+  assert.equal(canSeeCrmPreview(null, OWNERS, ["portals"]), false, "still needs a signed-in address");
+  assert.equal(canSeeCrmPreview("", [], ["portals"]), false);
+});
+
 const root = process.cwd();
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8");
 function filesUnder(dir: string): string[] {

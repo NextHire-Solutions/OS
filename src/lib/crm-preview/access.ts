@@ -22,10 +22,19 @@
  */
 export const PREVIEW_REVIEWERS: readonly string[] = ["eddy@brokerstaffer.com", "amy@brokerstaffer.com", "gabo075823532@gmail.com"];
 
-export function canSeeCrmPreview(email: string | null | undefined, owners: readonly string[]): boolean {
+/*
+ * 24 Nov — the client: "Fix the Portal button on the client record … Update the button to open the new Client
+ * Portal." The button can only do that for staff the new portal lets in, so it also opens to staff with the
+ * Client Portals switch (`portals`, Team access). They can already open every client's OLD portal (its login-free
+ * link) from the Client Portals screen, so nobody reaches a portal they couldn't before. Staff without that switch
+ * are still refused, and the record hides the button from them. This reverses the 15 Oct "only we" rule above for
+ * that switch: to undo, drop the `grants` line below.
+ */
+export function canSeeCrmPreview(email: string | null | undefined, owners: readonly string[], grants: readonly string[] = []): boolean {
   if (!email) return false;
   const key = email.trim().toLowerCase();
   if (!key) return false;
   if (PREVIEW_REVIEWERS.includes(key)) return true;
+  if (grants.includes("portals")) return true;
   return owners.length > 0 && owners.some((o) => o.trim().toLowerCase() === key);
 }

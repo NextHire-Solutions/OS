@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { CoverageError, getCoverage, listCoverage, setCoverage } from "@/lib/clients/coverage-db";
+import { CoverageError, getCoverage, getMlsAreas, listCoverage, setCoverage, setMlsAreas } from "@/lib/clients/coverage-db";
 import { clientsChanged } from "@/lib/clients/after-change";
 import { deriveCodesFromList } from "@/lib/clients/markets-mls";
 import { syncDatabaseMls } from "@/lib/clients/markets-mls-sync";
@@ -16,6 +16,10 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
  *   GET  ?boards=1                                the suggestions alone (Onboard a client, before the client exists)
  *   GET  ?size=FMLS,GAMLS                         how many salespeople those boards bring (the new portal's market)
  *   PUT  { clientId, markets?, mls?, areas? }     change any of them
+ *   PUT  { clientId, mlsAreas }                   the area for each MLS (migration 0056 — the client's request: the
+ *                                                 area name each MLS's campaign fills {CLIENT_AREA} with)
+ *
+ * GET with a clientId also answers `mlsAreas` — null until migration 0056 is run.
  *
  * After a change to MLS, the Database row's codes are rewritten from it
  * (markets-mls-sync.ts). Never fatal — the save stands either way — but
@@ -66,11 +70,11 @@ export async function GET(request: Request) {
   }
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   try {
-    const [coverage, boards, all] = await Promise.all([getCoverage(clientId), mlsBoards(), listCoverage()]);
+    const [coverage, boards, all, mlsAreas] = await Promise.all([getCoverage(clientId), mlsBoards(), listCoverage(), getMlsAreas(clientId)]);
     // Areas already in use anywhere, so the same place is spelled one way.
     const areas = [...new Set([...(all?.values() ?? [])].flatMap((c) => c.areas))].sort((a, b) => a.localeCompare(b));
     const lead = deriveCodesFromList(coverage.mls, boards.map((b) => ({ code: b.code, name: null, state: null })));
-    return NextResponse.json({ coverage, boards, suggestions: { areas }, leadBuilding: { codes: lead.codes, unknown: lead.unknown } });
+    return NextResponse.json({ coverage, mlsAreas, boards, suggestions: { areas }, leadBuilding: { codes: lead.codes, unknown: lead.unknown } });
   } catch (e) {
     return fail(e);
   }
@@ -82,6 +86,12 @@ export async function PUT(request: Request) {
   const clientId = typeof body.clientId === "string" ? body.clientId : "";
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   try {
+    // The area for each MLS, on its own (the Record tab's "Area for each MLS").
+    if (body.mlsAreas !== undefined) {
+      const mlsAreas = await setMlsAreas(clientId, body.mlsAreas);
+      clientsChanged();
+      return NextResponse.json({ mlsAreas });
+    }
     const coverage = await setCoverage(clientId, { markets: body.markets, mls: body.mls, areas: body.areas });
     clientsChanged();
     let leadBuilding: unknown = null;

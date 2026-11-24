@@ -132,6 +132,7 @@ export function billingOf(c: MasterClient): BillingShown {
 export const isPaying = (b: BillingShown) => b === "paying" || b === "per_lead";
 
 export function Cell({ k, c }: { k: string; c: MasterClient }) {
+  const portalAccess = usePortalAccess();
   switch (k) {
     case "clientId": return <Id value={c.id} />;
     case "name": return <b className="cx-strong">{c.name}</b>;
@@ -286,12 +287,17 @@ export function Cell({ k, c }: { k: string; c: MasterClient }) {
       const links = c.portal.links ?? [];
       return (
         <span className="cx-inline">
+          {/* The NEW client portal, each market's own (24 Nov); a name, not a link, for people it doesn't let in. */}
           {links.length > 1
             ? links.map((l) => l.enabled
-                ? <a key={l.url} className="cx-link" href={l.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{portalShortName(l.name, links)} ↗</a>
-                : <span key={l.url} className="cx-chip" title={l.name}>{portalShortName(l.name, links)} closed</span>)
+                ? portalAccess
+                  ? <a key={l.id} className="cx-link" href={l.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title={`Open ${l.name} in the client portal`}>{portalShortName(l.name, links)} ↗</a>
+                  : <span key={l.id} className="cx-chip" title={l.name}>{portalShortName(l.name, links)}</span>
+                : <span key={l.id} className="cx-chip" title={l.name}>{portalShortName(l.name, links)} closed</span>)
             : c.portal.url
-              ? <a className="cx-link" href={c.portal.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open portal ↗</a>
+              ? portalAccess
+                ? <a className="cx-link" href={c.portal.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Open portal ↗</a>
+                : <span className="cx-chip">Portal open</span>
               : <span className="cx-chip">Portal closed</span>}
           <span className="cx-sub">{fmtNum(c.introductions)} introductions</span>
         </span>
@@ -369,6 +375,7 @@ export function introMissing(c: { status: string; contact: { name: string | null
 
 export { effectiveSignup } from "@/lib/clients/signup";
 import { completeness } from "@/lib/clients/completeness";
+import { usePortalAccess } from "./portal-access";
 import { effectiveSignup } from "@/lib/clients/signup";
 
 const SIGNUP_TITLE: Record<string, string> = {

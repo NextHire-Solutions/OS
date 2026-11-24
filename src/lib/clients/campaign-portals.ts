@@ -2,7 +2,7 @@ import "server-only";
 
 import { getSupabase as getHealthSupabase } from "@/lib/tools/client-health/supabase";
 import { getMasterInboxSupabase } from "@/lib/tools/master-inbox/supabase";
-import { publicPortalUrl } from "@/lib/tools/master-inbox/portals/public-url";
+import { newPortalPath } from "@/lib/tools/master-inbox/portals/public-url";
 
 import { deriveClientIdFromCampaign } from "@/lib/tools/master-inbox/clients/derive";
 
@@ -86,7 +86,8 @@ async function portalsOf(c: MasterClient, miClientId: string | null): Promise<Po
   const { data, error } = await getMasterInboxSupabase().from("clients").select("id, name, portal_token, portal_enabled").in("id", ids);
   if (error) throw new Error(`Master Inbox portals: ${error.message}`);
   return ((data ?? []) as { id: string; name: string; portal_token: string | null; portal_enabled: boolean | null }[])
-    .map((r) => ({ id: r.id, name: r.name, url: publicPortalUrl(r.portal_token), enabled: r.portal_enabled !== false, main: r.id === miClientId }))
+    // The NEW portal (24 Nov): opens after sign-in, and the token stays on the server.
+    .map((r) => ({ id: r.id, name: r.name, url: r.portal_token ? newPortalPath(r.id) : null, enabled: r.portal_enabled !== false, main: r.id === miClientId }))
     .sort((a, b) => Number(b.main) - Number(a.main) || a.name.localeCompare(b.name));
 }
 

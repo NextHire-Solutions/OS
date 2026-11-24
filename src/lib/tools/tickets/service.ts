@@ -111,18 +111,14 @@ export async function listTickets(opts: { view: View; me: string; admin: boolean
   const mailboxes = (mbRes.data ?? []) as Array<{ email: string; name: string | null; state: string }>;
   const base = { ...empty, team, clients: [...clients.values()].sort((a, b) => a.name.localeCompare(b.name)), mailboxes, myMailbox: mailboxes.find((m) => m.email.toLowerCase() === me) ?? null };
 
-  // Filters that become id lists.
-  let only: string[] | null = null;
-  const narrow = (ids: string[]) => { only = only === null ? ids : only.filter((x) => ids.includes(x)); };
-  if (opts.view === "mentions") narrow(await mentionIds(me));
+  // The person's filters (client, inbox, search): the list AND every view's count follow them, so a count always
+  // matches what that view lists (24 Nov, client: "ticket counts and displayed records consistent with their scope").
+  let mailboxIds: string[] | null = null;
   if (opts.mailbox) {
     const { data } = await osTable("os_ticket_copies").select("ticket_id").eq("mailbox", opts.mailbox.toLowerCase()).limit(5000);
-    narrow([...new Set((data ?? []).map((r) => String((r as { ticket_id: string }).ticket_id)))]);
+    mailboxIds = [...new Set((data ?? []).map((r) => String((r as { ticket_id: string }).ticket_id)))];
   }
-
-  let q = osTable("os_tickets").select("*", { count: "exact" });
-  q = applyView(q, opts.view, me);
-  if (opts.client) q = q.eq("os_client_id", opts.client);
+  let orFilter: string | null = null;
   const text = cleanQuery(opts.q);
   if (text) {
     const n = ticketNumberIn(text);
@@ -135,14 +131,24 @@ export async function listTickets(opts: { view: View; me: string; admin: boolean
     const { data: bodyHits } = await osTable("os_ticket_messages").select("ticket_id").ilike("body_text", `%${text}%`).limit(300);
     const hitIds = [...new Set((bodyHits ?? []).map((r) => String((r as { ticket_id: string }).ticket_id)))];
     if (hitIds.length) parts.push(`id.in.(${hitIds.join(",")})`);
-    q = q.or(parts.join(","));
+    orFilter = parts.join(",");
   }
+  const scope: Scope = { client: opts.client ?? null, orFilter, ids: mailboxIds };
+
+  // The view's own id list (Mentions), on top of the scope.
+  let only: string[] | null = mailboxIds;
+  if (opts.view === "mentions") {
+    const mentioned = await mentionIds(me);
+    only = only === null ? mentioned : only.filter((x) => mentioned.includes(x));
+  }
+
+  let q = applyScope(applyView(osTable("os_tickets").select("*", { count: "exact" }), opts.view, me), { ...scope, ids: null });
   if (only !== null) {
-    if (!(only as string[]).length) return { ...base, ...(await countViews(me)) };
-    q = q.in("id", (only as string[]).slice(0, 1000));
+    if (!only.length) return { ...base, ...(await countViews(me, scope)) };
+    q = q.in("id", only.slice(0, 1000));
   }
   q = order(q, opts.view).range(opts.offset ?? 0, (opts.offset ?? 0) + pageSize - 1);
-  const [{ data, error, count }, counts] = await Promise.all([q, countViews(me)]);
+  const [{ data, error, count }, counts] = await Promise.all([q, countViews(me, scope)]);
   if (error) {
     if (MISSING.test(error.message)) return { ...base, ready: false, setup: SETUP_MIGRATION };
     throw new Error(error.message);
@@ -171,12 +177,31 @@ export async function listTickets(opts: { view: View; me: string; admin: boolean
   };
 }
 
-/** How many tickets each view holds (Done and All aren't counted: they only grow). */
-export async function countViews(me: string): Promise<{ counts: Partial<Record<View, number>>; unread: Partial<Record<View, number>> }> {
-  const views: View[] = ["open", "mine", "unassigned", "waiting", "snoozed"];
-  const res = await Promise.all(views.map((v) => applyView(osTable("os_tickets").select("id", { count: "exact", head: true }), v, me)));
+/** The filters a person has set on the Tickets screen: a client, a search, and the tickets an inbox received. */
+export interface Scope { client: string | null; orFilter: string | null; ids: string[] | null }
+export const NO_SCOPE: Scope = { client: null, orFilter: null, ids: null };
+
+export function applyScope(q: Q, s: Scope): Q {
+  if (s.client) q = q.eq("os_client_id", s.client);
+  if (s.orFilter) q = q.or(s.orFilter);
+  if (s.ids !== null) q = q.in("id", s.ids.slice(0, 1000));
+  return q;
+}
+
+/** The views with a count beside them. Done and All too (24 Nov), so Open + Waiting + Snoozed + Done adds up to All. */
+export const COUNTED_VIEWS: View[] = ["open", "mine", "unassigned", "waiting", "snoozed", "done", "all"];
+
+/** How many tickets each view holds, within the same filters as the list (24 Nov), so a count matches what it lists. */
+export async function countViews(me: string, scope: Scope = NO_SCOPE): Promise<{ counts: Partial<Record<View, number>>; unread: Partial<Record<View, number>> }> {
   const counts: Partial<Record<View, number>> = {};
-  views.forEach((v, i) => { if (!res[i].error) counts[v] = res[i].count ?? 0; });
+  // An inbox filter that matched no ticket: every view is empty.
+  if (scope.ids !== null && !scope.ids.length) {
+    for (const v of COUNTED_VIEWS) counts[v] = 0;
+    counts.mentions = 0;
+    return { counts, unread: {} };
+  }
+  const res = await Promise.all(COUNTED_VIEWS.map((v) => applyScope(applyView(osTable("os_tickets").select("id", { count: "exact", head: true }), v, me), scope)));
+  COUNTED_VIEWS.forEach((v, i) => { if (!res[i].error) counts[v] = res[i].count ?? 0; });
   const mentions = await mentionIds(me).catch(() => []);
   const unread: Partial<Record<View, number>> = {};
   if (mentions.length) {
@@ -188,7 +213,43 @@ export async function countViews(me: string): Promise<{ counts: Partial<Record<V
     unread.mentions = ((tk ?? []) as Array<{ id: string; last_activity_at: string }>).filter((t) => !(seen.get(t.id)! >= Date.parse(t.last_activity_at))).length;
   }
   counts.mentions = mentions.length;
+  // With a filter set, only the mentioned tickets inside it (as the Mentions list shows them).
+  if (mentions.length && (scope.client || scope.orFilter || scope.ids !== null)) {
+    const ids = scope.ids === null ? mentions : mentions.filter((x) => scope.ids!.includes(x));
+    if (!ids.length) counts.mentions = 0;
+    else {
+      const r = await applyScope(osTable("os_tickets").select("id", { count: "exact", head: true }), { ...scope, ids });
+      if (!r.error) counts.mentions = r.count ?? 0;
+    }
+  }
   return { counts, unread };
+}
+
+/**
+ * One inbox's share of Tickets (24 Nov, client: "only 6 tickets displayed when the account shows 233"). The inbox
+ * table used to count rows of os_ticket_copies (one per EMAIL, the team's reply markers included) under the heading
+ * "Tickets". Now both, named for what they are: `tickets` = the distinct tickets this inbox received (not those
+ * marked Not a ticket, which no view lists) and `emails` = the email copies it holds.
+ */
+export async function mailboxCounts(mailbox: string): Promise<{ tickets: number; emails: number }> {
+  const ids = new Set<string>();
+  let emails = 0;
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await osTable("os_ticket_copies").select("ticket_id").eq("mailbox", mailbox).order("gmail_id").range(from, from + 999);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Array<{ ticket_id: string }>;
+    emails += rows.length;
+    for (const r of rows) ids.add(String(r.ticket_id));
+    if (rows.length < 1000) break;
+  }
+  const list = [...ids];
+  let tickets = 0;
+  for (let i = 0; i < list.length; i += 200) {
+    const { count, error } = await osTable("os_tickets").select("id", { count: "exact", head: true }).in("id", list.slice(i, i + 200)).neq("status", "ignored");
+    if (error) throw new Error(error.message);
+    tickets += count ?? 0;
+  }
+  return { tickets, emails };
 }
 
 /** "1042" or a uuid → the ticket row. */
@@ -350,7 +411,7 @@ export async function mailboxesPage(me: string, admin: boolean): Promise<Mailbox
   const [team, res] = await Promise.all([teamPeople(), osTable("os_ticket_mailboxes").select("email, name, connected_by, state, connected_at, last_ok_at, last_error, backfill_done_at, scope")]);
   if (res.error) return MISSING.test(res.error.message) ? { ...base, ready: false, setup: SETUP_MIGRATION, team: team.map((p) => ({ ...p, connected: false })) } : Promise.reject(new Error(res.error.message));
   const rows = (res.data ?? []) as Array<Record<string, string | null>>;
-  const counts = await Promise.all(rows.map((r) => osTable("os_ticket_copies").select("ticket_id", { count: "exact", head: true }).eq("mailbox", String(r.email))));
+  const counts = await Promise.all(rows.map((r) => mailboxCounts(String(r.email)).catch(() => ({ tickets: 0, emails: 0 }))));
   const mailboxes: MailboxView[] = rows.map((r, i) => ({
     email: String(r.email).toLowerCase(),
     name: r.name,
@@ -360,7 +421,8 @@ export async function mailboxesPage(me: string, admin: boolean): Promise<Mailbox
     lastOkAt: r.last_ok_at,
     lastError: r.last_error,
     backfilled: !!r.backfill_done_at,
-    tickets: counts[i].count ?? 0,
+    tickets: counts[i].tickets,
+    emails: counts[i].emails,
     mine: String(r.email).toLowerCase() === meL || String(r.connected_by ?? "").toLowerCase() === meL,
     sends: canSendFrom(r.email) ? (scopeCanSend(r.scope) ? "on" : "reconnect") : null,
   }));

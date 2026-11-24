@@ -3,7 +3,7 @@ import "server-only";
 import { BROKERSTAFFER_PORTAL_ID } from "@/lib/crm-preview/market-model";
 
 import { osTable } from "./os-db";
-import { cleanCoverage, type Coverage } from "./coverage";
+import { cleanCoverage, cleanMlsAreas, readMlsAreas, type Coverage, type MlsAreas } from "./coverage";
 
 /*
  * Markets / MLS / Area on the master record (os_clients, migration 0022).
@@ -57,4 +57,43 @@ export async function setCoverage(clientId: string, input: { markets?: unknown; 
   if (error) throw new CoverageError(missing(error.message) ? MIGRATION : error.message, missing(error.message) ? 409 : 502);
   if (!data) throw new CoverageError("No such client", 404);
   return toCoverage(data as unknown as Row);
+}
+
+/*
+ * The area for each MLS (os_clients.mls_areas, migration 0056). Read on its own — never in listCoverage's select,
+ * where a column not there yet would blank every client's Markets / MLS / Area.
+ */
+const MIGRATION_0056 = "Area for each MLS needs migrations/0056_mls_areas.sql run in the Master Inbox Supabase project.";
+
+/** One client's map; null when the column isn't there yet (migration 0056 not run). */
+export async function getMlsAreas(clientId: string): Promise<MlsAreas | null> {
+  const { data, error } = await osTable("os_clients").select("id, mls_areas").eq("id", clientId).maybeSingle();
+  if (error) {
+    if (missing(error.message)) return null;
+    throw new CoverageError(error.message, 502);
+  }
+  if (!data) throw new CoverageError("No such client", 404);
+  return readMlsAreas((data as { mls_areas?: unknown }).mls_areas);
+}
+
+/** Every client's map (by os_clients id); empty when the column isn't there yet — never a failure. */
+export async function listMlsAreas(): Promise<Map<string, MlsAreas>> {
+  try {
+    const { data, error } = await osTable("os_clients").select("id, mls_areas");
+    if (error) return new Map();
+    return new Map(((data ?? []) as unknown as Array<{ id: string; mls_areas: unknown }>).map((r) => [String(r.id), readMlsAreas(r.mls_areas)]));
+  } catch {
+    return new Map();
+  }
+}
+
+/** Replace a client's map (checked against its MLS list). Returns the saved map. */
+export async function setMlsAreas(clientId: string, input: unknown): Promise<MlsAreas> {
+  const { mls } = await getCoverage(clientId);
+  const { value, problems } = cleanMlsAreas(input, mls);
+  if (problems.length) throw new CoverageError(problems.join(" "));
+  const { data, error } = await osTable("os_clients").update({ mls_areas: value, updated_at: new Date().toISOString() }).eq("id", clientId).select("id, mls_areas").maybeSingle();
+  if (error) throw new CoverageError(missing(error.message) ? MIGRATION_0056 : error.message, missing(error.message) ? 409 : 502);
+  if (!data) throw new CoverageError("No such client", 404);
+  return readMlsAreas((data as { mls_areas?: unknown }).mls_areas);
 }

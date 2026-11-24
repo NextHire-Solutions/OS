@@ -13,6 +13,7 @@ import type { ClientView } from "@/lib/clients/saved-views-match";
 import { completeness } from "@/lib/clients/completeness";
 import { CLIENT_STATUSES, STATUS_MEANING, statusLabel, type ClientStatus } from "@/lib/clients/client-status";
 
+import { PortalAccess } from "@/components/clients/portal-access";
 import { ClientRecord } from "./client-record";
 import { OnboardClient } from "./clients-onboard";
 import { invalidate, loadOnce, PlaceholderScreen } from "./lazy";
@@ -462,11 +463,13 @@ function DictGroup({ cat, clients }: { cat: FieldCategory; clients: MasterClient
  * server-renders from the warm cache with no loading state. Saves refresh the
  * list in place, and the record stays open on the same client.
  */
-export function ClientsScreen({ initial, only, billingTab = false }: {
+export function ClientsScreen({ initial, only, billingTab = false, portalAccess = false }: {
   initial: MasterClientList | null;
   only?: ToolViewId;
   /** The record's Billing tab — the people named in billing-access.ts only, decided by the page. */
   billingTab?: boolean;
+  /** Whether this person can open the new client portal, so the Portal buttons are links (24 Nov; decided by the page). */
+  portalAccess?: boolean;
 }) {
   const [data, setData] = useState<MasterClientList | null>(initial);
   const [error, setError] = useState<string | null>(null);
@@ -531,7 +534,7 @@ export function ClientsScreen({ initial, only, billingTab = false }: {
     ) : <PlaceholderScreen cards={5} />;
   }
   return (
-    <>
+    <PortalAccess.Provider value={portalAccess}>
       {error ? (
         <div className="cx-refresh-err" role="alert">
           <span>Saved — but the list could not refresh: {error}</span>
@@ -540,7 +543,7 @@ export function ClientsScreen({ initial, only, billingTab = false }: {
       ) : null}
       <ClientsView data={withViews(withStripe(data, stripe), views)} only={only} billingTab={billingTab} onPatch={patch}
         onChanged={(kind) => { void refresh(true); if (kind === "stripe") loadStripe(); }} />
-    </>
+    </PortalAccess.Provider>
   );
 }
 
@@ -569,6 +572,6 @@ function withStripe(data: MasterClientList, s: StripeFigures | "failed"): Master
 }
 
 /** A tool's own §8 view of the client record, mounted inside that tool. */
-export function ToolClientView({ view }: { view: ToolViewId }) {
-  return <ClientsScreen initial={null} only={view} />;
+export function ToolClientView({ view, portalAccess = false }: { view: ToolViewId; portalAccess?: boolean }) {
+  return <ClientsScreen initial={null} only={view} portalAccess={portalAccess} />;
 }

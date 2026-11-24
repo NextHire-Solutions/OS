@@ -247,6 +247,8 @@ export interface MarketQuery {
   not: { brokerages: string[]; offices: string[]; cities: string[]; counties: string[]; states: string[]; zips: string[]; titles: string[] };
   sort: SortKey;
   dir: "asc" | "desc";
+  /** Only the agents on this list of the client's (the DNC List, Setup › Your DNC List); null: everyone. Optional: absent = null. */
+  onList?: ListName | null;
 }
 
 /** A request's query string, held to what the page can send: bounded numbers, short texts, known sorts. */
@@ -295,6 +297,9 @@ export function parseMarketQuery(p: URLSearchParams): MarketQuery {
     not: { brokerages: many("xbrokerage"), offices: many("xoffice"), cities: places("xcity"), counties: places("xcounty"), states: states("xstate"), zips: zips("xzip"), titles: titles("xtitle") },
     sort,
     dir: dirRaw === "asc" || dirRaw === "desc" ? dirRaw : FIRST_DIR[sort],
+    // Only the agents on the client's DNC List (Setup › Your DNC List — the client: "a single DNC list … with the same
+    // functionality as the Markets section"). Market only.
+    onList: list === "market" && p.get("onlist") === "dnc" ? "DNC List" : null,
   };
 }
 

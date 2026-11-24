@@ -729,7 +729,9 @@ export async function runDemoAction(db: Db, a: DemoAction, who: string | null = 
  * List are always left out") leaves alone anyone already on My Agents, the DNC
  * List (as a person or by company domain) or in the pipeline.
  */
-export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget, who: string | null, opts: { onlyUnlisted?: boolean } = {}): Promise<DemoResult> {
+export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget, who: string | null, opts: { onlyUnlisted?: boolean; dncOnly?: boolean } = {}): Promise<DemoResult> {
+  // Off the DNC List only (Setup › Your DNC List's Remove): My Agents and Prospects stay as they are.
+  const dncOnly = to === "Not on a list" && !!opts.dncOnly;
   const C = DEMO_PORTAL_ID;
   const unique = [...new Set(ids)];
   // Before anything is taken off a list: Prospects must exist when it is where they go.
@@ -785,7 +787,7 @@ export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget,
   }
 
   // Off the lists it is leaving.
-  if (to !== "My Agents" && myRows.length) {
+  if (to !== "My Agents" && !dncOnly && myRows.length) {
     const r = await eachChunk(myRows.map((x) => x.id), (part) => db.from("client_agents").delete().eq("client_id", C).in("id", part));
     if (r) return r;
   }
@@ -793,7 +795,7 @@ export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget,
     const r = await eachChunk(dncRows.map((x) => x.id), (part) => db.from("client_dnc_entries").delete().eq("client_id", C).in("id", part));
     if (r) return r;
   }
-  if (to !== "Prospects") {
+  if (to !== "Prospects" && !dncOnly) {
     const off = [...agents, ...copies].map((a) => a.id);
     for (let i = 0; i < off.length; i += 200) {
       const r: Res = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", off.slice(i, i + 200));
@@ -829,5 +831,5 @@ export async function moveAgents(db: Db, ids: readonly string[], to: MoveTarget,
   }
   const n = agents.length;
   const who1 = n === 1 ? (agents[0].full_name ?? "1 agent") : `${n.toLocaleString("en-US")} agents`;
-  return { ok: true, message: to === "Not on a list" ? `${who1} taken off every list.` : `${who1} moved to ${to}.` };
+  return { ok: true, message: dncOnly ? `${who1} taken off your DNC List.` : to === "Not on a list" ? `${who1} taken off every list.` : `${who1} moved to ${to}.` };
 }

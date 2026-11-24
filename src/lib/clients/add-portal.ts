@@ -10,6 +10,7 @@ import { getMasterClientList } from "./master-list";
 import { miRowsFor } from "./mi-status-mirror";
 import { postToMasterInbox } from "./onboard-run";
 import { osTable } from "./os-db";
+import { newPortalPath } from "@/lib/tools/master-inbox/portals/public-url";
 import { withStandardFlags } from "./portal-features";
 
 /*
@@ -147,7 +148,8 @@ export async function addPortal(osClientId: string, marketInput: unknown, by: st
 
   getMasterClientList.invalidate?.();
   const relinked = await relinkForNewPortal(osClientId, created.id);
-  return { portal: { id: created.id, name: created.name, url: created.portal_url }, relinked, note };
+  // The NEW portal's address (24 Nov), not the standalone app's login-free token link.
+  return { portal: { id: created.id, name: created.name, url: created.portal_url ? newPortalPath(created.id) : null }, relinked, note };
 }
 
 /**
