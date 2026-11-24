@@ -9,6 +9,7 @@ import type { MailboxesPage, MailboxView } from "@/lib/tools/tickets/types";
 import { canSendFrom } from "@/lib/tools/tickets/senders";
 
 import { ago, api, Avatar, Icon, useNow } from "./ui";
+import { TICKETS_OTHERS_ON } from "@/lib/tools/tickets/others-switch";
 
 /*
  * TICKETS › Connected inboxes — each teammate connects their own Gmail (read-only). Says plainly what the OS reads
@@ -66,7 +67,9 @@ export function TicketsInboxesScreen() {
         <PageHeader
           kicker="Tickets"
           title="Connected inboxes"
-          description="Tickets reads the Gmail of each teammate who connects, and shares only the email that comes from a client's address. Connect yours so client email sent to you reaches the whole team."
+          description={TICKETS_OTHERS_ON
+            ? "Tickets reads the Gmail of each teammate who connects. Email from a client's address becomes a client ticket; every other email goes to Others. Connect yours so client email sent to you reaches the whole team."
+            : "Tickets reads the Gmail of each teammate who connects, and shares only the email that comes from a client's address. Connect yours so client email sent to you reaches the whole team."}
         />
 
         {notice ? (
@@ -157,9 +160,12 @@ export function TicketsInboxesScreen() {
               <h2 id="tk-priv-h">What Tickets reads, and what it keeps</h2>
               <div className="tk-privacy">
                 <div><Icon name="check" /><span><b>Kept and shared:</b> emails sent <b>from a client&apos;s address</b>, meaning an address on the client&apos;s record or its portal lists. The whole team with Tickets access can see them.</span></div>
+                {TICKETS_OTHERS_ON ? <div><Icon name="mail" /><span><b>Others:</b> every other email that reaches a connected inbox (other senders, someone new at a client&apos;s company, notifications, newsletters and personal email) is kept in <b>Others</b>, and the whole team with Tickets access can see it.</span></div> : null}
                 <div><Icon name="check" /><span><b>Noted, never shown:</b> when you reply to a client in Gmail, Tickets records only that you replied and when, so the ticket moves to Waiting. Your reply&apos;s text is never stored.</span></div>
                 <div><Icon name="reply" /><span><b>Replies written in Tickets:</b> sent from Amy&apos;s or Eddy&apos;s inbox, whichever the client wrote to, in the same conversation. The reply and who sent it are kept on the ticket.</span></div>
-                <div className="no"><Icon name="x" /><span><b>Never kept:</b> everything else. That includes personal email, other senders, people the client copies in, and someone new at a client&apos;s company until they&apos;re added to the client&apos;s record.</span></div>
+                {TICKETS_OTHERS_ON
+                  ? <div className="no"><Icon name="x" /><span><b>Never kept:</b> spam, drafts, chats, calendar invitations, and email only between teammates.</span></div>
+                  : <div className="no"><Icon name="x" /><span><b>Never kept:</b> everything else. That includes personal email, other senders, people the client copies in, and someone new at a client&apos;s company until they&apos;re added to the client&apos;s record.</span></div>}
                 <div className="no"><Icon name="x" /><span><b>Never done:</b> deleting, labelling or marking anything read in your Gmail. Nothing is ever sent except a reply a teammate writes and sends in Tickets, and only from Amy&apos;s or Eddy&apos;s inbox.</span></div>
                 <div><Icon name="check" /><span>Disconnect any time. Google forgets the OS&apos;s access, and tickets already shared stay.</span></div>
               </div>

@@ -5,7 +5,7 @@
  * in the open views; Mine counts open work only.
  */
 
-export const VIEWS = ["open", "mine", "unassigned", "waiting", "snoozed", "mentions", "done", "all"] as const;
+export const VIEWS = ["open", "mine", "unassigned", "waiting", "snoozed", "mentions", "done", "all", "others"] as const;
 export type View = (typeof VIEWS)[number];
 
 export const VIEW_LABEL: Record<View, string> = {
@@ -17,6 +17,7 @@ export const VIEW_LABEL: Record<View, string> = {
   mentions: "Mentions",
   done: "Done",
   all: "All",
+  others: "Others",
 };
 
 export const VIEW_HINT: Record<View, string> = {
@@ -27,7 +28,8 @@ export const VIEW_HINT: Record<View, string> = {
   snoozed: "Back to Open when the snooze ends",
   mentions: "Tickets where a teammate @mentioned you in a note",
   done: "Finished conversations",
-  all: "Everything except tickets marked Not a ticket",
+  all: "Every client conversation except those marked Not a ticket",
+  others: "Every other email to a connected inbox: from anyone who isn't a client address or our team",
 };
 
 export const isView = (v: unknown): v is View => typeof v === "string" && (VIEWS as readonly string[]).includes(v);

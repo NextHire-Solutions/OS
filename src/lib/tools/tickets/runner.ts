@@ -10,6 +10,7 @@ import { GmailAuthError, GmailClient, refreshAccessToken } from "./gmail-api";
 import type { MailboxRow } from "./store";
 import { dbTicketStore } from "./store-db";
 import { syncMailbox, type SyncReport } from "./sync";
+import { TICKETS_OTHERS_ON } from "./others-switch";
 import { wake } from "./ticket-rules";
 import { openToken } from "./token-crypto";
 
@@ -113,6 +114,7 @@ async function runOnce(): Promise<RunResult> {
         const r = await syncMailbox({
           store: dbTicketStore, gmail, index: dir!.index, team: team!.set, names: team!.names,
           heartbeat: () => dbTicketStore.renewClaim(mb.email, token),
+          others: TICKETS_OTHERS_ON,
         }, mb);
         if (r.failed) console.error(`[tickets] ${mb.email}: ${r.failed} message(s) skipped: ${r.errors.join(" | ")}`);
         await dbTicketStore.releaseMailbox(mb.email, token, {

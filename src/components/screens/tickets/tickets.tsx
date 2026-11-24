@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ModalDialog } from "@/components/ui/modal-dialog";
 import { shortAge, waitTone } from "@/lib/tools/tickets/ticket-rules";
@@ -17,7 +17,7 @@ import { api, Avatar, endG, Icon, inGSequence, markG, typingOrDialog, useNow, us
  * opens, / searches, G then O·M·U·W·D·A jumps to a view, ? lists them all.
  */
 
-const VIEW_ICON: Record<View, string> = { open: "inbox", mine: "user", unassigned: "userx", waiting: "clock", snoozed: "moon", mentions: "at", done: "checkc", all: "layers" };
+const VIEW_ICON: Record<View, string> = { open: "inbox", mine: "user", unassigned: "userx", waiting: "clock", snoozed: "moon", mentions: "at", done: "checkc", all: "layers", others: "mail" };
 const EMPTY: Record<View, { title: string; body: string }> = {
   open: { title: "No client is waiting on you", body: "Every conversation has an answer. New client emails land here the minute they arrive." },
   mine: { title: "Nothing assigned to you", body: "Press Q on any ticket to take it, or pick one from Unassigned." },
@@ -27,6 +27,7 @@ const EMPTY: Record<View, { title: string; body: string }> = {
   mentions: { title: "No mentions yet", body: "When a teammate @mentions you in a note, the ticket shows up here." },
   done: { title: "Nothing finished yet", body: "Tickets you mark Done (E) collect here. A client's new email reopens them." },
   all: { title: "No tickets yet", body: "Client emails appear here once a teammate's inbox is connected." },
+  others: { title: "No other email yet", body: "Email to a connected inbox from anyone who isn't a client lands here. Open one and move it to a client when it belongs to one." },
 };
 const GO: Record<string, View> = { o: "open", m: "mine", u: "unassigned", w: "waiting", s: "snoozed", d: "done", a: "all", n: "mentions" };
 
@@ -197,12 +198,15 @@ export function TicketsScreen() {
               const n = counts[v];
               const hot = v === "open" || v === "unassigned" || v === "mine";
               return (
-                <button key={v} type="button" className="tk-view" aria-current={view === v} title={VIEW_HINT[v]} onClick={() => { setView(v); }}>
+                <Fragment key={v}>
+                {v === "others" ? <div className="tk-views-sep" role="separator" aria-hidden="true" /> : null}
+                <button type="button" className="tk-view" aria-current={view === v} title={VIEW_HINT[v]} onClick={() => { setView(v); }}>
                   <Icon name={VIEW_ICON[v]} />
                   <span>{VIEW_LABEL[v]}</span>
                   {v === "mentions" && data?.unread.mentions ? <span className="tk-view-dot" aria-label={`${data.unread.mentions} unread`} /> : null}
                   {n !== undefined && n > 0 ? <span className={`tk-view-n${hot && n ? " hot" : ""}`}>{n}</span> : null}
                 </button>
+                </Fragment>
               );
             })}
           </div>
@@ -332,7 +336,7 @@ function Row({ r, active, onOpen, now, me, people, viewers, view }: {
       {r.unread ? <span className="tk-udot" aria-label="New activity" /> : null}
       <span className="tk-row-top">
         <span className="tk-who">{who}</span>
-        {r.client ? <span className="tk-client" title={r.client.name}><i className={r.client.status === "churned" ? "churned" : r.client.status === "paused" ? "paused" : ""} /><span className="tk-client-n">{r.client.name}</span></span> : null}
+        {r.client ? <span className="tk-client" title={r.client.name}><i className={r.client.status === "churned" ? "churned" : r.client.status === "paused" ? "paused" : ""} /><span className="tk-client-n">{r.client.name}</span></span> : <span className="tk-client tk-client-other" title="Not from a client's address"><span className="tk-client-n">Others</span></span>}
         <span className={`tk-age${tone ? ` ${tone === "fresh" ? "" : tone}` : " plain"}`} title={r.status === "open" && r.waitingSince ? `Waiting since ${new Date(r.waitingSince).toLocaleString()}` : "Last activity"}>{age}</span>
       </span>
       <span className="tk-subj">{r.subject}</span>

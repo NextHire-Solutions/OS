@@ -28,6 +28,13 @@ import { applyMessage, settleImported, type IncomingMessage } from "./ticket-rul
  *  - FROM ANYONE ELSE — a stranger, someone new at the client's company, a vendor inside a client's thread: never
  *    stored, never shown. Nothing about them is written anywhere.
  *  - Drafts, spam, trash and chats are skipped.
+ *  - OTHERS (24 Nov, the user chose "Every other email" for Eddy's "a section called others"; `deps.others`): with it
+ *    on, the "anyone else" mail above IS kept, whole, like a client's — in the conversation it belongs to when that is
+ *    already a ticket (someone new at the client's company replying in the client's thread), else as a new ticket with
+ *    no client (the Others view), automatic mail included. Our replies inside an Others conversation are noted like
+ *    replies to a client. Unchanged: a forged client address is still refused, calendar invitations are still never
+ *    tickets, our own mail between teammates still leaves no trace, and a forward to a vendor inside a CLIENT's
+ *    conversation is still not a reply.
  * When a conversation first reaches this mailbox's thread (a new ticket, or a copy of an email another teammate
  * already received), the rest of that thread in this mailbox is read the same way — so a teammate's replies are seen
  * even when the client's email was first stored from someone else's inbox.
@@ -50,6 +57,11 @@ export interface SyncDeps {
   now?: () => number;
   /** Called now and then during a long run (keeps the mailbox's claim fresh). */
   heartbeat?: () => Promise<void>;
+  /**
+   * Others (24 Nov, others-switch.ts): also keep every email from anyone who is neither a client address nor our team —
+   * a ticket with no client, or a message in the client conversation it was written in. Off: client addresses only.
+   */
+  others?: boolean;
 }
 
 export interface SyncReport {
@@ -131,6 +143,15 @@ async function importThread(run: Run, threadId: string, exceptId: string) {
   for (const m of rest) await takeSafely(run, m);
 }
 
+/** Is this message in a conversation that is already a ticket with no client (Others)? */
+async function inOthersTicket(run: Run, p: ParsedMessage): Promise<boolean> {
+  const { store } = run.deps;
+  const id = (await store.ticketForThread(run.mb.email, p.threadId)) ?? (p.refs.length ? (await store.messagesByRfc(p.refs))[0]?.ticket_id ?? null : null);
+  if (!id) return false;
+  const t = await store.getTicket(id);
+  return !!t && !t.os_client_id;
+}
+
 /** One message (headers) into the tickets, per the rules above. */
 async function take(run: Run, meta: GmailMessage): Promise<void> {
   const { deps, mb, report } = run;
@@ -145,17 +166,19 @@ async function take(run: Run, meta: GmailMessage): Promise<void> {
   if (p.fromCount !== 1 || !fromEmail) { report.skipped++; return; }
   const ours = isTeamAddress(fromEmail, deps.team) || fromEmail === mb.email;
   const client = ours ? null : matchSender(deps.index, fromEmail);
-  if (!ours && !client) { report.skipped++; return; }
+  // Neither us nor a client: kept only with Others on (24 Nov).
+  if (!ours && !client && !deps.others) { report.skipped++; return; }
   if (client && !senderVerified(fromEmail, p.auth)) { report.unverified++; report.skipped++; return; }
   if (ours) {
-    // A reply counts only when it went to a client (a forward to a vendor, or mail between teammates, does not).
+    // A reply counts only when it went to a client (a forward to a vendor, or mail between teammates, does not) —
+    // or, with Others on, when it is in a conversation that is already an Others ticket (no client to address).
     const toClient = [...p.to, ...p.cc].some((a) => !isTeamAddress(a.email, deps.team) && a.email !== mb.email && matchSender(deps.index, a.email));
-    if (!toClient) { report.skipped++; return; }
+    if (!toClient && !(deps.others && (await inOthersTicket(run, p)))) { report.skipped++; return; }
   }
 
   const rfc = p.rfcId || `gmail:${mb.email}:${p.gmailId}`;
   if (await store.anyBlocked([`msg:${rfc}`, ...p.refs.map((r) => `msg:${r}`), `thread:${mb.email}:${p.threadId}`])) {
-    if (client) await store.block([`msg:${rfc}`], null);
+    if (!ours) await store.block([`msg:${rfc}`], null);
     report.skipped++;
     return;
   }
@@ -182,10 +205,11 @@ async function take(run: Run, meta: GmailMessage): Promise<void> {
 
   let created = false;
   if (!ticketId) {
-    if (p.autoSubmitted || !client) { report.skipped++; return; }
+    // A client's automatic mail (out-of-office, lists) starts nothing. Others keeps it (the user: every other email).
+    if (client ? p.autoSubmitted : !deps.others) { report.skipped++; return; }
     const t = await store.createTicket({
-      os_client_id: client.clientId,
-      match_method: client.method,
+      os_client_id: client?.clientId ?? null,
+      match_method: client?.method ?? null,
       subject: cleanSubject(p.subject),
       contact_email: fromEmail,
       contact_name: p.from?.name ?? null,
@@ -196,17 +220,18 @@ async function take(run: Run, meta: GmailMessage): Promise<void> {
     run.created.add(t.id);
     report.created++;
     const mbName = deps.names.get(mb.email) ?? mb.name ?? mb.email;
-    const also = client.alsoOn.map((id) => deps.index.clients.get(id)?.name).filter(Boolean);
+    const also = (client?.alsoOn ?? []).map((id) => deps.index.clients.get(id)?.name).filter(Boolean);
     await store.addEvents(t.id, [{
       kind: "created", actor: null,
       body: `${run.report.mode === "history" ? "New email" : "Imported"} from ${p.from?.name ?? fromEmail} in ${mbName.split(/\s+/)[0]}'s inbox${also.length ? `. The same address is also on ${also.join(", ")}` : ""}`,
     }]);
   }
 
-  // A client's email: only the client's own words. Ours: a dated marker (no subject, text, recipients, files, ids).
+  // Their email (a client's, or with Others on anyone else's): only the sender's own words. Ours: a dated marker (no
+  // subject, text, recipients, files, ids).
   let content = { trimmed: false, to_list: [] as typeof p.to, cc_list: [] as typeof p.cc, subject: null as string | null, snippet: null as string | null, body_html: null as string | null, body_text: null as string | null, attachments: [] as ReturnType<typeof parseBodies>["attachments"], in_reply_to: null as string | null, refs: [] as string[] };
   let snippet = "";
-  if (client) {
+  if (!ours) {
     const b = parseBodies(await deps.gmail.full(p.gmailId));
     const own = trimEmail(b.html, b.text);
     const html = own.html && own.html.length <= MAX_HTML ? own.html : null;
@@ -267,6 +292,8 @@ async function fill(deps: SyncDeps, mb: MailboxRow, days: number, mode: "fill" |
   const profile = await deps.gmail.profile();
   report.historyId = profile.historyId;
   const queries = backfillQueries(deps.index, days);
+  // Others: every email of the window, not only the client addresses' (spam, trash, drafts and chats never).
+  if (deps.others) queries.push(`newer_than:${Math.max(1, Math.round(days))}d -in:sent -in:chats -in:drafts -in:spam -in:trash`);
   // A refill also reads our Sent mail of the gap: replies made while the history was lost.
   if (mode === "refill") queries.push(`in:sent newer_than:${Math.max(1, Math.round(days))}d`);
   const ids = new Map<string, string>();

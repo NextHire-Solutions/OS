@@ -84,7 +84,8 @@ async function fetchBadges(): Promise<RailBadges> {
       out.reminders = reminders.count;
     }
     // Tickets (20 Nov): conversations where a client is waiting on us. Absent until migration 0053 has run.
-    const open = await osTable("os_tickets").select("id", { count: "exact", head: true }).eq("status", "open").then((r) => r, () => null);
+    // Client conversations only: Others (no client, 24 Nov) never counts toward the badge.
+    const open = await osTable("os_tickets").select("id", { count: "exact", head: true }).eq("status", "open").not("os_client_id", "is", null).then((r) => r, () => null);
     if (open && !open.error && typeof open.count === "number" && open.count > 0) out["tickets-open"] = open.count;
     return out;
   } catch {

@@ -191,7 +191,12 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
             <a className="tk-client big" href={`/roster?client=${encodeURIComponent(t.client.id)}`} title={`Open ${t.client.name}'s record`}>
               <i className={t.client.status === "churned" ? "churned" : t.client.status === "paused" ? "paused" : ""} /><span className="tk-client-n">{t.client.name}</span>
             </a>
-          ) : <span className="tk-client big">No client</span>}
+          ) : (
+            <button type="button" className="tk-client big tk-client-other" onClick={() => setOpen("client")}
+              title="Not from a client's address (Others). Move it to a client to file it with that client's tickets.">
+              <span className="tk-client-n">Others · Move to a client</span>
+            </button>
+          )}
           <span className="tk-crumb" title={t.contact.email ?? undefined}>{t.contact.name ?? t.contact.email}</span>
           {/* When the client first wrote, not when Tickets first saw it (an inbox connected later imports older mail). */}
           <span className="tk-crumb tk-crumb-dot" title={fullTime(firstAt)}>Started {fullTime(firstAt)}</span>
@@ -459,7 +464,7 @@ function MailCard({ m, open, onToggle, people }: { m: TicketMessageView; open: b
             <EmailFrame html={m.html} text={m.text} messageId={m.id} attachments={m.attachments} showImages={showImages} onBlocked={onBlocked} />
           </div>
           {m.trimmed ? (
-            <div className="tk-trimmed">Earlier messages quoted in this email aren&apos;t kept in Tickets, only the client&apos;s own words.{m.myGmailId ? " The full email is in your Gmail." : ""}</div>
+            <div className="tk-trimmed">Earlier messages quoted in this email aren&apos;t kept in Tickets, only the sender&apos;s own words.{m.myGmailId ? " The full email is in your Gmail." : ""}</div>
           ) : null}
           {blocked > 0 && !showImages ? (
             <div className="tk-imgbar">

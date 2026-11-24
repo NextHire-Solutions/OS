@@ -30,7 +30,16 @@ const PAGE = 100;
 
 type Q = ReturnType<ReturnType<typeof osTable>["select"]>;
 
+/*
+ * Others (24 Nov, others-switch.ts): a ticket with no client. Every client view lists only tickets WITH a client, so
+ * the client's work is never buried under newsletters; Others lists the rest. Mentions spans both (a note is a note).
+ * A ticket whose client record was deleted (os_client_id set null) is in Others too: it no longer has a client.
+ */
+const clientOnly = (q: Q) => q.not("os_client_id", "is", null);
+
 function applyView(q: Q, view: View, me: string): Q {
+  if (view === "others") return q.is("os_client_id", null).neq("status", "ignored");
+  if (view !== "mentions") q = clientOnly(q);
   switch (view) {
     case "open": return q.eq("status", "open");
     case "mine": return q.eq("assignee", me).in("status", ["open", "waiting"]);
@@ -189,7 +198,7 @@ export function applyScope(q: Q, s: Scope): Q {
 }
 
 /** The views with a count beside them. Done and All too (24 Nov), so Open + Waiting + Snoozed + Done adds up to All. */
-export const COUNTED_VIEWS: View[] = ["open", "mine", "unassigned", "waiting", "snoozed", "done", "all"];
+export const COUNTED_VIEWS: View[] = ["open", "mine", "unassigned", "waiting", "snoozed", "done", "all", "others"];
 
 /** How many tickets each view holds, within the same filters as the list (24 Nov), so a count matches what it lists. */
 export async function countViews(me: string, scope: Scope = NO_SCOPE): Promise<{ counts: Partial<Record<View, number>>; unread: Partial<Record<View, number>> }> {
