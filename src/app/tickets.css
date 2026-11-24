@@ -298,8 +298,8 @@ a.tk-client:hover { background: var(--ds-brand-soft); color: var(--ds-brand-ink)
 .tk-team .tk-sp { flex: 1; }
 .tk-table-wrap { overflow-x: auto; }
 .tk-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.tk-table th { text-align: left; font-size: 11.5px; font-weight: 600; color: var(--ds-faint); text-transform: uppercase; letter-spacing: .05em; padding: 0 10px 8px; border-bottom: 1px solid var(--ds-border); white-space: nowrap; }
-.tk-table td { padding: 11px 10px; border-bottom: 1px solid var(--ds-border); vertical-align: middle; white-space: nowrap; }
+.tk-table th { text-align: left; font-size: 11.5px; font-weight: 600; color: var(--ds-faint); text-transform: uppercase; letter-spacing: .05em; padding: 0 7px 8px; border-bottom: 1px solid var(--ds-border); white-space: nowrap; }
+.tk-table td { padding: 11px 7px; border-bottom: 1px solid var(--ds-border); vertical-align: middle; white-space: nowrap; }
 .tk-table td:first-child { white-space: normal; }
 .tk-ibx { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .tk-ibx-n { font-weight: 550; color: var(--ds-ink); }
@@ -379,3 +379,9 @@ a.tk-client:hover { background: var(--ds-brand-soft); color: var(--ds-brand-ink)
 .tk-rbox-warn.bad { background: var(--ds-red-soft); color: var(--ds-red); }
 .tk-rbox-warn .tk-btn { margin-top: 6px; margin-right: 6px; height: 26px; }
 @media (max-width: 720px) { .tk-rbox { padding-left: 16px; padding-right: 16px; } .tk-sent { margin-left: 0; } }
+/* Connected inboxes: an inbox's state, and whether replies from Tickets go from it, stacked in one cell. */
+.tk-states { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.tk-state svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+/* The table's Disconnect is a small × (the full button is on "Your inbox"), so the row fits its card with the reply status. */
+.tk-table .tk-btn.icon.tk-disc { width: 28px; height: 28px; padding: 0; justify-content: center; }
+.tk-table th:last-child, .tk-table td:last-child { padding-left: 4px; padding-right: 0; }

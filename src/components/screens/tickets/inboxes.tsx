@@ -126,16 +126,22 @@ export function TicketsInboxesScreen() {
               {d && d.mailboxes.length ? (
                 <div className="tk-table-wrap">
                   <table className="tk-table">
-                    <thead><tr><th>Inbox</th><th>State</th><th>Replies</th><th>Tickets</th><th>Last checked</th><th aria-label="Actions" /></tr></thead>
+                    <thead><tr><th>Inbox</th><th>State</th><th>Tickets</th><th>Checked</th><th aria-label="Actions" /></tr></thead>
                     <tbody>
                       {d.mailboxes.map((m) => (
                         <tr key={m.email}>
                           <td><div className="tk-ibx"><Avatar email={m.email} name={m.name} /><div><div className="tk-ibx-n">{m.name ?? m.email}</div>{m.name && m.name !== m.email ? <div className="tk-ibx-e">{m.email}</div> : null}</div></div>{m.lastError && m.state !== "paused" ? <span className="err">{m.lastError}</span> : null}</td>
-                          <td><span className={`tk-state ${STATE[m.state].cls}`}><i />{STATE[m.state].label}</span></td>
-                          <td data-sends-cell={m.email}>{m.sends === "on" ? <span className="tk-state ok"><i />From Tickets</span> : m.sends === "reconnect" ? <span className="tk-state warn" title={`${m.name ?? m.email} reconnects once to allow replies from Tickets`}><i />Reconnect needed</span> : <span className="tk-muted">Gmail only</span>}</td>
+                          <td>
+                            <div className="tk-states" data-sends-cell={m.email} data-sends={m.sends ?? "none"}>
+                              <span className={`tk-state ${STATE[m.state].cls}`}><i />{STATE[m.state].label}</span>
+                              {/* Replies from Tickets go only from Amy's and Eddy's inboxes (senders.ts). */}
+                              {m.sends === "on" ? <span className="tk-state ok" title="Replies written in Tickets go from this inbox"><Icon name="reply" />Sends replies</span> : null}
+                              {m.sends === "reconnect" ? <span className="tk-state warn" title={`${m.name ?? m.email} reconnects once to allow replies from Tickets`}><Icon name="reply" />Replies: reconnect</span> : null}
+                            </div>
+                          </td>
                           <td className="n">{m.tickets}</td>
                           <td className="n" title={m.lastOkAt ?? ""}>{m.lastOkAt ? ago(m.lastOkAt, now) : "–"}</td>
-                          <td style={{ textAlign: "right" }}>{(d.admin || m.mine) && m.state !== "paused" ? <button type="button" className="tk-btn ghost danger" onClick={() => setConfirm(m)}>Disconnect</button> : null}</td>
+                          <td style={{ textAlign: "right" }}>{(d.admin || m.mine) && m.state !== "paused" ? <button type="button" className="tk-btn ghost danger icon tk-disc" onClick={() => setConfirm(m)} title={`Disconnect ${m.email}`} aria-label={`Disconnect ${m.email}`}><Icon name="x" /></button> : null}</td>
                         </tr>
                       ))}
                     </tbody>

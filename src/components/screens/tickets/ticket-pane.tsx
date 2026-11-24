@@ -276,7 +276,7 @@ export function TicketPane({ number, team, clients, me, onChanged, onBack, onRem
       <Timeline d={d} now={now} people={people} />
 
       {replyOpen && rc && !rc.blocked && rc.senders.length ? (
-        <ReplyBox key={t.id} ticketNumber={t.number} ctx={rc} me={me} people={people}
+        <ReplyBox key={t.id} ticketNumber={t.number} ctx={rc} people={people}
           onClose={() => setReplyOpen(false)}
           onStale={() => { void load(true); void loadReply(); }}
           onSent={() => { setReplyOpen(false); void load(true); void loadReply(); changedRef.current(); }} />
@@ -665,10 +665,9 @@ const newNonce = () => (typeof crypto !== "undefined" && "randomUUID" in crypto 
  * their email, untick to leave out), the reply, the inbox's Gmail signature, Send. The draft is kept in this browser
  * until it is sent or discarded, so switching tickets loses nothing.
  */
-function ReplyBox({ ticketNumber, ctx, me, people, onClose, onSent, onStale }: {
+function ReplyBox({ ticketNumber, ctx, people, onClose, onSent, onStale }: {
   ticketNumber: number;
   ctx: ReplyContextView;
-  me: string;
   people: ReturnType<typeof usePeople>;
   onClose: () => void;
   onSent: () => void;
@@ -735,7 +734,6 @@ function ReplyBox({ ticketNumber, ctx, me, people, onClose, onSent, onStale }: {
                 {ctx.senders.map((s) => <option key={s.email} value={s.email}>{s.name} &lt;{s.email}&gt;{s.ready ? "" : " · can't send yet"}</option>)}
               </select>
             ) : <span className="tk-rbox-addr" data-reply-from>{sender?.name}<small>{sender?.email}</small></span>}
-            {sender && sender.email !== me ? <span className="tk-muted">· the client sees it from {asName}</span> : null}
           </div>
           <div className="tk-rbox-row">
             <span className="k">To</span>
@@ -775,7 +773,7 @@ function ReplyBox({ ticketNumber, ctx, me, people, onClose, onSent, onStale }: {
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} />
         {sender?.signature ? <div className="tk-rbox-sig" title={`${asName}'s Gmail signature, added when it's sent`}>{sender.signature}</div> : null}
         <div className="tk-rbox-f">
-          <span>Goes to the client from {asName}&apos;s Gmail, in the same conversation{sender?.signature ? ", with the signature above" : ""}. Their email is quoted underneath.</span>
+          <span>Sent from {asName}&apos;s Gmail in the same conversation{sender?.signature ? ", signed as above" : ""}, with their email quoted underneath.</span>
           <span className="tk-sp" />
           <button type="button" className="tk-btn ghost" onClick={discard} disabled={sending}>{text.trim() ? "Discard" : "Close"}</button>
           <button type="button" className="tk-btn pri" data-reply-send disabled={!sender?.ready || !text.trim() || sending || !!problem?.unsure} onClick={() => void send()}>
