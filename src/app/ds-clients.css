@@ -644,3 +644,7 @@ th.cx-pin { z-index: 4 !important; box-shadow: inset -1px 0 0 var(--x-line); }
 .cx-metric.cx-paying[aria-pressed="true"]::after { background: #D97706; }
 .cx-metric .cx-of { font-size: 18px; letter-spacing: -.02em; color: var(--x-faint); }
 .cx-metric:disabled { cursor: default; }
+/* Automatic link (24 Nov): the dot stays beside the first line of a long reason, which wraps beside it. */
+.rx-hint.cl-meta.cl-meta-auto { flex-wrap: nowrap; align-items: flex-start; }
+.rx-hint.cl-meta.cl-meta-auto .cl-dot { margin-top: 5px; }
+.rx-hint.cl-meta.cl-meta-auto > span:last-child { flex: 1 1 0; min-width: 0; }

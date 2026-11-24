@@ -18,6 +18,9 @@ export const NAMED_PAGES: Readonly<Record<string, readonly string[]>> = {
   "brokerage-relay": ["amy@brokerstaffer.com", "gabo075823532@gmail.com"],
   // 18 Nov, the user: "give access to the AI assistant on the OS to Gabriel Castillo" — only what he can see (viewer.ts).
   assistant: ["gabo075823532@gmail.com"],
+  // 24 Nov, the user ("give him access too"), on Gabriel's ask: a client's Campaigns tab › "Where new Prospects go" —
+  // its campaign picks only (the route refuses the old clean-up switch to anyone but an admin).
+  "prospects-campaigns": ["gabo075823532@gmail.com"],
 };
 
 const norm = (email: string | null | undefined) => (email ?? "").trim().toLowerCase();

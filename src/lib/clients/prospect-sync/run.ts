@@ -17,6 +17,7 @@ import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 import { loadLeadAgents, type SyncAgent } from "./agents.ts";
 import { byPriority, databaseEmail, mapAgentToBisonLead, PRIORITY_ORDERS, type BisonLeadPayload, type LeadAgent } from "./lead-map.ts";
 import { postToPortalChannel, type ShownCampaign } from "./queue.ts";
+import { autoLinkFor, linkable, type CampaignProfile } from "./auto-link.ts";
 import { agentMarkets, campaignPerMls, campaignResultSlackText, chunks, IN_SEQUENCE, parseByMls, setupCampaignSlackText, syncMode, SWITCH_ENV, whyLeftOut, type CampaignOutcome, type CampaignPick, type Env } from "./rules.ts";
 import { ensureSetupCampaign, type SetupClient, type SetupOutcome } from "./setup-campaign.ts";
 
@@ -123,6 +124,8 @@ export interface RunDeps {
   orchCampaign?: (orchClientId: string) => Promise<string | null>;
   /** The team's picks on the Campaigns tab: one Prospects campaign, and one per MLS for a client with several. */
   choices?: (osClientId: string) => Promise<Choices>;
+  /** Where each of these campaigns' leads come from (auto-link.ts): an MLS nobody picked a campaign for is linked by it. */
+  campaignProfiles?: (campaigns: Campaign[]) => Promise<CampaignProfile[]>;
   /** The campaigns made at setup, ready: by MLS code ("" for a client with one market). */
   readySetupCampaigns?: (osClientId: string) => Promise<Map<string, CampaignPick>>;
   setupFinished?: (portalId: string) => Promise<boolean>;
@@ -210,6 +213,7 @@ function realDeps(d: RunDeps) {
       if (error) throw new Error(`orch_clients: ${error.message}`);
       return s((data as { bison_campaign_id?: unknown } | null)?.bison_campaign_id) || null;
     }),
+    campaignProfiles: d.campaignProfiles ?? (async (campaigns: Campaign[]) => (await import("./campaign-profiles")).campaignProfiles(campaigns)),
     choices: d.choices ?? (async (osClientId: string): Promise<Choices> => {
       const { data, error } = await osTable("os_campaign_list_clients").select("prospects_campaign_id, prospects_campaign_name, prospects_by_mls").eq("os_client_id", osClientId).maybeSingle();
       if (error) throw new Error(`os_campaign_list_clients: ${error.message}`);
@@ -296,6 +300,8 @@ class Batch {
   outcomes: Array<{ row: QueueRow; outcome: CampaignOutcome }> = [];
   /** Agents' names, as they are loaded — for that post. */
   names = new Map<string, string>();
+  /** Rows added by an automatic link (no campaign picked for the MLS): why that campaign, said on the row (24 Nov). */
+  autoWhy = new Map<number, string>();
   // Assigned in the constructor, not as parameter properties: Node's type stripping (the test runner) refuses those.
   readonly token: string;
   readonly now: Date;
@@ -830,7 +836,7 @@ async function judge(x: Deps, into: CampaignPick, part: ReadonlyArray<{ l: { row
       // The campaign's own list decides, never the lead search's campaigns (they lag: 6 Nov, 502 recorded added, none were).
       const on = await x.onCampaign(Number(into.id), l.email, id);
       if (on === "on") {
-        await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
+        await b.finish([l.row], "done", `Added to ${into.name}.${b.autoWhy.has(l.row.id) ? ` ${b.autoWhy.get(l.row.id)}` : ""}`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
         continue;
       }
       if (on === "unsure") { unsettled.push(l.row); continue; }
@@ -879,14 +885,23 @@ async function runMarketAdds(x: Deps, ctx: Ctx, record: ClientRecord, client: st
   for (const [id, a] of agents) if (a.full_name) b.names.set(id, a.full_name);
   const into = new Map<string, { campaign: CampaignPick; rows: QueueRow[] }>();
   const needs = new Map<string, QueueRow[]>();
+  // The client's own campaigns here that can take prospects (sending or paused), with where their leads come from —
+  // read once, only when some agent's MLS has no campaign picked.
+  let profiles: Promise<CampaignProfile[]> | null = null;
+  const profilesOf = () => (profiles ??= x.campaignProfiles(where.own.filter((c) => linkable(c.status))).catch(() => []));
   for (const r of rows) {
     const a = agents.get(r.agent_id);
     if (!a) { await b.finish([r], "skipped", "This agent is no longer in the agent database.", {}, { kind: "notAdded", reason: "no longer in our database" }); continue; }
     const codes = agentMarkets(a.mls_all, ctx.mlsCodes);
     if (!codes.length) { await b.finish([r], "skipped", `Not in any of ${client}'s MLSs (${ctx.mlsCodes.join(", ")}) — not added.`, {}, { kind: "notAdded", reason: "outside their MLSs" }); continue; }
-    // Its first MLS with a campaign; none: its first MLS decides what it waits for.
+    // Its first MLS with a campaign the team picked (or made at setup); none: the campaign that already holds that area's
+    // agents (auto-link.ts, 24 Nov) — never a guess: none of those either, its first MLS decides what it waits for.
     const hit = codes.map((code) => where.markets.get(code)).map((m) => m?.pick ?? m?.setup ?? null).find(Boolean) ?? null;
-    if (hit) into.set(hit.id, { campaign: hit, rows: [...(into.get(hit.id)?.rows ?? []), r] });
+    const unpicked = !hit && !codes.some((code) => where.markets.get(code)?.gone);
+    const auto = unpicked ? autoLinkFor({ codes, cities: [a.office_city, a.most_transacted_city] }, await profilesOf()) : null;
+    if (auto) b.autoWhy.set(r.id, `Linked automatically: no campaign is picked for its ${auto.code} agents, and ${auto.why}.`);
+    const goes = hit ?? (auto ? { id: auto.id, name: where.own.find((c) => c.id === auto.id)?.name || auto.name } : null);
+    if (goes) into.set(goes.id, { campaign: goes, rows: [...(into.get(goes.id)?.rows ?? []), r] });
     else needs.set(codes[0], [...(needs.get(codes[0]) ?? []), r]);
   }
   for (const [code, waiting] of needs) {
@@ -915,7 +930,7 @@ async function firstCampaign(x: Deps, ctx: Ctx, record: ClientRecord, client: st
     x.bell({ kind: "prospect_sync", severity, title, body: `${count} can't go into a campaign yet: ${why}`, ref: `prospect_sync:${kind}:${ctx.client!.id}${code ? `:${code}` : ""}:${day(b)}` }).catch(() => {});
   if (where.anyCampaign) {
     const why = code
-      ? `${client} has campaigns, but none picked for its ${code} agents — pick one on ${tab(client)}.`
+      ? `${client} has campaigns, but none holds its ${code} agents yet (none sending or paused with at least a fifth of its leads from ${code}) and none is picked for them — pick one on ${tab(client)}.`
       : `${client} has campaigns, but none can take prospects — pick its Prospects campaign on ${tab(client)}.`;
     await ask(why, "pick");
     return { wait: why };
@@ -980,7 +995,7 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       const inInto = found.find((f) => f.campaigns.some((c) => String(c.campaignId) === String(into.id)));
       // Tried before, and in it now: this sync put it there and EmailBison's search lagged — on record as added, so a
       // later removal looks where it was put.
-      if (inInto && l.row.attempts > 0) await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(inInto.id), email: l.email }, { kind: "added", campaign: into.name });
+      if (inInto && l.row.attempts > 0) await b.finish([l.row], "done", `Added to ${into.name}.${b.autoWhy.has(l.row.id) ? ` ${b.autoWhy.get(l.row.id)}` : ""}`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(inInto.id), email: l.email }, { kind: "added", campaign: into.name });
       else if (there) await b.finish([l.row], "done", there.id === into.id ? `Already in ${into.name}.` : `Already in ${there.name} — not added twice.`, { email: l.email }, { kind: "already", campaign: there.name });
       // In it already, whatever else holds it (a market's pick can go to another portal: not one of `own` here).
       else if (inInto) await b.finish([l.row], "done", `Already in ${into.name}.`, { email: l.email }, { kind: "already", campaign: into.name });
@@ -1034,6 +1049,6 @@ async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, 
       await judge(x, into, part, ours, b);
       continue;
     }
-    for (const { l, id } of part) await b.finish([l.row], "done", `Added to ${into.name}.`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
+    for (const { l, id } of part) await b.finish([l.row], "done", `Added to ${into.name}.${b.autoWhy.has(l.row.id) ? ` ${b.autoWhy.get(l.row.id)}` : ""}`, { campaign_id: into.id, campaign_name: into.name, eb_lead_id: String(id), email: l.email }, { kind: "added", campaign: into.name });
   }
 }

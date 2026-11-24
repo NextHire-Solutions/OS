@@ -1,4 +1,5 @@
 import { mock, test } from "node:test";
+import type { CampaignProfile } from "./auto-link.ts";
 import assert from "node:assert/strict";
 
 import { configureFakeEnvironment, FakePostgrest, type Row } from "../../tools/master-inbox/test/fake-postgrest.ts";
@@ -54,6 +55,8 @@ interface World {
   upsertFails: boolean;
   removeFails: boolean;
   ctx: unknown;
+  /** Where each campaign's leads come from (auto-link.ts) — none by default: nothing is linked automatically. */
+  profiles?: CampaignProfile[];
 }
 let w: World;
 const calls: Array<{ what: string; args: unknown[] }> = [];
@@ -80,6 +83,7 @@ function deps(extra: Partial<Deps> = {}): Deps {
     routes: async () => w.routes,
     orchCampaign: async () => w.orch,
     choices: async () => ({ single: w.chosen, byMls: w.byMls }),
+    campaignProfiles: async (cs) => { calls.push({ what: "profiles", args: [cs.map((c) => c.id)] }); return (w.profiles ?? []).filter((p) => cs.some((c) => c.id === p.id)); },
     readySetupCampaigns: async () => new Map([...(w.setup ? [["", w.setup] as const] : []), ...w.setupByMls]),
     setupFinished: async () => w.setupFinished,
     setupCampaign: async (client, o) => { calls.push({ what: "setupCampaign", args: [client, o] }); return (await w.setupOutcome()) as never; },
@@ -525,7 +529,7 @@ test("a client with several MLSs: each agent into the campaign picked for its ML
   assert.deepEqual(callsOf("attach").map((c) => [c.args[0], (c.args[1] as number[]).length]), [[1104, 2]], "Boston's agents into Boston's campaign — nothing else anywhere");
   assert.equal(rowOf("b1").detail, "Added to Homebase + Boston + ZF NS1 (EST).");
   assert.deepEqual([rowOf("s1").status, rowOf("s1").next_try_at], ["pending", new Date(START.getTime() + WAIT_MS).toISOString()]);
-  assert.match(String(rowOf("s1").detail), /none picked for its SOCAL agents/);
+  assert.match(String(rowOf("s1").detail), /none holds its SOCAL agents yet .*none is picked for them/);
   assert.deepEqual([rowOf("x1").status, rowOf("x1").detail], ["skipped", "Not in any of Homebase's MLSs (MLSPIN, SOCAL) — not added."]);
   assert.equal(r.waiting, 1);
   const bell = callsOf("bell")[0].args[0] as { body: string; ref: string };
@@ -764,7 +768,7 @@ test("a client whose MLSs changed: the campaign made for its old layout (or its 
   await runProspectSync(deps({ setupCampaign: async (client) => { calls.push({ what: "setupCampaign", args: [client] }); return { kind: "ready", campaignId: "902", campaignName: "x", created: true, note: null }; } }));
   assert.equal(callsOf("setupCampaign").length, 0);
   assert.equal(rowOf("b1").status, "pending");
-  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /none picked for its MLSPIN agents/);
+  assert.match(JSON.stringify(callsOf("bell")[0].args[0]), /none holds its MLSPIN agents yet .*none is picked for them/);
   // And back to one MLS with per-MLS drafts: no '' draft beside them.
   seed();
   w.mlsCodes = ["MLSPIN"];
@@ -1318,4 +1322,66 @@ test("after a shortfall, a lead the campaign's list has is added — one questio
   assert.equal(rowOf("a1").status, "done");
   const finds = callsOf("find").length;
   assert.equal(finds, 1, "searched once before adding, never again to confirm");
+});
+
+
+test("areas linked automatically (24 Nov): an MLS nobody picked goes to the campaign that already holds its agents; the team's pick still wins; a pick that's gone still waits; none fits → waits as before", async () => {
+  seed();
+  w.mlsCodes = ["CHSMLS", "CMLS", "GGAR"];
+  w.chosen = null;
+  w.campaigns = [
+    { id: "1396", name: "JCRE + Charleston, SC + ZF NS1 (EST)", status: "active" },
+    { id: "1280", name: "JCRE + Columbia, SC + ZF NS1 (EST)", status: "paused" },
+    { id: "1377", name: "JCRE 9 + Charleston, SC + ZF NS1 (EST)", status: "completed" },
+    { id: "1276", name: "JCRE + Greenville, SC + ZF NS1 (EST)", status: "paused" },
+  ];
+  w.profiles = [
+    { id: "1396", name: "", status: "active", sampled: 53, mls: { CHSMLS: 49 }, cities: {} },
+    { id: "1280", name: "", status: "paused", sampled: 200, mls: { CMLS: 173 }, cities: {} },
+    { id: "1377", name: "", status: "completed", sampled: 200, mls: { CHSMLS: 187, GGAR: 100 }, cities: {} },
+    { id: "1276", name: "", status: "paused", sampled: 200, mls: { GGAR: 173 }, cities: {} },
+  ];
+  w.byMls = { GGAR: { id: "1276", name: "JCRE + Greenville, SC + ZF NS1 (EST)" } };
+  w.agents = new Map([
+    ["c1", agent("c1", "columbia@agent.test", { mls_all: ["CMLS"] })],
+    ["h1", agent("h1", "charleston@agent.test", { mls_all: ["CHSMLS"] })],
+    ["g1", agent("g1", "greenville@agent.test", { mls_all: ["GGAR"] })],
+  ]);
+  queue(["c1", "h1", "g1"].map((a) => ({ agent: a, action: "add" as const })));
+  await runProspectSync(deps());
+  const attached = new Map(callsOf("attach").map((c) => [c.args[0] as number, (c.args[1] as number[]).length]));
+  assert.deepEqual([...attached].sort(), [[1276, 1], [1280, 1], [1396, 1]], "Columbia → Columbia (paused), Charleston → the sending Charleston, Greenville → the team's pick");
+  assert.equal(rowOf("c1").detail, "Added to JCRE + Columbia, SC + ZF NS1 (EST). Linked automatically: no campaign is picked for its CMLS agents, and 87% of its leads are CMLS agents (paused: they'll be emailed once it's resumed).");
+  assert.match(String(rowOf("h1").detail), /^Added to JCRE \+ Charleston, SC \+ ZF NS1 \(EST\)\. Linked automatically: .*92% of its leads are CHSMLS agents\.$/);
+  assert.equal(rowOf("g1").detail, "Added to JCRE + Greenville, SC + ZF NS1 (EST).", "the team's pick: no 'automatically'");
+  assert.deepEqual(callsOf("profiles").map((c) => c.args[0]), [["1396", "1280", "1276"]], "read once, only campaigns that can take prospects");
+  assert.equal(callsOf("bell").length, 0);
+
+  // A pick that is no longer the client's: the team is asked again — never silently replaced.
+  seed();
+  w.mlsCodes = ["CMLS", "GGAR"]; // several MLSs: picks are per MLS (one MLS has one Prospects campaign, chosen or the newest)
+  w.chosen = null;
+  w.campaigns = [{ id: "1280", name: "JCRE + Columbia, SC + ZF NS1 (EST)", status: "paused" }];
+  w.profiles = [{ id: "1280", name: "", status: "paused", sampled: 200, mls: { CMLS: 173 }, cities: {} }];
+  w.byMls = { CMLS: { id: "999", name: "Someone else's" } };
+  w.agents = new Map([["c1", agent("c1", "columbia@agent.test", { mls_all: ["CMLS"] })]]);
+  queue([{ agent: "c1", action: "add" }]);
+  await runProspectSync(deps());
+  assert.equal(rowOf("c1").status, "pending");
+  assert.match(String(rowOf("c1").detail), /no longer one of its campaigns — pick one again/);
+  assert.equal(callsOf("attach").length, 0);
+
+  // No campaign holds the area's agents: it waits, and the bell asks (as before).
+  seed();
+  w.mlsCodes = ["CCAR", "CHSMLS"];
+  w.chosen = null;
+  w.campaigns = [{ id: "1396", name: "JCRE + Charleston, SC + ZF NS1 (EST)", status: "active" }];
+  w.profiles = [{ id: "1396", name: "", status: "active", sampled: 53, mls: { CHSMLS: 49, CCAR: 2 }, cities: {} }];
+  w.agents = new Map([["m1", agent("m1", "myrtle@agent.test", { mls_all: ["CCAR"] })]]);
+  queue([{ agent: "m1", action: "add" }]);
+  await runProspectSync(deps());
+  assert.equal(rowOf("m1").status, "pending");
+  assert.match(String(rowOf("m1").detail), /none holds its CCAR agents yet/);
+  assert.equal(callsOf("attach").length, 0);
+  assert.equal(callsOf("bell").length, 1);
 });

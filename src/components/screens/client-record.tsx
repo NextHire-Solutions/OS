@@ -1,5 +1,6 @@
 "use client";
 
+import { introLeadsLabel } from "@/lib/clients/intro-leads-label";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -2109,11 +2110,13 @@ function ContactEditor({
                 <>
                   {value.name}{value.role ? <span style={{ color: "var(--ds-muted)" }}>, {value.role}</span> : null}
                   {value.email ? <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>{value.email}</span> : null}
-                  {value.territories?.length ? (
-                    <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>Territory: {value.territories.join(", ")}</span>
-                  ) : byTerritory ? (
-                    <span style={{ display: "block", fontSize: 12, color: "var(--ds-muted)" }}>Territory: none, so every lead</span>
-                  ) : null}
+                  {(() => {
+                    // Which leads this person gets, as the Introduce button decides it (24 Nov: one label for everyone).
+                    const l = introLeadsLabel(value);
+                    return l ? (
+                      <span data-leads={l.tone} title={l.title} style={{ display: "block", fontSize: 12, marginTop: 2, color: l.tone === "none" ? "var(--x-bad, #b42318)" : l.tone === "some" ? "var(--ds-brand-ink, #1d4ed8)" : "var(--ds-muted)" }}>{l.text}</span>
+                    ) : null;
+                  })()}
                 </>
               ) : <span className="empty">{ordinal === 0 ? "Not set" : "Add a person"}</span>}
             </span>

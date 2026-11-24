@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { requireAdminSession } from "@/lib/tools/master-inbox/auth/require-admin";
+import { requireSession, type SessionContext } from "@/lib/auth/workspace";
+import { isAdminUser } from "@/lib/identity/admin-db";
+import { holdsPage } from "@/lib/identity/named-pages";
 import { CampaignListError, clientListView, saveClientListSettings } from "@/lib/clients/campaign-lists/sweep";
 
 /*
@@ -9,13 +11,25 @@ import { CampaignListError, clientListView, saveClientListSettings } from "@/lib
  * the EmailBison campaign new Prospects go to.
  *
  * GET → { available, global, server, client, campaigns, recent }
- * PUT → { removeEnabled?, prospectsCampaignId? (null clears), ifUpdatedAt? }
+ * PUT → { removeEnabled?, prospectsCampaignId? (null clears), prospectsByMls?, ifUpdatedAt? }
+ *
+ * Admins; and, by name (named-pages.ts "prospects-campaigns", 24 Nov: Gabriel), the Prospects campaign picks only — a
+ * named person's PUT with anything else (the clean-up switch) is refused.
  */
 export const dynamic = "force-dynamic";
 
+const PICKS_ONLY = new Set(["prospectsCampaignId", "prospectsByMls", "ifUpdatedAt"]);
+
+async function allowed(): Promise<{ session: SessionContext; admin: boolean } | NextResponse> {
+  const session = await requireSession();
+  const admin = await isAdminUser(session.user.email);
+  if (admin || holdsPage(session.user.email, "prospects-campaigns")) return { session, admin };
+  return NextResponse.json({ error: "Only workspace admins can run this." }, { status: 403 });
+}
+
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await requireAdminSession();
-  if (session instanceof NextResponse) return session;
+  const who = await allowed();
+  if (who instanceof NextResponse) return who;
   const { id } = await params;
   try {
     return NextResponse.json(await clientListView(id));
@@ -26,10 +40,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await requireAdminSession();
-  if (session instanceof NextResponse) return session;
+  const who = await allowed();
+  if (who instanceof NextResponse) return who;
+  const { session, admin } = who;
   const { id } = await params;
   const body = await request.json().catch(() => null);
+  if (!admin && (!body || typeof body !== "object" || Object.keys(body).some((k) => !PICKS_ONLY.has(k)))) {
+    return NextResponse.json({ error: "Only workspace admins can change that." }, { status: 403 });
+  }
   try {
     const client = await saveClientListSettings(id, body, session.user.email ?? "unknown");
     console.log(`[campaign-cleanup] ${session.user.email} changed client ${id}: ${JSON.stringify(body)}`);

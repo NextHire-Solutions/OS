@@ -18,7 +18,11 @@ import { campaignStatusWord } from "@/lib/clients/campaign-lists/rules";
  */
 
 type Campaign = { id: string; name: string; status: string };
-type MlsRow = { code: string; name: string; picked: Campaign | null; savedMissing: { id: string; name: string } | null; setup: { id: string; name: string } | null };
+type MlsRow = {
+  code: string; name: string; picked: Campaign | null; savedMissing: { id: string; name: string } | null; setup: { id: string; name: string } | null;
+  /** Nothing picked: the campaign that already holds this area's agents, linked automatically (24 Nov). */
+  auto?: { id: string; name: string; status: string; why: string } | null;
+};
 type View =
   | { available: false }
   | {
@@ -136,12 +140,14 @@ export function ClientCampaignLists({ clientId }: { clientId: string }) {
     const changed = rows.filter((m) => (picks[m.code] ?? "") !== (m.picked?.id ?? ""));
     return (
       <section className="rx-sec" id="rx-campaign-lists">
-        <h3>Prospects campaigns<span>admins only</span></h3>
+        <h3>Prospects campaigns<span>admins and named teammates</span></h3>
         <div className="cl-card" data-testid="cl-prospects-mls">
           <div className="cl-head"><b>Where new Prospects go, by MLS</b></div>
           <p className="rx-hint cl-hint">
-            This client has several markets: an agent added to Prospects goes into the campaign picked for its MLS (one
-            campaign can take several). An MLS with none picked: its new Prospects wait, and the bell asks. {auto}
+            This client has several markets: an agent added to Prospects goes into the campaign for its MLS (one campaign
+            can take several). Left on Automatic, an MLS is linked to the campaign that already holds its agents, a sending
+            one before a paused one, and follows it when it&apos;s renewed. A campaign picked here stays until someone
+            changes it. {auto}
           </p>
           {view.campaignsError ? <p className="rx-hint cl-bad">This client&apos;s campaigns could not be read just now: {view.campaignsError}</p> : null}
           {rows.map((m) => (
@@ -150,7 +156,7 @@ export function ClientCampaignLists({ clientId }: { clientId: string }) {
               <div className="cl-pick">
                 <select id={`rx-prospects-mls-${m.code}`} aria-label={`Prospects campaign for ${m.code}`} className="ds-input" value={picks[m.code] ?? ""} disabled={busy || !!view.campaignsError}
                   onChange={(e) => setPicks({ ...picks, [m.code]: e.target.value })}>
-                  <option value="">Not picked</option>
+                  <option value="">{m.auto ? `Automatic · ${m.auto.name}` : "Automatic"}</option>
                   {options(null)}
                 </select>
               </div>
@@ -158,8 +164,10 @@ export function ClientCampaignLists({ clientId }: { clientId: string }) {
                 <p className="rx-hint cl-meta"><span className="cl-dot" data-s={m.picked.status} aria-hidden="true" />{campaignStatusWord(m.picked.status)} · EmailBison #{m.picked.id}</p>
               ) : m.setup ? (
                 <p className="rx-hint cl-meta">Made at setup: {m.setup.name} (EmailBison #{m.setup.id}) — used until one is picked.</p>
+              ) : m.auto ? (
+                <p className="rx-hint cl-meta cl-meta-auto" data-testid={`cl-auto-${m.code}`}><span className="cl-dot" data-s={m.auto.status} aria-hidden="true" /><span>Automatic: {campaignStatusWord(m.auto.status).toLowerCase()} · EmailBison #{m.auto.id} · {m.auto.why}.</span></p>
               ) : (
-                <p className="rx-hint cl-meta">Not picked — this MLS&apos;s new Prospects wait.</p>
+                <p className="rx-hint cl-meta" data-testid={`cl-auto-${m.code}`}>Automatic: none of this client&apos;s sending or paused campaigns holds {m.code} agents yet, so its new Prospects wait (the bell asks). Pick one here to send them somewhere now.</p>
               )}
               {m.savedMissing ? <p className="rx-hint cl-bad">The campaign picked earlier ({m.savedMissing.name}) is no longer one of this client&apos;s — pick again.</p> : null}
             </div>
@@ -168,7 +176,7 @@ export function ClientCampaignLists({ clientId }: { clientId: string }) {
             <button type="button" className="rx-btn solid" disabled={!changed.length || busy || !!view.campaignsError}
               onClick={() => void save(
                 { prospectsByMls: Object.fromEntries(changed.map((m) => [m.code, picks[m.code] || null])) },
-                changed.map((m) => (picks[m.code] ? `${m.code} → ${nameOf(picks[m.code])}` : `${m.code}: not picked`)).join(" · ") + ".",
+                changed.map((m) => (picks[m.code] ? `${m.code} → ${nameOf(picks[m.code])}` : `${m.code}: automatic`)).join(" · ") + ".",
               )}>
               {busy ? "Saving…" : "Save"}
             </button>
@@ -181,7 +189,7 @@ export function ClientCampaignLists({ clientId }: { clientId: string }) {
 
   return (
     <section className="rx-sec" id="rx-campaign-lists">
-      <h3>Prospects campaign<span>admins only</span></h3>
+      <h3>Prospects campaign<span>admins and named teammates</span></h3>
 
       <div className="cl-card" data-testid="cl-prospects">
         <div className="cl-head">

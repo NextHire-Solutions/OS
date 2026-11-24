@@ -5,6 +5,7 @@ import { listOsClients } from "@/lib/clients/os-clients";
 import { campaignsOfClient, type CampaignRow } from "@/lib/clients/pause-campaigns";
 import { DEMO_PORTAL_ID } from "@/lib/crm-preview/demo";
 import { clientMarkets } from "@/lib/clients/prospect-sync/markets";
+import { autoLinkForMls, linkable, type AutoLink, type CampaignProfile } from "@/lib/clients/prospect-sync/auto-link";
 import { campaignPerMls, parseByMls, syncMode, type CampaignPick } from "@/lib/clients/prospect-sync/rules";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { removeLeads, type MembershipResult } from "@/lib/tools/analytics/campaigns/lead-membership";
@@ -67,6 +68,8 @@ export interface SweepDeps {
   setupCampaigns?: (osClientId: string) => Promise<Array<{ mlsCode: string; id: string; name: string }>>;
   findLeads?: (email: string) => Promise<BisonLead[]>;
   remove?: (campaignId: number, leadIds: number[], actor: string) => Promise<MembershipResult>;
+  /** Where each campaign's leads come from (prospect-sync/auto-link.ts): what an MLS nobody picked is linked to. */
+  profiles?: (campaigns: ClientCampaign[]) => Promise<CampaignProfile[]>;
 }
 
 export interface OwnerClient {
@@ -264,6 +267,7 @@ function realDeps(d: SweepDeps) {
     setupCampaigns: d.setupCampaigns ?? setupCampaignRows,
     findLeads: d.findLeads ?? ((email: string) => createEmailBisonClient().findLeadsByEmail(email)),
     remove: d.remove ?? ((campaignId: number, leadIds: number[], actor: string) => removeLeads(campaignId, leadIds, actor, analyticsTeamId())),
+    profiles: d.profiles ?? (async (cs: ClientCampaign[]) => (await import("@/lib/clients/prospect-sync/campaign-profiles")).campaignProfiles(cs)),
   };
 }
 type Real = ReturnType<typeof realDeps>;
@@ -775,6 +779,10 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
     x.setupCampaigns(osClientId).catch(() => [] as Array<{ mlsCode: string; id: string; name: string }>),
   ]);
   const saved = clientFromRow((row.data ?? null) as Row | null);
+  // Areas nobody picked a campaign for: what they're linked to automatically (read only when there is such an area).
+  const several = campaignPerMls(client.miClientId, markets.map((m) => m.code));
+  const unpicked = several && markets.some((m) => !saved.prospectsByMls[m.code] && !setups.some((x) => x.mlsCode === m.code));
+  const profiles = unpicked ? await x.profiles(campaigns.filter((c) => linkable(c.status))).catch(() => [] as CampaignProfile[]) : [];
   return {
     available: true as const,
     global: { enabled: settings.enabled, practiceMode: settings.practiceMode },
@@ -783,7 +791,7 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
     campaigns: campaignChoiceOrder(campaigns),
     campaignsError: campaignsError as string | null,
     prospects: prospectsCampaign(saved, campaigns),
-    byMls: prospectsByMls(saved, campaigns, markets, setups, client.miClientId),
+    byMls: prospectsByMls(saved, campaigns, markets, setups, client.miClientId, profiles),
     marketsError: marketsError as string | null,
     autoAdd: autoAddState(client.miClientId, x.env),
     recent,
@@ -794,7 +802,7 @@ export async function clientListView(osClientId: string, deps: SweepDeps = {}) {
  * A client with several MLSs: each MLS's Prospects campaign — the one picked (if it is still one of the client's), else
  * the one made at setup, else none (its prospects wait, the bell asks). `several` false: the one campaign above applies.
  */
-export function prospectsByMls(saved: ClientListSettings, campaigns: readonly ClientCampaign[], markets: ReadonlyArray<{ code: string; name: string }>, setups: ReadonlyArray<{ mlsCode: string; id: string; name: string }>, portalId: string | null = null) {
+export function prospectsByMls(saved: ClientListSettings, campaigns: readonly ClientCampaign[], markets: ReadonlyArray<{ code: string; name: string }>, setups: ReadonlyArray<{ mlsCode: string; id: string; name: string }>, portalId: string | null = null, profiles: readonly CampaignProfile[] = []) {
   const codes = markets.map((m) => m.code);
   return {
     // BrokerStaffer's own: one campaign whatever the MLS (campaignPerMls).
@@ -803,12 +811,16 @@ export function prospectsByMls(saved: ClientListSettings, campaigns: readonly Cl
       const saved1 = saved.prospectsByMls[m.code] ?? null;
       const picked = saved1 ? campaigns.find((c) => c.id === saved1.id) ?? null : null;
       const setup = setups.find((x) => x.mlsCode === m.code) ?? null;
+      // Nothing picked (or made at setup): the campaign that already holds this area's agents (24 Nov), named as listed.
+      const linked = !saved1 && !setup ? autoLinkForMls(m.code, profiles) : null;
+      const auto: AutoLink | null = linked ? { ...linked, name: campaigns.find((c) => c.id === linked.id)?.name || linked.name } : null;
       return {
         code: m.code,
         name: m.name,
         picked,
         savedMissing: saved1 && !picked ? saved1 : null,
         setup: !picked && setup ? setup : null,
+        auto,
       };
     }),
   };
