@@ -17,9 +17,11 @@ import {
   moreContactsFrom,
   missingIntroFields,
   introSubject,
+  peopleAreas,
   renderIntroMacroTemplate,
   routeIntro,
   slotTerritories,
+  withoutOwnAreas,
   type IntroMacroClient,
   type IntroVariant,
 } from "@/lib/tools/master-inbox/inbox/intro-macro";
@@ -136,6 +138,11 @@ export interface IntroView {
   canSaveVariants: boolean;
   /** The client's people by name — what a variant can be for. */
   people: string[];
+  /**
+   * Each person's areas (territories), by name (25 Nov). A wording for a person follows these, so the editor shows
+   * them beside the person and never asks for them again as markets. All empty: nobody has an area.
+   */
+  peopleAreas: Array<{ name: string; areas: string[] }>;
   /** The subject, with `{{lead.*}}` still to resolve. `canSave` is false until 0048 has run. */
   subject: { custom: string | null; standard: string; canSave: boolean };
 }
@@ -222,6 +229,7 @@ export async function introView(clientId: string): Promise<IntroView> {
     variants: client.introVariants ?? [],
     canSaveVariants,
     people: introContacts(client).map((p) => (p.name ?? "").trim()).filter(Boolean),
+    peopleAreas: peopleAreas(client),
     subject: { custom: subject.custom, standard: standardSubject(client), canSave: subject.ready },
   };
 }
@@ -272,7 +280,11 @@ export async function saveIntroVariants(clientId: string, raw: unknown): Promise
     if (text.length > MAX_INTRO_VARIANT_TEXT) throw new IntroOverrideError(`Variant ${i + 1} is too long (the limit is ${MAX_INTRO_VARIANT_TEXT} characters).`);
     if (!has(r.places) && !has(r.people)) throw new IntroOverrideError(`Variant ${i + 1} needs a market (a place in the campaign name) or a person.`);
   });
-  const variants = introVariantsFrom(raw.map((x, i) => ({ ...(x as object), id: (x as { id?: unknown })?.id || `v${Date.now().toString(36)}${i}` })));
+  const typed = introVariantsFrom(raw.map((x, i) => ({ ...(x as object), id: (x as { id?: unknown })?.id || `v${Date.now().toString(36)}${i}` })));
+  // A market that is already an area of the person the wording is for is left out (intro-macro.ts, 25 Nov): it sends
+  // nothing different today and would outlast that area moving to someone else. The editor refuses it first; this
+  // covers a page opened before that change.
+  const variants = withoutOwnAreas(typed, peopleAreas(await macroClient(clientId)));
   const { error } = await osTable("os_clients")
     .update({ intro_variants: variants, updated_at: new Date().toISOString() })
     .eq("id", clientId);

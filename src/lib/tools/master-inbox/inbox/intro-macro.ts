@@ -573,6 +573,51 @@ export function pickIntroVariant(
   return null;
 }
 
+/*
+ * A WORDING FOR A PERSON FOLLOWS THEIR AREAS (25 Nov 2026). Douglas Elliman NYC's wordings were for Lara and for
+ * Elisa AND named their areas again as markets ("Manhattan, Brooklyn, REBNY"): the same places typed on the wording
+ * and on the person. A wording for a person already reaches every lead routed to them (pickIntroVariant), so a
+ * market that is one of that person's own areas adds nothing, until the area moves: give Brooklyn to Elisa, forget
+ * the wording, and Brooklyn leads go to Elisa with the text introducing Lara (markets are checked first). So those
+ * markets are never stored: the editor refuses them and the save leaves them out. Every lead gets the same people
+ * and the same wording either way (intro-macro.test.ts proves it on the real names).
+ */
+
+/** Each introduced person's areas (territories), by name; a name on two rows is one person. In order. */
+export function peopleAreas(client: IntroMacroClient): Array<{ name: string; areas: string[] }> {
+  const out: Array<{ name: string; areas: string[] }> = [];
+  for (const c of introContacts(client)) {
+    const name = (c.name ?? "").trim();
+    const areas = territoriesFrom(c.territories ?? []);
+    const had = out.find((p) => placeKey(p.name) === placeKey(name));
+    if (had) had.areas = territoriesFrom([...had.areas, ...areas]);
+    else out.push({ name, areas });
+  }
+  return out;
+}
+
+/** A wording's markets that are already an area of a person it is for: they add nothing, and would outlast a move. */
+export function ownAreaPlaces(
+  v: Pick<IntroVariant, "places" | "people">,
+  people: ReadonlyArray<{ name: string; areas: readonly string[] }>,
+): string[] {
+  const own = new Set(
+    v.people.flatMap((n) => people.filter((p) => placeKey(p.name) === placeKey(n)).flatMap((p) => p.areas)).map(placeKey),
+  );
+  return v.places.filter((p) => own.has(placeKey(p)));
+}
+
+/** The wordings with those markets left out; everything else about each wording untouched. */
+export function withoutOwnAreas<T extends Pick<IntroVariant, "places" | "people">>(
+  variants: T[],
+  people: ReadonlyArray<{ name: string; areas: readonly string[] }>,
+): T[] {
+  return variants.map((v) => {
+    const own = new Set(ownAreaPlaces(v, people).map(placeKey));
+    return own.size ? { ...v, places: v.places.filter((p) => !own.has(placeKey(p))) } : v;
+  });
+}
+
 /* ------------------------------------------------------------------------ */
 /*
  * THE SUBJECT (client feedback, 6 Oct): "Intro: {Lead First Name} & {Client

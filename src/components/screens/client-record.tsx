@@ -31,7 +31,7 @@ import type { ChangeKind, ClientPatch } from "./clients";
 import type { ClaimSource, ClientBilling, FoundByEmail } from "@/lib/clients/billing-model";
 import { completeness, type ProfileCheck } from "@/lib/clients/completeness";
 import { alignmentNote } from "@/lib/clients/billing-align.ts";
-import { routeIntro, type IntroMacroClient } from "@/lib/tools/master-inbox/inbox/intro-macro";
+import { ownAreaPlaces, placeKey, routeIntro, type IntroMacroClient } from "@/lib/tools/master-inbox/inbox/intro-macro";
 import type { ClientView } from "@/lib/clients/saved-views-match";
 
 /*
@@ -1836,19 +1836,31 @@ function IntroRoutes({ routes }: { routes: NonNullable<IntroView["routes"]> }) {
  * Wording by market or person (client feedback, 6 Oct — Jeff Cook, P&E): for a
  * lead whose campaign names one of the places, or who is routed to one of the
  * people, this introduction is sent instead of the usual one. First fit wins.
+ *
+ * When the client's people have areas (25 Nov): a wording is for a person
+ * first, and follows that person's areas as set on Introduce to; the areas are
+ * shown beside each name and never typed here again (intro-macro.ts,
+ * ownAreaPlaces). Markets stay for a place nobody ticked covers.
  */
-type VariantDraft = { id: string; label: string; places: string; people: string[]; text: string };
+type VariantDraft = { id: string; label: string; places: string; people: string[]; text: string; tidied?: string[] };
+const splitPlaces = (s: string) => s.split(/[,;\n]/).map((p) => p.trim()).filter(Boolean);
 const toDraft = (v: IntroView["variants"][number]): VariantDraft => ({ id: v.id, label: v.label ?? "", places: v.places.join(", "), people: v.people, text: v.text });
 const fromDraft = (d: VariantDraft) => ({
   id: d.id, label: d.label.trim() || null, text: d.text,
-  places: d.places.split(/[,;\n]/).map((p) => p.trim()).filter(Boolean), people: d.people,
+  places: splitPlaces(d.places), people: d.people,
 });
+const andList = (xs: string[]) => (xs.length <= 1 ? xs[0] ?? "" : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 function IntroVariants({ clientId, view, onSaved }: { clientId: string; view: IntroView; onSaved: (v: IntroView) => void }) {
   const [edit, setEdit] = useState<{ index: number; d: VariantDraft } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
   const list = view.variants;
+  const areas = view.peopleAreas ?? [];
+  /** Somebody has an area: wordings are for people, and their areas come from the person. */
+  const byArea = areas.some((p) => p.areas.length);
+  const areasOf = (name: string) => areas.find((p) => placeKey(p.name) === placeKey(name))?.areas ?? [];
+  const tickable = byArea ? areas.map((p) => p.name) : [...new Set(view.people)];
 
   async function put(next: Array<ReturnType<typeof fromDraft>>, done: string) {
     setBusy(true); setMsg(null);
@@ -1877,6 +1889,64 @@ function IntroVariants({ clientId, view, onSaved }: { clientId: string; view: In
   const remove = (i: number) => void put(all().filter((_, j) => j !== i), "Removed.");
   const up = (i: number) => { const n = all(); [n[i - 1], n[i]] = [n[i], n[i - 1]]; void put(n, "Order saved — the first that fits wins."); };
   const startNew = () => setEdit({ index: -1, d: { id: "", label: "", places: "", people: [], text: view.custom ?? view.standard ?? "" } });
+  /** Opening a wording that still names its person's own areas as markets takes them out, and says so. */
+  const startEdit = (i: number, v: IntroView["variants"][number]) => {
+    const d = toDraft(v);
+    const own = byArea ? ownAreaPlaces(v, areas) : [];
+    if (own.length) {
+      const keep = new Set(own.map(placeKey));
+      d.places = v.places.filter((p) => !keep.has(placeKey(p))).join(", ");
+      d.tidied = own;
+    }
+    setEdit({ index: i, d });
+  };
+  const forPeople = (people: string[]) => people.map((n) => {
+    const a = areasOf(n);
+    return a.length ? `${n}'s leads (${a.join(", ")})` : `${n}'s leads`;
+  }).join(" or ");
+
+  const draftOwn = edit && byArea ? ownAreaPlaces({ places: splitPlaces(edit.d.places), people: edit.d.people }, areas) : [];
+  const ownerOf = (place: string) => edit?.d.people.find((n) => areasOf(n).some((a) => placeKey(a) === placeKey(place))) ?? "";
+  const noTarget = !!edit && !edit.d.places.trim() && !edit.d.people.length;
+
+  const markets = edit ? (
+    <label className="rx-hint" style={{ marginTop: 0 }}>
+      {byArea ? "Also for campaigns naming (optional): a place none of the ticked people covers" : "Markets — places in the campaign name, separated by commas"}
+      <input className="ds-input" style={{ width: "100%", minWidth: 0 }} value={edit.d.places} placeholder={byArea ? "Queens" : "Charleston, Summerville"} disabled={busy}
+        aria-invalid={draftOwn.length ? true : undefined} aria-describedby={draftOwn.length ? "rx-variant-own" : undefined}
+        onChange={(e) => setEdit({ ...edit, d: { ...edit.d, places: e.target.value } })} />
+      {draftOwn.length ? (
+        <span id="rx-variant-own" role="alert" style={{ display: "block", marginTop: 4, color: "var(--ds-red)" }}>
+          {draftOwn.map((p) => { const who = ownerOf(p); return `${areasOf(who).find((a) => placeKey(a) === placeKey(p)) ?? p} is already ${who}'s area`; }).join("; ")}, so the tick above covers {draftOwn.length > 1 ? "them" : "it"}. Take {draftOwn.length > 1 ? "them" : "it"} out here.
+        </span>
+      ) : null}
+    </label>
+  ) : null;
+  const people = edit && tickable.length ? (
+    <div className="rx-hint" style={{ marginTop: 0 }}>{byArea ? "Who is this wording for?" : "Or for leads routed to"}
+      <div style={byArea ? { display: "grid", gap: 6, marginTop: 6 } : { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+        {tickable.map((p) => {
+          const a = areasOf(p);
+          return (
+            <label key={p} style={{ display: "inline-flex", gap: 6, alignItems: "baseline", flexWrap: "wrap", color: "var(--ds-ink, inherit)" }}>
+              <input type="checkbox" checked={edit.d.people.includes(p)} disabled={busy}
+                onChange={(e) => setEdit({ ...edit, d: { ...edit.d, people: e.target.checked ? [...edit.d.people, p] : edit.d.people.filter((x) => x !== p) } })} />
+              <span>{p}</span>
+              {byArea ? <span style={{ color: "var(--ds-muted)" }}>{a.length ? a.join(" · ") : "no area set"}</span> : null}
+            </label>
+          );
+        })}
+      </div>
+      {byArea ? (
+        <div style={{ marginTop: 6 }}>Their leads get this wording, by the areas set on each person under Introduce to. Change an area there and the wording follows.</div>
+      ) : null}
+      {edit.d.tidied?.length ? (
+        <div role="status" style={{ marginTop: 6, color: "var(--ds-ink, inherit)" }}>
+          {andList(edit.d.tidied)} {edit.d.tidied.length > 1 ? "were" : "was"} also typed here as {edit.d.tidied.length > 1 ? "markets" : "a market"}. {edit.d.tidied.length > 1 ? "They are" : "It is"} already {edit.d.people.length === 1 ? `${edit.d.people[0]}'s` : "the ticked person's"} area, so {edit.d.tidied.length > 1 ? "they've" : "it's"} been taken out. Save to keep it that way: who gets which wording doesn't change.
+        </div>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <div style={{ display: "grid", gap: 8, marginTop: 10 }} id="rx-t-variants">
@@ -1889,58 +1959,63 @@ function IntroVariants({ clientId, view, onSaved }: { clientId: string; view: In
         <div className="rx-hint" style={{ marginTop: 0 }}>Needs database migration 0030 first.</div>
       ) : !list.length && !edit ? (
         <div className="rx-hint" style={{ marginTop: 0 }}>
-          None — every lead gets the introduction above. Add wording for a market (a place in the campaign name, like &ldquo;Charleston&rdquo;) or for a person{view.people.length ? ` (${view.people.join(", ")})` : ""}.
+          {byArea
+            ? `None. Every lead gets the introduction above. Add wording for a person (${tickable.join(", ")}): their leads get it, by their areas.`
+            : <>None — every lead gets the introduction above. Add wording for a market (a place in the campaign name, like &ldquo;Charleston&rdquo;) or for a person{tickable.length ? ` (${tickable.join(", ")})` : ""}.</>}
         </div>
       ) : null}
-      {list.map((v, i) => edit?.index === i ? null : (
-        <div key={v.id} className="rx-camp" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}>
-          <div style={{ minWidth: 0 }}>
-            <b>{v.label ?? ([...v.places, ...v.people].join(", ") || "Wording")}</b>
-            <small>
-              {v.places.length ? `Campaigns naming ${v.places.join(" / ")}` : ""}
-              {v.places.length && v.people.length ? " · or " : ""}
-              {v.people.length ? `leads routed to ${v.people.join(" / ")}` : ""}
-              {` · “${v.text.split("\n").find((l) => l.trim())?.slice(0, 60) ?? ""}…”`}
-            </small>
+      {list.map((v, i) => {
+        if (edit?.index === i) return null;
+        const own = byArea ? ownAreaPlaces(v, areas) : [];
+        const otherPlaces = v.places.filter((p) => !own.some((o) => placeKey(o) === placeKey(p)));
+        const first = `“${v.text.split("\n").find((l) => l.trim())?.slice(0, 60) ?? ""}…”`;
+        return (
+          <div key={v.id} className="rx-camp" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}>
+            <div style={{ minWidth: 0 }}>
+              <b>{v.label ?? ([...v.places, ...v.people].join(", ") || "Wording")}</b>
+              {byArea && v.people.length ? (
+                <small>
+                  {`For ${forPeople(v.people)}`}
+                  {otherPlaces.length ? ` · and campaigns naming ${otherPlaces.join(" / ")}` : ""}
+                  {` · ${first}`}
+                  {own.length ? (
+                    <span style={{ display: "block", color: "var(--ds-amber)" }}>
+                      {andList(own)} {own.length > 1 ? "are" : "is"} typed here too. Edit, then Save, to keep {own.length > 1 ? "them" : "it"} only on the person.
+                    </span>
+                  ) : null}
+                </small>
+              ) : (
+                <small>
+                  {v.places.length ? `Campaigns naming ${v.places.join(" / ")}` : ""}
+                  {v.places.length && v.people.length ? " · or " : ""}
+                  {v.people.length ? `leads routed to ${v.people.join(" / ")}` : ""}
+                  {` · ${first}`}
+                </small>
+              )}
+            </div>
+            <span style={{ display: "flex", gap: 4 }}>
+              {i > 0 ? <button type="button" className="rx-btn" disabled={busy || !!edit} title="Try this one earlier" onClick={() => up(i)}>↑</button> : null}
+              <button type="button" className="rx-btn" disabled={busy || !!edit} onClick={() => startEdit(i, v)}>Edit</button>
+              <button type="button" className="rx-btn" disabled={busy || !!edit} onClick={() => remove(i)}>Remove</button>
+            </span>
           </div>
-          <span style={{ display: "flex", gap: 4 }}>
-            {i > 0 ? <button type="button" className="rx-btn" disabled={busy || !!edit} title="Try this one earlier" onClick={() => up(i)}>↑</button> : null}
-            <button type="button" className="rx-btn" disabled={busy || !!edit} onClick={() => setEdit({ index: i, d: toDraft(v) })}>Edit</button>
-            <button type="button" className="rx-btn" disabled={busy || !!edit} onClick={() => remove(i)}>Remove</button>
-          </span>
-        </div>
-      ))}
+        );
+      })}
       {edit ? (
         <div style={{ display: "grid", gap: 8, padding: 12, border: "1px solid var(--ds-line, #e4e4e7)", borderRadius: 8 }}>
           <label className="rx-hint" style={{ marginTop: 0 }}>Name (optional)
-            <input className="ds-input" style={{ width: "100%", minWidth: 0 }} value={edit.d.label} placeholder="Charleston" disabled={busy}
+            <input className="ds-input" style={{ width: "100%", minWidth: 0 }} value={edit.d.label} placeholder={byArea ? tickable[0] ?? "Charleston" : "Charleston"} disabled={busy}
               onChange={(e) => setEdit({ ...edit, d: { ...edit.d, label: e.target.value } })} />
           </label>
-          <label className="rx-hint" style={{ marginTop: 0 }}>Markets — places in the campaign name, separated by commas
-            <input className="ds-input" style={{ width: "100%", minWidth: 0 }} value={edit.d.places} placeholder="Charleston, Summerville" disabled={busy}
-              onChange={(e) => setEdit({ ...edit, d: { ...edit.d, places: e.target.value } })} />
-          </label>
-          {view.people.length ? (
-            <div className="rx-hint" style={{ marginTop: 0 }}>Or for leads routed to
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
-                {view.people.map((p) => (
-                  <label key={p} style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "var(--ds-ink, inherit)" }}>
-                    <input type="checkbox" checked={edit.d.people.includes(p)} disabled={busy}
-                      onChange={(e) => setEdit({ ...edit, d: { ...edit.d, people: e.target.checked ? [...edit.d.people, p] : edit.d.people.filter((x) => x !== p) } })} />
-                    {p}
-                  </label>
-                ))}
-              </div>
-            </div>
-          ) : null}
+          {byArea ? <>{people}{markets}</> : <>{markets}{people}</>}
           <textarea className="ds-input" aria-label="Introduction for this market or person" value={edit.d.text} disabled={busy}
             rows={Math.min(24, Math.max(10, edit.d.text.split("\n").length + 2))}
             style={{ width: "100%", minWidth: 0, height: "auto", resize: "vertical", fontFamily: "inherit", fontSize: 13.5, lineHeight: 1.55, padding: "10px 12px" }}
             onChange={(e) => setEdit({ ...edit, d: { ...edit.d, text: e.target.value } })} />
           <div className="rx-hint" style={{ marginTop: 0 }}>Fields like {"{{lead.first_name}}"} and {"{{lead.phone_number}}"} are filled in for each lead, as above.</div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button type="button" className="ds-btn primary sm" disabled={busy || !edit.d.text.trim() || (!edit.d.places.trim() && !edit.d.people.length)}
-              title={!edit.d.places.trim() && !edit.d.people.length ? "Add a market or pick a person" : undefined} onClick={saveEdit}>{busy ? "Saving…" : "Save"}</button>
+            <button type="button" className="ds-btn primary sm" disabled={busy || !edit.d.text.trim() || noTarget || draftOwn.length > 0}
+              title={noTarget ? (byArea ? "Tick a person or add a market" : "Add a market or pick a person") : draftOwn.length ? "Take out the areas the tick already covers" : undefined} onClick={saveEdit}>{busy ? "Saving…" : "Save"}</button>
             <button type="button" className="ds-btn ghost sm" disabled={busy} onClick={() => setEdit(null)}>Cancel</button>
           </div>
         </div>
