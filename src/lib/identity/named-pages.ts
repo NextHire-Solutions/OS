@@ -21,6 +21,9 @@ export const NAMED_PAGES: Readonly<Record<string, readonly string[]>> = {
   // 24 Nov, the user ("give him access too"), on Gabriel's ask: a client's Campaigns tab › "Where new Prospects go" —
   // its campaign picks only (the route refuses the old clean-up switch to anyone but an admin).
   "prospects-campaigns": ["gabo075823532@gmail.com"],
+  // 25 Nov, the user: the Claude connector for "admins + people by name" — each limited to what their switches open
+  // (lib/mcp: the Assistant's viewer rules for reading, the screen's own switch for each action). Empty until Eddy names someone.
+  "claude-connector": [],
 };
 
 const norm = (email: string | null | undefined) => (email ?? "").trim().toLowerCase();

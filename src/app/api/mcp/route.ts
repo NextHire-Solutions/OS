@@ -2,7 +2,10 @@ import { connectorUserCheck } from "@/lib/mcp/access";
 import { CORS, json, preflight } from "@/lib/mcp/http";
 import { authenticate, wwwAuthenticate } from "@/lib/mcp/oauth";
 import { handleMcpBody } from "@/lib/mcp/server";
-import { INSTRUCTIONS, mcpTools, runMcpTool } from "@/lib/mcp/tools";
+import { instructionsFor, mcpTools, runMcpTool, type ConnectorViewer } from "@/lib/mcp/tools";
+import { grantStore } from "@/lib/identity/store";
+import { isAdminUser } from "@/lib/identity/admin-db";
+import { canUseBillingTab } from "@/lib/clients/billing-people";
 
 /*
  * BrokerStaffer OS for Claude (15 Oct): the MCP endpoint a Claude connector
@@ -39,13 +42,22 @@ export async function POST(request: Request) {
   }
 
   const email = auth.email;
+  // Who is asking decides the tools (25 Nov): an admin, every tool; a person named for the connector, only what their
+  // switches open (the Assistant's viewer rules) and only the actions they could take on the OS screen.
+  const user = await grantStore().findByEmail(email);
+  const viewer: ConnectorViewer = {
+    email,
+    admin: await isAdminUser(email),
+    grants: user?.grants ?? [],
+    billing: await canUseBillingTab(email),
+  };
   const out = await handleMcpBody(body, {
-    tools: mcpTools(),
-    instructions: INSTRUCTIONS,
+    tools: mcpTools(viewer),
+    instructions: instructionsFor(viewer),
     call: async (name, args) => {
       const started = Date.now();
       try {
-        const result = await runMcpTool(name, args);
+        const result = await runMcpTool(name, args, viewer);
         console.info(`[mcp] ${email} ${name} ok ${Date.now() - started}ms`);
         return result;
       } catch (error) {

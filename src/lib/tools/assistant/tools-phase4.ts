@@ -196,6 +196,8 @@ export async function recentRepliesTool(options: { client?: string; label?: stri
     client: clientName,
     label: options.label ?? null,
     replies: ((data ?? []) as Array<Record<string, unknown>>).map((m) => ({
+      // The conversation's id, for the connector's inbox actions (25 Nov).
+      thread_id: String(m.thread_id ?? ""),
       from: trim(m.sender, 120),
       subject: trim(m.subject, 160),
       text: trim(m.body_text, 700),

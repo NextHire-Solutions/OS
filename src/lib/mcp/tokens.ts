@@ -20,7 +20,8 @@
  * A token for Claude must not open the OS in a browser.
  */
 
-export type TokenKind = "client" | "code" | "access" | "refresh";
+// "action" (25 Nov): the confirmation code of one previewed connector action (mcp/actions/core.ts).
+export type TokenKind = "client" | "code" | "access" | "refresh" | "action";
 
 /** How long each kind lives. A client registration does not expire. */
 export const TTL_MS: Record<TokenKind, number | null> = {
@@ -28,6 +29,7 @@ export const TTL_MS: Record<TokenKind, number | null> = {
   code: 5 * 60 * 1000,
   access: 60 * 60 * 1000,
   refresh: 30 * 24 * 60 * 60 * 1000,
+  action: 10 * 60 * 1000,
 };
 
 const encoder = new TextEncoder();

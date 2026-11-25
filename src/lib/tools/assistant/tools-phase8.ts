@@ -248,6 +248,7 @@ export async function searchConversationsTool(a: { text: string; days?: number }
       const body = r.body_text ?? "";
       const at = body.toLowerCase().indexOf(text.toLowerCase());
       return {
+        thread_id: r.thread_id ?? null, // for the connector's inbox actions (25 Nov)
         when: r.sent_at?.slice(0, 10), direction: r.direction, from: r.sender, subject: r.subject ?? thread.get(r.thread_id ?? "")?.subject,
         portal: portal.get(thread.get(r.thread_id ?? "")?.client_id ?? "") ?? null,
         excerpt: body.slice(Math.max(0, at - 120), at + 200).replace(/\s+/g, " "),

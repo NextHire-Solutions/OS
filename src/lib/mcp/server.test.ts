@@ -76,9 +76,13 @@ test("a batch is answered message by message, notifications left out", async () 
 /* ------------------------------------------------------------ what Claude gets --- */
 
 test("Claude is offered every Assistant tool plus the guide, every one marked read-only, with a valid input schema", async () => {
-  const { mcpTools, INSTRUCTIONS, runMcpTool } = await import("./tools.ts");
+  const { mcpTools, instructionsFor, runMcpTool } = await import("./tools.ts");
   const { TOOL_SCHEMA, SYSTEM_PROMPT } = await import("@/lib/tools/assistant/engine");
-  const tools = mcpTools();
+  // An admin, with no action switched on (OS_MCP_ACTIONS unset): exactly the connector as it was.
+  delete process.env.OS_MCP_ACTIONS;
+  const admin = { email: "owner@example.com", admin: true, grants: [], billing: true };
+  const INSTRUCTIONS = instructionsFor(admin);
+  const tools = mcpTools(admin);
   assert.equal(tools.length, TOOL_SCHEMA.length + 1);
   assert.equal(tools[0].name, "os_guide");
   const names = new Set(tools.map((t) => t.name));
@@ -94,8 +98,8 @@ test("Claude is offered every Assistant tool plus the guide, every one marked re
   // The whole briefing reaches Claude, both ways.
   assert.ok(INSTRUCTIONS.includes(SYSTEM_PROMPT));
   assert.match(INSTRUCTIONS, /READ-ONLY/);
-  assert.equal(await runMcpTool("os_guide", {}), INSTRUCTIONS);
-  await assert.rejects(runMcpTool("no_such_tool", {}), /No tool named no_such_tool/);
+  assert.equal(await runMcpTool("os_guide", {}, admin), INSTRUCTIONS);
+  await assert.rejects(runMcpTool("no_such_tool", {}, admin), /No tool named no_such_tool/);
 });
 
 /* ------------------------------------------------------------------ the proxy --- */

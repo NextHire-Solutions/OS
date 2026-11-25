@@ -68,6 +68,7 @@ test("the allowlist contains exactly the OS tables", () => {
     "os_ticket_mailboxes", "os_tickets", "os_ticket_messages", "os_ticket_copies", "os_ticket_events", "os_ticket_reads", "os_ticket_blocks",
     // Added 2026-11-24: replies from Tickets (0055).
     "os_ticket_sends",
+    "os_mcp_actions",
   ]);
 });
 

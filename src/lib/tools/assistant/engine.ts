@@ -343,7 +343,8 @@ export const TOOL_SCHEMA = [
       name: "recent_replies",
       description:
         "The actual text of recent replies from leads. Filter by client, by label (Interested, Not Interested, " +
-        "Introduction, Unsubscribe and so on), or both. Bodies are truncated; ask for few.",
+        "Introduction, Unsubscribe and so on), or both. Bodies are truncated; ask for few. Each reply carries its " +
+        "conversation's thread_id.",
       parameters: {
         type: "object",
         properties: {
