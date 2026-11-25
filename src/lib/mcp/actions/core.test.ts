@@ -19,6 +19,7 @@ function harness(now = Date.now()) {
     sign: (c) => signToken(SECRET, "action", c, now),
     verify: (t) => verifyToken(SECRET, "action", t, now),
     audit: {
+      async used(n) { return claimed.has(n); },
       async claim(row) { if (claimed.has(row.nonce)) return false; claimed.set(row.nonce, { status: "running" }); return true; },
       async finish(n, o) { claimed.set(n, { status: o.ok ? "done" : "failed", result: o.result, error: o.error }); },
     },
@@ -52,8 +53,7 @@ test("a preview changes nothing and gives a code; the code does it once", async 
   assert.equal(d.done, true);
   assert.equal(st.runs, 1);
   assert.deepEqual([...claimed.values()].map((r) => r.status), ["done"]);
-  // The same code again: refused, not run twice (even though the preview would now differ anyway).
-  st.label = "OOO";
+  // The same code again — the label is now Keep Warm, so the preview differs too: still "already used", not "changed".
   const again = await runAction(s, { thread_id: "t1", label: "Keep Warm", confirm: code }, EDDY, deps);
   assert.equal(again.done, false);
   assert.match(String(again.refused), /already used/);

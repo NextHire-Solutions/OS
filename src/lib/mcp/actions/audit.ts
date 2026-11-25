@@ -11,6 +11,14 @@ import type { ActionAudit } from "./core.ts";
 const MISSING = /os_mcp_actions|relation .* does not exist|schema cache/i;
 
 export const auditStore: ActionAudit = {
+  async used(nonce) {
+    const { data, error } = await osTable("os_mcp_actions").select("nonce").eq("nonce", nonce).limit(1);
+    if (error) {
+      if (MISSING.test(error.message ?? "")) throw new Error("Actions need migrations/0058_mcp_actions.sql run first. Nothing was done.");
+      throw new Error(`Could not check the confirmation, so nothing was done: ${error.message}`);
+    }
+    return ((data ?? []) as unknown[]).length > 0;
+  },
   async claim(row) {
     const { error } = await osTable("os_mcp_actions").insert({
       nonce: row.nonce, email: row.email, action: row.action, args: row.args, preview: row.preview, status: "running",

@@ -48,6 +48,8 @@ export interface ActionSpec<A = Record<string, unknown>, B = unknown> {
 }
 
 export interface ActionAudit {
+  /** Whether this nonce was claimed before — checked first, so a reused code is told so plainly. */
+  used(nonce: string): Promise<boolean>;
   /** Claims the nonce. False when it was claimed before (the action already ran, or is running). */
   claim(row: { nonce: string; email: string; action: string; args: unknown; preview: string }): Promise<boolean>;
   finish(nonce: string, outcome: { ok: boolean; result?: unknown; error?: string }): Promise<void>;
@@ -109,12 +111,17 @@ export async function runAction(
   if (!claims || claims.sub !== v.email || claims.act !== spec.name || claims.args !== canonical(a)) {
     return { done: false, refused: "That confirmation code isn't valid for this action (expired, for other details, or for someone else). Nothing was done. Preview again." };
   }
+  // A code used once never acts again — said before anything else (after an action, its preview has usually changed
+  // too, which would otherwise answer "things changed" and offer a new code).
+  const nonce = String(claims.n ?? "");
+  if (!nonce || (await deps.audit.used(nonce))) {
+    return { done: false, refused: "This confirmation was already used, so it was not done again." };
+  }
   if (claims.bind !== canonical(fresh.bind)) {
     return { ...(await issue()), refused: "Things changed since the preview, so nothing was done. Here is the new preview; confirm again only if it is still right." };
   }
 
-  const nonce = String(claims.n ?? "");
-  if (!nonce || !(await deps.audit.claim({ nonce, email: v.email, action: spec.name, args: a, preview: fresh.preview }))) {
+  if (!(await deps.audit.claim({ nonce, email: v.email, action: spec.name, args: a, preview: fresh.preview }))) {
     return { done: false, refused: "This confirmation was already used, so it was not done again." };
   }
   try {
