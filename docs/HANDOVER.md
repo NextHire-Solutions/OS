@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill
 | **0.25** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#025-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **Hassan Ahmed's work: LIVE 24 Nov 20:51 UTC (merge 44f2b98, Railway 4a182c08); migration 0056_mls_areas.sql run by the user first; his Client Portals access change kept (the user)**
 | **0.24** | [Intro wording for a person follows their areas — 24 November](#024-intro-wording-for-a-person-follows-their-areas--24-november) — **LIVE 24 Nov (db44e9a, Railway a1519cb5)**; Douglas Elliman NYC cleaned first; Properties & Estates still has Boston typed twice
 | **0.23** | [Prospects: areas linked to campaigns automatically; who gets which leads — 24 November](#023-prospects-areas-linked-to-campaigns-automatically-who-gets-which-leads--24-november) — **LIVE 24 Nov (217862c + 9cf3587, Railway b0dfcdbe then 80b178fa)**; first run put 55 Douglas Elliman NYC prospects into REBNY #1395 automatically
@@ -20,7 +21,7 @@ figure will age, the query that produced it is given so you can re-run it.
 | **0.20** | [A delivered hand-off is an introduction — 20 November](#020-a-delivered-hand-off-is-an-introduction--20-november) — **LIVE 20 Nov 17:57 UTC (7addc52, Railway a7e75e23)**; Introduction-model clients get the Introduction label once a live hand-off has gone; first real one not seen yet
 | **0.19** | [Inbox health rules on Add to campaigns and Assign — 20 November](#019-inbox-health-rules-on-add-to-campaigns-and-assign--20-november) — **LIVE 21 Nov (2be7e46, Railway 59e19820)** — BUILT on feat/inbox-health-assign (with the Duplicate & Renew tightening underneath), NOT deployed
 | **0.18** | [Billing-cycle auto-pause — 20 November](#018-billing-cycle-auto-pause--20-november) — **LIVE 21 Nov as a dry run (2be7e46, Railway 59e19820)**; 0054 run 21 Nov; dry run unless OS_CYCLE_PAUSE=1; needs migration 0054 before it can act
-| **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; Amy connected 21 Nov; reading pane redesigned, LIVE 21 Nov (20c4c85, Railway 6de41125). Only a verified client address's own words are kept. Each person connects their own Gmail on Connected inboxes |
+| **0.17** | [Tickets — client emails in the team's Gmail, shared and tracked — 20 November](#017-tickets--client-emails-in-the-teams-gmail-shared-and-tracked--20-november) — **LIVE 20 Nov (7358626, Railway 176b50d3)**; Amy connected 21 Nov; reading pane redesigned, LIVE 21 Nov (20c4c85, Railway 6de41125). Only a verified client address's own words are kept (since 25 Nov every other email goes to Others, §0.26). Each person connects their own Gmail on Connected inboxes |
 | **0.16** | [Duplicate & Renew Campaign — 19 November](#016-duplicate--renew-campaign--19-november) — LIVE 19 Nov (c2ce76a; 4a3c6d4 fast refusals + pool top-up rule; ff88f32 = Railway d98c1b63: every lead goes, stopped on the old campaign); nothing renewed for real yet
 | **0.15** | [Inboxes: Bounce rate, Sync with EmailBison, deleted inboxes; Instantly switched off in Campaign Analytics — 19 November](#015-inboxes-bounce-rate-sync-with-emailbison-deleted-inboxes-instantly-switched-off-in-campaign-analytics--19-november) — live 93944842; one switch brings Instantly back, nothing deleted
 | **0.14** | [New portal: Switch portal, for a client on more than one portal — 19 November](#014-new-portal-switch-portal-for-a-client-on-more-than-one-portal--19-november) — one sign-in already opened every portal an email is listed on; now a link moves between them; live 32d4deb1
@@ -235,6 +236,36 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.26 Tickets › Others: every other email to a connected inbox — 25 November
+
+**LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)** on the user's "deploy others". Eddy (Slack, 24 Nov): "could you
+create a section called others and have the rest of the email go through there? Reason being someone within a client's
+organization may message Amy, we don't want to miss anything." Offered a narrow version (only people at a client's
+company) or every other email; **the user chose "Every other email"**, which replaces §0.17's "only emails from a
+client's address" for this section. **No backfill** (the user: "we do not want to backfill amy's last 30 days").
+
+- **Switch:** `lib/tools/tickets/others-switch.ts` TICKETS_OTHERS_ON = true. false = the old rule exactly (sync.test.ts
+  still proves it); tickets already kept stay.
+- **What goes where (sync.ts):** from a client address → the client's ticket, unchanged. From anyone else who isn't our
+  team → a ticket with no client (os_client_id null) = Others, the email's words kept as a client's are. Someone new
+  writing inside a client's conversation joins that client's ticket. Our reply in an Others conversation → a dated
+  marker and Waiting; our words are never stored. Notifications and newsletters go to Others too. Never kept: spam,
+  drafts, chats, calendar invitations, mail only between teammates. A forged client address is still refused, not filed
+  under Others.
+- **Reading:** an inbox already read carries on from where it was, so only NEW email reaches Others. A reconnect keeps
+  its place (saveMailbox), so it never re-reads. **A first connect (Eddy) reads 30 days of every email** (older than a
+  week arrives as Done). A refill after Gmail drops the history (a long outage) reads only the missed days.
+- **Screen:** Others is the last view, after a divider; its count leaves out Not a ticket. The client views (Open, Mine,
+  Unassigned, Waiting, Snoozed, Done, All) and the rail's Client email badge never count Others; Mentions still
+  includes them. An Others ticket shows "Others · Move to a client", which opens the client picker. Connected inboxes
+  explains the rule. Ticket #31 (its client record was deleted) shows under Others.
+- **No migration:** os_client_id was already nullable.
+
+**Tested:** unit 4,105 (others 10, others-views 4), tsc clean; local Chrome against live data, writes refused.
+Production as the owner, writes blocked, nothing picked: 13/13; All 35 + Others 1 = all 36 tickets. Amy's first sync
+under the new code (14:04:18): normal mode, first-read date unchanged (20 Nov), no error; logs clean. **Not yet seen:**
+the first real Others email.
 
 ## 0.25 Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November
 
