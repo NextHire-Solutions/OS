@@ -39,7 +39,7 @@ export function TicketsInboxesScreen() {
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
-    if (p.get("connected")) setNotice({ kind: "ok", text: `${p.get("connected")} is connected. Client email from the last 30 days is being fetched now; it shows in Tickets within a few minutes.` });
+    if (p.get("connected")) setNotice({ kind: "ok", text: `${p.get("connected")} is connected. Client email from the last 30 days is being fetched now; it shows in Tickets within a few minutes.${TICKETS_OTHERS_ON ? " Other email goes to Others from now on." : ""}` });
     else if (p.get("error")) setNotice({ kind: "err", text: p.get("error")! });
     if (p.get("connected") || p.get("error")) window.history.replaceState(window.history.state, "", window.location.pathname);
     void load();
@@ -160,7 +160,7 @@ export function TicketsInboxesScreen() {
               <h2 id="tk-priv-h">What Tickets reads, and what it keeps</h2>
               <div className="tk-privacy">
                 <div><Icon name="check" /><span><b>Kept and shared:</b> emails sent <b>from a client&apos;s address</b>, meaning an address on the client&apos;s record or its portal lists. The whole team with Tickets access can see them.</span></div>
-                {TICKETS_OTHERS_ON ? <div><Icon name="mail" /><span><b>Others:</b> every other email that reaches a connected inbox (other senders, someone new at a client&apos;s company, notifications, newsletters and personal email) is kept in <b>Others</b>, and the whole team with Tickets access can see it.</span></div> : null}
+                {TICKETS_OTHERS_ON ? <div><Icon name="mail" /><span><b>Others:</b> from the moment an inbox is connected, every other email that reaches it (other senders, someone new at a client&apos;s company, notifications, newsletters and personal email) is kept in <b>Others</b>, and the whole team with Tickets access can see it.</span></div> : null}
                 <div><Icon name="check" /><span><b>Noted, never shown:</b> when you reply to a client in Gmail, Tickets records only that you replied and when, so the ticket moves to Waiting. Your reply&apos;s text is never stored.</span></div>
                 <div><Icon name="reply" /><span><b>Replies written in Tickets:</b> sent from Amy&apos;s or Eddy&apos;s inbox, whichever the client wrote to, in the same conversation. The reply and who sent it are kept on the ticket.</span></div>
                 {TICKETS_OTHERS_ON

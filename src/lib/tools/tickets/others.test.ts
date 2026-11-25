@@ -48,6 +48,7 @@ test("the switch is on in the app, and Others is a view of its own, last", () =>
 
 test("someone who isn't a client writes to Amy: a ticket with no client (Others), their words kept", async () => {
   const { store, amy, sync } = setup();
+  await sync(AMY); // connected first: Others starts at the connect (25 Nov)
   amy.deliver({ from: "Sara Lee <sara@newbrokerage.com>", to: [AMY], subject: "Question about your service", messageId: "o1@nb", date: NOW - 2 * H, html: "<p>Hi Amy, what do you charge?</p>" });
   await sync(AMY);
   const all = tickets(store);
@@ -64,6 +65,7 @@ test("someone who isn't a client writes to Amy: a ticket with no client (Others)
 
 test("notifications and newsletters go to Others too (every other email); spam and drafts never", async () => {
   const { store, amy, sync } = setup();
+  await sync(AMY); // connected first: Others starts at the connect (25 Nov)
   amy.deliver({ from: "Calendly <notifications@calendly.com>", subject: "New event: Intro call", messageId: "cal@c", date: NOW - 3 * H, autoSubmitted: "auto-generated", text: "A new event was scheduled" });
   amy.deliver({ from: "news@realty.com", subject: "Weekly market", messageId: "nl@r", date: NOW - 2 * H, text: "This week" });
   amy.deliver({ from: "spam@bad.com", subject: "You won", messageId: "sp@b", date: NOW - H, labels: ["SPAM"] });
@@ -92,6 +94,7 @@ test("Eddy's case: someone new at the client's company writes in the client's co
 
 test("our reply in an Others conversation is noted like a reply to a client: a dated marker, ticket to Waiting", async () => {
   const { store, amy, sync } = setup();
+  await sync(AMY); // connected first: Others starts at the connect (25 Nov)
   amy.deliver({ from: "sara@newbrokerage.com", to: [AMY], subject: "Pricing", messageId: "p1@nb", date: NOW - 3 * H, text: "Pricing?" });
   await sync(AMY);
   amy.deliver({ from: AMY, to: ["sara@newbrokerage.com"], subject: "Re: Pricing", messageId: "p2@bs", inReplyTo: "p1@nb", references: ["p1@nb"], date: NOW - 2 * H, text: "Here are our prices" });
@@ -130,16 +133,34 @@ test("unchanged with Others on: mail only between teammates leaves no trace; cal
   assert.equal(store.messages.size, 0);
 });
 
-test("first fill with Others on reads every email of the window; one quiet for over a week is imported as Done", async () => {
+test("a first connect: Others starts NOW (the user, 25 Nov); client email still comes 30 days back", async () => {
   const { store, amy, sync } = setup();
   amy.deliver({ from: "old@vendor.com", subject: "Old offer", messageId: "o1@v", date: NOW - 10 * D, text: "old" });
-  amy.deliver({ from: "fresh@vendor.com", subject: "New offer", messageId: "o2@v", date: NOW - D, text: "new" });
+  amy.deliver({ from: "fresh@vendor.com", subject: "New offer", messageId: "o2@v", date: NOW - H, text: "new" });
+  amy.deliver({ from: "john@myrehomebase.com", subject: "Old signs", messageId: "c1@hb", date: NOW - 10 * D, text: "old ask" });
+  amy.deliver({ from: "john@myrehomebase.com", subject: "New signs", messageId: "c2@hb", date: NOW - D, text: "new ask" });
   const r = await sync(AMY);
   assert.equal(r.mode, "fill");
-  assert.ok(amy.calls.some((c) => c.startsWith("list newer_than:30d -in:sent")), "the fill also searched every email, not only client addresses");
-  const byEmail = new Map(tickets(store).map((t) => [t.contact_email, t.status]));
-  assert.equal(byEmail.get("old@vendor.com"), "done");
-  assert.equal(byEmail.get("fresh@vendor.com"), "open");
+  assert.ok(!amy.calls.some((c) => c.startsWith("list newer_than:")), "no every-email search on a first read");
+  assert.ok(tickets(store).every((t) => t.os_client_id === "homebase"), "nothing from before the connect in Others");
+  assert.deepEqual(tickets(store).map((t) => t.status).sort(), ["done", "open"], "client email of the 30 days, as before");
+  // After the connect: someone else writes → Others.
+  amy.deliver({ from: "sara@newbrokerage.com", to: [AMY], subject: "Hello", messageId: "n1@nb", date: NOW + H, text: "after connect" });
+  await sync(AMY);
+  const others = tickets(store).filter((t) => t.os_client_id === null);
+  assert.deepEqual(others.map((t) => t.contact_email), ["sara@newbrokerage.com"]);
+});
+
+test("a refill after the history is lost reads every email of the gap, never from before the first read", async () => {
+  const { store, amy, sync } = setup();
+  await sync(AMY); // the first read (connect) at NOW
+  amy.deliver({ from: "early@vendor.com", subject: "Before connect", messageId: "e1@v", date: NOW - 2 * H, text: "before" });
+  amy.deliver({ from: "late@vendor.com", subject: "After connect", messageId: "l1@v", date: NOW + 2 * H, text: "after" });
+  amy.historyFloor = 10_000;
+  const r = await sync(AMY);
+  assert.equal(r.mode, "refill");
+  assert.ok(amy.calls.some((c) => /^list newer_than:\d+d after:\d+ -in:sent/.test(c)), "the gap's every-email search, bounded by the first read");
+  assert.deepEqual(tickets(store).map((t) => t.contact_email), ["late@vendor.com"]);
 });
 
 test("Others off: the old rule exactly — nothing but client addresses", async () => {

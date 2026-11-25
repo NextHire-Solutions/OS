@@ -106,11 +106,16 @@ export class FakeGmail {
     this.calls.push(`list ${q}`);
     const terms = (/from:\(([^)]*)\)/.exec(q)?.[1] ?? "").split(/\s+OR\s+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
     const days = Number(/newer_than:(\d+)d/.exec(q)?.[1] ?? "3650");
-    const since = Date.now() - days * 86_400_000;
+    const after = Number(/(?:^|\s)after:(\d+)(?:\s|$)/.exec(q)?.[1] ?? "0") * 1000;
+    const since = Math.max(Date.now() - days * 86_400_000, after);
     const hits = this.msgs.filter(({ msg, mail }) => {
       if ((msg.labelIds ?? []).some((l) => ["SPAM", "TRASH", "DRAFT", "CHAT"].includes(l))) return false;
       if (mail.date < since) return false;
       const from = (/<([^>]+)>/.exec(mail.from)?.[1] ?? mail.from).toLowerCase();
+      // in:sent / -in:sent as Gmail reads them: our own mail (labelled SENT, or from this mailbox).
+      const sent = (msg.labelIds ?? []).includes("SENT") || from === this.address.toLowerCase();
+      if (/(?:^|\s)in:sent\b/.test(q) && !sent) return false;
+      if (/(?:^|\s)-in:sent\b/.test(q) && sent) return false;
       return !terms.length || terms.some((t) => (t.includes("@") ? from === t : from.endsWith(`@${t}`)));
     }).sort((a, b) => b.mail.date - a.mail.date);
     const start = Number(pageToken ?? 0);

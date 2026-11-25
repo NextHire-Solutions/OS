@@ -34,7 +34,9 @@ import { applyMessage, settleImported, type IncomingMessage } from "./ticket-rul
  *    no client (the Others view), automatic mail included. Our replies inside an Others conversation are noted like
  *    replies to a client. Unchanged: a forged client address is still refused, calendar invitations are still never
  *    tickets, our own mail between teammates still leaves no trace, and a forward to a vendor inside a CLIENT's
- *    conversation is still not a reply.
+ *    conversation is still not a reply. Others starts WHEN AN INBOX IS CONNECTED (the user, 25 Nov): the first fill
+ *    searches only client addresses (30 days back); only a refill adds an every-email search, never earlier than the
+ *    first read (backfill_done_at). Mail from someone else in a client's thread found by the fill joins that ticket.
  * When a conversation first reaches this mailbox's thread (a new ticket, or a copy of an email another teammate
  * already received), the rest of that thread in this mailbox is read the same way — so a teammate's replies are seen
  * even when the client's email was first stored from someone else's inbox.
@@ -292,8 +294,14 @@ async function fill(deps: SyncDeps, mb: MailboxRow, days: number, mode: "fill" |
   const profile = await deps.gmail.profile();
   report.historyId = profile.historyId;
   const queries = backfillQueries(deps.index, days);
-  // Others: every email of the window, not only the client addresses' (spam, trash, drafts and chats never).
-  if (deps.others) queries.push(`newer_than:${Math.max(1, Math.round(days))}d -in:sent -in:chats -in:drafts -in:spam -in:trash`);
+  // Others: every email, not only the client addresses' (spam, trash, drafts and chats never) — but NEVER on a first read.
+  // Others starts the moment an inbox is connected (the user, 25 Nov: "we need to see emails from when someone connects
+  // his email"); client email still goes 30 days back. A refill (the history lost) reads the missed days of every email,
+  // bounded below by the first read, so it never reaches back before the connect either.
+  if (deps.others && mode === "refill") {
+    const floor = Date.parse(mb.backfill_done_at ?? "");
+    queries.push(`newer_than:${Math.max(1, Math.round(days))}d${Number.isFinite(floor) ? ` after:${Math.floor(floor / 1000)}` : ""} -in:sent -in:chats -in:drafts -in:spam -in:trash`);
+  }
   // A refill also reads our Sent mail of the gap: replies made while the history was lost.
   if (mode === "refill") queries.push(`in:sent newer_than:${Math.max(1, Math.round(days))}d`);
   const ids = new Map<string, string>();
