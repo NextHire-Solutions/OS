@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
 | **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill; Others starts when an inbox is connected (a1b8a9d, Railway 5da9f367)
 | **0.25** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#025-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **Hassan Ahmed's work: LIVE 24 Nov 20:51 UTC (merge 44f2b98, Railway 4a182c08); migration 0056_mls_areas.sql run by the user first; his Client Portals access change kept (the user)**
 | **0.24** | [Intro wording for a person follows their areas — 24 November](#024-intro-wording-for-a-person-follows-their-areas--24-november) — **LIVE 24 Nov (db44e9a, Railway a1519cb5)**; Douglas Elliman NYC cleaned first; Properties & Estates still has Boston typed twice
@@ -236,6 +237,25 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.27 Client Health: every campaign read, status dates kept — 25 November
+
+**LIVE 25 Nov 16:51 UTC (e596f92 + 27f8dd7 + e85338f, Railway ed7e02ec)** on the user's "deploy the fixes". Found while
+testing the Client Health database merge (built, not deployed: branch feat/ch-merge). Deployed between two syncs.
+- **Supabase returns at most 1,000 rows per request.** bison_campaigns has 1,248. Five reads saw an arbitrary 1,000:
+  the dashboard (on 25 Nov it was missing 150 of the 312 campaigns assigned to active clients, across 18 clients incl.
+  Homebase, Jeff Cook, both Douglas Elliman, FAST), the sync's Interested-per-campaign step, onboarding's campaign
+  auto-link, the sync's previous-status read, and the weekly-metrics feed. `client-health/read-all.ts` pages a query
+  ordered by a unique key; weekly reads have a `client_id` tie-break; master-list pages in id order.
+  `paged-reads.test.ts` fails on any new unpaged read of a growing Client Health table.
+- **status_changed_at flipped every sync:** the sync left the column out to mean "keep it", but upserts the campaigns
+  in one batch, and supabase-js fills a column missing from some rows with NULL. `keptStamp` always sends the stored
+  value; a failed previous-status read now stops the step.
+
+**Checked live:** owner, writes blocked, 5/5 (/api/tools/client-health returns all 1,248 campaigns; both screens load,
+no errors). Before: 15:45→16:00, 65 dates blanked and 120 refilled with no status change. After: 16:45→17:00 0 blanked,
+118 filled, 7 Interested counts added; 17:00→17:15 nothing moved. 118 paused/finished campaigns stay blank: most likely
+ones EmailBison no longer lists (the sync reads 458 live campaigns), so nothing re-seeds them (cosmetic).
 
 ## 0.26 Tickets › Others: every other email to a connected inbox — 25 November
 
