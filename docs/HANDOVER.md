@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **BUILT, NOT DEPLOYED** (feat/ch-merge, switch off); tested locally against a copy of the live data; the switch-over needs the user's go
 | **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
 | **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill; Others starts when an inbox is connected (a1b8a9d, Railway 5da9f367)
 | **0.25** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#025-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **Hassan Ahmed's work: LIVE 24 Nov 20:51 UTC (merge 44f2b98, Railway 4a182c08); migration 0056_mls_areas.sql run by the user first; his Client Portals access change kept (the user)**
@@ -237,6 +238,43 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.28 Client Health's database moves into the Master Inbox project — 25 November
+
+**Why:** cost. Client Health has its own Supabase project (`fjmxbhcxvkyimgyispaf`, ~13 MB). With its standalone app
+off (24 Nov), only the OS uses it. Moving its six tables into the Master Inbox project lets that project be closed:
+about $10/month if it is a paid Micro project in a shared org, $25+/month if it sits alone in its own Pro org, $0 if
+it is on the free plan (billing not yet seen; ask the user).
+
+**BUILT, NOT DEPLOYED** (branch feat/ch-merge, ~/wt/os-chmerge: 6f87802 + ac58380, on top of main). Its paging and
+status-date fixes went live first (§0.27): a copy's new stored order would otherwise have changed which rows the
+unpaged reads returned.
+- **The merge, switched off:** `migrations/0057_client_health_schema.sql` creates schema `client_health` in
+  the Master Inbox project (same tables, triggers, indexes; service role only; RLS on; the toggle log's ids from 1000).
+  `CLIENT_HEALTH_DB=master-inbox` points the one getter (`client-health/supabase.ts`) at the Master Inbox URL + key with
+  that schema; unset = Client Health's own project, as today. `scripts/client-health-merge-copy.mjs` copy | verify |
+  delta (SRC_/DST_SCHEMA swap it for a rollback).
+
+**Tested locally (nothing written anywhere live):** the 20 Client Health migrations replayed; 0057's structure identical
+to them (182/182 lines) and to the live columns; 0057 re-runs cleanly; browser keys refused, service key allowed.
+Copy of the live data (57 / 1,248 / 339 / 2,664 / 20 / ~61k rows) in 46 s, verify identical, and verify catches a
+one-number change. The OS's eight Client Health readers (dashboard, statuses, weekly feed, onboarding check, billing
+cycles, consistency reports) give byte-identical output old vs merged, through a proxy that sends client_health to the
+local copy and everything else to the live Master Inbox read-only. The real sync ran in the merged layout (all three
+steps ok, writes only into the copy). Unit 4,117; tsc clean; deliberate breaks caught. Traps found: the local copy
+must sort like Supabase (ICU en-US, not C) and cap at 1,000 rows, or the comparison lies.
+
+**Switch-over (each step on the user's word):**
+1. Deploy the branch (switch off: nothing changes until the setting is set).
+2. The user runs 0057 in the Master Inbox SQL editor, and adds `client_health` under Project Settings → Data API →
+   Exposed schemas. Check: service key reads it, anon key refused.
+3. Just after a Client Health sync slot finishes (runs at :00/:15/:30/:45, done ~4 min later): copy, then verify.
+4. Set `CLIENT_HEALTH_DB=master-inbox` on `os` and `railway redeploy` (same build) before the next slot.
+5. Verify again; if anyone edited a client in between, run `delta <copy start>`. Watch two sync slots land in
+   `client_health.sync_runs`, the old project's `sync_runs` stop growing, and the Client Health screens show the same.
+6. Keep the old project 30 days with no writers, then a final dump; pausing or deleting it is the user's call.
+**Rollback:** unset `CLIENT_HEALTH_DB` + `railway redeploy`; copy changes made since back with the script (delta,
+SRC = Master Inbox / client_health, DST = Client Health / public).
 
 ## 0.27 Client Health: every campaign read, status dates kept — 25 November
 
