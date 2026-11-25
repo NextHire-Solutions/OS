@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **BUILT, NOT DEPLOYED** (feat/mcp-actions d4139f8 + 0bcbf8c); switched off until OS_MCP_ACTIONS; needs migration 0058
+| **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
 | **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
 | **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
 | **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill; Others starts when an inbox is connected (a1b8a9d, Railway 5da9f367)
@@ -242,7 +242,10 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.29 Claude connector: actions, previewed then confirmed — 25 November
 
-**BUILT, NOT DEPLOYED** (branch feat/mcp-actions, ~/wt/os-mcpact: d4139f8 refactor, 0bcbf8c actions). Eddy (Slack, 25 Nov):
+**DEPLOYED 25 Nov 20:57 UTC (4ce0a38 = Railway f6642bf6) with every action switched OFF** (OS_MCP_ACTIONS unset), on
+the user's "deploy". Migration 0058 run by the user first (checked: table empty, service key in, anon refused). After
+the deploy: os_guide still says READ-ONLY; recent_replies returns thread_id; inbox + a conversation load (3/3, writes
+blocked); logs clean; the 21:00 Client Health sync ran normally. Commits: d4139f8 refactor, 0bcbf8c actions. Eddy (Slack, 25 Nov):
 "I am looking for the ability to take actions directly from Claude". The user picked the first set: inbox label +
 snooze, pause/resume a client's campaigns; who: admins + people by name.
 
