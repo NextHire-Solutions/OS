@@ -290,7 +290,8 @@ async function readHealthCampaigns(): Promise<Map<string, { name: string; status
   const out = new Map<string, { name: string; status: string | null; size: number | null }>();
   for (const table of ["instantly_campaigns", "bison_campaigns"] as const) {
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await sb.from(table).select("id, name, status, campaign_size").range(from, from + 999);
+      // Ordered by id: pages without a unique order can skip or repeat rows (client-health/read-all.ts).
+      const { data, error } = await sb.from(table).select("id, name, status, campaign_size").order("id").range(from, from + 999);
       if (error) throw new Error(`${table}: ${error.message}`);
       for (const r of (data ?? []) as Row[]) {
         out.set(String(r.id), { name: str(r.name) ?? String(r.id), status: str(r.status), size: num(r.campaign_size) });

@@ -302,7 +302,10 @@ export function bisonCampaignRow(
 
 async function loadPreviousStatuses(sb: SupabaseClient, table: 'instantly_campaigns' | 'bison_campaigns') {
   // Load existing rows to detect status transitions.
-  const { data: existingRows } = await sb.from(table).select('id, status, status_changed_at');
+  // Paged (read-all.ts): unpaged, campaigns past the first 1,000 looked new on every run and lost their status_changed_at.
+  const { data: existingRows } = await readAll<{ id: string; status: string | null; status_changed_at: string | null }>((a, b) =>
+    sb.from(table).select('id, status, status_changed_at').order('id').range(a, b),
+  );
   return new Map<string, PreviousStatus>(
     ((existingRows ?? []) as { id: string; status: string | null; status_changed_at: string | null }[]).map(
       (r) => [r.id, { status: r.status, status_changed_at: r.status_changed_at }]
