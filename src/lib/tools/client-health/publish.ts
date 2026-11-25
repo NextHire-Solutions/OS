@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabase } from "./supabase";
+import { readAll } from "./read-all";
 
 /*
  * Client Health's three published reads, answered from its database directly.
@@ -188,14 +189,21 @@ export async function weeklyMetrics(q: WeeklyMetricsQuery = {}): Promise<WeeklyM
 
   const sb = getSupabase();
 
-  let query = sb
-    .from("weekly_metrics")
-    .select("client_id, week_key, emails_sent, intros, intros_corofy, interested_corofy, last_intro_at")
-    .order("week_key", { ascending: false });
-  if (from) query = query.gte("week_key", from);
-  if (to) query = query.lte("week_key", to);
-
-  const { data: rows, error } = await (from || to ? query : query.limit(weeks * 200));
+  // Paged, in a unique order (read-all.ts): one request stops at 1,000 rows, and without client_id as a tie-break a
+  // capped or paged read returns a different subset whenever the table's stored order changes.
+  const { data: rows, error } = await readAll<Record<string, unknown>>(
+    (a, b) => {
+      let query = sb
+        .from("weekly_metrics")
+        .select("client_id, week_key, emails_sent, intros, intros_corofy, interested_corofy, last_intro_at")
+        .order("week_key", { ascending: false })
+        .order("client_id", { ascending: true });
+      if (from) query = query.gte("week_key", from);
+      if (to) query = query.lte("week_key", to);
+      return query.range(a, b);
+    },
+    from || to ? {} : { cap: weeks * 200 },
+  );
   if (error) return { ok: false, status: 500, error: error.message };
 
   const { data: clients, error: clientsError } = await sb

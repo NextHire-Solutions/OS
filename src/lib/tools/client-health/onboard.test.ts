@@ -31,6 +31,8 @@ function fakeDb(replies: Record<string, unknown[]>): { db: SupabaseClient; calls
     const self: any = {
       select: () => self,
       limit: () => self,
+      order: () => self,
+      range: (a: number, b: number) => (call.filters.push(["range", String(a), b]), self),
       single: () => self,
       eq: (c: string, v: unknown) => (call.filters.push(["eq", c, v]), self),
       ilike: (c: string, v: unknown) => (call.filters.push(["ilike", c, v]), self),
@@ -104,6 +106,22 @@ test("auto-links campaigns by the shared name rule and inserts through createCli
   assert.equal(values.billing_interval, "biweekly");
   assert.equal("hidden" in values, false);
   assert.equal("emails_today" in values, false);
+});
+
+test("sees campaigns past the first 1,000 (Supabase's cap per request; read in pages, Nov 2026)", async () => {
+  const filler = Array.from({ length: 1000 }, (_, i) => ({ id: `b-${String(i).padStart(4, "0")}`, name: `Other Brokerage ${i}` }));
+  const { db, calls } = fakeDb({
+    "clients:select": [{ data: [] }],
+    "instantly_campaigns:select": [{ data: [] }],
+    "bison_campaigns:select": [{ data: filler }, { data: [{ id: "b-1001", name: "acme realty agents" }] }],
+    "clients:insert": [{ data: { id: "new-1", name: "Acme Realty" } }],
+  });
+  const r = await onboardClient(db, { name: "Acme Realty", plan: "production", weekly_target: 3 });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.deepEqual(r.value.linked.bison, ["b-1001"], "the 1,001st campaign is found");
+  const pages = calls.filter((c) => c.table === "bison_campaigns").map((c) => c.filters.filter((f) => f[0] === "range").map((f) => [Number(f[1]), f[2]])[0]);
+  assert.deepEqual(pages, [[0, 999], [1000, 1999]]);
 });
 
 test("validates like the tool: plan, target, dates, custom interval", async () => {

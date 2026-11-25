@@ -52,6 +52,7 @@ async function weeksSince(weeks: number): Promise<{ rows: WeekRow[]; truncated: 
       .select("client_id, week_key, emails_sent, replies, intros_corofy")
       .gte("week_key", since)
       .order("week_key", { ascending: false })
+      .order("client_id", { ascending: true }) // a unique order, or pages can skip / repeat rows
       .range(from, from + 999);
     if (error) break;
     const rows = (data ?? []) as unknown as WeekRow[];

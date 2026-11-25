@@ -21,6 +21,7 @@ import {
   type WeeklyMetric,
 } from './types';
 import { addDays, getMondayOf, weekKey } from './derive';
+import { readAll } from './read-all';
 
 interface ClientRow {
   id: string;
@@ -101,6 +102,7 @@ export async function loadDashboardClients(): Promise<{
         .select('*')
         .gte('week_key', earliestMonday)
         .order('week_key', { ascending: false })
+        .order('client_id', { ascending: true })
         .range(from, from + PAGE_SIZE - 1);
       if (error) return { data: all, error };
       const rows = (data ?? []) as WeeklyMetric[];
@@ -113,8 +115,9 @@ export async function loadDashboardClients(): Promise<{
   const [clientsRes, metricsRes, campaignsRes, bisonRes, masters, stripeFacts, perLead] = await Promise.all([
     sb.from('clients').select('*').order('name'),
     fetchAllMetrics(),
-    sb.from('instantly_campaigns').select('*'),
-    sb.from('bison_campaigns').select('*'),
+    // Paged: bison_campaigns passed 1,000 rows (read-all.ts) — "stay well under 1000" above no longer holds for it.
+    readAll<InstantlyCampaign>((a, b) => sb!.from('instantly_campaigns').select('*').order('id').range(a, b)),
+    readAll<BisonCampaign>((a, b) => sb!.from('bison_campaigns').select('*').order('id').range(a, b)),
     // Null on failure: "could not read" is not "no markets" (R1).
     masterByToolId('clientHealth').catch(() => null),
     /*

@@ -60,6 +60,7 @@ import {
 import { listCorofyIntros, type CorofyIntro } from "./corofy";
 import { listCorofyPortals } from "./portals";
 import { autoMatchCampaignIds } from "../matchCampaigns";
+import { readAll } from "../read-all";
 import { HISTORICAL_WEEKS } from "../types";
 
 // A client can own several portals (P&E Boston/Florida, SERHANT. PA/15M+).
@@ -990,7 +991,8 @@ export async function runCorofy(ctx: RunContext): Promise<SyncResult['corofy']> 
       const byCampaign = interestedByCampaign(interestedRows);
       let instMatched = 0;
       let bisonMatched = 0;
-      const { data: instCampaigns } = await sb.from('instantly_campaigns').select('id');
+      // Paged (read-all.ts): unpaged, only the first 1,000 campaigns ever got their Interested count.
+      const { data: instCampaigns } = await readAll<{ id: string }>((a, b) => sb.from('instantly_campaigns').select('id').order('id').range(a, b));
       for (const ic of (instCampaigns ?? []) as { id: string }[]) {
         const n = byCampaign.get(ic.id) ?? 0;
         const { error } = await sb
@@ -999,9 +1001,9 @@ export async function runCorofy(ctx: RunContext): Promise<SyncResult['corofy']> 
           .eq('id', ic.id);
         if (!error && n > 0) instMatched++;
       }
-      const { data: bisonCampaignRows } = await sb
-        .from('bison_campaigns')
-        .select('id, int_id');
+      const { data: bisonCampaignRows } = await readAll<{ id: string; int_id: number | null }>((a, b) =>
+        sb.from('bison_campaigns').select('id, int_id').order('id').range(a, b),
+      );
       for (const bc of (bisonCampaignRows ?? []) as { id: string; int_id: number | null }[]) {
         if (bc.int_id == null) continue;
         const n = byCampaign.get(String(bc.int_id)) ?? 0;

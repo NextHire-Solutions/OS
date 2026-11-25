@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClientRow, type ClientRow, type WriteResult } from "./clientWrites.ts";
 import { autoMatchCampaignIds } from "./matchCampaigns.ts";
+import { readAll } from "./read-all.ts";
 
 /*
  * Inbound onboarding — the tool's POST /api/clients/onboard, as a function.
@@ -109,8 +110,9 @@ export async function onboardClient(db: SupabaseClient, input: unknown): Promise
   // Auto-link campaigns by normalised-name substring — same rule as the
   // Add-Client modal in the dashboard.
   const [instantlyRes, bisonRes] = await Promise.all([
-    db.from("instantly_campaigns").select("id, name"),
-    db.from("bison_campaigns").select("id, name"),
+    // Paged: an unpaged read stops at 1,000 campaigns (read-all.ts).
+    readAll<{ id: string; name: string }>((a, b) => db.from("instantly_campaigns").select("id, name").order("id").range(a, b)),
+    readAll<{ id: string; name: string }>((a, b) => db.from("bison_campaigns").select("id, name").order("id").range(a, b)),
   ]);
   if (instantlyRes.error) return bad(instantlyRes.error.message, 500);
   if (bisonRes.error) return bad(bisonRes.error.message, 500);
