@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill
+| **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill; Others starts when an inbox is connected (a1b8a9d, Railway 5da9f367)
 | **0.25** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#025-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **Hassan Ahmed's work: LIVE 24 Nov 20:51 UTC (merge 44f2b98, Railway 4a182c08); migration 0056_mls_areas.sql run by the user first; his Client Portals access change kept (the user)**
 | **0.24** | [Intro wording for a person follows their areas — 24 November](#024-intro-wording-for-a-person-follows-their-areas--24-november) — **LIVE 24 Nov (db44e9a, Railway a1519cb5)**; Douglas Elliman NYC cleaned first; Properties & Estates still has Boston typed twice
 | **0.23** | [Prospects: areas linked to campaigns automatically; who gets which leads — 24 November](#023-prospects-areas-linked-to-campaigns-automatically-who-gets-which-leads--24-november) — **LIVE 24 Nov (217862c + 9cf3587, Railway b0dfcdbe then 80b178fa)**; first run put 55 Douglas Elliman NYC prospects into REBNY #1395 automatically
@@ -254,8 +254,10 @@ client's address" for this section. **No backfill** (the user: "we do not want t
   drafts, chats, calendar invitations, mail only between teammates. A forged client address is still refused, not filed
   under Others.
 - **Reading:** an inbox already read carries on from where it was, so only NEW email reaches Others. A reconnect keeps
-  its place (saveMailbox), so it never re-reads. **A first connect (Eddy) reads 30 days of every email** (older than a
-  week arrives as Done). A refill after Gmail drops the history (a long outage) reads only the missed days.
+  its place (saveMailbox), so it never re-reads. **Others starts when an inbox is connected** (the user, 25 Nov: "we
+  need to see emails from when someone connects his email"; a1b8a9d, Railway 5da9f367, LIVE 14:31 UTC): a first connect
+  (Eddy) reads 30 days of CLIENT email only. A refill after Gmail drops the history (a long outage) reads every email of
+  the missed days, never before the first read (`after:<backfill_done_at>`). Live check 13/13, logs clean.
 - **Screen:** Others is the last view, after a divider; its count leaves out Not a ticket. The client views (Open, Mine,
   Unassigned, Waiting, Snoozed, Done, All) and the rail's Client email badge never count Others; Mentions still
   includes them. An Others ticket shows "Others · Move to a client", which opens the client picker. Connected inboxes
