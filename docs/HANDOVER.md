@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **BUILT, NOT DEPLOYED** (feat/ch-merge, switch off); tested locally against a copy of the live data; the switch-over needs the user's go
+| **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
 | **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
 | **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill; Others starts when an inbox is connected (a1b8a9d, Railway 5da9f367)
 | **0.25** | [Client fixes batch: Select All, DNC in Setup, Members, Area, Portal button, ticket counts — 24 November](#025-client-fixes-batch-select-all-dnc-in-setup-members-area-portal-button-ticket-counts--24-november) — **Hassan Ahmed's work: LIVE 24 Nov 20:51 UTC (merge 44f2b98, Railway 4a182c08); migration 0056_mls_areas.sql run by the user first; his Client Portals access change kept (the user)**
@@ -246,7 +246,16 @@ off (24 Nov), only the OS uses it. Moving its six tables into the Master Inbox p
 about $10/month if it is a paid Micro project in a shared org, $25+/month if it sits alone in its own Pro org, $0 if
 it is on the free plan (billing not yet seen; ask the user).
 
-**BUILT, NOT DEPLOYED** (branch feat/ch-merge, ~/wt/os-chmerge: 6f87802 + ac58380, on top of main). Its paging and
+**LIVE 25 Nov 18:56 UTC (ace512b = Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox on `os`)** on the user's "go but please
+make sure nothing breaks". The user ran 0057 and exposed `client_health` first (checked: 6 empty tables, service key in,
+the browser key refused, public tables unchanged). After the 18:45 sync: copy (57 / 1,248 / 339 / 2,664 / 20 / 61,014
+rows), verify identical, the 8 readers byte-identical against the REAL Master Inbox project, the live screens' data
+recorded. The switch was set with --skip-deploys, then one deploy (one restart), live before the 19:00 slot. After:
+verify identical again (no edits in between), the live screens' data identical, 6/6 pages (Home, Clients, both Client
+Health screens, Consistency), logs clean. 19:00 sync: all three steps ok IN client_health; the old project got 0 runs
+(sync_runs still 61,014). The corofy step took 3.5 min vs ~1.75 before (per-row writes; MI CPU 2.7%); watch it.
+**The old project (fjmxbhcxvkyimgyispaf, "brokerstaffer's Project" on the invoice, ~$10/month) is untouched and
+unused: delete it in Supabase from ~26 Dec, after a final dump.** Built on Its paging and
 status-date fixes went live first (§0.27): a copy's new stored order would otherwise have changed which rows the
 unpaged reads returned.
 - **The merge, switched off:** `migrations/0057_client_health_schema.sql` creates schema `client_health` in
