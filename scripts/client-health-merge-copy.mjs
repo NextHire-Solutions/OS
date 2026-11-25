@@ -5,6 +5,9 @@
  *
  *   SRC_URL / SRC_KEY   Client Health's project URL + service key  (read only: this script never writes there)
  *   DST_URL / DST_KEY   Master Inbox's project URL + service key   (writes only to the client_health schema)
+ *   SRC_SCHEMA / DST_SCHEMA   default: public / client_health. Swapped for a ROLLBACK (copy changes made after the
+ *                             switch back to Client Health's own project): SRC = Master Inbox with SRC_SCHEMA=client_health,
+ *                             DST = Client Health with DST_SCHEMA=public, mode delta.
  *
  *   node scripts/client-health-merge-copy.mjs copy     every row, in order; the target tables must be EMPTY
  *   node scripts/client-health-merge-copy.mjs verify   row counts + a content hash per table, both sides; exit 1 if any differ
@@ -23,7 +26,6 @@ const TABLES = [
   { name: "campaign_toggle_log", pk: ["id"], changed: ["created_at"] },
   { name: "sync_runs", pk: ["id"], changed: ["started_at", "finished_at"] },
 ];
-const SCHEMA = "client_health";
 const PAGE = 1000;
 const BATCH = 500;
 
@@ -32,9 +34,9 @@ const env = (k) => {
   if (!v) { console.error(`${k} is not set`); process.exit(2); }
   return v.replace(/\/+$/, "");
 };
-const SRC = { url: env("SRC_URL"), key: env("SRC_KEY"), profile: null };
-const DST = { url: env("DST_URL"), key: env("DST_KEY"), profile: SCHEMA };
-if (SRC.url === DST.url) { console.error("SRC_URL and DST_URL are the same project: refusing"); process.exit(2); }
+const SRC = { url: env("SRC_URL"), key: env("SRC_KEY"), profile: process.env.SRC_SCHEMA || "public" };
+const DST = { url: env("DST_URL"), key: env("DST_KEY"), profile: process.env.DST_SCHEMA || "client_health" };
+if (SRC.url === DST.url && SRC.profile === DST.profile) { console.error("source and target are the same tables: refusing"); process.exit(2); }
 
 function headers(side, extra = {}) {
   const h = { apikey: side.key, Authorization: `Bearer ${side.key}`, "Content-Type": "application/json", ...extra };
@@ -101,7 +103,7 @@ const [mode, since] = process.argv.slice(2);
 if (mode === "copy") {
   for (const t of TABLES) {
     const have = await count(DST, t);
-    if (have) { console.error(`STOP: ${SCHEMA}.${t.name} already has ${have} rows; copy needs empty tables (use delta)`); process.exit(1); }
+    if (have) { console.error(`STOP: ${DST.profile}.${t.name} already has ${have} rows; copy needs empty tables (use delta)`); process.exit(1); }
   }
   for (const t of TABLES) {
     const rows = await readAll(SRC, t);
