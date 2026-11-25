@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **BUILT, NOT DEPLOYED** (feat/mcp-actions d4139f8 + 0bcbf8c); switched off until OS_MCP_ACTIONS; needs migration 0058
 | **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
 | **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
 | **0.26** | [Tickets › Others: every other email to a connected inbox — 25 November](#026-tickets--others-every-other-email-to-a-connected-inbox--25-november) — **LIVE 25 Nov 14:03 UTC (b9bc58d, Railway f0020ac1)**; the user chose "Every other email" (replaces §0.17's client-address-only rule for this section); no backfill; Others starts when an inbox is connected (a1b8a9d, Railway 5da9f367)
@@ -238,6 +239,44 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.29 Claude connector: actions, previewed then confirmed — 25 November
+
+**BUILT, NOT DEPLOYED** (branch feat/mcp-actions, ~/wt/os-mcpact: d4139f8 refactor, 0bcbf8c actions). Eddy (Slack, 25 Nov):
+"I am looking for the ability to take actions directly from Claude". The user picked the first set: inbox label +
+snooze, pause/resume a client's campaigns; who: admins + people by name.
+
+- **Actions:** `inbox_set_label` (thread_id, label), `inbox_snooze` (thread_id, until with time zone, note, or cancel),
+  `client_campaigns` (client, pause|resume: ALL of the client's sending campaigns, Client Health's Play/Pause).
+- **Two calls each** (`lib/mcp/actions/core.ts`). Without `confirm`: nothing changes; a preview in words + a code. The
+  code is a signed token (`tokens.ts` kind "action", 10 min) bound to the person, the action, its exact arguments and
+  what the preview showed (`bind`: current label; the exact campaigns). With it: checked again from scratch; if the
+  preview changed (relabelled meanwhile, a campaign launched), nothing is done and a new preview comes back; the nonce
+  is claimed in `os_mcp_actions` BEFORE acting (never twice) and the row is the record ("<email> via Claude").
+- **Same code as the screens:** `inbox/set-label.ts` + `inbox/snooze.ts` (the routes' bodies moved verbatim),
+  `planToggle` / `applyToggle`. **Same people:** the screen route's switch (grantsForRequest: inbox / clients), admins always.
+- **Labels allowed (batch 1):** only those that move nothing outside the OS or on a bill. Refused: TO Interested or
+  Meetings Booked (relay TRIGGER_LABELS: hand-off, Slack alert, per-lead billing; Meetings Booked = billed call), TO
+  Introduction (client portal entry), TO Hostile / Unsubscribe / Do Not Contact / Add to Blocklist (stop the person),
+  FROM Introduction (deletes the portal entry), and ANY change on a conversation EVER marked Interested or Meetings
+  Booked (label_history): per-lead billing counts it unless its label NOW is a correction (Not Interested, Not
+  Qualified, Broker/Owner…), so a relabel can add or remove it from a bill (`usage-billing/leads.ts`).
+  `label-policy.ts`; unreadable history = treated as ever-positive (refused).
+- **Switch:** `OS_MCP_ACTIONS` = comma list of action names; unset = no action tools, the briefing still says
+  READ-ONLY (exactly as before). Each can be turned on/off with a restart.
+- **Access:** connector = admins + `named-pages.ts` "claude-connector" (EMPTY: Eddy names people). Named people read
+  only what their switches open (the Assistant's `viewer.ts` rules, `toolSchemaFor`/`handlersFor`) + scope note.
+- `recent_replies` and `search_conversations` now return `thread_id`.
+
+**Tested:** unit 4,141 (core 8, label-policy 3, switch 1, actions 5 with the real specs, connector scoping 5); tsc
+clean; 3 deliberate breaks caught. Live READ-ONLY run of the real previews against production (no confirm; audit refused
+claims; outside writes refused: none attempted): the right lead, client, label and Eastern time; Interested and
+Meetings Booked refused; campaign plans read from live statuses.
+
+**Go-live (each on the user's word):** deploy (switch off: nothing changes) → the user runs
+`migrations/0058_mcp_actions.sql` → set `OS_MCP_ACTIONS=inbox_snooze` first, `railway redeploy`, try one snooze +
+cancel on a conversation the user picks → then `inbox_set_label`, then `client_campaigns` (only on a client the user
+picks). Pre-existing, not changed: snoozed threads may not wake on their own (inbox audit A1, 23 Nov).
 
 ## 0.28 Client Health's database moves into the Master Inbox project — 25 November
 
