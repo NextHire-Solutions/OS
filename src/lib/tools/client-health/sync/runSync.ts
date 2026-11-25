@@ -252,9 +252,7 @@ export function instantlyCampaignRow(
     // written below by the Corofy step, not here.
     reply_count: a?.reply_count_unique ?? a?.reply_count ?? 0,
   };
-  // Only include status_changed_at in the upsert payload when we actually
-  // want to write it (undefined means "leave existing value alone").
-  if (stamp !== undefined) base.status_changed_at = stamp;
+  base.status_changed_at = keptStamp(stamp, prev);
   return base;
 }
 
@@ -296,16 +294,31 @@ export function bisonCampaignRow(
     // is written below by the Corofy step.
     reply_count: c.unique_replies ?? c.replied ?? 0,
   };
-  if (stamp !== undefined) base.status_changed_at = stamp;
+  base.status_changed_at = keptStamp(stamp, prev);
   return base;
+}
+
+/*
+ * status_changed_at is ALWAYS sent (Nov 2026). It used to be left out to mean "keep the stored value", but the rows
+ * are upserted in one batch, and supabase-js sends the union of every row's columns with missing ones as NULL
+ * (defaultToNull). So a campaign whose stamp was left out was blanked whenever another row in the batch carried one,
+ * then re-seeded from the vendor on the next run: paused/finished campaigns flipped between a date and empty every
+ * 15 minutes. Now "keep" sends the stored value itself; a campaign seen for the first time gets null, its default.
+ */
+export function keptStamp(stamp: string | null | undefined, prev: PreviousStatus | undefined): string | null {
+  if (stamp !== undefined) return stamp;
+  return prev?.status_changed_at ?? null;
 }
 
 async function loadPreviousStatuses(sb: SupabaseClient, table: 'instantly_campaigns' | 'bison_campaigns') {
   // Load existing rows to detect status transitions.
   // Paged (read-all.ts): unpaged, campaigns past the first 1,000 looked new on every run and lost their status_changed_at.
-  const { data: existingRows } = await readAll<{ id: string; status: string | null; status_changed_at: string | null }>((a, b) =>
+  const { data: existingRows, error } = await readAll<{ id: string; status: string | null; status_changed_at: string | null }>((a, b) =>
     sb.from(table).select('id, status, status_changed_at').order('id').range(a, b),
   );
+  // Every row now carries its stored stamp (keptStamp), so a failed read must stop the step rather than write every
+  // campaign as if it were new.
+  if (error) throw new Error(`${table} previous statuses: ${error.message}`);
   return new Map<string, PreviousStatus>(
     ((existingRows ?? []) as { id: string; status: string | null; status_changed_at: string | null }[]).map(
       (r) => [r.id, { status: r.status, status_changed_at: r.status_changed_at }]

@@ -148,13 +148,13 @@ test("an instantly_campaigns row carries every column the tool writes", () => {
   });
 });
 
-test("an Instantly campaign with no analytics row writes zeros and no stamp", () => {
+test("an Instantly campaign with no analytics row writes zeros, and null for a first-seen running campaign's stamp", () => {
   const row = instantlyCampaignRow({ id: "c2", name: "Beta", status: 1 }, undefined, undefined, NOW);
   assert.deepEqual(row, {
     id: "c2", name: "Beta", status: "running",
     emails_sent_total: 0, campaign_size: 0, progress_pct: 0, reply_count: 0,
+    status_changed_at: null,
   });
-  assert.ok(!("status_changed_at" in row), "undefined must not be sent as a column");
 });
 
 test("Instantly falls back to the analytics status and to total replies", () => {
@@ -172,7 +172,18 @@ test("Instantly falls back to the analytics status and to total replies", () => 
   assert.equal(row.status, "finished");
   assert.equal(row.reply_count, 4);
   assert.equal(row.progress_pct, 100, "capped at 100");
-  assert.ok(!("status_changed_at" in row));
+  assert.equal(row.status_changed_at, "2026-01-01T00:00:00Z", "unchanged status: the stored stamp is sent back, not left out");
+});
+
+test("every row carries status_changed_at, so a batch upsert can't blank the ones left out (Nov 2026)", () => {
+  const camp = (id: number, status: string) => ({ id, uuid: `u-${id}`, name: `C${id}`, status, emails_sent: 1, total_leads: 1, total_leads_contacted: 1, updated_at: "2026-03-03T00:00:00Z" });
+  const rows = [
+    bisonCampaignRow(camp(1, "Completed"), { status: "finished", status_changed_at: "2026-01-01T00:00:00Z" }, NOW), // unchanged
+    bisonCampaignRow(camp(2, "Active"), { status: "paused", status_changed_at: "2026-01-02T00:00:00Z" }, NOW),     // transition
+    bisonCampaignRow(camp(3, "Active"), undefined, NOW),                                                           // first seen
+  ];
+  assert.ok(rows.every((r) => "status_changed_at" in r), "same columns on every row");
+  assert.deepEqual(rows.map((r) => r.status_changed_at), ["2026-01-01T00:00:00Z", NOW.toISOString(), null]);
 });
 
 // -- row mapping: Bison ------------------------------------------------------
@@ -210,7 +221,7 @@ test("Bison progress derives from contacted/total when the vendor gives no perce
   assert.equal(row.status, "running");
   assert.equal(row.progress_pct, 25);
   assert.equal(row.reply_count, 3, "total replied when unique_replies is absent");
-  assert.ok(!("status_changed_at" in row));
+  assert.equal(row.status_changed_at, null, "first-seen running campaign: null, its default");
 });
 
 // -- weekly rows: each source owns its columns, the total is derived -------
