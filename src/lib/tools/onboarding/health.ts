@@ -2,6 +2,7 @@ import "server-only";
 
 import { isConfigured } from "@/lib/env";
 import { clientStatuses } from "@/lib/tools/client-health/publish";
+import { clientHealthDbEnv } from "@/lib/tools/client-health/supabase";
 
 import { getOnboardingDb } from "./db";
 import { getSetting, setSetting } from "./settings";
@@ -43,10 +44,11 @@ export interface HealthPanel {
   configured: boolean;
 }
 
-const DB_ENV = ["CLIENT_HEALTH_SUPABASE_URL", "CLIENT_HEALTH_SUPABASE_SERVICE_ROLE_KEY"];
+/** Client Health's own project, or the Master Inbox project once merged (CLIENT_HEALTH_DB=master-inbox). */
+const dbEnv = () => clientHealthDbEnv();
 
 function configured(): boolean {
-  return isConfigured(...DB_ENV);
+  return isConfigured(...dbEnv());
 }
 
 export async function fetchHealthStatuses(): Promise<{
@@ -56,7 +58,7 @@ export async function fetchHealthStatuses(): Promise<{
   counts?: Record<string, number>;
 }> {
   if (!configured()) {
-    return { ok: false, error: `${DB_ENV.join(" / ")} not set` };
+    return { ok: false, error: `${dbEnv().join(" / ")} not set` };
   }
 
   try {
