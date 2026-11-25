@@ -182,7 +182,10 @@ export const inboxSnooze: ActionSpec<SnoozeArgs, SnoozeBind> = {
     const et = new Date(a.until!).toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" });
     return {
       ok: true,
-      preview: `Snooze ${describe(t)} until ${et} Eastern (${a.until})${a.note ? `, with the note "${a.note}"` : ""}.${t.snoozedUntil ? ` It is already snoozed until ${t.snoozedUntil}; that is replaced.` : ""}`,
+      preview:
+        `Snooze ${describe(t)} until ${et} Eastern (${a.until})${a.note ? `, with the note "${a.note}"` : ""}. It leaves the ` +
+        "inbox and comes back once that time has passed and someone opens Master Inbox › Reminders (as with the inbox's own Snooze)." +
+        `${t.snoozedUntil ? ` It is already snoozed until ${t.snoozedUntil}; that is replaced.` : ""}`,
       details: { thread: t },
       bind: { status: t.status, snoozedUntil: t.snoozedUntil },
     };

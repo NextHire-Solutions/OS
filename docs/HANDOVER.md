@@ -276,7 +276,10 @@ Meetings Booked refused; campaign plans read from live statuses.
 **Go-live (each on the user's word):** deploy (switch off: nothing changes) → the user runs
 `migrations/0058_mcp_actions.sql` → set `OS_MCP_ACTIONS=inbox_snooze` first, `railway redeploy`, try one snooze +
 cancel on a conversation the user picks → then `inbox_set_label`, then `client_campaigns` (only on a client the user
-picks). Pre-existing, not changed: snoozed threads may not wake on their own (inbox audit A1, 23 Nov).
+picks). How a snooze comes back (unchanged, the same as the inbox's own Snooze): when its time has passed and someone
+opens Master Inbox › Reminders, which fires due reminders and reopens their threads (screens/master-inbox/reminders.tsx;
+the comment in lib/tools/master-inbox/reminders.ts saying the OS never fires them is out of date). The screen's own
+snooze route is threads/[threadId]/snooze: same writes, plus the inbox user id (none for OS users).
 
 ## 0.28 Client Health's database moves into the Master Inbox project — 25 November
 
