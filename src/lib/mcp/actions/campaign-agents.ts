@@ -1,6 +1,6 @@
 import "server-only";
 
-import { campaignClient, createAgentJob, PER_RUN, runningJobFor } from "@/lib/clients/campaign-agents/run";
+import { campaignClient, createAgentJob, PER_RUN, runningJobFor, stopAgentJob } from "@/lib/clients/campaign-agents/run";
 import { isOpenStatus } from "@/lib/tools/analytics/campaigns/inbox-removal.ts";
 import { createEmailBisonClient } from "@/lib/tools/analytics/emailbison/client.ts";
 import { buildFilters, describeQuery } from "@/lib/tools/assistant/agent-query";
@@ -26,7 +26,7 @@ import { resolveEbCampaign } from "./campaign-one.ts";
 const n = (v: number) => v.toLocaleString("en-US");
 const FILTER_KEYS = ["place", "place_type", "located_by", "mls", "brokerage", "office", "min_sales_volume", "max_sales_volume", "min_transactions", "max_transactions", "contacted", "replied", "from_client_lists"] as const;
 type Args = { campaign: string } & Partial<Record<(typeof FILTER_KEYS)[number], unknown>>;
-type Bind = { campaignId: number; campaignName: string; filters: string; matched: number; status: string; described: string; mlsScope: string[] | null; osClientId: string | null };
+type Bind = { campaignId: number; campaignName: string; filters: string; status: string; described: string; mlsScope: string[] | null; osClientId: string | null };
 
 const num = (v: unknown, what: string): number | undefined | { error: string } => {
   if (v === undefined || v === null || v === "") return undefined;
@@ -82,9 +82,12 @@ export const campaignAddAgents: ActionSpec<Args, Bind> = {
       if (v !== undefined) out[k] = v;
     }
     for (const k of ["contacted", "replied"] as const) if (typeof a[k] === "boolean") out[k] = a[k];
-    // At least one filter: "every agent we have" is never one call away by accident. Any size is fine.
-    if (!FILTER_KEYS.some((k) => out[k] !== undefined && k !== "place_type" && k !== "located_by")) {
-      return { error: "Which agents? Give at least one filter — a place, an MLS, a brokerage, an office, a sales volume or transactions range, or a client's lists." };
+    // At least one filter that narrows WHO (any number of agents is fine): "never emailed" or "never replied" alone, or a
+    // minimum of 0, would be nearly the whole database by accident.
+    const narrows = ["place", "mls", "brokerage", "office", "from_client_lists", "max_sales_volume", "max_transactions"].some((k) => out[k as keyof Args] !== undefined)
+      || Number(out.min_sales_volume ?? 0) > 0 || Number(out.min_transactions ?? 0) > 0;
+    if (!narrows) {
+      return { error: "Which agents? Give at least one filter that narrows them — a place, an MLS, a brokerage, an office, a sales volume or transactions range, or a client's lists. (Emailed or not, replied or not, can be added to those.)" };
     }
     return out;
   },
@@ -130,7 +133,7 @@ export const campaignAddAgents: ActionSpec<Args, Bind> = {
       r.resolved.placeNote ? String(r.resolved.placeNote) : "",
       r.otherPlaces.length ? `Other places with that name: ${r.otherPlaces.slice(0, 4).join("; ")}.` : "",
       client ? `This campaign is ${client.name}'s: agents on ${client.name}'s DNC List, My Agents or pipeline are left out, and anyone already in another of ${client.name}'s campaigns isn't added twice.` : "This campaign isn't tied to a client.",
-      "Each goes in the way Prospects adds agents: the database's own email; a lead EmailBison already has goes in as it is; bounced or unsubscribed addresses are left out.",
+      "Each goes in the way Prospects adds agents: the database's own email; one EmailBison already has in another campaign goes in as that lead is, never rewritten (one in no campaign is updated as the Database app's worker makes leads); bounced or unsubscribed addresses are left out.",
       `It runs in the background, up to ${n(PER_RUN)} agents a minute (at least ${n(minutes)} minute${minutes === 1 ? "" : "s"}; EmailBison's answers set the pace).`,
       ["active", "queued", "launching"].includes(live) ? "The campaign is sending: they start getting its emails on its schedule." : "Nothing is sent until the campaign is started.",
     ].filter(Boolean);
@@ -139,18 +142,64 @@ export const campaignAddAgents: ActionSpec<Args, Bind> = {
       preview: parts.join(" "),
       details: { campaign: c.name, number: c.id, matched, filters: described, client: client?.name ?? null },
       bind: {
-        campaignId: c.id, campaignName: c.name, filters: canonical(filters), matched, status: live, described,
+        // The count is shown, not bound: a busy segment moves by a few between preview and yes, and the job takes
+        // every agent the confirmed filters match when it runs.
+        campaignId: c.id, campaignName: c.name, filters: canonical(filters), status: live, described,
         mlsScope: r.q.mlsIds?.length ? r.q.mlsIds.map(String) : null, osClientId: client?.osClientId ?? null,
       },
     };
   },
   async execute(_a, v, bind) {
     // Everything exactly as previewed: the bind holds it, and the fresh preview runAction just made matched it.
+    const filters = JSON.parse(bind.filters) as Record<string, unknown>;
+    const matched = await agentCount(filters);
     const job = await createAgentJob({
-      campaignId: String(bind.campaignId), campaignName: bind.campaignName, osClientId: bind.osClientId, filters: JSON.parse(bind.filters) as Record<string, unknown>,
-      described: bind.described, mlsScope: bind.mlsScope, matched: bind.matched, requestedBy: v.email,
+      campaignId: String(bind.campaignId), campaignName: bind.campaignName, osClientId: bind.osClientId, filters,
+      described: bind.described, mlsScope: bind.mlsScope, matched, requestedBy: v.email,
     });
-    console.info(`[mcp-action] ${v.email} via Claude: add ${bind.matched} agents to campaign #${bind.campaignId} (job ${job.id})`);
-    return { job: job.id, campaign: bind.campaignName, number: bind.campaignId, agents: bind.matched, note: "Adding has started in the background. Ask for its progress any time (campaign_agent_jobs)." };
+    console.info(`[mcp-action] ${v.email} via Claude: add ${matched} agents to campaign #${bind.campaignId} (job ${job.id})`);
+    return { job: job.id, campaign: bind.campaignName, number: bind.campaignId, agents: matched, note: "Adding has started in the background. Ask for its progress any time (campaign_agent_jobs); stop it with campaign_add_agents_stop." };
+  },
+};
+
+/* ---------------------------------------------------------------------------------------------------- stop --- */
+
+type StopArgs = { campaign: string };
+type StopBind = { job: string; campaignId: number };
+
+export const campaignAddAgentsStop: ActionSpec<StopArgs, StopBind> = {
+  name: "campaign_add_agents_stop",
+  title: "Stop adding agents to a campaign",
+  description:
+    "Stop the agents being added to ONE campaign (campaign_add_agents): those already added stay in it; the rest are " +
+    "not added. The preview shows how far it has got.",
+  inputSchema: { type: "object", properties: { campaign: { type: "string", description: "The campaign's name or number." } }, required: ["campaign"] },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  needs: [] as ToolId[],
+  parse(a) {
+    const campaign = String(a.campaign ?? "").trim();
+    return campaign ? { campaign } : { error: "Which campaign? Give its name or number." };
+  },
+  async preview(a) {
+    const c = await resolveEbCampaign(a.campaign);
+    if ("error" in c) return { ok: false, refusal: c.error };
+    let job;
+    try {
+      job = await runningJobFor(String(c.id));
+    } catch (e) {
+      return { ok: false, refusal: `Adding agents can't be checked just now: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    if (!job) return { ok: false, refusal: `No agents are being added to ${c.name} right now.` };
+    return {
+      ok: true,
+      preview: `Stop adding agents to "${c.name}" (#${c.id}): ${(job.status === "collecting" ? `still collecting (${n(job.collected)} so far)` : job.detail ?? "adding").replace(/\.\s*$/, "")}. Agents already added stay in the campaign; the rest are not added.`,
+      bind: { job: job.id, campaignId: c.id },
+    };
+  },
+  async execute(_a, v, bind) {
+    const r = await stopAgentJob(bind.job, v.email);
+    if (!r.stopped) throw new Error("It had already finished, so there was nothing to stop.");
+    console.info(`[mcp-action] ${v.email} via Claude: stopped adding agents to campaign #${bind.campaignId} (job ${bind.job})`);
+    return { stopped: true, job: bind.job, notAdded: r.notAdded };
   },
 };

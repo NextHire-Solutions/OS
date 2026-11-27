@@ -41,7 +41,11 @@ function analyticsDb() {
     from(table: string) {
       if (table !== "campaigns_unified") {
         return {
-          upsert: async (row: Record<string, unknown>) => { calls.push(`analytics ${table} upsert ${JSON.stringify(row).slice(0, 200)}`); return { error: null }; },
+          upsert: async (row: Record<string, unknown>) => {
+            calls.push(`analytics ${table} upsert ${JSON.stringify(row).slice(0, 200)}`);
+            if (table === "campaigns") world.campaigns.push({ id: String(row.id), name: String(row.name), status: "draft", platform: "emailbison", team_id: 7 });
+            return { error: null };
+          },
           insert: async (row: Record<string, unknown>) => { calls.push(`analytics ${table} insert ${String(row.action)} by ${String(row.actor)}`); return { error: null }; },
         };
       }
@@ -98,6 +102,7 @@ async function load() {
       campaignClient: async () => world.client,
       runningJobFor: async () => { if ((world.running as unknown) === "missing") throw new Error("needs migrations/0059_campaign_agent_jobs.sql"); return world.running; },
       createAgentJob: async (o: Record<string, unknown>) => { calls.push(`job ${JSON.stringify(o)}`); return { id: "job-1" }; },
+      stopAgentJob: async (id: string, by: string) => { calls.push(`stop ${id} by ${by}`); return world.running ? { stopped: true, notAdded: 90 } : { stopped: false, notAdded: 0 }; },
     },
   });
   mock.module("@/lib/tools/assistant/tools-phase10", {
@@ -160,13 +165,13 @@ test("create: a copy of the team's template for a client — the preview says ev
   assert.deepEqual(calls, [], "the preview made nothing");
   const done = await run(create.campaignCreate, { name: "Howe Realty Group + Phoenix + Prospects (MST)", client: "Howe Realty Group", confirm: p.confirm }, d);
   assert.equal(done.done, true);
-  assert.deepEqual(calls.slice(0, 4), [
-    "duplicate 251",
+  assert.equal(calls[0], "duplicate 251");
+  assert.match(calls[1], /^analytics campaigns upsert \{"id":1600,"team_id":7,"name":"Howe Realty Group \+ Phoenix \+ Prospects \(MST\)","status":"draft"/, "recorded under its name straight after it is made");
+  assert.deepEqual(calls.slice(2, 5), [
     `update 1600 {"name":"Howe Realty Group + Phoenix + Prospects (MST)"}`,
     "fill 1600 area=Phoenix alias=Howe",
     "attach inboxes 1600 [11,12,13]",
   ]);
-  assert.match(calls[4], /^analytics campaigns upsert \{"id":1600,"team_id":7,"name":"Howe Realty Group \+ Phoenix \+ Prospects \(MST\)","status":"draft"/);
   assert.match(calls[5], /^analytics campaign_clients upsert \{"campaign_id":1600,"client_id":"an-howe"/);
   assert.equal(calls[6], "analytics campaign_audit_log insert create by eddy@brokerstaffer.com via Claude");
   assert.ok(!calls.some((c) => /resume|launch|start/.test(c)), "never started");
@@ -206,6 +211,8 @@ test("create: a client with no Area while the copy uses {CLIENT_AREA} — said b
   const p2 = await run(create.campaignCreate, { name: "Half" }, d2);
   const r2 = await run(create.campaignCreate, { name: "Half", confirm: p2.confirm }, d2);
   assert.match(String(r2.failed), /^Campaign #1600 "Half" was made, but renaming it failed/);
+  // Trying again never makes a second one: its name is already recorded.
+  assert.match(String((await run(create.campaignCreate, { name: "Half" })).refused), /A campaign called "Half" already exists \(#1600, draft\)/);
 });
 
 /* -------------------------------------------------------------------------------------- campaign_add_agents --- */
@@ -216,7 +223,7 @@ test("add agents: the preview counts them and says what happens; confirm records
   const d = deps();
   const args = { campaign: "#1500", place: "Phoenix, AZ" };
   const p = await run(add.campaignAddAgents, args, d);
-  assert.equal(p.preview, `Add 1,234 agents with an email from the agent database to "Howe Realty 9 + Phoenix" (#1500, draft): in Phoenix, AZ; with an email. 200 of them have been in one of our campaigns before. This campaign is Howe Realty Group's: agents on Howe Realty Group's DNC List, My Agents or pipeline are left out, and anyone already in another of Howe Realty Group's campaigns isn't added twice. Each goes in the way Prospects adds agents: the database's own email; a lead EmailBison already has goes in as it is; bounced or unsubscribed addresses are left out. It runs in the background, up to 200 agents a minute (at least 8 minutes; EmailBison's answers set the pace). Nothing is sent until the campaign is started.`);
+  assert.equal(p.preview, `Add 1,234 agents with an email from the agent database to "Howe Realty 9 + Phoenix" (#1500, draft): in Phoenix, AZ; with an email. 200 of them have been in one of our campaigns before. This campaign is Howe Realty Group's: agents on Howe Realty Group's DNC List, My Agents or pipeline are left out, and anyone already in another of Howe Realty Group's campaigns isn't added twice. Each goes in the way Prospects adds agents: the database's own email; one EmailBison already has in another campaign goes in as that lead is, never rewritten (one in no campaign is updated as the Database app's worker makes leads); bounced or unsubscribed addresses are left out. It runs in the background, up to 200 agents a minute (at least 8 minutes; EmailBison's answers set the pace). Nothing is sent until the campaign is started.`);
   assert.deepEqual(calls, []);
   const done = await run(add.campaignAddAgents, { ...args, confirm: p.confirm }, d);
   assert.equal(done.done, true);
@@ -230,6 +237,9 @@ test("add agents: refusals — no filter, a finished campaign, one already being
   await load(); reset();
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500" })).refused), /Which agents\? Give at least one filter/);
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", located_by: "home" })).refused), /at least one filter/, "how a place is matched is not itself a filter");
+  assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", contacted: false })).refused), /narrows them/, "never emailed alone is nearly everyone");
+  assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", replied: false, min_sales_volume: 0 })).refused), /narrows them/);
+  assert.ok((await run(add.campaignAddAgents, { campaign: "#1500", mls: "ARMLS", contacted: false })).preview, "with something that narrows, fine");
   world.live.set(1500, "completed");
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", mls: "ARMLS" })).refused), /is completed: agents go only into a campaign that can still send/);
   reset(); world.running = { status: "adding", detail: "Added 10; 90 still to go." };
@@ -244,10 +254,26 @@ test("add agents: refusals — no filter, a finished campaign, one already being
   const d = deps();
   const p = await run(add.campaignAddAgents, { campaign: "#1500", place: "Phoenix" }, d);
   world.count = 1300;
-  assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", place: "Phoenix", confirm: p.confirm }, d)).refused), /Things changed/);
+  const moved = await run(add.campaignAddAgents, { campaign: "#1500", place: "Phoenix", confirm: p.confirm }, d);
+  assert.equal(moved.done, true, "a count moving by a few never blocks the yes: the filters are what was confirmed");
+  assert.equal((JSON.parse(String(calls.find((c) => c.startsWith("job"))).slice(4)) as { matched: number }).matched, 1300, "the job records the count at the yes");
+  calls.length = 0;
   reset(); world.live.set(1500, "active");
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", place: "Phoenix" })).preview), /The campaign is sending: they start getting its emails on its schedule\.$/);
   const notAdmin = { email: "gabriel@example.com", admin: false, grants: ["campaigns", "analytics", "inbox"] };
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", place: "Phoenix" }, deps(), notAdmin)).refused), /can't do this in the OS/);
   assert.ok(!calls.some((c) => c.startsWith("job")));
+});
+
+test("stop: only a running add, with how far it got; confirm stops it; one that finished meanwhile says so", { skip }, async () => {
+  await load(); reset();
+  assert.match(String((await run(add.campaignAddAgentsStop, { campaign: "#1500" })).refused), /No agents are being added to Howe Realty 9 \+ Phoenix right now/);
+  world.running = { id: "job-7", status: "adding", collected: 100, detail: "Added 10; already in it 0; not added 0. 90 still to go." };
+  const d = deps();
+  const p = await run(add.campaignAddAgentsStop, { campaign: "#1500" }, d);
+  assert.equal(p.preview, `Stop adding agents to "Howe Realty 9 + Phoenix" (#1500): Added 10; already in it 0; not added 0. 90 still to go. Agents already added stay in the campaign; the rest are not added.`);
+  const done = await run(add.campaignAddAgentsStop, { campaign: "#1500", confirm: p.confirm }, d);
+  assert.deepEqual([done.done, calls.at(-1)], [true, "stop job-7 by eddy@brokerstaffer.com"]);
+  const notAdmin = { email: "gabriel@example.com", admin: false, grants: ["campaigns"] };
+  assert.match(String((await run(add.campaignAddAgentsStop, { campaign: "#1500" }, deps(), notAdmin)).refused), /can't do this in the OS/);
 });

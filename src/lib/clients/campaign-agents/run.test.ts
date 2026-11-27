@@ -54,6 +54,9 @@ const world = {
   lists: { emails: new Set<string>(), names: new Set<string>(), domains: new Set<string>() },
   upserts: [] as string[][],
   bells: [] as Array<{ severity: string; title: string; body: string }>,
+  client: undefined as undefined | null | { osClientId: string; name: string },
+  idsFail: false,
+  loadFail: false,
 };
 let nextLead = 9000;
 
@@ -61,8 +64,10 @@ function deps(): import("./run.ts").JobDeps {
   return {
     now: () => new Date("2026-11-28T12:00:00Z"),
     campaignStatus: async () => world.status,
-    ids: async (_f, offset) => world.ids.slice(offset),
-    loadAgents: async (ids) => new Map([...world.agents].filter(([id]) => ids.includes(id))),
+    ids: async (_f, offset) => { if (world.idsFail) throw new Error("canceling statement due to statement timeout"); return world.ids.slice(offset); },
+    loadAgents: async (ids) => { if (world.loadFail) throw new Error("agents: the agent database did not answer"); return new Map([...world.agents].filter(([id]) => ids.includes(id))); },
+    // Unless a test says otherwise: the campaign's client as the job recorded it.
+    campaignClient: async () => (world.client === undefined ? (job()?.os_client_id ? { osClientId: String(job().os_client_id), name: "Howe Realty Group" } : null) : world.client),
     clientLists: async () => world.lists,
     clientCampaigns: async () => [{ id: "1400", name: "Howe Realty 1 + Phoenix", status: "active" }],
     syncBase: {
@@ -91,7 +96,7 @@ function reset() {
   db.reset();
   attaches.length = 0;
   attachFails = false;
-  Object.assign(world, { status: "draft", agents: new Map(), leads: new Map(), ids: [], lists: { emails: new Set(), names: new Set(), domains: new Set() }, upserts: [], bells: [] });
+  Object.assign(world, { status: "draft", agents: new Map(), leads: new Map(), ids: [], lists: { emails: new Set(), names: new Set(), domains: new Set() }, upserts: [], bells: [], client: undefined, idsFail: false, loadFail: false });
 }
 
 test("collecting: every matching agent becomes an item; then adding. None at all: done, said", { skip }, async () => {
@@ -212,4 +217,64 @@ test("missingTable: the database's own words for a table not made yet (migration
   assert.equal(mod.missingTable({ message: 'relation "os_campaign_agent_jobs" does not exist', code: "42P01" }), true);
   assert.equal(mod.missingTable({ message: "permission denied for table os_campaign_agent_jobs", code: "42501" }), false);
   assert.equal(mod.missingTable(null), false);
+});
+
+test("review fixes: a batch that fails part-way counts a try (never forever); collecting failing 5 times stops the job with the bell", { skip }, async () => {
+  await load(); reset();
+  seedJob();
+  world.agents = new Map([["e1", agent("e1", "e1@agent.test")]]);
+  seedItems(["e1"]);
+  world.loadFail = true;
+  const r = await mod.runCampaignAgentJobs(deps());
+  assert.deepEqual([item("e1").status, item("e1").attempts], ["pending", 1], "back in the queue, one try counted");
+  assert.match(String(item("e1").detail), /Not added yet: agents: the agent database did not answer/);
+  assert.ok(r.notes.some((x) => /did not answer/.test(x)));
+  // Collecting: counted in the job's words; the fifth stops it.
+  reset(); seedJob({ status: "collecting" }); db.seed("os_campaign_agent_job_items", []);
+  world.idsFail = true;
+  for (let i = 1; i <= 4; i++) {
+    await mod.runCampaignAgentJobs(deps());
+    assert.match(String(job().detail), new RegExp(`Collecting failed ${i} of 5 times so far`));
+    assert.equal(job().status, "collecting");
+  }
+  await mod.runCampaignAgentJobs(deps());
+  assert.equal(job().status, "failed");
+  assert.match(String(job().detail), /Collecting the agents failed 5 times \(canceling statement due to statement timeout\)/);
+  assert.equal(world.bells.at(-1)!.severity, "warning");
+});
+
+test("review fixes: a campaign tied to a client AFTER the job started gets that client's lists; the address actually emailed is checked against them", { skip }, async () => {
+  await load(); reset();
+  seedJob({ client: null });
+  world.client = { osClientId: "os-howe", name: "Howe Realty Group" };
+  world.agents = new Map([
+    // Emailed at its Courted address (databaseEmail), not its main one: that is the address the DNC entry has.
+    ["f1", agent("f1", "main@agent.test", { source_ids: { courted: { email: "src@agent.test" } } } as never)],
+    ["f2", agent("f2", "ok@agent.test")],
+  ]);
+  world.lists = { emails: new Set(["src@agent.test"]), names: new Set(), domains: new Set() };
+  seedItems(["f1", "f2"]);
+  await mod.runCampaignAgentJobs(deps());
+  assert.equal(job().os_client_id, "os-howe", "the job now knows its client");
+  assert.deepEqual([item("f1").status, item("f2").kind], ["skipped", "added"]);
+  assert.match(String(item("f1").detail), /DNC List, My Agents or pipeline/);
+});
+
+test("stopping a job: done stays done; the rest are not added; a stopped job is never written over by a batch finishing late", { skip }, async () => {
+  await load(); reset();
+  seedJob();
+  db.seed("os_campaign_agent_job_items", [
+    { id: 1, job_id: JOB, agent_id: "g1", status: "done", kind: "added", attempts: 0 },
+    { id: 2, job_id: JOB, agent_id: "g2", status: "pending", kind: null, attempts: 0 },
+    { id: 3, job_id: JOB, agent_id: "g3", status: "pending", kind: null, attempts: 0 },
+  ]);
+  const r = await mod.stopAgentJob(JOB, "eddy@brokerstaffer.com");
+  assert.deepEqual(r, { stopped: true, notAdded: 2 });
+  assert.equal(job().status, "failed");
+  assert.match(String(job().detail), /^Stopped by eddy@brokerstaffer\.com via Claude\. Added 1; already in it 0; not added 2\./);
+  assert.deepEqual([item("g1").status, item("g2").status, item("g3").status], ["done", "skipped", "skipped"]);
+  assert.deepEqual(await mod.stopAgentJob(JOB, "eddy@brokerstaffer.com"), { stopped: false, notAdded: 0 }, "a second stop changes nothing");
+  // The run never picks it up again.
+  const after = await mod.runCampaignAgentJobs(deps());
+  assert.equal(after.jobs, 0);
 });

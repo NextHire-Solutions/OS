@@ -150,32 +150,40 @@ export const campaignCreate: ActionSpec<Args, Bind> = {
     const made = await step("creating it", () => (bind.sourceId ? eb.duplicateCampaign(bind.sourceId, { retry: false }) : eb.createCampaign(bind.name, { retry: false })));
     id = Number((made as { data?: { id?: unknown } })?.data?.id);
     if (!Number.isInteger(id) || id <= 0) throw new Error("EmailBison did not return the new campaign's number. Look in EmailBison before trying again.");
-    if (bind.sourceId) await step("renaming it", () => eb.updateCampaign(id!, { name: bind.name }));
-    let fields: string | null = null;
-    if (bind.sourceId && bind.client) {
-      const { data: c } = await osTable("os_clients").select("name, aliases, areas").eq("id", bind.client.osClientId).maybeSingle();
-      const values = clientFieldValues(c as { name: string; aliases: string[] | null; areas: string[] | null } | null);
-      const filled = await step("filling its client fields", () => fillCampaignSequence(eb as EmailBisonClient, id!, bind.name, values));
-      fields = filled.missing.length ? `not filled: ${filled.missing.join(", ")}` : filled.filled ? `${filled.filled} filled` : null;
-    }
-    for (let i = 0; i < bind.inboxes.length; i += 250) await step("attaching its inboxes", () => eb.attachSenderEmails(id!, bind.inboxes.slice(i, i + 250)));
-    // In Campaign Analytics at once (as a draft), tied to the client when it has a record, and in the campaign's history.
+    // Recorded in Campaign Analytics AT ONCE, under its new name: whatever fails next, a retry finds the name taken and
+    // never makes a second one (the name check reads this cache).
     const sb = getAnalyticsSupabase();
     const teamId = analyticsTeamId();
     const cached = await sb.from("campaigns").upsert({ id, team_id: teamId, name: bind.name, status: "draft", synced_at: new Date().toISOString() }, { onConflict: "id" });
-    if (cached.error) throw new Error(`Campaign #${id} "${bind.name}" was made, but Campaign Analytics couldn't record it (${cached.error.message}); it appears there at the next sync.`);
+    if (cached.error) throw new Error(`Campaign #${id} was made in EmailBison, but Campaign Analytics couldn't record it (${cached.error.message}). Don't make it again: find #${id} in EmailBison and rename it "${bind.name}".`);
+    if (bind.sourceId) await step("renaming it", () => eb.updateCampaign(id!, { name: bind.name }));
+    const notes: string[] = [];
+    if (bind.sourceId && bind.client) {
+      // As a new client's first campaign: a fill that can't be done is said, never a failure (the Launch tab refuses
+      // to start a campaign that still holds a placeholder).
+      try {
+        const { data: c } = await osTable("os_clients").select("name, aliases, areas").eq("id", bind.client.osClientId).maybeSingle();
+        const values = clientFieldValues(c as { name: string; aliases: string[] | null; areas: string[] | null } | null);
+        const filled = await fillCampaignSequence(eb as EmailBisonClient, id!, bind.name, values);
+        if (filled.missing.length) notes.push(`Client fields not filled (${filled.missing.join(", ")}): add them on ${bind.client.name}'s record and save its sequence before starting it.`);
+      } catch (e) {
+        notes.push(`Its client fields could not be filled (${describeEmailBisonError(e)}): open its sequence before starting it.`);
+      }
+    }
+    for (let i = 0; i < bind.inboxes.length; i += 250) await step("attaching its inboxes", () => eb.attachSenderEmails(id!, bind.inboxes.slice(i, i + 250)));
+    // Tied to the client when it has a record, and in the campaign's history.
     if (bind.client?.analyticsClientId) {
       const linked = await sb.from("campaign_clients").upsert({
         campaign_id: id, client_id: bind.client.analyticsClientId, match_method: "manual", matched_on: "claude", confidence: 1,
         ambiguous: false, excluded: false, exclude_reason: null, resolved_at: new Date().toISOString(),
       }, { onConflict: "campaign_id" });
-      if (linked.error) throw new Error(`Campaign #${id} "${bind.name}" was made, but tying it to ${bind.client.name} failed (${linked.error.message}). Tie it on its Client tab.`);
+      if (linked.error) notes.push(`Not tied to ${bind.client.name} in Campaign Analytics (${linked.error.message}): tie it on its Client tab.`);
     }
     await sb.from("campaign_audit_log").insert({
       team_id: teamId, campaign_id: id, campaign_name: bind.name, action: "create", actor, status: "ok", error: null,
       before_state: { source_campaign_id: bind.sourceId, client: bind.client?.name ?? null }, after_state: { campaign_id: id, inboxes: bind.inboxes.length }, batch_id: crypto.randomUUID(),
     });
     console.info(`[mcp-action] ${actor}: created campaign #${id} "${bind.name}"${bind.sourceId ? ` from #${bind.sourceId}` : " (blank)"}`);
-    return { number: id, name: bind.name, status: "draft", copiedFrom: bind.sourceName, client: bind.client?.name ?? null, inboxes: bind.inboxes.length, ...(fields ? { clientFields: fields } : {}), next: "Add agents with campaign_add_agents; start it with campaign_start." };
+    return { number: id, name: bind.name, status: "draft", copiedFrom: bind.sourceName, client: bind.client?.name ?? null, inboxes: bind.inboxes.length, ...(notes.length ? { notes } : {}), next: "Add agents with campaign_add_agents; start it with campaign_start." };
   },
 };

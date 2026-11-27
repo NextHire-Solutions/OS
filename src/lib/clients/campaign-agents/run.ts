@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { osTable } from "@/lib/clients/os-db";
 import { loadLeadAgents, type SyncAgent } from "@/lib/clients/prospect-sync/agents";
+import { databaseEmail, type LeadAgent } from "@/lib/clients/prospect-sync/lead-map";
+import { portalsOf } from "@/lib/clients/usage-billing/leads";
 import { addInto, BACKOFF_MIN, MAX_ATTEMPTS, prospectSyncDeps, type AddSink, type Campaign, type ProspectSyncDeps, type QueueRow } from "@/lib/clients/prospect-sync/run";
 import type { CampaignOutcome } from "@/lib/clients/prospect-sync/rules";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -91,13 +93,8 @@ export interface ClientLists {
  * portal's Market never moves one (portal-save.ts: by email, by name where an entry has none, by company domain).
  */
 export async function loadClientLists(osClientId: string): Promise<ClientLists> {
-  const [{ data: c, error: e1 }, { data: routes, error: e2 }] = await Promise.all([
-    osTable("os_clients").select("mi_client_id").eq("id", osClientId).maybeSingle(),
-    osTable("os_campaign_portals").select("mi_client_id").eq("os_client_id", osClientId),
-  ]);
-  if (e1) throw new Error(`os_clients: ${e1.message}`);
-  if (e2) throw new Error(`os_campaign_portals: ${e2.message}`);
-  const portals = [...new Set([s((c as { mi_client_id?: unknown } | null)?.mi_client_id), ...((routes ?? []) as Array<{ mi_client_id: string }>).map((r) => s(r.mi_client_id))].filter(Boolean))];
+  // Every portal that is this client's — linked, routed, or its name / alias (usage-billing's portalsOf, the standard).
+  const portals = await portalsOf(osClientId);
   const mi = createAdminSupabase();
   type Q = { range: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }> };
   const all = <T,>(table: string, columns: string, portal: string, key = "client_id") =>
@@ -124,7 +121,9 @@ export async function loadClientLists(osClientId: string): Promise<ClientLists> 
 
 /** Which list an agent is on, or null: by either of its addresses, its addresses' domain, or its name (entries with no email). */
 export function onClientList(a: Pick<SyncAgent, "preferred_email" | "enriched_email" | "full_name">, lists: ClientLists): string | null {
-  const emails = [a.preferred_email, a.enriched_email].map((e) => lower(e as string | null)).filter(Boolean);
+  // Its addresses, and the one its lead would be made with (databaseEmail: it can be a source's own).
+  const sent = (() => { try { const e = databaseEmail(a as LeadAgent); return "email" in e ? e.email : null; } catch { return null; } })();
+  const emails = [...new Set([a.preferred_email, a.enriched_email, sent].map((e) => lower(e as string | null)).filter(Boolean))];
   if (emails.some((e) => lists.emails.has(e))) return "is on the client's DNC List, My Agents or pipeline";
   if (emails.some((e) => lists.domains.has(e.split("@")[1] ?? ""))) return "is at a company on the client's DNC List";
   if (personKey(a.full_name).length >= 5 && lists.names.has(personKey(a.full_name))) return "has the name of someone on the client's DNC List, My Agents or pipeline";
@@ -181,6 +180,8 @@ export interface JobDeps {
   loadAgents?: (ids: readonly string[], mlsScope: readonly string[] | null) => Promise<Map<string, SyncAgent>>;
   clientLists?: (osClientId: string) => Promise<ClientLists>;
   clientCampaigns?: (osClientId: string) => Promise<Campaign[]>;
+  /** The campaign's client as it is NOW (it can be tied to one after the job started). */
+  campaignClient?: (campaignId: string) => Promise<{ osClientId: string; name: string } | null>;
   /** prospect-sync's own EmailBison calls, with overrides (the tests' stand-ins); attach is always named for the person who asked. */
   syncBase?: Parameters<typeof prospectSyncDeps>[0];
   bell?: (row: { kind: string; severity: string; title: string; body: string; ref: string }) => Promise<void>;
@@ -201,6 +202,7 @@ function realDeps(d: JobDeps) {
     ids: d.ids ?? ((filters: Record<string, unknown>, offset: number) => agentIdsPage(filters, offset)),
     loadAgents: d.loadAgents ?? ((ids: readonly string[], mlsScope: readonly string[] | null) => loadLeadAgents(ids, { mlsScope })),
     clientLists: d.clientLists ?? loadClientLists,
+    campaignClient: d.campaignClient ?? campaignClient,
     clientCampaigns: d.clientCampaigns ?? (async (osClientId: string) => {
       const record = await base.clientRecord(osClientId);
       return record ? base.campaigns(record) : [];
@@ -217,8 +219,11 @@ function realDeps(d: JobDeps) {
 
 export interface JobRunResult { jobs: number; collected: number; claimed: number; finished: string[]; notes: string[] }
 
-async function patchJob(id: string, patch: Record<string, unknown>, now: Date) {
-  const { error } = await osTable("os_campaign_agent_jobs").update({ ...patch, updated_at: now.toISOString() }).eq("id", id);
+/** Updates the job — `running`: only while it is still collecting or adding (a job stopped meanwhile keeps its words). */
+async function patchJob(id: string, patch: Record<string, unknown>, now: Date, running = false) {
+  let q = osTable("os_campaign_agent_jobs").update({ ...patch, updated_at: now.toISOString() }).eq("id", id);
+  if (running) q = q.in("status", ["collecting", "adding"]);
+  const { error } = await q;
   if (error) throw new Error(`os_campaign_agent_jobs: ${error.message}`);
 }
 
@@ -274,7 +279,22 @@ async function runJob(x: ReturnType<typeof realDeps>, job: AgentJob, now: Date, 
   }
 
   if (job.status === "collecting") {
-    const page = await x.ids(job.filters, job.collected);
+    let page: string[];
+    try {
+      page = await x.ids(job.filters, job.collected);
+    } catch (e) {
+      // Counted in the job's own words; the fifth failure in a row stops it (and the bell says so).
+      const tries = Number(/Collecting failed (\d+) of 5/.exec(job.detail ?? "")?.[1] ?? 0) + 1;
+      const why = e instanceof Error ? e.message : String(e);
+      if (tries >= 5) {
+        await patchJob(job.id, { status: "failed", detail: `Collecting the agents failed 5 times (${why.slice(0, 300)}); ${job.collected.toLocaleString("en-US")} were collected and are not added. Add them again with narrower filters.`, finished_at: now.toISOString() }, now, true);
+        await x.bell({ kind: "campaign_agents", severity: "warning", title: `Adding agents stopped — ${name}`, body: `The agent database couldn't give the agents (${why.slice(0, 200)}) (${job.requested_by} via Claude).`, ref: `campaign_agents:collect-failed:${job.id}` });
+        out.finished.push(job.id);
+      } else {
+        await patchJob(job.id, { detail: `Collecting failed ${tries} of 5 times so far (${why.slice(0, 300)}); trying again next minute.` }, now, true);
+      }
+      return;
+    }
     for (const part of chunks(page, 1000)) {
       const { error } = await osTable("os_campaign_agent_job_items").upsert(part.map((agent_id) => ({ job_id: job.id, agent_id })), { onConflict: "job_id,agent_id", ignoreDuplicates: true });
       if (error) throw new Error(`os_campaign_agent_job_items: ${error.message}`);
@@ -283,11 +303,11 @@ async function runJob(x: ReturnType<typeof realDeps>, job: AgentJob, now: Date, 
     out.collected += page.length;
     const done = page.length < IDS_PAGE;
     if (done && collected === 0) {
-      await patchJob(job.id, { collected, status: "done", detail: "No agent matches these filters now.", finished_at: now.toISOString() }, now);
+      await patchJob(job.id, { collected, status: "done", detail: "No agent matches these filters now.", finished_at: now.toISOString() }, now, true);
       out.finished.push(job.id);
       return;
     }
-    await patchJob(job.id, { collected, status: done ? "adding" : "collecting", detail: done ? `${collected.toLocaleString("en-US")} agents to add.` : `Collecting: ${collected.toLocaleString("en-US")} so far.` }, now);
+    await patchJob(job.id, { collected, status: done ? "adding" : "collecting", detail: done ? `${collected.toLocaleString("en-US")} agents to add.` : `Collecting: ${collected.toLocaleString("en-US")} so far.` }, now, true);
     return;
   }
 
@@ -299,7 +319,7 @@ async function runJob(x: ReturnType<typeof realDeps>, job: AgentJob, now: Date, 
   if (!pending.length) {
     const t = await jobTotals(job.id);
     if (t.open === 0) {
-      await patchJob(job.id, { status: "done", added: t.added, already: t.already, skipped: t.skipped, failed: t.failed, detail: summary(t), finished_at: now.toISOString() }, now);
+      await patchJob(job.id, { status: "done", added: t.added, already: t.already, skipped: t.skipped, failed: t.failed, detail: summary(t), finished_at: now.toISOString() }, now, true);
       await x.bell({ kind: "campaign_agents", severity: t.failed ? "warning" : "info", title: `Agents added — ${name}`, body: `${summary(t)} (${job.requested_by} via Claude).`, ref: `campaign_agents:done:${job.id}` });
       out.finished.push(job.id);
     }
@@ -318,29 +338,40 @@ async function runJob(x: ReturnType<typeof realDeps>, job: AgentJob, now: Date, 
   if (!claimed.length) return;
   const sink = new JobSink(token, now);
   const rows = claimed.map((p) => ({ id: Number(p.id), agent_id: String(p.agent_id), attempts: n(p.attempts), email: null } as unknown as QueueRow));
-  const agents = await x.loadAgents(rows.map((r) => r.agent_id), job.mls_scope && job.mls_scope.length ? job.mls_scope : null);
+  try {
+    const agents = await x.loadAgents(rows.map((r) => r.agent_id), job.mls_scope && job.mls_scope.length ? job.mls_scope : null);
 
-  // A client's campaign: its own lists are never emailed from here; its other campaigns aren't added to twice.
-  let own: Campaign[] = [];
-  let toAdd = rows;
-  if (job.os_client_id) {
-    const [lists, campaigns] = await Promise.all([x.clientLists(job.os_client_id), x.clientCampaigns(job.os_client_id)]);
-    own = campaigns;
-    const left: QueueRow[] = [];
-    toAdd = [];
-    for (const r of rows) {
-      const a = agents.get(r.agent_id);
-      const why = a ? onClientList(a, lists) : null;
-      if (why) { left.push(r); if (a?.full_name) sink.names.set(r.agent_id, a.full_name); } else toAdd.push(r);
+    // A client's campaign — as it is now (tied to a client after the job started counts): its own lists are never
+    // emailed from here; its other campaigns aren't added to twice.
+    const now_client = await x.campaignClient(job.campaign_id);
+    const osClientId = now_client?.osClientId ?? job.os_client_id;
+    if (osClientId && osClientId !== job.os_client_id) await patchJob(job.id, { os_client_id: osClientId }, now, true);
+    let own: Campaign[] = [];
+    let toAdd = rows;
+    if (osClientId) {
+      const [lists, campaigns] = await Promise.all([x.clientLists(osClientId), x.clientCampaigns(osClientId)]);
+      own = campaigns;
+      const left: QueueRow[] = [];
+      toAdd = [];
+      for (const r of rows) {
+        const a = agents.get(r.agent_id);
+        const why = a ? onClientList(a, lists) : null;
+        if (why) { left.push(r); if (a?.full_name) sink.names.set(r.agent_id, a.full_name); } else toAdd.push(r);
+      }
+      for (const r of left) {
+        const a = agents.get(r.agent_id)!;
+        await sink.finish([r], "skipped", `Not added: this agent ${onClientList(a, lists)}.`, {}, { kind: "notAdded", reason: "on the client's own lists" });
+      }
     }
-    for (const r of left) {
-      const a = agents.get(r.agent_id)!;
-      await sink.finish([r], "skipped", `Not added: this agent ${onClientList(a, lists)}.`, {}, { kind: "notAdded", reason: "on the client's own lists" });
-    }
+    if (toAdd.length) await addInto(x.sync(job.requested_by), { id: String(job.campaign_id), name }, agents, toAdd, own, new Set(), sink);
+  } catch (e) {
+    // Anything that failed part-way: the agents still claimed by this run are tried again later, each try counted
+    // (sink.retry; finished ones keep what they are — only rows still holding this run's claim are touched).
+    await sink.retry(rows, `Not added yet: ${e instanceof Error ? e.message : String(e)}`.slice(0, 900));
+    out.notes.push(`${job.id.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (toAdd.length) await addInto(x.sync(job.requested_by), { id: String(job.campaign_id), name }, agents, toAdd, own, new Set(), sink);
   const t = await jobTotals(job.id);
-  await patchJob(job.id, { added: t.added, already: t.already, skipped: t.skipped, failed: t.failed, detail: `${summary(t)}${t.open ? ` ${t.open.toLocaleString("en-US")} still to go.` : ""}` }, now);
+  await patchJob(job.id, { added: t.added, already: t.already, skipped: t.skipped, failed: t.failed, detail: `${summary(t)}${t.open ? ` ${t.open.toLocaleString("en-US")} still to go.` : ""}` }, now, true);
 }
 
 function summary(t: { added: number; already: number; skipped: number; failed: number }): string {
@@ -360,6 +391,21 @@ export async function createAgentJob(o: {
   }).select("id").single();
   if (error) throw new Error(missingTable(error) ? "needs migrations/0059_campaign_agent_jobs.sql" : `os_campaign_agent_jobs: ${error.message}`);
   return { id: String((data as { id: string }).id) };
+}
+
+/** Stops a running job: what is done stays done; the agents not yet worked on are not added. */
+export async function stopAgentJob(jobId: string, by: string): Promise<{ stopped: boolean; notAdded: number }> {
+  const now = new Date().toISOString();
+  const { data, error } = await osTable("os_campaign_agent_jobs").update({ status: "failed", detail: `Stopped by ${by} via Claude.`, finished_at: now, updated_at: now })
+    .eq("id", jobId).in("status", ["collecting", "adding"]).select("id");
+  if (error) throw new Error(`os_campaign_agent_jobs: ${error.message}`);
+  if (!((data ?? []) as unknown[]).length) return { stopped: false, notAdded: 0 };
+  const { data: left, error: e2 } = await osTable("os_campaign_agent_job_items").update({ status: "skipped", kind: "skipped", detail: `Not added: the add was stopped by ${by} via Claude.`, processed_at: now, updated_at: now, next_try_at: null })
+    .eq("job_id", jobId).eq("status", "pending").select("id");
+  if (e2) throw new Error(`os_campaign_agent_job_items: ${e2.message}`);
+  const t = await jobTotals(jobId);
+  await osTable("os_campaign_agent_jobs").update({ added: t.added, already: t.already, skipped: t.skipped, failed: t.failed, detail: `Stopped by ${by} via Claude. ${summary(t)}` }).eq("id", jobId);
+  return { stopped: true, notAdded: ((left ?? []) as unknown[]).length };
 }
 
 /** A job still running for this campaign, or null. */
