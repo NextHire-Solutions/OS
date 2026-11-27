@@ -37,6 +37,8 @@ const needs = (path: string): ToolId[] => (grantsForRequest(path, "POST") ?? [])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 const isStop = (label: string | null) => isStopContactLabel(label) || isHostileLabel(label);
+/* BrokerStaffer stopped using Instantly (last send 8 Sep 2026): nothing is sent through it from Claude (27 Nov). */
+const INSTANTLY_REFUSAL = "This conversation came through Instantly, which BrokerStaffer no longer uses, so nothing is sent on it through Claude. If it still needs an answer, do it in the Master Inbox.";
 
 async function latestInboundId(admin: ReturnType<typeof createAdminSupabase>, threadId: string): Promise<string | null> {
   const { data } = await admin.from("messages").select("id").eq("thread_id", threadId).eq("direction", "inbound").order("sent_at", { ascending: false }).limit(1);
@@ -96,6 +98,12 @@ export const inboxIntroduce: ActionSpec<IntroArgs, IntroBind> = {
     });
     if (plan.kind === "stop") return { ok: false, refusal: `No introduction can be written: ${plan.detail}.` };
     const provider = (await admin.from("threads").select("source_provider").eq("id", a.thread_id).maybeSingle()).data?.source_provider as string | null;
+    if ((provider ?? "").toLowerCase() === "instantly") return { ok: false, refusal: INSTANTLY_REFUSAL };
+    // The introduction greets the lead by first name ("Hey {{lead.first_name}},"). With none on record it would open
+    // "Hey ," and name nobody; the inbox's Introduce button lets someone fix that in the composer, Claude sends as previewed.
+    if (!(input.leadName ?? "").trim() || /^\s*(hey|hi|hello)\s*,/i.test(plan.body)) {
+      return { ok: false, refusal: "This lead has no name on record, so the introduction would open \"Hey ,\" and name nobody. Introduce them from the Master Inbox, where the email can be edited before it goes." };
+    }
     const sender = await introSenderFor(admin, ws, provider ?? "emailbison");
     const cc = mergeAlwaysCcString(plan.cc.join(", "), input.leadEmail).split(/,\s*/).filter(Boolean);
     const from = sender.channelId ? `${sender.name ?? ""} <${sender.email}>`.trim() : `the campaign's own mailbox (${sender.problem ?? "no introductions mailbox on this platform"})`;
@@ -171,7 +179,8 @@ export const inboxReply: ActionSpec<ReplyArgs, ReplyBind> = {
     if (!t) return { ok: false, refusal: "No conversation with that thread_id." };
     if (isStop(t.label)) return { ok: false, refusal: `This lead is labelled ${t.label}: they are not to be contacted.` };
     if (t.status === "trash") return { ok: false, refusal: "That conversation is in the trash." };
-    const { data: th } = await admin.from("threads").select("subject, outbound_sender_email, leads:lead_id(email, full_name)").eq("id", a.thread_id).maybeSingle();
+    const { data: th } = await admin.from("threads").select("subject, outbound_sender_email, source_provider, leads:lead_id(email, full_name)").eq("id", a.thread_id).maybeSingle();
+    if (String((th as { source_provider?: unknown } | null)?.source_provider ?? "").toLowerCase() === "instantly") return { ok: false, refusal: INSTANTLY_REFUSAL };
     const lead = Array.isArray(th?.leads) ? th?.leads[0] : th?.leads;
     const to = (lead as { email?: string } | null)?.email ?? null;
     if (!to) return { ok: false, refusal: "The lead has no email address on this conversation." };

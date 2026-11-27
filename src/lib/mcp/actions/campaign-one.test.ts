@@ -366,6 +366,9 @@ test("edit copy: one email's wording through the portal editor's planner — onl
   world.seqStatus = "completed";
   assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1, text: "x" })).refused), /is completed: its emails aren't changed any more/);
   assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1 })).refused), /Give the new subject and\/or text/);
+  // A reply in the first email's thread has no subject of its own: said, not silently dropped.
+  world.seqStatus = "active";
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 2, subject: "Checking in" })).refused), /is sent as a reply in the first email's thread, so it has no subject of its own \(it goes out as "Re: Quick question"\)/);
   assert.deepEqual(calls, []);
 
   // Someone edits another email between preview and confirm: nothing written over it.

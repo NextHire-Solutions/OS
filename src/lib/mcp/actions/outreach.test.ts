@@ -11,7 +11,7 @@ const skip = canMock ? false : "needs node --experimental-test-module-mocks --im
 
 const T = "11111111-1111-4111-8111-111111111111";
 const calls: string[] = [];
-const state = { label: "Interested" as string | null, introducedBefore: false, inbound: "m1", handoff: null as string | null, plan: "ok" as "ok" | "stop", sendOk: true };
+const state = { label: "Interested" as string | null, introducedBefore: false, inbound: "m1", handoff: null as string | null, plan: "ok" as "ok" | "stop", sendOk: true, provider: "emailbison", leadName: "Ann Lee" };
 
 function from(table: string) {
   const q: Record<string, unknown> = {};
@@ -20,7 +20,7 @@ function from(table: string) {
   b.eq = (c: string, v: unknown) => { q[c] = v; return b; };
   const data = () => {
     switch (table) {
-      case "threads": return { id: T, subject: "Re: Ann?", status: "open", last_message_at: "2026-11-25T00:00:00Z", source_provider: "emailbison", outbound_sender_email: "william@buildbuyerlists.com", client_id: "c1", leads: { full_name: "Ann Lee", email: "ann@example.com" }, clients: { name: "Howe Realty Group" } };
+      case "threads": return { id: T, subject: "Re: Ann?", status: "open", last_message_at: "2026-11-25T00:00:00Z", source_provider: state.provider, outbound_sender_email: "william@buildbuyerlists.com", client_id: "c1", leads: { full_name: "Ann Lee", email: "ann@example.com" }, clients: { name: "Howe Realty Group" } };
       case "label_assignments": return state.label ? [{ labels: { name: state.label } }] : [];
       case "reminders": return [];
       case "label_history": return q.label_name === "Introduction" ? (state.introducedBefore ? [{ id: 1 }] : []) : [];
@@ -45,7 +45,7 @@ async function load() {
   mock.module("@/lib/tools/master-inbox/supabase", { namedExports: { getMasterInboxSupabase: () => ({ from }), workspaceId: async () => "ws1" } });
   mock.module("@/lib/tools/master-inbox/ai/runtime", {
     namedExports: {
-      assembleRunInput: async () => ({ clientId: "c1", leadName: "Ann Lee", leadEmail: "ann@example.com", introduction: { client: { name: "Howe Realty Group" }, unavailableReason: null } }),
+      assembleRunInput: async () => ({ clientId: "c1", leadName: state.leadName, leadEmail: "ann@example.com", introduction: { client: { name: "Howe Realty Group" }, unavailableReason: null } }),
       handoverVariables: () => ({}),
     },
   });
@@ -84,7 +84,7 @@ function deps() {
   };
 }
 const run = (spec: unknown, args: Record<string, unknown>, d = deps()) => core.runAction(spec as never, args, EDDY, d as never);
-const reset = () => { calls.length = 0; Object.assign(state, { label: "Interested", introducedBefore: false, inbound: "m1", handoff: null, plan: "ok", sendOk: true }); };
+const reset = () => { calls.length = 0; Object.assign(state, { label: "Interested", introducedBefore: false, inbound: "m1", handoff: null, plan: "ok", sendOk: true, provider: "emailbison", leadName: "Ann Lee" }); };
 
 test("introduce: the preview is the whole email; confirm sends exactly it (from the intro mailbox, new subject), then labels Introduction", { skip }, async () => {
   await load(); reset();
@@ -149,4 +149,16 @@ test("reply: a new message from the lead after the preview → nothing sent, fre
   reset(); state.label = "Do Not Contact";
   assert.match(String((await run(reply, { thread_id: T, text: "hi" })).refused), /not to be contacted/);
   assert.match(String((await run(reply, { thread_id: T, text: "hi", cc: ["not-an-email"] })).refused), /Not email addresses/);
+});
+
+test("an Instantly conversation: neither introduced nor replied to through Claude; a lead with no name is not introduced (it would open \"Hey ,\")", { skip }, async () => {
+  await load();
+  reset(); state.provider = "instantly";
+  assert.match(String((await run(intro, { thread_id: T })).refused), /came through Instantly, which BrokerStaffer no longer uses/);
+  assert.match(String((await run(reply, { thread_id: T, text: "hi" })).refused), /came through Instantly/);
+  reset(); state.leadName = "";
+  assert.match(String((await run(intro, { thread_id: T })).refused), /no name on record, so the introduction would open "Hey ,"/);
+  // A reply needs no name.
+  assert.ok((await run(reply, { thread_id: T, text: "hi" })).preview);
+  assert.deepEqual(calls, []);
 });

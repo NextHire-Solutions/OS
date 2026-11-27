@@ -81,6 +81,12 @@ export const campaignEditCopy: ActionSpec<Args, Bind> = {
     if (e.off) return { ok: false, refusal: `Email ${a.email} of ${name} is turned off; turn it on in the OS first.` };
     const v = e.versions[a.version - 1];
     if (!v) return { ok: false, refusal: `Email ${a.email} of ${name} has ${e.versions.length} version${e.versions.length === 1 ? "" : "s"} switched on; there is no version ${a.version}.` };
+    // A reply in the first email's thread has no subject of its own (it goes out as "Re: <email 1's subject>"); the
+    // planner keeps it as it is, so a subject asked for here would silently not happen — said instead.
+    const replies = a.version === 1 ? e.threadReply : v.reply === true;
+    if (a.subject !== undefined && replies && a.subject.trim() !== v.subject.trim()) {
+      return { ok: false, refusal: `Email ${a.email}${a.version > 1 ? ` (version ${VERSION_LETTER(a.version - 1)})` : ""} of ${name} is sent as a reply in the first email's thread, so it has no subject of its own (it goes out as "Re: ${model.emails[0]?.versions[0]?.subject ?? ""}"). Leave the subject out, or change email 1's subject.` };
+    }
 
     // The whole campaign as read, with this one version's wording changed.
     let input: SaveInput = {
