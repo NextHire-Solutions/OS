@@ -21,6 +21,10 @@ const world = {
   unhealthy: new Map<number, string>(),
   onCampaign: 12,
   addResult: { ok: true, outcome: "added", added: 0, alreadyOn: 0, before: 12, after: 0, dropped: 0 } as Record<string, unknown>,
+  seq: [] as Array<{ id: number; order: number | null; subject: string; body: string; wait: number; variant: boolean; parentId: number | null; threadReply: boolean; active: boolean }>,
+  seqStatus: "active",
+  fields: { clientName: "Howe Realty Group", area: "Atlanta" as string | null, alias: "Howe" as string | null },
+  updateFails: false,
 };
 const calls: string[] = [];
 
@@ -36,6 +40,9 @@ function likeToRegex(p: string): RegExp {
 function analyticsDb() {
   return {
     from(table: string) {
+      if (table === "campaign_audit_log") {
+        return { insert: async (r: Record<string, unknown>) => { calls.push(`audit ${r.action} ${r.status} by ${r.actor}`); return { error: null }; } };
+      }
       if (table === "sender_emails") {
         const q = { eq: {} as Record<string, unknown>, nullCol: "" };
         const c: Record<string, unknown> = {
@@ -70,6 +77,7 @@ function analyticsDb() {
 
 let mod: typeof import("./campaign-one.ts");
 let inb: typeof import("./campaign-inboxes.ts");
+let edit: typeof import("./campaign-edit.ts");
 let core: typeof import("./core.ts");
 const EDDY = { email: "eddy@brokerstaffer.com", admin: true, grants: [] as string[] };
 
@@ -88,6 +96,25 @@ async function load() {
       },
     },
   });
+  mock.module("@/lib/crm-preview/campaigns", {
+    namedExports: {
+      stateOf: (status: string) => {
+        const st = String(status ?? "").toLowerCase();
+        return ["active", "queued", "launching"].includes(st) ? "sending" : st === "paused" ? "paused" : st === "draft" ? "draft" : ["completed", "stopped"].includes(st) ? "finished" : null;
+      },
+      realDeps: () => ({
+        liveCampaign: async () => ({ name: "Howe 1 + Nicole + Atlanta", status: world.seqStatus }),
+        liveSequence: async () => ({ sequenceId: 55, steps: world.seq.map((x) => ({ ...x })) }),
+        sentPerStep: async () => new Map([[101, 340]]),
+        updateSteps: async (sequenceId: number, title: string, writes: Array<{ id: number; email_subject: string; email_body: string }>) => {
+          calls.push(`update seq ${sequenceId} "${title}" ${JSON.stringify(writes.map((w) => [w.id, w.email_subject, w.email_body]))}`);
+          if (world.updateFails) throw new Error("EmailBison: step locked");
+          for (const w of writes) { const st = world.seq.find((x) => x.id === w.id)!; st.subject = w.email_subject; st.body = w.email_body; }
+        },
+      }),
+    },
+  });
+  mock.module("@/lib/tools/analytics/campaigns/client-fields-load", { namedExports: { clientFieldValuesForCampaign: async () => world.fields } });
   mock.module("@/lib/tools/analytics/campaigns/inbox-add-run", {
     namedExports: {
       runInboxAdd: async (i: { campaignId: number; inboxIds: number[]; actor: string; from: string }) => {
@@ -122,6 +149,7 @@ async function load() {
   core = await import("./core.ts");
   mod = await import("./campaign-one.ts");
   inb = await import("./campaign-inboxes.ts");
+  edit = await import("./campaign-edit.ts");
 }
 
 function deps() {
@@ -161,6 +189,14 @@ function reset() {
   ];
   world.unhealthy = new Map();
   world.onCampaign = 12;
+  world.seq = [
+    { id: 101, order: 1, subject: "Quick question", body: "<p>Hi {FIRST_NAME},</p><p>Are you open to a move this year?</p>", wait: 0, variant: false, parentId: null, threadReply: false, active: true },
+    { id: 102, order: 1, subject: "Quick q", body: "<p>Hi {FIRST_NAME}, open to a move?</p>", wait: 0, variant: true, parentId: 101, threadReply: false, active: true },
+    { id: 103, order: 2, subject: "Re: Quick question", body: "<p>Following up, {FIRST_NAME}.</p>", wait: 3, variant: false, parentId: null, threadReply: true, active: true },
+  ];
+  world.seqStatus = "active";
+  world.fields = { clientName: "Howe Realty Group", area: "Atlanta", alias: "Howe" };
+  world.updateFails = false;
 }
 
 test("finding a campaign: by number, exact name, one match — several or none are said, never guessed; Instantly and other teams never", { skip }, async () => {
@@ -284,4 +320,68 @@ test("add inboxes: by tag or by address; only healthy ones, said why; confirm ru
   world.unhealthy = new Map([[12, "Bounce rate 4%"]]);
   assert.match(String((await run(inb.campaignAddInboxes, { campaign: "#1", tag: "Pool 12", confirm: p2.confirm }, d2)).refused), /Things changed/);
   assert.deepEqual(calls, []);
+});
+
+
+test("edit copy: one email's wording through the portal editor's planner — only that step written, plain text to HTML, read back; its rules and every refusal", { skip }, async () => {
+  await load(); reset();
+  const d = deps();
+  const p = await run(edit.campaignEditCopy, { campaign: "#1", email: 1, text: "Hi {FIRST_NAME},\n\nWould a team in Atlanta interest you this year?" }, d);
+  assert.match(String(p.preview), /^Change email 1 of "Howe 1 \+ Nicole \+ Atlanta" \(#1, active\)\. Subject stays "Quick question"\. Text now \(\d+ words\): «Hi \{FIRST_NAME\},/);
+  assert.match(String(p.preview), /It has gone to 340 leads already; the new wording is for everyone who gets it from now on\.$/);
+  assert.deepEqual(calls, [], "the preview wrote nothing");
+  const done = await run(edit.campaignEditCopy, { campaign: "#1", email: 1, text: "Hi {FIRST_NAME},\n\nWould a team in Atlanta interest you this year?", confirm: p.confirm }, d);
+  assert.equal(done.done, true);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /^update seq 55 "Howe 1 \+ Nicole \+ Atlanta" \[\[101,"Quick question","/, "only step 101, by id, in its sequence");
+  assert.ok(!/103|102/.test(calls[0]), "the other emails and the A/B version untouched");
+  assert.equal(calls[1], "audit edit-sequence ok by eddy@brokerstaffer.com via Claude");
+  assert.equal((done.result as { confirmedInEmailBison: boolean }).confirmedInEmailBison, true);
+
+  // An A/B version's subject.
+  reset();
+  const v2 = await run(edit.campaignEditCopy, { campaign: "#1", email: 1, version: 2, subject: "Open to a move?" });
+  assert.match(String(v2.preview), /^Change email 1 \(version B\) of .* Subject: "Quick q" → "Open to a move\?"\. Text stays as it is\./);
+
+  // {CLIENT_AREA}: filled with the campaign's area before it is written; no area — refused.
+  reset();
+  const d3 = deps();
+  const p3 = await run(edit.campaignEditCopy, { campaign: "#1", email: 2, text: "Still keen to hear about {CLIENT_AREA}, {FIRST_NAME}?" }, d3);
+  await run(edit.campaignEditCopy, { campaign: "#1", email: 2, text: "Still keen to hear about {CLIENT_AREA}, {FIRST_NAME}?", confirm: p3.confirm }, d3);
+  assert.match(calls[0], /\[\[103,"Quick question","[^"]*Atlanta/);
+  assert.ok(!String(calls[0]).includes("CLIENT_AREA"), "EmailBison never holds the placeholder");
+  reset(); world.fields = { clientName: "Howe Realty Group", area: null, alias: "Howe" };
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 2, text: "About {CLIENT_AREA}?" })).refused), /has no Area on record/);
+
+  // The portal's rules: words, links, unknown fields.
+  reset();
+  const long = Array.from({ length: 130 }, () => "word").join(" ");
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1, text: long })).refused), /130 words; the limit is 125/);
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1, text: "See https://howe.com for more" })).refused), /link|https/i);
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1, text: "Hi {LAST_NAME}" })).refused), /isn't a field this campaign can fill/);
+  // Nothing changes; no such email or version; a finished campaign.
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1, subject: "Quick question" })).refused), /already says that/);
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 5, text: "x" })).refused), /has 2 emails; there is no email 5/);
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 2, version: 2, text: "x" })).refused), /has 1 version switched on; there is no version 2/);
+  world.seqStatus = "completed";
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1, text: "x" })).refused), /is completed: its emails aren't changed any more/);
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1 })).refused), /Give the new subject and\/or text/);
+  assert.deepEqual(calls, []);
+
+  // Someone edits another email between preview and confirm: nothing written over it.
+  reset();
+  const d4 = deps();
+  const p4 = await run(edit.campaignEditCopy, { campaign: "#1", email: 1, subject: "A new subject" }, d4);
+  world.seq[2].body = "<p>Edited in the OS meanwhile.</p>";
+  assert.match(String((await run(edit.campaignEditCopy, { campaign: "#1", email: 1, subject: "A new subject", confirm: p4.confirm }, d4)).refused), /Things changed/);
+  assert.deepEqual(calls, []);
+
+  // EmailBison refuses: said, recorded, nothing claimed.
+  reset(); world.updateFails = true;
+  const d5 = deps();
+  const p5 = await run(edit.campaignEditCopy, { campaign: "#1", email: 1, subject: "A new subject" }, d5);
+  const f = await run(edit.campaignEditCopy, { campaign: "#1", email: 1, subject: "A new subject", confirm: p5.confirm }, d5);
+  assert.equal(f.done, false);
+  assert.match(String(f.failed), /EmailBison refused the change, so nothing was saved/);
+  assert.equal(calls.at(-1), "audit edit-sequence error by eddy@brokerstaffer.com via Claude");
 });

@@ -5,7 +5,7 @@
  */
 export const ACTION_NAMES = [
   "inbox_set_label", "inbox_snooze", "client_campaigns", "inbox_introduce", "inbox_reply",
-  "campaign_pause", "campaign_start", "campaign_limits", "campaign_add_inboxes",
+  "campaign_pause", "campaign_start", "campaign_limits", "campaign_add_inboxes", "campaign_edit_copy",
 ] as const;
 export type ActionName = (typeof ACTION_NAMES)[number];
 
