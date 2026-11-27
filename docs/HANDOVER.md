@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records awaits the user's OK
+| **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
 | **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
 | **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
 | **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
@@ -278,8 +278,12 @@ updates these records now.
 exactly the expected records: only each client's own, 0.1 to 0.5 s a click (about 1 s for 251 agents at Rise Real Estate
 Antelope, a client with a lead list).
 
-**One-off clean-up (awaits the user's OK).** 742 records list agents that were already taken off Prospects, all of them
-stale:
+**One-off clean-up: DONE 27 Nov, ~15:40 UTC, on the user's "Yes, clear them".** The plan was rebuilt just before and was identical.
+Every row was backed up in full to ~/brokerstaffer-audit-2026-11-23/prospects-letgo-backup-2026-11-27.json, then deleted
+by row id: 742 deleted, 0 left. Prospects afterwards: Bastion 0, BHGRE 3,845, Douglas Elliman New York 2,328, Hetherington
+379, with none of the cleared agents in any of them. Script: scratchpad mcpact/letgo-cleanup.mjs. It refuses on another
+client's row, the lead-list trap, a lead back in its campaign, or a count that differs from the plan. 742 records listed
+agents that were already taken off Prospects, all of them stale:
 - 734 Instantly records: Bastion 648, BHGRE 76, Douglas Elliman New York 10.
 - 8 EmailBison records at Hetherington: taken out on 6–10 Nov and re-written by the Database sync on 20 Nov; EmailBison
   no longer has them in that campaign.
