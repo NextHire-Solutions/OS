@@ -269,10 +269,12 @@ updates these records now.
 - **The lead-list trap** (`leadListWouldShow`). The agent database's search lists the client's campaign leads, or its
   lead list (orch_client_leads) while it has no campaign leads at all. 17 of 57 linked clients have such a list, up to
   5,977 agents. Neither the click nor the run ever drops a client's last records while it has one: they stay, and the
-  run rings a warning bell. This trap was already reachable through the run's own drop since 2 Nov.
+  run rings a warning bell. This trap was already reachable through the run's own drop since 2 Nov. A cheap count comes
+  first (one per 150 agents); only a drop near the client's last records is counted exactly.
 
 **Tests.** 4,148 pass. Live dry run: the branch's real code ran on live data with every delete intercepted. It selected
-exactly the expected records: only each client's own, 0.1 to 0.5 s a click.
+exactly the expected records: only each client's own, 0.1 to 0.5 s a click (about 1 s for 251 agents at Rise Real Estate
+Antelope, a client with a lead list).
 
 **One-off clean-up (awaits the user's OK).** 742 records list agents that were already taken off Prospects, all of them
 stale:

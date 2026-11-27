@@ -278,6 +278,14 @@ export async function leadListWouldShow(orchClientId: string, drops: readonly Dr
   const leadList = await counted(db.from("orch_client_leads").select("agent_id", { count: "exact", head: true }).eq("client_id", orchClientId).not("agent_id", "is", null), "orch_client_leads");
   if (!leadList) return null;
   const total = await counted(db.from("v_agent_campaigns").select("agent_id", { count: "exact", head: true }).eq("client_id", orchClientId), "v_agent_campaigns");
+  // First, cheaply: every record these agents have at the client (at least what is dropped), 150 agents a count. Some
+  // left even then: fine. Only a drop near the client's last records is counted exactly, campaign by campaign.
+  const agents = [...new Set(drops.flatMap((d) => [...d.campaignsOf.keys()]))];
+  let atMost = 0;
+  for (let i = 0; i < agents.length; i += 150) {
+    atMost += await counted(db.from("v_agent_campaigns").select("agent_id", { count: "exact", head: true }).eq("client_id", orchClientId).in("agent_id", agents.slice(i, i + 150)), "v_agent_campaigns");
+  }
+  if (total - atMost > 0) return null;
   let dropping = 0;
   for (const d of drops) {
     for (const g of groupByCampaigns(d.campaignsOf)) {

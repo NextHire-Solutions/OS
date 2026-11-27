@@ -61,7 +61,10 @@ function deletesDb(o: { fail?: string; leadList?: number; records?: number } = {
       then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
         if (q.counting) {
           counts.push(table);
-          const count = table === "orch_client_leads" ? (o.leadList ?? 0) : table === "v_agent_campaigns" ? (o.records ?? 1000) : (q.in.agent_id ?? []).length * (q.in.campaign_id ?? []).length;
+          // The client's records: all of them, or (by agent) two per agent asked — an agent's records in other campaigns too.
+          const count = table === "orch_client_leads" ? (o.leadList ?? 0)
+            : table === "v_agent_campaigns" ? (q.in.agent_id ? q.in.agent_id.length * 2 : (o.records ?? 1000))
+            : (q.in.agent_id ?? []).length * (q.in.campaign_id ?? []).length;
           return Promise.resolve({ count, error: null }).then(res, rej);
         }
         assert.ok(q.deleting, "only deletes and counts here");
@@ -134,8 +137,13 @@ test("the lead-list trap: never a client's last campaign records while it has a 
   const kept = await forgetListings(args, { db: last.db, routes: async () => [] });
   assert.deepEqual([kept.emailbison, kept.instantly, last.deletes.length], [0, 0, 0]);
   assert.match(String(kept.keptFor), /whole lead list \(1634\)/);
-  // A lead list, but records stay after: dropped.
+  // A lead list, near its last records (all 4 could be these agents'), but one stays after: counted exactly, dropped.
   const more = deletesDb({ leadList: 1634, records: 4 });
   assert.deepEqual(await forgetListings(args, { db: more.db, routes: async () => [] }), { emailbison: 2, instantly: 1 });
-  assert.deepEqual(more.counts, ["orch_client_leads", "v_agent_campaigns", "bison_client_leads", "instantly_client_leads"]);
+  assert.deepEqual(more.counts, ["orch_client_leads", "v_agent_campaigns", "v_agent_campaigns", "bison_client_leads", "instantly_client_leads"]);
+  // A lead list and plenty of records: the cheap count settles it, one per 150 agents.
+  const plenty = deletesDb({ leadList: 1634, records: 5000 });
+  const many = new Map<string, ShownCampaign[]>(Array.from({ length: 400 }, (_, i) => [`m${i}`, [eb(String(100 + (i % 37)))]]));
+  assert.equal((await forgetListings({ ...args, shown: many }, { db: plenty.db, routes: async () => [] })).emailbison, 400);
+  assert.deepEqual(plenty.counts, ["orch_client_leads", "v_agent_campaigns", "v_agent_campaigns", "v_agent_campaigns", "v_agent_campaigns"], "never one count per campaign group");
 });
