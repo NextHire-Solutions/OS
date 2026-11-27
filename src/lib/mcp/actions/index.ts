@@ -8,6 +8,8 @@ import { clientCampaigns } from "./campaigns.ts";
 import { campaignLimits, campaignPause, campaignStart } from "./campaign-one.ts";
 import { campaignAddInboxes } from "./campaign-inboxes.ts";
 import { campaignEditCopy } from "./campaign-edit.ts";
+import { campaignCreate } from "./campaign-create.ts";
+import { campaignAddAgents } from "./campaign-agents.ts";
 import { inboxSetLabel, inboxSnooze } from "./inbox.ts";
 import { inboxIntroduce, inboxReply } from "./outreach.ts";
 import { enabledActions, type ActionName } from "./switch.ts";
@@ -25,6 +27,8 @@ const ALL: Record<ActionName, ActionSpec> = {
   campaign_limits: campaignLimits as unknown as ActionSpec,
   campaign_add_inboxes: campaignAddInboxes as unknown as ActionSpec,
   campaign_edit_copy: campaignEditCopy as unknown as ActionSpec,
+  campaign_create: campaignCreate as unknown as ActionSpec,
+  campaign_add_agents: campaignAddAgents as unknown as ActionSpec,
 };
 
 /** The actions switched on (OS_MCP_ACTIONS) that this person may take. */

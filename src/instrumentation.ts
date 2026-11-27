@@ -413,6 +413,28 @@ export async function register() {
   setInterval(syncProspectsSafely, 60_000).unref?.();
 
   /*
+   * Agents from the agent database into a campaign, asked through Claude (28 Nov; lib/clients/campaign-agents/run.ts):
+   * every minute, each job's next page of agents collected, or its next batch added. Railway only; OS_CAMPAIGN_AGENTS=0
+   * pauses it (the jobs wait, nothing is lost). A slow run is never overlapped; every item is claimed before it is worked.
+   */
+  let agentJobsRunning = false;
+  const runAgentJobs = async () => {
+    if (agentJobsRunning || process.env.OS_CAMPAIGN_AGENTS === "0") return;
+    if (!process.env.MASTER_INBOX_SUPABASE_URL || !(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT)) return;
+    agentJobsRunning = true;
+    try {
+      const { runCampaignAgentJobs } = await import("./lib/clients/campaign-agents/run");
+      const r = await runCampaignAgentJobs();
+      if (r.jobs) console.log(`[campaign-agents] ${r.jobs} job(s) · ${r.collected} collected · ${r.claimed} worked${r.finished.length ? ` · finished ${r.finished.join(",")}` : ""}${r.notes.length ? ` · ${r.notes.slice(0, 3).join(" | ")}` : ""}`);
+    } finally {
+      agentJobsRunning = false;
+    }
+  };
+  const runAgentJobsSafely = () => { runAgentJobs().catch((e) => console.error("[campaign-agents] failed:", e instanceof Error ? e.message : e)); };
+  setTimeout(runAgentJobsSafely, 55_000).unref?.();
+  setInterval(runAgentJobsSafely, 60_000).unref?.();
+
+  /*
    * The billing-cycle pause (20 Nov; lib/tools/client-health/cycle-pause.ts): every 15 minutes, a client whose billing
    * cycle reached its required introductions has its sending campaigns paused, once per cycle, never restarted by
    * itself. Railway only. Without OS_CYCLE_PAUSE=1 it pauses nothing and writes nothing: the log says what it would do.

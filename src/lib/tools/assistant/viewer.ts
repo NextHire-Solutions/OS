@@ -108,6 +108,8 @@ export const TOOL_NEEDS: Readonly<Record<string, Need>> = {
   tickets: any("tickets"),
   data_consistency: admin,
   reply_agent_status: admin,
+  // Agents added to campaigns through Claude (28 Nov): the action is admins only, so its progress is too.
+  campaign_agent_jobs: admin,
 };
 
 /** Whether this person may use this tool. An unknown tool, or one with no rule, is admins only. */

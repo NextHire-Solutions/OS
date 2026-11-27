@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS public.os_campaign_agent_jobs (
   os_client_id   uuid,
   filters        jsonb       NOT NULL,
   described      text,
-  mls_codes      text[],
+  mls_scope      text[],
   matched        integer,
   collected      integer     NOT NULL DEFAULT 0,
   status         text        NOT NULL DEFAULT 'collecting' CHECK (status IN ('collecting', 'adding', 'done', 'failed')),
