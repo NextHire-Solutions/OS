@@ -11,6 +11,7 @@ const skip = canMock ? false : "needs node --experimental-test-module-mocks --im
 
 type Row = Record<string, unknown>;
 const calls: string[] = [];
+const nonces: string[] = [];
 const world = {
   ticket: null as null | Row,
   team: [] as Array<{ email: string; name: string }>,
@@ -34,7 +35,8 @@ async function load() {
     namedExports: {
       replyContext: async (id: string) => { if (world.ctxThrows) throw world.ctxThrows; calls.push(`(read reply box ${id})`); return world.ctx; },
       sendTicketReply: async (id: string, actor: string, input: Row) => {
-        calls.push(`send ${id} by ${actor} ${JSON.stringify({ ...input, nonce: typeof input.nonce === "string" && input.nonce.length >= 8 ? "<nonce>" : input.nonce })}`);
+        nonces.push(String(input.nonce));
+        calls.push(`send ${id} by ${actor} ${JSON.stringify({ ...input, nonce: /^[A-Za-z0-9_-]{8,64}$/.test(String(input.nonce)) ? "<nonce>" : input.nonce })}`);
         if (world.send.ok && world.ticket) world.ticket.last_outbound_at = "2026-11-28T10:00:00.000Z";
         return world.send;
       },
@@ -73,6 +75,7 @@ const inADay = () => new Date(Date.now() + 86_400_000).toISOString().replace("Z"
 
 function reset() {
   calls.length = 0;
+  nonces.length = 0;
   world.ctxThrows = null;
   world.team = [
     { email: "admin@outreachify.io", name: "Admin" },
@@ -81,7 +84,7 @@ function reset() {
   ];
   world.ticket = {
     id: "11111111-2222-3333-4444-555555555555", number: 42, subject: "Billing question", status: "open", assignee: null, snoozed_until: null,
-    os_client_id: "os-home", contact_email: "jane@homebase.com", contact_name: "Jane Doe", last_outbound_at: null,
+    os_client_id: "os-home", contact_email: "jane@homebase.com", contact_name: "Jane Doe", last_outbound_at: null, last_inbound_at: "2026-11-27T15:00:00.000Z",
   };
   world.ctx = {
     blocked: null,
@@ -180,10 +183,10 @@ test("note: mentions by name become emails (you are never mentioned); the previe
   const d = deps();
   const args = { ticket: "#42", note: "Jane wants the invoice resent.\nI'll do it Monday.", mention: ["Gabriel", "eddy@brokerstaffer.com"] };
   const p = await run(tk.ticketNote, args, d);
-  assert.equal(p.preview, `Add this internal note to #42 "Billing question" from Jane Doe <jane@homebase.com> (Homebase), in your name:\n"Jane wants the invoice resent.\nI'll do it Monday."\nIt @mentions Gabriel, so it shows in their Mentions view (no email or bell). Only the team sees notes; the client never does.`);
+  assert.equal(p.preview, `Add this internal note to #42 "Billing question" from Jane Doe <jane@homebase.com> (Homebase), in your name:\n"@Gabriel Castillo Jane wants the invoice resent.\nI'll do it Monday."\nIt @mentions Gabriel, so it shows in their Mentions view (no email or bell). Only the team sees notes; the client never does.`);
   assert.deepEqual(calls, []);
   await run(tk.ticketNote, { ...args, confirm: p.confirm }, d);
-  assert.deepEqual(calls, [`note 42 by eddy@brokerstaffer.com "Jane wants the invoice resent.\\nI'll do it Monday." @gabriel@gmail.com`]);
+  assert.deepEqual(calls, [`note 42 by eddy@brokerstaffer.com "@Gabriel Castillo Jane wants the invoice resent.\\nI'll do it Monday." @gabriel@gmail.com`]);
   assert.match(String((await run(tk.ticketNote, { ...args, confirm: p.confirm }, d)).refused), /already used/);
   assert.match(String((await run(tk.ticketNote, { ticket: "42", note: "x", mention: ["Amy"] })).refused), /"Amy" isn't on the team/);
   assert.match(String((await run(tk.ticketNote, { ticket: "42", note: "   " })).refused), /Write the note first/);
@@ -200,7 +203,7 @@ test("reply: the preview shows from, to, cc, subject and the whole text, and sen
   const p = await run(tk.ticketReply, args, d);
   assert.equal(p.preview, [
     `Send this reply on #42 "Billing question" from Jane Doe <jane@homebase.com> (Homebase)`,
-    "From: Amy Lee <amy@brokerstaffer.com> (their Gmail, with their signature)",
+    "From: amy@brokerstaffer.com (Amy's Gmail, under the name and with the signature set there)",
     "To: Jane Doe <jane@homebase.com>",
     "Cc: Bob <bob@homebase.com>, Eddy Smith <eddy@brokerstaffer.com>",
     "Subject: Re: Billing question",
@@ -283,4 +286,71 @@ test("ticketRef and pickTeammate", { skip }, async () => {
   assert.deepEqual(tk.pickTeammate(team, "ann"), team[0]);
   assert.deepEqual(tk.pickTeammate(team, "BO LEE"), team[1]);
   assert.ok("error" in tk.pickTeammate(team, "lee"));
+});
+
+/* ------------------------------------------------------------------------------------------ review, 28 Nov --- */
+
+test("review: a client email that arrived after the preview blocks the change (it must be seen first)", { skip }, async () => {
+  await load(); reset();
+  const d = deps();
+  const p = await run(tk.ticketUpdate, { ticket: "42", status: "done" }, d);
+  world.ticket!.last_inbound_at = "2026-11-28T08:00:00.000Z"; // still Open, same assignee, no snooze — but a new email
+  const r = await run(tk.ticketUpdate, { ticket: "42", status: "done", confirm: p.confirm }, d);
+  assert.match(String(r.refused), /Things changed since the preview/);
+  assert.deepEqual(calls, []);
+});
+
+test("review: one reply = one send id, whichever code confirms it; other words or a newer client email get another", { skip }, async () => {
+  await load(); reset();
+  world.send = { ok: false, sent: "unknown", status: 502, code: "unsure", error: "Gmail didn't confirm whether the reply was sent. Look in Amy's Sent folder before sending it again." };
+  const d = deps();
+  for (let i = 0; i < 2; i++) {
+    const p = await run(tk.ticketReply, { ticket: "#42", text: "Resent." }, d);
+    await run(tk.ticketReply, { ticket: "#42", text: "Resent.", confirm: p.confirm }, d);
+  }
+  assert.equal(nonces.length, 2);
+  assert.equal(nonces[0], nonces[1], "the retry carries the same id, so os_ticket_sends answers instead of Gmail sending again");
+  assert.match(nonces[0], /^[A-Za-z0-9_-]{8,64}$/);
+  const p3 = await run(tk.ticketReply, { ticket: "42", text: "Resent, sorry." }, d);
+  await run(tk.ticketReply, { ticket: "42", text: "Resent, sorry.", confirm: p3.confirm }, d);
+  world.ctx!.replyTo = "msg-in-9";
+  const p4 = await run(tk.ticketReply, { ticket: "42", text: "Resent." }, d);
+  await run(tk.ticketReply, { ticket: "42", text: "Resent.", confirm: p4.confirm }, d);
+  assert.equal(new Set(nonces).size, 3);
+});
+
+test("review: a Done ticket stays Done after a reply (only Open moves to Waiting)", { skip }, async () => {
+  await load(); reset();
+  world.ticket!.status = "done";
+  assert.match(String((await run(tk.ticketReply, { ticket: "42", text: "x" })).preview), /and the ticket stays Done\./);
+});
+
+test("review: snooze times must be ISO with a zone; a snooze whose time just passed still counts until the sweep (as the screen)", { skip }, async () => {
+  await load(); reset();
+  for (const bad of ["12-01-2026", "01-Dec-2026", "2026-12-01", "Dec 1 2026 9:00 EST", "2026-12-01 09:00-05:00"]) {
+    assert.match(String((await run(tk.ticketUpdate, { ticket: "42", snooze_until: bad })).refused), /ISO date-time with its time zone/, bad);
+  }
+  assert.equal(tk.isoWithZone("2026-12-01T09:00-05:00"), Date.parse("2026-12-01T14:00:00Z"));
+  world.ticket!.status = "waiting"; world.ticket!.snoozed_until = new Date(Date.now() - 20_000).toISOString();
+  const c = await run(tk.ticketUpdate, { ticket: "42", cancel_snooze: true });
+  assert.match(String(c.preview), /its snooze just ended; it returns to Open within a minute/);
+  assert.ok((await run(tk.ticketUpdate, { ticket: "42", status: "waiting" })).preview, "not refused as already Waiting");
+});
+
+test("review: a note that already names the person isn't given the @name twice; too long with the names is refused", { skip }, async () => {
+  await load(); reset();
+  const p = await run(tk.ticketNote, { ticket: "42", note: "@Gabriel Castillo can you check?", mention: ["gabriel"] });
+  assert.match(String(p.preview), /\n"@Gabriel Castillo can you check\?"\n/);
+  assert.match(String((await run(tk.ticketNote, { ticket: "42", note: "x".repeat(4995), mention: ["gabriel"] })).refused), /over 5,000 characters/);
+});
+
+test("review: a used snooze code retried after its time passed still says 'already used'", { skip }, async () => {
+  await load(); reset();
+  const d = deps();
+  const until = new Date(Date.now() + 61_500).toISOString();
+  const p = await run(tk.ticketUpdate, { ticket: "42", snooze_until: until }, d);
+  await run(tk.ticketUpdate, { ticket: "42", snooze_until: until, confirm: p.confirm }, d);
+  await new Promise((r) => setTimeout(r, 1600));
+  const again = await run(tk.ticketUpdate, { ticket: "42", snooze_until: until, confirm: p.confirm }, d);
+  assert.match(String(again.refused), /already used/);
 });

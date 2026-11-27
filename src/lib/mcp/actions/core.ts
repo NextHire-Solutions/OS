@@ -91,17 +91,19 @@ export async function runAction(
   }
   const { confirm, ...args } = rawArgs;
   const parsed = spec.parse(args);
-  if ("error" in parsed && Object.keys(parsed).length === 1) return { done: false, refused: (parsed as { error: string }).error };
+  const parseError = "error" in parsed && Object.keys(parsed).length === 1 ? (parsed as { error: string }).error : null;
   const a = parsed as Record<string, unknown>;
 
-  // A code that was already used is said so first — before the preview, which after the action has usually changed or
-  // refuses ("already Done") and would hide that the action was done once already.
+  // A code that was already used is said so first — before the arguments are judged again (a snooze time may have
+  // passed since) and before the preview, which after the action has usually changed or refuses ("already Done") and
+  // would hide that the action was done once already. Only for this person's own code for this action.
   if (!(confirm === undefined || confirm === null || confirm === "")) {
     const early = await deps.verify(String(confirm));
-    if (early && early.sub === v.email && early.act === spec.name && early.args === canonical(a) && early.n && (await deps.audit.used(String(early.n)))) {
+    if (early && early.sub === v.email && early.act === spec.name && (parseError !== null || early.args === canonical(a)) && early.n && (await deps.audit.used(String(early.n)))) {
       return { done: false, refused: "This confirmation was already used, so it was not done again." };
     }
   }
+  if (parseError !== null) return { done: false, refused: parseError };
 
   const fresh = await spec.preview(a, v);
   if (!fresh.ok) return { done: false, refused: fresh.refusal };

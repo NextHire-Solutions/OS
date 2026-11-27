@@ -182,8 +182,8 @@ export const inboxSnooze: ActionSpec<SnoozeArgs, SnoozeBind> = {
     if (note && note.length > 500) return { error: "The note can be 500 characters at most." };
     if (cancel) return { thread_id, until: null, note: null, cancel };
     const raw = String(a.until ?? "").trim();
-    const at = Date.parse(raw);
-    if (!raw || Number.isNaN(at) || !/[zZ]|[+-]\d\d:?\d\d$/.test(raw)) return { error: "until must be a date-time with its time zone, e.g. 2026-12-01T09:00:00-05:00." };
+    const at = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?([zZ]|[+-]\d{2}:?\d{2})$/.test(raw) ? Date.parse(raw) : Number.NaN;
+    if (!raw || Number.isNaN(at)) return { error: "until must be an ISO date-time with its time zone, e.g. 2026-12-01T09:00:00-05:00." };
     if (at <= Date.now() + 60_000) return { error: "until must be in the future." };
     if (at > Date.now() + 366 * 86_400_000) return { error: "Snooze for at most a year." };
     return { thread_id, until: new Date(at).toISOString(), note, cancel };

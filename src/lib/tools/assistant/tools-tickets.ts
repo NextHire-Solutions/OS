@@ -109,7 +109,7 @@ export async function ticketThreadTool(args: { ticket: string }) {
         to: m.to.map((a) => a.email),
         cc: m.cc.map((a) => a.email),
         sentAt: m.sentAt,
-        text: clip((m.text ?? (m.html ? htmlToText(m.html) : "")).trim(), 4000),
+        text: clip((m.text ?? (m.html ? htmlToText(m.html) : "")).trim(), 4000) || (m.direction === "out" ? "(A reply sent from Gmail: Tickets keeps only when it was sent, not its words.)" : "(No text: see the attachments, or open it in Gmail.)"),
         quotedHistoryCut: m.trimmed,
         attachments: m.attachments.filter((x) => !x.inline).map((x) => x.filename).filter(Boolean),
         ...(m.sentBy ? { sentFromTicketsBy: m.sentBy } : {}),

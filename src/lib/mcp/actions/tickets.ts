@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { grantsForRequest } from "@/lib/workspace/tool-paths";
 import { clientDirectory } from "@/lib/tools/tickets/directory";
 import { MAX_REPLY_CHARS } from "@/lib/tools/tickets/reply";
@@ -28,6 +30,13 @@ export function ticketRef(v: unknown): string | null {
   return UUID.test(s) ? s.toLowerCase() : null;
 }
 
+/** An ISO date-time with its time zone (2026-12-01T09:00:00-05:00, or …Z), as ms — else null. */
+export function isoWithZone(raw: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?([zZ]|[+-]\d{2}:?\d{2})$/.test(raw)) return null;
+  const at = Date.parse(raw);
+  return Number.isNaN(at) ? null : at;
+}
+
 const TICKET_ARG = { type: "string", description: "The ticket's number as the tickets tool shows it, e.g. #42." };
 
 interface Found { t: TicketRow; client: string | null; line: string }
@@ -47,8 +56,10 @@ async function found(ref: string): Promise<Found | null> {
 const STATUS_WORD: Record<TicketStatus, string> = { open: "Open", waiting: "Waiting", done: "Done", ignored: "Not a ticket" };
 const eastern = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" });
 const snoozed = (t: TicketRow) => !!t.snoozed_until && Date.parse(t.snoozed_until) > Date.now();
+/** A snooze is set (the screen's own test, act()): one whose time just passed counts until the minute sweep wakes it. */
+const snoozeSet = (t: TicketRow) => !!t.snoozed_until;
 const stateLine = (t: TicketRow) =>
-  `${snoozed(t) ? `snoozed until ${eastern(t.snoozed_until!)} Eastern` : STATUS_WORD[t.status]}, ${t.assignee ? `assigned to ${t.assignee}` : "unassigned"}`;
+  `${snoozed(t) ? `snoozed until ${eastern(t.snoozed_until!)} Eastern` : snoozeSet(t) ? `${STATUS_WORD[t.status]} (its snooze just ended; it returns to Open within a minute)` : STATUS_WORD[t.status]}, ${t.assignee ? `assigned to ${t.assignee}` : "unassigned"}`;
 
 /** A teammate by email, full name or first name — exactly one, or why not. */
 export function pickTeammate(team: ReadonlyArray<{ email: string; name: string }>, want: string): { email: string; name: string } | { error: string } {
@@ -71,7 +82,7 @@ type UpdateArgs =
   | { ticket: string; kind: "status"; status: TicketStatus }
   | { ticket: string; kind: "assign"; assignee: string }
   | { ticket: string; kind: "snooze"; until: string | null };
-type UpdateBind = { status: TicketStatus; assignee: string | null; snoozedUntil: string | null; to: string | null };
+type UpdateBind = { status: TicketStatus; assignee: string | null; snoozedUntil: string | null; lastIn: string | null; to: string | null };
 
 const STATUS_IN: Record<string, TicketStatus> = { open: "open", waiting: "waiting", done: "done", not_a_ticket: "ignored" };
 
@@ -117,8 +128,8 @@ export const ticketUpdate: ActionSpec<UpdateArgs, UpdateBind> = {
       return { ticket, kind: "snooze", until: null };
     }
     const raw = String(a.snooze_until).trim();
-    const at = Date.parse(raw);
-    if (Number.isNaN(at) || !/[zZ]|[+-]\d\d:?\d\d$/.test(raw)) return { error: "snooze_until must be a date-time with its time zone, e.g. 2026-12-01T09:00:00-05:00." };
+    const at = isoWithZone(raw);
+    if (at === null) return { error: "snooze_until must be an ISO date-time with its time zone, e.g. 2026-12-01T09:00:00-05:00." };
     if (at <= Date.now() + 60_000) return { error: "snooze_until must be in the future." };
     if (at > Date.now() + 366 * 86_400_000) return { error: "Snooze for a year at most." };
     return { ticket, kind: "snooze", until: new Date(at).toISOString() };
@@ -127,11 +138,12 @@ export const ticketUpdate: ActionSpec<UpdateArgs, UpdateBind> = {
     const f = await found(a.ticket);
     if (!f) return { ok: false, refusal: `There is no ticket ${/^\d+$/.test(a.ticket) ? `#${a.ticket}` : a.ticket} (it was removed, or never existed).` };
     const { t } = f;
-    const bindBase = { status: t.status, assignee: t.assignee ?? null, snoozedUntil: snoozed(t) ? t.snoozed_until : null };
+    // lastIn: a client email that arrived after the preview must be seen before the ticket is closed, snoozed or moved.
+    const bindBase = { status: t.status, assignee: t.assignee ?? null, snoozedUntil: t.snoozed_until ?? null, lastIn: t.last_inbound_at ?? null };
     const now = `It is ${stateLine(t)} now.`;
 
     if (a.kind === "status") {
-      if (t.status === a.status && !snoozed(t)) return { ok: false, refusal: `${f.line} is already ${STATUS_WORD[a.status]}.` };
+      if (t.status === a.status && !snoozeSet(t)) return { ok: false, refusal: `${f.line} is already ${STATUS_WORD[a.status]}.` };
       const effect =
         a.status === "done" ? "It moves to Done." :
         a.status === "ignored" ? "It is marked Not a ticket and leaves every list but All." :
@@ -139,7 +151,7 @@ export const ticketUpdate: ActionSpec<UpdateArgs, UpdateBind> = {
         "It goes back to Open (a client is waiting on us).";
       return {
         ok: true,
-        preview: `Mark ${f.line} as ${STATUS_WORD[a.status]}. ${now} ${effect}${snoozed(t) ? " The snooze ends." : ""} If the client writes again it reopens.`,
+        preview: `Mark ${f.line} as ${STATUS_WORD[a.status]}. ${now} ${effect}${snoozeSet(t) ? " The snooze ends." : ""} If the client writes again it reopens.`,
         details: { ticket: `#${t.number}`, from: STATUS_WORD[t.status], to: STATUS_WORD[a.status] },
         bind: { ...bindBase, to: a.status },
       };
@@ -166,7 +178,7 @@ export const ticketUpdate: ActionSpec<UpdateArgs, UpdateBind> = {
     }
 
     if (a.until === null) {
-      if (!snoozed(t)) return { ok: false, refusal: `${f.line} isn't snoozed.` };
+      if (!snoozeSet(t)) return { ok: false, refusal: `${f.line} isn't snoozed.` };
       return {
         ok: true,
         preview: `Cancel the snooze on ${f.line}. ${now} It goes back to Open now.`,
@@ -195,7 +207,7 @@ export const ticketUpdate: ActionSpec<UpdateArgs, UpdateBind> = {
 // ---------------------------------------------------------------------------------------------------------------------
 
 type NoteArgs = { ticket: string; note: string; mention: string[] };
-type NoteBind = { mentions: string[] };
+type NoteBind = { mentions: string[]; note: string };
 
 export const ticketNote: ActionSpec<NoteArgs, NoteBind> = {
   name: "ticket_note",
@@ -236,18 +248,22 @@ export const ticketNote: ActionSpec<NoteArgs, NoteBind> = {
       if (p.email !== v.email.toLowerCase() && !picked.some((x) => x.email === p.email)) picked.push(p);
     }
     const names = picked.map((p) => p.name.split(/\s+/)[0]);
+    // As the screen: a mention is "@Full Name" in the note itself (it is highlighted there). Missing ones lead the note.
+    const missing = picked.filter((p) => !a.note.includes(`@${p.name}`));
+    const note = missing.length ? `${missing.map((p) => `@${p.name}`).join(" ")} ${a.note}` : a.note;
+    if (note.length > 5000) return { ok: false, refusal: "With the @names added the note is over 5,000 characters. Shorten it." };
     return {
       ok: true,
       preview:
-        `Add this internal note to ${f.line}, in your name:\n"${a.note}"\n` +
+        `Add this internal note to ${f.line}, in your name:\n"${note}"\n` +
         `${picked.length ? `It @mentions ${names.join(" and ")}, so it shows in ${picked.length === 1 ? "their" : "each one's"} Mentions view (no email or bell). ` : ""}` +
         "Only the team sees notes; the client never does.",
       details: { ticket: `#${f.t.number}`, mentions: picked.map((p) => p.email) },
-      bind: { mentions: picked.map((p) => p.email).sort() },
+      bind: { mentions: picked.map((p) => p.email).sort(), note },
     };
   },
   async execute(a, v, bind) {
-    await addNote(a.ticket, v.email, a.note, bind.mentions);
+    await addNote(a.ticket, v.email, bind.note, bind.mentions);
     console.info(`[mcp-action] ${v.email} via Claude: note on ticket ${a.ticket}${bind.mentions.length ? ` (@${bind.mentions.join(", @")})` : ""}`);
     return { ticket: a.ticket, noted: true, mentioned: bind.mentions };
   },
@@ -258,7 +274,7 @@ export const ticketNote: ActionSpec<NoteArgs, NoteBind> = {
 // ---------------------------------------------------------------------------------------------------------------------
 
 type ReplyArgs = { ticket: string; text: string; from: string | null; cc: string[] | null };
-type ReplyBind = { replyTo: string | null; lastOut: string | null; from: string; to: string; cc: string[]; subject: string };
+type ReplyBind = { ticketId: string; replyTo: string | null; lastOut: string | null; from: string; to: string; cc: string[]; subject: string };
 
 export const ticketReply: ActionSpec<ReplyArgs, ReplyBind> = {
   name: "ticket_reply",
@@ -319,25 +335,32 @@ export const ticketReply: ActionSpec<ReplyArgs, ReplyBind> = {
     const team = await teamPeople().catch(() => []);
     const gone = !team.some((p) => p.email === sender.email);
     const who = (x: { email: string; name: string | null }) => (x.name ? `${x.name} <${x.email}>` : x.email);
+    const owner = sender.name.split(/\s+/)[0];
+    // applyMessage: our reply moves only an Open, unsnoozed ticket to Waiting; Done / Not a ticket / snoozed stay.
+    const after = f.t.status === "open" && !snoozeSet(f.t) ? "the ticket moves to Waiting" : `the ticket stays ${snoozed(f.t) ? "snoozed" : STATUS_WORD[f.t.status]}`;
     return {
       ok: true,
       preview:
         `Send this reply on ${f.line}\n` +
-        `From: ${sender.name} <${sender.email}> (their Gmail${sender.signature ? ", with their signature" : ""})\n` +
+        `From: ${sender.email} (${owner}'s Gmail, under the name${sender.signature ? " and with the signature" : ""} set there)\n` +
         `To: ${who(ctx.to)}\n` +
         `Cc: ${cc.length ? cc.map((e) => who(offered.get(e)!)).join(", ") : "nobody"}\n` +
         `Subject: ${ctx.subject}\n` +
         `---\n${a.text}\n---\n` +
-        "It goes in the same Gmail thread with the client's email quoted below, and the ticket moves to Waiting. " +
-        `${gone ? `${sender.name.split(/\s+/)[0]} is no longer an active teammate in the OS; the email still goes from their inbox. ` : ""}` +
+        `It goes in the same Gmail thread with the client's email quoted below, and ${after}. ` +
+        `${gone ? `${owner} is no longer an active teammate in the OS; the email still goes from their inbox. ` : ""}` +
         "This sends a real email that can't be unsent.",
       details: { ticket: `#${f.t.number}`, from: sender.email, to: ctx.to.email, cc, subject: ctx.subject },
       // A newer client email, a reply sent meanwhile (from Gmail or Tickets) or a changed recipient list: refused, new preview.
-      bind: { replyTo: ctx.replyTo, lastOut: f.t.last_outbound_at ?? null, from: sender.email, to: ctx.to.email, cc, subject: ctx.subject },
+      bind: { ticketId: f.t.id, replyTo: ctx.replyTo, lastOut: f.t.last_outbound_at ?? null, from: sender.email, to: ctx.to.email, cc, subject: ctx.subject },
     };
   },
   async execute(a, v, bind) {
-    const r = await sendTicketReply(a.ticket, v.email, { from: bind.from, text: a.text, cc: bind.cc, nonce: crypto.randomUUID(), replyTo: bind.replyTo });
+    // One draft = one id, whichever code confirms it (the screen keeps one per draft): the same words answering the same
+    // client email from the same inbox never go twice — a retry after "Gmail didn't confirm", or two codes confirmed at
+    // once, get os_ticket_sends' answer (already sent / look in the Sent folder) instead of a second email.
+    const nonce = createHash("sha256").update([bind.ticketId, bind.replyTo ?? "", bind.from, a.text].join("\u0000")).digest("base64url");
+    const r = await sendTicketReply(a.ticket, v.email, { from: bind.from, text: a.text, cc: bind.cc, nonce, replyTo: bind.replyTo });
     if (r.ok) {
       console.info(`[mcp-action] ${v.email} via Claude: ticket ${a.ticket} reply sent as ${r.sentAs} to ${r.to}`);
       return { ticket: a.ticket, sent: true, from: r.sentAs, to: r.to, ...(r.note ? { note: r.note } : {}) };
