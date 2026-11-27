@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.33** | [Claude connector: Tickets — status, assign, snooze, note, reply — 28 November](#033-claude-connector-tickets--status-assign-snooze-note-reply--28-november) — **LIVE 27 Nov**: ticket_update + ticket_note ON since 22:11 (6468bd63), live-tested on test ticket #43; ticket_reply OFF (waits on the user's explicit yes); campaign_detail by number LIVE (c332a468)
+| **0.33** | [Claude connector: Tickets — status, assign, snooze, note, reply — 28 November](#033-claude-connector-tickets--status-assign-snooze-note-reply--28-november) — **ALL LIVE 27 Nov**: ticket_update + ticket_note ON 22:11, ticket_reply ON 22:25 after the user's explicit yes; all live-tested on test ticket #43 (removed); latest deploy b96e6ec1 (a2bf4b1)
 | **0.32** | [Claude connector: create a campaign, add agents from the agent database — 28 November](#032-claude-connector-create-a-campaign-add-agents-from-the-agent-database--28-november) — **LIVE 27 Nov** (deploy 98b240ca; actions on via a95e3ff0); live test passed on #1423 (deleted); 10 test leads left in EmailBison, see the section
 | **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **LIVE 27 Nov 17:53 UTC (main 506cf7c = Railway bb8ef155)**; ON: snooze, labels, client campaigns + the five one-campaign actions; OFF until a live send is verified: inbox_reply, inbox_introduce
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
@@ -263,8 +263,18 @@ Gmail, sent to amy@ — mail from outreachify.io never becomes a ticket, the use
 again refused "already used"; assign admin → unassign; snooze tomorrow 09:00 ET → cancel; a code from before the snooze
 refused "things changed", nothing done; a note. The ticket's activity shows every step under admin@outreachify.io;
 os_mcp_actions has 7 done. #43 ends Open and unassigned (kept for the reply test, then removed).
-**ticket_reply stays OFF**: switching it on was refused by the session's safety check until the user says an explicit
-yes to one test reply from Amy's inbox to their own Gmail. The user's third group:
+**ticket_reply ON 22:25 UTC** (redeploy 0b62ad86) after the user's explicit "Yes, switch on and send one test reply"
+(the session's safety check had refused it on the earlier, indirect answer). Live test on #43: ONE reply from
+amy@brokerstaffer.com to the user's own Gmail, Cc nobody; os_ticket_sends 1 row (sent, actor admin@outreachify.io); the
+reply is on the ticket with sent_by; the ticket moved to Waiting; the same code again "already used"; a NEW code for the
+same reply got "already sent" from os_ticket_sends with no second email (the review fix, proven live). Live finding,
+fixed and deployed 22:38 (a2bf4b1, Railway b96e6ec1): that answer said `sent: true`; it now says nothing new was sent.
+**#43 removed** through the screen's own DELETE route as the owner (rows gone, 404; its emails blocked, not re-imported
+after Amy's 22:39 sync). Final live smoke: 66 tools, 0 problems, the three ticket actions refuse an unknown ticket.
+
+**OS_MCP_ACTIONS now:** inbox_snooze, inbox_set_label, client_campaigns, campaign_pause, campaign_start, campaign_limits,
+campaign_add_inboxes, campaign_edit_copy, campaign_create, campaign_add_agents, campaign_add_agents_stop, ticket_update,
+ticket_note, ticket_reply. Still OFF: inbox_reply, inbox_introduce (§0.31). The user's third group:
 "Tickets: assign, status, snooze, note, reply as Amy/Eddy". Every action calls the Tickets screen's own functions and is
 open to whoever holds the Tickets switch (admins always), as on the screen. Changes are written in the person's own name
 on the ticket's activity; os_mcp_actions records that they came through Claude.
