@@ -134,7 +134,9 @@ export const inboxSetLabel: ActionSpec<LabelArgs, LabelBind> = {
       ok: true,
       preview: `Change the label of ${describe(t)} → ${found.name}.${notes.length ? ` ${notes.join(" ")}` : ""}`,
       details: { thread: t, newLabel: found.name },
-      bind: { current: t.label, labelId: found.id },
+      // The effects it showed are part of what was confirmed: if they change meanwhile (the lead turns once-Interested,
+      // the client's hand-off is switched on), nothing is done and the new preview says so.
+      bind: { current: t.label, labelId: found.id, effects: notes },
     };
   },
   async execute(a, v, bind) {

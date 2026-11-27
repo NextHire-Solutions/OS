@@ -11,7 +11,7 @@ const skip = canMock ? false : "needs node --experimental-test-module-mocks --im
 
 const T = "11111111-1111-4111-8111-111111111111";
 const calls: string[] = [];
-const state = { label: "Interested" as string | null, introducedBefore: false, inbound: "m1", handoff: null as string | null, plan: "ok" as "ok" | "stop", sendOk: true, provider: "emailbison", leadName: "Ann Lee" };
+const state = { label: "Interested" as string | null, introducedBefore: false, inbound: "m1", handoff: null as string | null, plan: "ok" as "ok" | "stop", sendOk: true, provider: "emailbison", leadName: "Ann Lee", outbound: [] as Array<{ id: string; subject: string | null; sent_at: string | null }> };
 
 function from(table: string) {
   const q: Record<string, unknown> = {};
@@ -24,7 +24,7 @@ function from(table: string) {
       case "label_assignments": return state.label ? [{ labels: { name: state.label } }] : [];
       case "reminders": return [];
       case "label_history": return q.label_name === "Introduction" ? (state.introducedBefore ? [{ id: 1 }] : []) : [];
-      case "messages": return [{ id: state.inbound }];
+      case "messages": return q.direction === "outbound" ? state.outbound : [{ id: state.inbound }];
       case "labels": return { id: "L-intro" };
       default: return null;
     }
@@ -61,6 +61,8 @@ async function load() {
     namedExports: {
       sendOutboundReply: async (i: Record<string, unknown>) => {
         calls.push(`send to=${JSON.stringify(i.to)} cc=${JSON.stringify(i.cc)} subject=${i.subject} changed=${i.subjectChanged} from=${i.senderChannelId ?? "-"} html=${JSON.stringify(i.body)}`);
+        // As the real one: a sent email is stored on the conversation.
+        if (state.sendOk) state.outbound = [{ id: `out${state.outbound.length + 1}`, subject: String(i.subject ?? ""), sent_at: "2026-11-27T17:00:00Z" }, ...state.outbound];
         return state.sendOk ? { ok: true } : { ok: false, status: 502, body: { error: "provider said no" } };
       },
     },
@@ -84,7 +86,7 @@ function deps() {
   };
 }
 const run = (spec: unknown, args: Record<string, unknown>, d = deps()) => core.runAction(spec as never, args, EDDY, d as never);
-const reset = () => { calls.length = 0; Object.assign(state, { label: "Interested", introducedBefore: false, inbound: "m1", handoff: null, plan: "ok", sendOk: true, provider: "emailbison", leadName: "Ann Lee" }); };
+const reset = () => { calls.length = 0; Object.assign(state, { label: "Interested", introducedBefore: false, inbound: "m1", handoff: null, plan: "ok", sendOk: true, provider: "emailbison", leadName: "Ann Lee", outbound: [] }); };
 
 test("introduce: the preview is the whole email; confirm sends exactly it (from the intro mailbox, new subject), then labels Introduction", { skip }, async () => {
   await load(); reset();
@@ -132,10 +134,10 @@ test("reply: preview shows From/To/Subject/text; confirm sends in the conversati
   await load(); reset(); state.label = "Keep Warm";
   const d = deps();
   const p = await run(reply, { thread_id: T, text: "Thanks Ann — does Tuesday work?", cc: ["eddy@brokerstaffer.com"] }, d);
-  assert.match(String(p.preview), /From: william@buildbuyerlists\.com\. To: ann@example\.com\. Cc: eddy@brokerstaffer\.com\. Subject: "Re: Ann\?"\. Text:\nThanks Ann/);
+  assert.match(String(p.preview), /From: william@buildbuyerlists\.com\. To: ann@example\.com\. Cc: eddy@brokerstaffer\.com, nicole\.c@brokerstaffer\.com\. Subject: "Re: Ann\?"\. Text:\nThanks Ann/, "the composer's always-Cc too");
   const done = await run(reply, { thread_id: T, text: "Thanks Ann — does Tuesday work?", cc: ["eddy@brokerstaffer.com"], confirm: p.confirm }, d);
   assert.equal(done.done, true);
-  assert.match(calls[0], /to=\[\{"email_address":"ann@example\.com"\}\] cc=\[\{"email_address":"eddy@brokerstaffer\.com"\}\] subject=Re: Ann\? changed=false/);
+  assert.match(calls[0], /to=\[\{"email_address":"ann@example\.com"\}\] cc=\[\{"email_address":"eddy@brokerstaffer\.com"\},\{"email_address":"nicole\.c@brokerstaffer\.com"\}\] subject=Re: Ann\? changed=false/);
 });
 
 test("reply: a new message from the lead after the preview → nothing sent, fresh preview; stop label and bad Cc refused", { skip }, async () => {
@@ -161,4 +163,20 @@ test("an Instantly conversation: neither introduced nor replied to through Claud
   // A reply needs no name.
   assert.ok((await run(reply, { thread_id: T, text: "hi" })).preview);
   assert.deepEqual(calls, []);
+});
+
+test("never twice: two previews of one reply send it once; an introduction sent but never labelled is not sent again", { skip }, async () => {
+  await load(); reset(); state.label = "Keep Warm";
+  const d = deps();
+  const a = await run(reply, { thread_id: T, text: "Does Tuesday work?" }, d);
+  const b = await run(reply, { thread_id: T, text: "Does Tuesday work?" }, d);
+  assert.equal((await run(reply, { thread_id: T, text: "Does Tuesday work?", confirm: a.confirm }, d)).done, true);
+  const again = await run(reply, { thread_id: T, text: "Does Tuesday work?", confirm: b.confirm }, d);
+  assert.match(String(again.refused), /Things changed since the preview/);
+  assert.equal(calls.filter((c) => c.startsWith("send")).length, 1, "one email");
+  // The introduction went out but the labelling failed: a new preview refuses a second one.
+  reset();
+  state.outbound = [{ id: "o1", subject: "Intro: Ann & Howe Realty Group", sent_at: "2026-11-27T16:00:00Z" }];
+  assert.match(String((await run(intro, { thread_id: T })).refused), /An introduction \("Intro: Ann & Howe Realty Group"\) was already sent on this conversation on 2026-11-27, but it isn't labelled Introduction/);
+  assert.equal(calls.length, 0);
 });

@@ -116,11 +116,14 @@ export const campaignEditCopy: ActionSpec<Args, Bind> = {
       return { ok: false, refusal: `${plan.error}${problems}` };
     }
     if (plan.adds.length || plan.deletes.length) return { ok: false, refusal: "That would add or remove emails, which isn't done through Claude. Use the OS's sequence editor." };
-    if (!plan.updates.length) return { ok: false, refusal: `Email ${a.email}${a.version > 1 ? ` (version ${VERSION_LETTER(a.version - 1)})` : ""} of ${name} already says that.` };
+    // Only the email asked about: an update that would only renumber another step (one EmailBison holds with no
+    // number) is left out — EmailBison keeps it exactly as it is.
+    const changedOnly = plan.updates.filter((u) => !u.orderOnly);
+    if (!changedOnly.length) return { ok: false, refusal: `Email ${a.email}${a.version > 1 ? ` (version ${VERSION_LETTER(a.version - 1)})` : ""} of ${name} already says that.` };
     if (!seq.sequenceId) return { ok: false, refusal: "This campaign's emails couldn't be changed just now. Try again in a minute." };
 
     // Any client field still in what is written ({CLIENT_ALIAS}, or {CLIENT_AREA} already there): filled, as the OS editor does.
-    let writes = plan.updates.map(({ orderOnly: _o, ...w }) => w);
+    let writes = changedOnly.map(({ orderOnly: _o, ...w }) => w);
     if (usesClientFields(writes.flatMap((w) => [w.email_subject, w.email_body]))) {
       let values;
       try {

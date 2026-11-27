@@ -45,6 +45,12 @@ async function latestInboundId(admin: ReturnType<typeof createAdminSupabase>, th
   return ((data ?? []) as Array<{ id: string }>)[0]?.id ?? null;
 }
 
+/* The newest email sent on the conversation: a confirm is bound to it, so a second confirm after a send is refused. */
+async function latestOutbound(admin: ReturnType<typeof createAdminSupabase>, threadId: string): Promise<Array<{ id: string; subject: string | null; sent_at: string | null }>> {
+  const { data } = await admin.from("messages").select("id, subject, sent_at").eq("thread_id", threadId).eq("direction", "outbound").order("sent_at", { ascending: false }).limit(20);
+  return (data ?? []) as Array<{ id: string; subject: string | null; sent_at: string | null }>;
+}
+
 async function everIntroduced(admin: ReturnType<typeof createAdminSupabase>, threadId: string): Promise<boolean> {
   const { data, error } = await admin.from("label_history").select("id").eq("thread_id", threadId).eq("label_name", "Introduction").limit(1);
   return !!error || ((data ?? []) as unknown[]).length > 0;
@@ -55,7 +61,7 @@ async function everIntroduced(admin: ReturnType<typeof createAdminSupabase>, thr
 // ---------------------------------------------------------------------------------------------------------------------
 
 type IntroArgs = { thread_id: string };
-type IntroBind = { label: string | null; inbound: string | null; to: string; toName: string | null; cc: string[]; subject: string; body: string; senderChannelId: string | null };
+type IntroBind = { label: string | null; inbound: string | null; outbound: string | null; to: string; toName: string | null; cc: string[]; subject: string; body: string; senderChannelId: string | null };
 
 export const inboxIntroduce: ActionSpec<IntroArgs, IntroBind> = {
   name: "inbox_introduce",
@@ -87,7 +93,7 @@ export const inboxIntroduce: ActionSpec<IntroArgs, IntroBind> = {
     if (!input.leadEmail) return { ok: false, refusal: "The lead has no email address on this conversation." };
     if (input.clientId && t.client) {
       const found = await rosterRowForPortal(input.clientId, t.client, "pipeline_entry, relay_settings");
-      if (found.readFailed) return { ok: false, refusal: `${t.client}'s client record couldn't be read, so it isn't known whether it gets introductions. Nothing was sent.` };
+      if (found.readFailed || found.error) return { ok: false, refusal: `${t.client}'s client record couldn't be read, so it isn't known whether it gets introductions. Nothing was sent.` };
       const handoff = found.row ? directHandoffReason(found.row, t.client) : null;
       if (handoff) return { ok: false, refusal: `${handoff} (no introduction email; the hand-off sends it).` };
     }
@@ -104,6 +110,10 @@ export const inboxIntroduce: ActionSpec<IntroArgs, IntroBind> = {
     if (!(input.leadName ?? "").trim() || /^\s*(hey|hi|hello)\s*,/i.test(plan.body)) {
       return { ok: false, refusal: "This lead has no name on record, so the introduction would open \"Hey ,\" and name nobody. Introduce them from the Master Inbox, where the email can be edited before it goes." };
     }
+    // An introduction already sent here whose label never landed (the send worked, the labelling failed): never a second.
+    const sentBefore = await latestOutbound(admin, a.thread_id);
+    const earlier = sentBefore.find((m) => (m.subject ?? "").trim().toLowerCase() === plan.subject.trim().toLowerCase());
+    if (earlier) return { ok: false, refusal: `An introduction ("${plan.subject}") was already sent on this conversation${earlier.sent_at ? ` on ${earlier.sent_at.slice(0, 10)}` : ""}, but it isn't labelled Introduction. Label it in the Master Inbox; a second introduction isn't sent through Claude.` };
     const sender = await introSenderFor(admin, ws, provider ?? "emailbison");
     const cc = mergeAlwaysCcString(plan.cc.join(", "), input.leadEmail).split(/,\s*/).filter(Boolean);
     const from = sender.channelId ? `${sender.name ?? ""} <${sender.email}>`.trim() : `the campaign's own mailbox (${sender.problem ?? "no introductions mailbox on this platform"})`;
@@ -115,7 +125,7 @@ export const inboxIntroduce: ActionSpec<IntroArgs, IntroBind> = {
         `Then it is labelled Introduction: ${t.client}'s portal gets the lead, and the SMS alert, the Slack introduction post ` +
         "and Follow Up Boss run as set up for this client.",
       details: { thread: t, from, to: input.leadEmail, cc, subject: plan.subject, body: plan.body },
-      bind: { label: t.label, inbound: await latestInboundId(admin, a.thread_id), to: input.leadEmail, toName: input.leadName, cc, subject: plan.subject, body: plan.body, senderChannelId: sender.channelId ?? null },
+      bind: { label: t.label, inbound: await latestInboundId(admin, a.thread_id), outbound: sentBefore[0]?.id ?? null, to: input.leadEmail, toName: input.leadName, cc, subject: plan.subject, body: plan.body, senderChannelId: sender.channelId ?? null },
     };
   },
   async execute(a, v, bind) {
@@ -142,7 +152,7 @@ export const inboxIntroduce: ActionSpec<IntroArgs, IntroBind> = {
 // ---------------------------------------------------------------------------------------------------------------------
 
 type ReplyArgs = { thread_id: string; text: string; cc: string[] };
-type ReplyBind = { label: string | null; inbound: string | null; to: string; subject: string | null };
+type ReplyBind = { label: string | null; inbound: string | null; outbound: string | null; to: string; cc: string[]; subject: string | null };
 
 export const inboxReply: ActionSpec<ReplyArgs, ReplyBind> = {
   name: "inbox_reply",
@@ -185,11 +195,13 @@ export const inboxReply: ActionSpec<ReplyArgs, ReplyBind> = {
     const to = (lead as { email?: string } | null)?.email ?? null;
     if (!to) return { ok: false, refusal: "The lead has no email address on this conversation." };
     const subject = agentSubject((th?.subject as string | null) ?? null) ?? null;
+    // The composer's own Cc: the always-copied address added to whatever was asked (auto-cc.ts), never the lead twice.
+    const cc = mergeAlwaysCcString(a.cc.join(", "), to).split(/,\s*/).filter(Boolean);
     return {
       ok: true,
-      preview: `Reply in ${t.lead}'s conversation${t.client ? ` (${t.client})` : ""}. From: ${(th?.outbound_sender_email as string | null) ?? "the conversation's mailbox"}. To: ${to}.${a.cc.length ? ` Cc: ${a.cc.join(", ")}.` : ""} Subject: "${subject ?? "(the conversation's)"}". Text:\n${a.text}`,
-      details: { thread: t, to, cc: a.cc, subject },
-      bind: { label: t.label, inbound: await latestInboundId(admin, a.thread_id), to, subject },
+      preview: `Reply in ${t.lead}'s conversation${t.client ? ` (${t.client})` : ""}. From: ${(th?.outbound_sender_email as string | null) ?? "the conversation's mailbox"}. To: ${to}.${cc.length ? ` Cc: ${cc.join(", ")}.` : ""} Subject: "${subject ?? "(the conversation's)"}". Text:\n${a.text}`,
+      details: { thread: t, to, cc, subject },
+      bind: { label: t.label, inbound: await latestInboundId(admin, a.thread_id), outbound: (await latestOutbound(admin, a.thread_id))[0]?.id ?? null, to, cc, subject },
     };
   },
   async execute(a, v, bind) {
@@ -197,7 +209,7 @@ export const inboxReply: ActionSpec<ReplyArgs, ReplyBind> = {
     const sent = await sendOutboundReply({
       admin, workspaceId: await workspaceId(), threadId: a.thread_id,
       body: { kind: "html", html: agentBodyHtml(a.text) }, subject: bind.subject ?? undefined, subjectChanged: false,
-      to: [{ email_address: bind.to }], cc: a.cc.map((email_address) => ({ email_address })),
+      to: [{ email_address: bind.to }], cc: bind.cc.map((email_address) => ({ email_address })),
       bcc: undefined, replyAll: false, injectPreviousEmailBody: true, actor: { kind: "user", userId: null },
     } as never);
     if (!sent.ok) throw new Error(`Nothing was sent: ${sent.body.error}${sent.body.detail ? ` (${sent.body.detail})` : ""}`);

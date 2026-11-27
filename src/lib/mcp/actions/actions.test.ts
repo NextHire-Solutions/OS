@@ -13,12 +13,14 @@ const T1 = "11111111-1111-4111-8111-111111111111";
 const T_INTRO = "22222222-2222-4222-8222-222222222222";
 const T_WAS_INT = "33333333-3333-4333-8333-333333333333";
 const calls: string[] = [];
+/* T1 turns once-Interested between a preview and its confirm (the label bind test). */
+let t1WasInterested = false;
 const db: Record<string, (q: Record<string, unknown>) => unknown> = {
   threads: (q) => (q.id === T1 ? { id: T1, subject: "Re: Ann?", status: "open", last_message_at: "2026-11-22T03:11:37Z", leads: { full_name: "Ann Lee", email: "ann@example.com" }, clients: { name: "Howe Realty Group" } }
     : q.id === T_INTRO ? { id: T_INTRO, subject: "Re: Bo", status: "open", last_message_at: "2026-11-20T00:00:00Z", leads: { full_name: "Bo", email: "bo@example.com" }, clients: { name: "LIV Indy Realty" } }
     : q.id === T_WAS_INT ? { id: T_WAS_INT, subject: "Re: Cy", status: "open", last_message_at: "2026-11-21T00:00:00Z", leads: { full_name: "Cy", email: "cy@example.com" }, clients: { name: "Homebase Real Estate at eXp" } } : null),
   label_assignments: (q) => [{ labels: { name: q.target_id === T_INTRO ? "Introduction" : q.target_id === T_WAS_INT ? "Not Interested" : "OOO" } }],
-  label_history: (q) => (q.thread_id === T_WAS_INT ? [{ label_name: "Interested" }] : []),
+  label_history: (q) => (q.thread_id === T_WAS_INT || (q.thread_id === T1 && t1WasInterested) ? [{ label_name: "Interested" }] : []),
   reminders: () => [],
   labels: () => [{ id: "L-kw", name: "Keep Warm" }, { id: "L-ni", name: "Not Interested" }, { id: "L-int", name: "Interested" }, { id: "L-ooo", name: "OOO" }, { id: "L-unsub", name: "Unsubscribe" }, { id: "L-mb", name: "Meetings Booked" }],
 };
@@ -133,4 +135,17 @@ test("client_campaigns: the preview lists what changes and what is skipped; conf
   assert.match(String((await run(specs.campaigns, { client: "Douglas Elliman", action: "pause" })).refused), /matches several clients/);
   assert.match(String((await run(specs.campaigns, { client: "Nobody Realty", action: "pause" })).refused), /No client called/);
   assert.match(String((await run(specs.campaigns, { client: "Howe", action: "delete" })).refused), /pause or resume/);
+});
+
+test("inbox_set_label: the effects shown are part of what was confirmed — the lead turns once-Interested meanwhile: nothing done, a new preview", { skip }, async () => {
+  await load(); calls.length = 0; t1WasInterested = false;
+  const d = deps();
+  const p = await run(specs.label, { thread_id: T1, label: "Not Interested" }, d);
+  assert.ok(!/bill/.test(String(p.preview)), "no billing effect while it was never Interested");
+  t1WasInterested = true;
+  const r = await run(specs.label, { thread_id: T1, label: "Not Interested", confirm: p.confirm }, d);
+  t1WasInterested = false;
+  assert.match(String(r.refused), /Things changed since the preview/);
+  assert.match(String(r.preview), /bill/, "the new preview names the billing effect");
+  assert.deepEqual(calls, []);
 });
