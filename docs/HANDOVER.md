@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **built on feat/mcp-actions, NOT deployed**; every new action off until named in OS_MCP_ACTIONS
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
 | **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
 | **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
@@ -240,6 +241,39 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.31 Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November
+
+**Built and tested, NOT deployed** (branch feat/mcp-actions, rebased on main 27 Nov). The user: "almost everything except
+billing changes". Client status changes are left out, because they pause and resume Stripe billing. Each action is off until it
+is named in OS_MCP_ACTIONS, and each uses §0.29's preview, then a signed code, then one confirm.
+
+| Action / tool | What it does | Runs the OS's own |
+|---|---|---|
+| positive_replies (read) | A client's positive replies (Interested or Introduction), the Inboxes page's rule | tools-positive.ts |
+| inbox_set_label | Now every label, with its effects in the preview (hand-off, Slack alert, per-lead bill, stop). It never sets Introduction and never relabels from it | label-policy.ts |
+| inbox_introduce | The Introduce hand-over: the whole email previewed, sent from the intro mailbox, then labelled Introduction | reply agent's planHandover + sendOutboundReply |
+| inbox_reply | A reply in the conversation, from its own sender | sendOutboundReply |
+| campaign_pause | Pause one EmailBison campaign; the preview shows its live status | campaigns/actions.ts |
+| campaign_start | Launch a draft or resume a paused campaign, with the Launch tab's live checks; a paused or churned client is noted | launch-load.ts |
+| campaign_limits | Daily send limit / new leads per day, the two sent together | settings-rules.ts + settings-update.ts (moved from the route, unchanged) |
+| campaign_add_inboxes | By tag or addresses; only healthy inboxes go on (attach-health) | inbox-add-run.ts (moved from the route, unchanged; its 11 tests pass) |
+| campaign_edit_copy | One email's subject and/or text, or one of its A/B versions; only that step is written, by id | the client portal editor's planCopySave (live since 23 Nov), with its rules: 125 words, 60-character subject, no links |
+
+A campaign is found by its number, or by a name that matches exactly one EmailBison campaign. Several matches are listed
+and nothing is done. Instantly is excluded (no longer used). Every change is in campaign_audit_log as "<email> via Claude".
+
+**Checks.**
+- Tests: 4,162 pass.
+- Live previews, never confirmed (scratchpad mcpact/campaign-previews.mts, with every outside write refused except one
+  read-only database function): pause, start, limits, add inboxes and edit copy all previewed correctly on real
+  campaigns, and 0 writes were attempted. The add-inboxes preview takes about 30 s, because its health reads are the screen's own.
+- Introduce/reply live test: waits for the user's pick (a temporary test client with our own addresses, or the first
+  real use).
+
+**Seen 27 Nov while testing (not changed):** EmailBison has no active campaign: 53 paused, 18 draft, the rest finished.
+Daily sends were 9,000 to 19,000 through 24 Nov, 3,439 on 25 Nov, and none after. The OS history has no bulk pause, so it
+was done outside the OS or the campaigns ran out of leads. 26 Nov was Thanksgiving. Raised with the user.
 
 ## 0.30 Prospects: Remove takes agents off at once — 27 November
 
