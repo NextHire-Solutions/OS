@@ -21,6 +21,7 @@ import {
 import { infrastructureHealthTool } from "./tools-phase3.ts";
 import { notificationsTool, profileCompletenessTool } from "./tools-phase9.ts";
 import { ticketsTool } from "./tools-tickets.ts";
+import { positiveRepliesTool } from "./tools-positive.ts";
 import {
   campaignCopyTool,
   clientCommercialsTool,
@@ -716,13 +717,33 @@ export const TOOL_SCHEMA = [
       parameters: {"type": "object", "properties": {"days": {"type": "number"}, "client": {"type": "string"}}},
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "positive_replies",
+      description:
+        "POSITIVE REPLIES in Master Inbox for a period (default 7 days): how many, per client, and the replies themselves " +
+        "with their thread_id. Positive = marked Interested or Introduction (counted when it first became positive) " +
+        "unless corrected since (Not Interested, Not Qualified, Do Not Contact, Unsubscribe, Broker/Owner) — the Inboxes " +
+        "page's rule. Use this for 'positive replies', 'how many interested replies did X get'. Not EmailBison's own " +
+        "interested figure (campaign_kpis).",
+      parameters: {
+        type: "object",
+        properties: {
+          days: { type: "number", description: "Look back this many days, 1-90. Default 7." },
+          client: { type: "string", description: "Optional: only this client (portal name or part of it)." },
+          limit: { type: "number", description: "How many replies to list, 1-50. Default 20." },
+        },
+      },
+    },
+  },
 ];
 
 export const SYSTEM_PROMPT = `You answer questions about a lead-generation business from its own data.
 
 There are six products: Master Inbox (email threads, the reply agent), Client Portals (each client's portal: its link, on/off, SMS alerts and pipeline), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents into the agent database — about 1.2 million agents, the Database app; the onboarding app and the scraper share that database). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
 
-Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), Tickets — client emails to the team's Gmail (tickets), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), the agent database (find_agent for one agent and the campaigns they are in; search_agents for how many agents or offices are in a place or match filters — sales volume, brokerage, MLS, emailed or not — with top agents and top brokerages; agent_places to rank cities, counties, zips, states or brokerages), inbox text and templates (search_conversations, reply_templates) and recent introductions. Look before saying something is not tracked.
+Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), Tickets — client emails to the team's Gmail (tickets), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), the agent database (find_agent for one agent and the campaigns they are in; search_agents for how many agents or offices are in a place or match filters — sales volume, brokerage, MLS, emailed or not — with top agents and top brokerages; agent_places to rank cities, counties, zips, states or brokerages), inbox text and templates (search_conversations, reply_templates), positive replies per client (positive_replies — Interested or Introduction, unless corrected; the Inboxes page's rule) and recent introductions. Look before saying something is not tracked.
 
 A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
@@ -871,6 +892,11 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   }),
   search_conversations: (a) => searchConversationsTool({ text: String(a.text ?? ""), days: typeof a.days === "number" ? a.days : undefined }),
   reply_templates: (a) => replyTemplatesTool(typeof a.query === "string" && a.query ? a.query : undefined),
+  positive_replies: (a) => positiveRepliesTool({
+    days: typeof a.days === "number" ? a.days : undefined,
+    client: typeof a.client === "string" && a.client ? a.client : undefined,
+    limit: typeof a.limit === "number" ? a.limit : undefined,
+  }),
   recent_introductions: (a) => recentIntroductionsTool({ days: typeof a.days === "number" ? a.days : undefined, client: typeof a.client === "string" && a.client ? a.client : undefined }),
   client_record: (a) => clientRecordTool(String(a.client ?? "")),
   profile_completeness: (a) => profileCompletenessTool({

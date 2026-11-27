@@ -81,6 +81,8 @@ export const TOOL_NEEDS: Readonly<Record<string, Need>> = {
   search_conversations: any("inbox"),
   reply_templates: any("inbox"),
   recent_introductions: any("inbox", "portals"),
+  // Master Inbox labels (27 Nov).
+  positive_replies: any("inbox"),
   // Client Portals.
   client_portals: any("portals"),
   portal_pipeline: any("portals"),
