@@ -95,6 +95,9 @@ export const OS_TABLES = [
   "os_ticket_sends",
   // Actions through the Claude connector: each confirmation claimed before it runs (never twice) — migrations/0058_mcp_actions.sql.
   "os_mcp_actions",
+  // Adding agents from the agent database to a campaign (Claude): the job and what became of each agent — migrations/0059_campaign_agent_jobs.sql.
+  "os_campaign_agent_jobs",
+  "os_campaign_agent_job_items",
 ] as const;
 export type OsTable = (typeof OS_TABLES)[number];
 

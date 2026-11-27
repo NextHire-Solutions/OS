@@ -69,6 +69,8 @@ test("the allowlist contains exactly the OS tables", () => {
     // Added 2026-11-24: replies from Tickets (0055).
     "os_ticket_sends",
     "os_mcp_actions",
+    // Added 2026-11-28: adding agents from the agent database to a campaign (0059).
+    "os_campaign_agent_jobs", "os_campaign_agent_job_items",
   ]);
 });
 

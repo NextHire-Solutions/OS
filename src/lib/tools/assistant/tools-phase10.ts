@@ -62,6 +62,27 @@ async function filterSearch(mode: "agent" | "office", filters: Record<string, un
   return { rows: d.data ?? [], total: Number(d.totalCount) || 0, salesVolume: Number(d.salesVolumeTotal) || 0 };
 }
 
+/** How many agents these filters match — the count search_agents gives. */
+export async function agentCount(filters: Record<string, unknown>): Promise<number> {
+  return (await filterSearch("agent", filters, "sales_volume", 1)).total;
+}
+
+/** The most agent ids fn_filter_ids gives in one call (the Database app's export cap). */
+export const IDS_PAGE = 100_000;
+
+/*
+ * Every agent these filters match, a page at a time (28 Nov, campaign_add_agents): the Database app's own fn_filter_ids
+ * (STABLE), in its stable pseudo-random order (md5 of the id, its "random" sort), so consecutive pages never skip or
+ * repeat an agent. Same source ("all") as the counts.
+ */
+export async function agentIdsPage(filters: Record<string, unknown>, offset: number, limit = IDS_PAGE): Promise<string[]> {
+  const { data, error } = (await db().rpc("fn_filter_ids", {
+    p_mode: "agent", p_source: "all", p_filters: filters, p_sort_by: "random", p_sort_dir: "asc", p_limit: Math.min(Math.max(limit, 1), IDS_PAGE), p_offset: Math.max(offset, 0),
+  })) as Rpc;
+  if (error) throw new Error(describeDbError(error));
+  return ((Array.isArray(data) ? data : []) as unknown[]).map(String).filter(Boolean);
+}
+
 const AGENT_SORTS = new Set(["sales_volume", "closed_transactions", "units", "approx_gci", "avg_sale_price"]);
 const OFFICE_SORTS = new Set(["agent_count", "sales_volume", "units"]);
 const LOCATED: Record<string, LocatedBy[] | undefined> = { any: undefined, office: ["office"], home: ["home"], most_transacted: ["transacted"], transacted: ["transacted"] };
@@ -92,62 +113,77 @@ export interface SearchAgentsArgs {
 // search_agents
 // ---------------------------------------------------------------------------
 
-export async function searchAgentsTool(a: SearchAgentsArgs) {
+/*
+ * The search's arguments resolved into the agent database's query (28 Nov: shared with Claude's campaign_add_agents, so
+ * an add takes exactly the agents a count named): the place, MLS, brokerage and office as the Database app spells them,
+ * a client's lists by its agent-database link. A refusal is the tool's own answer, unchanged.
+ */
+export type ResolvedAgentQuery = { ok: true; q: AgentQuery; resolved: Record<string, unknown>; otherPlaces: string[] } | { ok: false; answer: Record<string, unknown> };
+
+export async function resolveAgentQuery(a: SearchAgentsArgs): Promise<ResolvedAgentQuery> {
   const q: AgentQuery = {};
   const resolved: Record<string, unknown> = {};
   let otherPlaces: string[] = [];
+  const no = (answer: Record<string, unknown>): ResolvedAgentQuery => ({ ok: false, answer });
+  if (a.place && a.place.trim()) {
+    const parsed = parsePlace(a.place, a.place_type);
+    if (!parsed) return no({ note: `"${a.place}" is not a place the agent database can look up. Give a city, county, state or 5-digit zip.` });
+    const { picked, others } = pickPlace(await placeOptions(parsed.level, parsed.name), parsed);
+    if (!picked) {
+      return no({
+        note: `No ${parsed.level} called "${a.place}" in the agent database.`,
+        didYouMean: others.map((o) => `${o.v} (${o.n.toLocaleString("en-US")} agents)`),
+      });
+    }
+    q.place = { level: parsed.level, value: picked.v };
+    resolved.place = { asked: a.place, matched: picked.v, type: parsed.level };
+    // The data holds misspelled places too ("Dalas, TX": 1 agent), and a typo finds them.
+    if (picked.n < 25 && parsed.level !== "zip") resolved.placeNote = `Only ${picked.n} agent${picked.n === 1 ? " is" : "s are"} recorded in "${picked.v}" — if a bigger place was meant, check the spelling.`;
+    if (!parsed.state) otherPlaces = others.map((o) => `${o.v}: ${o.n.toLocaleString("en-US")} agents`);
+  }
+  q.locatedBy = LOCATED[a.located_by ?? "any"];
+  if (a.mls) {
+    const m = await pickMls(a.mls);
+    if (!m) return no({ note: `No MLS matching "${a.mls}" in the agent database.` });
+    q.mlsIds = [m.id];
+    resolved.mls = `${m.code} — ${m.name}`;
+  }
+  if (a.brokerage) {
+    const b = await pickOption("brand", a.brokerage);
+    if (!b) return no({ note: `No brokerage matching "${a.brokerage}" in the agent database.` });
+    q.brands = [b.value];
+    resolved.brokerage = b.value;
+    if (b.others.length && b.value.toLowerCase() !== a.brokerage.trim().toLowerCase()) resolved.otherBrokerageNames = b.others;
+  }
+  if (a.office) {
+    const o = await pickOption("office", a.office);
+    if (!o) return no({ note: `No office matching "${a.office}" in the agent database.` });
+    q.offices = [o.value];
+    resolved.office = o.value;
+  }
+  if (a.client) {
+    const { match, candidates } = await findClient(a.client);
+    if (!match) return no(candidates.length ? { note: `"${a.client}" matches several clients — ask which.`, candidates: candidates.map((c) => c.name) } : { note: `No client named "${a.client}".` });
+    if (!match.agentSearchClientId) return no({ client: match.name, note: "This client is not linked in the agent database, so its lists cannot be searched. That is not the same as having no agents." });
+    q.clientIds = [match.agentSearchClientId];
+    resolved.client = match.name;
+  }
+  q.minSalesVolume = n(a.min_sales_volume) ?? undefined;
+  q.maxSalesVolume = n(a.max_sales_volume) ?? undefined;
+  q.minTransactions = n(a.min_transactions) ?? undefined;
+  q.maxTransactions = n(a.max_transactions) ?? undefined;
+  if (typeof a.has_email === "boolean") q.hasEmail = a.has_email;
+  if (typeof a.contacted === "boolean") q.contacted = a.contacted;
+  if (typeof a.replied === "boolean") q.replied = a.replied;
 
+  return { ok: true, q, resolved, otherPlaces };
+}
+
+export async function searchAgentsTool(a: SearchAgentsArgs) {
   try {
-    if (a.place && a.place.trim()) {
-      const parsed = parsePlace(a.place, a.place_type);
-      if (!parsed) return { note: `"${a.place}" is not a place the agent database can look up. Give a city, county, state or 5-digit zip.` };
-      const { picked, others } = pickPlace(await placeOptions(parsed.level, parsed.name), parsed);
-      if (!picked) {
-        return {
-          note: `No ${parsed.level} called "${a.place}" in the agent database.`,
-          didYouMean: others.map((o) => `${o.v} (${o.n.toLocaleString("en-US")} agents)`),
-        };
-      }
-      q.place = { level: parsed.level, value: picked.v };
-      resolved.place = { asked: a.place, matched: picked.v, type: parsed.level };
-      // The data holds misspelled places too ("Dalas, TX": 1 agent), and a typo finds them.
-      if (picked.n < 25 && parsed.level !== "zip") resolved.placeNote = `Only ${picked.n} agent${picked.n === 1 ? " is" : "s are"} recorded in "${picked.v}" — if a bigger place was meant, check the spelling.`;
-      if (!parsed.state) otherPlaces = others.map((o) => `${o.v}: ${o.n.toLocaleString("en-US")} agents`);
-    }
-    q.locatedBy = LOCATED[a.located_by ?? "any"];
-    if (a.mls) {
-      const m = await pickMls(a.mls);
-      if (!m) return { note: `No MLS matching "${a.mls}" in the agent database.` };
-      q.mlsIds = [m.id];
-      resolved.mls = `${m.code} — ${m.name}`;
-    }
-    if (a.brokerage) {
-      const b = await pickOption("brand", a.brokerage);
-      if (!b) return { note: `No brokerage matching "${a.brokerage}" in the agent database.` };
-      q.brands = [b.value];
-      resolved.brokerage = b.value;
-      if (b.others.length && b.value.toLowerCase() !== a.brokerage.trim().toLowerCase()) resolved.otherBrokerageNames = b.others;
-    }
-    if (a.office) {
-      const o = await pickOption("office", a.office);
-      if (!o) return { note: `No office matching "${a.office}" in the agent database.` };
-      q.offices = [o.value];
-      resolved.office = o.value;
-    }
-    if (a.client) {
-      const { match, candidates } = await findClient(a.client);
-      if (!match) return candidates.length ? { note: `"${a.client}" matches several clients — ask which.`, candidates: candidates.map((c) => c.name) } : { note: `No client named "${a.client}".` };
-      if (!match.agentSearchClientId) return { client: match.name, note: "This client is not linked in the agent database, so its lists cannot be searched. That is not the same as having no agents." };
-      q.clientIds = [match.agentSearchClientId];
-      resolved.client = match.name;
-    }
-    q.minSalesVolume = n(a.min_sales_volume) ?? undefined;
-    q.maxSalesVolume = n(a.max_sales_volume) ?? undefined;
-    q.minTransactions = n(a.min_transactions) ?? undefined;
-    q.maxTransactions = n(a.max_transactions) ?? undefined;
-    if (typeof a.has_email === "boolean") q.hasEmail = a.has_email;
-    if (typeof a.contacted === "boolean") q.contacted = a.contacted;
-    if (typeof a.replied === "boolean") q.replied = a.replied;
+    const r = await resolveAgentQuery(a);
+    if (!r.ok) return r.answer;
+    const { q, resolved, otherPlaces } = r;
 
     const filters = buildFilters(q);
     const offices = a.count === "offices";
