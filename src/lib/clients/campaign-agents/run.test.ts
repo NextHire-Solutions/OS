@@ -205,3 +205,11 @@ test("onClientList: by either address, by the address's domain, by name only whe
   assert.equal(mod.onClientList({ preferred_email: "c@y.test", enriched_email: null, full_name: "Jo" } as never, { ...lists, names: new Set(["jo"]) }), null, "a name under 5 letters never matches");
   assert.equal(mod.onClientList({ preferred_email: "c@y.test", enriched_email: null, full_name: "Someone Else" } as never, lists), null);
 });
+
+test("missingTable: the database's own words for a table not made yet (migration 0059), and nothing broader", { skip }, async () => {
+  await load();
+  assert.equal(mod.missingTable({ message: "Could not find the table 'public.os_campaign_agent_jobs' in the schema cache", code: "PGRST205" }), true, "as seen live, 28 Nov");
+  assert.equal(mod.missingTable({ message: 'relation "os_campaign_agent_jobs" does not exist', code: "42P01" }), true);
+  assert.equal(mod.missingTable({ message: "permission denied for table os_campaign_agent_jobs", code: "42501" }), false);
+  assert.equal(mod.missingTable(null), false);
+});

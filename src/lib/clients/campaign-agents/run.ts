@@ -38,6 +38,8 @@ const s = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 const n = (v: unknown) => Number(v) || 0;
 const lower = (e: string | null | undefined) => (e ?? "").trim().toLowerCase();
 const personKey = (name: string | null | undefined) => (name ?? "").toLowerCase().replace(/[^a-z]/g, "");
+/** A table the database doesn't have yet (migration 0059 not run): PostgREST's own words and codes for it. */
+export const missingTable = (e: { message?: string; code?: string } | null | undefined) => !!e && /does not exist|Could not find the table|PGRST205|42P01/.test(`${e.message ?? ""} ${e.code ?? ""}`);
 const chunks = <T>(xs: readonly T[], size: number): T[][] => { const out: T[][] = []; for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size)); return out; };
 
 export interface AgentJob {
@@ -114,7 +116,7 @@ export async function loadClientLists(osClientId: string): Promise<ClientLists> 
     }
     for (const d of dnc.filter((x) => x.kind === "company")) { const dom = lower(d.domain).replace(/^@/, ""); if (dom) out.domains.add(dom); }
     const { data: hidden, error } = await mi.from("os_market_dnc_emails").select("email").eq("client_id", p);
-    if (error && !/does not exist|PGRST205|42P01/.test(`${error.message} ${(error as { code?: string }).code ?? ""}`)) throw new Error(`os_market_dnc_emails: ${error.message}`);
+    if (error && !missingTable(error)) throw new Error(`os_market_dnc_emails: ${error.message}`);
     for (const h of (hidden ?? []) as Array<{ email: string }>) if (lower(h.email)) out.emails.add(lower(h.email));
   }
   return out;
@@ -356,14 +358,14 @@ export async function createAgentJob(o: {
     campaign_id: o.campaignId, campaign_name: o.campaignName, os_client_id: o.osClientId, filters: o.filters, described: o.described,
     mls_scope: o.mlsScope, matched: o.matched, requested_by: o.requestedBy, status: "collecting",
   }).select("id").single();
-  if (error) throw new Error(/does not exist|PGRST205|42P01/.test(error.message) ? "needs migrations/0059_campaign_agent_jobs.sql" : `os_campaign_agent_jobs: ${error.message}`);
+  if (error) throw new Error(missingTable(error) ? "needs migrations/0059_campaign_agent_jobs.sql" : `os_campaign_agent_jobs: ${error.message}`);
   return { id: String((data as { id: string }).id) };
 }
 
 /** A job still running for this campaign, or null. */
 export async function runningJobFor(campaignId: string): Promise<AgentJob | null> {
   const { data, error } = await osTable("os_campaign_agent_jobs").select("*").eq("campaign_id", campaignId).in("status", ["collecting", "adding"]).limit(1);
-  if (error) throw new Error(/does not exist|PGRST205|42P01/.test(error.message) ? "needs migrations/0059_campaign_agent_jobs.sql" : `os_campaign_agent_jobs: ${error.message}`);
+  if (error) throw new Error(missingTable(error) ? "needs migrations/0059_campaign_agent_jobs.sql" : `os_campaign_agent_jobs: ${error.message}`);
   return ((data ?? []) as AgentJob[])[0] ?? null;
 }
 
@@ -372,7 +374,7 @@ export async function agentJobsOverview(o: { id?: string; limit?: number } = {})
   let q = osTable("os_campaign_agent_jobs").select("*").order("created_at", { ascending: false }).limit(Math.min(Math.max(o.limit ?? 10, 1), 25));
   if (o.id) q = osTable("os_campaign_agent_jobs").select("*").eq("id", o.id).limit(1);
   const { data, error } = await q;
-  if (error) return { note: /does not exist|PGRST205|42P01/.test(error.message) ? "Adding agents isn't set up yet (migration 0059)." : `Jobs could not be read: ${error.message}` };
+  if (error) return { note: missingTable(error) ? "Adding agents isn't set up yet (migration 0059)." : `Jobs could not be read: ${error.message}` };
   const jobs = (data ?? []) as AgentJob[];
   const out = [];
   for (const j of jobs) {
