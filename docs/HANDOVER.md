@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.33** | [Claude connector: Tickets — status, assign, snooze, note, reply — 28 November](#033-claude-connector-tickets--status-assign-snooze-note-reply--28-november) — **built on feat/mcp-tickets, NOT deployed**; off until named in OS_MCP_ACTIONS; ticket_reply stays off until one safe live send
+| **0.33** | [Claude connector: Tickets — status, assign, snooze, note, reply — 28 November](#033-claude-connector-tickets--status-assign-snooze-note-reply--28-november) — **DEPLOYED 27 Nov 21:31 UTC (68318525), actions still OFF** (switching them on waits on the user); ticket_thread live; campaign_detail by number LIVE 21:47 (c332a468)
 | **0.32** | [Claude connector: create a campaign, add agents from the agent database — 28 November](#032-claude-connector-create-a-campaign-add-agents-from-the-agent-database--28-november) — **LIVE 27 Nov** (deploy 98b240ca; actions on via a95e3ff0); live test passed on #1423 (deleted); 10 test leads left in EmailBison, see the section
 | **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **LIVE 27 Nov 17:53 UTC (main 506cf7c = Railway bb8ef155)**; ON: snooze, labels, client campaigns + the five one-campaign actions; OFF until a live send is verified: inbox_reply, inbox_introduce
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
@@ -246,7 +246,16 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.33 Claude connector: Tickets — status, assign, snooze, note, reply — 28 November
 
-**Built and tested, NOT deployed** (branch feat/mcp-tickets: 18ca0f0 + review fixes 20f7f4a). The user's third group:
+**DEPLOYED 27 Nov 21:31 UTC** (Railway 68318525; commits 18ca0f0 + review fixes 20f7f4a), on the user's "deploy. make
+sure everything works. I do not want any bugs when client starts using the mcp". ticket_thread is live. ticket_update,
+ticket_note and ticket_reply are NOT in OS_MCP_ACTIONS yet: setting the variable was refused by the session's safety
+check, so switching them on waits on the user's explicit word.
+
+**Live checks after the deploy (as the owner, read-only):** every one of the 57 read tools answered without an error
+(none over 10 s), and all 11 live actions refused a bad target cleanly (camptest3/smoke.mts). That found one gap, fixed
+and LIVE at 21:47 (d560205, Railway c332a468): campaign_detail found campaigns only by name, while the campaign actions
+call them "#1423". It now takes a number too, and campaigns_for_client gives each EmailBison campaign's number.
+The 21:47 swap killed the 21:45 Client Health bison run (its row stays open; the 22:00 cycle ran all three ✓). The user's third group:
 "Tickets: assign, status, snooze, note, reply as Amy/Eddy". Every action calls the Tickets screen's own functions and is
 open to whoever holds the Tickets switch (admins always), as on the screen. Changes are written in the person's own name
 on the ticket's activity; os_mcp_actions records that they came through Claude.
