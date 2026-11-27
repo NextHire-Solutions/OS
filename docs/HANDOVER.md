@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.33** | [Claude connector: Tickets — status, assign, snooze, note, reply — 28 November](#033-claude-connector-tickets--status-assign-snooze-note-reply--28-november) — **built on feat/mcp-tickets, NOT deployed**; off until named in OS_MCP_ACTIONS; ticket_reply stays off until one safe live send
 | **0.32** | [Claude connector: create a campaign, add agents from the agent database — 28 November](#032-claude-connector-create-a-campaign-add-agents-from-the-agent-database--28-november) — **LIVE 27 Nov** (deploy 98b240ca; actions on via a95e3ff0); live test passed on #1423 (deleted); 10 test leads left in EmailBison, see the section
 | **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **LIVE 27 Nov 17:53 UTC (main 506cf7c = Railway bb8ef155)**; ON: snooze, labels, client campaigns + the five one-campaign actions; OFF until a live send is verified: inbox_reply, inbox_introduce
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
@@ -242,6 +243,50 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.33 Claude connector: Tickets — status, assign, snooze, note, reply — 28 November
+
+**Built and tested, NOT deployed** (branch feat/mcp-tickets: 18ca0f0 + review fixes 20f7f4a). The user's third group:
+"Tickets: assign, status, snooze, note, reply as Amy/Eddy". Every action calls the Tickets screen's own functions and is
+open to whoever holds the Tickets switch (admins always), as on the screen. Changes are written in the person's own name
+on the ticket's activity; os_mcp_actions records that they came through Claude.
+
+- **ticket_update**: ONE change per call (service.ts changeTicket).
+  - status: open / waiting / done / not_a_ticket (= the screen's "ignored").
+  - assignee: an active teammate by name or email, or "nobody".
+  - snooze_until: strict ISO with a zone, at most a year; or cancel_snooze.
+  - The confirm is bound to status, assignee, snooze and last_inbound_at, so a client email that arrived after the
+    preview blocks it (it must be seen before the ticket is closed or snoozed).
+- **ticket_note** (addNote): an internal note. Mentions become "@Full Name" in the note, as the screen writes them, and
+  show only in the person's Mentions view (no email or bell exists).
+- **ticket_reply** (reply-service sendTicketReply, the reply box's path):
+  - It goes from the inbox the client wrote to (only Amy's or Eddy's), to the client, in the same Gmail thread, with the
+    signature, the quote and the screen's Cc rule.
+  - The confirm is bound to the client's latest email, our last reply, from, to, cc and subject.
+  - Its os_ticket_sends id comes from the reply itself (ticket, the email it answers, the inbox, the words). A retry
+    after "Gmail didn't confirm", or two codes confirmed at once, get "already sent" / "look in the Sent folder" instead
+    of a second email.
+- **ticket_thread** (read, the Tickets switch): one ticket's emails, notes, activity and whether a reply can go from Tickets.
+- **core.ts**: a used code is reported as used before the arguments and the preview are judged again (every action).
+- **inbox_snooze**: the same strict ISO check (a date like 12-01-2026 used to pass as server midnight).
+
+**Live facts (read-only, 28 Nov):**
+- Only Amy's inbox is connected (send scope yes); Eddy's is not. So every reply from Tickets today goes FROM AMY's Gmail,
+  although Amy was offboarded on 20 Nov. The preview says so.
+- os_ticket_sends is empty: no reply has ever been sent from Tickets.
+- Mail from our own domains (brokerstaffer.com, outreachify.io, opslabs.ai, ascense.io) never becomes a ticket, so a test
+  ticket needs mail from an outside address.
+
+**Checks.**
+- 4,202 tests pass (tickets.test.ts 18 + a core test); the production build passes.
+- An independent review: 2 should-fix (a second send across two codes; a new client email not blocking a change) and
+  5 nits, all fixed.
+- Guarded local run over the connector route on live data (scratchpad mcpact/serve-local-tk.mjs + tk-e2e.mts), twice:
+  every preview and refusal correct on Jeff Cook #37 and Others #42, 0 writes. The only refused calls were Google token
+  refreshes from reading Amy's signature, which the screen does too.
+
+**To go live (the user's word for each):** deploy; switch on ticket_update + ticket_note; live-test them on a test
+ticket; ticket_reply only after one real send to our own outside address, from Amy's inbox, with the user's OK.
 
 ## 0.32 Claude connector: create a campaign, add agents from the agent database — 28 November
 
