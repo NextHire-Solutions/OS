@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.32** | [Claude connector: create a campaign, add agents from the agent database — 28 November](#032-claude-connector-create-a-campaign-add-agents-from-the-agent-database--28-november) — **built on feat/mcp-campaign-agents, NOT deployed**; migration 0059 run by the user; off until named in OS_MCP_ACTIONS
 | **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **LIVE 27 Nov 17:53 UTC (main 506cf7c = Railway bb8ef155)**; ON: snooze, labels, client campaigns + the five one-campaign actions; OFF until a live send is verified: inbox_reply, inbox_introduce
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
 | **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
@@ -241,6 +242,45 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.32 Claude connector: create a campaign, add agents from the agent database — 28 November
+
+**Built and tested, NOT deployed** (branch feat/mcp-campaign-agents). The client asked: "what about creating a campaign
+and using leads on the database?" The user: all campaigns (a client's or BrokerStaffer's own), no limit on the number of
+agents, and the OS's own path with no enrichment (picked over the Database app's Send to campaign, which was idle since 22 Oct
+and spends credit). Migration 0059 (os_campaign_agent_jobs + items) was run by the user on 28 Nov.
+
+- **campaign_create:** a draft copy of the team's setup template, or a named campaign, or a blank one; renamed.
+  - It is recorded in Campaign Analytics right after EmailBison makes it, so a retry never makes a second one.
+  - For a client: its client fields are filled (a failed fill is a note, as at setup) and it is tied in Campaign Analytics.
+  - The copy's healthy inboxes are attached. It is never started.
+- **campaign_add_agents** (admins only: it needs both Agent Search and Campaigns):
+  - The filters are search_agents' own (resolveAgentQuery, lifted out unchanged: 10/10 answers identical, main vs branch)
+    plus "has an email". The preview shows the count, which is checked equal to search_agents (1,625 = 1,625).
+  - A filter that narrows WHO is required.
+  - Confirmed, one job is recorded. The every-minute run (lib/clients/campaign-agents/run.ts, OS_CAMPAIGN_AGENTS=0 pauses it):
+    - collects every match through fn_filter_ids, in its stable md5 order, 100k per call;
+    - then adds 200 per run through prospect-sync's addInto, exported with types only: the database's own email; a lead
+      already in another campaign added as it is; bounced and unsubscribed left out; the attach named "<email> via Claude";
+    - for a client's campaign (the client looked up each batch): its DNC List, My Agents and pipeline across all its
+      portals (usage-billing portalsOf) are left out, checked against the address actually emailed too, and agents
+      already in its other campaigns are not added twice;
+    - a failing batch counts a try; collecting failing 5 times stops the job; a finished or deleted campaign stops it; the bell rings when done.
+- **campaign_add_agents_stop** (admins): what is done stays; the rest are not added.
+- **campaign_agent_jobs** (read, admins): progress, and why agents weren't added.
+
+**Checks.**
+- 4,183 tests pass; the production build passes.
+- An independent review: nothing serious; its 7 findings were fixed (retries counted, the client re-checked, the portal lookup,
+  the emailed address, stop, no duplicate create, wording / count binding / narrowing).
+- Local end to end over the connector route on live data, with every outside write refused: all previews and refusals correct, 0 writes.
+- Real client lists load (Howe: 248 addresses, 406 names, 2 domains).
+
+**Live test plan (after "deploy"; the actions stay OFF until it passes):**
+1. campaign_create makes a ZZ TEST campaign (never started).
+2. campaign_add_agents adds a small set of agents EmailBison already has; then a second small add is stopped.
+3. Check the items, the campaign's leads and the audit log.
+4. Delete the test campaign, and compare a snapshot of all 459 campaigns before and after.
 
 ## 0.31 Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November
 
