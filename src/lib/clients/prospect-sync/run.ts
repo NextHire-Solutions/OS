@@ -16,7 +16,7 @@ import { analyticsTeamId } from "@/lib/tools/analytics/supabase";
 import { getSupabase as getClientHealthSupabase } from "@/lib/tools/client-health/supabase";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 
-import { loadLeadAgents, type SyncAgent } from "./agents.ts";
+import { campaignRoutes, dropCampaignRecords, fitsPortal, leadListWouldShow, loadLeadAgents, type SyncAgent } from "./agents.ts";
 import { byPriority, databaseEmail, mapAgentToBisonLead, PRIORITY_ORDERS, type BisonLeadPayload, type LeadAgent } from "./lead-map.ts";
 import { postToPortalChannel, type ShownCampaign } from "./queue.ts";
 import { autoLinkFor, linkable, type CampaignProfile } from "./auto-link.ts";
@@ -150,6 +150,10 @@ export interface RunDeps {
   remove?: (campaignId: number, leadIds: number[], actor: string) => Promise<MembershipResult>;
   /** Drop the agent database's record of these agents in these campaigns. */
   forgetCampaignLeads?: (orchClientId: string, agentIds: readonly string[], campaignIds: readonly string[]) => Promise<void>;
+  /** Drop its record of these agents in the client's Instantly campaigns (agent → campaigns): Instantly is no longer used. */
+  forgetInstantlyLeads?: (orchClientId: string, campaignsOf: ReadonlyMap<string, readonly string[]>) => Promise<void>;
+  /** Dropping these would leave the client no campaign records while it has a lead list: that list's size (agents.ts). */
+  leadListWouldShow?: (orchClientId: string, drops: Parameters<typeof leadListWouldShow>[1]) => Promise<number | null>;
   slack?: (text: string) => Promise<unknown>;
   bell?: (row: { kind: string; severity: string; title: string; body: string; ref: string }) => Promise<void>;
 }
@@ -206,11 +210,7 @@ function realDeps(d: RunDeps) {
       (await campaignsOfClient(client, extra(client))).filter((c) => c.platform === "emailbison").map((c) => ({ id: c.id, name: c.name, status: c.status }))),
     allCampaigns: d.allCampaigns ?? (async (client: ClientRecord) =>
       (await allCampaignsOfClient(client, extra(client))).map((c) => ({ platform: c.platform, id: c.id, name: c.name, status: c.status }))),
-    routes: d.routes ?? (async (osClientId: string) => {
-      const { data, error } = await osTable("os_campaign_portals").select("platform, campaign_id, mi_client_id").eq("os_client_id", osClientId);
-      if (error) throw new Error(`os_campaign_portals: ${error.message}`);
-      return ((data ?? []) as Array<{ platform: string; campaign_id: string; mi_client_id: string }>).filter((r) => r.platform === "emailbison").map((r) => ({ campaignId: String(r.campaign_id), portalId: String(r.mi_client_id) }));
-    }),
+    routes: d.routes ?? campaignRoutes,
     orchCampaign: d.orchCampaign ?? (async (orchClientId: string) => {
       // Unreadable is not "none": a client whose only campaign the onboarding app built must never get a second.
       const { data, error } = await getCorofySupabase().from("orch_clients").select("bison_campaign_id").eq("id", orchClientId).maybeSingle();
@@ -279,6 +279,10 @@ function realDeps(d: RunDeps) {
         if (error) throw new Error(`bison_client_leads: ${error.message}`);
       }
     }),
+    forgetInstantlyLeads: d.forgetInstantlyLeads ?? (async (orchClientId: string, campaignsOf: ReadonlyMap<string, readonly string[]>) => {
+      await dropCampaignRecords("instantly_client_leads", orchClientId, campaignsOf);
+    }),
+    leadListWouldShow: d.leadListWouldShow ?? ((orchClientId: string, drops: Parameters<typeof leadListWouldShow>[1]) => leadListWouldShow(orchClientId, drops)),
     slack: d.slack ?? postToPortalChannel,
     // The bell takes info, warning or critical (migration 0030's CHECK) — a refused one is logged, never lost silently.
     bell: d.bell ?? (async (row: { kind: string; severity: string; title: string; body: string; ref: string }) => {
@@ -558,8 +562,7 @@ async function runPortal(x: Deps, portalId: string, claimed: QueueRow[], b: Batc
   ]);
   // A client with several portals: this portal's changes go only to — and come only out of — campaigns routed here.
   const multiPortal = new Set(routes.map((r) => r.portalId)).size > 1 || routes.some((r) => r.portalId !== portalId);
-  const routedHere = new Set(routes.filter((r) => r.portalId === portalId).map((r) => r.campaignId));
-  const fits = (id: string) => !multiPortal || routedHere.has(id);
+  const fits = fitsPortal(routes, portalId);
   // The team's picks, only while each is still one of the client's own campaigns (its strict mapping — an excluded
   // mapping is a campaign taken away from it — or one made at setup) and routed here: never trusted forever.
   const setupIds = new Set([...setups.values()].map((c) => c.id));
@@ -703,13 +706,16 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
 
   // Each agent's record dropped for exactly the campaigns it left (or was only on record in) — never another's.
   const forget = new Map<string, string[]>();
+  const forgetInstantly = new Map<string, string[]>();
   const retry: QueueRow[] = [];
   for (const r of rows) {
     const p = plan.get(r.id);
     if (!p) continue; // its lookup failed — tried again above
     if (p.found.some((f) => failedCampaigns.has(f.campaignId))) { retry.push(r); continue; }
     const took = [...new Set(p.found.map((f) => names.get(f.campaignId) ?? f.campaignId))];
-    const instantly = shownOf(r).filter((c) => c.provider !== "emailbison").map((c) => c.name ?? c.id);
+    const instantlyShown = shownOf(r).filter((c) => c.provider !== "emailbison");
+    const instantly = instantlyShown.map((c) => c.name ?? c.id);
+    if (instantlyShown.length) forgetInstantly.set(r.agent_id, instantlyShown.map((c) => c.id));
     const elsewhere = shownOf(r).filter((c) => c.provider === "emailbison" && !fits(c.id) && !p.found.some((f) => f.campaignId === c.id) && !p.strayIds.includes(c.id)).map((c) => c.name ?? c.id);
     // What was done, then (a failure) what is wrong, then what else is known.
     const head = [
@@ -717,7 +723,7 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
       p.stale.length ? `Listed in ${p.stale.map((id) => names.get(id) ?? id).join(", ")}, but EmailBison has no lead of it there now.` : "",
     ];
     const tail = [
-      instantly.length ? `Also listed in ${[...new Set(instantly)].join(", ")} (Instantly — not reached from here).` : "",
+      instantly.length ? `Also listed in ${[...new Set(instantly)].join(", ")} (Instantly, no longer used — only taken off the list).` : "",
       elsewhere.length ? `Also in ${[...new Set(elsewhere)].join(", ")}, which goes to another of ${client}'s portals — left there.` : "",
     ];
     const result = { campaign_id: p.found.map((f) => f.campaignId).join(",") || null, campaign_name: took.join(", ") || null };
@@ -737,6 +743,29 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
     const why = [...new Set(retry.flatMap((r) => (plan.get(r.id)?.found ?? []).map((f) => failedCampaigns.get(f.campaignId)).filter(Boolean)))].join(" · ");
     await b.retry(retry, `Not taken out yet: ${why}`);
   }
+  // Never the client's last campaign records while it has a lead list: its Prospects would turn into that whole list
+  // (27 Nov, agents.ts leadListWouldShow). Then they stay — out of the campaigns but listed — and our team is told.
+  // Not known (the check failed): kept as well; a later removal tries again.
+  if (ctx.orchClientId && (forget.size || forgetInstantly.size)) {
+    let leadList: number | null;
+    try {
+      leadList = await x.leadListWouldShow(ctx.orchClientId, [{ table: "bison_client_leads", campaignsOf: forget }, { table: "instantly_client_leads", campaignsOf: forgetInstantly }]);
+    } catch (err) {
+      leadList = -1;
+      b.out.notes.push(`lead list check: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (leadList !== null) {
+      forget.clear();
+      forgetInstantly.clear();
+      if (leadList > 0) {
+        await x.bell({
+          kind: "prospect_sync", severity: "warning", title: `Prospects: last campaign records kept — ${client}`,
+          body: `Every prospect of ${client} is now off its campaigns. Dropping the agent database's last records of them would make its Prospects list its whole lead list (${leadList.toLocaleString("en-US")} agents), so they stay listed there although they are out of the campaigns — needs a look.`,
+          ref: `prospect_sync:leadlist:${ctx.portalId}:${day(b)}`,
+        }).catch(() => {});
+      }
+    }
+  }
   // So Prospects stops listing them now, not at the Database app's next sync — agents with the same campaigns together.
   if (ctx.orchClientId && forget.size) {
     const groups = new Map<string, { agents: string[]; campaigns: string[] }>();
@@ -751,6 +780,15 @@ async function runRemoves(x: Deps, ctx: Ctx, client: string, own: Campaign[], fi
       } catch (err) {
         b.out.notes.push(`forget: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+  }
+  // And off its Instantly campaigns' record, which nothing refreshes now (27 Nov): the save drops it at the click
+  // (forgetListings); this is for one that couldn't.
+  if (ctx.orchClientId && forgetInstantly.size) {
+    try {
+      await x.forgetInstantlyLeads(ctx.orchClientId, forgetInstantly);
+    } catch (err) {
+      b.out.notes.push(`forget Instantly: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }

@@ -177,7 +177,7 @@ export function unavailable(ctx: MarketContext, list: "market" | "prospects"): s
  * client's set is first read, the page's agents are looked up directly, as
  * before. Never more than one read per client at a time.
  */
-type ClientSet = { ids: Set<string> | null; at: number; loading: boolean };
+type ClientSet = { ids: Set<string> | null; at: number; loading: boolean; gen?: number };
 const CLIENT_SET_MS = 10 * 60_000;
 function clientSets(): Record<string, ClientSet> {
   const g = globalThis as unknown as Record<string, Record<string, ClientSet>>;
@@ -204,14 +204,27 @@ function heldClientSet(orchClientId: string, now = Date.now()): Set<string> | nu
   const all = clientSets();
   const cur = all[orchClientId];
   if (!cur || (now - cur.at > CLIENT_SET_MS && !cur.loading)) {
-    all[orchClientId] = { ids: cur?.ids ?? null, at: cur?.at ?? 0, loading: true };
+    const gen = cur?.gen ?? 0;
+    all[orchClientId] = { ids: cur?.ids ?? null, at: cur?.at ?? 0, loading: true, gen };
+    // A read the client's records changed under (forgetClientSet) is never kept: it may hold agents just taken off.
+    const mine = () => (all[orchClientId]?.gen ?? 0) === gen;
     void readClientSet(orchClientId)
-      .then((ids) => { all[orchClientId] = { ids, at: Date.now(), loading: false }; })
-      .catch(() => { all[orchClientId] = { ids: cur?.ids ?? null, at: cur?.at ?? 0, loading: false }; });
+      .then((ids) => { if (mine()) all[orchClientId] = { ids, at: Date.now(), loading: false, gen }; })
+      .catch(() => { if (mine()) all[orchClientId] = { ids: cur?.ids ?? null, at: cur?.at ?? 0, loading: false, gen }; });
   }
   // A held set is used for up to six hours while a newer one is read; older than that, the page asks directly.
   const held = all[orchClientId];
   return held?.ids && now - held.at < 6 * 60 * 60_000 ? held.ids : null;
+}
+
+/**
+ * Agents were just taken off the client's Prospects and its campaign records dropped (portal-save, 27 Nov): the held
+ * set is let go, so Market's labels and the List sort stop counting them at once. The next page asks the agent
+ * database directly while a fresh set is read; a read already under way is not kept.
+ */
+export function forgetClientSet(orchClientId: string): void {
+  const all = clientSets();
+  all[orchClientId] = { ids: null, at: 0, loading: false, gen: (all[orchClientId]?.gen ?? 0) + 1 };
 }
 
 async function inClientLists(orchClientId: string, agentIds: string[]): Promise<Set<string>> {

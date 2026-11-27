@@ -110,6 +110,12 @@ function deps(extra: Partial<Deps> = {}): Deps {
       return w.removeFails ? { ok: false, attempted: leadIds.length, applied: 0, skipped: 0, chunks: [{ size: leadIds.length, ok: false, error: "EmailBison refused" }], batchId: "b" } : { ok: true, attempted: leadIds.length, applied: leadIds.length, skipped: 0, chunks: [{ size: leadIds.length, ok: true }], batchId: "b" };
     },
     forgetCampaignLeads: async (...args) => { calls.push({ what: "forget", args }); },
+    forgetInstantlyLeads: async (...args) => { calls.push({ what: "forgetInstantly", args }); },
+    leadListWouldShow: async (...args) => {
+      calls.push({ what: "leadList", args });
+      if (leadListSize === "fails") throw new Error("orch_client_leads: timeout");
+      return leadListSize;
+    },
     slack: async (text) => { calls.push({ what: "slack", args: [text] }); },
     // The bell's table takes only these (migration 0030's CHECK) — any other is refused by the database (3 Nov audit).
     bell: async (row) => { assert.ok(["info", "warning", "critical"].includes(row.severity), `bell severity "${row.severity}" would be refused`); calls.push({ what: "bell", args: [row] }); },
@@ -132,7 +138,11 @@ function queue(rows: Array<{ detail?: string; email?: string; agent: string; act
 }
 const rowOf = (agentId: string) => db.rows("os_prospect_sync").filter((r) => r.agent_id === agentId).sort((a, b) => Number(b.id) - Number(a.id))[0] as Row;
 
+/* What the lead-list check answers (agents.ts leadListWouldShow): null — some records stay; a number — the list's size. */
+let leadListSize: number | null | "fails" = null;
+
 function seed() {
+  leadListSize = null;
   db.reset();
   calls.length = 0;
   nextId = 1;
@@ -629,7 +639,9 @@ test("a removal finds the lead in a campaign the portal showed it in that is NOT
   await runProspectSync(deps());
   assert.deepEqual(callsOf("remove").map((c) => c.args[0]), [100], "its own campaign only");
   assert.equal(rowOf("r1").status, "failed");
-  assert.equal(rowOf("r1").detail, "Taken out of Homebase + Greater Denver + ZF NS1 (MST). Still in Homebase 2 + Old Mapping (MST) — not one of Homebase's campaigns for this portal now, so not touched: check who it belongs to. Also listed in Homebase + Nicole + Denver (Instantly — not reached from here).");
+  assert.equal(rowOf("r1").detail, "Taken out of Homebase + Greater Denver + ZF NS1 (MST). Still in Homebase 2 + Old Mapping (MST) — not one of Homebase's campaigns for this portal now, so not touched: check who it belongs to. Also listed in Homebase + Nicole + Denver (Instantly, no longer used — only taken off the list).");
+  // Instantly is no longer used (27 Nov): its record of the agent is dropped, so Prospects can let it go at all.
+  assert.deepEqual(callsOf("forgetInstantly").map((c) => [c.args[0], [...(c.args[1] as Map<string, string[]>)]]), [["orch-homebase", [["r1", ["9f1c-uuid"]]]]]);
   const bell = callsOf("bell")[0].args[0] as { severity: string; ref: string };
   assert.deepEqual([bell.severity, bell.ref.startsWith("prospect_sync:failed:remove:")], ["critical", true]);
   // Another portal's campaign (a client with two portals): said, left there — not a failure.
@@ -727,6 +739,35 @@ test("first due, first done: a market's backlog of 5,600 waiting for a pick neve
   assert.deepEqual([rowOf("r1").status, rowOf("b1").status], ["done", "done"]);
   assert.ok(m <= 14, `done within the backlog's own turn (${m} minutes)`);
   assert.deepEqual(callsOf("remove").map((c) => c.args[0]), [1104]);
+});
+
+test("the lead-list trap (27 Nov): never the client's last campaign records while it has a lead list — they stay, our team is told; the check failing keeps them too", async () => {
+  const removal = () => {
+    seed();
+    w.agents = new Map([["r1", agent("r1", "pref@agent.test")]]);
+    w.leads = new Map([["pref@agent.test", [{ id: 11, email: "pref@agent.test", campaigns: [{ campaignId: 100, status: "in_sequence" }] }]]]);
+    w.listed = new Set();
+    queue([{ agent: "r1", action: "remove", in_campaigns: [{ provider: "emailbison", id: "100", name: "Homebase + Greater Denver + ZF NS1 (MST)" }, { provider: "instantly", id: "9f1c-uuid", name: "Homebase + Nicole + Denver" }] }]);
+  };
+  removal();
+  await runProspectSync(deps());
+  assert.deepEqual(callsOf("leadList").map((c) => [c.args[0], (c.args[1] as Array<{ table: string; campaignsOf: Map<string, string[]> }>).map((d) => [d.table, [...d.campaignsOf]])]), [["orch-homebase", [["bison_client_leads", [["r1", ["100"]]]], ["instantly_client_leads", [["r1", ["9f1c-uuid"]]]]]]], "asked once, with everything it would drop");
+  assert.deepEqual([callsOf("forget").length, callsOf("forgetInstantly").length], [1, 1], "some records stay: dropped as before");
+  removal();
+  leadListSize = 1634;
+  await runProspectSync(deps());
+  assert.deepEqual(callsOf("remove").map((c) => c.args[0]), [100], "still taken out of the campaign");
+  assert.equal(rowOf("r1").status, "done");
+  assert.deepEqual([callsOf("forget").length, callsOf("forgetInstantly").length], [0, 0], "its last records kept");
+  const bell = callsOf("bell")[0].args[0] as { severity: string; ref: string; body: string };
+  assert.equal(bell.severity, "warning");
+  assert.match(bell.ref, /^prospect_sync:leadlist:/);
+  assert.match(bell.body, /whole lead list \(1,634 agents\)/);
+  removal();
+  leadListSize = "fails";
+  const r = await runProspectSync(deps());
+  assert.deepEqual([callsOf("forget").length, callsOf("forgetInstantly").length, callsOf("bell").length], [0, 0, 0]);
+  assert.ok(r.notes.some((n) => /lead list check: orch_client_leads: timeout/.test(n)));
 });
 
 test("a removal shown in one of the client's campaigns: looked for under the address that campaign's lead has; not found there — out of date, said; with no address known — failed, and the bell rings", async () => {

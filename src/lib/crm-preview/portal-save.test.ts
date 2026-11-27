@@ -66,6 +66,9 @@ let fubOutcome: unknown = { ok: true, mode: "created", personId: "p1" };
 /* Prospects ↔ campaign (2 Nov): the agents in the client's campaigns, and whether recording a change fails. */
 let campaignAgents: string[] = [];
 let recordFails = false;
+/* What recording a change answers for the sync's mode ("off": the run won't act on it), and whether letting go fails. */
+let recordMode = "test";
+let forgetFails = false;
 /* The agent database's v_agent_campaigns, as the portal shows each agent's campaigns. */
 let shownDb = new Map<string, Array<{ provider: string; id: string; name: string | null }>>();
 
@@ -134,14 +137,21 @@ if (canMock) {
         if (recordFails) throw new Error("os_prospect_sync: relation does not exist");
         // As the real one: Slack only once the sync is on.
         if (process.env.OS_PROSPECT_SYNC === "1") await o.slack?.(`prospects ${(input as { action: string }).action}`);
-        return { mode: "test", recorded: (input as { agents: unknown[] }).agents.length };
+        return { mode: recordMode, recorded: (input as { agents: unknown[] }).agents.length };
       },
       postToPortalChannel: record("prospectsSlack"),
       unrecordedAlert: record("unrecorded"),
     },
   });
   mock.module("../clients/prospect-sync/agents", {
-    namedExports: { shownCampaigns: async (_orch: string, ids: readonly string[]) => new Map([...shownDb].filter(([id]) => ids.includes(id))) },
+    namedExports: {
+      shownCampaigns: async (_orch: string, ids: readonly string[]) => new Map([...shownDb].filter(([id]) => ids.includes(id))),
+      forgetListings: async (o: unknown) => {
+        sent.push({ what: "forget", args: [o] });
+        if (forgetFails) throw new Error("bison_client_leads: the agent database did not answer");
+        return { emailbison: 1, instantly: 1 };
+      },
+    },
   });
   mock.module("./market", {
     namedExports: {
@@ -151,6 +161,7 @@ if (canMock) {
       },
       matchingIds: async (_ctx: unknown, _q: unknown, max: number) => ({ ids: matching.ids.slice(0, max), total: matching.total }),
       campaignProspectsAmong: async (_ctx: unknown, ids: string[]) => new Set(ids.filter((id) => campaignAgents.includes(id))),
+      forgetClientSet: (orch: string) => { sent.push({ what: "forgetSet", args: [orch] }); },
     },
   });
   ({ runPortalAction } = await import("./portal-save.ts"));
@@ -176,6 +187,8 @@ function seed(opts: { flags?: Record<string, unknown>; fubKey?: string | null; e
   campaignAgents = [];
   shownDb = new Map();
   recordFails = false;
+  recordMode = "test";
+  forgetFails = false;
   delete process.env.OS_PROSPECT_SYNC;
   delete process.env.OS_PROSPECT_SYNC_ONLY;
   fubOutcome = { ok: true, mode: "created", personId: "p1" };
@@ -673,6 +686,49 @@ test("Prospects ↔ campaign: moved off Prospects (no list, My Agents, DNC) — 
   campaignAgents = ["a8"];
   okResult(await run({ type: "market.move", ids: ["a8"], to: "DNC List" }));
   assert.deepEqual(recorded().map((r) => ({ action: r.action, agents: r.agents.map((a) => a.id) })), [{ action: "remove", agents: ["a8"] }], "onto the DNC List: blocked AND out of the campaigns");
+});
+
+test("Prospects let go at once (27 Nov, Gabriel: \"click the Remove button at least four times\"): the campaigns' record of each agent taken off is dropped at the click — once recorded for the run; never unrecorded, with the sync off, or for Your DNC List's Remove", { skip }, async () => {
+  const setUp = () => {
+    seed();
+    syncOn();
+    campaignAgents = ["a6"];
+    agentDb = [agent("a6", "In Campaign", ["in.campaign@x.test", null]), agent("a9", "Only Instantly", ["only.instantly@x.test", null]), agent("a7", "Never A Prospect", ["never@x.test", null])];
+    shownDb = new Map([["a6", [{ provider: "emailbison", id: "292", name: "BrokerStaffer 1 + Philly (EST)" }]], ["a9", [{ provider: "instantly", id: "uuid-1", name: "BrokerStaffer + Nicole" }]]]);
+  };
+  const steps = () => sent.map((x) => x.what).filter((w) => w === "prospects" || w === "forget" || w === "forgetSet");
+  setUp();
+  okResult(await run({ type: "market.move", ids: ["a6", "a9", "a7"], to: "Not on a list" }));
+  assert.deepEqual(steps(), ["prospects", "forget", "forgetSet"], "recorded for the run first, then let go, then Market's held set");
+  const f = sentOf("forget")[0].args[0] as { orchClientId: string; osClientId: string | null; portalId: string; shown: Map<string, unknown[]> };
+  assert.deepEqual([f.orchClientId, f.osClientId, f.portalId], ["orch-bs", "os-bs", PORTAL]);
+  assert.deepEqual([...f.shown.keys()].sort(), ["a6", "a9"], "only the agents the portal showed in a campaign — EmailBison's and Instantly's");
+  assert.deepEqual(sentOf("forgetSet")[0].args, ["orch-bs"]);
+  // Onto the DNC List from Prospects: the same — it comes out of the campaigns too.
+  setUp();
+  okResult(await run({ type: "market.move", ids: ["a6"], to: "DNC List" }));
+  assert.deepEqual(steps(), ["prospects", "forget", "forgetSet"]);
+  // Not recorded: nothing let go — the run has nothing to take out of the campaigns, so the list keeps showing it.
+  setUp();
+  recordFails = true;
+  okResult(await run({ type: "market.move", ids: ["a6", "a9"], to: "Not on a list" }));
+  assert.deepEqual(steps(), ["prospects"]);
+  // The sync off for this portal: recorded, but nothing acts on it — not let go either.
+  setUp();
+  recordMode = "off";
+  okResult(await run({ type: "market.move", ids: ["a6", "a9"], to: "Not on a list" }));
+  assert.deepEqual(steps(), ["prospects"]);
+  // Setup › Your DNC List's Remove: off the DNC List only, Prospects untouched.
+  setUp();
+  okResult(await run({ type: "market.move", ids: ["a6"], to: "Not on a list", dncOnly: true }));
+  assert.deepEqual(steps(), []);
+  // Letting go fails: the move still goes through (the run drops the record once the leads are out).
+  setUp();
+  forgetFails = true;
+  fake.seed("os_demo_prospects", [{ portal_id: PORTAL, agent_id: "a9", added_by: "x" }]);
+  okResult(await run({ type: "market.move", ids: ["a6", "a9"], to: "Not on a list" }));
+  assert.deepEqual(steps(), ["prospects", "forget"]);
+  assert.deepEqual(fake.rows("os_demo_prospects").filter((x) => x.portal_id === PORTAL), [], "still off Prospects");
 });
 
 /* ------------------------------------- one agent, two records (11 Nov, Hetherington) --- */

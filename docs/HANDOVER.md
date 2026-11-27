@@ -12,6 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
+| **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **built on fix/prospects-remove-now, NOT deployed**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 734 dead Instantly records awaits the user's OK
 | **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
 | **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
 | **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
@@ -239,6 +240,49 @@ links (anyone who found the hole could have copied them), and Railway's
 recommendation to revoke the secrets stored in Railway.
 
 ---
+
+## 0.30 Prospects: Remove takes agents off at once — 27 November
+
+**Built, tested, NOT deployed** (branch fix/prospects-remove-now). Gabriel (Slack, 27 Nov): "I have to click the
+Remove button at least four times before it actually removes them" (Team Leaders and Managing Brokers on clients'
+Prospects).
+
+**Why it happened (live data, read only).** A real client's Prospects is the agent database's record of its campaign
+leads (v_agent_campaigns = bison_client_leads + instantly_client_leads). Remove recorded the change for the
+prospect-sync run, and the run dropped the record only after taking the leads out of EmailBison. On 26 Nov that took
+2 to 44 minutes (median 19). Meanwhile the list looked unchanged, so Gabriel removed the same agents again and again: 195
+of BHGRE Base Camp's 6 times each, one of Bastion Realty South's 32 times. And an agent also listed in an Instantly campaign
+never left at all, because the run says "Instantly — not reached from here" and keeps that record. That was 646 of Bastion's
+and 75 of BHGRE's on 27 Nov. Instantly is no longer used: its last send was 8 Sep, and the Database app's Instantly sync
+last ran 22 Sep. The Database app's EmailBison sync last wrote on 20 Nov, so the OS's own drop is the only thing that
+updates these records now.
+
+**The fix.**
+- `prospect-sync/agents.ts` `forgetListings`: the save drops the record at the click, only once the removal is recorded
+  for the run with the sync on for that portal. EmailBison records are dropped only for the campaigns routed to this
+  portal (`fitsPortal`, the run's own rule). Instantly records are dropped for all of the client's Instantly campaigns
+  the portal showed the agent in. The run still takes the leads out of EmailBison from the campaigns recorded with the
+  removal, and rings the bell when it can't.
+- `run.ts` also drops the Instantly records (a backstop) and words it "Instantly, no longer used — only taken off the
+  list".
+- `market.ts` `forgetClientSet`: Market's held campaign set is let go, so its labels follow at once.
+- **The lead-list trap** (`leadListWouldShow`). The agent database's search lists the client's campaign leads, or its
+  lead list (orch_client_leads) while it has no campaign leads at all. 17 of 57 linked clients have such a list, up to
+  5,977 agents. Neither the click nor the run ever drops a client's last records while it has one: they stay, and the
+  run rings a warning bell. This trap was already reachable through the run's own drop since 2 Nov.
+
+**Tests.** 4,148 pass. Live dry run: the branch's real code ran on live data with every delete intercepted. It selected
+exactly the expected records: only each client's own, 0.1 to 0.5 s a click.
+
+**One-off clean-up (awaits the user's OK).** 742 records list agents that were already taken off Prospects, all of them
+stale:
+- 734 Instantly records: Bastion 648, BHGRE 76, Douglas Elliman New York 10.
+- 8 EmailBison records at Hetherington: taken out on 6–10 Nov and re-written by the Database sync on 20 Nov; EmailBison
+  no longer has them in that campaign.
+
+Bastion's would leave it no campaign records. It has no lead list and no moved prospects, so its Prospects would be
+empty, which is what Gabriel's 2,721 removals asked for. Scripts: scratchpad mcpact/letgo-dryrun.mjs (plan) and
+letgo-live-dry.mts.
 
 ## 0.29 Claude connector: actions, previewed then confirmed — 25 November
 

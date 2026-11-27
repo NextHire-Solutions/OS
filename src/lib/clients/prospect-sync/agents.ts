@@ -1,3 +1,4 @@
+import { osTable } from "@/lib/clients/os-db";
 import { getCorofySupabase } from "@/lib/tools/corofy/supabase";
 
 import type { LeadAgent } from "./lead-map.ts";
@@ -211,4 +212,119 @@ export async function shownCampaigns(orchClientId: string, agentIds: readonly st
     }
   }
   return out;
+}
+
+/** Which of a client's EmailBison campaigns go to which of its portals (os_campaign_portals, migration 0025). */
+export interface CampaignRoute { campaignId: string; portalId: string }
+
+export async function campaignRoutes(osClientId: string): Promise<CampaignRoute[]> {
+  const { data, error } = await osTable("os_campaign_portals").select("platform, campaign_id, mi_client_id").eq("os_client_id", osClientId);
+  if (error) throw new Error(`os_campaign_portals: ${error.message}`);
+  return ((data ?? []) as Array<{ platform: string; campaign_id: string; mi_client_id: string }>).filter((r) => r.platform === "emailbison").map((r) => ({ campaignId: String(r.campaign_id), portalId: String(r.mi_client_id) }));
+}
+
+/** A client with several portals: only the campaigns routed to this one are this portal's. With one portal, all of them. */
+export function fitsPortal(routes: readonly CampaignRoute[], portalId: string): (campaignId: string) => boolean {
+  const multiPortal = new Set(routes.map((r) => r.portalId)).size > 1 || routes.some((r) => r.portalId !== portalId);
+  const here = new Set(routes.filter((r) => r.portalId === portalId).map((r) => r.campaignId));
+  return (id) => !multiPortal || here.has(id);
+}
+
+/**
+ * The agent database's record of these agents in these campaigns of ONE client, dropped (its campaign-lead tables:
+ * bison_client_leads for EmailBison, instantly_client_leads for Instantly). Agents with the same campaigns go together,
+ * 150 a request (the API's URL limit). How many agents' records were dropped.
+ */
+function groupByCampaigns(campaignsOf: ReadonlyMap<string, readonly string[]>): Array<{ agents: string[]; campaigns: string[] }> {
+  const groups = new Map<string, { agents: string[]; campaigns: string[] }>();
+  for (const [agent, campaigns] of campaignsOf) {
+    const sorted = [...new Set(campaigns)].filter(Boolean).sort();
+    if (!sorted.length) continue;
+    const key = sorted.join(",");
+    groups.set(key, { agents: [...(groups.get(key)?.agents ?? []), agent], campaigns: sorted });
+  }
+  return [...groups.values()];
+}
+
+export async function dropCampaignRecords(table: "bison_client_leads" | "instantly_client_leads", orchClientId: string, campaignsOf: ReadonlyMap<string, readonly string[]>, db: Db = getCorofySupabase()): Promise<number> {
+  let n = 0;
+  for (const g of groupByCampaigns(campaignsOf)) {
+    for (let i = 0; i < g.agents.length; i += 150) {
+      const part = g.agents.slice(i, i + 150);
+      const { error } = await db.from(table).delete().eq("client_id", orchClientId).in("agent_id", part).in("campaign_id", g.campaigns);
+      if (error) throw new Error(`${table}: ${error.message}`);
+      n += part.length;
+    }
+  }
+  return n;
+}
+
+type Drop = { table: "bison_client_leads" | "instantly_client_leads"; campaignsOf: ReadonlyMap<string, readonly string[]> };
+
+/* The rows a query counts (the API's exact count, no rows sent). */
+async function counted(q: PromiseLike<{ count: number | null; error: { message: string } | null }>, what: string): Promise<number> {
+  const { count, error } = await q;
+  if (error) throw new Error(`${what}: ${error.message}`);
+  return count ?? 0;
+}
+
+/**
+ * THE LEAD-LIST TRAP (27 Nov). The agent database's search lists a client's campaign leads, OR its lead list
+ * (orch_client_leads) while it has no campaign leads at all (fn_agent_where). So dropping a client's last campaign records
+ * would turn its Prospects into its whole lead list (17 of 57 linked clients have one, up to 5,977 agents). Null when
+ * these drops leave some (or the client has no lead list); otherwise the lead list's size, and nothing must be dropped.
+ */
+export async function leadListWouldShow(orchClientId: string, drops: readonly Drop[], db: Db = getCorofySupabase()): Promise<number | null> {
+  const leadList = await counted(db.from("orch_client_leads").select("agent_id", { count: "exact", head: true }).eq("client_id", orchClientId).not("agent_id", "is", null), "orch_client_leads");
+  if (!leadList) return null;
+  const total = await counted(db.from("v_agent_campaigns").select("agent_id", { count: "exact", head: true }).eq("client_id", orchClientId), "v_agent_campaigns");
+  let dropping = 0;
+  for (const d of drops) {
+    for (const g of groupByCampaigns(d.campaignsOf)) {
+      for (let i = 0; i < g.agents.length; i += 150) {
+        dropping += await counted(db.from(d.table).select("agent_id", { count: "exact", head: true }).eq("client_id", orchClientId).in("agent_id", g.agents.slice(i, i + 150)).in("campaign_id", g.campaigns), d.table);
+      }
+    }
+  }
+  return total - dropping > 0 ? null : leadList;
+}
+
+/**
+ * PROSPECTS LETS GO AT ONCE (27 Nov; Gabriel: "I have to click the Remove button at least four times before it actually
+ * removes them"). A real client's Prospects is the agent database's record of its campaign leads (v_agent_campaigns),
+ * and that record was dropped only by the background run, once it had taken the leads out of EmailBison: 2 to 44
+ * minutes after the click (26 Nov, median 19). Until then the list looked unchanged, so the agents were removed again,
+ * and again (one of Bastion Realty South's 32 times). And an agent also in one of the client's Instantly campaigns
+ * never left at all (26 Nov: 646 of Bastion Realty South's, 75 of BHGRE Base Camp's).
+ *
+ * So the save drops it at the click, once the removal is recorded for the run, which still takes the leads out of the
+ * client's EmailBison campaigns (from the campaigns recorded with it, under the addresses recorded with them) and rings
+ * our team's bell for any it can't:
+ *   - EmailBison: the agent's record in each campaign the portal showed it in, for a client with several portals only
+ *     the ones routed to this portal (the run leaves another portal's campaigns as they are, so their record stays);
+ *   - Instantly: its record in each of the client's Instantly campaigns the portal showed it in. BrokerStaffer stopped
+ *     using Instantly (its last send 8 Sep 2026; the Database app's Instantly sync last ran 22 Sep), so nothing goes
+ *     out from there and no sync brings the record back.
+ * Only this client's records, only these agents — and never its last ones while it has a lead list (leadListWouldShow):
+ * then nothing is dropped here and `keptFor` says why (the run asks the same before it drops anything). How many
+ * agents' records were dropped, per platform.
+ */
+export async function forgetListings(
+  o: { orchClientId: string; osClientId: string | null; portalId: string; shown: ReadonlyMap<string, readonly ShownCampaign[]> },
+  d: { db?: Db; routes?: (osClientId: string) => Promise<CampaignRoute[]> } = {},
+): Promise<{ emailbison: number; instantly: number; keptFor?: string }> {
+  const db = d.db ?? getCorofySupabase();
+  const of = (provider: string) => new Map([...o.shown].map(([agent, cs]) => [agent, cs.filter((c) => c.provider === provider).map((c) => c.id)] as const).filter(([, ids]) => ids.length));
+  const bison = of("emailbison");
+  const instantly = of("instantly");
+  let fits: (id: string) => boolean = () => true;
+  if (bison.size) fits = fitsPortal(o.osClientId ? await (d.routes ?? campaignRoutes)(o.osClientId) : [], o.portalId);
+  const bisonHere = new Map([...bison].map(([agent, ids]) => [agent, ids.filter(fits)] as const).filter(([, ids]) => ids.length));
+  if (!bisonHere.size && !instantly.size) return { emailbison: 0, instantly: 0 };
+  const leadList = await leadListWouldShow(o.orchClientId, [{ table: "bison_client_leads", campaignsOf: bisonHere }, { table: "instantly_client_leads", campaignsOf: instantly }], db);
+  if (leadList) return { emailbison: 0, instantly: 0, keptFor: `these are the client's last campaign records: without them its Prospects would list its whole lead list (${leadList})` };
+  return {
+    emailbison: bisonHere.size ? await dropCampaignRecords("bison_client_leads", o.orchClientId, bisonHere, db) : 0,
+    instantly: instantly.size ? await dropCampaignRecords("instantly_client_leads", o.orchClientId, instantly, db) : 0,
+  };
 }

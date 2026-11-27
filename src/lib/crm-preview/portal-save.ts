@@ -15,7 +15,7 @@ import { stopEntries } from "@/lib/tools/master-inbox/portals/stop-person";
 import { resolvePortalClient, type PortalClient } from "@/lib/tools/master-inbox/portals/token";
 import { notifyPortalDncBulkAdd } from "@/lib/tools/master-inbox/webhooks/slack-portal";
 import { alertMarketMove, recordUse } from "@/lib/portal-usage/usage";
-import { shownCampaigns } from "@/lib/clients/prospect-sync/agents";
+import { forgetListings, shownCampaigns } from "@/lib/clients/prospect-sync/agents";
 import { postToPortalChannel, recordProspectChanges, unrecordedAlert, type ShownCampaign } from "@/lib/clients/prospect-sync/queue";
 
 // The current portal's own save code (Master Inbox app/api/portal/[token]/*): the OS's copies, byte for byte.
@@ -42,7 +42,7 @@ import * as fubRoute from "@/lib/tools/master-inbox/portal-routes/followup-boss/
 
 import { demoAction, DNC_EMAIL_NEEDED, imported, introAt, saveOffer, type Db, type DemoAction, type DemoResult } from "./demo";
 import { agentsByIds, copiesOf, demoProspectIds, emailsOf, lower, marketAction, type AgentRow, type MarketAction } from "./demo-market";
-import { campaignProspectsAmong, marketContext, matchingIds } from "./market";
+import { campaignProspectsAmong, forgetClientSet, marketContext, matchingIds } from "./market";
 import { parseMarketQuery, personKey } from "./market-model";
 
 /*
@@ -91,19 +91,22 @@ const MOVE_INSERT_PART = 1000;
  * leaves list and campaign apart. Recorded whether or not the sync is on yet (applied once it is); it never fails the
  * move — a record that could not be made rings our team's bell instead.
  */
-async function syncProspects(C: string, action: "add" | "remove", setup: boolean, agents: readonly AgentRow[], who: string, shown?: ReadonlyMap<string, ShownCampaign[]>): Promise<void> {
-  if (!agents.length) return;
+async function syncProspects(C: string, action: "add" | "remove", setup: boolean, agents: readonly AgentRow[], who: string, shown?: ReadonlyMap<string, ShownCampaign[]>): Promise<boolean> {
+  if (!agents.length) return false;
   try {
     // Every one recorded — the run asks EmailBison, live, whether it is already in the client's campaigns (3 Nov
     // re-audit: a filter here on the agent database's older campaign record dropped picks for good).
     const ctx = await marketContext(C);
-    await recordProspectChanges(
+    const r = await recordProspectChanges(
       { portalId: C, isDemo: false, osClientId: ctx?.client?.id ?? null, clientName: ctx?.client?.name ?? ctx?.portal.name ?? "A client", action, source: setup ? "setup" : "prospects", agents: agents.map((ag) => ({ id: ag.id, name: ag.full_name, inCampaigns: shown?.get(ag.id) })), who },
       { slack: async (text) => { after(() => postToPortalChannel(text)); } },
     );
+    // True only when the run will act on it: recorded, with the sync on for this portal.
+    return r.recorded > 0 && r.mode !== "off";
   } catch (err) {
     console.error("[crm-preview] prospects not recorded", err instanceof Error ? err.message : err);
     after(() => unrecordedAlert({ portalId: C, action, agents: agents.length, who, error: err instanceof Error ? err.message : String(err) }));
+    return false;
   }
 }
 /* What an entry Market made says in its notes — how a later move knows it is Market's own to take off. */
@@ -762,6 +765,7 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
   let off: AgentRow[];
   let leaving: AgentRow[];
   let shown: Map<string, ShownCampaign[]>;
+  let leaveCtx: Awaited<ReturnType<typeof marketContext>> = null;
   try {
     const there = (await demoProspectIds(db as unknown as Db, C)) ?? [];
     const onIt = new Set(there);
@@ -769,7 +773,7 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
     const owners = a.to === "DNC List" ? agents : agents.filter((ag) => onIt.has(ag.id));
     const copies = owners.some((ag) => preferredOf(ag).length) ? copiesOf(await recordsOf(there.filter((id) => !picked.has(id))), owners) : [];
     off = [...agents, ...copies];
-    const leaveCtx = await marketContext(C);
+    leaveCtx = await marketContext(C);
     const ids = off.map((ag) => ag.id);
     const inCampaigns = leaveCtx ? await campaignProspectsAmong(leaveCtx, ids) : new Set<string>();
     shown = leaveCtx?.orchClientId ? await shownCampaigns(leaveCtx.orchClientId, ids) : new Map();
@@ -896,7 +900,20 @@ async function moveAgents({ client, token }: Portal, a: MarketAction, who: strin
   // And off Prospects — the agents moved there and their other records (read before anything changed, above). The one
   // delete of this file's own: the OS's own list, this portal's rows, with no current-portal equivalent or side effect.
   if (!dncOnly) {
-    await syncProspects(C, "remove", false, leaving, who, shown);
+    const recorded = await syncProspects(C, "remove", false, leaving, who, shown);
+    // Off the client's campaign leads' record at once, so Prospects stops listing them now rather than when the run
+    // gets to them (27 Nov, Gabriel: "click the Remove button at least four times") — only once the run has them to
+    // take out of the campaigns (forgetListings). Failing, the run drops the record itself once the leads are out.
+    const orch = leaveCtx?.orchClientId ?? null;
+    if (recorded && orch && shown.size) {
+      try {
+        const n = await forgetListings({ orchClientId: orch, osClientId: leaveCtx?.client?.id ?? null, portalId: C, shown });
+        forgetClientSet(orch);
+        console.info(JSON.stringify({ tag: "[crm-preview] prospects let go", client: C, agents: shown.size, ...n }));
+      } catch (err) {
+        console.error("[crm-preview] prospects let go", err instanceof Error ? err.message : err);
+      }
+    }
     for (let i = 0; i < off.length; i += 100) {
       const { error } = await db.from("os_demo_prospects").delete().eq("portal_id", C).in("agent_id", off.slice(i, i + 100).map((ag) => ag.id));
       if (error) return onto ? unfinished : { ok: false, status: 400, error: TRY_AGAIN };
