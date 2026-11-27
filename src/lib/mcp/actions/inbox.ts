@@ -2,7 +2,9 @@ import "server-only";
 
 import { grantsForRequest } from "@/lib/workspace/tool-paths";
 import { getMasterInboxSupabase, workspaceId } from "@/lib/tools/master-inbox/supabase";
-import { isInterestedLabel, isNotInterestedLabel } from "@/lib/tools/master-inbox/inbox/interest";
+import { isInterestedLabel } from "@/lib/tools/master-inbox/inbox/interest";
+import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-portal";
+import { directHandoffReason } from "@/lib/tools/master-inbox/relay/settings";
 import { setThreadLabel } from "@/lib/tools/master-inbox/inbox/set-label";
 import { snoozeThread, unsnoozeThread } from "@/lib/tools/master-inbox/inbox/snooze";
 import type { ToolId } from "@/lib/bs-auth";
@@ -64,6 +66,16 @@ export async function threadSummary(id: string): Promise<ThreadSummary | null> {
   };
 }
 
+/** "<client> gets interested replies by direct hand-off" when it does, else null. */
+async function handoffFor(threadId: string, clientName: string | null): Promise<string | null> {
+  if (!clientName) return null;
+  const { data } = await getMasterInboxSupabase().from("threads").select("client_id").eq("id", threadId).maybeSingle();
+  const clientId = (data as { client_id?: string | null } | null)?.client_id;
+  if (!clientId) return null;
+  const found = await rosterRowForPortal(clientId, clientName, "pipeline_entry, relay_settings");
+  return found.row ? directHandoffReason(found.row, clientName) : null;
+}
+
 const describe = (t: ThreadSummary) =>
   `${t.lead}${t.client ? ` (${t.client})` : ""}, "${t.subject ?? "no subject"}", last message ${t.lastMessageAt?.slice(0, 10) ?? "?"}, label now: ${t.label ?? "none"}`;
 
@@ -79,10 +91,11 @@ export const inboxSetLabel: ActionSpec<LabelArgs, LabelBind> = {
   title: "Change a reply's label",
   description:
     "Change the label of one Master Inbox conversation (its reply), as the inbox's label menu does — one label per " +
-    "conversation, so it replaces the current one. thread_id comes from recent_replies or search_conversations. Not " +
-    "available here: Interested, Meetings Booked, Introduction, Hostile, Unsubscribe, Do Not Contact, Add to Blocklist " +
-    "(they start hand-offs, billing, client portal entries or stop the person); relabelling a conversation that is now " +
-    "an Introduction; and any change to a conversation ever marked Interested or Meetings Booked (per-lead billing).",
+    "conversation, so it replaces the current one. thread_id comes from positive_replies, recent_replies or " +
+    "search_conversations. The preview lists every effect: Interested / Meetings Booked start the Slack alert, the " +
+    "hand-off to direct-hand-off clients and per-lead billing; stop labels stop the person in every campaign; on a lead " +
+    "that was Interested, a correction label (Not Interested, Not Qualified, …) can take it off a per-lead bill. For " +
+    "Introduction use inbox_introduce; a conversation that is an Introduction is relabelled in the inbox.",
   inputSchema: {
     type: "object",
     properties: {
@@ -111,12 +124,12 @@ export const inboxSetLabel: ActionSpec<LabelArgs, LabelBind> = {
     }
     const policy = labelPolicy(t.label, found.name, t.everPositive);
     if (!policy.ok) return { ok: false, refusal: policy.reason };
-    const notes = [
-      isNotInterestedLabel(found.name) ? "EmailBison's Interested flag for this reply is cleared, as the inbox does." : null,
-      isInterestedLabel(t.label) && !isInterestedLabel(found.name)
-        ? "It is Interested now: EmailBison's Interested flag is cleared. Anything Interested already started (a hand-off to the client, the Slack alert, a billable lead) is NOT undone."
-        : null,
-    ].filter(Boolean);
+    const notes = [...policy.effects];
+    if (isInterestedLabel(found.name) || /^meetings booked$/i.test(found.name.trim())) {
+      // Say plainly when THIS client gets the reply by hand-off.
+      const handoff = await handoffFor(a.thread_id, t.client);
+      if (handoff) notes.unshift(`${handoff}: this reply is emailed to the client within a minute.`);
+    }
     return {
       ok: true,
       preview: `Change the label of ${describe(t)} → ${found.name}.${notes.length ? ` ${notes.join(" ")}` : ""}`,

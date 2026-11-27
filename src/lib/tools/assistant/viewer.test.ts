@@ -42,7 +42,7 @@ test("Gabriel: the tools for his switches — clients, Client Health, campaigns,
     "attribution", "billing_cycles", "campaign_copy", "campaign_detail", "campaign_kpis", "campaigns_for_client",
     "client_commercials", "client_introduction", "client_overview", "client_portals", "client_rankings", "client_record",
     "client_reply_rates", "client_report", "client_success", "find_client", "find_lead", "inbox_activity", "inbox_deliverability",
-    "infrastructure_health", "list_clients", "outcomes", "portal_pipeline", "profile_completeness", "recent_introductions",
+    "infrastructure_health", "list_clients", "outcomes", "portal_pipeline", "positive_replies", "profile_completeness", "recent_introductions",
     "recent_replies", "reminders", "reply_templates", "search_conversations", "send_schedule", "sending_volume", "workspace_home",
   ]);
   for (const t of ["client_billing", "billing_overview", "commissions", "team", "notifications", "data_consistency", "reply_agent_status", "business_performance", "onboarding_records", "scrape_activity", "agent_database", "find_agent", "search_agents", "agent_places", "mls_coverage"]) {

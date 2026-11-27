@@ -6,6 +6,7 @@ import { actionTool, mayUse, runAction, type ActionDeps, type ActionSpec, type A
 import { auditStore } from "./audit.ts";
 import { clientCampaigns } from "./campaigns.ts";
 import { inboxSetLabel, inboxSnooze } from "./inbox.ts";
+import { inboxIntroduce, inboxReply } from "./outreach.ts";
 import { enabledActions, type ActionName } from "./switch.ts";
 
 /* The connector's actions (core.ts): which exist (switch.ts), who may (the screen's own switch), and their runner. */
@@ -14,6 +15,8 @@ const ALL: Record<ActionName, ActionSpec> = {
   inbox_set_label: inboxSetLabel as unknown as ActionSpec,
   inbox_snooze: inboxSnooze as unknown as ActionSpec,
   client_campaigns: clientCampaigns as unknown as ActionSpec,
+  inbox_introduce: inboxIntroduce as unknown as ActionSpec,
+  inbox_reply: inboxReply as unknown as ActionSpec,
 };
 
 /** The actions switched on (OS_MCP_ACTIONS) that this person may take. */

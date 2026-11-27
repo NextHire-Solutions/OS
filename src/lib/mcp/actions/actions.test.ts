@@ -40,6 +40,7 @@ async function load() {
   if (specs) return;
   mock.module("server-only", { namedExports: {} });
   mock.module("@/lib/tools/master-inbox/supabase", { namedExports: { getMasterInboxSupabase: () => ({ from }), workspaceId: async () => "ws1" } });
+  mock.module("@/lib/tools/master-inbox/clients/roster-for-portal", { namedExports: { rosterRowForPortal: async () => ({ row: { pipeline_entry: "introduction", relay_settings: {} } }) } });
   mock.module("@/lib/tools/master-inbox/inbox/set-label", { namedExports: { setThreadLabel: async (t: string, l: string) => { calls.push(`setThreadLabel ${t} ${l}`); return { ok: true }; } } });
   mock.module("@/lib/tools/master-inbox/inbox/snooze", {
     namedExports: {
@@ -96,20 +97,17 @@ test("inbox_set_label: Not Interested says it clears EmailBison's flag", { skip 
   assert.match(String(p.preview), /EmailBison's Interested flag/);
 });
 
-test("inbox_set_label refuses: Interested, a stop label, an unknown label (listing the usable ones), an Introduction, a bad id", { skip }, async () => {
+test("inbox_set_label: effects in the preview (Interested, stop labels, a once-Interested lead); refusals that remain", { skip }, async () => {
   await load(); calls.length = 0;
-  assert.match(String((await run(specs.label, { thread_id: T1, label: "Interested" })).refused), /hand-off/);
-  assert.match(String((await run(specs.label, { thread_id: T1, label: "Unsubscribe" })).refused), /every campaign/);
+  assert.match(String((await run(specs.label, { thread_id: T1, label: "Interested" })).preview), /Slack alert.*billed/);
+  assert.match(String((await run(specs.label, { thread_id: T1, label: "Unsubscribe" })).preview), /stopped in every campaign/);
+  assert.match(String((await run(specs.label, { thread_id: T_WAS_INT, label: "Keep Warm" })).preview), /puts it back on a per-lead client's bill/);
   const unknown = String((await run(specs.label, { thread_id: T1, label: "Maybe" })).refused);
   assert.match(unknown, /no label called "Maybe"/);
   assert.match(unknown, /Keep Warm/);
-  assert.doesNotMatch(unknown, /Interested,|Unsubscribe/, "only usable labels are listed");
   assert.match(String((await run(specs.label, { thread_id: T_INTRO, label: "Keep Warm" })).refused), /portal entry/);
   assert.match(String((await run(specs.label, { thread_id: "nope", label: "Keep Warm" })).refused), /thread_id/);
-  // Once Interested (here on a per-lead client, now corrected to Not Interested): relabelling would put it back on the bill.
-  assert.match(String((await run(specs.label, { thread_id: T_WAS_INT, label: "Keep Warm" })).refused), /billed/);
-  assert.match(String((await run(specs.label, { thread_id: T1, label: "Meetings Booked" })).refused), /hand-off/);
-  assert.deepEqual(calls, [], "nothing was changed");
+  assert.deepEqual(calls, [], "previews change nothing");
 });
 
 test("inbox_snooze: preview in Eastern time with the note; confirm snoozes; cancel needs a snoozed conversation", { skip }, async () => {
