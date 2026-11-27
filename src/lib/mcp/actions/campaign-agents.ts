@@ -131,7 +131,7 @@ export const campaignAddAgents: ActionSpec<Args, Bind> = {
       r.otherPlaces.length ? `Other places with that name: ${r.otherPlaces.slice(0, 4).join("; ")}.` : "",
       client ? `This campaign is ${client.name}'s: agents on ${client.name}'s DNC List, My Agents or pipeline are left out, and anyone already in another of ${client.name}'s campaigns isn't added twice.` : "This campaign isn't tied to a client.",
       "Each goes in the way Prospects adds agents: the database's own email; a lead EmailBison already has goes in as it is; bounced or unsubscribed addresses are left out.",
-      `It runs in the background, ${n(PER_RUN)} agents a minute (about ${n(minutes)} minute${minutes === 1 ? "" : "s"}).`,
+      `It runs in the background, up to ${n(PER_RUN)} agents a minute (at least ${n(minutes)} minute${minutes === 1 ? "" : "s"}; EmailBison's answers set the pace).`,
       ["active", "queued", "launching"].includes(live) ? "The campaign is sending: they start getting its emails on its schedule." : "Nothing is sent until the campaign is started.",
     ].filter(Boolean);
     return {
