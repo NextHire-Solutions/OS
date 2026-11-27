@@ -93,7 +93,13 @@ export const campaignAddAgents: ActionSpec<Args, Bind> = {
     if ("error" in c) return { ok: false, refusal: c.error };
     const live = String((await createEmailBisonClient().getCampaign(c.id)).status ?? c.status).toLowerCase();
     if (!isOpenStatus(live)) return { ok: false, refusal: `${c.name} (#${c.id}) is ${live}: agents go only into a campaign that can still send.` };
-    const running = await runningJobFor(String(c.id));
+    let running;
+    try {
+      running = await runningJobFor(String(c.id));
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      return { ok: false, refusal: /0059/.test(why) ? "Adding agents isn't set up yet: migration 0059 (migrations/0059_campaign_agent_jobs.sql) has to be run first." : `Adding agents can't be checked just now: ${why}` };
+    }
     if (running) return { ok: false, refusal: `Agents are already being added to ${c.name} (${running.status}: ${running.detail ?? "started"}). Wait for that to finish (campaign_agent_jobs), then add more.` };
 
     const search: SearchAgentsArgs = {

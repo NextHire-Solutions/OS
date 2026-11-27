@@ -96,7 +96,7 @@ async function load() {
     namedExports: {
       PER_RUN: 200,
       campaignClient: async () => world.client,
-      runningJobFor: async () => world.running,
+      runningJobFor: async () => { if ((world.running as unknown) === "missing") throw new Error("needs migrations/0059_campaign_agent_jobs.sql"); return world.running; },
       createAgentJob: async (o: Record<string, unknown>) => { calls.push(`job ${JSON.stringify(o)}`); return { id: "job-1" }; },
     },
   });
@@ -234,6 +234,8 @@ test("add agents: refusals — no filter, a finished campaign, one already being
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", mls: "ARMLS" })).refused), /is completed: agents go only into a campaign that can still send/);
   reset(); world.running = { status: "adding", detail: "Added 10; 90 still to go." };
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", mls: "ARMLS" })).refused), /already being added .*Added 10; 90 still to go/);
+  reset(); world.running = "missing" as never;
+  assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", mls: "ARMLS" })).refused), /isn't set up yet: migration 0059/);
   reset(); world.resolve = { ok: false, answer: { note: `No city called "Phoenx" in the agent database.`, didYouMean: ["Phoenix, AZ (31,000 agents)"] } };
   assert.match(String((await run(add.campaignAddAgents, { campaign: "#1500", place: "Phoenx" })).refused), /No city called "Phoenx".*Did you mean: Phoenix, AZ/);
   reset(); world.count = 0;
