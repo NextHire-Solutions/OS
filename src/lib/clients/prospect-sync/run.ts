@@ -169,7 +169,7 @@ export interface RunResult {
   notes: string[];
 }
 
-interface QueueRow {
+export interface QueueRow {
   id: number; portal_id: string; os_client_id: string | null; agent_id: string; action: "add" | "remove"; source: "setup" | "prospects";
   requested_by: string; attempts: number; test: boolean; created_at: string; in_campaigns: ShownCampaign[] | null; email: string | null;
 }
@@ -292,6 +292,21 @@ function realDeps(d: RunDeps) {
   };
 }
 type Deps = ReturnType<typeof realDeps>;
+export type ProspectSyncDeps = Deps;
+/** The run's own EmailBison and database calls, with overrides (campaign-agents/run.ts reuses addInto through these). */
+export const prospectSyncDeps = (d: RunDeps = {}): Deps => realDeps(d);
+
+/*
+ * Where addInto writes what became of each agent (28 Nov): this run's Batch (os_prospect_sync rows), or a campaign-agent
+ * job's items (campaign-agents/run.ts). The same calls, so both add agents exactly the same way.
+ */
+export interface AddSink {
+  names: Map<string, string>;
+  autoWhy: Map<number, string>;
+  finish(rows: readonly QueueRow[], status: "done" | "skipped" | "failed", detail: string, extra?: Record<string, unknown>, outcome?: CampaignOutcome): Promise<void>;
+  retry(rows: readonly QueueRow[], detail: string): Promise<void>;
+  nextWeek(row: QueueRow, detail: string, extra: Record<string, unknown>, outcome: CampaignOutcome): Promise<void>;
+}
 
 /* ----------------------------------------------------------------------------------------------- the queue --- */
 
@@ -852,7 +867,7 @@ async function waitingAdds(portalId: string): Promise<number> {
 }
 
 /** A lead that can't go in, from what it shows now: another campaign's sequence → next week; bounced or unsubscribed → final, said why; nothing to go on → tried again. */
-async function leftOut(into: CampaignPick, row: QueueRow, email: string, leadId: number, found: FoundLead[], b: Batch): Promise<void> {
+async function leftOut(into: CampaignPick, row: QueueRow, email: string, leadId: number, found: FoundLead[], b: AddSink): Promise<void> {
   const why = whyLeftOut(found, into.id);
   const extra = { eb_lead_id: String(leadId), email };
   if (why.kind === "unknown") {
@@ -872,7 +887,7 @@ async function leftOut(into: CampaignPick, row: QueueRow, email: string, leadId:
  * can't be told and is tried again — safe to repeat: a lead that did go in is then found there. A search that fails says
  * nothing about the rest, and they aren't each left to wait out its timeout.
  */
-async function judge(x: Deps, into: CampaignPick, part: ReadonlyArray<{ l: { row: QueueRow; email: string }; id: number }>, ours: ReadonlySet<string>, b: Batch): Promise<void> {
+async function judge(x: Deps, into: CampaignPick, part: ReadonlyArray<{ l: { row: QueueRow; email: string }; id: number }>, ours: ReadonlySet<string>, b: AddSink): Promise<void> {
   const unread: QueueRow[] = [];
   // One address the campaign's list can't settle says nothing about the others: tried again on its own.
   const unsettled: QueueRow[] = [];
@@ -1007,7 +1022,7 @@ async function firstCampaign(x: Deps, ctx: Ctx, record: ClientRecord, client: st
 }
 
 /** These agents into one campaign: as the worker makes leads — or, a lead EmailBison has in other campaigns, as it is. */
-async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, SyncAgent>, rows: QueueRow[], own: Campaign[], seen: Set<string>, b: Batch): Promise<void> {
+export async function addInto(x: Deps, into: CampaignPick, agents: ReadonlyMap<string, SyncAgent>, rows: QueueRow[], own: Campaign[], seen: Set<string>, b: AddSink): Promise<void> {
   // 1. The leads — the database's email; the market's own numbers.
   const leads: Array<{ row: QueueRow; email: string; payload: BisonLeadPayload }> = [];
   for (const r of rows) {
