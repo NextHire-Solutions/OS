@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.32** | [Claude connector: create a campaign, add agents from the agent database — 28 November](#032-claude-connector-create-a-campaign-add-agents-from-the-agent-database--28-november) — **built on feat/mcp-campaign-agents, NOT deployed**; migration 0059 run by the user; off until named in OS_MCP_ACTIONS
+| **0.32** | [Claude connector: create a campaign, add agents from the agent database — 28 November](#032-claude-connector-create-a-campaign-add-agents-from-the-agent-database--28-november) — **LIVE 27 Nov** (deploy 98b240ca; actions on via a95e3ff0); live test passed on #1423 (deleted); 10 test leads left in EmailBison, see the section
 | **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **LIVE 27 Nov 17:53 UTC (main 506cf7c = Railway bb8ef155)**; ON: snooze, labels, client campaigns + the five one-campaign actions; OFF until a live send is verified: inbox_reply, inbox_introduce
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
 | **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
@@ -245,7 +245,8 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.32 Claude connector: create a campaign, add agents from the agent database — 28 November
 
-**Built and tested, NOT deployed** (branch feat/mcp-campaign-agents). The client asked: "what about creating a campaign
+**LIVE since 27 Nov 20:09 UTC** (deploy 98b240ca, on the user's "deploy"). The three actions were added to OS_MCP_ACTIONS
+by redeploy a95e3ff0 (20:11). The client asked: "what about creating a campaign
 and using leads on the database?" The user: all campaigns (a client's or BrokerStaffer's own), no limit on the number of
 agents, and the OS's own path with no enrichment (picked over the Database app's Send to campaign, which was idle since 22 Oct
 and spends credit). Migration 0059 (os_campaign_agent_jobs + items) was run by the user on 28 Nov.
@@ -276,11 +277,25 @@ and spends credit). Migration 0059 (os_campaign_agent_jobs + items) was run by t
 - Local end to end over the connector route on live data, with every outside write refused: all previews and refusals correct, 0 writes.
 - Real client lists load (Howe: 248 addresses, 406 names, 2 domains).
 
-**Live test plan (after "deploy"; the actions stay OFF until it passes):**
-1. campaign_create makes a ZZ TEST campaign (never started).
-2. campaign_add_agents adds a small set of agents EmailBison already has; then a second small add is stopped.
-3. Check the items, the campaign's leads and the audit log.
-4. Delete the test campaign, and compare a snapshot of all 459 campaigns before and after.
+**Live test, 27 Nov (through the production connector, as the owner; scratchpad camptest3/):**
+1. campaign_create made #1423 "ZZ TEST Claude connector 3 (delete me)": a draft, 8 steps, 26 healthy inboxes (EmailBison
+   lists inboxes 15 per page; meta.total said 26), history "create … via Claude". Never started.
+2. campaign_add_agents (zip 85249, already in a campaign, $3M+ sales; 10 matched): job 4a6fee23 collected and added all 10
+   in about 2.5 minutes. EmailBison showed 10 leads; the campaign stayed a draft with 0 sent. History said "attach-leads
+   admin@outreachify.io via Claude", and the bell rang.
+3. A second add (Boulder, CO) was started, a third was refused while it ran ("already being added"), and the stop worked:
+   job 09b5923a "Stopped by admin@outreachify.io via Claude", 0 added. 75 seconds later it was still stopped.
+4. #1423 was paused and deleted (404 after 20 s). The snapshot of all 459 campaigns was identical before and after (id,
+   name, status). The half-hourly sync marks the deleted campaign in Campaign Analytics, as it did for #1421 and #1422.
+
+**Trap found: "already in a campaign" does not mean EmailBison already has the lead.** The agent database's in-campaign
+flag is v_agent_campaigns, which unions bison_client_leads and instantly_client_leads. All 10 test agents were only in
+Instantly campaigns (Howe Realty Group (2) - Maricopa, Brokers), so EmailBison made 10 NEW lead records (ids 208523 to
+208532, created 20:16:45 UTC 27 Nov). No email was sent, and since #1423 was deleted they are in no campaign. They are still
+in the workspace: deleting them waits on the user's OK. This is correct behaviour for the action (a new lead is made the
+way Prospects makes one); it only broke the test plan's assumption.
+
+**Not changed:** reply and introduce stay OFF (§0.31).
 
 ## 0.31 Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November
 
