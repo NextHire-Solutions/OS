@@ -5,6 +5,7 @@ import { signToken, verifyToken } from "@/lib/mcp/tokens";
 import { actionTool, mayUse, runAction, type ActionDeps, type ActionSpec, type ActionViewer } from "./core.ts";
 import { auditStore } from "./audit.ts";
 import { clientCampaigns } from "./campaigns.ts";
+import { campaignLimits, campaignPause, campaignStart } from "./campaign-one.ts";
 import { inboxSetLabel, inboxSnooze } from "./inbox.ts";
 import { inboxIntroduce, inboxReply } from "./outreach.ts";
 import { enabledActions, type ActionName } from "./switch.ts";
@@ -17,6 +18,9 @@ const ALL: Record<ActionName, ActionSpec> = {
   client_campaigns: clientCampaigns as unknown as ActionSpec,
   inbox_introduce: inboxIntroduce as unknown as ActionSpec,
   inbox_reply: inboxReply as unknown as ActionSpec,
+  campaign_pause: campaignPause as unknown as ActionSpec,
+  campaign_start: campaignStart as unknown as ActionSpec,
+  campaign_limits: campaignLimits as unknown as ActionSpec,
 };
 
 /** The actions switched on (OS_MCP_ACTIONS) that this person may take. */

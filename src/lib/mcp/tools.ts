@@ -46,8 +46,8 @@ function actionsLine(names: string[]): string {
     "call it WITHOUT `confirm`: nothing changes, and you get a preview and a code. Tell the person exactly what the " +
     "preview says and ask them to confirm. Only after they clearly say yes in this chat, call it again with the SAME " +
     "arguments and `confirm` set to that code. Never confirm on your own, never reuse a code, and get a separate yes " +
-    "for each action. If a call comes back `refused`, nothing was done: say so and why. Anything else (sending email, " +
-    "introductions, billing, other labels) is done in the OS: say where. "
+    "for each action. If a call comes back `refused`, nothing was done: say so and why. Anything not in that list " +
+    "(billing among it) is done in the OS: say where. "
   );
 }
 

@@ -3,7 +3,10 @@
  * "inbox_set_label,inbox_snooze,client_campaigns". Unset or empty: none — the connector is exactly as read-only as
  * before. Each action can be switched on (and off again) alone, with a restart, no deploy.
  */
-export const ACTION_NAMES = ["inbox_set_label", "inbox_snooze", "client_campaigns", "inbox_introduce", "inbox_reply"] as const;
+export const ACTION_NAMES = [
+  "inbox_set_label", "inbox_snooze", "client_campaigns", "inbox_introduce", "inbox_reply",
+  "campaign_pause", "campaign_start", "campaign_limits",
+] as const;
 export type ActionName = (typeof ACTION_NAMES)[number];
 
 export function enabledActions(env: Record<string, string | undefined> = process.env): Set<ActionName> {
