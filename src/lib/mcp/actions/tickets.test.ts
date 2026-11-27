@@ -354,3 +354,12 @@ test("review: a used snooze code retried after its time passed still says 'alrea
   const again = await run(tk.ticketUpdate, { ticket: "42", snooze_until: until, confirm: p.confirm }, d);
   assert.match(String(again.refused), /already used/);
 });
+
+test("live finding, 28 Nov: a second code for a reply that already went says nothing new was sent (not 'sent')", { skip }, async () => {
+  await load(); reset();
+  world.send = { ok: true, sentAs: "amy@brokerstaffer.com", to: "jane@homebase.com", messageId: "g1", note: "This reply was already sent." };
+  const d = deps();
+  const p = await run(tk.ticketReply, { ticket: "42", text: "Resent." }, d);
+  const r = await run(tk.ticketReply, { ticket: "42", text: "Resent.", confirm: p.confirm }, d);
+  assert.deepEqual(r.result, { ticket: "42", sent: false, alreadySent: true, note: "This exact reply was already sent from amy@brokerstaffer.com to jane@homebase.com; nothing new was sent." });
+});

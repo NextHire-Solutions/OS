@@ -361,9 +361,14 @@ export const ticketReply: ActionSpec<ReplyArgs, ReplyBind> = {
     // once, get os_ticket_sends' answer (already sent / look in the Sent folder) instead of a second email.
     const nonce = createHash("sha256").update([bind.ticketId, bind.replyTo ?? "", bind.from, a.text].join("\u0000")).digest("base64url");
     const r = await sendTicketReply(a.ticket, v.email, { from: bind.from, text: a.text, cc: bind.cc, nonce, replyTo: bind.replyTo });
+    if (r.ok && r.note) {
+      // os_ticket_sends had this exact reply as sent already: nothing new went out (say so plainly, not "sent").
+      console.info(`[mcp-action] ${v.email} via Claude: ticket ${a.ticket} reply NOT sent again (already sent as ${r.sentAs})`);
+      return { ticket: a.ticket, sent: false, alreadySent: true, note: `This exact reply was already sent from ${r.sentAs} to ${r.to}; nothing new was sent.` };
+    }
     if (r.ok) {
       console.info(`[mcp-action] ${v.email} via Claude: ticket ${a.ticket} reply sent as ${r.sentAs} to ${r.to}`);
-      return { ticket: a.ticket, sent: true, from: r.sentAs, to: r.to, ...(r.note ? { note: r.note } : {}) };
+      return { ticket: a.ticket, sent: true, from: r.sentAs, to: r.to };
     }
     if (r.sent === false) throw new Error(`Nothing was sent: ${r.error}`);
     throw new Error(r.error);
