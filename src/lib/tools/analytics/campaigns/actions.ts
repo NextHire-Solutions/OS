@@ -212,6 +212,13 @@ export async function applyCampaignAction(
   targets: CampaignTarget[],
   actor: string,
   teamId: number,
+  /*
+   * The status EmailBison reports right now, by `${platform}:${id}`, when the caller has just read it (the Claude
+   * connector, 27 Nov). It replaces the cached status for the eligibility check: the cache can be overwritten by a sync
+   * that read the platform a moment earlier — live test: a campaign resumed and active, the cache still "paused", and
+   * the pause refused as "not sending". The screens pass nothing and are unchanged.
+   */
+  opts: { liveStatus?: ReadonlyMap<string, string> } = {},
 ): Promise<{ batchId: string; results: ActionResult[] }> {
   const sb = getSupabase();
   const eb = createEmailBisonClient();
@@ -239,7 +246,11 @@ export async function applyCampaignAction(
   // not a unique key across them.
   const key = (platform: string, id: string) => `${platform}:${id}`;
   const byId = new Map(
-    (rows ?? []).map((r) => [key(String(r.platform), String(r.id)), r as CampaignRow]),
+    (rows ?? []).map((r) => {
+      const k = key(String(r.platform), String(r.id));
+      const live = opts.liveStatus?.get(k);
+      return [k, (live ? { ...(r as CampaignRow), status: live } : r) as CampaignRow];
+    }),
   );
 
   const results: ActionResult[] = [];

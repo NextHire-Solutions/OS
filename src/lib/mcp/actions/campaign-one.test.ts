@@ -127,8 +127,8 @@ async function load() {
   });
   mock.module("@/lib/tools/analytics/campaigns/actions.ts", {
     namedExports: {
-      applyCampaignAction: async (action: string, targets: unknown, actor: string, team: number) => {
-        calls.push(`${action} ${JSON.stringify(targets)} by ${actor} team ${team}`);
+      applyCampaignAction: async (action: string, targets: unknown, actor: string, team: number, opts: { liveStatus?: Map<string, string> } = {}) => {
+        calls.push(`${action} ${JSON.stringify(targets)} by ${actor} team ${team} live ${JSON.stringify([...(opts.liveStatus ?? new Map())])}`);
         if (action === "pause" && !world.stickyActive) for (const tg of targets as Array<{ id: string }>) world.live.set(Number(tg.id), "paused");
         return { batchId: "b", results: [{ campaignId: "1", platform: "emailbison", name: "Howe 1", ok: true, status: "paused" }] };
       },
@@ -224,7 +224,7 @@ test("pause: the preview names the campaign and its LIVE status; confirm runs Ca
   assert.deepEqual(calls, [], "the preview changed nothing");
   const done = await run(mod.campaignPause, { campaign: "#1", confirm: p.confirm }, d);
   assert.equal(done.done, true);
-  assert.deepEqual(calls, [`pause [{"platform":"emailbison","id":"1"}] by eddy@brokerstaffer.com via Claude team 7`]);
+  assert.deepEqual(calls, [`pause [{"platform":"emailbison","id":"1"}] by eddy@brokerstaffer.com via Claude team 7 live [["emailbison:1","active"]]`], "the live status goes with it — never the cache's");
   // Still starting (queued / launching): refused — EmailBison would undo the pause when the start finishes.
   reset(); world.live.set(1, "queued");
   assert.match(String((await run(mod.campaignPause, { campaign: "#1" })).refused), /is still being started by EmailBison \(queued\)\. A pause sent now can be undone/);

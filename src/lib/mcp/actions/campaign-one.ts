@@ -121,7 +121,10 @@ export const campaignPause: ActionSpec<One, { id: number; status: string }> = {
     };
   },
   async execute(_a, v, bind) {
-    const { results } = await applyCampaignAction("pause", [{ platform: "emailbison", id: String(bind.id) }], actor(v.email), analyticsTeamId());
+    // The live status the preview just read (and the confirm re-read): the screen's cached one can be a sync behind.
+    const { results } = await applyCampaignAction("pause", [{ platform: "emailbison", id: String(bind.id) }], actor(v.email), analyticsTeamId(), {
+      liveStatus: new Map([[`emailbison:${bind.id}`, bind.status]]),
+    });
     const r = results[0];
     if (!r?.ok) throw new Error(r?.error ?? "EmailBison did not pause it.");
     // Read back a few seconds later: what EmailBison holds then is what is said.
