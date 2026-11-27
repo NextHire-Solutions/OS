@@ -32,6 +32,8 @@ const db = {
 
 export interface CampaignRow {
   name: string;
+  /** EmailBison's campaign number, "#1419": what the connector's campaign actions and campaign_detail take. */
+  number?: string;
   platform: string;
   status: string;
   leads: number | null;
@@ -89,6 +91,7 @@ export async function campaignsForClientTool(clientQuery: string, options: { act
     const replies = (r.lifetime_unique_replies as number) ?? null;
     return {
       name: String(r.name ?? ""),
+      ...(r.platform === "emailbison" && /^\d+$/.test(String(r.id)) ? { number: `#${r.id}` } : {}),
       platform: String(r.platform ?? ""),
       status: String(r.status ?? ""),
       leads: (r.total_leads as number) ?? null,

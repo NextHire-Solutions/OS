@@ -574,7 +574,7 @@ export const TOOL_SCHEMA = [
     function: {
       name: "campaign_detail",
       description:
-        "One campaign in full by its name (or part of it): status, settings and limits, the sequence steps with how each step is doing, and recent activity.",
+        "One campaign in full by its name (or part of it) or its number (#1419): status, settings and limits, the sequence steps with how each step is doing, and recent activity.",
       parameters: {"type": "object", "properties": {"campaign": {"type": "string"}}, "required": ["campaign"]},
     },
   },

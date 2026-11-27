@@ -163,8 +163,17 @@ export async function sendScheduleTool() {
 export async function campaignDetailTool(query: string) {
   const an = readOnly(getAnalyticsSupabase());
   type Hit = { id: string | number; name: string; platform: string; status: string };
-  const { data } = await an.from("campaigns_unified").select("id, name, platform, status").ilike("name", `%${query.trim()}%`).limit(6);
-  let hits = (data ?? []) as Hit[];
+  /*
+   * By number too (28 Nov): the connector's campaign actions and campaign_create name a campaign "#1423", so "show me
+   * campaign #1423" must find it — a name containing the digits only if no campaign has that number.
+   */
+  const num = /^#?\s*(\d{1,9})$/.exec(query.trim())?.[1];
+  let hits: Hit[] = [];
+  if (num) hits = (((await an.from("campaigns_unified").select("id, name, platform, status").eq("id", num).limit(3)).data ?? []) as Hit[]);
+  if (!hits.length) {
+    const { data } = await an.from("campaigns_unified").select("id, name, platform, status").ilike("name", `%${query.trim()}%`).limit(6);
+    hits = (data ?? []) as Hit[];
+  }
   /*
    * People name a campaign loosely — "the Jeff Cook Greenville campaign" for
    * "Jeff Cook Real Estate + Greenville, SC + ZF NS1 (EST)" — so when the
@@ -178,8 +187,8 @@ export async function campaignDetailTool(query: string) {
       hits = ((await q.limit(10)).data ?? []) as Hit[];
     }
   }
-  if (!hits.length) return { note: `No campaign name contains "${query}".` };
-  const exact = hits.find((h) => h.name.toLowerCase() === query.trim().toLowerCase());
+  if (!hits.length) return { note: num ? `No campaign #${num}, and no campaign name contains "${query}".` : `No campaign name contains "${query}".` };
+  const exact = hits.find((h) => h.name.toLowerCase() === query.trim().toLowerCase() || (num !== undefined && String(h.id) === num));
   // Several matches but only one still sending: that is the one meant; the rest are listed.
   const live = hits.filter((h) => ["active", "running", "in_progress"].includes(String(h.status).toLowerCase()));
   if (hits.length > 1 && !exact && live.length !== 1) {
