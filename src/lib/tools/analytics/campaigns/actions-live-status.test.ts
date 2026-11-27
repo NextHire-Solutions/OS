@@ -25,8 +25,10 @@ function db() {
 }
 
 let apply: typeof import("./actions.ts").applyCampaignAction;
+let loaded = false;
 async function load() {
-  if (apply) return;
+  if (loaded) return;
+  loaded = true;
   mock.module("@/lib/tools/analytics/supabase", { namedExports: { getAnalyticsSupabase: db, analyticsTeamId: () => 7 } });
   mock.module("@/lib/tools/analytics/emailbison/client.ts", { namedExports: { createEmailBisonClient: () => ({ pauseCampaign: async (id: number) => { paused.push(id); } }) } });
   mock.module("@/lib/tools/analytics/instantly/client.ts", { namedExports: { createInstantlyClient: () => ({}) } });
