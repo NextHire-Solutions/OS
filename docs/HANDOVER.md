@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **built on feat/mcp-actions, NOT deployed**; every new action off until named in OS_MCP_ACTIONS
+| **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **LIVE 27 Nov 17:53 UTC (main 506cf7c = Railway bb8ef155)**; ON: snooze, labels, client campaigns + the five one-campaign actions; OFF until a live send is verified: inbox_reply, inbox_introduce
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
 | **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
 | **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
@@ -244,7 +244,36 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.31 Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November
 
-**Built and tested, NOT deployed** (branch feat/mcp-actions, rebased on main 27 Nov). The user: "almost everything except
+**LIVE since 27 Nov**, on the user's "deploy and do proper testing of everything. I do not want any issues or bugs".
+Deploys: da3024f8 at 16:38, then fixes found in testing (dc91d47e 17:08, d8b61e0b 17:24, and bb8ef155 at 17:53). Every
+deploy was timed between Client Health sync slots. OS_MCP_ACTIONS now = inbox_snooze, inbox_set_label, client_campaigns,
+campaign_pause, campaign_start, campaign_limits, campaign_add_inboxes, campaign_edit_copy. inbox_reply and
+inbox_introduce stay OFF until one real send is verified. None of our own conversations has a live mailbox (each was
+sent from a mailbox since deleted), and none is safe to introduce.
+
+**How it was tested.**
+1. An independent review of the whole branch found nothing blocking; its 6 findings were fixed.
+2. A production build, then the connector's HTTP route end to end against a LOCAL server with live settings and every
+   outside write refused (scratchpad mcpact/serve-local.mjs + guard-server.mjs + local-e2e.mts). 0 writes attempted.
+3. Live on a test campaign (#1422 "ZZ TEST Claude connector 2 (delete me)", Sundays 03:00–03:30 ET only, our own lead):
+   limits, copy (main email, three A/B versions, a reply email), add inboxes, start, resume, pause, a second start
+   refused, a used or old code refused. 0 emails sent.
+   - #1422 was deleted (404).
+   - Snapshot of all 459 campaigns before/after: identical.
+   - Every change is in campaign_audit_log as "admin@outreachify.io via Claude".
+
+**Bugs found by testing, fixed before switching on.**
+- Introduce was offered on an Instantly conversation, and opened "Hey ," for a nameless lead. Both are refused now.
+- A subject change on a reply-in-thread email answered "already says that". It is now refused, with the reason.
+- A reply could be sent twice from two previews. Confirms are now bound to the newest sent email. An introduction sent
+  but never labelled is not sent again.
+- campaign_pause:
+  - A pause sent while EmailBison was still starting a campaign (queued) was undone when the start finished.
+  - The pause used Campaign Analytics' cached status, which a sync had just overwritten, so it refused an active campaign.
+  - Now: refused while queued or launching; it acts on the live status (applyCampaignAction's new optional liveStatus,
+    which the screens don't pass); and the status is read back 5 s later.
+  - The screen's own Pause has the same two weaknesses (queued, cached status). Not changed; raised with the user.
+- A reply from a mailbox EmailBison no longer has failed at send. It is refused in the preview now. The user: "almost everything except
 billing changes". Client status changes are left out, because they pause and resume Stripe billing. Each action is off until it
 is named in OS_MCP_ACTIONS, and each uses §0.29's preview, then a signed code, then one confirm.
 
