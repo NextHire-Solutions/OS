@@ -14,6 +14,7 @@ import { rosterRowForPortal } from "@/lib/tools/master-inbox/clients/roster-for-
 import { directHandoffReason } from "@/lib/tools/master-inbox/relay/settings";
 import { isHostileLabel } from "@/lib/tools/master-inbox/inbox/dnc";
 import { isStopContactLabel } from "@/lib/tools/master-inbox/portals/stop-person-plan";
+import { analyticsTeamId, getAnalyticsSupabase } from "@/lib/tools/analytics/supabase";
 import type { ToolId } from "@/lib/bs-auth";
 
 import type { ActionSpec } from "./core.ts";
@@ -49,6 +50,29 @@ async function latestInboundId(admin: ReturnType<typeof createAdminSupabase>, th
 async function latestOutbound(admin: ReturnType<typeof createAdminSupabase>, threadId: string): Promise<Array<{ id: string; subject: string | null; sent_at: string | null }>> {
   const { data } = await admin.from("messages").select("id, subject, sent_at").eq("thread_id", threadId).eq("direction", "outbound").order("sent_at", { ascending: false }).limit(20);
   return (data ?? []) as Array<{ id: string; subject: string | null; sent_at: string | null }>;
+}
+
+/*
+ * The mailbox a reply goes out from: the one the lead last wrote to (the inbound email's sender_email, as
+ * send-reply.ts takes it). Deleted from EmailBison since, the reply would be refused at send ("The selected sender
+ * email id is invalid", live test 27 Nov): said in the preview instead. Unreadable here: not blocked (the send itself
+ * still refuses plainly).
+ */
+async function goneMailbox(admin: ReturnType<typeof createAdminSupabase>, threadId: string): Promise<string | null> {
+  const { data } = await admin.from("messages").select("raw_payload").eq("thread_id", threadId).eq("direction", "inbound").order("sent_at", { ascending: false }).limit(1);
+  const raw = (((data ?? []) as Array<{ raw_payload: unknown }>)[0]?.raw_payload ?? {}) as { data?: { sender_email?: { id?: unknown; email?: unknown } } };
+  const id = Number(raw.data?.sender_email?.id);
+  const email = String(raw.data?.sender_email?.email ?? "") || null;
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { data: row, error } = await getAnalyticsSupabase().from("sender_emails").select("id, email, archived_at").eq("team_id", analyticsTeamId()).eq("id", id).maybeSingle();
+    if (error) return null;
+    const r = row as { email?: string; archived_at?: string | null } | null;
+    if (!r || r.archived_at) return `The mailbox this lead wrote to (${r?.email ?? email ?? `#${id}`}) no longer exists in EmailBison, so a reply can't go out from it. Reply from the Master Inbox, where another mailbox can be chosen.`;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 async function everIntroduced(admin: ReturnType<typeof createAdminSupabase>, threadId: string): Promise<boolean> {
@@ -115,6 +139,10 @@ export const inboxIntroduce: ActionSpec<IntroArgs, IntroBind> = {
     const earlier = sentBefore.find((m) => (m.subject ?? "").trim().toLowerCase() === plan.subject.trim().toLowerCase());
     if (earlier) return { ok: false, refusal: `An introduction ("${plan.subject}") was already sent on this conversation${earlier.sent_at ? ` on ${earlier.sent_at.slice(0, 10)}` : ""}, but it isn't labelled Introduction. Label it in the Master Inbox; a second introduction isn't sent through Claude.` };
     const sender = await introSenderFor(admin, ws, provider ?? "emailbison");
+    if (!sender.channelId) {
+      const gone = await goneMailbox(admin, a.thread_id);
+      if (gone) return { ok: false, refusal: gone };
+    }
     const cc = mergeAlwaysCcString(plan.cc.join(", "), input.leadEmail).split(/,\s*/).filter(Boolean);
     const from = sender.channelId ? `${sender.name ?? ""} <${sender.email}>`.trim() : `the campaign's own mailbox (${sender.problem ?? "no introductions mailbox on this platform"})`;
     return {
@@ -194,6 +222,8 @@ export const inboxReply: ActionSpec<ReplyArgs, ReplyBind> = {
     const lead = Array.isArray(th?.leads) ? th?.leads[0] : th?.leads;
     const to = (lead as { email?: string } | null)?.email ?? null;
     if (!to) return { ok: false, refusal: "The lead has no email address on this conversation." };
+    const gone = await goneMailbox(admin, a.thread_id);
+    if (gone) return { ok: false, refusal: gone };
     const subject = agentSubject((th?.subject as string | null) ?? null) ?? null;
     // The composer's own Cc: the always-copied address added to whatever was asked (auto-cc.ts), never the lead twice.
     const cc = mergeAlwaysCcString(a.cc.join(", "), to).split(/,\s*/).filter(Boolean);

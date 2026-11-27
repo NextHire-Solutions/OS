@@ -11,7 +11,7 @@ const skip = canMock ? false : "needs node --experimental-test-module-mocks --im
 
 const T = "11111111-1111-4111-8111-111111111111";
 const calls: string[] = [];
-const state = { label: "Interested" as string | null, introducedBefore: false, inbound: "m1", handoff: null as string | null, plan: "ok" as "ok" | "stop", sendOk: true, provider: "emailbison", leadName: "Ann Lee", outbound: [] as Array<{ id: string; subject: string | null; sent_at: string | null }> };
+const state = { label: "Interested" as string | null, introducedBefore: false, inbound: "m1", handoff: null as string | null, plan: "ok" as "ok" | "stop", sendOk: true, provider: "emailbison", leadName: "Ann Lee", outbound: [] as Array<{ id: string; subject: string | null; sent_at: string | null }>, mailbox: "live" as "live" | "archived" | "missing" };
 
 function from(table: string) {
   const q: Record<string, unknown> = {};
@@ -24,7 +24,7 @@ function from(table: string) {
       case "label_assignments": return state.label ? [{ labels: { name: state.label } }] : [];
       case "reminders": return [];
       case "label_history": return q.label_name === "Introduction" ? (state.introducedBefore ? [{ id: 1 }] : []) : [];
-      case "messages": return q.direction === "outbound" ? state.outbound : [{ id: state.inbound }];
+      case "messages": return q.direction === "outbound" ? state.outbound : [{ id: state.inbound, raw_payload: { data: { sender_email: { id: 77, email: "william@buildbuyerlists.com" } } } }];
       case "labels": return { id: "L-intro" };
       default: return null;
     }
@@ -43,6 +43,12 @@ async function load() {
   mock.module("server-only", { namedExports: {} });
   mock.module("@/lib/supabase/admin", { namedExports: { createAdminSupabase: () => ({ from }) } });
   mock.module("@/lib/tools/master-inbox/supabase", { namedExports: { getMasterInboxSupabase: () => ({ from }), workspaceId: async () => "ws1" } });
+  mock.module("@/lib/tools/analytics/supabase", {
+    namedExports: {
+      analyticsTeamId: () => 7,
+      getAnalyticsSupabase: () => ({ from: () => { const c: Record<string, unknown> = { select: () => c, eq: () => c, maybeSingle: async () => ({ data: state.mailbox === "missing" ? null : { id: 77, email: "william@buildbuyerlists.com", archived_at: state.mailbox === "archived" ? "2026-11-18" : null }, error: null }) }; return c; } }),
+    },
+  });
   mock.module("@/lib/tools/master-inbox/ai/runtime", {
     namedExports: {
       assembleRunInput: async () => ({ clientId: "c1", leadName: state.leadName, leadEmail: "ann@example.com", introduction: { client: { name: "Howe Realty Group" }, unavailableReason: null } }),
@@ -86,7 +92,7 @@ function deps() {
   };
 }
 const run = (spec: unknown, args: Record<string, unknown>, d = deps()) => core.runAction(spec as never, args, EDDY, d as never);
-const reset = () => { calls.length = 0; Object.assign(state, { label: "Interested", introducedBefore: false, inbound: "m1", handoff: null, plan: "ok", sendOk: true, provider: "emailbison", leadName: "Ann Lee", outbound: [] }); };
+const reset = () => { calls.length = 0; Object.assign(state, { label: "Interested", introducedBefore: false, inbound: "m1", handoff: null, plan: "ok", sendOk: true, provider: "emailbison", leadName: "Ann Lee", outbound: [], mailbox: "live" }); };
 
 test("introduce: the preview is the whole email; confirm sends exactly it (from the intro mailbox, new subject), then labels Introduction", { skip }, async () => {
   await load(); reset();
@@ -179,4 +185,15 @@ test("never twice: two previews of one reply send it once; an introduction sent 
   state.outbound = [{ id: "o1", subject: "Intro: Ann & Howe Realty Group", sent_at: "2026-11-27T16:00:00Z" }];
   assert.match(String((await run(intro, { thread_id: T })).refused), /An introduction \("Intro: Ann & Howe Realty Group"\) was already sent on this conversation on 2026-11-27, but it isn't labelled Introduction/);
   assert.equal(calls.length, 0);
+});
+
+test("a reply from a mailbox EmailBison no longer has: refused in the preview, not at send", { skip }, async () => {
+  await load(); reset(); state.label = "Keep Warm"; state.mailbox = "archived";
+  assert.match(String((await run(reply, { thread_id: T, text: "hi" })).refused), /The mailbox this lead wrote to \(william@buildbuyerlists\.com\) no longer exists in EmailBison/);
+  state.mailbox = "missing";
+  assert.match(String((await run(reply, { thread_id: T, text: "hi" })).refused), /no longer exists in EmailBison/);
+  // An introduction goes from the introductions mailbox, so the lead's old mailbox doesn't matter there.
+  reset(); state.mailbox = "archived";
+  assert.ok((await run(intro, { thread_id: T })).preview);
+  assert.deepEqual(calls, []);
 });
