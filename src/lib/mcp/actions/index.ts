@@ -12,6 +12,7 @@ import { campaignCreate } from "./campaign-create.ts";
 import { campaignAddAgents, campaignAddAgentsStop } from "./campaign-agents.ts";
 import { inboxSetLabel, inboxSnooze } from "./inbox.ts";
 import { inboxIntroduce, inboxReply } from "./outreach.ts";
+import { ticketNote, ticketReply, ticketUpdate } from "./tickets.ts";
 import { enabledActions, type ActionName } from "./switch.ts";
 
 /* The connector's actions (core.ts): which exist (switch.ts), who may (the screen's own switch), and their runner. */
@@ -30,6 +31,9 @@ const ALL: Record<ActionName, ActionSpec> = {
   campaign_create: campaignCreate as unknown as ActionSpec,
   campaign_add_agents: campaignAddAgents as unknown as ActionSpec,
   campaign_add_agents_stop: campaignAddAgentsStop as unknown as ActionSpec,
+  ticket_update: ticketUpdate as unknown as ActionSpec,
+  ticket_note: ticketNote as unknown as ActionSpec,
+  ticket_reply: ticketReply as unknown as ActionSpec,
 };
 
 /** The actions switched on (OS_MCP_ACTIONS) that this person may take. */

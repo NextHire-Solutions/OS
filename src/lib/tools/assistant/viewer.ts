@@ -106,6 +106,7 @@ export const TOOL_NEEDS: Readonly<Record<string, Need>> = {
   notifications: admin,
   // Tickets (20 Nov): its own switch.
   tickets: any("tickets"),
+  ticket_thread: any("tickets"),
   data_consistency: admin,
   reply_agent_status: admin,
   // Agents added to campaigns through Claude (28 Nov): the action is admins only, so its progress is too.

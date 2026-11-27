@@ -138,3 +138,18 @@ test("arguments match whatever the key order; the tool Claude sees has `confirm`
   assert.equal(t.annotations.readOnlyHint, false);
   assert.match(t.description, /preview/);
 });
+
+test("a used code is said so even when the preview now refuses (the action made it a no-op): 'already used', nothing run", async () => {
+  const { deps } = harness();
+  const st = { label: "OOO", runs: 0 };
+  const s = { ...spec(st), async preview(a: { label: string }) { return st.label === a.label ? { ok: false as const, refusal: `already ${a.label}` } : { ok: true as const, preview: `${st.label} → ${a.label}`, bind: { current: st.label } }; } } as unknown as ActionSpec;
+  const p = await runAction(s, { thread_id: "t1", label: "Keep Warm" }, EDDY, deps);
+  await runAction(s, { thread_id: "t1", label: "Keep Warm", confirm: p.confirm }, EDDY, deps);
+  assert.equal(st.runs, 1);
+  const again = await runAction(s, { thread_id: "t1", label: "Keep Warm", confirm: p.confirm }, EDDY, deps);
+  assert.match(String(again.refused), /already used/);
+  // Someone else's (or a forged) code doesn't get that answer: the normal refusal.
+  const other = await runAction(s, { thread_id: "t1", label: "Keep Warm", confirm: p.confirm }, { ...EDDY, email: "amy@brokerstaffer.com" }, deps);
+  assert.equal(other.refused, "already Keep Warm");
+  assert.equal(st.runs, 1);
+});

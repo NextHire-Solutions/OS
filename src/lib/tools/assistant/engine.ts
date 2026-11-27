@@ -20,7 +20,7 @@ import {
 } from "./tools-phase2.ts";
 import { infrastructureHealthTool } from "./tools-phase3.ts";
 import { notificationsTool, profileCompletenessTool } from "./tools-phase9.ts";
-import { ticketsTool } from "./tools-tickets.ts";
+import { ticketsTool, ticketThreadTool } from "./tools-tickets.ts";
 import { positiveRepliesTool } from "./tools-positive.ts";
 import { agentJobsOverview } from "@/lib/clients/campaign-agents/run";
 import {
@@ -691,13 +691,24 @@ export const TOOL_SCHEMA = [
     function: {
       name: "tickets",
       description:
-        "OS › Tickets: emails FROM client addresses that reached the team's connected Gmail, as tracked tickets (Open = a client is waiting on us, Waiting = we replied, Done). Counts, the connected inboxes, and up to 25 tickets with client, sender, assignee, how long the client has waited and the client's latest words. Answers 'any client emails waiting?', 'what has Homebase emailed about?', 'what is assigned to Amy?'. Never holds the team's reply text.",
+        "OS › Tickets: emails FROM client addresses that reached the team's connected Gmail, as tracked tickets (Open = a client is waiting on us, Waiting = we replied, Done), plus Others (every other email to a connected inbox). Counts, the connected inboxes, and up to 25 tickets with client, sender, assignee, how long the client has waited and the client's latest words. Answers 'any client emails waiting?', 'what has Homebase emailed about?', 'what is assigned to Amy?'. For one ticket's full emails, notes and activity: ticket_thread.",
       parameters: {"type": "object", "properties": {
         "client": {"type": "string", "description": "Part of a client's name, to see only that client's tickets"},
         "status": {"type": "string", "enum": ["open", "waiting", "done", "ignored"]},
         "assignee": {"type": "string", "description": "Part of a teammate's email, e.g. amy"},
         "search": {"type": "string", "description": "Words in the subject, the client's email, or the sender"},
       }},
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "ticket_thread",
+      description:
+        "One OS › Tickets ticket in full: its emails (newest last, up to 12, each up to 4,000 characters; quoted history already cut), the team's internal notes and activity, and whether a reply can go from Tickets (from which inbox, to whom, who is copied). Read this before replying to or acting on a ticket.",
+      parameters: {"type": "object", "properties": {
+        "ticket": {"type": "string", "description": "The ticket's number, e.g. #42 (from the tickets tool)"},
+      }, "required": ["ticket"]},
     },
   },
   {
@@ -761,7 +772,7 @@ export const SYSTEM_PROMPT = `You answer questions about a lead-generation busin
 
 There are six products: Master Inbox (email threads, the reply agent), Client Portals (each client's portal: its link, on/off, SMS alerts and pipeline), Campaign Analytics (EmailBison and Instantly campaigns), Client Health (targets and intros per client), Onboarding, and Agent Search (scraping real-estate agents into the agent database — about 1.2 million agents, the Database app; the onboarding app and the scraper share that database). On top of them sits the OS master client record (status, people, dates, markets, portals, introductions), Stripe billing (MRR, spend, invoices) and commissions.
 
-Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), Tickets — client emails to the team's Gmail (tickets), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), the agent database (find_agent for one agent and the campaigns they are in; search_agents for how many agents or offices are in a place or match filters — sales volume, brokerage, MLS, emailed or not — with top agents and top brokerages; agent_places to rank cities, counties, zips, states or brokerages), inbox text and templates (search_conversations, reply_templates), positive replies per client (positive_replies — Interested or Introduction, unless corrected; the Inboxes page's rule), agents being added to campaigns through Claude (campaign_agent_jobs) and recent introductions. Look before saying something is not tracked.
+Every OS screen has a tool: Home (workspace_home), Performance \u203a Overview (business_performance, and billing_overview for its billing cards) and Performance \u203a Billing Calendar (billing_overview's billingCalendar), the notifications bell (notifications), Tickets — client emails to the team's Gmail (tickets, and ticket_thread for one ticket in full), profile completeness and saved views (profile_completeness, client_record), Consistency (data_consistency), Client Health's Overview and Delivery (billing_cycles; account health has no screen but client_success reads it), Campaign Analytics' KPIs and Attribution and Campaign Management's Schedule and one campaign (campaign_kpis, attribution, send_schedule, campaign_detail), the agent database (find_agent for one agent and the campaigns they are in; search_agents for how many agents or offices are in a place or match filters — sales volume, brokerage, MLS, emailed or not — with top agents and top brokerages; agent_places to rank cities, counties, zips, states or brokerages), inbox text and templates (search_conversations, reply_templates), positive replies per client (positive_replies — Interested or Introduction, unless corrected; the Inboxes page's rule), agents being added to campaigns through Claude (campaign_agent_jobs) and recent introductions. Look before saying something is not tracked.
 
 A CLIENT can have several PORTALS (one per market — Properties & Estates has Boston and Florida). Client-level questions — status, people, billing, commissions, introductions, portals — use client_record, list_clients, client_billing, billing_overview, commissions, client_introduction, client_portals, portal_pipeline. If find_client offers several portals of ONE client, answer client-level questions for the client instead of asking.
 
@@ -924,6 +935,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
     client: typeof a.client === "string" && a.client ? a.client : undefined,
   }),
   notifications: () => notificationsTool(),
+  ticket_thread: (a) => ticketThreadTool({ ticket: String(a.ticket ?? "") }),
   tickets: (a) => ticketsTool({
     client: typeof a.client === "string" && a.client ? a.client : undefined,
     status: typeof a.status === "string" && a.status ? a.status : undefined,
