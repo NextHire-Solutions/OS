@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **built on fix/prospects-remove-now, NOT deployed**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 734 dead Instantly records awaits the user's OK
+| **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records awaits the user's OK
 | **0.29** | [Claude connector: actions, previewed then confirmed — 25 November](#029-claude-connector-actions-previewed-then-confirmed--25-november) — **DEPLOYED 25 Nov 20:57 UTC (4ce0a38, Railway f6642bf6), every action OFF** (OS_MCP_ACTIONS unset); 0058 run by the user
 | **0.28** | [Client Health's database moves into the Master Inbox project — 25 November](#028-client-healths-database-moves-into-the-master-inbox-project--25-november) — **LIVE 25 Nov 18:56 UTC (ace512b, Railway e6c8552a, CLIENT_HEALTH_DB=master-inbox)**; every check identical; delete the old project from ~26 Dec (saves ~$10/month)
 | **0.27** | [Client Health: every campaign read, status dates kept — 25 November](#027-client-health-every-campaign-read-status-dates-kept--25-november) — **LIVE 25 Nov 16:51 UTC (e85338f, Railway ed7e02ec)**; the dashboard saw 1,000 of 1,248 EmailBison campaigns; paused/finished status dates flipped every sync
@@ -243,7 +243,9 @@ recommendation to revoke the secrets stored in Railway.
 
 ## 0.30 Prospects: Remove takes agents off at once — 27 November
 
-**Built, tested, NOT deployed** (branch fix/prospects-remove-now). Gabriel (Slack, 27 Nov): "I have to click the
+**LIVE 27 Nov 15:24 UTC (main 1016473 = Railway fd7dc9d8)**, on the user's "deploy". It was timed after the 15:15 Client Health
+sync. Afterwards: health 200, logs clean, the 15:30 sync ran 3/3, and the Prospects queue had none due. It can't be
+live-tested without changing a client's data, so watch for `[crm-preview] prospects let go` on the next real Remove. Gabriel (Slack, 27 Nov): "I have to click the
 Remove button at least four times before it actually removes them" (Team Leaders and Managing Brokers on clients'
 Prospects).
 
