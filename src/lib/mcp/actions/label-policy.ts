@@ -24,7 +24,7 @@ export function labelPolicy(current: string | null, target: string, everPositive
   if ((current ?? "").trim().toLowerCase() === "introduction") {
     return { ok: false, reason: "This conversation is an Introduction: changing its label removes the client's portal entry. Do it in the Master Inbox, where that is shown." };
   }
-  if (t === "introduction") return { ok: false, reason: "Use the introduce action (inbox_introduce): it sends the introduction email and then labels it. The label alone would announce to the client with no email." };
+  if (t === "introduction") return { ok: false, reason: "An introduction goes with its email: use the Introduce button in the Master Inbox (or the introduce action, where it is switched on). The label alone would announce to the client with no email." };
   const effects: string[] = [];
   if (isInterestedLabel(target) || isTrigger(target)) {
     effects.push(

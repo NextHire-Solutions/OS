@@ -10,7 +10,7 @@ test("plain labels: allowed, nothing set off", () => {
 });
 
 test("refused: TO Introduction (use the introduce action), FROM Introduction (portal entry), and a no-op", () => {
-  assert.match(ok(labelPolicy("OOO", "Introduction")), /REFUSED.*inbox_introduce/);
+  assert.match(ok(labelPolicy("OOO", "Introduction")), /REFUSED.*Introduce button in the Master Inbox/);
   assert.match(ok(labelPolicy("Introduction", "Keep Warm")), /REFUSED.*portal entry/);
   assert.match(ok(labelPolicy("Keep Warm", "keep warm")), /REFUSED.*already/);
 });

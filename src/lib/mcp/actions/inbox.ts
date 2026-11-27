@@ -95,7 +95,8 @@ export const inboxSetLabel: ActionSpec<LabelArgs, LabelBind> = {
     "search_conversations. The preview lists every effect: Interested / Meetings Booked start the Slack alert, the " +
     "hand-off to direct-hand-off clients and per-lead billing; stop labels stop the person in every campaign; on a lead " +
     "that was Interested, a correction label (Not Interested, Not Qualified, …) can take it off a per-lead bill. For " +
-    "Introduction use inbox_introduce; a conversation that is an Introduction is relabelled in the inbox.",
+    "Introduction, the Master Inbox's Introduce button (or inbox_introduce where it is listed); a conversation that is an " +
+    "Introduction is relabelled in the inbox.",
   inputSchema: {
     type: "object",
     properties: {
