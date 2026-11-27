@@ -25,6 +25,8 @@ const world = {
   seqStatus: "active",
   fields: { clientName: "Howe Realty Group", area: "Atlanta" as string | null, alias: "Howe" as string | null },
   updateFails: false,
+  /* EmailBison flips a paused campaign back to active (a queued start finishing). */
+  stickyActive: false,
 };
 const calls: string[] = [];
 
@@ -127,6 +129,7 @@ async function load() {
     namedExports: {
       applyCampaignAction: async (action: string, targets: unknown, actor: string, team: number) => {
         calls.push(`${action} ${JSON.stringify(targets)} by ${actor} team ${team}`);
+        if (action === "pause" && !world.stickyActive) for (const tg of targets as Array<{ id: string }>) world.live.set(Number(tg.id), "paused");
         return { batchId: "b", results: [{ campaignId: "1", platform: "emailbison", name: "Howe 1", ok: true, status: "paused" }] };
       },
     },
@@ -148,6 +151,7 @@ async function load() {
   });
   core = await import("./core.ts");
   mod = await import("./campaign-one.ts");
+  mod.setPauseCheckMs(0);
   inb = await import("./campaign-inboxes.ts");
   edit = await import("./campaign-edit.ts");
 }
@@ -197,6 +201,7 @@ function reset() {
   world.seqStatus = "active";
   world.fields = { clientName: "Howe Realty Group", area: "Atlanta", alias: "Howe" };
   world.updateFails = false;
+  world.stickyActive = false;
 }
 
 test("finding a campaign: by number, exact name, one match — several or none are said, never guessed; Instantly and other teams never", { skip }, async () => {
@@ -220,6 +225,16 @@ test("pause: the preview names the campaign and its LIVE status; confirm runs Ca
   const done = await run(mod.campaignPause, { campaign: "#1", confirm: p.confirm }, d);
   assert.equal(done.done, true);
   assert.deepEqual(calls, [`pause [{"platform":"emailbison","id":"1"}] by eddy@brokerstaffer.com via Claude team 7`]);
+  // Still starting (queued / launching): refused — EmailBison would undo the pause when the start finishes.
+  reset(); world.live.set(1, "queued");
+  assert.match(String((await run(mod.campaignPause, { campaign: "#1" })).refused), /is still being started by EmailBison \(queued\)\. A pause sent now can be undone/);
+  // EmailBison shows it sending again right after: said, not claimed as paused.
+  reset(); world.stickyActive = true;
+  const d9 = deps();
+  const p9 = await run(mod.campaignPause, { campaign: "#1" }, d9);
+  const r9 = await run(mod.campaignPause, { campaign: "#1", confirm: p9.confirm }, d9);
+  assert.match(String(r9.failed), /accepted the pause but now shows the campaign active/, "the stand-in still says active after the pause");
+  calls.length = 0;
   // Already paused (live): refused, nothing sent.
   reset();
   assert.match(String((await run(mod.campaignPause, { campaign: "#2" })).refused), /can't be paused: A paused campaign is not sending/);
@@ -229,7 +244,7 @@ test("pause: the preview names the campaign and its LIVE status; confirm runs Ca
   const p2 = await run(mod.campaignPause, { campaign: "#1" }, d2);
   world.live.set(1, "queued");
   const r2 = await run(mod.campaignPause, { campaign: "#1", confirm: p2.confirm }, d2);
-  assert.match(String(r2.refused), /Things changed since the preview/);
+  assert.match(String(r2.refused), /still being started/, "a fresh look refuses it: nothing done");
   assert.deepEqual(calls, []);
 });
 

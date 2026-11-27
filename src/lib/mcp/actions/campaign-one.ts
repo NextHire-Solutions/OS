@@ -28,6 +28,9 @@ import type { ActionSpec } from "./core.ts";
 const NEEDS = (path: string, method: string) => (grantsForRequest(path, method) ?? []) as ToolId[];
 const actor = (email: string) => `${email} via Claude`;
 const n = (v: number) => v.toLocaleString("en-US");
+/* How long after a pause its status is read back (the tests set it to 0). */
+export let PAUSE_CHECK_MS = 5_000;
+export const setPauseCheckMs = (ms: number) => { PAUSE_CHECK_MS = ms; };
 
 export interface EbCampaign { id: number; name: string; status: string }
 
@@ -106,6 +109,11 @@ export const campaignPause: ActionSpec<One, { id: number; status: string }> = {
     // The live status, not the cache's: the cache can be half an hour behind.
     const live = String((await createEmailBisonClient().getCampaign(c.id)).status ?? c.status).toLowerCase();
     if (!canApply("pause", live)) return { ok: false, refusal: `${c.name} (#${c.id}) can't be paused: ${whyNot("pause", live)}.` };
+    // Still starting (27 Nov, live test): EmailBison answers "paused" to a pause sent while a start is queued, then
+    // finishes the start and the campaign is active again. Refused until it shows active.
+    if (live === "queued" || live === "launching") {
+      return { ok: false, refusal: `${c.name} (#${c.id}) is still being started by EmailBison (${live}). A pause sent now can be undone when the start finishes, so wait a minute until it shows active, then pause it.` };
+    }
     return {
       ok: true,
       preview: `Pause "${c.name}" (#${c.id}, ${live} now). Its emails stop going out until it is started again.`,
@@ -116,8 +124,12 @@ export const campaignPause: ActionSpec<One, { id: number; status: string }> = {
     const { results } = await applyCampaignAction("pause", [{ platform: "emailbison", id: String(bind.id) }], actor(v.email), analyticsTeamId());
     const r = results[0];
     if (!r?.ok) throw new Error(r?.error ?? "EmailBison did not pause it.");
-    console.info(`[mcp-action] ${actor(v.email)}: paused campaign #${bind.id}`);
-    return { campaign: r.name, number: bind.id, status: r.status ?? "paused" };
+    // Read back a few seconds later: what EmailBison holds then is what is said.
+    await new Promise((res) => setTimeout(res, PAUSE_CHECK_MS));
+    const now = String((await createEmailBisonClient().getCampaign(bind.id)).status ?? "").toLowerCase();
+    console.info(`[mcp-action] ${actor(v.email)}: paused campaign #${bind.id} (EmailBison now: ${now || "unknown"})`);
+    if (now && now !== "paused") throw new Error(`EmailBison accepted the pause but now shows the campaign ${now}. Pause it again in a minute, and check it in Campaign Analytics.`);
+    return { campaign: r.name, number: bind.id, status: now || r.status || "paused" };
   },
 };
 
