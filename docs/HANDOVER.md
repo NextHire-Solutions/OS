@@ -12,7 +12,7 @@ figure will age, the query that produced it is given so you can re-run it.
 |---|---|
 | **0** | [Read this first](#0-read-this-first) — what this project is, in five minutes |
 | **0.0** | [SECURITY — staff pages open without signing in (found 22 October)](#00-security--staff-pages-open-without-signing-in-found-22-october) — fixed on main and on a hotfix branch; deploy the hotfix first when Railway accepts deploys |
-| **0.33** | [Claude connector: Tickets — status, assign, snooze, note, reply — 28 November](#033-claude-connector-tickets--status-assign-snooze-note-reply--28-november) — **DEPLOYED 27 Nov 21:31 UTC (68318525), actions still OFF** (switching them on waits on the user); ticket_thread live; campaign_detail by number LIVE 21:47 (c332a468)
+| **0.33** | [Claude connector: Tickets — status, assign, snooze, note, reply — 28 November](#033-claude-connector-tickets--status-assign-snooze-note-reply--28-november) — **LIVE 27 Nov**: ticket_update + ticket_note ON since 22:11 (6468bd63), live-tested on test ticket #43; ticket_reply OFF (waits on the user's explicit yes); campaign_detail by number LIVE (c332a468)
 | **0.32** | [Claude connector: create a campaign, add agents from the agent database — 28 November](#032-claude-connector-create-a-campaign-add-agents-from-the-agent-database--28-november) — **LIVE 27 Nov** (deploy 98b240ca; actions on via a95e3ff0); live test passed on #1423 (deleted); 10 test leads left in EmailBison, see the section
 | **0.31** | [Claude connector: more actions — positive replies, introduce/reply, labels, one campaign — 27 November](#031-claude-connector-more-actions--positive-replies-introducereply-labels-one-campaign--27-november) — **LIVE 27 Nov 17:53 UTC (main 506cf7c = Railway bb8ef155)**; ON: snooze, labels, client campaigns + the five one-campaign actions; OFF until a live send is verified: inbox_reply, inbox_introduce
 | **0.30** | [Prospects: Remove takes agents off at once — 27 November](#030-prospects-remove-takes-agents-off-at-once--27-november) — **LIVE 27 Nov 15:24 UTC (1016473, Railway fd7dc9d8)**; Gabriel had to click Remove about four times; Instantly-listed agents never left; one-off clean-up of 742 stale records DONE 27 Nov (the user's OK)
@@ -255,7 +255,16 @@ check, so switching them on waits on the user's explicit word.
 (none over 10 s), and all 11 live actions refused a bad target cleanly (camptest3/smoke.mts). That found one gap, fixed
 and LIVE at 21:47 (d560205, Railway c332a468): campaign_detail found campaigns only by name, while the campaign actions
 call them "#1423". It now takes a number too, and campaigns_for_client gives each EmailBison campaign's number.
-The 21:47 swap killed the 21:45 Client Health bison run (its row stays open; the 22:00 cycle ran all three ✓). The user's third group:
+The 21:47 swap killed the 21:45 Client Health bison run (its row stays open; the 22:00 cycle ran all three ✓).
+
+**ticket_update + ticket_note switched ON 22:11 UTC** (OS_MCP_ACTIONS + redeploy 6468bd63), on the user's "Yes, switch both
+on". Live test through the production connector on test ticket #43 "MCP Integration testing" (Others; the user's own
+Gmail, sent to amy@ — mail from outreachify.io never becomes a ticket, the user's first try): Done → Open; the same code
+again refused "already used"; assign admin → unassign; snooze tomorrow 09:00 ET → cancel; a code from before the snooze
+refused "things changed", nothing done; a note. The ticket's activity shows every step under admin@outreachify.io;
+os_mcp_actions has 7 done. #43 ends Open and unassigned (kept for the reply test, then removed).
+**ticket_reply stays OFF**: switching it on was refused by the session's safety check until the user says an explicit
+yes to one test reply from Amy's inbox to their own Gmail. The user's third group:
 "Tickets: assign, status, snooze, note, reply as Amy/Eddy". Every action calls the Tickets screen's own functions and is
 open to whoever holds the Tickets switch (admins always), as on the screen. Changes are written in the person's own name
 on the ticket's activity; os_mcp_actions records that they came through Claude.
